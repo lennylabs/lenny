@@ -24,9 +24,9 @@ const runtimeApplyImage = "ghcr.io/acme/my-agent@sha256:" +
 // TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4 covers the
 // §17.4 runtime-apply verb's apply path against a real kube-apiserver with the
 // lenny.dev CRDs installed: ApplyRuntimeSetFromConfig applies the cluster-scoped
-// Runtime CR through the typed-client upsert and the SandboxTemplate/SandboxWarmPool
-// pair through the C1 dynamic-apply path, so a custom runtime materialized
-// through the verb has the Runtime the Sandbox controller resolves by name and
+// Runtime CR through the typed-client upsert and the PodSet
+// through the C1 dynamic-apply path, so a custom runtime materialized
+// through the verb has the Runtime the AgentPod controller resolves by name and
 // the pool the unconditionally-registered WarmPoolController reconciles to a
 // warm pod. Under the no-Postgres development profile no PoolScalingController
 // runs, so without this set ResolvePool returns ErrNoMatchingPool and a custom
@@ -40,8 +40,8 @@ const runtimeApplyImage = "ghcr.io/acme/my-agent@sha256:" +
 //
 // spec: §17.4 (the runtime-apply verb materializes the CRD set without a
 // PoolScalingController), §5.1 (the Runtime CR is the declarative source the
-// Sandbox controller resolves by name), §5.2 (ResolvePool lists the applied
-// SandboxWarmPool), §4.6.2 (direct pool materialization).
+// AgentPod controller resolves by name), §5.2 (ResolvePool lists the applied
+// PodSet), §4.6.2 (direct pool materialization).
 func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testing.T) {
 	env := sharedEnv.Start(t)
 	ctx := context.Background()
@@ -49,15 +49,14 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 
 	// The agent namespace the verb materializes the pool CRDs into must exist
 	// first, exactly as the bring-up creates it before placement. The verb
-	// fixes the namespace, so this test owns the Runtime and pool pair it
+	// fixes the namespace, so this test owns the Runtime and PodSet it
 	// names there on the package's shared control plane.
 	const ns = "lenny-agents"
 	poolName := stack.RuntimePoolName("my-agent")
 	claimFixedObjects(
 		t, cfg,
 		&lennyv1alpha1.Runtime{ObjectMeta: metav1.ObjectMeta{Name: "my-agent"}},
-		&lennyv1alpha1.SandboxTemplate{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: poolName}},
-		&lennyv1alpha1.SandboxWarmPool{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: poolName}},
+		&lennyv1alpha1.PodSet{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: poolName}},
 	)
 	if err := stack.EnsureAgentNamespaceFromConfigForTest(ctx, cfg, ns); err != nil {
 		t.Fatalf("ensure agent namespace: %v", err)
@@ -92,22 +91,15 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 			got.Spec.Type, got.Spec.ExecutionMode, got.Spec.IsolationProfile)
 	}
 
-	// The pool pair is named for the runtime and lands in the agent namespace,
+	// The PodSet is named for the runtime and lands in the agent namespace,
 	// so the WarmPoolController reconciles it independently of any other pool.
-	var tmpl lennyv1alpha1.SandboxTemplate
-	if err := cl.Get(ctx, ctrlclient.ObjectKey{Namespace: ns, Name: poolName}, &tmpl); err != nil {
-		t.Fatalf("get SandboxTemplate after apply: %v", err)
-	}
-	if tmpl.Spec.RuntimeRef != "my-agent" {
-		t.Errorf("SandboxTemplate runtimeRef = %q, want my-agent", tmpl.Spec.RuntimeRef)
-	}
-	var pool lennyv1alpha1.SandboxWarmPool
+	var pool lennyv1alpha1.PodSet
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Namespace: ns, Name: poolName}, &pool); err != nil {
-		t.Fatalf("get SandboxWarmPool after apply: %v", err)
+		t.Fatalf("get PodSet after apply: %v", err)
 	}
-	if pool.Spec.TemplateRef != poolName || pool.Spec.MinWarm != 1 || pool.Spec.MaxWarm != 1 {
-		t.Errorf("SandboxWarmPool = templateRef=%q minWarm=%d maxWarm=%d, want %q/1/1",
-			pool.Spec.TemplateRef, pool.Spec.MinWarm, pool.Spec.MaxWarm, poolName)
+	if pool.Spec.RuntimeRef != "my-agent" || pool.Spec.MinWarm != 1 || pool.Spec.MaxWarm != 1 {
+		t.Errorf("PodSet = runtimeRef=%q minWarm=%d maxWarm=%d, want my-agent/1/1",
+			pool.Spec.RuntimeRef, pool.Spec.MinWarm, pool.Spec.MaxWarm)
 	}
 
 	// A re-run of the verb (a second walkthrough apply, or a re-imported image)
@@ -116,7 +108,7 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 	if err := stack.ApplyRuntimeSetFromConfig(ctx, cfg, rt); err != nil {
 		t.Fatalf("re-apply must be idempotent, got: %v", err)
 	}
-	pools := &lennyv1alpha1.SandboxWarmPoolList{}
+	pools := &lennyv1alpha1.PodSetList{}
 	if err := cl.List(ctx, pools, ctrlclient.InNamespace(ns)); err != nil {
 		t.Fatalf("list warm pools after re-apply: %v", err)
 	}
@@ -127,7 +119,7 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 		}
 	}
 	if count != 1 {
-		t.Errorf("after re-apply there are %d %q SandboxWarmPools, want exactly 1", count, poolName)
+		t.Errorf("after re-apply there are %d %q PodSets, want exactly 1", count, poolName)
 	}
 }
 
@@ -140,7 +132,7 @@ func TestApplyRuntimeSetFromConfigMaterializesRuntimeAndPool_spec_17_4(t *testin
 // programming error the API server fails closed on.
 //
 // diagnosis: a failure means the verb registered a non-digest-pinned runtime
-// image, so a mutable tag-based reference could reach a Sandbox pod, violating
+// image, so a mutable tag-based reference could reach an AgentPod pod, violating
 // the §5.3 supply-chain MUST.
 //
 // spec: §5.3 (digest-pinned image references enforced at the API server).
@@ -167,8 +159,8 @@ func TestApplyRuntimeSetFromConfigRejectsTagOnlyImage_spec_5_3(t *testing.T) {
 		t.Errorf("error = %v, want an API-server Invalid rejection of the tag-only image", err)
 	}
 
-	// The rejected Runtime must not exist: the verb fails closed before the pool
-	// pair so a half-applied set does not linger.
+	// The rejected Runtime must not exist: the verb fails closed before the
+	// PodSet so a half-applied set does not linger.
 	cl := lennyClient(t, cfg)
 	var got lennyv1alpha1.Runtime
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: "tag-agent"}, &got); !apierrors.IsNotFound(err) {

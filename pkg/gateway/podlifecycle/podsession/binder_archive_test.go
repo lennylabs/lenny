@@ -96,7 +96,7 @@ func TestBindExtractsUploadArchive(t *testing.T) {
 		"docs/g.md":   "guide",
 	}))
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
 
@@ -146,7 +146,7 @@ func TestBindUploadArchiveStripComponentsWarning(t *testing.T) {
 		"keep/nested/f.txt": "kept",
 	}))
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
 
@@ -200,7 +200,7 @@ func TestBindUploadArchiveAbortRecordsMetric(t *testing.T) {
 	ref := putArchiveBlob(t, blobs, "arch-3", raw.Bytes())
 
 	var gotType string
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
 	binder.ExtractionAbort = func(errorType string) { gotType = errorType }
@@ -283,7 +283,7 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 			ref := putArchiveBlob(t, blobs, "arch-mal-"+tc.name, tc.data)
 
 			var gotType string
-			c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+			c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 			binder := newBinder(ns, c, adapterDialer(t, srv))
 			binder.Blobs = blobs
 			binder.ExtractionAbort = func(errorType string) { gotType = errorType }

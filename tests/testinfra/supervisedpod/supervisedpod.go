@@ -215,7 +215,7 @@ func EnvValue(env []string, name string) (string, bool) {
 	return "", false
 }
 
-// WaitClaimPhase polls the binding state on pod's SandboxClaim until it is
+// WaitClaimPhase polls the binding state on pod's PodClaim until it is
 // want, failing the test at timeout. The reserved state lasts only the
 // §4.6.1 hold, so the poll is short.
 func WaitClaimPhase(t testing.TB, c *kind.Cluster, pod, want string, timeout time.Duration) {
@@ -223,7 +223,7 @@ func WaitClaimPhase(t testing.TB, c *kind.Cluster, pod, want string, timeout tim
 	deadline := time.Now().Add(timeout)
 	var last string
 	for time.Now().Before(deadline) {
-		out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxclaim", "claim-"+pod, "-o", "jsonpath={.status.phase}")
+		out, err := c.KubectlOut(t, "-n", Namespace, "get", "podclaim", "claim-"+pod, "-o", "jsonpath={.status.phase}")
 		if err != nil {
 			t.Fatalf("read claim of %s: %v\n%s", pod, err, out)
 		}
@@ -253,11 +253,11 @@ func ReservedKeepPod(ctx context.Context, t testing.TB, d *sessiondriver.Driver,
 	return tenant, s.PodAssignment
 }
 
-// ClaimExists reports whether pod has a SandboxClaim. A pod with none is
+// ClaimExists reports whether pod has a PodClaim. A pod with none is
 // idle once it is Ready.
 func ClaimExists(t testing.TB, c *kind.Cluster, pod string) bool {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxclaim", "claim-"+pod, "--ignore-not-found", "-o", "name")
+	out, err := c.KubectlOut(t, "-n", Namespace, "get", "podclaim", "claim-"+pod, "--ignore-not-found", "-o", "name")
 	if err != nil {
 		t.Fatalf("read claim of %s: %v\n%s", pod, err, out)
 	}
@@ -275,7 +275,7 @@ func ClaimExists(t testing.TB, c *kind.Cluster, pod string) bool {
 // the admin API has that bound at zero. spec: §5.2 (Pinned idle inventory).
 func requirePinnedIdleBound(t testing.TB, c *kind.Cluster, pool string) {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxwarmpool", pool, "-o",
+	out, err := c.KubectlOut(t, "-n", Namespace, "get", "podset", pool, "-o",
 		"jsonpath={.spec.minWarm} {.spec.maxWarm}")
 	if err != nil {
 		t.Fatalf("read minWarm and maxWarm of %s: %v\n%s", pool, err, out)
@@ -301,9 +301,9 @@ func pinnedIdleBound(minWarm, maxWarm int) int {
 }
 
 // FirstIdleInClaimOrder reports whether pod is idle (Ready, not being
-// deleted, and holding no SandboxClaim) and no other pod of pool that is not
+// deleted, and holding no PodClaim) and no other pod of pool that is not
 // being deleted and holds no claim sorts before it by name. The gateway's
-// idle scan lists the pool's Sandboxes from the API server, which returns
+// idle scan lists the pool's AgentPods from the API server, which returns
 // them in name order, and claims the first one the tenant pin admits, so the
 // next start by pod's pinned tenant is placed on it. A warming pod that
 // sorts first counts against pod, because it can turn idle before the start.

@@ -7,7 +7,7 @@
 // response, and write the AdmissionReview reply.
 //
 // The admission decision logic lives in the sibling pure-decision
-// packages (label_immutability, sandboxclaim_guard, ownership). Each
+// packages (label_immutability, podclaim_guard, ownership). Each
 // webhook supplies a Decider that adapts an AdmissionRequest into its
 // decision package's input and maps the result back to an
 // AdmissionResponse via Allow and Deny.

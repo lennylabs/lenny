@@ -17,12 +17,12 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-// templateObject marshals a SandboxTemplate with the given
+// templateObject marshals a PodSet with the given
 // credential-delivery fields into an admission request object.
 func templateObject(t *testing.T, deliveryMode, isolationProfile, spiffeBinding string) runtime.RawExtension {
 	t.Helper()
-	raw, err := json.Marshal(lennyv1.SandboxTemplate{
-		Spec: lennyv1.SandboxTemplateSpec{
+	raw, err := json.Marshal(lennyv1.PodSet{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			DeliveryMode:     deliveryMode,
 			IsolationProfile: isolationProfile,
@@ -30,18 +30,18 @@ func templateObject(t *testing.T, deliveryMode, isolationProfile, spiffeBinding 
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal SandboxTemplate: %v", err)
+		t.Fatalf("marshal PodSet: %v", err)
 	}
 	return runtime.RawExtension{Raw: raw}
 }
 
 // directModeDecide runs the DirectModeIsolation decider for the given
-// platform tenancy configuration and SandboxTemplate object.
+// platform tenancy configuration and PodSet object.
 func directModeDecide(tenancyMode string, devMode bool, obj runtime.RawExtension) *admissionv1.AdmissionResponse {
 	decide := webhook.DirectModeIsolation(tenancyMode, devMode)
 	return decide(context.Background(), &admissionv1.AdmissionRequest{
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "SandboxTemplate"},
+		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "PodSet"},
 		Object:    obj,
 	})
 }
@@ -49,7 +49,7 @@ func directModeDecide(tenancyMode string, devMode bool, obj runtime.RawExtension
 func TestDirectModeIsolationRejectsDirectStandardInMultiTenant(t *testing.T) {
 	resp := directModeDecide("multi", false, templateObject(t, "direct", "standard", ""))
 	if resp.Allowed {
-		t.Fatal("direct + standard SandboxTemplate admitted in multi-tenant mode")
+		t.Fatal("direct + standard PodSet admitted in multi-tenant mode")
 	}
 	if resp.Result == nil || resp.Result.Code != 403 {
 		t.Fatalf("response = %+v, want a 403 rejection", resp.Result)
@@ -62,7 +62,7 @@ func TestDirectModeIsolationRejectsDirectStandardInMultiTenant(t *testing.T) {
 func TestDirectModeIsolationRejectsProxySpiffeDisabledInMultiTenant(t *testing.T) {
 	resp := directModeDecide("multi", false, templateObject(t, "proxy", "sandboxed", "disabled"))
 	if resp.Allowed {
-		t.Fatal("proxy + spiffeBinding disabled SandboxTemplate admitted in multi-tenant mode")
+		t.Fatal("proxy + spiffeBinding disabled PodSet admitted in multi-tenant mode")
 	}
 	if resp.Result == nil || !strings.Contains(resp.Result.Message, dmi.RejectProxyModeSpiffeBindingDisabled) {
 		t.Errorf("response %+v does not carry the spiffe-binding rejection code", resp.Result)
@@ -72,7 +72,7 @@ func TestDirectModeIsolationRejectsProxySpiffeDisabledInMultiTenant(t *testing.T
 func TestDirectModeIsolationAdmitsSafeTemplate(t *testing.T) {
 	resp := directModeDecide("multi", false, templateObject(t, "proxy", "sandboxed", "enabled"))
 	if !resp.Allowed {
-		t.Errorf("safe SandboxTemplate rejected: %+v", resp.Result)
+		t.Errorf("safe PodSet rejected: %+v", resp.Result)
 	}
 }
 
@@ -88,20 +88,20 @@ func TestDirectModeIsolationAdmitsEverythingInSingleTenant(t *testing.T) {
 // mutual exclusivity is enforced even in single-tenant mode (it is not
 // gated on tenancy).
 func TestDirectModeIsolationRejectsProxyProviderDirect_spec_13_2_NET006(t *testing.T) {
-	raw, err := json.Marshal(lennyv1.SandboxTemplate{
-		Spec: lennyv1.SandboxTemplateSpec{
+	raw, err := json.Marshal(lennyv1.PodSet{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:    "claude-code",
 			DeliveryMode:  "proxy",
 			EgressProfile: "provider-direct",
 		},
 	})
 	if err != nil {
-		t.Fatalf("marshal SandboxTemplate: %v", err)
+		t.Fatalf("marshal PodSet: %v", err)
 	}
 	for _, tenancy := range []string{"multi", "single"} {
 		resp := directModeDecide(tenancy, false, runtime.RawExtension{Raw: raw})
 		if resp.Allowed {
-			t.Fatalf("%s-tenant: proxy + provider-direct SandboxTemplate admitted, want NET-006 rejection", tenancy)
+			t.Fatalf("%s-tenant: proxy + provider-direct PodSet admitted, want NET-006 rejection", tenancy)
 		}
 		if resp.Result == nil || resp.Result.Code != 403 {
 			t.Fatalf("%s-tenant: response = %+v, want a 403 rejection", tenancy, resp.Result)
@@ -115,7 +115,7 @@ func TestDirectModeIsolationRejectsProxyProviderDirect_spec_13_2_NET006(t *testi
 func TestDirectModeIsolationRejectsMalformedObject(t *testing.T) {
 	resp := directModeDecide("multi", false, runtime.RawExtension{Raw: []byte(`{not json`)})
 	if resp.Allowed {
-		t.Fatal("malformed SandboxTemplate admitted")
+		t.Fatal("malformed PodSet admitted")
 	}
 	if resp.Result == nil || resp.Result.Code != 400 {
 		t.Errorf("response = %+v, want a 400 rejection", resp.Result)

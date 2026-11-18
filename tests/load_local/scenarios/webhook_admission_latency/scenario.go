@@ -3,7 +3,7 @@
 //go:build load_local
 
 // Package webhook_admission_latency drives
-// pkg/admission/sandboxclaim_guard.Decide from N concurrent
+// pkg/admission/podclaim_guard.Decide from N concurrent
 // goroutines, modelling the §17.2 webhook hot path. The invariant:
 // Decide is pure, returns within microseconds, and admits / rejects
 // according to the §4.6.1 CREATE-only per-pod uniqueness rule
@@ -17,7 +17,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/admission/sandboxclaim_guard"
+	"github.com/lennylabs/lenny/pkg/admission/podclaim_guard"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )
@@ -60,12 +60,12 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	switch iter % 2 {
 	case 0:
 		// First claim for a fresh pod — §4.6.1 admits.
-		req := sandboxclaim_guard.Request{
-			Operation:  sandboxclaim_guard.OpCreate,
-			ClaimName:  fmt.Sprintf("claim-%d-%d", vu, iter),
-			SandboxRef: fmt.Sprintf("pod-%d-%d", vu, iter),
+		req := podclaim_guard.Request{
+			Operation:   podclaim_guard.OpCreate,
+			ClaimName:   fmt.Sprintf("claim-%d-%d", vu, iter),
+			AgentPodRef: fmt.Sprintf("pod-%d-%d", vu, iter),
 		}
-		d, err := sandboxclaim_guard.Decide(req)
+		d, err := podclaim_guard.Decide(req)
 		if err != nil {
 			return err
 		}
@@ -77,16 +77,16 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	case 1:
 		// Second claim for a pod that already holds a non-terminal claim —
 		// §4.6.1 rejects (per-pod uniqueness, no concurrency exemption).
-		req := sandboxclaim_guard.Request{
-			Operation:  sandboxclaim_guard.OpCreate,
-			ClaimName:  fmt.Sprintf("claim-dup-%d-%d", vu, iter),
-			SandboxRef: "pod-s",
-			ExistingClaims: []sandboxclaim_guard.ExistingClaim{{
+		req := podclaim_guard.Request{
+			Operation:   podclaim_guard.OpCreate,
+			ClaimName:   fmt.Sprintf("claim-dup-%d-%d", vu, iter),
+			AgentPodRef: "pod-s",
+			ExistingClaims: []podclaim_guard.ExistingClaim{{
 				Name:   "existing",
-				Status: sandboxclaim_guard.ClaimBound,
+				Status: podclaim_guard.ClaimBound,
 			}},
 		}
-		d, err := sandboxclaim_guard.Decide(req)
+		d, err := podclaim_guard.Decide(req)
 		if err != nil {
 			return err
 		}

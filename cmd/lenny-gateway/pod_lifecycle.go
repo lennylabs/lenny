@@ -39,7 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
-// adapterGRPCPort is the TCP port a Sandbox pod's §4.7 adapter listens
+// adapterGRPCPort is the TCP port an AgentPod pod's §4.7 adapter listens
 // on. §13.2 fixes the gateway↔adapter link to TCP 50051.
 const adapterGRPCPort = 50051
 
@@ -156,7 +156,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			log.Fatalf("lenny-gateway: resolve cluster config for --agent-namespace: %v", err)
 		}
 		// The gateway's session-start path issues 5+ Kubernetes API
-		// calls per request (list pools, get template, list sandboxes,
+		// calls per request (list pools, get template, list agentpods,
 		// patch sandbox, create claim). client-go's default of QPS=5 /
 		// Burst=10 saturates at trivial load; the gateway logs spam
 		// "Waited Ns due to client-side throttling" and each

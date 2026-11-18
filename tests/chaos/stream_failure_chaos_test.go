@@ -88,8 +88,8 @@ type streamChaosGateway struct {
 func newStreamChaosGateway(t *testing.T, id string, cl *adapterclient.Client) *streamChaosGateway {
 	t.Helper()
 	g := &streamChaosGateway{id: id, store: memstore.New(), registry: podsession.NewRegistry()}
-	sandbox := "sbx-" + id
-	g.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: sandbox, Adapter: cl, CoordinationGeneration: 1})
+	agentPod := "sbx-" + id
+	g.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", AgentPodName: agentPod, Adapter: cl, CoordinationGeneration: 1})
 	scheme := k8sruntime.NewScheme()
 	if err := lennyv1.AddToScheme(scheme); err != nil {
 		t.Fatalf("AddToScheme: %v", err)
@@ -102,9 +102,9 @@ func newStreamChaosGateway(t *testing.T, id string, cl *adapterclient.Client) *s
 		DevTenantHeader: true,
 		Executor:        g.exec, PodRegistry: g.registry, Transcripts: transcriptstore.NewMemory(),
 	})
-	g.exec.SetStreamFailureHandler(func(tenantID, sessionID, sandboxName string, cause error) {
+	g.exec.SetStreamFailureHandler(func(tenantID, sessionID, agentPodName string, cause error) {
 		g.reports.Add(1)
-		srv.ReportAttachStreamFailure(tenantID, sessionID, sandboxName, cause)
+		srv.ReportAttachStreamFailure(tenantID, sessionID, agentPodName, cause)
 	})
 	// spec: §10.2 (Session ownership) — the requests run as the seeded row's owner.
 	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
@@ -114,7 +114,7 @@ func newStreamChaosGateway(t *testing.T, id string, cl *adapterclient.Client) *s
 	if err := g.store.Create(context.Background(), sessionstore.Session{
 		UserID: ownerprincipal.Alice,
 		ID:     id, TenantID: "acme", State: session.StateRunning, RuntimeRef: "echo",
-		PodAssignment: sandbox, CoordinationGeneration: 1, CreatedAt: now, UpdatedAt: now,
+		PodAssignment: agentPod, CoordinationGeneration: 1, CreatedAt: now, UpdatedAt: now,
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
 	}

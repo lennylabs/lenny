@@ -4,7 +4,9 @@ package slotcounter_test
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io"
 	"math/rand"
 	"os"
 	"strconv"
@@ -33,9 +35,19 @@ type interleaving struct {
 	next        int
 }
 
-// members returns the pod's set while Redis is up.
+// members returns the pod's set while Redis is up. A connection the
+// client pooled before the last outage was closed by the restarted server,
+// and the client runs with retries disabled, so a read that lands on it
+// answers io.EOF; the read is repeated on a fresh connection.
 func (s *interleaving) members() map[string]bool {
-	ms, err := s.replicas[0].Members(context.Background(), interleavingPod)
+	var ms []string
+	var err error
+	for attempt := 0; attempt < 3; attempt++ {
+		ms, err = s.replicas[0].Members(context.Background(), interleavingPod)
+		if !errors.Is(err, io.EOF) {
+			break
+		}
+	}
 	if err != nil {
 		s.t.Fatalf("read the set while Redis is up: %v", err)
 	}

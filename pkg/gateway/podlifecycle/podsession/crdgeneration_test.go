@@ -16,12 +16,12 @@ import (
 
 // spec: §4.6.2 — CRDGeneration reads the
 // pool_config_generation and last-reconciled timestamp the
-// PoolScalingController stamps on the pool's SandboxTemplate, backing the
+// PoolScalingController stamps on the pool's PodSet, backing the
 // production sync-status endpoint outside the Postgres-only dev posture.
 func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
 	ns := testNamespace(t)
 	at := time.Unix(1700000000, 0).UTC()
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "p",
 			Namespace: ns,
@@ -47,7 +47,7 @@ func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
 }
 
 // spec: §4.6.2 — a pool defined in Postgres but not yet
-// reconciled into a SandboxTemplate reports ok=false so the handler
+// reconciled into a PodSet reports ok=false so the handler
 // renders the pending state rather than a misleading synced=false-at-0.
 func TestCRDGenerationMissingTemplate_spec_4_6_2(t *testing.T) {
 	ns := testNamespace(t)
@@ -62,13 +62,13 @@ func TestCRDGenerationMissingTemplate_spec_4_6_2(t *testing.T) {
 	}
 }
 
-// spec: §4.6.2 — a SandboxTemplate the controller has not yet
+// spec: §4.6.2 — a PodSet the controller has not yet
 // stamped (applied by hand, or a generation it has not observed) leaves
 // generation 0 with ok=true, so the handler reports inSync=false against
 // the Postgres counter.
 func TestCRDGenerationUnstampedTemplate_spec_4_6_2(t *testing.T) {
 	ns := testNamespace(t)
-	tmpl := &lennyv1.SandboxTemplate{
+	tmpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns},
 	}
 	c := fake.NewClientBuilder().WithScheme(newScheme(t)).WithObjects(tmpl).Build()

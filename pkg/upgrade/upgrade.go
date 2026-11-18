@@ -113,7 +113,7 @@ type Emitter = events.EventEmitter
 // Advance progresses an upgrade from current to the next phase per the
 // §25.8 sequence, emitting a §16.6 upgrade_progressed CloudEvents
 // record carrying pool, oldPhase, newPhase, and imageDigest on success.
-// pool is the upgrade scope (a SandboxWarmPool name, or the platform
+// pool is the upgrade scope (a PodSet name, or the platform
 // scope identifier for a platform-wide upgrade); imageDigest is the
 // target image digest the upgrade is converging on, captured for the
 // event payload per §4.0. A nil em emits nothing; the phase transition

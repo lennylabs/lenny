@@ -24,7 +24,7 @@ Usage of lenny-gateway:
   -admin-token-tenant string
     	§17.6 tenant the initial lenny-admin user and token are scoped to. Override via LENNY_ADMIN_TOKEN_TENANT. (default "default")
   -agent-namespace string
-    	Kubernetes namespace the §5 warm pools and Sandboxes live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.
+    	Kubernetes namespace the §5 warm pools and AgentPods live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.
   -agent-runtime string
     	§17.4 zero-credential runtime selector. "echo" forces the built-in in-process echo runtime (overriding --runtime-bin); empty defaults to echo when no runtime binary is set. The only built-in name is "echo"; any other value is a fatal startup error. Override via LENNY_AGENT_RUNTIME.
   -alerting-bundle-formats lenny_alerting_rules_bundled{format}
@@ -132,11 +132,11 @@ Usage of lenny-gateway:
   -checkpoint-jitter-fraction checkpointInterval + random(0, checkpointInterval × jitterFraction)
     	§4.4. Each session's first periodic checkpoint is scheduled at checkpointInterval + random(0, checkpointInterval × jitterFraction), preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION. (default 0.2)
   -claim-hold-ttl-seconds reserved
-    	§4.6.1 reserved-hold TTL: when a recycling pod's occupancy reaches zero the gateway patches the per-pod SandboxClaim to reserved and holds it this many seconds so a back-to-back same-tenant session rebinds (reserved → bound) with no acquisition round trip; on expiry the holder deletes the claim and the pod returns to idle. A reserved pod is counted as occupied for inventory and scaling (§4.6.2), so a high value depresses apparent idle inventory and delays retirement-limit evaluation; the gateway warns at startup when it is set high. Default 10. Override via LENNY_CLAIM_HOLD_TTL_SECONDS. (default 10)
+    	§4.6.1 reserved-hold TTL: when a recycling pod's occupancy reaches zero the gateway patches the per-pod PodClaim to reserved and holds it this many seconds so a back-to-back same-tenant session rebinds (reserved → bound) with no acquisition round trip; on expiry the holder deletes the claim and the pod returns to idle. A reserved pod is counted as occupied for inventory and scaling (§4.6.2), so a high value depresses apparent idle inventory and delays retirement-limit evaluation; the gateway warns at startup when it is set high. Default 10. Override via LENNY_CLAIM_HOLD_TTL_SECONDS. (default 10)
   -cluster-burst int
     	client-go burst (token-bucket size) for the cluster client. Pairs with --cluster-qps. Override via LENNY_CLUSTER_BURST. (default 200)
   -cluster-qps float
-    	client-go QPS for the cluster client the gateway uses to list/get/patch SandboxWarmPool / SandboxTemplate / Sandbox / SandboxClaim. The session-start path issues 5+ API calls per request, so client-go's default of 5 saturates at trivial load. The spec mandates explicit QPS values for the controller (§4.6.1) but leaves the gateway's client throttle to operator tuning; the kube-apiserver's own priority+fairness is the production-bounded gate. Override via LENNY_CLUSTER_QPS. (default 100)
+    	client-go QPS for the cluster client the gateway uses to list/get/patch PodSet / AgentPod / PodClaim. The session-start path issues 5+ API calls per request, so client-go's default of 5 saturates at trivial load. The spec mandates explicit QPS values for the controller (§4.6.1) but leaves the gateway's client throttle to operator tuning; the kube-apiserver's own priority+fairness is the production-bounded gate. Override via LENNY_CLUSTER_QPS. (default 100)
   -connector-oauth-ca string
     	path to a CA bundle that verifies the §9.3 connector OAuth provider's token-endpoint TLS certificate. Empty uses the system trust store. Set this for a provider behind a private CA. Override via LENNY_CONNECTOR_OAUTH_CA.
   -connector-oauth-callback-url string

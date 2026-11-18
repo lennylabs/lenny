@@ -7,12 +7,13 @@
 | The cost of selection by import graph. Replay the new selector and the change graph over the last 50 merges into `main`, and record per merge the packages each selects per tier and the test time of the merge-gate tiers, in particular the whole integration package. | The default bound of `run --changed` in 0116.S4, and decision O3. |
 | The selections the import graph misses. For each `pkg/` package the change graph sends to a tier no import reaches (6 component, 34 contract, 21 integration, 13 security, and 1 chaos), find how the test reaches the package: a non-Go input gets a row in `tests/non-go-inputs.yaml`, and a test through a running binary is left to the gates. | 0116.S6, which deletes the change graph. |
 | Coverage equivalence. For the 17 spec-map keys with tests that the annotations do not cover, find whether the tests exist and what their annotations cite, and fix the annotation where it names the wrong section. | 0116.S6, which deletes the spec map. |
+| The selection union. Since 0116.S1, `list --spec` and `run --spec` resolve each query as the union of the annotation index and `tests/spec-map.json`, because the index alone selected less than the map for 48 of its 231 keys (tiers lost, keys with no numbered heading, and a unit tier narrowed from `./...`). The union ends with the map: 0116.S6 removes the map's half of the union when it deletes the map, after the coverage-equivalence item above shows that the index selects at least what the map did for every key. | 0116.S6, which deletes the spec map. |
 | The 46 cited section numbers that name no heading, in 234 test citations. The coverage view lists them with their sites. | Nothing; each area change fixes the ones in its packages. |
 
 ## Steps
 
 ### 0116.S1 Annotation index and coverage view
-- status: Planned
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0115.S5, 0115.S7, 0115.S8]
 
@@ -40,7 +41,7 @@ The selector of CS-4 and CS-5 in `cmd/lenny-test` (`changed_select.go`, `cmd_run
 `--max-tier` removed, `--tier` taking a list, `--gate` bounding a selection by the gates 0154.S2 defines, and `run --changed` without a bound running the tiers that need no infrastructure (CS-7). `tests/groups.yaml`, `.github/workflows/reusable/lenny-test.yml`, `.claude/rules/test-coverage.md`, the `build` skill, and `TESTING.md` follow. The first validation item sets the default bound.
 
 ### 0116.S5 Claim register into issues
-- status: Planned
+- status: Landed
 - lanes: [specification, code, documentation]
 - depends-on: [0115.S1]
 

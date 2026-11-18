@@ -20,15 +20,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // newEnvtestClient creates the test's namespace on the package's shared
 // envtest API server (sharedEnv) and seeds the supplied objects (spec via
-// Create, Sandbox status via SSA Apply under the lenny-gateway field manager
+// Create, AgentPod status via SSA Apply under the lenny-gateway field manager
 // so the seed lands on the same status code path a controller would use).
-// The gateway no longer writes Sandbox.status at runtime; the seed pre-stages
+// The gateway no longer writes AgentPod.status at runtime; the seed pre-stages
 // the WPC-owned phase the idle-pod scan reads.
 func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	t.Helper()
@@ -46,31 +46,31 @@ func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 			t.Fatalf("seed %T %s: namespace %q is not this test's namespace %q", o, o.GetName(), got, ns)
 		}
 		var (
-			sbStatus  lennyv1.SandboxStatus
+			sbStatus  lennyv1.AgentPodStatus
 			seedAfter func()
 		)
-		if sb, ok := o.(*lennyv1.Sandbox); ok {
+		if sb, ok := o.(*lennyv1.AgentPod); ok {
 			sbStatus = sb.Status
-			sb.Status = lennyv1.SandboxStatus{}
+			sb.Status = lennyv1.AgentPodStatus{}
 			seedAfter = func() {
 				if sbStatus.Phase == "" && sbStatus.PodName == "" &&
 					sbStatus.NodeName == "" && sbStatus.PodIP == "" &&
 					sbStatus.TenantID == "" {
 					return
 				}
-				patch := &lennyv1.Sandbox{
+				patch := &lennyv1.AgentPod{
 					TypeMeta: metav1.TypeMeta{
 						APIVersion: lennyv1.GroupVersion.String(),
-						Kind:       "Sandbox",
+						Kind:       "AgentPod",
 					},
 					ObjectMeta: metav1.ObjectMeta{Name: sb.Name, Namespace: sb.Namespace},
 				}
 				patch.Status = sbStatus
-				// The WarmPoolController owns Sandbox.status; seed under its
+				// The WarmPoolController owns AgentPod.status; seed under its
 				// field manager so a test asserting the gateway never writes
-				// Sandbox.status is not contaminated by the seed itself.
+				// AgentPod.status is not contaminated by the seed itself.
 				if err := c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
-					t.Fatalf("seed status Sandbox %s: %v", sb.Name, err)
+					t.Fatalf("seed status AgentPod %s: %v", sb.Name, err)
 				}
 			}
 		}
@@ -84,19 +84,19 @@ func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	return c
 }
 
-// concurrentSandbox builds a Sandbox in the test pool with the given phase
-// and tenant pin. Occupancy is no longer a Sandbox.status field: the per-pod
-// SandboxClaim (claim-<podName>) is the occupancy authority and the Redis
+// concurrentAgentPod builds an AgentPod in the test pool with the given phase
+// and tenant pin. Occupancy is no longer an AgentPod.status field: the per-pod
+// PodClaim (claim-<podName>) is the occupancy authority and the Redis
 // counter is the intra-pod capacity gate, so a pod's slots are set up with
 // seedOccupiedPod rather than a status field.
-func concurrentSandbox(ns, name, phase, tenantID string) *lennyv1.Sandbox {
-	sb := &lennyv1.Sandbox{
+func concurrentAgentPod(ns, name, phase, tenantID string) *lennyv1.AgentPod {
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: testPool},
 		},
-		Status: lennyv1.SandboxStatus{
+		Status: lennyv1.AgentPodStatus{
 			Phase:    phase,
 			PodIP:    "10.0.0.1",
 			TenantID: tenantID,
@@ -109,61 +109,61 @@ func concurrentSandbox(ns, name, phase, tenantID string) *lennyv1.Sandbox {
 }
 
 // seedOccupiedPod establishes a pod already hosting n slots for tenantID:
-// it creates the per-pod SandboxClaim (claim-<podName>) with binding state
+// it creates the per-pod PodClaim (claim-<podName>) with binding state
 // `bound` and reserves n members, occ-0 to occ-<n-1>, in the pod's slot set.
-func seedOccupiedPod(t *testing.T, c client.Client, counter *slotcounter.Counter, sandboxName, tenantID string, n int32) {
+func seedOccupiedPod(t *testing.T, c client.Client, counter *slotcounter.Counter, agentPodName, tenantID string, n int32) {
 	t.Helper()
 	ns := testNamespace(t)
 	ctx := context.Background()
-	claim := &lennyv1.SandboxClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + sandboxName, Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxName, TenantID: tenantID},
+	claim := &lennyv1.PodClaim{
+		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + agentPodName, Namespace: ns},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: agentPodName, TenantID: tenantID},
 	}
 	if err := c.Create(ctx, claim); err != nil {
-		t.Fatalf("seed per-pod claim for %s: %v", sandboxName, err)
+		t.Fatalf("seed per-pod claim for %s: %v", agentPodName, err)
 	}
 	if err := podclaim.WriteBoundStatus(ctx, c, ns, claim.Name); err != nil {
-		t.Fatalf("seed bound status for %s: %v", sandboxName, err)
+		t.Fatalf("seed bound status for %s: %v", agentPodName, err)
 	}
 	for i := int32(0); i < n; i++ {
-		if _, _, err := counter.Reserve(ctx, sandboxName, fmt.Sprintf("occ-%d", i), n+1); err != nil {
-			t.Fatalf("seed counter %d on %s: %v", i, sandboxName, err)
+		if _, _, err := counter.Reserve(ctx, agentPodName, fmt.Sprintf("occ-%d", i), n+1); err != nil {
+			t.Fatalf("seed counter %d on %s: %v", i, agentPodName, err)
 		}
 	}
 }
 
-// podClaimExists reports whether a per-pod SandboxClaim (claim-<podName>)
-// exists for sandboxName.
-func podClaimExists(t *testing.T, c client.Client, sandboxName string) bool {
+// podClaimExists reports whether a per-pod PodClaim (claim-<podName>)
+// exists for agentPodName.
+func podClaimExists(t *testing.T, c client.Client, agentPodName string) bool {
 	t.Helper()
 	ns := testNamespace(t)
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + sandboxName}, &lennyv1.SandboxClaim{})
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + agentPodName}, &lennyv1.PodClaim{})
 	if err == nil {
 		return true
 	}
 	if apierrors.IsNotFound(err) {
 		return false
 	}
-	t.Fatalf("get per-pod claim for %s: %v", sandboxName, err)
+	t.Fatalf("get per-pod claim for %s: %v", agentPodName, err)
 	return false
 }
 
 // assertNotGatewayStatusOwned fails if the gateway field manager owns any
-// part of the Sandbox status subresource. Per §4.6.3 the gateway does not
-// write Sandbox.status (the WarmPoolController projects the pod phase from
+// part of the AgentPod status subresource. Per §4.6.3 the gateway does not
+// write AgentPod.status (the WarmPoolController projects the pod phase from
 // the claim binding state); the seed in newEnvtestClient writes status under
 // the WarmPoolController field manager, so a lenny-gateway status entry can
 // only come from a gateway-side write the redesign removed.
-func assertNotGatewayStatusOwned(t *testing.T, c client.Client, sandboxName string) {
+func assertNotGatewayStatusOwned(t *testing.T, c client.Client, agentPodName string) {
 	t.Helper()
 	ns := testNamespace(t)
-	var sb lennyv1.Sandbox
-	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: sandboxName}, &sb); err != nil {
-		t.Fatalf("get sandbox %s: %v", sandboxName, err)
+	var sb lennyv1.AgentPod
+	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: agentPodName}, &sb); err != nil {
+		t.Fatalf("get sandbox %s: %v", agentPodName, err)
 	}
 	for _, mf := range sb.ManagedFields {
 		if mf.Manager == string(ownership.Gateway) && mf.Subresource == "status" {
-			t.Errorf("gateway must not write Sandbox.status (§4.6.3); found managedFields entry %+v on %s", mf, sandboxName)
+			t.Errorf("gateway must not write AgentPod.status (§4.6.3); found managedFields entry %+v on %s", mf, agentPodName)
 		}
 	}
 }
@@ -201,15 +201,15 @@ func slotReq(session, tenant string, maxConcurrentSessions int32) podclaim.SlotR
 // state, reserves the first Redis slot, and pins the pod to the tenant.
 func TestClaimSlotOpensFreshIdlePod(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	claimer, c, _ := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "idle", ""))
 
 	res, err := claimer.ClaimSlot(context.Background(),
 		slotReq("sess-1", "acme", 8))
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-1" {
-		t.Errorf("claimed %q, want sbx-1", res.SandboxName)
+	if res.AgentPodName != "sbx-1" {
+		t.Errorf("claimed %q, want sbx-1", res.AgentPodName)
 	}
 	if !res.FreshPod {
 		t.Error("first slot on an idle pod should report FreshPod=true")
@@ -221,17 +221,17 @@ func TestClaimSlotOpensFreshIdlePod(t *testing.T) {
 		t.Errorf("SlotID = %q, want the session id", res.SlotID)
 	}
 
-	// The per-pod claim (§4.6.3) carries sandboxRef and tenantId and its
+	// The per-pod claim (§4.6.3) carries agentPodRef and tenantId and its
 	// first binding state is `bound`.
-	var stored lennyv1.SandboxClaim
+	var stored lennyv1.PodClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: res.Claim.Name}, &stored); err != nil {
-		t.Fatalf("the per-pod SandboxClaim was not persisted: %v", err)
+		t.Fatalf("the per-pod PodClaim was not persisted: %v", err)
 	}
 	if stored.Name != "claim-sbx-1" {
 		t.Errorf("claim name = %q, want claim-sbx-1 (per-pod deterministic name)", stored.Name)
 	}
-	if stored.Spec.SandboxRef != "sbx-1" || stored.Spec.TenantID != "acme" {
-		t.Errorf("claim spec = %+v, want sandboxRef=sbx-1 tenantId=acme", stored.Spec)
+	if stored.Spec.AgentPodRef != "sbx-1" || stored.Spec.TenantID != "acme" {
+		t.Errorf("claim spec = %+v, want agentPodRef=sbx-1 tenantId=acme", stored.Spec)
 	}
 	if stored.Status.Phase != "bound" {
 		t.Errorf("claim binding state = %q, want bound (first status patch)", stored.Status.Phase)
@@ -239,7 +239,7 @@ func TestClaimSlotOpensFreshIdlePod(t *testing.T) {
 	// The tenant pin is carried on the claim's tenantId; the pod-label pin
 	// (the §13.2 NET-003 NetworkPolicy selector) is covered by the
 	// tenant-label tests, which create a backing agent pod. The gateway no
-	// longer writes Sandbox.status, so no Sandbox-status assertion applies.
+	// longer writes AgentPod.status, so no AgentPod-status assertion applies.
 }
 
 // spec: 5.2
@@ -251,8 +251,8 @@ func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, counter := slotClaimerFor(
 		t,
-		concurrentSandbox(ns, "sbx-busy", "claimed", "acme"),
-		concurrentSandbox(ns, "sbx-spare", "idle", ""),
+		concurrentAgentPod(ns, "sbx-busy", "claimed", "acme"),
+		concurrentAgentPod(ns, "sbx-spare", "idle", ""),
 	)
 	seedOccupiedPod(t, c, counter, "sbx-busy", "acme", 1)
 
@@ -261,8 +261,8 @@ func TestClaimSlotSecondSlotLandsOnSamePodUpToTheBound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-busy" {
-		t.Errorf("second slot landed on %q, want sbx-busy (the pod already hosting slots)", res.SandboxName)
+	if res.AgentPodName != "sbx-busy" {
+		t.Errorf("second slot landed on %q, want sbx-busy (the pod already hosting slots)", res.AgentPodName)
 	}
 	if res.FreshPod {
 		t.Error("a slot joining an occupied pod must report FreshPod=false")
@@ -286,8 +286,8 @@ func TestClaimSlotClaimsFreshPodWhenBoundReached(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, counter := slotClaimerFor(
 		t,
-		concurrentSandbox(ns, "sbx-full", "claimed", "acme"),
-		concurrentSandbox(ns, "sbx-fresh", "idle", ""),
+		concurrentAgentPod(ns, "sbx-full", "claimed", "acme"),
+		concurrentAgentPod(ns, "sbx-fresh", "idle", ""),
 	)
 	seedOccupiedPod(t, c, counter, "sbx-full", "acme", 2)
 
@@ -296,8 +296,8 @@ func TestClaimSlotClaimsFreshPodWhenBoundReached(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-fresh" {
-		t.Errorf("slot landed on %q, want sbx-fresh; the full pod must not be overrun", res.SandboxName)
+	if res.AgentPodName != "sbx-fresh" {
+		t.Errorf("slot landed on %q, want sbx-fresh; the full pod must not be overrun", res.AgentPodName)
 	}
 	if !res.FreshPod || res.ActiveSlots != 1 {
 		t.Errorf("a slot on a fresh pod should report FreshPod=true, ActiveSlots=1; got %+v", res)
@@ -312,8 +312,8 @@ func TestClaimSlotExhaustedWhenAllPodsFull(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, counter := slotClaimerFor(
 		t,
-		concurrentSandbox(ns, "sbx-a", "claimed", "acme"),
-		concurrentSandbox(ns, "sbx-b", "claimed", "acme"),
+		concurrentAgentPod(ns, "sbx-a", "claimed", "acme"),
+		concurrentAgentPod(ns, "sbx-b", "claimed", "acme"),
 	)
 	seedOccupiedPod(t, c, counter, "sbx-a", "acme", 4)
 	seedOccupiedPod(t, c, counter, "sbx-b", "acme", 4)
@@ -334,7 +334,7 @@ func TestClaimSlotRejectsCrossTenantSlotSharing(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, counter := slotClaimerFor(
 		t,
-		concurrentSandbox(ns, "sbx-globex", "claimed", "globex"),
+		concurrentAgentPod(ns, "sbx-globex", "claimed", "globex"),
 	)
 	seedOccupiedPod(t, c, counter, "sbx-globex", "globex", 1)
 	_, err := claimer.ClaimSlot(context.Background(),
@@ -353,8 +353,8 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, counter := slotClaimerFor(
 		t,
-		concurrentSandbox(ns, "sbx-globex", "claimed", "globex"),
-		concurrentSandbox(ns, "sbx-idle", "idle", ""),
+		concurrentAgentPod(ns, "sbx-globex", "claimed", "globex"),
+		concurrentAgentPod(ns, "sbx-idle", "idle", ""),
 	)
 	seedOccupiedPod(t, c, counter, "sbx-globex", "globex", 1)
 	res, err := claimer.ClaimSlot(context.Background(),
@@ -362,8 +362,8 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-idle" {
-		t.Errorf("slot landed on %q, want sbx-idle; acme must get a fresh pod", res.SandboxName)
+	if res.AgentPodName != "sbx-idle" {
+		t.Errorf("slot landed on %q, want sbx-idle; acme must get a fresh pod", res.AgentPodName)
 	}
 	if !res.FreshPod {
 		t.Error("the slot should have acquired a fresh pod")
@@ -376,7 +376,7 @@ func TestClaimSlotFallsThroughToFreshPodOnTenantMismatch(t *testing.T) {
 // maxConcurrentSessions >= 1.
 func TestClaimSlotRejectsInvalidRequests(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, _, _ := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	claimer, _, _ := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "idle", ""))
 	if _, err := claimer.ClaimSlot(context.Background(),
 		slotReq("s", "acme", 0)); err == nil {
 		t.Error("maxConcurrentSessions=0 should be rejected")
@@ -386,11 +386,11 @@ func TestClaimSlotRejectsInvalidRequests(t *testing.T) {
 // spec: 5.2
 // diagnosis: ClaimSlot ran without an intra-pod capacity gate. The Redis
 // counter (with its §12.4 Postgres fallback) is the only intra-pod gate now
-// that the gateway does not mirror the slot count onto Sandbox.status; a nil
+// that the gateway does not mirror the slot count onto AgentPod.status; a nil
 // Counter must fail closed rather than overrun the bound.
 func TestClaimSlotRequiresCounter(t *testing.T) {
 	ns := testNamespace(t)
-	c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+	c := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "idle", ""))
 	claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns}
 	if _, err := claimer.ClaimSlot(context.Background(), slotReq("s", "acme", 4)); err == nil {
 		t.Error("ClaimSlot with no Counter must fail closed")
@@ -402,17 +402,17 @@ func TestClaimSlotRequiresCounter(t *testing.T) {
 // and deleted the per-pod claim, over-releasing a pod that may still host
 // live slots. The Redis counter (with its §12.4 Postgres fallback) is the
 // only intra-pod occupancy record now that the gateway does not mirror the
-// slot count onto Sandbox.status, so release must fail closed on a nil
+// slot count onto AgentPod.status, so release must fail closed on a nil
 // counter the same way ClaimSlot does — rather than carry a silent
 // Counter==nil allow path.
 func TestReleaseSlotRequiresCounter(t *testing.T) {
 	ns := testNamespace(t)
-	c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	c := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 	ctx := context.Background()
 	// A per-pod claim exists for the pod; the silent nil path would delete it.
-	seed := &lennyv1.SandboxClaim{
+	seed := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "sbx-1", TenantID: "acme"},
 	}
 	if err := c.Create(ctx, seed); err != nil {
 		t.Fatalf("seed per-pod claim: %v", err)
@@ -437,14 +437,14 @@ func TestClaimSlotConcurrentAcquisitionCollidesOnPerPodName(t *testing.T) {
 	ns := testNamespace(t)
 	c := newEnvtestClient(
 		t,
-		concurrentSandbox(ns, "sbx-1", "idle", ""),
-		concurrentSandbox(ns, "sbx-2", "idle", ""),
+		concurrentAgentPod(ns, "sbx-1", "idle", ""),
+		concurrentAgentPod(ns, "sbx-2", "idle", ""),
 	)
 	ctx := context.Background()
 	// A competing replica already acquired sbx-1: its per-pod claim exists.
-	seed := &lennyv1.SandboxClaim{
+	seed := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-sbx-1", Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "sbx-1", TenantID: "globex"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "sbx-1", TenantID: "globex"},
 	}
 	if err := c.Create(ctx, seed); err != nil {
 		t.Fatalf("seed competing claim: %v", err)
@@ -460,12 +460,12 @@ func TestClaimSlotConcurrentAcquisitionCollidesOnPerPodName(t *testing.T) {
 	}
 	// acme is a different tenant, so sbx-1 (pinned to globex) is skipped and
 	// the fresh acquisition lands on sbx-2.
-	if res.SandboxName != "sbx-2" {
-		t.Errorf("acquired %q, want sbx-2 (sbx-1 is claimed by globex)", res.SandboxName)
+	if res.AgentPodName != "sbx-2" {
+		t.Errorf("acquired %q, want sbx-2 (sbx-1 is claimed by globex)", res.AgentPodName)
 	}
 }
 
-// spec: 5.2 (Slot assignment atomicity), 4.6.3 (SandboxClaim: a release that ends the occupancy without reuse)
+// spec: 5.2 (Slot assignment atomicity), 4.6.3 (PodClaim: a release that ends the occupancy without reuse)
 // diagnosis: the keyed release did not remove exactly the session's member,
 // a duplicate release ran the disposition, or the per-pod claim was not
 // deleted when the last member left. The claim spans the whole occupancy
@@ -473,7 +473,7 @@ func TestClaimSlotConcurrentAcquisitionCollidesOnPerPodName(t *testing.T) {
 // member.
 func TestReleaseSlotKeyedDeletesClaimOnLastMember_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c, counter := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	claimer, c, counter := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 2)
 	ctx := context.Background()
 
@@ -503,7 +503,7 @@ func TestReleaseSlotKeyedDeletesClaimOnLastMember_spec_5_2(t *testing.T) {
 // disposition.
 func TestReleaseSlotLeakedKeepsSlotCounted(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c, counter := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	claimer, c, counter := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 	ctx := context.Background()
 	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 2)
 
@@ -542,7 +542,7 @@ func (f *fakeRecycleArmer) OnRecycling(podID string) { f.armed = append(f.armed,
 func TestReleaseSlotRecyclingPatchesRecyclingAndArmsTimeout_spec_3_4(t *testing.T) {
 	ns := testNamespace(t)
 	armer := &fakeRecycleArmer{}
-	claimer, c, counter := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	claimer, c, counter := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 	claimer.RecycleBoundary = armer
 	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 1)
 
@@ -592,7 +592,7 @@ func TestClaimSlotEmptyPoolReturnsErrNoIdlePod(t *testing.T) {
 // when the atomic Redis counter finds a candidate pod at its bound.
 func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 	ns := testNamespace(t)
-	c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-a", "claimed", "acme"))
+	c := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-a", "claimed", "acme"))
 	counter := newCounter(t)
 	seedOccupiedPod(t, c, counter, "sbx-a", "acme", 2)
 
@@ -616,16 +616,16 @@ func TestClaimSlotRecordsConflictOnSlotContention(t *testing.T) {
 // spec: §6.2, §4.6.1 (uptime drains
 // are WarmPoolController-written).
 // diagnosis: ClaimSlot placed a slot on a pod whose wall-clock uptime had
-// exceeded the pool's maxPodUptimeSeconds, or it wrote Sandbox.status to
+// exceeded the pool's maxPodUptimeSeconds, or it wrote AgentPod.status to
 // drain the pod itself. §6.2: an over-uptime claimed pod accepts no
 // new slots, so ClaimSlot must skip it as a candidate. Per §4.6.1 the
 // gateway no longer owns the draining transition; the WarmPoolController
 // derives it from the pod CreationTimestamp. The gateway therefore skips the
-// pod read-only and must not mutate Sandbox.status.
+// pod read-only and must not mutate AgentPod.status.
 func TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, counter := slotClaimerFor(t,
-		concurrentSandbox(ns, "sbx-old", "claimed", "acme"))
+		concurrentAgentPod(ns, "sbx-old", "claimed", "acme"))
 	seedOccupiedPod(t, c, counter, "sbx-old", "acme", 1)
 	// The pod was created ~now; advance the claimer's clock two hours past
 	// creation so its uptime exceeds the 60s cap.
@@ -638,15 +638,15 @@ func TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
 		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was skipped)", err)
 	}
 
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-old"}, &sb); err != nil {
 		t.Fatalf("get sbx-old: %v", err)
 	}
-	// §4.6.1: the gateway does not write Sandbox.status; the seeded
+	// §4.6.1: the gateway does not write AgentPod.status; the seeded
 	// (WPC-owned) phase is left untouched. The WarmPoolController owns the
 	// claimed → draining uptime transition.
 	if sb.Status.Phase != "claimed" {
-		t.Errorf("over-uptime claimed pod phase = %q, want claimed unchanged (gateway must not write Sandbox.status, §4.6.1)", sb.Status.Phase)
+		t.Errorf("over-uptime claimed pod phase = %q, want claimed unchanged (gateway must not write AgentPod.status, §4.6.1)", sb.Status.Phase)
 	}
 	assertNotGatewayStatusOwned(t, c, "sbx-old")
 }
@@ -654,13 +654,13 @@ func TestClaimSlotSkipsOverUptimeClaimedPod_spec_6_2(t *testing.T) {
 // spec: §6.2, §4.6.1 (uptime drains are
 // WarmPoolController-written).
 // diagnosis: ClaimSlot acquired a fresh slot on an idle pod that was already
-// past its uptime cap, or it wrote Sandbox.status to drain the pod. Per
+// past its uptime cap, or it wrote AgentPod.status to drain the pod. Per
 // §4.6.1 the gateway skips an over-uptime idle pod read-only and leaves the
 // idle → draining transition to the WarmPoolController.
 func TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, _ := slotClaimerFor(t,
-		concurrentSandbox(ns, "sbx-old", "idle", ""))
+		concurrentAgentPod(ns, "sbx-old", "idle", ""))
 	claimer.Now = func() time.Time { return time.Now().Add(2 * time.Hour) }
 
 	req := slotReq("sess-1", "acme", 8)
@@ -670,14 +670,14 @@ func TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 		t.Fatalf("ClaimSlot err = %v, want ErrNoConcurrentSlot (the only pod was skipped)", err)
 	}
 
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-old"}, &sb); err != nil {
 		t.Fatalf("get sbx-old: %v", err)
 	}
-	// §4.6.1: the gateway does not write Sandbox.status; the idle phase is
+	// §4.6.1: the gateway does not write AgentPod.status; the idle phase is
 	// left untouched and no per-pod claim is created for the skipped pod.
 	if sb.Status.Phase != string(state.Idle) {
-		t.Errorf("over-uptime idle pod phase = %q, want idle unchanged (gateway must not write Sandbox.status, §4.6.1)", sb.Status.Phase)
+		t.Errorf("over-uptime idle pod phase = %q, want idle unchanged (gateway must not write AgentPod.status, §4.6.1)", sb.Status.Phase)
 	}
 	if podClaimExists(t, c, "sbx-old") {
 		t.Error("over-uptime idle pod was acquired (per-pod claim created); it must be skipped read-only")
@@ -691,7 +691,7 @@ func TestClaimSlotSkipsOverUptimeIdlePod_spec_6_2(t *testing.T) {
 func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, _ := slotClaimerFor(t,
-		concurrentSandbox(ns, "sbx-fresh", "idle", ""))
+		concurrentAgentPod(ns, "sbx-fresh", "idle", ""))
 
 	req := slotReq("sess-1", "acme", 8)
 	req.MaxPodUptimeSeconds = 86400
@@ -699,11 +699,11 @@ func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-fresh" {
-		t.Errorf("acquired %q, want sbx-fresh", res.SandboxName)
+	if res.AgentPodName != "sbx-fresh" {
+		t.Errorf("acquired %q, want sbx-fresh", res.AgentPodName)
 	}
 
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-fresh"}, &sb); err != nil {
 		t.Fatalf("get sbx-fresh: %v", err)
 	}
@@ -721,7 +721,7 @@ func TestClaimSlotKeepsUnderUptimePod_spec_6_2(t *testing.T) {
 func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, c, _ := slotClaimerFor(t,
-		concurrentSandbox(ns, "sbx-fresh", "idle", ""))
+		concurrentAgentPod(ns, "sbx-fresh", "idle", ""))
 	claimer.Now = func() time.Time { return time.Now().Add(1000 * time.Hour) }
 
 	req := slotReq("sess-1", "acme", 8)
@@ -730,11 +730,11 @@ func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-fresh" {
-		t.Errorf("acquired %q, want sbx-fresh", res.SandboxName)
+	if res.AgentPodName != "sbx-fresh" {
+		t.Errorf("acquired %q, want sbx-fresh", res.AgentPodName)
 	}
 
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-fresh"}, &sb); err != nil {
 		t.Fatalf("get sbx-fresh: %v", err)
 	}
@@ -743,17 +743,17 @@ func TestClaimSlotUptimeCapZeroDisablesCheck_spec_6_2(t *testing.T) {
 	}
 }
 
-// seedReservedSlotPod creates the per-pod claim for sandboxName, patches it
+// seedReservedSlotPod creates the per-pod claim for agentPodName, patches it
 // bound → recycling → reserved with the given hold TTL, so the §6.2 slot-path
 // rebind branch sees a reserved claim it can rebind.
-func seedReservedSlotPod(t *testing.T, c client.Client, sandboxName, tenantID string, now time.Time, holdTTL time.Duration) {
+func seedReservedSlotPod(t *testing.T, c client.Client, agentPodName, tenantID string, now time.Time, holdTTL time.Duration) {
 	t.Helper()
 	ns := testNamespace(t)
 	ctx := context.Background()
-	name := podclaim.ClaimName(sandboxName)
-	claim := &lennyv1.SandboxClaim{
+	name := podclaim.ClaimName(agentPodName)
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: sandboxName, TenantID: tenantID},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: agentPodName, TenantID: tenantID},
 	}
 	if err := c.Create(ctx, claim); err != nil {
 		t.Fatalf("create claim %s: %v", name, err)
@@ -785,8 +785,8 @@ func TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	claimer, c, _ := slotClaimerFor(
 		t,
-		concurrentSandbox(ns, "sbx-held", "reserved", "acme"),
-		concurrentSandbox(ns, "sbx-idle", "idle", ""),
+		concurrentAgentPod(ns, "sbx-held", "reserved", "acme"),
+		concurrentAgentPod(ns, "sbx-idle", "idle", ""),
 	)
 	claimer.Now = func() time.Time { return now.Add(5 * time.Second) } // within the hold
 	seedReservedSlotPod(t, c, "sbx-held", "acme", now, 30*time.Second)
@@ -795,13 +795,13 @@ func TestClaimSlotRebindsReservedSamePodWithinHold_spec_3_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-held" {
-		t.Errorf("slot landed on %q, want the rebound reserved pod sbx-held", res.SandboxName)
+	if res.AgentPodName != "sbx-held" {
+		t.Errorf("slot landed on %q, want the rebound reserved pod sbx-held", res.AgentPodName)
 	}
 	if res.FreshPod {
 		t.Error("rebind onto a reserved pod should not report FreshPod=true (no claim CREATE)")
 	}
-	stored := &lennyv1.SandboxClaim{}
+	stored := &lennyv1.PodClaim{}
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName("sbx-held")}, stored); err != nil {
 		t.Fatalf("get rebound claim: %v", err)
 	}
@@ -818,8 +818,8 @@ func TestClaimSlotSkipsExpiredReservedHold_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	claimer, c, _ := slotClaimerFor(
 		t,
-		concurrentSandbox(ns, "sbx-expired", "reserved", "acme"),
-		concurrentSandbox(ns, "sbx-idle", "idle", ""),
+		concurrentAgentPod(ns, "sbx-expired", "reserved", "acme"),
+		concurrentAgentPod(ns, "sbx-idle", "idle", ""),
 	)
 	claimer.Now = func() time.Time { return now.Add(time.Minute) } // past the hold
 	seedReservedSlotPod(t, c, "sbx-expired", "acme", now, 10*time.Second)
@@ -828,8 +828,8 @@ func TestClaimSlotSkipsExpiredReservedHold_spec_3_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if res.SandboxName != "sbx-idle" {
-		t.Errorf("slot landed on %q, want the fresh idle pod sbx-idle (expired hold not rebound)", res.SandboxName)
+	if res.AgentPodName != "sbx-idle" {
+		t.Errorf("slot landed on %q, want the fresh idle pod sbx-idle (expired hold not rebound)", res.AgentPodName)
 	}
 	if !res.FreshPod {
 		t.Error("a fresh idle acquisition should report FreshPod=true")

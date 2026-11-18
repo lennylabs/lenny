@@ -35,7 +35,7 @@ platform:
 
 # Run the cluster-internal gRPC links in plaintext (dev posture). With
 # mtls.enabled=true (the chart default) the gateway dials each agent pod's
-# adapter over mTLS (--adapter-tls-cert/key/ca), but the Sandbox reconciler
+# adapter over mTLS (--adapter-tls-cert/key/ca), but the AgentPod reconciler
 # does not yet stamp a per-pod serving certificate onto the adapter
 # container, so the adapter serves :50051 in plaintext. The gateway's mTLS
 # dial then fails the handshake ("tls: first record does not look like a
@@ -76,7 +76,7 @@ controller:
     repository: lenny-controller
     tag: e2e
     pullPolicy: Never
-  # The Sandbox reconciler stamps this adapter image into every agent
+  # The AgentPod reconciler stamps this adapter image into every agent
   # pod. install.sh builds and kind-loads lenny-adapter:e2e.
   adapterImage: lenny-adapter:e2e
   # The runtime supervisor image every sidecar pod of a type: agent runtime
@@ -96,7 +96,7 @@ controller:
     supervisePingInterval: 2s
     supervisePingTimeout: 2s
   # TESTING.md §12.9.8 security-tier egress-capture sidecar. The reconciler injects it
-  # into every Sandbox whose template carries the
+  # into every AgentPod whose template carries the
   # `lenny.dev/test-egress-capture-upstream` annotation (today, only
   # the cred-shell-echo template in agent-workload.yaml).
   egressCaptureImage: lenny-egress-capture:e2e
@@ -134,7 +134,7 @@ tokenService:
     pullPolicy: Never
 
 sandbox:
-  # The e2e agent-workload registers SandboxTemplates with
+  # The e2e agent-workload registers PodSets with
   # isolationProfile: standard (matching the §13.1 cluster lacking
   # a Kata / microVM runtime class). Without this override the
   # gateway falls back to its compiled-in `sandboxed` default and
@@ -146,7 +146,7 @@ sandbox:
 # chart's catalog ships ghcr.io/lennylabs/runtime-<name>:1.0.0 images
 # the local Kind cluster cannot pull, and one of those entries
 # (claude-code) collides with the agent-workload.yaml's claude-code
-# Runtime + SandboxTemplate + SandboxWarmPool the tier-7 load
+# Runtime + PodSet the tier-7 load
 # scenarios target. The agent-workload owns the e2e runtime set.
 referenceRuntimes:
   enabled: false
@@ -279,7 +279,7 @@ poolScalingController:
 # With coredns.deploy=false the chart skips the CoreDNS Deployment, Service,
 # ConfigMap, and PDB, and the controller-deployment omits the
 # --dedicated-dns-cluster-ip flag (it is gated on coredns.deploy AND
-# coredns.clusterIP). The Sandbox reconciler's applyDedicatedDNS then returns
+# coredns.clusterIP). The AgentPod reconciler's applyDedicatedDNS then returns
 # early without an IP, so agent pods keep the default ClusterFirst resolver
 # (kube-system kube-dns) rather than dnsPolicy:None.
 #
@@ -348,7 +348,7 @@ bootstrap:
   # digests. Helm replaces a list value wholesale when a later -f sets it,
   # so the overlay's lists supersede anything declared here while the
   # tenants/users maps above deep-merge through. The pools are seeded into
-  # Postgres (rather than applied as SandboxTemplate/SandboxWarmPool CRs)
+  # Postgres (rather than applied as PodSet CRs)
   # because the pool-config-validator webhook rejects any manual kubectl
   # write to those resources: only the PoolScalingController service
   # account may create them, and it does so by reconciling each seeded

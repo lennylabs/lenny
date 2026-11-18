@@ -1332,7 +1332,7 @@ func (*ReportSessionScrubResponse) Descriptor() ([]byte, []int) {
 
 // ReportPodScrubRequest carries the §5.2 whole-pod scrub outcome the
 // adapter reports when occupancy reaches zero on a recycling pod and the
-// gateway has patched the pod's SandboxClaim to recycling. pod_id is the
+// gateway has patched the pod's PodClaim to recycling. pod_id is the
 // agent_pod_state row key the gateway resolves the claim and disposition
 // from; there is no session_id because occupancy is zero at the recycle
 // boundary. detail carries an optional adapter-side failure description
@@ -2243,7 +2243,7 @@ type ArchivePolicy struct {
 	// aborts extraction on any symlink with details.reason = "symlink".
 	AllowSymlinks bool `protobuf:"varint,1,opt,name=allow_symlinks,json=allowSymlinks,proto3" json:"allow_symlinks,omitempty"`
 	// workspace_root is the adapter's absolute workspace path. The
-	// gateway derives it from the SandboxTemplate so the per-Runtime
+	// gateway derives it from the PodSet so the per-Runtime
 	// workspace-tier and slot-scoped paths flow through correctly. The
 	// adapter falls back to its own configured root when this field is
 	// empty (workspaces materialized into
@@ -4779,7 +4779,7 @@ type ResumeRequest struct {
 	// emptyDir guard.
 	ExpectedWorkspaceBytes int64 `protobuf:"varint,10,opt,name=expected_workspace_bytes,json=expectedWorkspaceBytes,proto3" json:"expected_workspace_bytes,omitempty"`
 	// workspace_size_limit_bytes is the §4.4 / §10.1 per-pod hard
-	// workspace size cap the SandboxTemplate or runtime resolves to.
+	// workspace size cap the PodSet or runtime resolves to.
 	// The adapter uses it together with expected_workspace_bytes for
 	// the symmetric pre-extraction size check. Zero disables the
 	// gateway-supplied limit (the kubelet emptyDir guard is the
@@ -4790,7 +4790,7 @@ type ResumeRequest struct {
 	// path." The gateway passes it so the adapter can assert the
 	// replacement pod was provisioned with an identical workspace mount
 	// before extracting any checkpoint bytes. A mismatch (typically caused
-	// by a SandboxTemplate or runtime workspaceRoot change between the
+	// by a PodSet or runtime workspaceRoot change between the
 	// original and replacement pods) aborts the Resume with
 	// FailedPrecondition so the gateway can surface the cause to the
 	// client rather than silently restoring into the wrong absolute path.
@@ -6108,11 +6108,11 @@ func (x *ShutdownRequest) GetUnconditionalTeardown() bool {
 
 // RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
 // parameters the adapter needs to run the scrub at the recycle boundary and
-// report its outcome. The gateway resolves these from the pod's SandboxName
+// report its outcome. The gateway resolves these from the pod's AgentPodName
 // and the pool's sessionPolicy.recycle block.
 type RecycleScrub struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
-	// pod_id is the agent_pod_state row key (the Sandbox name) the gateway
+	// pod_id is the agent_pod_state row key (the AgentPod name) the gateway
 	// resolves the recycling claim from and keys the missing-report timeout on.
 	// The adapter, which holds no pod identity of its own, echoes it back in
 	// ReportPodScrub so the report matches the timer the gateway armed before

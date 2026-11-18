@@ -85,7 +85,7 @@ rules:
     verbs: ["get", "list"]
   # §5.2 node-drain-timeout warning lists pools cluster-wide.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates"]
+    resources: ["podsets"]
     verbs: ["list"]
   # §17.6 namespace-resourcequota / namespace-limitrange
   # checks read each agent namespace and its ResourceQuota / LimitRange
@@ -410,7 +410,7 @@ spec:
             # the chart cannot probe in-cluster.
             - --dev-mode={{ .Values.global.devMode }}
             - --attest-volume-encryption={{ .Values.preflight.attestVolumeEncryption }}
-            # §4.9 — the credential-delivery scan lists every SandboxTemplate
+            # §4.9 — the credential-delivery scan lists every PodSet
             # pool definition and fails the multi-tenant install when a pool
             # carries a forbidden deliveryMode combination (direct + standard,
             # proxy + spiffeBinding: disabled, or proxy + provider-direct). It

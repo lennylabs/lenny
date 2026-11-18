@@ -10,8 +10,8 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
 // controllerFlags holds the parsed lenny-controller command-line flags and
@@ -144,7 +144,7 @@ func registerPodIdentityFlags(f *controllerFlags) {
 	flag.Int64Var(&f.credReadersGID, "cred-readers-gid", envInt64("LENNY_CRED_READERS_GID", podspec.CredReadersGID),
 		"§13.1 lenny-cred-readers GID used as the pod fsGroup for the credential tmpfs. Must match the lenny-webhook --cred-readers-gid.")
 	flag.StringVar(&f.egressCaptureImage, "egress-capture-image", os.Getenv("LENNY_EGRESS_CAPTURE_IMAGE"),
-		"the security-tier lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every Sandbox whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Leave it empty outside security-tier credential-leakage probes: lenny-pod-security admits the sidecar, which runs at a non-reserved identity and mounts no credential path, so the empty default is what keeps it out of production.")
+		"the security-tier lenny-egress-capture sidecar image. Empty disables capture globally. Non-empty enables injection on every AgentPod whose annotation set carries `lenny.dev/test-egress-capture-upstream`. Leave it empty outside security-tier credential-leakage probes: lenny-pod-security admits the sidecar, which runs at a non-reserved identity and mounts no credential path, so the empty default is what keeps it out of production.")
 }
 
 // registerRateLimitFlags binds the §4.6.1 Postgres/Redis backends, the agent
@@ -152,19 +152,19 @@ func registerPodIdentityFlags(f *controllerFlags) {
 // knobs.
 func registerRateLimitFlags(f *controllerFlags) {
 	flag.StringVar(&f.postgresDSN, "postgres-dsn", os.Getenv("LENNY_POSTGRES_DSN"),
-		"Postgres connection string. When set, the WarmPoolController mirrors Sandbox status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
+		"Postgres connection string. When set, the WarmPoolController mirrors AgentPod status to the §4.6.1 agent_pod_state table (the migrations/ schema must already be applied). When empty, mirroring is disabled.")
 	flag.StringVar(&f.agentNSList, "agent-namespaces", os.Getenv("LENNY_AGENT_NAMESPACES"),
-		"comma-separated agent namespaces. With --postgres-dsn, the leader runs the §4.6.1 orphaned-SandboxClaim GarbageCollect loop and the agent_pod_state mirror reconciler over these namespaces; without this flag neither runs. The §13.2 NET-022 cluster-CIDR drift detector also audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes.")
+		"comma-separated agent namespaces. With --postgres-dsn, the leader runs the §4.6.1 orphaned-PodClaim GarbageCollect loop and the agent_pod_state mirror reconciler over these namespaces; without this flag neither runs. The §13.2 NET-022 cluster-CIDR drift detector also audits the broad-internet egress NetworkPolicies in these namespaces every 5 minutes.")
 	flag.StringVar(&f.redisURL, "redis-url", os.Getenv("LENNY_REDIS_URL"),
 		"Redis connection URL for the §25.5 operational event stream. When set, controller-emitted pool_state_changed events land on ops:events:stream alongside the gateway-emitted events. When empty, events stay in the controller-local in-memory buffer.")
 	flag.StringVar(&f.redisPassword, "redis-password", os.Getenv("LENNY_REDIS_PASSWORD"),
 		"Redis AUTH password.")
 	flag.Float64Var(&f.createQPS, "create-qps", ratelimit.DefaultCreateQPS,
-		"§4.6.1 pod-creation rate-limiter bucket QPS. Create calls for new Sandbox pods route through this bucket so scale-up is never starved by status-update traffic.")
+		"§4.6.1 pod-creation rate-limiter bucket QPS. Create calls for new AgentPod pods route through this bucket so scale-up is never starved by status-update traffic.")
 	flag.IntVar(&f.createBurst, "create-burst", ratelimit.DefaultCreateBurst,
 		"§4.6.1 pod-creation rate-limiter bucket burst.")
 	flag.Float64Var(&f.statusQPS, "status-qps", ratelimit.DefaultStatusQPS,
-		"§4.6.1 status-update rate-limiter bucket QPS. UpdateStatus calls on Sandbox and SandboxWarmPool route through this bucket.")
+		"§4.6.1 status-update rate-limiter bucket QPS. UpdateStatus calls on AgentPod and PodSet route through this bucket.")
 	flag.IntVar(&f.statusBurst, "status-burst", ratelimit.DefaultStatusBurst,
 		"§4.6.1 status-update rate-limiter bucket burst.")
 	flag.IntVar(&f.maxConcurrentReconciles, "max-concurrent-reconciles", 1,
@@ -177,15 +177,15 @@ func registerLifecycleFlags(f *controllerFlags) {
 	flag.DurationVar(&f.initialFillGrace, "initial-fill-grace-period", 120*time.Second,
 		"§4.6.1 cold-start fill grace period. The WarmPoolExhausted and WarmPoolLow alerts are suppressed for a pool during this window from pool creation, controller startup, or a minWarm 0→positive re-activation, to avoid false positives while the pool fills toward minWarm.")
 	flag.DurationVar(&f.statusDedupWindow, "status-update-dedup-window", 500*time.Millisecond,
-		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same Sandbox. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
+		"§4.6.1 statusUpdateDeduplicationWindow: the minimum interval between consecutive UpdateStatus writes for the same AgentPod. Status changes within the window are coalesced (trailing write wins), reducing etcd write pressure.")
 	flag.DurationVar(&f.claimOrphanTimeout, "claim-orphan-timeout", 15*time.Minute,
-		"§4.6.1 SandboxClaim orphan timeout (claimOrphanTimeout): a live (bound/recycling) or empty-status SandboxClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup. The gateway's --slot-reaper-terminal-age must equal it, and it must be at least one second more than the largest of the gateway's --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and §7.1 terminal pipeline budget, which is the gateway's --workspace-seal-max-duration-seconds plus its --stream-failure-report-timeout (§5.2). Default 15m.")
+		"§4.6.1 PodClaim orphan timeout (claimOrphanTimeout): a live (bound/recycling) or empty-status PodClaim whose orphan key is older than this with no active session is reclaimed by the leader's GarbageCollect loop. Requires --postgres-dsn for the active-session lookup. The gateway's --slot-reaper-terminal-age must equal it, and it must be at least one second more than the largest of the gateway's --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and §7.1 terminal pipeline budget, which is the gateway's --workspace-seal-max-duration-seconds plus its --stream-failure-report-timeout (§5.2). Default 15m.")
 	flag.DurationVar(&f.reservedHoldGrace, "reserved-hold-grace", 60*time.Second,
-		"§4.6.1 reserved-claim grace period: a reserved SandboxClaim is reclaimed by the leader's GarbageCollect loop once holdExpiresAt plus this grace has passed, so the GC does not race the gateway's own hold-expiry DELETE.")
+		"§4.6.1 reserved-claim grace period: a reserved PodClaim is reclaimed by the leader's GarbageCollect loop once holdExpiresAt plus this grace has passed, so the GC does not race the gateway's own hold-expiry DELETE.")
 	flag.IntVar(&f.workqueueMaxDepth, "workqueue-max-depth", 500,
 		"§4.6.1 controller work-queue max depth. When a controller's reconciliation queue is at this depth, new reconciliation events are dropped and lenny_controller_queue_overflow_total is incremented (requeues are never shed). A non-positive value disables work-shedding. Per-tier recommendations: 500 / 2,000 / 10,000.")
 	flag.BoolVar(&f.devMode, "dev-mode", os.Getenv("LENNY_DEV_MODE") == "true",
-		"§5.3 global.devMode. When true, a Sandbox that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
+		"§5.3 global.devMode. When true, an AgentPod that omits an isolation profile defaults its pod to `standard` (runc) so a developer can run on a cluster without gVisor installed. Production leaves this false (default `sandboxed`/gVisor).")
 }
 
 // registerCertFlags binds the §4.6.1 / §10.3 idle-pod certificate-expiry

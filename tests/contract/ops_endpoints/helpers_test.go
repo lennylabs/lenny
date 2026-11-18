@@ -115,7 +115,7 @@ requires:
 ` + "```\nGET /v1/admin/diagnostics/pools/<pool-name>\n```" + `
 
 <!-- access: kubectl requires=cluster-access -->
-` + "```bash\nkubectl get sandboxes -n lenny-agents -l pool=<pool-name>\nkubectl describe sandbox <pod-name> -n lenny-agents\n```" + `
+` + "```bash\nkubectl get agentpods -n lenny-agents -l pool=<pool-name>\nkubectl describe sandbox <pod-name> -n lenny-agents\n```" + `
 `
 
 // Runbooks returns the single indexed runbook.

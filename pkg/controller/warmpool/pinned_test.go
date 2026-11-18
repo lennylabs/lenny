@@ -21,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 )
 
-// tenantPod builds the agent Pod backing the same-named Sandbox in the test
+// tenantPod builds the agent Pod backing the same-named AgentPod in the test
 // pool, carrying the §5.2 tenant pin when tenant is non-empty.
 func tenantPod(ns, name, tenant string) *corev1.Pod {
 	p := &corev1.Pod{
@@ -38,18 +38,18 @@ func tenantPod(ns, name, tenant string) *corev1.Pod {
 }
 
 // pinTestClaim builds claim-<podName> for tenant.
-func pinTestClaim(ns, podName, tenant string) *lennyv1.SandboxClaim {
-	return &lennyv1.SandboxClaim{
+func pinTestClaim(ns, podName, tenant string) *lennyv1.PodClaim {
+	return &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: "claim-" + podName, Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podName, TenantID: tenant},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: podName, TenantID: tenant},
 	}
 }
 
-// phases maps each pool Sandbox to its phase.
+// phases maps each pool AgentPod to its phase.
 func phases(t *testing.T, c client.Client) map[string]string {
 	t.Helper()
 	out := map[string]string{}
-	for _, sb := range poolSandboxes(t, c) {
+	for _, sb := range poolAgentPods(t, c) {
 		out[sb.Name] = sb.Status.Phase
 	}
 	return out
@@ -82,14 +82,14 @@ func pinnedReconciler(c client.Client, apiReader client.Reader) *warmpool.Reconc
 func TestReconcilePinnedIdleInventory_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 3),
-		idleSandbox(ns, "sb-acme"), idleSandbox(ns, "sb-globex"),
+	c := newClient(t, s, pool(ns, 2, 3),
+		idleAgentPod(ns, "sb-acme"), idleAgentPod(ns, "sb-globex"),
 		tenantPod(ns, "sb-acme", "acme"), tenantPod(ns, "sb-globex", "globex"))
 	reconcileWith(t, pinnedReconciler(c, c))
 
 	ph := phases(t, c)
 	if len(ph) != 4 {
-		t.Fatalf("have %d sandboxes, want 4 (two pinned plus two created)", len(ph))
+		t.Fatalf("have %d agentpods, want 4 (two pinned plus two created)", len(ph))
 	}
 	if n := countPhase(map[string]string{"a": ph["sb-acme"], "g": ph["sb-globex"]}, "draining"); n != 1 {
 		t.Errorf("draining pinned pods = %d, want exactly 1 (maxWarm 3 minus minWarm 2 keeps one)", n)
@@ -101,7 +101,7 @@ func TestReconcilePinnedIdleInventory_spec_5_2(t *testing.T) {
 }
 
 // spec: 5.2 (Pinned idle inventory), 4.6.1 (Warm Pool Controller)
-// diagnosis: a pod whose acquisition is in flight is drained, a Sandbox
+// diagnosis: a pod whose acquisition is in flight is drained, an AgentPod
 // without a Pod is counted as pinned, a pod pinned `unassigned` is counted as
 // claimable inventory, or a claim the cache has not yet seen lets the pod be
 // drained.
@@ -109,8 +109,8 @@ func TestReconcilePinnedIdleClaimAndLabelConditions_spec_5_2(t *testing.T) {
 	t.Run("a claimed labelled pod is inventory", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(ns), pool(ns, 1, 1),
-			idleSandbox(ns, "sb-held"), tenantPod(ns, "sb-held", "acme"), pinTestClaim(ns, "sb-held", "acme"))
+		c := newClient(t, s, pool(ns, 1, 1),
+			idleAgentPod(ns, "sb-held"), tenantPod(ns, "sb-held", "acme"), pinTestClaim(ns, "sb-held", "acme"))
 		reconcileWith(t, pinnedReconciler(c, c))
 		if ph := phases(t, c); ph["sb-held"] != "idle" || len(ph) != 1 {
 			t.Errorf("phases = %v, want sb-held idle and nothing created", ph)
@@ -122,8 +122,8 @@ func TestReconcilePinnedIdleClaimAndLabelConditions_spec_5_2(t *testing.T) {
 	t.Run("no Pod is unpinned and unassigned is pinned", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(ns), pool(ns, 1, 1),
-			idleSandbox(ns, "sb-nopod"), idleSandbox(ns, "sb-unassigned"), tenantPod(ns, "sb-unassigned", "unassigned"))
+		c := newClient(t, s, pool(ns, 1, 1),
+			idleAgentPod(ns, "sb-nopod"), idleAgentPod(ns, "sb-unassigned"), tenantPod(ns, "sb-unassigned", "unassigned"))
 		reconcileWith(t, pinnedReconciler(c, c))
 		ph := phases(t, c)
 		if ph["sb-nopod"] != "idle" || ph["sb-unassigned"] != "draining" || len(ph) != 2 {
@@ -136,12 +136,12 @@ func TestReconcilePinnedIdleClaimAndLabelConditions_spec_5_2(t *testing.T) {
 	t.Run("a cached NotFound is confirmed through the API reader", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		base := newClient(t, s, template(ns), pool(ns, 1, 1),
-			idleSandbox(ns, "sb-lag"), tenantPod(ns, "sb-lag", "acme"), pinTestClaim(ns, "sb-lag", "acme"))
+		base := newClient(t, s, pool(ns, 1, 1),
+			idleAgentPod(ns, "sb-lag"), tenantPod(ns, "sb-lag", "acme"), pinTestClaim(ns, "sb-lag", "acme"))
 		stale := interceptor.NewClient(base, interceptor.Funcs{
 			Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if _, ok := obj.(*lennyv1.SandboxClaim); ok {
-					return apierrors.NewNotFound(schema.GroupResource{Group: "lenny.dev", Resource: "sandboxclaims"}, key.Name)
+				if _, ok := obj.(*lennyv1.PodClaim); ok {
+					return apierrors.NewNotFound(schema.GroupResource{Group: "lenny.dev", Resource: "podclaims"}, key.Name)
 				}
 				return cl.Get(ctx, key, obj, opts...)
 			},
@@ -176,7 +176,7 @@ func TestReconcilePinnedIdleReadFailuresFailTheReconcile_spec_5_2(t *testing.T) 
 		{
 			name: "cached claim Get fails",
 			cached: interceptor.Funcs{Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-				if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+				if _, ok := obj.(*lennyv1.PodClaim); ok {
 					return boom
 				}
 				return cl.Get(ctx, key, obj, opts...)
@@ -195,7 +195,7 @@ func TestReconcilePinnedIdleReadFailuresFailTheReconcile_spec_5_2(t *testing.T) 
 			name: "uncached claim Get fails",
 			reader: func(base client.WithWatch) client.Reader {
 				return interceptor.NewClient(base, interceptor.Funcs{Get: func(ctx context.Context, cl client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-					if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+					if _, ok := obj.(*lennyv1.PodClaim); ok {
 						return boom
 					}
 					return cl.Get(ctx, key, obj, opts...)
@@ -207,8 +207,8 @@ func TestReconcilePinnedIdleReadFailuresFailTheReconcile_spec_5_2(t *testing.T) 
 		t.Run(tc.name, func(t *testing.T) {
 			ns := testNamespace(t)
 			s := newScheme(t)
-			base := newClient(t, s, template(ns), pool(ns, 2, 3),
-				idleSandbox(ns, "sb-acme"), idleSandbox(ns, "sb-globex"),
+			base := newClient(t, s, pool(ns, 2, 3),
+				idleAgentPod(ns, "sb-acme"), idleAgentPod(ns, "sb-globex"),
 				tenantPod(ns, "sb-acme", "acme"), tenantPod(ns, "sb-globex", "globex"))
 			var reader client.Reader = base
 			if tc.reader != nil {
@@ -235,10 +235,10 @@ func TestReconcilePinnedIdleReadFailuresFailTheReconcile_spec_5_2(t *testing.T) 
 func TestReconcileServicePoolReadsNoPin_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	tm := template(ns)
+	tm := pool(ns, 2, 3)
 	tm.Spec.ExecutionMode = "service"
-	c := newClient(t, s, tm, pool(ns, 2, 3),
-		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"),
+	c := newClient(t, s, tm,
+		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"),
 		tenantPod(ns, "sb-a", "acme"), tenantPod(ns, "sb-b", "globex"))
 	reconcileWith(t, pinnedReconciler(c, c))
 	ph := phases(t, c)
@@ -287,8 +287,8 @@ func labelValue(m *dto.Metric, name string) string {
 func TestReconcilePinnedIdleMetrics_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 3),
-		idleSandbox(ns, "sb-p1"), idleSandbox(ns, "sb-p2"),
+	c := newClient(t, s, pool(ns, 1, 3),
+		idleAgentPod(ns, "sb-p1"), idleAgentPod(ns, "sb-p2"),
 		tenantPod(ns, "sb-p1", "acme"), tenantPod(ns, "sb-p2", "globex"))
 	r := pinnedReconciler(c, c)
 	reconcileWith(t, r)

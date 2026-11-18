@@ -15,7 +15,7 @@ TESTING.md §17.10 sets the flake budget: every test must pass 50 consecutive ru
 The local check is `lenny-test stress`:
 
 ```bash
-lenny-test stress --test TestSandboxClaim --runs 50
+lenny-test stress --test TestPodClaim --runs 50
 lenny-test stress --pattern 'TestSession.*' --runs 25
 ```
 
@@ -42,7 +42,7 @@ When a test fails the 50-run check, classify the root cause per TESTING.md §21.
 Re-run with `-race` if not already on:
 
 ```bash
-go test -race -count=10 -run TestSandboxClaim ./pkg/sandboxclaim/...
+go test -race -count=10 -run TestPodClaim ./pkg/podclaim/...
 ```
 
 ## Quarantine workflow
@@ -52,7 +52,7 @@ When stress fails and a fix is more than 30 minutes away:
 1. Add the test to `tests/flake-budget.yaml` (gitignored history; create when needed):
    ```yaml
    quarantined:
-     - test: TestSandboxClaim
+     - test: TestPodClaim
        category: flaky-time
        owner: alice@acme.com
        opened: 2026-05-14

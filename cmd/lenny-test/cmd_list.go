@@ -3,11 +3,11 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sort"
 )
 
@@ -18,9 +18,10 @@ import (
 // Usage:
 //
 //	lenny-test list                          # groups + tiers (default)
-//	lenny-test list --groups | --tiers | --subsets | --specs
+//	lenny-test list --groups | --tiers | --subsets
 //	lenny-test list --tier <name>            # tests in that tier
-//	lenny-test list --spec 4.2,12.3          # tests for those sections
+//	lenny-test list --specs                  # page codes, identifiers, numbered sections
+//	lenny-test list --spec POOL-R5,POOL,§4.2  # tests for those, through the annotations
 //	lenny-test list --pkg pkg/quota          # tests covering those pkgs
 //	lenny-test list --changed                # tests for changed files
 //	lenny-test list --json                   # machine-readable
@@ -29,9 +30,9 @@ func runList(args []string) int {
 	groupsOnly := fs.Bool("groups", false, "list groups only")
 	tiersOnly := fs.Bool("tiers", false, "list tiers only")
 	subsetsOnly := fs.Bool("subsets", false, "list subsets only")
-	specsOnly := fs.Bool("specs", false, "list spec sections from spec-map.json")
+	specsOnly := fs.Bool("specs", false, "list the page codes, identifiers, and numbered sections of the specification")
 	tierFilter := fs.String("tier", "", "list tests in the named tier")
-	specFilter := fs.String("spec", "", "comma-separated spec sections; resolves through spec-map")
+	specFilter := fs.String("spec", "", "comma-separated identifiers, page codes, or numbered sections (§N.M); resolves through the // spec: annotations")
 	pkgFilter := fs.String("pkg", "", "comma-separated package globs; resolves through change-graph")
 	changed := fs.Bool("changed", false, "list tests affected by uncommitted git changes")
 	jsonOut := fs.Bool("json", false, "machine-readable output")
@@ -100,7 +101,7 @@ func runList(args []string) int {
 		fmt.Println()
 	}
 	if specs, ok := out["specs"].([]string); ok {
-		fmt.Println("Spec sections:")
+		fmt.Println("Specification (page codes, identifiers, numbered sections):")
 		for _, s := range specs {
 			fmt.Printf("  %s\n", s)
 		}
@@ -118,7 +119,12 @@ func listDiscovered(tier, spec, pkg string, changed, jsonOut bool) int {
 		tests = append(tests, enumerateTier(tier)...)
 	}
 	if spec != "" {
-		tests = append(tests, testsForSpec(spec)...)
+		specTests, err := testsForSpec(spec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list: %v\n", err)
+			return 2
+		}
+		tests = append(tests, specTests...)
 	}
 	if pkg != "" {
 		tests = append(tests, testsForPkg(pkg)...)
@@ -215,26 +221,12 @@ func knownGroups() []string {
 	}
 }
 
-// specSections returns the spec section IDs from spec-map.json.
-// The catalog file is required: missing or malformed files fail
-// loudly instead of returning a synthesized "(could not read ...)"
-// row that would pollute downstream JSON consumers.
+// specSections returns the page codes, the identifiers, and the numbered
+// sections of the specification, as `list --spec` accepts them.
 func specSections() ([]string, error) {
-	path := filepath.Join(repoRoot(), specMapFile)
-	data, err := os.ReadFile(path)
+	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
-		return nil, fmt.Errorf("read %s: %w", specMapFile, err)
+		return nil, err
 	}
-	var doc struct {
-		Sections map[string]any `json:"sections"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return nil, fmt.Errorf("parse %s: %w", specMapFile, err)
-	}
-	out := make([]string, 0, len(doc.Sections))
-	for k := range doc.Sections {
-		out = append(out, k)
-	}
-	sort.Strings(out)
-	return out, nil
+	return m.queryNames(), nil
 }

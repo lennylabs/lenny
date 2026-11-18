@@ -109,12 +109,12 @@ packages:
       count: 1
     - package: pkg/admission/label_immutability
       count: 7
+    - package: pkg/admission/podclaim_guard
+      count: 7
     - package: pkg/admission/pool_config_validator
       count: 29
     - package: pkg/admission/registry_digest
       count: 1
-    - package: pkg/admission/sandboxclaim_guard
-      count: 7
     - package: pkg/admission/t4_node_isolation
       count: 2
     - package: pkg/admission/webhook
@@ -136,7 +136,7 @@ packages:
     - package: pkg/api/v1/session
       count: 65
     - package: pkg/apis/lenny/v1alpha1
-      count: 41
+      count: 39
     - package: pkg/audit
       count: 46
     - package: pkg/audit/integrity
@@ -189,26 +189,26 @@ packages:
       count: 12
     - package: pkg/connectoroauth
       count: 16
+    - package: pkg/controller/agentpod
+      count: 161
+    - package: pkg/controller/agentpod/lifecycle
+      count: 15
+    - package: pkg/controller/agentpod/podspec
+      count: 108
+    - package: pkg/controller/agentpod/resourceclass
+      count: 2
     - package: pkg/controller/cidrdrift
       count: 10
     - package: pkg/controller/controllermetrics
       count: 4
     - package: pkg/controller/poolscaling
-      count: 120
+      count: 115
     - package: pkg/controller/poolscaling/convergence
       count: 14
     - package: pkg/controller/ratelimit
       count: 1
     - package: pkg/controller/runtime
       count: 42
-    - package: pkg/controller/sandbox
-      count: 161
-    - package: pkg/controller/sandbox/lifecycle
-      count: 15
-    - package: pkg/controller/sandbox/podspec
-      count: 108
-    - package: pkg/controller/sandbox/resourceclass
-      count: 2
     - package: pkg/controller/ssaretry
       count: 10
     - package: pkg/controller/statusdedup
@@ -858,7 +858,7 @@ packages:
     - package: pkg/platform/store
       count: 8
     - package: pkg/podlifecycle
-      count: 28
+      count: 27
     - package: pkg/podregistry
       count: 42
     - package: pkg/podsecurity
@@ -897,7 +897,7 @@ packages:
       count: 7
     - package: pkg/sandbox/state
       count: 5
-    - package: pkg/sandboxclaim/state
+    - package: pkg/podclaim/state
       count: 10
     - package: pkg/schemamigrate
       count: 7
@@ -1170,7 +1170,7 @@ packages:
     - package: tests/contract/workspaceplan
       count: 15
     - package: tests/docs
-      count: 1202
+      count: 1191
     - package: tests/e2e_cloud
       count: 77
     - package: tests/e2e_kind
@@ -1208,9 +1208,9 @@ packages:
     - package: tests/static/chart
       count: 99
     - package: tests/static/lint
-      count: 18
+      count: 20
     - package: tests/static/structure
-      count: 164
+      count: 132
     - package: tests/testinfra/ackruntime
       count: 2
     - package: tests/testinfra/admission

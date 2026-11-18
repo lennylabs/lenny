@@ -51,7 +51,7 @@ lenny-test validate-diagnosis
 
 # Discovery
 lenny-test list --tier unit       # enumerate test functions
-lenny-test list --spec 4.2,12.3   # tests for spec sections
+lenny-test list --spec POOL-R5,§4.2  # tests whose annotations cite them
 lenny-test list --pkg pkg/quota   # tests covering a package
 lenny-test list --changed         # tests for the current diff
 
@@ -64,12 +64,12 @@ lenny-test watch --tier unit
 lenny-test watch --changed
 
 # Stress (50 consecutive runs)
-lenny-test stress --test TestSandboxClaim --runs 50
+lenny-test stress --test TestPodClaim --runs 50
 lenny-test stress --pattern 'TestSession.*' --runs 25
 
 # Coverage
 lenny-test coverage --go         # Go coverage from tests/results/cover.out
-lenny-test coverage --spec       # spec-section coverage
+lenny-test coverage --spec       # coverage view from the // spec: annotations
 
 # Baselines
 lenny-test baseline diff --before old.json --after new.json --threshold 0.15

@@ -16,11 +16,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
-// claimResource is the SandboxClaim resource the rebind status patch targets;
+// claimResource is the PodClaim resource the rebind status patch targets;
 // the interceptor returns NotFound for it to simulate a concurrent expiry
 // DELETE reclaiming the claim between the eligibility read and the rebind
 // patch.
-var claimResource = schema.GroupResource{Group: lennyv1.GroupVersion.Group, Resource: "sandboxclaims"}
+var claimResource = schema.GroupResource{Group: lennyv1.GroupVersion.Group, Resource: "podclaims"}
 
 // TestClaimRebindFallsThroughWhenHoldExpiresMidRebind covers the
 // rebind-vs-hold-expiry race in the acquisition path: a reserved pod looks
@@ -42,20 +42,20 @@ func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) 
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	base := newEnvtestClient(
 		t,
-		reservedSandbox(ns, "sbx-held", "acme"),
+		reservedAgentPod(ns, "sbx-held", "acme"),
 		lifetimePod(ns, testPool, "sbx-held", "acme", "keep"),
-		sandboxIn(ns, testPool, "sbx-idle", "idle"),
+		agentPodIn(ns, testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, base, "sbx-held", "acme", now, 30*time.Second)
 
 	// Wrap the live client: the rebind status patch on the held pod's claim
 	// returns NotFound (the concurrent expiry DELETE won the race). Every other
-	// SandboxClaim status patch, including the fresh idle pod's bound-status
+	// PodClaim status patch, including the fresh idle pod's bound-status
 	// write, passes through, so the fall-through acquisition succeeds.
 	heldClaim := podclaim.ClaimName("sbx-held")
 	raced := interceptor.NewClient(base, interceptor.Funcs{
 		SubResourcePatch: func(ctx context.Context, cl client.Client, subResourceName string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok && obj.GetName() == heldClaim {
+			if _, ok := obj.(*lennyv1.PodClaim); ok && obj.GetName() == heldClaim {
 				return apierrors.NewNotFound(claimResource, obj.GetName())
 			}
 			return cl.SubResource(subResourceName).Patch(ctx, obj, patch, opts...)
@@ -74,7 +74,7 @@ func TestClaimRebindFallsThroughWhenHoldExpiresMidRebind_spec_3_2(t *testing.T) 
 	}
 	// The held pod's rebind lost to the expiry DELETE, so the claimer advanced
 	// to the fresh idle pod rather than surfacing the race as an error.
-	if claim.Spec.SandboxRef != "sbx-idle" {
-		t.Errorf("acquired %q, want sbx-idle (fall-through past the vanished hold)", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "sbx-idle" {
+		t.Errorf("acquired %q, want sbx-idle (fall-through past the vanished hold)", claim.Spec.AgentPodRef)
 	}
 }

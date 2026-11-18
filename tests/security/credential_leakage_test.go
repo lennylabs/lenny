@@ -18,7 +18,7 @@
 //     pod, parse the JSONL capture file the sidecar writes for each
 //     accepted forward, and assert no captured payload hash matches
 //     a known credential. The TESTING.md §12.9.8 sidecar (see
-//     pkg/controller/sandbox/podspec.EgressCapture) is the network-
+//     pkg/controller/agentpod/podspec.EgressCapture) is the network-
 //     side analogue of the environment and filesystem probes.
 //
 // Each test calls t.Skip when the precondition is not met (no Kind
@@ -37,7 +37,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -67,7 +67,7 @@ var credentialPrefixes = []string{
 // findCredShellPod returns one cred-shell-echo agent pod from the
 // running workload, or "" with a skip when no such pod is present.
 // The pool name suffix is the discriminator; install.sh applies
-// agent-workload.yaml with cred-shell-echo-pool, and the SandboxClaim
+// agent-workload.yaml with cred-shell-echo-pool, and the PodClaim
 // reconciler stamps the pool label onto each managed pod.
 func findCredShellPod(t *testing.T, c *kind.Cluster) string {
 	t.Helper()

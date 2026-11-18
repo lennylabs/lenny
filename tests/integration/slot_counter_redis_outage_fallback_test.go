@@ -48,7 +48,7 @@ import (
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
@@ -394,10 +394,10 @@ func (o *outageTopology) boundClaimer(t *testing.T, c *slotcounter.Counter) (*po
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(o.pod), Namespace: "lenny-agents"},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: o.pod, TenantID: "acme"},
-		Status:     lennyv1.SandboxClaimStatus{Phase: string(claimstate.Bound)},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: o.pod, TenantID: "acme"},
+		Status:     lennyv1.PodClaimStatus{Phase: string(claimstate.Bound)},
 	}
 	kube := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(claim).WithStatusSubresource(claim).Build()
 	return &podclaim.SlotClaimer{Client: kube, Namespace: "lenny-agents", Counter: c}, kube
@@ -406,7 +406,7 @@ func (o *outageTopology) boundClaimer(t *testing.T, c *slotcounter.Counter) (*po
 // requireClaimBound fails unless the pod's claim is still bound.
 func (o *outageTopology) requireClaimBound(t *testing.T, kube client.Client) {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	if err := kube.Get(context.Background(), client.ObjectKey{Namespace: "lenny-agents", Name: podclaim.ClaimName(o.pod)}, &claim); err != nil {
 		t.Fatalf("the claim is gone: %v", err)
 	}
@@ -453,7 +453,7 @@ func (o *outageTopology) failedTerminalRelease(t *testing.T) time.Time {
 }
 
 // spec: §12.4 (Redis failure behavior), §5.2 (Post-recovery rehydration
-// atomicity), §4.6.1 (Orphaned SandboxClaim detection)
+// atomicity), §4.6.1 (Orphaned PodClaim detection)
 // diagnosis: a member whose release failed during the outage, on a replica
 // that stopped before Redis returned, was removed by the surviving replica's
 // rebuild, so the pod admits one session over its cap while the slot may
@@ -533,7 +533,7 @@ func TestStaleSlotReaperReleasesTheOutageMember_spec_5_2(t *testing.T) {
 }
 
 // reapBinder is the reaper's releaser: a binder whose cluster holds the pod's
-// Sandbox and whose adapter dial reaches an adapter holding no session, which
+// AgentPod and whose adapter dial reaches an adapter holding no session, which
 // answers a Shutdown absent with a clean exit.
 func (o *outageTopology) reapBinder(t *testing.T) *podsession.Binder {
 	t.Helper()
@@ -541,9 +541,9 @@ func (o *outageTopology) reapBinder(t *testing.T) *podsession.Binder {
 	if err := lennyv1.AddToScheme(s); err != nil {
 		t.Fatal(err)
 	}
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: o.pod, Namespace: "lenny-agents"},
-		Status:     lennyv1.SandboxStatus{Phase: "claimed", PodIP: "10.244.9.9"},
+		Status:     lennyv1.AgentPodStatus{Phase: "claimed", PodIP: "10.244.9.9"},
 	}
 	kube := ctrlfake.NewClientBuilder().WithScheme(s).WithObjects(sb).WithStatusSubresource(sb).Build()
 	srv := adapter.New("reaper-target")

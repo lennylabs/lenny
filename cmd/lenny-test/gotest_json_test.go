@@ -3,6 +3,9 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -113,39 +116,53 @@ func TestSummarizeFailures(t *testing.T) {
 	}
 }
 
-func TestScanFileForSpecSections(t *testing.T) {
-	body := `package x
-
-// Some unrelated comment.
-// spec: 11.7 (audit retention × compliance pairing matrix)
-// diagnosis: Documented compatible pair rejected.
-func TestPairing(t *testing.T) {}
-
-// spec: 8.2, 8.3 (delegation cycle)
-func TestCycle(t *testing.T) {}
-
-// no annotations here
-func TestPlain(t *testing.T) {}
-`
+// The verdict's annotation lookup is contributor tooling over the
+// annotation rule, so these cases carry no specification annotation.
+func TestSpecCitationsReadTheTestsAnnotationFromTheIndex(t *testing.T) {
+	root := t.TempDir()
+	dir := filepath.Join(root, "pkg", "x")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	sign := "\u00a7"
+	body := "package x\n\nimport \"testing\"\n\n" +
+		"// Some unrelated comment.\n// spec: 11.7 (audit retention)\n// diagnosis: Documented pair rejected.\nfunc TestPairing(t *testing.T) {}\n\n" +
+		"// spec: POOL-R5, " + sign + "8.2, 8.3 (delegation cycle)\nfunc TestCycle(t *testing.T) {}\n\n" +
+		"// no annotations here\nfunc TestPlain(t *testing.T) {}\n"
+	if err := os.WriteFile(filepath.Join(dir, "x_test.go"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "x.go"), []byte("package x\n\n// spec: POOL-R9\nfunc TestLike() {}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
 	cases := []struct {
-		test string
-		want []string
+		dir, test string
+		want      []string
 	}{
-		{"TestPairing", []string{"11.7"}},
-		{"TestCycle", []string{"8.2", "8.3"}},
-		{"TestPlain", nil},
-		{"TestMissing", nil},
+		{"pkg/x", "TestPairing", []string{sign + "11.7"}},
+		{"pkg/x", "TestCycle", []string{"POOL-R5", sign + "8.2", sign + "8.3"}},
+		{"pkg/x", "TestCycle/subtest", []string{"POOL-R5", sign + "8.2", sign + "8.3"}},
+		{"pkg/x", "TestPlain", nil},
+		{"pkg/x", "TestMissing", nil},
+		{"pkg/x", "TestLike", nil},
+		{"pkg/absent", "TestPairing", nil},
 	}
 	for _, c := range cases {
-		got := scanFileForSpecSections(body, c.test)
-		if len(got) != len(c.want) {
-			t.Errorf("%s: got %v; want %v", c.test, got, c.want)
-			continue
+		got := specCitationsIn(root, c.dir, c.test)
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%s %s: got %v; want %v", c.dir, c.test, got, c.want)
 		}
-		for i := range got {
-			if got[i] != c.want[i] {
-				t.Errorf("%s[%d]: got %q; want %q", c.test, i, got[i], c.want[i])
-			}
+	}
+}
+
+func TestPackageRelDirStripsTheModulePrefix(t *testing.T) {
+	for pkg, want := range map[string]string{
+		"github.com/lennylabs/lenny/pkg/audit": "pkg/audit",
+		"./pkg/audit":                          "pkg/audit",
+		"pkg/audit/":                           "pkg/audit",
+	} {
+		if got := packageRelDir(pkg); got != want {
+			t.Errorf("packageRelDir(%q) = %q; want %q", pkg, got, want)
 		}
 	}
 }

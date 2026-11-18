@@ -15,7 +15,7 @@ type miscMetrics struct {
 	// PoolScalingController reads
 	// `rate(lenny_service_requests_total[5m])` as `base_demand_p95`
 	// for service pools (service mode bypasses the gateway claim model).
-	// Labeled by `pool` (the SandboxTemplate name) — the emitter lands
+	// Labeled by `pool` (the PodSet name) — the emitter lands
 	// with the tenant-affinity routing layer (F-5.2.3), the metric is
 	// registered here so the catalog test sees the declared surface and
 	// operators can scrape it as soon as the producer exists.

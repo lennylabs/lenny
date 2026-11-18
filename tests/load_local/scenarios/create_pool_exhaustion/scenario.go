@@ -9,11 +9,11 @@
 // with the §7.1-atomicity SESSION_CREATION_FAILED (pool exhaustion surfaced
 // before the client uploads) rather than deferring the claim to /start.
 //
-// The claim primitive under test is the §4.6.1 per-pod occupancy SandboxClaim
+// The claim primitive under test is the §4.6.1 per-pod occupancy PodClaim
 // CREATE under the deterministic name claim-<podName>: a finite set of idle
 // pods admits one CREATE each; once every pod carries a claim, a fresh create
 // finds no idle pod and fails. The fakekube store's Create is the same
-// name-uniqueness primitive the lenny-sandboxclaim-guard webhook enforces, so
+// name-uniqueness primitive the lenny-podclaim-guard webhook enforces, so
 // this exercises the real fail-fast-at-create ordering without a cluster.
 //
 // Regression source: proposal 0007 reverses the F-7.1.6 deferred-claim
@@ -83,10 +83,10 @@ func (s *Scenario) Setup(ctx context.Context) error {
 		pod := fmt.Sprintf("pod-%02d", i)
 		s.idle = append(s.idle, pod)
 		// The idle pod carries no per-pod claim yet. The gateway no longer
-		// writes Sandbox.status, so the seed is the WPC-projected idle phase
+		// writes AgentPod.status, so the seed is the WPC-projected idle phase
 		// annotation only; the claim admission never reads it.
 		if err := s.store.Create(&fakekube.Object{
-			Kind:        "Sandbox",
+			Kind:        "AgentPod",
 			Namespace:   "lenny-agents",
 			Name:        pod,
 			Annotations: map[string]string{"phase": "idle"},
@@ -109,12 +109,12 @@ func claimName(pod string) string { return "claim-" + pod }
 func (s *Scenario) claimOne() string {
 	for _, pod := range s.idle {
 		err := s.store.Create(&fakekube.Object{
-			Kind:      "SandboxClaim",
+			Kind:      "PodClaim",
 			Namespace: "lenny-agents",
 			Name:      claimName(pod),
-			// §4.6.3 per-pod occupancy claim: spec carries only sandboxRef and
+			// §4.6.3 per-pod occupancy claim: spec carries only agentPodRef and
 			// tenantId; no session or slot identifier.
-			Annotations: map[string]string{"sandboxRef": pod, "tenantId": "acme"},
+			Annotations: map[string]string{"agentPodRef": pod, "tenantId": "acme"},
 		})
 		if err == nil {
 			return pod

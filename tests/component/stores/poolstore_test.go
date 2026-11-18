@@ -2,7 +2,7 @@
 
 // SPDX-License-Identifier: MIT
 
-// Contract test for the §5.2 SandboxWarmPool registry, exercising the
+// Contract test for the §5.2 PodSet registry, exercising the
 // Postgres-backed pkg/gateway/poolstore/pgstore against a real
 // container. Covers CRUD, the §5.2 / §5.3 validation, the soft-delete
 // lifecycle, and the IncludeDeleted / RuntimeRef list filters.
@@ -27,7 +27,7 @@ func poolName(t *testing.T) string {
 }
 
 // spec: 5.2
-// diagnosis: the Postgres-backed SandboxWarmPool registry in
+// diagnosis: the Postgres-backed PodSet registry in
 // pkg/gateway/poolstore/pgstore did not behave as specified. Create
 // and Get must round-trip a pool, Create must reject duplicates and
 // the §5.3 standard-isolation guard, Get on a missing name must

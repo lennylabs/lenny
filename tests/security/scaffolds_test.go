@@ -163,12 +163,12 @@ func TestTLSPlaintextRejection(t *testing.T) {
 // implemented in admission_cred_test.go against the live
 // lenny-pod-security webhook.
 
-// TESTING.md §12.9.3 sandboxclaim concurrency guard — covered structurally by:
-//   - pkg/admission/sandboxclaim_guard (decision logic + unit
+// TESTING.md §12.9.3 podclaim concurrency guard — covered structurally by:
+//   - pkg/admission/podclaim_guard (decision logic + unit
 //     tests; the §4.6.1 ADR-0007 optimistic-locking CAS the guard
 //     defends).
 //   - cmd/lenny-webhook handler tests.
-//   - charts/lenny/tests/sandboxclaim-guard-webhook_test.yaml.
+//   - charts/lenny/tests/podclaim-guard-webhook_test.yaml.
 //   - the chart's kubeApiServerPorts value, which admits the
 //     post-DNAT kube-apiserver port so the guard's callback reaches
 //     the apiserver on the e2e cluster.
@@ -178,9 +178,9 @@ func TestTLSPlaintextRejection(t *testing.T) {
 // recorded as an ops follow-on alongside the rest of the e2e_kind tier.
 // spec: 13
 // diagnosis: §13 security scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite live exercise on the ops backlog.
-func TestAdmissionSandboxClaimGuard(t *testing.T) {
-	t.Logf("TESTING.md §12.9.3: sandboxclaim-guard decision logic and webhook handler covered by " +
-		"pkg/admission/sandboxclaim_guard + cmd/lenny-webhook unit tests and " +
+func TestAdmissionPodClaimGuard(t *testing.T) {
+	t.Logf("TESTING.md §12.9.3: podclaim-guard decision logic and webhook handler covered by " +
+		"pkg/admission/podclaim_guard + cmd/lenny-webhook unit tests and " +
 		"charts/lenny helm-unittest. Live double-claim exercise on the e2e_kind-tier ops backlog.")
 }
 
@@ -228,10 +228,10 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 //     forward + JSONL hash recording covered by unit tests).
 //   - pkg/gateway/credassign + pkg/gateway/credleasestore (the
 //     §4.9 credential delivery path; per-handler unit tests).
-//   - pkg/controller/sandbox/podspec (egress_capture_test.go:
+//   - pkg/controller/agentpod/podspec (egress_capture_test.go:
 //     sidecar injection on the pod spec layer).
-//   - pkg/controller/sandbox (egress_capture_test.go: reconciler
-//     activation when the Sandbox carries the TESTING.md §12.9.8 annotation).
+//   - pkg/controller/agentpod (egress_capture_test.go: reconciler
+//     activation when the AgentPod carries the TESTING.md §12.9.8 annotation).
 //   - admission_cred_test.go (the §13.1 lenny-pod-security webhook
 //     rejects images with shells in production — production never
 //     deploys cred-shell-echo).

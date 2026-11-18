@@ -42,7 +42,7 @@ func TestClaimEmitsClaimPodSpan_spec_16_3(t *testing.T) {
 	rec, restore := installSpanRecorder(t)
 	defer restore()
 
-	claimer, _ := claimerFor(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
+	claimer, _ := claimerFor(t, agentPodIn(ns, testPool, "sbx-1", "idle"))
 	if _, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
 	}); err != nil {
@@ -68,7 +68,7 @@ func TestClaimEmitsClaimPodSpan_spec_16_3(t *testing.T) {
 }
 
 // TestClaimSpanRecordsNoIdlePodError_spec_16_3 asserts the span records
-// the error status when the pool has no claimable idle Sandbox.
+// the error status when the pool has no claimable idle AgentPod.
 func TestClaimSpanRecordsNoIdlePodError_spec_16_3(t *testing.T) {
 	rec, restore := installSpanRecorder(t)
 	defer restore()

@@ -89,7 +89,7 @@ func agentPod(name, pool, hostSchedulable string, createdAt time.Time) *corev1.P
 }
 
 // recycleScheme registers lenny.dev/v1alpha1 and corev1 so the fake client can
-// read the SandboxClaim the inspector reads at the recycle boundary alongside
+// read the PodClaim the inspector reads at the recycle boundary alongside
 // the agent Pod.
 func recycleScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
@@ -103,20 +103,20 @@ func recycleScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-// recyclingClaim builds the per-pod SandboxClaim the inspector reads to
+// recyclingClaim builds the per-pod PodClaim the inspector reads to
 // confirm the claim still exists at the recycle boundary. Its presence keeps
 // InspectForRecycle on the found=true path; deleting or omitting it is the
 // §4.6.1 gone-claim race.
-func recyclingClaim(podID string) *lennyv1.SandboxClaim {
-	return &lennyv1.SandboxClaim{
+func recyclingClaim(podID string) *lennyv1.PodClaim {
+	return &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(podID), Namespace: testNS},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: podID, TenantID: "acme"},
 	}
 }
 
 // inspectorClient builds a fake client over the lenny.dev scheme seeded with
 // the supplied objects, the common construction the inspector unit tests share
-// now that InspectForRecycle reads the SandboxClaim.
+// now that InspectForRecycle reads the PodClaim.
 func inspectorClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	t.Helper()
 	return fake.NewClientBuilder().WithScheme(recycleScheme(t)).WithObjects(objs...).Build()
@@ -393,7 +393,7 @@ func TestInspectForRecycleMissingPodIsNoOp_spec_3_4(t *testing.T) {
 }
 
 // TestInspectForRecycleClaimGonePodPresentIsNoOp verifies the inspector reports
-// found=false when the SandboxClaim has been concurrently reclaimed (a racing
+// found=false when the PodClaim has been concurrently reclaimed (a racing
 // hold-expiry DELETE or the §4.6.1 orphan GC) while the agent Pod object
 // survives, so the disposition is skipped before any counter advances.
 // spec: 3.4 (skip when the claim is gone), 4.6.1 (orphan GC reclaiming a recycling claim), 4.7 (concurrent-retirement no-op)
@@ -402,7 +402,7 @@ func TestInspectForRecycleMissingPodIsNoOp_spec_3_4(t *testing.T) {
 // disposition against a claim that a hold-expiry DELETE or the orphan GC already
 // reclaimed, the opposite of the §4.7 skip the contract promises.
 func TestInspectForRecycleClaimGonePodPresentIsNoOp_spec_4_7(t *testing.T) {
-	// The Pod survives but no SandboxClaim is seeded: the gone-claim race.
+	// The Pod survives but no PodClaim is seeded: the gone-claim race.
 	cl := inspectorClient(t, agentPod("pod-1", "agents", "true", time.Unix(0, 0)))
 	insp := mustInspector(t, cl, map[string]poolstore.Pool{
 		"agents": recyclingPool("agents", "rt", isolation.ProfileStandard, &runtimestore.RecyclePolicy{
@@ -1209,11 +1209,11 @@ func TestClaimDispositionRecycleScrubWarningStampFailureFailsClosed_spec_5_2(t *
 }
 
 // claimNotFound is the NotFound the binding-state writers surface when the
-// SandboxClaim was concurrently reclaimed: the status-subresource SSA cannot
+// PodClaim was concurrently reclaimed: the status-subresource SSA cannot
 // create the vanished object and WriteRewarmStartedStatus's get-first wraps a
 // NotFound.
 func claimNotFound(podID string) error {
-	return apierrors.NewNotFound(schema.GroupResource{Group: "lenny.dev", Resource: "sandboxclaims"}, podclaim.ClaimName(podID))
+	return apierrors.NewNotFound(schema.GroupResource{Group: "lenny.dev", Resource: "podclaims"}, podclaim.ClaimName(podID))
 }
 
 // TestClaimDispositionRecycleNonPreConnectClaimGoneIsNoOp verifies a

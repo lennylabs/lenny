@@ -267,7 +267,7 @@ const componentLabel = "lenny.dev/component"
 const opsAppLabel = "app"
 
 // runtimeLogSource builds the pod-log source for one runtime's agent pods,
-// selected by the §6.2 runtime-name label the Sandbox controller stamps on
+// selected by the §6.2 runtime-name label the AgentPod controller stamps on
 // every agent pod (state.LabelRuntime). spec: §6.2 (the runtime-name pod
 // label), §17.4 (runtime-<name> streams the runtime's agent pods).
 func runtimeLogSource(client kubernetes.Interface, runtimeName string) logSource {

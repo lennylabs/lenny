@@ -5,7 +5,7 @@
 // e2e_kind Kind test for the TESTING.md §13.6 warm-pool pod lifecycle against
 // the live agent-pod workload. install.sh applies
 // tests/testinfra/kind/agent-workload.yaml, which declares two
-// SandboxWarmPools, one per §4.7 deployment model. The test asserts
+// PodSets, one per §4.7 deployment model. The test asserts
 // each pool warms a Ready agent pod whose container topology matches
 // its model.
 
@@ -25,13 +25,13 @@ import (
 //
 // diagnosis: the TESTING.md §13.6 warm-pool pod lifecycle is exercised against
 // the live agent-pod workload install.sh applies. The workload
-// declares two SandboxWarmPools, one per §4.7 deployment model. The
+// declares two PodSets, one per §4.7 deployment model. The
 // test asserts both models are represented, that each pool warmed a
 // Ready pod whose container set matches its model (sidecar: an
 // adapter and a runtime container; embedded: one runtime container),
 // that every pod has the §5.3 isolation RuntimeClass stamped, and
-// that the backing Sandbox is idle. A pod left claimed by an earlier
-// run's SandboxClaim is reclaimed by the §4.6.1 orphan-claim GC before
+// that the backing AgentPod is idle. A pod left claimed by an earlier
+// run's PodClaim is reclaimed by the §4.6.1 orphan-claim GC before
 // the assertions run; a pod still claimed afterwards means either the GC
 // is not running (check the lenny-controller log for the registration
 // line and its --agent-namespaces argument) or a live session holds the
@@ -72,7 +72,7 @@ func TestPodLifecycle(t *testing.T) {
 }
 
 // chartClaimOrphanTimeout is the chart default of the lenny-controller
-// --claim-orphan-timeout flag: a live or empty-status SandboxClaim older than
+// --claim-orphan-timeout flag: a live or empty-status PodClaim older than
 // this with no active session is an orphan the §4.6.1 GC reclaims.
 const chartClaimOrphanTimeout = 15 * time.Minute
 
@@ -80,16 +80,16 @@ const chartClaimOrphanTimeout = 15 * time.Minute
 // sweep intervals plus the drain and pod-termination latency.
 const orphanReclaimBudget = 4 * time.Minute
 
-// workloadClaim is one SandboxClaim on a workload pod.
+// workloadClaim is one PodClaim on a workload pod.
 type workloadClaim struct {
-	Name, SandboxRef, Phase string
-	OrphanKey               time.Time
+	Name, AgentPodRef, Phase string
+	OrphanKey                time.Time
 }
 
 // awaitOrphanedWorkloadClaimsReclaimed is TestPodLifecycle's start-time sweep
 // (check 6 of the environment preflight in .claude/rules/test-coverage.md). A
 // session test killed before its cleanup, or one whose coordinating replica
-// was killed, leaves its SandboxClaim bound with no session behind it, and
+// was killed, leaves its PodClaim bound with no session behind it, and
 // the pod stays claimed. The sweep's scope is the fixture's own pods, the
 // lenny.dev/managed=true agent pods RequireAgentWorkload returns. It selects
 // the claims on those pods whose §4.6.1 orphan key is older than the orphan
@@ -109,7 +109,7 @@ func awaitOrphanedWorkloadClaimsReclaimed(t *testing.T, c *kind.Cluster) {
 	for _, cl := range aged {
 		names = append(names, cl.Name+" ("+cl.Phase+", since "+cl.OrphanKey.UTC().Format(time.RFC3339)+")")
 	}
-	t.Logf("start-time sweep: %d SandboxClaim(s) on workload pods are older than the %s orphan timeout; "+
+	t.Logf("start-time sweep: %d PodClaim(s) on workload pods are older than the %s orphan timeout; "+
 		"waiting up to %s for the §4.6.1 orphan-claim GC: %s",
 		len(aged), chartClaimOrphanTimeout, orphanReclaimBudget, strings.Join(names, ", "))
 
@@ -117,7 +117,7 @@ func awaitOrphanedWorkloadClaimsReclaimed(t *testing.T, c *kind.Cluster) {
 	pollUntilCondition(orphanReclaimBudget, 10*time.Second, func() bool {
 		remaining = remaining[:0]
 		for _, cl := range aged {
-			if objectExists(t, c, "sandboxclaim", cl.Name) || objectExists(t, c, "pod", cl.SandboxRef) {
+			if objectExists(t, c, "podclaim", cl.Name) || objectExists(t, c, "pod", cl.AgentPodRef) {
 				remaining = append(remaining, cl.Name)
 			}
 		}
@@ -127,7 +127,7 @@ func awaitOrphanedWorkloadClaimsReclaimed(t *testing.T, c *kind.Cluster) {
 		len(aged)-len(remaining), len(aged), remaining)
 }
 
-// agedWorkloadClaims lists the SandboxClaims on managed agent pods whose
+// agedWorkloadClaims lists the PodClaims on managed agent pods whose
 // §4.6.1 orphan key (the binding-state transition time, or the creation time
 // before a binding state is written) is older than the orphan timeout. A
 // claim in a terminal binding state is excluded, because the GC does not
@@ -144,12 +144,12 @@ func agedWorkloadClaims(t *testing.T, c *kind.Cluster, now time.Time) []workload
 	for _, name := range strings.Fields(podsOut) {
 		managed[name] = true
 	}
-	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandboxclaims", "-o",
-		"jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.sandboxRef}{\"\\t\"}"+
+	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "podclaims", "-o",
+		"jsonpath={range .items[*]}{.metadata.name}{\"\\t\"}{.spec.agentPodRef}{\"\\t\"}"+
 			"{.status.phase}{\"\\t\"}{.status.bindingStateTransitionTime}{\"\\t\"}"+
 			"{.metadata.creationTimestamp}{\"\\n\"}{end}")
 	if err != nil {
-		t.Logf("start-time sweep: listing SandboxClaims failed (continuing): %v\n%s", err, out)
+		t.Logf("start-time sweep: listing PodClaims failed (continuing): %v\n%s", err, out)
 		return nil
 	}
 	var aged []workloadClaim
@@ -169,7 +169,7 @@ func agedWorkloadClaims(t *testing.T, c *kind.Cluster, now time.Time) []workload
 		if perr != nil || now.Sub(key) < chartClaimOrphanTimeout {
 			continue
 		}
-		aged = append(aged, workloadClaim{Name: f[0], SandboxRef: f[1], Phase: f[2], OrphanKey: key})
+		aged = append(aged, workloadClaim{Name: f[0], AgentPodRef: f[1], Phase: f[2], OrphanKey: key})
 	}
 	return aged
 }
@@ -194,7 +194,7 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) bool {
 		return false
 	}
 	// The TESTING.md §12.9.8 egress-capture sidecar is optional per
-	// SandboxTemplate annotation. Filter it from the topology check
+	// PodSet annotation. Filter it from the topology check
 	// so the §4.7 model assertion stays focused on the runtime /
 	// adapter pair the model defines.
 	containersForModel := filterOutContainers(containers, "egress-capture")
@@ -215,7 +215,7 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) bool {
 		t.Errorf("%s: pool %s declares no recognized §4.7 deployment model", p.Name, p.Pool)
 	}
 
-	// The Sandbox reconciler stamps the §5.3 isolation RuntimeClass onto
+	// The AgentPod reconciler stamps the §5.3 isolation RuntimeClass onto
 	// every agent pod. Every reference pool on this overlay is
 	// isolationProfile: standard (runc) except gvisor-echo-pool
 	// (isolationProfile: sandboxed), which tests/e2e_kind/
@@ -231,23 +231,23 @@ func assertPodLifecycle(t *testing.T, c *kind.Cluster, p kind.AgentPod) bool {
 		t.Errorf("%s: runtimeClassName = %q, want %q (§5.3 isolation profile for pool %s)", p.Name, rc, want, p.Pool)
 	}
 
-	// A warmed, unclaimed pod's Sandbox sits in the idle phase. A pod
-	// deleted since the reads above has left its pool, so its Sandbox
+	// A warmed, unclaimed pod's AgentPod sits in the idle phase. A pod
+	// deleted since the reads above has left its pool, so its AgentPod
 	// phase is no longer the warm pod's.
-	if phase := sandboxPhaseForPod(t, c, p.Name); phase != "idle" {
+	if phase := agentPodPhaseForPod(t, c, p.Name); phase != "idle" {
 		if !objectExists(t, c, "pod", p.Name) {
-			t.Logf("%s: deleted during the walk (Sandbox phase %q); skipped", p.Name, phase)
+			t.Logf("%s: deleted during the walk (AgentPod phase %q); skipped", p.Name, phase)
 			return false
 		}
-		t.Errorf("%s: backing Sandbox phase = %q, want \"idle\" (a warm, claimable pod)", p.Name, phase)
+		t.Errorf("%s: backing AgentPod phase = %q, want \"idle\" (a warm, claimable pod)", p.Name, phase)
 	}
 
-	t.Logf("%s: §4.7 %s model verified — containers %v, RuntimeClass %s, Sandbox idle",
+	t.Logf("%s: §4.7 %s model verified — containers %v, RuntimeClass %s, AgentPod idle",
 		p.Name, p.Model, containers, want)
 	return true
 }
 
-// expectedRuntimeClass returns the §5.3 RuntimeClass the Sandbox
+// expectedRuntimeClass returns the §5.3 RuntimeClass the AgentPod
 // reconciler stamps onto a warm pod from the named pool. Every pool on
 // this overlay is isolationProfile: standard (runc) except
 // gvisor-echo-pool (isolationProfile: sandboxed); see
@@ -317,14 +317,14 @@ func livePodField(t *testing.T, c *kind.Cluster, pod, jsonpath string) (string, 
 	return strings.TrimSpace(out), true
 }
 
-// sandboxPhaseForPod returns the status.phase of the Sandbox whose
+// agentPodPhaseForPod returns the status.phase of the AgentPod whose
 // status.podName names the given pod.
-func sandboxPhaseForPod(t *testing.T, c *kind.Cluster, pod string) string {
+func agentPodPhaseForPod(t *testing.T, c *kind.Cluster, pod string) string {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "sandbox",
+	out, err := c.KubectlOut(t, "-n", "lenny-agents", "get", "agentpod",
 		"-o", "jsonpath={range .items[?(@.status.podName==\""+pod+"\")]}{.status.phase}{end}")
 	if err != nil {
-		t.Fatalf("reading the Sandbox phase for pod %s: %v\n%s", pod, err, out)
+		t.Fatalf("reading the AgentPod phase for pod %s: %v\n%s", pod, err, out)
 	}
 	return strings.TrimSpace(out)
 }

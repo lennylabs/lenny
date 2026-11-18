@@ -353,7 +353,7 @@ func seedReleaseFixture(t *testing.T, terminatedAt time.Time) (*preRunningFixtur
 	row.TerminatedAt = terminatedAt
 	a := &reclaimAdapter{}
 	p.registry.Put(&podsession.BindResult{
-		SessionID: "sess-1", TenantID: "acme", SandboxName: reclaimPod, SlotID: "sess-1",
+		SessionID: "sess-1", TenantID: "acme", AgentPodName: reclaimPod, SlotID: "sess-1",
 		Adapter: dialReclaimAdapter(t, a), CoordinationGeneration: row.CoordinationGeneration,
 	})
 	return p, row, a

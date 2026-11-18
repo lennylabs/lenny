@@ -158,7 +158,7 @@ func TestRecordSlotReservationIsCounted(t *testing.T) {
 	}
 }
 
-// spec: §12.4, §4.6.1 (Orphaned SandboxClaim detection) — the reclaim
+// spec: §12.4, §4.6.1 (Orphaned PodClaim detection) — the reclaim
 // deletes a record older than the cutoff whose session row is absent,
 // terminal since before the cutoff, or non-terminal on another pod, and keeps
 // every other record.

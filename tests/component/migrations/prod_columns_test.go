@@ -494,8 +494,8 @@ var prodMigrationSchema = []struct {
 	}},
 	{migration: "0167", table: "sandbox_warm_pools", columns: []string{"session_policy"}},
 	// 0168 relocates the §7.2 / §8.8 Terminated/Suspended session-condition
-	// facts off Sandbox.status onto the Postgres session row (the §5.2 mode
-	// collapse makes the WarmPoolController the sole writer of Sandbox.status)
+	// facts off AgentPod.status onto the Postgres session row (the §5.2 mode
+	// collapse makes the WarmPoolController the sole writer of AgentPod.status)
 	// and persists the §7.1 conversationContinuity envelope half resolved at
 	// create time and frozen for the session lifetime. All columns are
 	// append-only ALTER TABLE additions on the sessions row. spec: §7.1, §7.2,
@@ -671,6 +671,28 @@ var prodMigrationSchema = []struct {
 	// TestReserveSlotUnderLock and TestReclaimSlotReservations.
 	// spec: §12.4, §5.2.
 	{migration: "0197", table: "slot_reservations", create: true, columns: []string{"pod_id", "session_id", "reserved_at"}},
+	// 0198 renames the pool-record table from sandbox_warm_pools to pools,
+	// the name the admin API gives its records. The forward check finds
+	// pools; rolling 0198 back leaves no pools table.
+	{migration: "0198", table: "pools", create: true, columns: []string{"name"}},
+}
+
+// renamedTables maps a table an earlier migration created or altered to
+// the name a later migration gave it, so the forward check, which runs on
+// the fully migrated schema, reads the current name. The rollback check
+// runs each step after every later step is rolled back, so it reads the
+// name the entry records.
+var renamedTables = map[string]string{
+	"sandbox_warm_pools": "pools",
+}
+
+// currentTable returns the name a table carries once every migration has
+// applied.
+func currentTable(name string) string {
+	if to, ok := renamedTables[name]; ok {
+		return to
+	}
+	return name
 }
 
 // spec: 12.2, 18.5
@@ -684,11 +706,12 @@ func TestProdMigrationsApplyExpectedSchema(t *testing.T) {
 	ctx := context.Background()
 
 	for _, m := range prodMigrationSchema {
+		table := currentTable(m.table)
 		if m.create {
-			mustHaveTable(t, ctx, pg, m.table)
+			mustHaveTable(t, ctx, pg, table)
 		}
 		for _, col := range m.columns {
-			mustHaveColumn(t, ctx, pg, m.table, col)
+			mustHaveColumn(t, ctx, pg, table, col)
 		}
 	}
 }

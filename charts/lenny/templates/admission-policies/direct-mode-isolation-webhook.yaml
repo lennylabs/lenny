@@ -1,18 +1,18 @@
 {{- /*
 lenny-direct-mode-isolation ValidatingAdmissionWebhook (§4.9, §13.2).
-Rejects SandboxTemplate resources whose credential-delivery
+Rejects PodSet resources whose credential-delivery
 configuration exposes cross-tenant credential risk: deliveryMode direct
 with isolationProfile standard, and deliveryMode proxy with spiffeBinding
 disabled (both in multi-tenant mode), plus the §13.2 NET-006 deliveryMode
 proxy / egressProfile provider-direct mutual exclusivity (every tenancy
-mode). Scoped to agent namespaces and the sandboxtemplates resource;
+mode). Scoped to agent namespaces and the podsets resource;
 fail-closed.
 
 Rendered unconditionally (§13.2.5 step 2): the enforcement target
 is the credential-delivery / egress configuration of a pool, which is
 independent of whether the LLM proxy feature is enabled. A multi-tenant
 install with features.llmProxy: false still admits direct + standard
-SandboxTemplates without this webhook — the precise cross-tenant
+PodSets without this webhook — the precise cross-tenant
 credential exposure §4.9 names — so the webhook must not be gated on
 features.llmProxy.
 */ -}}
@@ -42,7 +42,7 @@ webhooks:
     rules:
       - apiGroups: ["lenny.dev"]
         apiVersions: ["v1alpha1"]
-        resources: ["sandboxtemplates"]
+        resources: ["podsets"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
     clientConfig:

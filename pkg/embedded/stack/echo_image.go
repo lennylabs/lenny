@@ -15,7 +15,7 @@ import (
 
 // echoImageNamespace is the containerd namespace the embedded k3s kubelet
 // resolves pod images from. The bring-up imports the echo image into this
-// namespace so the digest-pinned Sandbox pod reference resolves locally
+// namespace so the digest-pinned AgentPod pod reference resolves locally
 // with the default IfNotPresent pull policy. spec: §24.19.1 (the image
 // bridge reaches the embedded containerd image store).
 const echoImageNamespace = "k8s.io"
@@ -52,7 +52,7 @@ var ctrImagesLs = func(ctr CtrInvocation, namespace string, stderr io.Writer) (s
 // ctrImagesTag registers an additional name for an image already present
 // in the embedded containerd. The bring-up tags the imported tarball's
 // image under its digest-pinned echoImageRepository@sha256:<digest> name
-// so the kubelet resolves the digest-pinned Sandbox pod reference from the
+// so the kubelet resolves the digest-pinned AgentPod pod reference from the
 // local store without a registry pull. It is a package-level var so a unit
 // test can assert the tag argv without a live ctr. spec: §24.19.1.
 var ctrImagesTag = func(ctr CtrInvocation, namespace, source, target string, stderr io.Writer) error {
@@ -104,7 +104,7 @@ func resolveEchoTarball(explicit string) (string, error) {
 // the host Docker daemon, so the digest is resolved from ctr output rather
 // than `docker image inspect`), and registers the digest-pinned
 // echoImageRepository@sha256:<digest> name in containerd so the kubelet
-// resolves the Sandbox pod's digest-pinned reference from the local store
+// resolves the AgentPod pod's digest-pinned reference from the local store
 // under the default IfNotPresent pull policy. Returning the resolved
 // reference keeps the seeded digest, the CRD digest, and the digest of the
 // image present in containerd identical, which the digest-pinned pull
@@ -130,7 +130,7 @@ func importEchoImage(ctr CtrInvocation, tarball string, stdout, stderr io.Writer
 		// The tarball's own tag is the build tag (Makefile builds
 		// ghcr.io/lennylabs/runtime-echo-embedded:dev). Tag the imported
 		// image under its digest-pinned name so the kubelet resolves the
-		// Sandbox pod reference locally. A tag failure means the
+		// AgentPod pod reference locally. A tag failure means the
 		// digest-pinned pod reference would ImagePullBackOff, so it is fatal.
 		return "", fmt.Errorf("register digest-pinned echo runtime reference %s: %w", reference, err)
 	}

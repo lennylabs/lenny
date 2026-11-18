@@ -29,7 +29,7 @@
 #
 # A control plane whose apiserver informers connected at startup keeps
 # limping along on those conntrack-established connections, but every NEW
-# apiserver connection fails: the gateway's per-session SandboxClaim write
+# apiserver connection fails: the gateway's per-session PodClaim write
 # (POST /v1/sessions/start) hangs and returns 503 SESSION_CREATION_FAILED,
 # and leader-election lease renewals time out. This manifest admits egress
 # to the Kind node CIDR on the apiserver ports so the post-DNAT apiserver

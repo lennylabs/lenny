@@ -85,5 +85,5 @@
   <text class="sub" x="680" y="514">PoolScalingController</text>
   <path class="ln" d="M 660 488 L 606 488" marker-end="url(#ar)"/>
   <text class="foot" x="680" y="560">Create, claim, and drain pods</text>
-  <text class="foot" x="680" y="578">through Sandbox resources</text>
+  <text class="foot" x="680" y="578">through AgentPod resources</text>
 </svg>

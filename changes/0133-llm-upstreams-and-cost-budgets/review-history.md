@@ -33,3 +33,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Revision 9 (2026-11-16)
 
 The review of [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md) raised three open decisions here: provider server tools in the pass-through, `soc2` in the shared-upstream warning, and the error detail format for a removed field. RCR-5 of 0132 retired in favour of this change's LUR-10.
+
+## Open decision raised by 0116.S5 (2026-11-17)
+
+The security review of 0116.S5 raised open decision 4: whether 0133.S2 depends on a pod SPIFFE identity, and whether removing `credential.proxy_mode_spiffe_binding_disabled` here and the `lenny-direct-mode-isolation` webhook in 0127 drops the multi-tenant refusal of `spiffeBinding: disabled`. A check of the tree and of both changes found that it does. Issues CHEGRESS-I1, CHGWPOD-I9, CHGWPOD-I12, and CHGWPOD-I15 are planned for 0133.S2, which now lists them under `closes`.

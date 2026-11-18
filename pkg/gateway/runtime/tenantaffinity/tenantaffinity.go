@@ -82,7 +82,7 @@ type Router struct {
 	active       int                            // pool-wide in-flight requests
 }
 
-// New returns a router for the named pool (the SandboxTemplate name used
+// New returns a router for the named pool (the PodSet name used
 // as the metric label). metrics may be nil.
 func New(pool string, metrics StatelessMetrics) *Router {
 	return &Router{

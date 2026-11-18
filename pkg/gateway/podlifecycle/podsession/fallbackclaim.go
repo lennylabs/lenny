@@ -33,20 +33,20 @@ const DefaultFallbackMaxMirrorLagSeconds = 10
 
 // fallbackClaim runs the §4.6.1 Postgres-backed fallback claim after
 // the Kubernetes-API claim returned podclaim.ErrNoIdlePod. It returns
-// the claimed Sandbox name, or podclaim.ErrNoIdlePod when the fallback
+// the claimed AgentPod name, or podclaim.ErrNoIdlePod when the fallback
 // is disabled, the mirror is too stale to trust, or the mirror also
 // has no idle pod (the warm pool is genuinely exhausted, which the
 // caller surfaces as WARM_POOL_EXHAUSTED).
 //
 // The fallback claims an agent_pod_state row, then reproduces the
-// authoritative side of a claim: it creates the binding SandboxClaim
-// CRD (so the lenny-sandboxclaim-guard webhook's CREATE-time check
-// still guards against a double-claim), re-reads the Sandbox to confirm
+// authoritative side of a claim: it creates the binding PodClaim
+// CRD (so the lenny-podclaim-guard webhook's CREATE-time check
+// still guards against a double-claim), re-reads the AgentPod to confirm
 // it is still idle (the WPC may have drained the pod between the mirror
-// snapshot and the CRD lookup), and flips the Sandbox CRD phase idle →
+// snapshot and the CRD lookup), and flips the AgentPod CRD phase idle →
 // claimed via SSA Apply under the §4.6.3 gateway field manager +
-// ForceOwnership. If the live Sandbox is past idle the just-created
-// SandboxClaim is deleted and ErrNoIdlePod is returned so the caller
+// ForceOwnership. If the live AgentPod is past idle the just-created
+// PodClaim is deleted and ErrNoIdlePod is returned so the caller
 // surfaces warm-pool exhaustion rather than binding a session to a
 // draining pod.
 //
@@ -88,7 +88,7 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest, r
 	}
 
 	// Precondition 2 (admission reachability): the fallback's
-	// lenny-sandboxclaim-guard CREATE check traverses the API server, so
+	// lenny-podclaim-guard CREATE check traverses the API server, so
 	// probe reachability before locking a mirror row. A failed probe
 	// means full API-server unavailability (distinct from watch-stream
 	// degradation, which the fallback is designed for), so skip rather
@@ -111,7 +111,7 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest, r
 	}
 
 	// Reproduce the authoritative side of a claim. Create the binding
-	// SandboxClaim first: the lenny-sandboxclaim-guard webhook rejects
+	// PodClaim first: the lenny-podclaim-guard webhook rejects
 	// the CREATE if the pod is already claimed, which backstops the
 	// §4.6.1 single-claim invariant for the fallback path.
 	claim, err := podclaim.CreateClaim(ctx, b.Client, b.Namespace, pod.PodID, req)
@@ -119,13 +119,13 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest, r
 		return "", err
 	}
 
-	// Re-read the Sandbox to detect a mid-fallback drain: the mirror
+	// Re-read the AgentPod to detect a mid-fallback drain: the mirror
 	// snapshot may pre-date a §6.2 idle → draining transition the WPC
 	// applied while we were locking the Postgres row. If the live phase
 	// has moved past idle, delete the orphan claim and surface the
 	// no-idle-pod result rather than binding a session to a doomed pod.
 	// spec: §4.6.1 fallback claim consistency; §6.2.
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := b.Client.Get(ctx, client.ObjectKey{Namespace: b.Namespace, Name: pod.PodID}, &sb); err != nil {
 		_ = b.Client.Delete(ctx, claim)
 		return "", fmt.Errorf("podsession: get sandbox %s for fallback claim: %w", pod.PodID, err)
@@ -137,7 +137,7 @@ func (b *Binder) fallbackClaim(ctx context.Context, req podclaim.ClaimRequest, r
 	// §4.6.1: the per-pod claim is CREATEd with spec only; write its first
 	// `bound` binding state with a subsequent status patch, the same first
 	// status the in-cluster Claimer writes. The gateway does not write
-	// Sandbox.status; the WarmPoolController projects the pod's occupancy
+	// AgentPod.status; the WarmPoolController projects the pod's occupancy
 	// phase from the claim binding state.
 	if err := podclaim.WriteBoundStatus(ctx, b.Client, b.Namespace, claim.Name); err != nil {
 		_ = b.Client.Delete(ctx, claim)

@@ -15,7 +15,7 @@ import (
 
 // DirectModeIsolation returns the Decider for the
 // lenny-direct-mode-isolation ValidatingAdmissionWebhook (§4.9, §13.2).
-// It is installed on SandboxTemplate resources in agent namespaces and
+// It is installed on PodSet resources in agent namespaces and
 // rejects, fail-closed, the credential-delivery configurations that
 // expose cross-tenant credential risk in a multi-tenant deployment:
 // deliveryMode direct with isolationProfile standard, and deliveryMode
@@ -29,9 +29,9 @@ import (
 // or development), per §4.9.
 func DirectModeIsolation(tenancyMode string, devMode bool) Decider {
 	return func(_ context.Context, req *admissionv1.AdmissionRequest) *admissionv1.AdmissionResponse {
-		var tmpl lennyv1.SandboxTemplate
+		var tmpl lennyv1.PodSet
 		if err := json.Unmarshal(req.Object.Raw, &tmpl); err != nil {
-			return Deny(http.StatusBadRequest, "decode SandboxTemplate object: "+err.Error())
+			return Deny(http.StatusBadRequest, "decode PodSet object: "+err.Error())
 		}
 		decision := dmi.Decide(dmi.Request{
 			TenancyMode:      tenancyMode,

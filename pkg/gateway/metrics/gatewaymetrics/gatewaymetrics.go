@@ -203,7 +203,7 @@ func (m *Metrics) ObserveInterceptorMTLSHandshake(result string, seconds float64
 }
 
 // IncStatelessRequest records a §5.2 service-mode-pool request that
-// increments lenny_service_requests_total. `pool` is the SandboxTemplate
+// increments lenny_service_requests_total. `pool` is the PodSet
 // name. spec: §5.2.
 func (m *Metrics) IncStatelessRequest(pool string) {
 	if m == nil {
@@ -224,7 +224,7 @@ func (m *Metrics) SetStatelessConcurrentActive(pool string, value float64) {
 
 // ObserveSessionReuseCount records the served-session count of a retiring
 // recycling session-mode pod into lenny_pod_session_reuse_count. `pool`
-// is the SandboxTemplate name and `k8sPodName` is the pod whose
+// is the PodSet name and `k8sPodName` is the pod whose
 // retirement triggered the observation. spec: §5.2 / §16.1.
 func (m *Metrics) ObserveSessionReuseCount(pool, k8sPodName string, count int) {
 	if m == nil {

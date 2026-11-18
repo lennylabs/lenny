@@ -39,10 +39,9 @@ const CurrentCRDSchemaVersion = "1"
 // spec: §10 / §10. F-15.5.12.
 var LennyCRDNames = []string{
 	"runtimes.lenny.dev",
-	"sandboxclaims.lenny.dev",
-	"sandboxes.lenny.dev",
-	"sandboxtemplates.lenny.dev",
-	"sandboxwarmpools.lenny.dev",
+	"podclaims.lenny.dev",
+	"agentpods.lenny.dev",
+	"podsets.lenny.dev",
 }
 
 // CRDSchemaVersionCheck runs the §10 preflight comparison:

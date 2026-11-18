@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: MIT
 
-// Package agentpodstate is the §4.6.1 Postgres-side mirror of Sandbox
+// Package agentpodstate is the §4.6.1 Postgres-side mirror of AgentPod
 // CRD status. The WarmPoolController writes the mirror; the gateway's
 // fallback claim path reads it when the Kubernetes API watch stream is
 // degraded.
 //
-// The mirror is a read-optimized copy of the authoritative Sandbox
+// The mirror is a read-optimized copy of the authoritative AgentPod
 // status subresource, never a source of truth. The agent_pod_state
 // table is platform-global (§12.6): tenant_id is a denormalized
 // convenience column set on claim, not an isolation boundary, so the
@@ -19,12 +19,12 @@ import (
 )
 
 // PodState is one agent_pod_state row: the mirrored status of a single
-// Sandbox. The field set matches the table created by migration 0001.
+// AgentPod. The field set matches the table created by migration 0001.
 type PodState struct {
-	// PodID is the Sandbox name, the agent_pod_state primary key.
+	// PodID is the AgentPod name, the agent_pod_state primary key.
 	PodID string
 
-	// PoolID is the SandboxWarmPool the pod belongs to.
+	// PoolID is the PodSet the pod belongs to.
 	PoolID string
 
 	// State is the observed §6.2 pod lifecycle phase.
@@ -45,7 +45,7 @@ type PodState struct {
 	// ExecutionMode is the §5.2 pod-reuse mode.
 	ExecutionMode string
 
-	// ResourceVersion is the Sandbox metadata.resourceVersion the
+	// ResourceVersion is the AgentPod metadata.resourceVersion the
 	// mirror row was derived from, parsed to an integer.
 	ResourceVersion int64
 
@@ -74,8 +74,8 @@ type RecycleCounters struct {
 }
 
 // Store is the §4.6.1 agent_pod_state mirror contract. The mirror is a
-// read-optimized copy of Sandbox status; the authoritative store is the
-// Sandbox CRD status subresource.
+// read-optimized copy of AgentPod status; the authoritative store is the
+// AgentPod CRD status subresource.
 type Store interface {
 	// Sync converges the mirror for poolID to the observed set: every
 	// row in observed is bulk-UPSERTed keyed on pod_id, and any
@@ -91,9 +91,9 @@ type Store interface {
 	// deleted. This is the §4.6.1 "mirror reconciliation on recovery"
 	// path the WarmPoolController runs on startup and on every
 	// leader-election acquisition, re-deriving the full row set from the
-	// authoritative Sandbox CRDs across all agent namespaces. Unlike
+	// authoritative AgentPod CRDs across all agent namespaces. Unlike
 	// Sync, ReconcileAll is global: it prunes rows for every pool,
-	// including pods whose pool no longer has any live Sandbox.
+	// including pods whose pool no longer has any live AgentPod.
 	ReconcileAll(ctx context.Context, observed []PodState) error
 
 	// MirrorLagSeconds returns now() - max(updated_at) across the rows
@@ -118,7 +118,7 @@ type Store interface {
 	// distinct pods: the second call skips the row the first holds
 	// locked. The mirror is a read-optimized copy, so a successful claim
 	// here is provisional until the caller flips the authoritative
-	// Sandbox CRD phase and creates the binding SandboxClaim.
+	// AgentPod CRD phase and creates the binding PodClaim.
 	//
 	// skip names pod_ids the call never selects, locks, or offers: the
 	// gateway passes the pods its Kubernetes-API idle scan already refused

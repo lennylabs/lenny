@@ -13,22 +13,22 @@ func TestValidateAllowsOwnedWrites(t *testing.T) {
 		crd        CRD
 		field      string
 	}{
-		{PoolScalingController, SandboxTemplate, "spec"},
-		{PoolScalingController, SandboxTemplate, "spec.runtimeRef"},
-		{WarmPoolController, SandboxTemplate, "status.conditions"},
-		{PoolScalingController, SandboxWarmPool, "spec.minWarm"},
-		{PoolScalingController, SandboxWarmPool, "spec.maxWarm"},
-		{PoolScalingController, SandboxWarmPool, "spec.scalePolicy"},
-		{PoolScalingController, SandboxWarmPool, "spec.scalePolicy.maxIdleSeconds"},
-		{PoolScalingController, SandboxWarmPool, "spec.sdkWarmDisabled"},
-		{PoolScalingController, SandboxWarmPool, "status.sdkWarmCircuitBreaker"},
-		{PoolScalingController, SandboxWarmPool, "status.sdkWarmCircuitBreaker.openedAt"},
-		{WarmPoolController, SandboxWarmPool, "status.warmCount"},
-		{WarmPoolController, SandboxWarmPool, "status.readyCount"},
-		{WarmPoolController, Sandbox, "spec.runtimeImage"},
-		{WarmPoolController, Sandbox, "status.phase"},
-		{Gateway, SandboxClaim, "spec.sandboxRef"},
-		{Gateway, SandboxClaim, "status.phase"},
+		{PoolScalingController, PodSet, "spec"},
+		{PoolScalingController, PodSet, "spec.runtimeRef"},
+		{WarmPoolController, PodSet, "status.conditions"},
+		{PoolScalingController, PodSet, "spec.minWarm"},
+		{PoolScalingController, PodSet, "spec.maxWarm"},
+		{PoolScalingController, PodSet, "spec.scalePolicy"},
+		{PoolScalingController, PodSet, "spec.scalePolicy.maxIdleSeconds"},
+		{PoolScalingController, PodSet, "spec.sdkWarmDisabled"},
+		{PoolScalingController, PodSet, "status.sdkWarmCircuitBreaker"},
+		{PoolScalingController, PodSet, "status.sdkWarmCircuitBreaker.openedAt"},
+		{WarmPoolController, PodSet, "status.warmCount"},
+		{WarmPoolController, PodSet, "status.readyCount"},
+		{WarmPoolController, AgentPod, "spec.runtimeImage"},
+		{WarmPoolController, AgentPod, "status.phase"},
+		{Gateway, PodClaim, "spec.agentPodRef"},
+		{Gateway, PodClaim, "status.phase"},
 	}
 	for _, c := range cases {
 		if err := Validate(c.controller, c.crd, c.field); err != nil {
@@ -44,14 +44,14 @@ func TestValidateRejectsCrossControllerWrites(t *testing.T) {
 		field      string
 		want       Controller
 	}{
-		{WarmPoolController, SandboxTemplate, "spec", PoolScalingController},
-		{PoolScalingController, SandboxTemplate, "status", WarmPoolController},
-		{WarmPoolController, SandboxWarmPool, "spec.minWarm", PoolScalingController},
-		{WarmPoolController, SandboxWarmPool, "status.sdkWarmCircuitBreaker.openedAt", PoolScalingController},
-		{PoolScalingController, SandboxWarmPool, "status.warmCount", WarmPoolController},
-		{PoolScalingController, Sandbox, "spec", WarmPoolController},
-		{Gateway, Sandbox, "status.phase", WarmPoolController},
-		{WarmPoolController, SandboxClaim, "status.phase", Gateway},
+		{WarmPoolController, PodSet, "spec", PoolScalingController},
+		{PoolScalingController, PodSet, "status", WarmPoolController},
+		{WarmPoolController, PodSet, "spec.minWarm", PoolScalingController},
+		{WarmPoolController, PodSet, "status.sdkWarmCircuitBreaker.openedAt", PoolScalingController},
+		{PoolScalingController, PodSet, "status.warmCount", WarmPoolController},
+		{PoolScalingController, AgentPod, "spec", WarmPoolController},
+		{Gateway, AgentPod, "status.phase", WarmPoolController},
+		{WarmPoolController, PodClaim, "status.phase", Gateway},
 	}
 	for _, c := range cases {
 		err := Validate(c.controller, c.crd, c.field)
@@ -71,14 +71,14 @@ func TestValidateRejectsCrossControllerWrites(t *testing.T) {
 }
 
 func TestValidateRejectsUnknownField(t *testing.T) {
-	err := Validate(PoolScalingController, SandboxTemplate, "metadata.labels")
+	err := Validate(PoolScalingController, PodSet, "metadata.labels")
 	if err == nil {
 		t.Errorf("metadata.* paths should be outside the §4.6.3 matrix")
 	}
 }
 
 func TestValidateRejectsEmptyFieldPath(t *testing.T) {
-	err := Validate(PoolScalingController, SandboxTemplate, "")
+	err := Validate(PoolScalingController, PodSet, "")
 	if err == nil {
 		t.Errorf("empty fieldPath should error")
 	}
@@ -87,11 +87,11 @@ func TestValidateRejectsEmptyFieldPath(t *testing.T) {
 func TestOwnerSdkWarmCircuitBreakerOverridesDefault(t *testing.T) {
 	// The carve-out: status.sdkWarmCircuitBreaker.* belongs to PSC
 	// even though status.* by default is WarmPoolController.
-	owner, ok := Owner(SandboxWarmPool, "status.sdkWarmCircuitBreaker.openedAt")
+	owner, ok := Owner(PodSet, "status.sdkWarmCircuitBreaker.openedAt")
 	if !ok || owner != PoolScalingController {
 		t.Errorf("status.sdkWarmCircuitBreaker.openedAt: want PoolScalingController, got (%q, %v)", owner, ok)
 	}
-	owner, ok = Owner(SandboxWarmPool, "status.warmCount")
+	owner, ok = Owner(PodSet, "status.warmCount")
 	if !ok || owner != WarmPoolController {
 		t.Errorf("status.warmCount: want WarmPoolController, got (%q, %v)", owner, ok)
 	}
@@ -99,7 +99,7 @@ func TestOwnerSdkWarmCircuitBreakerOverridesDefault(t *testing.T) {
 
 func TestAllRulesEnumerateMatrix(t *testing.T) {
 	rules := AllRules()
-	if len(rules) < 12 {
+	if len(rules) < 7 {
 		t.Errorf("AllRules() should enumerate the §4.6.3 matrix, got %d", len(rules))
 	}
 	// Every rule must validate against its declared owner.

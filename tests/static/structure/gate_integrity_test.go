@@ -66,8 +66,6 @@ var tierZeroGates = []tierZeroGate{
 	{"TestFragmentLinkGateCertifiesTheTree", "fragment_link_test.go", "every intra-repo markdown fragment resolves"},
 	{"TestDegradationMatrixCorrespondsOneToOneWithTheChannelRegister", "matrix_completeness_test.go", "the §28.8 matrix covers every channel"},
 	{"TestEverySpecificationHeadingCarriesAnIndexEntry", "heading_walker_test.go", "every heading carries a resolving index entry"},
-	{"TestClaimRegisterSaysWhatTheSpecificationRequires", "claim_register_test.go", "the §28.4 claim register is well-formed"},
-	{"TestClaimRegisterAgreesWithTheAdapterProto", "claim_register_proto_agreement_test.go", "the claim register agrees with the adapter proto"},
 	{"TestEveryCitationNamesADocumentAReaderCanReach", "citation_document_test.go", "every citation names a document a reader can reach"},
 	{"TestResidualGateCertifiesTheTree", "residual_gate_test.go", "no member of a migration class is unclassified"},
 	{"TestSpecCitationResolutionCertifiesTheTree", "spec_citation_resolution_test.go", "a line citation resolves inside the section it names"},
@@ -266,7 +264,7 @@ func tolerantChannelInvocations(root string, gates []tierZeroGate) []string {
 	return findings
 }
 
-// spec: 28.2 (the gates the naming law needs), 28.4 (claim register)
+// spec: 28.2 (the gates the naming law needs)
 // diagnosis: a gate the channel migration relies on is no longer registered at
 // the static tier. Either its file was deleted, its test was renamed, or it moved to a
 // channel whose failure the harness tolerates. Whatever population that gate

@@ -188,7 +188,7 @@ helm() {
 }
 export -f helm
 
-# 1b. Drain any leftover load-* SandboxWarmPools from a prior run.
+# 1b. Drain any leftover load-* PodSets from a prior run.
 #     The previous run's pools (4 pools × 2 CPU per sandbox at small
 #     scale) pin both nodes at 100% CPU, blocking the rolling deploy of
 #     gateway/webhook replicas in run-e2e.sh — `kubectl wait` then times
@@ -204,13 +204,13 @@ export -f helm
 # terminates the script even though the if is supposed to swallow the
 # failure. macOS still ships bash 3.2 and the cloud scripts run there.
 if (kubectl get namespace lenny-agents >/dev/null 2>&1); then
-  echo "==[1b/5] drain leftover load-* SandboxWarmPools==" >&2
+  echo "==[1b/5] drain leftover load-* PodSets==" >&2
   # The four pool names are deterministic across runs; deleting them
   # before re-applying the load fixture frees the CPU the prior run's
-  # warm pods were holding. Force-drain the orphaned Sandboxes after
+  # warm pods were holding. Force-drain the orphaned AgentPods after
   # so CPU frees up immediately instead of waiting on the per-sandbox
   # §6.2 drain timeout. Both deletes are idempotent.
-  kubectl -n lenny-agents delete sandboxwarmpool \
+  kubectl -n lenny-agents delete podset \
     load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool \
     --ignore-not-found
   for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
@@ -266,10 +266,10 @@ fi
 # Wait for each pool to reach minWarm before driving load against it.
 for pool in load-session-pool load-cworkspace-pool load-cstateless-pool load-task-pool; do
   echo "  waiting for ${pool} to scale to minWarm..." >&2
-  until [[ "$(kubectl -n lenny-agents get sandboxwarmpool "${pool}" -o jsonpath='{.status.readyCount}' 2>/dev/null)" -ge 1 ]]; do
+  until [[ "$(kubectl -n lenny-agents get podset "${pool}" -o jsonpath='{.status.readyCount}' 2>/dev/null)" -ge 1 ]]; do
     sleep 5
   done
-  ready=$(kubectl -n lenny-agents get sandboxwarmpool "${pool}" -o jsonpath='{.status.readyCount}')
+  ready=$(kubectl -n lenny-agents get podset "${pool}" -o jsonpath='{.status.readyCount}')
   echo "  ${pool} ready=${ready}" >&2
 done
 

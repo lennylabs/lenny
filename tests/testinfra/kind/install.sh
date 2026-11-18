@@ -206,7 +206,7 @@ lenny-ctl Dockerfile BINARY=lenny-ctl
 # built and loaded onto the offline Kind cluster like the rest.
 lenny-pool-scaling-controller Dockerfile BINARY=lenny-pool-scaling-controller
 # TESTING.md §12.9.8 security-tier egress-capture sidecar; the controller injects
-# this image when a Sandbox carries the egress-capture annotation.
+# this image when an AgentPod carries the egress-capture annotation.
 lenny-egress-capture Dockerfile BINARY=lenny-egress-capture
 # The adapter binary image. It is a build base only: the lenny-adapter
 # image below overlays the supervise-probe binary onto it.
@@ -372,11 +372,11 @@ build_image() {
   fi
 
   log "building ${image} from ${dockerfile_rel}"
-  docker build -f "${dockerfile}" "${build_args[@]}" -t "${image}" "${context}" </dev/null
+  docker build -f "${dockerfile}" ${build_args[@]+"${build_args[@]}"} -t "${image}" "${context}" </dev/null
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
     log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
-    DOCKER_BUILDKIT=0 docker build -f "${dockerfile}" "${build_args[@]}" -t "${image}" "${context}" </dev/null
+    DOCKER_BUILDKIT=0 docker build -f "${dockerfile}" ${build_args[@]+"${build_args[@]}"} -t "${image}" "${context}" </dev/null
   fi
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
@@ -1187,7 +1187,7 @@ kc apply -f "${CHART_DIR}/crds/"
 # sessiondriver harness drives by name plus the generic `echo` /
 # `claude-code` runtimeRefs the tier-7 scenarios post; the pools are the
 # Postgres-authoritative pool rows the PoolScalingController reconciles
-# into SandboxTemplate/SandboxWarmPool CRD pairs in lenny-agents. Each pool
+# into PodSet CRD pairs in lenny-agents. Each pool
 # is standard-isolation (the §13.1 Kind cluster has no Kata/microVM runtime
 # class) with allowStandardIsolation: true, the §5.3 deployer opt-in a
 # standard-isolation pool requires. Each pool also sets the §13.2 per-pool
@@ -1227,7 +1227,7 @@ bootstrap:
     # The §4.7 sidecar / embedded / SDK-warm reference runtimes the
     # tier-5/8 sessiondriver harness drives by name. The gateway runtime
     # lookup resolves these when a test posts POST /v1/sessions with the
-    # matching runtimeRef; the Sandbox reconciler reads the same-named
+    # matching runtimeRef; the AgentPod reconciler reads the same-named
     # Runtime CR (applied from agent-workload.yaml) for the pod image.
     # capabilities.injection.supported is true (§5.1) to match the
     # Runtime CRD in agent-workload.yaml, so the tier5/8/9
@@ -1499,7 +1499,7 @@ bootstrap:
     # override: §13.2 rejects dnsPolicy: cluster-default on a
     # non-standard-isolation pool (the dedicated-CoreDNS opt-out is
     # standard-only), and none is needed here — coredns.clusterIP is
-    # unset on this overlay, so the Sandbox reconciler's applyDedicatedDNS
+    # unset on this overlay, so the AgentPod reconciler's applyDedicatedDNS
     # already falls back every agent pod (regardless of pool) to the
     # default ClusterFirst resolver. warmCount: 1 — gvisor_isolation_
     # test.go is the only consumer and claims no pod (it inspects the
@@ -1827,7 +1827,7 @@ fi
 # policies' service-CIDR ipBlock (10.96.0.0/12, covering the kubernetes
 # Service ClusterIP) does not match the apiserver's real endpoint on the
 # `kind` Docker bridge network (172.18.0.0/16). Without this the gateway's
-# per-session SandboxClaim write times out and POST /v1/sessions/start
+# per-session PodClaim write times out and POST /v1/sessions/start
 # returns 503 SESSION_CREATION_FAILED. The manifest excludes the Token
 # Service, whose kube-apiserver egress the chart's allow-token-service admits
 # through the kubeApiServerCIDR in e2e-values.yaml. The manifest is
@@ -1923,7 +1923,7 @@ fi
 # RuntimeClass. The pools themselves are Postgres-authoritative: the §17.6
 # bootstrap.pools list seeded through the chart (Step 9) creates the pool
 # rows, and the PoolScalingController reconciles each into a
-# SandboxTemplate + SandboxWarmPool CRD pair in lenny-agents. The Sandbox
+# PodSet in lenny-agents. The AgentPod
 # reconciler reads each pool's Runtime CR spec.image to build the warm
 # agent pods, so the tier-5/8/9 tests that need a live agent pod run
 # against a real workload rather than skipping. The chart's
@@ -1956,10 +1956,10 @@ sed \
 # upgrade state machine rather than an in-place roll. A reinstall has no
 # such upgrade to run, so without this step a test can claim a pod built
 # from the previous image. reinstall-sync selects only pods whose state
-# label and owning Sandbox phase are both idle, and each pod is deleted
+# label and owning AgentPod phase are both idle, and each pod is deleted
 # with its listed resourceVersion as a precondition, so a pod claimed after
 # the listing (the claim relabels it) is refused with 409 rather than
-# deleted. The Sandbox reconciler retires the Sandbox of a deleted idle pod
+# deleted. The AgentPod reconciler retires the AgentPod of a deleted idle pod
 # and the pool replaces it from the current CR. A pod created from the old
 # CR before the apply above can still be warming; the loop waits for it to
 # reach idle and rolls it on a later pass.
@@ -1967,14 +1967,14 @@ log "rolling idle warm pods whose runtime or platform container image is out of 
 roll_list() {
   kc -n lenny-agents get pods -l lenny.dev/managed=true -o json >"${REINSTALL_SYNC_DIR}/pods.json"
   kc get runtimes.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/runtimes.json"
-  kc -n lenny-agents get sandboxes.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/sandboxes.json"
+  kc -n lenny-agents get agentpods.lenny.dev -o json >"${REINSTALL_SYNC_DIR}/agentpods.json"
   "${REINSTALL_SYNC}" stale-pods "$@" \
     --platform-image "adapter=$(image_ref lenny-adapter)" \
     --platform-image "lenny-supervisor-stage=$(image_ref lenny-supervisor)" \
     --platform-image "egress-capture=$(image_ref lenny-egress-capture)" \
     --pods "${REINSTALL_SYNC_DIR}/pods.json" \
     --runtimes "${REINSTALL_SYNC_DIR}/runtimes.json" \
-    --sandboxes "${REINSTALL_SYNC_DIR}/sandboxes.json"
+    --agentpods "${REINSTALL_SYNC_DIR}/agentpods.json"
 }
 rolled=0
 stale_idle=""
@@ -2040,7 +2040,7 @@ for _ in $(seq 1 36); do
 done
 if [ "${ready:-0}" -lt 2 ]; then
   log "fewer than two warm agent pods became Ready; dumping their state"
-  kc -n lenny-agents get sandboxwarmpool,pods -o wide || true
+  kc -n lenny-agents get podset,pods -o wide || true
   echo "error: fewer than two warm agent pods became Ready" >&2
   exit 1
 fi

@@ -704,7 +704,7 @@ type ResumeParams struct {
 	// the kubelet emptyDir guard is the only backstop. F-7.3.26.
 	ExpectedWorkspaceBytes int64
 	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size cap
-	// resolved from the SandboxTemplate. Zero disables the
+	// resolved from the PodSet. Zero disables the
 	// gateway-supplied limit. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
 	// ExpectedWorkspaceRoot is the §7.3 the original session ran against. The gateway passes it so
@@ -1042,10 +1042,10 @@ func (c *Client) ShutdownReclaim(
 
 // RecycleScrub carries the pod identity and the §5.2 whole-pod scrub
 // parameters the gateway delivers on the occupancy-zero recycle-boundary
-// Shutdown. The gateway resolves these from the pod's SandboxName and the
+// Shutdown. The gateway resolves these from the pod's AgentPodName and the
 // resolved pool's sessionPolicy.recycle block, captured once at bind time.
 type RecycleScrub struct {
-	// PodID is the agent_pod_state row key (the Sandbox name) the gateway
+	// PodID is the agent_pod_state row key (the AgentPod name) the gateway
 	// keys the missing-report timeout on and the adapter echoes back in
 	// ReportPodScrub so the report matches the armed timer.
 	// spec: §4.7 Shutdown recycle disposition.

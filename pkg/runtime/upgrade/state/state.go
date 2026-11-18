@@ -25,7 +25,7 @@ type State string
 
 const (
 	// Pending: upgrade registered, not yet started. Old and new
-	// SandboxTemplate CRDs exist; new pool minWarm = 0.
+	// PodSet CRDs exist; new pool minWarm = 0.
 	Pending State = "pending"
 
 	// Expanding: new pool ramping up to target minWarm; new sessions
@@ -37,7 +37,7 @@ const (
 	// drainTimeoutSeconds.
 	Draining State = "draining"
 
-	// Contracting: old SandboxTemplate CRD and pool record being deleted.
+	// Contracting: old PodSet CRD and pool record being deleted.
 	Contracting State = "contracting"
 
 	// Complete: upgrade finished, only the new pool remains. Terminal.

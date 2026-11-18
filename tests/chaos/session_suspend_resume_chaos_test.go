@@ -206,9 +206,9 @@ func orphanedClaimsReclaimed(t *testing.T) float64 {
 
 // runClaimGC runs the controller's claim-orphan GC until the pod's claim is
 // gone, aging every claim past its orphan timeout, and asserts the GC
-// recorded the reclaim: the pod's Sandbox is draining and carries the
+// recorded the reclaim: the pod's AgentPod is draining and carries the
 // OrphanClaimReclaimed condition, and lenny_orphaned_claims_total for the
-// pool rose by one (§4.6.1 Orphaned SandboxClaim detection).
+// pool rose by one (§4.6.1 Orphaned PodClaim detection).
 func runClaimGC(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -228,7 +228,7 @@ func runClaimGC(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	awaitReclaimCondition(h, pod)
 	cancel()
 	<-done
-	assertSandboxReclaimed(t, h, pod)
+	assertAgentPodReclaimed(t, h, pod)
 	if got := orphanedClaimsReclaimed(t) - before; got != 1 {
 		t.Errorf("lenny_orphaned_claims_total{pool=%q} rose by %v, want 1", lifecycleharness.Pool, got)
 	}
@@ -253,15 +253,15 @@ func awaitClaimGone(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	}
 }
 
-// awaitReclaimCondition waits, for at most 15 s, until the pod's Sandbox
+// awaitReclaimCondition waits, for at most 15 s, until the pod's AgentPod
 // carries the OrphanClaimReclaimed condition. It reports nothing itself:
-// assertSandboxReclaimed reads the outcome after the wait.
+// assertAgentPodReclaimed reads the outcome after the wait.
 // spec: §4.6.1 (Warm Pool Controller (Pod Lifecycle)), §6.2 (Pod State
 // Machine)
 func awaitReclaimCondition(h *lifecycleharness.Harness, pod string) {
 	deadline := time.Now().Add(15 * time.Second)
 	for time.Now().Before(deadline) {
-		var sb lennyv1.Sandbox
+		var sb lennyv1.AgentPod
 		err := h.Cluster.Client.Get(context.Background(), client.ObjectKey{Namespace: lifecycleharness.Namespace, Name: pod}, &sb)
 		if err == nil && meta.IsStatusConditionTrue(sb.Status.Conditions, sandboxcond.OrphanClaimReclaimed) {
 			return
@@ -270,19 +270,19 @@ func awaitReclaimCondition(h *lifecycleharness.Harness, pod string) {
 	}
 }
 
-// assertSandboxReclaimed asserts the claim-orphan GC drained the pod's
-// Sandbox and recorded the OrphanClaimReclaimed condition on it.
-func assertSandboxReclaimed(t *testing.T, h *lifecycleharness.Harness, pod string) {
+// assertAgentPodReclaimed asserts the claim-orphan GC drained the pod's
+// AgentPod and recorded the OrphanClaimReclaimed condition on it.
+func assertAgentPodReclaimed(t *testing.T, h *lifecycleharness.Harness, pod string) {
 	t.Helper()
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := h.Cluster.Client.Get(context.Background(), client.ObjectKey{Namespace: lifecycleharness.Namespace, Name: pod}, &sb); err != nil {
-		t.Fatalf("read the Sandbox %s: %v", pod, err)
+		t.Fatalf("read the AgentPod %s: %v", pod, err)
 	}
 	if sb.Status.Phase != sandboxstate.CoarseDraining {
-		t.Errorf("the reclaimed Sandbox %s is %q, want %q", pod, sb.Status.Phase, sandboxstate.CoarseDraining)
+		t.Errorf("the reclaimed AgentPod %s is %q, want %q", pod, sb.Status.Phase, sandboxstate.CoarseDraining)
 	}
 	if c := meta.FindStatusCondition(sb.Status.Conditions, sandboxcond.OrphanClaimReclaimed); c == nil || c.Status != metav1.ConditionTrue {
-		t.Errorf("the reclaimed Sandbox %s carries %s = %v, want True", pod, sandboxcond.OrphanClaimReclaimed, c)
+		t.Errorf("the reclaimed AgentPod %s carries %s = %v, want True", pod, sandboxcond.OrphanClaimReclaimed, c)
 	}
 }
 
@@ -290,7 +290,7 @@ func assertSandboxReclaimed(t *testing.T, h *lifecycleharness.Harness, pod strin
 // diagnosis: a coordinator killed right after the resume attempt's entry
 // write left no orphaned claim, or a claim the controller's claim-orphan GC
 // could not reclaim, or the GC reclaimed it without draining and marking
-// the Sandbox or without counting the orphan; or the session did not reach running on another pod through the watchdog and
+// the AgentPod or without counting the orphan; or the session did not reach running on another pod through the watchdog and
 // the peer's driver; or a crash between an interrupt suspension's binding
 // clear and its release left a session that could not resume.
 func TestCrashBetweenEffectsLeavesAReclaimableClaim_spec_7_3(t *testing.T) {

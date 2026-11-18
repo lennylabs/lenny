@@ -5,7 +5,7 @@
 // spec §12.8 ("Data residency admission control") and §12.9. The
 // webhook is deployed with failurePolicy: Fail and intercepts CREATE
 // and UPDATE on the tenant-scoped CRD resources that carry a
-// dataResidencyRegion field (SandboxClaim and any Tenant or
+// dataResidencyRegion field (PodClaim and any Tenant or
 // Environment configuration resources).
 //
 // The §12.8 rule. On each admission request the webhook resolves the
@@ -26,8 +26,7 @@
 // inherited region, or — at the webhook-transport layer — a missing
 // region configuration all reject. A webhook outage rejects via
 // failurePolicy: Fail so an unverifiable region constraint cannot be
-// silently admitted (§12.8: "if the webhook is unavailable, admission
-// is denied").
+// silently admitted (§12.8).
 //
 // The decision logic is split from the webhook HTTP/AdmissionReview
 // transport so it can be unit-tested without the controller-runtime
@@ -70,7 +69,7 @@ const TierT4 = "T4"
 // of the admitted resource.
 type Request struct {
 	// Kind is the admitted resource kind, used in rejection messages
-	// (for example "SandboxClaim", "Tenant", "Environment").
+	// (for example "PodClaim", "Tenant", "Environment").
 	Kind string
 
 	// Field is the JSON path of the dataResidencyRegion field on the

@@ -426,7 +426,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		}
 		if outcome.Claim != nil {
 			createClaim = outcome.Claim
-			row.PodAssignment = createClaim.SandboxName
+			row.PodAssignment = createClaim.AgentPodName
 			row.PoolRef = createClaim.Pool
 			startCtx.PodClaim = createClaim.PodClaim
 		}
@@ -447,7 +447,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 		}
 		bound = result
 		if bound != nil {
-			row.PodAssignment = bound.SandboxName
+			row.PodAssignment = bound.AgentPodName
 			row.SetupOutput = setupOutputsFromBind(bound.SetupOutputs)
 		}
 	}

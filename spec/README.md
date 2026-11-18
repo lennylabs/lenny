@@ -320,7 +320,7 @@ The numbered files hold the content of every page that is not yet written. Their
   - [28.1 Naming law](28_communication-channels.md#281-naming-law)
   - [28.2 Taxonomy and axes](28_communication-channels.md#282-taxonomy-and-axes)
   - [28.3 Registers](28_communication-channels.md#283-registers)
-  - [28.4 Claim register](28_communication-channels.md#284-claim-register)
+  - [28.4 Implementation status](28_communication-channels.md#284-implementation-status)
   - [28.5 Contract cards](28_communication-channels.md#285-contract-cards)
     - [28.5.1 Gateway-to-pod](28_communication-channels.md#2851-gateway-to-pod)
     - [28.5.2 Pod-to-gateway](28_communication-channels.md#2852-pod-to-gateway)

@@ -383,7 +383,7 @@ func TestOpsUnreachableFromAgentPod_spec_25_1(t *testing.T) {
 // The pod carries lenny.dev/managed=true, the label every agent-egress
 // NetworkPolicy selects (default-deny-all admits nothing; the supplemental
 // allow-pod-egress-* policies re-open one destination each to managed pods).
-// A real agent pod is managed by the Sandbox reconciler and carries it; a
+// A real agent pod is managed by the AgentPod reconciler and carries it; a
 // probe that omits it would sit under default-deny with no egress allow and
 // could never reach the object store, so the boundary the test asserts would
 // be unobservable. The lenny-label-immutability webhook permits any initial

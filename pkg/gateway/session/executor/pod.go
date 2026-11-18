@@ -47,7 +47,7 @@ type PodExecutor struct {
 	// failure, after the conn has left the cache. It is set at wiring time,
 	// before the first Send, and read without a lock, as approvals is. Nil
 	// reports nothing.
-	onStreamFailure func(tenantID, sessionID, sandboxName string, cause error)
+	onStreamFailure func(tenantID, sessionID, agentPodName string, cause error)
 
 	// mu guards streams. It is taken before any attachConn mutex.
 	mu      sync.Mutex
@@ -83,7 +83,7 @@ func (e *PodExecutor) SetApprovalGate(g ApprovalGate) {
 // end reaches h; a clean end, an Unavailable end, and the gateway's own
 // evictions do not. A nil handler reports nothing.
 // spec: §28.5.1 (CH-ATTACH Degradation.).
-func (e *PodExecutor) SetStreamFailureHandler(h func(tenantID, sessionID, sandboxName string, cause error)) {
+func (e *PodExecutor) SetStreamFailureHandler(h func(tenantID, sessionID, agentPodName string, cause error)) {
 	e.onStreamFailure = h
 }
 
@@ -279,7 +279,7 @@ type toolResultFrame struct {
 // the pod returns to idle only when its last slot drains, per §5.2.
 // Routing every concurrent termination through the session-mode
 // drain would (a) tear down sibling slots that did not terminate and
-// (b) leak the SandboxClaim that the slot reservation created.
+// (b) leak the PodClaim that the slot reservation created.
 func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 	// No disposition: the pod still drains, but the §6.2 terminal phase is
 	// not recorded. The terminal-state path uses Release instead.
@@ -288,7 +288,7 @@ func (e *PodExecutor) Close(ctx context.Context, sessionID string) error {
 
 // Release implements SessionReleaser: it tears the session's pod down like
 // Close and records the session's terminal disposition on the backing
-// Sandbox (§6.2 attached → completed/failed/cancelled/expired) before
+// AgentPod (§6.2 attached → completed/failed/cancelled/expired) before
 // draining the pod. A concurrent-mode (slot) bind has no pod-level terminal
 // phase — the per-slot lifecycle tracks that — so it releases the slot
 // without a disposition.
@@ -302,9 +302,9 @@ func (e *PodExecutor) Release(ctx context.Context, sessionID string, disposition
 		return e.binder.ReleaseSlot(ctx, bind)
 	}
 	// The session-terminal disposition (completed/failed/cancelled/expired)
-	// is recorded on the Postgres session model and surfaced on the Sandbox
+	// is recorded on the Postgres session model and surfaced on the AgentPod
 	// only as a Terminated condition; it is no longer a coarse
-	// Sandbox.status.phase value (spec: §6.2, §7.2). Release maps the
+	// AgentPod.status.phase value (spec: §6.2, §7.2). Release maps the
 	// disposition string to that condition reason and drains the pod.
 	return e.binder.Release(ctx, bind, string(disposition))
 }

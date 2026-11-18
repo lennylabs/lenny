@@ -111,7 +111,7 @@ func TestResolveVariantRolesRejectsSumAtOrAboveOne(t *testing.T) {
 }
 
 // spec: 4.6.2
-// diagnosis: a variant pool's own SandboxWarmPool is sized by the
+// diagnosis: a variant pool's own PodSet is sized by the
 // variant formula, so a variant naming a VariantPool absent from the
 // pool configs would route traffic to a pool with no warm-pod floor.
 // ResolveVariantRoles must reject the configuration rather than drop it.

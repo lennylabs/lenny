@@ -25,11 +25,11 @@ func denyingClient(t *testing.T) client.WithWatch {
 	t.Helper()
 	scheme := newScheme(t)
 	return fake.NewClientBuilder().WithScheme(scheme).
-		WithStatusSubresource(&lennyv1.SandboxWarmPool{}).
+		WithStatusSubresource(&lennyv1.PodSet{}).
 		WithInterceptorFuncs(interceptor.Funcs{
 			Create: func(_ context.Context, _ client.WithWatch, obj client.Object, _ ...client.CreateOption) error {
 				return apierrors.NewForbidden(
-					schema.GroupResource{Group: "lenny.dev", Resource: "sandboxwarmpools"},
+					schema.GroupResource{Group: "lenny.dev", Resource: "podsets"},
 					obj.GetName(), errors.New("validator rejected"),
 				)
 			},
@@ -129,7 +129,7 @@ func TestSyncResumeEpochFirstObservationDoesNotClear_spec_4_6_2(t *testing.T) {
 // does not churn the CRD every tick).
 func TestSyncStampsLastReconciledAtOnGenerationChange_spec_4_6_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.Generation = 3
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -138,10 +138,10 @@ func TestSyncStampsLastReconciledAtOnGenerationChange_spec_4_6_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("sync 1: %v", err)
 	}
-	tmpl := getTemplate(t, c)
-	first := tmpl.Annotations[lennyv1.AnnotationLastReconciledAt]
+	ps := getPodSet(t, c)
+	first := ps.Annotations[lennyv1.AnnotationLastReconciledAt]
 	if first == "" {
-		t.Fatalf("last-reconciled-at not stamped on first reconcile: %v", tmpl.Annotations)
+		t.Fatalf("last-reconciled-at not stamped on first reconcile: %v", ps.Annotations)
 	}
 	if _, err := time.Parse(time.RFC3339Nano, first); err != nil {
 		t.Errorf("last-reconciled-at %q is not RFC3339Nano: %v", first, err)
@@ -153,7 +153,7 @@ func TestSyncStampsLastReconciledAtOnGenerationChange_spec_4_6_2(t *testing.T) {
 	if err := r2.Sync(context.Background()); err != nil {
 		t.Fatalf("sync 2: %v", err)
 	}
-	if got := getTemplate(t, c).Annotations[lennyv1.AnnotationLastReconciledAt]; got != first {
+	if got := getPodSet(t, c).Annotations[lennyv1.AnnotationLastReconciledAt]; got != first {
 		t.Errorf("last-reconciled-at changed on unchanged generation: %q -> %q", first, got)
 	}
 
@@ -165,7 +165,7 @@ func TestSyncStampsLastReconciledAtOnGenerationChange_spec_4_6_2(t *testing.T) {
 	if err := r3.Sync(context.Background()); err != nil {
 		t.Fatalf("sync 3: %v", err)
 	}
-	got := getTemplate(t, c).Annotations[lennyv1.AnnotationLastReconciledAt]
+	got := getPodSet(t, c).Annotations[lennyv1.AnnotationLastReconciledAt]
 	if got == first {
 		t.Errorf("last-reconciled-at did not advance on generation change (still %q)", got)
 	}

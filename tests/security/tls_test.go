@@ -53,7 +53,7 @@ var mtlsIssuers = []string{
 // Certificate's CA once the Certificate is Ready.
 var caInjectedWebhooks = []string{
 	"lenny-label-immutability",
-	"lenny-sandboxclaim-guard",
+	"lenny-podclaim-guard",
 	"lenny-pool-config-validator",
 	"lenny-ephemeral-container-cred-guard",
 	"lenny-pod-security",

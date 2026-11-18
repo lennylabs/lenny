@@ -240,7 +240,7 @@ func TestRolloutRestartBumpsDeploymentTemplate_spec_24_19(t *testing.T) {
 
 // TestEchoPoolReadyReflectsReadyCount_spec_17_4 covers the §17.4/§5.2 echo-pool
 // readiness read against a real kube-apiserver with the lenny.dev CRDs
-// installed: the seeded echo SandboxWarmPool reads not-ready until its
+// installed: the seeded echo PodSet reads not-ready until its
 // status.readyCount reports a claimable idle pod, then ready. This is the
 // "pool ready" signal lenny status reports independently of "gateway up". The
 // status subresource is set directly because envtest runs no WarmPoolController.
@@ -257,14 +257,13 @@ func TestEchoPoolReadyReflectsReadyCount_spec_17_4(t *testing.T) {
 	cfg := env.RESTConfig()
 
 	// echoPoolReady reads the echo pool in the agent namespace the product
-	// code fixes, so this test owns the echo pool pair there on the
+	// code fixes, so this test owns the echo PodSet there on the
 	// package's shared control plane, and the claim deletes a copy whose
 	// readyCount an earlier iteration set.
 	const ns = "lenny-agents"
 	claimFixedObjects(
 		t, cfg,
-		&lennyv1alpha1.SandboxTemplate{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: stack.EchoPoolName}},
-		&lennyv1alpha1.SandboxWarmPool{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: stack.EchoPoolName}},
+		&lennyv1alpha1.PodSet{ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: stack.EchoPoolName}},
 	)
 	if err := stack.EnsureAgentNamespaceFromConfigForTest(ctx, cfg, ns); err != nil {
 		t.Fatalf("ensure agent namespace: %v", err)
@@ -281,7 +280,7 @@ func TestEchoPoolReadyReflectsReadyCount_spec_17_4(t *testing.T) {
 
 	// Drive the pool status to one ready idle pod.
 	cl := lennyClient(t, cfg)
-	var pool lennyv1alpha1.SandboxWarmPool
+	var pool lennyv1alpha1.PodSet
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Namespace: ns, Name: stack.EchoPoolName}, &pool); err != nil {
 		t.Fatalf("get echo pool: %v", err)
 	}

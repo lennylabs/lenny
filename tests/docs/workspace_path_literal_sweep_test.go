@@ -73,7 +73,7 @@ var permittedWorkspaceRetirementStatements = map[string][]string{
 	filepath.Join("cmd", "runtimes", "echo-concurrent", "main_test.go"): {
 		"// pod-global /workspace/current alternative.",
 	},
-	filepath.Join("pkg", "controller", "sandbox", "podspec", "podspec_test.go"): {
+	filepath.Join("pkg", "controller", "agentpod", "podspec", "podspec_test.go"): {
 		"// the pod-global `/workspace/current` exists on no pod. The builder",
 		`if strings.Contains(joined, "/workspace/current") {`,
 		`t.Errorf("%s argv names the retired pod-global /workspace/current: %v", tc.container, args)`,

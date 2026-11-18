@@ -199,7 +199,7 @@ type finalizeExitCell struct {
 //
 // spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal
 // states), §6.1 (Per-session credential lease lifecycle), §4.6.3
-// (SandboxClaim: a release that ends the occupancy without reuse), §5.2
+// (PodClaim: a release that ends the occupancy without reuse), §5.2
 // (Slot assignment atomicity)
 func TestFinalizeExitsReleaseThroughFailureWriteHook_spec_15_1(t *testing.T) {
 	rows := []struct {
@@ -296,7 +296,7 @@ func TestFinalizeExitsReleaseThroughFailureWriteHook_spec_15_1(t *testing.T) {
 // occupancy exactly once, by the row's pool kind.
 //
 // spec: §6.2 (finalize timeout), §15.1 (finalize row), §7.2 (terminal
-// states), §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// states), §4.6.3 (PodClaim: a release that ends the occupancy without
 // reuse)
 func TestFinalizeReadyWriteStoreErrorReleasesOnceAfterWatchdog_spec_6_2(t *testing.T) {
 	for _, pool := range finalizeExitPools() {
@@ -327,7 +327,7 @@ func TestFinalizeReadyWriteStoreErrorReleasesOnceAfterWatchdog_spec_6_2(t *testi
 // claim and no claim is deleted; on an exclusive pool it deletes the claim by
 // name. A later finalizing-watchdog pass removes nothing more.
 //
-// spec: §15.1 (finalize row), §6.2 (finalize timeout), §4.6.3 (SandboxClaim:
+// spec: §15.1 (finalize row), §6.2 (finalize timeout), §4.6.3 (PodClaim:
 // a release that ends the occupancy without reuse), §5.2 (Slot assignment
 // atomicity)
 func TestFinalizePlanParseStoreErrorReclaimsByPoolKind_spec_15_1(t *testing.T) {

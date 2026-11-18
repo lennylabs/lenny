@@ -39,14 +39,14 @@ func newScheme(t *testing.T) *runtime.Scheme {
 	return s
 }
 
-func sandboxIn(ns, pool, name, phase string) *lennyv1.Sandbox {
-	return &lennyv1.Sandbox{
+func agentPodIn(ns, pool, name, phase string) *lennyv1.AgentPod {
+	return &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: pool},
 		},
-		Status: lennyv1.SandboxStatus{Phase: phase},
+		Status: lennyv1.AgentPodStatus{Phase: phase},
 	}
 }
 
@@ -61,13 +61,13 @@ func claimerFor(t *testing.T, objs ...client.Object) (*podclaim.Claimer, client.
 
 // spec: §4.6.1, §4.6.3
 // TestClaimBindsAnIdlePod_spec_4_6 — Claim CREATEs the per-pod occupancy
-// SandboxClaim (claim-<podName>) with spec only, then writes its first
+// PodClaim (claim-<podName>) with spec only, then writes its first
 // `bound` binding-state status patch. The gateway does not write
-// Sandbox.status; the WarmPoolController projects the pod's phase from the
+// AgentPod.status; the WarmPoolController projects the pod's phase from the
 // claim binding state.
 func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c := claimerFor(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
+	claimer, c := claimerFor(t, agentPodIn(ns, testPool, "sbx-1", "idle"))
 
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -76,31 +76,31 @@ func TestClaimBindsAnIdlePod_spec_4_6(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 	// The per-pod occupancy claim (§4.6.3) is named claim-<podName> and
-	// carries sandboxRef and tenantId only; the session-to-pod binding lives
+	// carries agentPodRef and tenantId only; the session-to-pod binding lives
 	// on the Postgres session row's pod_assignment column.
 	if claim.Name != "claim-sbx-1" {
 		t.Errorf("claim name = %q, want claim-sbx-1 (per-pod deterministic name)", claim.Name)
 	}
-	if claim.Spec.SandboxRef != "sbx-1" || claim.Spec.TenantID != "acme" {
+	if claim.Spec.AgentPodRef != "sbx-1" || claim.Spec.TenantID != "acme" {
 		t.Errorf("claim spec = %+v, want a binding of acme to sbx-1", claim.Spec)
 	}
 
-	var stored lennyv1.SandboxClaim
+	var stored lennyv1.PodClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: claim.Name}, &stored); err != nil {
-		t.Fatalf("the SandboxClaim was not persisted: %v", err)
+		t.Fatalf("the PodClaim was not persisted: %v", err)
 	}
 	if stored.Status.Phase != "bound" {
 		t.Errorf("claim binding state = %q, want bound (first status patch)", stored.Status.Phase)
 	}
 
-	// The gateway no longer writes Sandbox.status.phase; the WPC projection
+	// The gateway no longer writes AgentPod.status.phase; the WPC projection
 	// owns it, so the pod's status stays at the WPC-written idle value here.
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	if sb.Status.Phase != "idle" {
-		t.Errorf("sandbox phase = %q, want idle (gateway does not write Sandbox.status; WPC projects claimed from the claim binding state)", sb.Status.Phase)
+		t.Errorf("sandbox phase = %q, want idle (gateway does not write AgentPod.status; WPC projects claimed from the claim binding state)", sb.Status.Phase)
 	}
 }
 
@@ -113,13 +113,13 @@ func TestClaimReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 	}
 }
 
-func TestClaimSkipsNonIdleSandboxes(t *testing.T) {
+func TestClaimSkipsNonIdleAgentPods(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, _ := claimerFor(
 		t,
-		sandboxIn(ns, testPool, "sbx-warming", "warming"),
-		sandboxIn(ns, testPool, "sbx-claimed", "claimed"),
-		sandboxIn(ns, testPool, "sbx-draining", "draining"),
+		agentPodIn(ns, testPool, "sbx-warming", "warming"),
+		agentPodIn(ns, testPool, "sbx-claimed", "claimed"),
+		agentPodIn(ns, testPool, "sbx-draining", "draining"),
 	)
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{Pool: testPool, SessionID: "s"})
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
@@ -127,27 +127,27 @@ func TestClaimSkipsNonIdleSandboxes(t *testing.T) {
 	}
 }
 
-func TestClaimPicksTheIdleSandboxAmongMixedPhases(t *testing.T) {
+func TestClaimPicksTheIdleAgentPodAmongMixedPhases(t *testing.T) {
 	ns := testNamespace(t)
 	claimer, _ := claimerFor(
 		t,
-		sandboxIn(ns, testPool, "sbx-warming", "warming"),
-		sandboxIn(ns, testPool, "sbx-idle", "idle"),
-		sandboxIn(ns, testPool, "sbx-claimed", "claimed"),
+		agentPodIn(ns, testPool, "sbx-warming", "warming"),
+		agentPodIn(ns, testPool, "sbx-idle", "idle"),
+		agentPodIn(ns, testPool, "sbx-claimed", "claimed"),
 	)
 	claim, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{Pool: testPool, SessionID: "s"})
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "sbx-idle" {
-		t.Errorf("claimed %q, want the idle sandbox sbx-idle", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "sbx-idle" {
+		t.Errorf("claimed %q, want the idle sandbox sbx-idle", claim.Spec.AgentPodRef)
 	}
 }
 
 func TestClaimScopesToTheRequestedPool(t *testing.T) {
 	ns := testNamespace(t)
 	// The only idle pod belongs to a different pool.
-	claimer, _ := claimerFor(t, sandboxIn(ns, "other-pool", "sbx-other", "idle"))
+	claimer, _ := claimerFor(t, agentPodIn(ns, "other-pool", "sbx-other", "idle"))
 
 	_, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{Pool: testPool, SessionID: "s"})
 	if !errors.Is(err, podclaim.ErrNoIdlePod) {
@@ -155,7 +155,7 @@ func TestClaimScopesToTheRequestedPool(t *testing.T) {
 	}
 }
 
-// spec: §4.6.1 ADR-007 — the per-pod SandboxClaim CREATE with the
+// spec: §4.6.1 ADR-007 — the per-pod PodClaim CREATE with the
 // deterministic name claim-<podName> is the §4.6.1 authoritative
 // single-claim guard. A claimed pod (its claim already exists) collides on
 // AlreadyExists, so Claim skips it and acquires the next idle pod; a pool
@@ -164,8 +164,8 @@ func TestClaimSkipsAlreadyClaimedPod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	c := newEnvtestClient(
 		t,
-		sandboxIn(ns, testPool, "sbx-1", "idle"),
-		sandboxIn(ns, testPool, "sbx-2", "idle"),
+		agentPodIn(ns, testPool, "sbx-1", "idle"),
+		agentPodIn(ns, testPool, "sbx-2", "idle"),
 	)
 	ctx := context.Background()
 	// A competing replica already claimed sbx-1: its per-pod claim exists.
@@ -184,8 +184,8 @@ func TestClaimSkipsAlreadyClaimedPod_spec_4_6(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "sbx-2" {
-		t.Errorf("acquired %q, want sbx-2 (sbx-1 already has a per-pod claim)", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "sbx-2" {
+		t.Errorf("acquired %q, want sbx-2 (sbx-1 already has a per-pod claim)", claim.Spec.AgentPodRef)
 	}
 }
 
@@ -193,7 +193,7 @@ func TestClaimSkipsAlreadyClaimedPod_spec_4_6(t *testing.T) {
 // acquisition surfaces ErrNoIdlePod so the caller does not double-claim.
 func TestClaimReturnsErrNoIdlePodWhenAllClaimed_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
-	c := newEnvtestClient(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
+	c := newEnvtestClient(t, agentPodIn(ns, testPool, "sbx-1", "idle"))
 	ctx := context.Background()
 	if _, err := podclaim.CreateClaim(ctx, c, ns, "sbx-1", podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "s", TenantID: "acme",
@@ -209,15 +209,15 @@ func TestClaimReturnsErrNoIdlePodWhenAllClaimed_spec_4_6(t *testing.T) {
 	}
 }
 
-// spec: §4.6.3 ownership table — the gateway does not write Sandbox.status;
+// spec: §4.6.3 ownership table — the gateway does not write AgentPod.status;
 // the WarmPoolController projects the pod phase from the claim binding
-// state. Claim must therefore leave Sandbox.status untouched by the
+// state. Claim must therefore leave AgentPod.status untouched by the
 // gateway field manager.
-// TestClaimDoesNotWriteSandboxStatus_spec_4_6_3 — verifies no
-// lenny-gateway managedFields entry on the Sandbox status subresource.
-func TestClaimDoesNotWriteSandboxStatus_spec_4_6_3(t *testing.T) {
+// TestClaimDoesNotWriteAgentPodStatus — verifies no
+// lenny-gateway managedFields entry on the AgentPod status subresource.
+func TestClaimDoesNotWriteAgentPodStatus(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c := claimerFor(t, sandboxIn(ns, testPool, "sbx-1", "idle"))
+	claimer, c := claimerFor(t, agentPodIn(ns, testPool, "sbx-1", "idle"))
 
 	if _, err := claimer.Claim(context.Background(), podclaim.ClaimRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme",
@@ -225,13 +225,13 @@ func TestClaimDoesNotWriteSandboxStatus_spec_4_6_3(t *testing.T) {
 		t.Fatalf("Claim: %v", err)
 	}
 
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "sbx-1"}, &sb); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	for _, mf := range sb.ManagedFields {
 		if mf.Manager == "lenny-gateway" && mf.Subresource == "status" {
-			t.Errorf("gateway must not write Sandbox.status; found managedFields entry %+v", mf)
+			t.Errorf("gateway must not write AgentPod.status; found managedFields entry %+v", mf)
 		}
 	}
 }
@@ -260,11 +260,11 @@ func TestClaimCreateClaimPerPodAlreadyExistsClass(t *testing.T) {
 	}
 }
 
-// reservedSandbox builds a Sandbox projecting the §6.2 `reserved` phase,
+// reservedAgentPod builds an AgentPod projecting the §6.2 `reserved` phase,
 // pinned to tenantID, the projection the acquisition-path rebind branch
 // scans for.
-func reservedSandbox(ns, name, tenantID string) *lennyv1.Sandbox {
-	sb := sandboxIn(ns, testPool, name, "reserved")
+func reservedAgentPod(ns, name, tenantID string) *lennyv1.AgentPod {
+	sb := agentPodIn(ns, testPool, name, "reserved")
 	sb.Status.TenantID = tenantID
 	if tenantID != "" {
 		sb.Labels[podclaim.LabelTenant] = tenantID
@@ -280,9 +280,9 @@ func seedReservedClaim(t *testing.T, c client.Client, podID, tenantID string, no
 	ns := testNamespace(t)
 	ctx := context.Background()
 	name := podclaim.ClaimName(podID)
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: tenantID},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: podID, TenantID: tenantID},
 	}
 	if err := c.Create(ctx, claim); err != nil {
 		t.Fatalf("create claim %s: %v", name, err)
@@ -308,7 +308,7 @@ func TestClaimRebindsReservedPodWithinHold_spec_3_2(t *testing.T) {
 	ns := testNamespace(t)
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	// The rebind reads the reserved pod before its patch, so the Pod exists.
-	c := newEnvtestClient(t, reservedSandbox(ns, "sbx-held", "acme"), lifetimePod(ns, testPool, "sbx-held", "acme", "keep"))
+	c := newEnvtestClient(t, reservedAgentPod(ns, "sbx-held", "acme"), lifetimePod(ns, testPool, "sbx-held", "acme", "keep"))
 	seedReservedClaim(t, c, "sbx-held", "acme", now, 30*time.Second)
 
 	var rebound []string
@@ -344,8 +344,8 @@ func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	c := newEnvtestClient(
 		t,
-		reservedSandbox(ns, "sbx-expired", "acme"),
-		sandboxIn(ns, testPool, "sbx-idle", "idle"),
+		reservedAgentPod(ns, "sbx-expired", "acme"),
+		agentPodIn(ns, testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, c, "sbx-expired", "acme", now, 10*time.Second)
 
@@ -359,8 +359,8 @@ func TestClaimSkipsExpiredReservedHoldAndAcquiresIdle_spec_3_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "sbx-idle" {
-		t.Errorf("acquired %q, want the fresh idle pod sbx-idle (expired hold not rebound)", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "sbx-idle" {
+		t.Errorf("acquired %q, want the fresh idle pod sbx-idle (expired hold not rebound)", claim.Spec.AgentPodRef)
 	}
 }
 
@@ -373,8 +373,8 @@ func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2(t *testing.T) {
 	now := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
 	c := newEnvtestClient(
 		t,
-		reservedSandbox(ns, "sbx-globex", "globex"),
-		sandboxIn(ns, testPool, "sbx-idle", "idle"),
+		reservedAgentPod(ns, "sbx-globex", "globex"),
+		agentPodIn(ns, testPool, "sbx-idle", "idle"),
 	)
 	seedReservedClaim(t, c, "sbx-globex", "globex", now, time.Minute)
 
@@ -387,7 +387,7 @@ func TestClaimDoesNotRebindReservedPodOfOtherTenant_spec_3_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if claim.Spec.SandboxRef != "sbx-idle" {
-		t.Errorf("acquired %q, want sbx-idle (cross-tenant reserved pod not rebound)", claim.Spec.SandboxRef)
+	if claim.Spec.AgentPodRef != "sbx-idle" {
+		t.Errorf("acquired %q, want sbx-idle (cross-tenant reserved pod not rebound)", claim.Spec.AgentPodRef)
 	}
 }

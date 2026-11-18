@@ -6,11 +6,11 @@
 // sessionPolicy.maxConcurrentSessions > 1 multiplexes multiple
 // sessions onto one pod, each session bound to its own materialized
 // workspace slot. The runtime fixture
-// (agent-workload-load.yaml.tmpl::load-cworkspace-template) declares
+// (agent-workload-load.yaml.tmpl::load-cworkspace-pool) declares
 // executionMode: session; the per-pod slot count
 // (maxConcurrentSessions) and the acknowledgeProcessLevelIsolation
 // acknowledgment live in the gateway poolstore per the §4.6.3
-// ownership boundary rather than on the CRD template. The scenarios
+// ownership boundary rather than on the PodSet. The scenarios
 // stress the §4.6 slot-claim path (the per-slot claim that the
 // gateway's SlotClaimer drives when maxConcurrentSessions > 1, vs.
 // the one-session-per-pod claim path) and the §5.2 per-slot cleanup

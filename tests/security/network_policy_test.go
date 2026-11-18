@@ -145,8 +145,8 @@ func TestNetworkPolicyAdversarial(t *testing.T) {
 // gatewayInternalPort is the gateway's internal HTTP port (§13.2,
 // values.yaml gateway.internalPort default 8080). It serves
 // GET /internal/runtime-upgrade/active, the endpoint the
-// sandboxtemplate-deletion-guard webhook probes before admitting a
-// SandboxTemplate DELETE. The §13.2 sub-rule (c) gateway-egress grant
+// podset-deletion-guard webhook probes before admitting a
+// PodSet DELETE. The §13.2 sub-rule (c) gateway-egress grant
 // is narrowed to this port for the deletion-guard pods only.
 const gatewayInternalPort = "8080"
 
@@ -156,10 +156,10 @@ const gatewayInternalPort = "8080"
 // gateway-internal-port egress to the deletion-guard pods alone
 // (NET-068). It matches the egressLabel the chart stamps via
 // lenny.admissionWebhookWorkload.
-const deletionGuardWebhookName = "sandboxtemplate-deletion-guard"
+const deletionGuardWebhookName = "podset-deletion-guard"
 
 // spec: 13.2 (NET-068 least-privilege additive-label narrowing, sub-rule (c)),
-// 17.2 (only lenny-drain-readiness and lenny-sandboxtemplate-deletion-guard
+// 17.2 (only lenny-drain-readiness and lenny-podset-deletion-guard
 // carry the additive gateway-egress webhook-name label)
 // diagnosis: the §13.2 sub-rule (c) gateway-egress grant is broader than
 // the deletion-guard alone, or the additive-label narrowing is not
@@ -171,7 +171,7 @@ const deletionGuardWebhookName = "sandboxtemplate-deletion-guard"
 // must NOT select it, so the lenny-system default-deny drops its egress
 // to the gateway internal port and its curl times out (exit 28). The
 // second pod additionally carries lenny.dev/webhook-name:
-// sandboxtemplate-deletion-guard, so allow-deletion-guard-gateway-egress
+// podset-deletion-guard, so allow-deletion-guard-gateway-egress
 // selects it and its egress to the internal port is permitted (curl exit
 // 0). A failure means sub-rule (c) grants gateway egress to every
 // admission-webhook pod (broadening least privilege past the deletion-
@@ -212,7 +212,7 @@ func TestDeletionGuardGatewayEgressLeastPrivilege(t *testing.T) {
 
 	// The adversarial probe: a pod carrying ONLY the canonical
 	// lenny.dev/component: admission-webhook label — an in-process webhook
-	// (pod-security, sandboxclaim-guard, etc.) that lacks the deletion-
+	// (pod-security, podclaim-guard, etc.) that lacks the deletion-
 	// guard webhook-name. allow-admission-webhooks grants it base egress
 	// (CoreDNS) but NOT gateway egress, and allow-deletion-guard-gateway-
 	// egress does not select it (no matching webhook-name), so the

@@ -24,7 +24,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
 
-// agentPodFor builds the agent Pod backing the same-named Sandbox, carrying
+// agentPodFor builds the agent Pod backing the same-named AgentPod, carrying
 // the §5.2 tenant pin when tenant is non-empty.
 func agentPodFor(ns, name, tenant string) *corev1.Pod {
 	p := &corev1.Pod{
@@ -72,10 +72,10 @@ func kindOf(obj client.Object) string {
 	switch obj.(type) {
 	case *corev1.Pod:
 		return "Pod"
-	case *lennyv1.SandboxClaim:
-		return "SandboxClaim"
-	case *lennyv1.Sandbox:
-		return "Sandbox"
+	case *lennyv1.PodClaim:
+		return "PodClaim"
+	case *lennyv1.AgentPod:
+		return "AgentPod"
 	default:
 		return "other"
 	}
@@ -136,7 +136,7 @@ func (r *fbRecorder) drainPatches() []fbCall {
 func claimExists(t *testing.T, c client.Client, podName string) bool {
 	t.Helper()
 	ns := testNamespace(t)
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(podName)}, &lennyv1.SandboxClaim{})
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(podName)}, &lennyv1.PodClaim{})
 	if apierrors.IsNotFound(err) {
 		return false
 	}
@@ -168,7 +168,7 @@ func podDrained(t *testing.T, c client.Client, name string) bool {
 }
 
 // fallbackFixture builds a Binder whose Kubernetes-API claim finds no idle
-// pod (every Sandbox in objs that the case wants on the fallback path is
+// pod (every AgentPod in objs that the case wants on the fallback path is
 // unlabelled) and whose mirror reports idle in order.
 func fallbackFixture(t *testing.T, idle []string, objs ...client.Object) (*podsession.Binder, client.WithWatch, *fakeMirror, *fbRecorder, *[]string) {
 	t.Helper()
@@ -201,15 +201,15 @@ func TestFallbackClaimReadsTenantPin_spec_5_2(t *testing.T) {
 	t.Run("refused older row", func(t *testing.T) {
 		ns := testNamespace(t)
 		binder, base, mirror, _, _ := fallbackFixture(t, []string{"fb-old", "fb-young"},
-			unlabeledSandbox(ns, "fb-old", "10.0.0.1"), unlabeledSandbox(ns, "fb-young", "10.0.0.2"),
+			unlabeledAgentPod(ns, "fb-old", "10.0.0.1"), unlabeledAgentPod(ns, "fb-young", "10.0.0.2"),
 			agentPodFor(ns, "fb-old", "globex"), agentPodFor(ns, "fb-young", ""))
 		res, err := bindAcme(binder, true)
 		if err != nil {
 			t.Fatalf("Bind: %v", err)
 		}
 		defer res.Adapter.Close()
-		if res.SandboxName != "fb-young" {
-			t.Errorf("bound %q, want fb-young", res.SandboxName)
+		if res.AgentPodName != "fb-young" {
+			t.Errorf("bound %q, want fb-young", res.AgentPodName)
 		}
 		if claimExists(t, base, "fb-old") {
 			t.Error("a claim was created on the refused pod")
@@ -224,7 +224,7 @@ func TestFallbackClaimReadsTenantPin_spec_5_2(t *testing.T) {
 	t.Run("only row refused", func(t *testing.T) {
 		ns := testNamespace(t)
 		binder, base, _, rec, _ := fallbackFixture(t, []string{"fb-only"},
-			unlabeledSandbox(ns, "fb-only", "10.0.0.1"), agentPodFor(ns, "fb-only", "globex"))
+			unlabeledAgentPod(ns, "fb-only", "10.0.0.1"), agentPodFor(ns, "fb-only", "globex"))
 		if _, err := bindAcme(binder, true); !errors.Is(err, podclaim.ErrNoIdlePod) {
 			t.Fatalf("Bind = %v, want ErrNoIdlePod", err)
 		}
@@ -238,7 +238,7 @@ func TestFallbackClaimReadsTenantPin_spec_5_2(t *testing.T) {
 	t.Run("pin stamp fails", func(t *testing.T) {
 		ns := testNamespace(t)
 		binder, base, _, rec, _ := fallbackFixture(t, []string{"fb-stamp"},
-			unlabeledSandbox(ns, "fb-stamp", "10.0.0.1"), agentPodFor(ns, "fb-stamp", ""))
+			unlabeledAgentPod(ns, "fb-stamp", "10.0.0.1"), agentPodFor(ns, "fb-stamp", ""))
 		boom := apierrors.NewInternalError(errors.New("stamp boom"))
 		rec.failPodPatch = map[string]error{"fb-stamp": boom}
 		if _, err := bindAcme(binder, true); err == nil || !errors.Is(err, boom) {
@@ -251,7 +251,7 @@ func TestFallbackClaimReadsTenantPin_spec_5_2(t *testing.T) {
 }
 
 // spec: 5.2 (Tenant pinning), 4.6.1 (Postgres-backed fallback claim)
-// diagnosis: a Patch or SandboxClaim call is issued while the fallback holds
+// diagnosis: a Patch or PodClaim call is issued while the fallback holds
 // the row lock and its Postgres connection, the pin is read outside the row
 // lock, or the fallback writes a drain stamp.
 func TestFallbackWritesNothingUnderRowLock(t *testing.T) {
@@ -266,15 +266,15 @@ func TestFallbackWritesNothingUnderRowLock(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ns := testNamespace(t)
 			binder, base, _, rec, _ := fallbackFixture(t, []string{"rl-old", "rl-young"},
-				unlabeledSandbox(ns, "rl-old", "10.0.0.1"), unlabeledSandbox(ns, "rl-young", "10.0.0.2"),
+				unlabeledAgentPod(ns, "rl-old", "10.0.0.1"), unlabeledAgentPod(ns, "rl-young", "10.0.0.2"),
 				agentPodFor(ns, "rl-old", tc.oldPin), agentPodFor(ns, "rl-young", ""))
 			res, err := bindAcme(binder, tc.keeps)
 			if err != nil {
 				t.Fatalf("Bind: %v", err)
 			}
 			defer res.Adapter.Close()
-			if res.SandboxName != "rl-young" {
-				t.Errorf("bound %q, want rl-young", res.SandboxName)
+			if res.AgentPodName != "rl-young" {
+				t.Errorf("bound %q, want rl-young", res.AgentPodName)
 			}
 			if podDrained(t, base, "rl-old") || len(rec.drainPatches()) != 0 {
 				t.Error("the fallback wrote a drain request")
@@ -304,7 +304,7 @@ func TestFallbackWritesNothingUnderRowLock(t *testing.T) {
 func TestFallbackPinReadErrorEndsTheAcquisition_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	binder, base, mirror, rec, skipped := fallbackFixture(t, []string{"pe-old", "pe-young"},
-		unlabeledSandbox(ns, "pe-old", "10.0.0.1"), unlabeledSandbox(ns, "pe-young", "10.0.0.2"),
+		unlabeledAgentPod(ns, "pe-old", "10.0.0.1"), unlabeledAgentPod(ns, "pe-young", "10.0.0.2"),
 		agentPodFor(ns, "pe-old", "acme"), agentPodFor(ns, "pe-young", ""))
 	boom := apierrors.NewInternalError(errors.New("pin read boom"))
 	rec.failPodGet = map[string]error{"pe-young": boom}
@@ -338,7 +338,7 @@ func TestFallbackPinReadErrorEndsTheAcquisition_spec_5_2(t *testing.T) {
 func TestFallbackSkipsScanRefusals_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	binder, _, mirror, rec, _ := fallbackFixture(t, []string{"sr-pinned", "sr-free"},
-		idleSandbox(ns, "sr-pinned", "10.0.0.1"), unlabeledSandbox(ns, "sr-free", "10.0.0.2"),
+		idleAgentPod(ns, "sr-pinned", "10.0.0.1"), unlabeledAgentPod(ns, "sr-free", "10.0.0.2"),
 		agentPodFor(ns, "sr-pinned", "globex"), agentPodFor(ns, "sr-free", ""))
 	res, err := binder.Claim(context.Background(), podsession.BindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", ReusesPods: true, RequiresProcessAcknowledgment: true,
@@ -346,8 +346,8 @@ func TestFallbackSkipsScanRefusals_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Claim: %v", err)
 	}
-	if res.SandboxName != "sr-free" {
-		t.Errorf("claimed %q, want sr-free", res.SandboxName)
+	if res.AgentPodName != "sr-free" {
+		t.Errorf("claimed %q, want sr-free", res.AgentPodName)
 	}
 	var pinnedGets []fbCall
 	for _, c := range rec.snapshot() {
@@ -373,7 +373,7 @@ func TestFallbackSkipsScanRefusals_spec_5_2(t *testing.T) {
 func TestFallbackPinReadIsBounded_spec_4_6_1(t *testing.T) {
 	ns := testNamespace(t)
 	binder, base, mirror, rec, skipped := fallbackFixture(t, []string{"bd-pod"},
-		unlabeledSandbox(ns, "bd-pod", "10.0.0.1"), agentPodFor(ns, "bd-pod", ""))
+		unlabeledAgentPod(ns, "bd-pod", "10.0.0.1"), agentPodFor(ns, "bd-pod", ""))
 	mirror.lag = 0
 	binder.FallbackMaxMirrorLagSeconds = 0.1
 	rec.blockPodGet = map[string]bool{"bd-pod": true}
@@ -407,7 +407,7 @@ func TestFallbackPinReadIsBounded_spec_4_6_1(t *testing.T) {
 func TestPrimaryPinReadErrorStartsNoFallback_spec_4_6_1(t *testing.T) {
 	ns := testNamespace(t)
 	binder, base, mirror, rec, _ := fallbackFixture(t, []string{"pp-fallback"},
-		idleSandbox(ns, "pp-primary", "10.0.0.1"), unlabeledSandbox(ns, "pp-fallback", "10.0.0.2"),
+		idleAgentPod(ns, "pp-primary", "10.0.0.1"), unlabeledAgentPod(ns, "pp-fallback", "10.0.0.2"),
 		agentPodFor(ns, "pp-primary", ""), agentPodFor(ns, "pp-fallback", ""))
 	boom := apierrors.NewInternalError(errors.New("primary pin read boom"))
 	rec.failPodGet = map[string]error{"pp-primary": boom}
@@ -434,7 +434,7 @@ func TestOutsideRuleScanDrainsAndFallbackAddsNoStamp_spec_5_2(t *testing.T) {
 	newFixture := func(t *testing.T) (*podsession.Binder, client.WithWatch, *fakeMirror, *fbRecorder) {
 		ns := testNamespace(t)
 		binder, base, mirror, rec, _ := fallbackFixture(t, []string{"or-pod"},
-			idleSandbox(ns, "or-pod", "10.0.0.1"), agentPodFor(ns, "or-pod", "acme"))
+			idleAgentPod(ns, "or-pod", "10.0.0.1"), agentPodFor(ns, "or-pod", "acme"))
 		return binder, base, mirror, rec
 	}
 	assertOneEarlyDrain := func(t *testing.T, rec *fbRecorder) {

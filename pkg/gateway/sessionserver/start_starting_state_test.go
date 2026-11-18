@@ -29,8 +29,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // The tests in this file pin each exit of POST /v1/sessions/{id}/start
@@ -209,9 +209,8 @@ func newStartFixture(t *testing.T, id string) *startFixture {
 	gate := newLaunchGate()
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	f := &startFixture{
 		id:       id,
@@ -320,7 +319,7 @@ func (f *startFixture) leaseHolder(t *testing.T) string {
 
 func (f *startFixture) claimBound(t *testing.T) bool {
 	t.Helper()
-	var c lennyv1.SandboxClaim
+	var c lennyv1.PodClaim
 	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &c)
 	if apierrors.IsNotFound(err) {
 		return false
@@ -333,7 +332,7 @@ func (f *startFixture) claimBound(t *testing.T) bool {
 
 func (f *startFixture) claimPresent(t *testing.T) bool {
 	t.Helper()
-	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &lennyv1.SandboxClaim{})
+	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &lennyv1.PodClaim{})
 	if apierrors.IsNotFound(err) {
 		return false
 	}
@@ -560,8 +559,8 @@ func TestStartForeignLeaseHolderFailsTheSession_spec_7_2(t *testing.T) {
 func TestStartLaunchFailureBeforeTheBinderReclaimsByName_spec_7_2(t *testing.T) {
 	t.Parallel()
 	f := newStartFixture(t, "sess-f2")
-	if err := f.cluster.Delete(context.Background(), podBindWarmPool(t, "echo-pool", "echo-tmpl")); err != nil {
-		t.Fatalf("delete warm pool: %v", err)
+	if err := f.cluster.Delete(context.Background(), podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed))); err != nil {
+		t.Fatalf("delete pool PodSet: %v", err)
 	}
 	if !f.claimPresent(t) {
 		t.Fatal("claim-sbx-1 absent before /start")
@@ -796,9 +795,8 @@ func TestServiceModeStartTakesNoLease_spec_10_1_1(t *testing.T) {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "svc-pool", "svc-tmpl"),
-		podBindServiceTemplate(t, "svc-tmpl", "svc-runtime", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
+		podBindServicePodSet(t, "svc-pool", "svc-runtime", string(isolation.ProfileSandboxed)),
+		podBindIdleAgentPod(t, "svc-sbx-1", "svc-pool", "10.244.3.9"),
 	)
 	store := memstore.New()
 	leases := newComponentLeaseStore()

@@ -120,9 +120,9 @@ func dialPerSlotAdapter(t *testing.T, rec *perSlotAdapter) *adapterclient.Client
 // coordinator so the buffered (input_required) path exercises real machinery.
 func concurrentRoutingServer(t *testing.T, reg *podsession.Registry) (*sessionserver.Server, sessionstore.Store, *sessioninbox.MemoryInbox) {
 	t.Helper()
-	cluster := podBindClient(t, &lennyv1.Sandbox{
+	cluster := podBindClient(t, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{Name: "sbx-c", Namespace: testNS(t)},
-		Status:     lennyv1.SandboxStatus{Phase: string(state.Claimed), PodIP: "10.0.0.9"},
+		Status:     lennyv1.AgentPodStatus{Phase: string(state.Claimed), PodIP: "10.0.0.9"},
 	})
 	binder := &podsession.Binder{Client: cluster, Namespace: testNS(t)}
 
@@ -181,11 +181,11 @@ func TestMessagesPerSlotRoutingOnConcurrentPod(t *testing.T) {
 
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
-		SessionID: "sess-slot-01", TenantID: "acme", SandboxName: "sbx-c",
+		SessionID: "sess-slot-01", TenantID: "acme", AgentPodName: "sbx-c",
 		Adapter: cl01, SlotID: "slot_01",
 	})
 	reg.Put(&podsession.BindResult{
-		SessionID: "sess-slot-02", TenantID: "acme", SandboxName: "sbx-c",
+		SessionID: "sess-slot-02", TenantID: "acme", AgentPodName: "sbx-c",
 		Adapter: cl02, SlotID: "slot_02",
 	})
 
@@ -256,7 +256,7 @@ func TestMessagesIgnoresAClientAddressAndRoutesBySession(t *testing.T) {
 	cl := dialPerSlotAdapter(t, rec)
 	reg := podsession.NewRegistry()
 	reg.Put(&podsession.BindResult{
-		SessionID: "sess-slot-01", TenantID: "acme", SandboxName: "sbx-c",
+		SessionID: "sess-slot-01", TenantID: "acme", AgentPodName: "sbx-c",
 		Adapter: cl, SlotID: "slot_01",
 	})
 	srv, store, _ := concurrentRoutingServer(t, reg)
@@ -301,7 +301,7 @@ func TestMessagesAddressesTheStreamBySessionOnAPoolOfOne(t *testing.T) {
 	reg := podsession.NewRegistry()
 	// A bind on a pool of one: no separate slot recorded.
 	reg.Put(&podsession.BindResult{
-		SessionID: "sess-excl", TenantID: "acme", SandboxName: "sbx-c",
+		SessionID: "sess-excl", TenantID: "acme", AgentPodName: "sbx-c",
 		Adapter: cl,
 	})
 	srv, store, _ := concurrentRoutingServer(t, reg)

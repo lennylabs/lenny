@@ -31,7 +31,7 @@ func (s *stubRuntimeClassChecker) RuntimeClassExists(_ context.Context, name str
 	return s.exists, s.err
 }
 
-func degradedCondition(t *testing.T, p lennyv1.SandboxWarmPool) (metav1.Condition, bool) {
+func degradedCondition(t *testing.T, p lennyv1.PodSet) (metav1.Condition, bool) {
 	t.Helper()
 	for _, c := range p.Status.Conditions {
 		if c.Type == "Degraded" {
@@ -50,13 +50,13 @@ func degradedCondition(t *testing.T, p lennyv1.SandboxWarmPool) (metav1.Conditio
 func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
 	reconcileWith(t, r)
 
-	if got := poolSandboxes(t, c); len(got) != 0 {
+	if got := poolAgentPods(t, c); len(got) != 0 {
 		t.Fatalf("created %d sandboxes for a pool with a missing RuntimeClass, want 0", len(got))
 	}
 	if len(stub.calls) == 0 || stub.calls[0] != "gvisor" {
@@ -85,14 +85,14 @@ func TestReconcileRuntimeClassMissing_spec_5_3(t *testing.T) {
 func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10))
+	c := newClient(t, s, pool(ns, 2, 10))
 	stub := &stubRuntimeClassChecker{exists: true}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
 	reconcileWith(t, r)
 
-	if got := poolSandboxes(t, c); len(got) != 2 {
-		t.Fatalf("created %d sandboxes, want 2", len(got))
+	if got := poolAgentPods(t, c); len(got) != 2 {
+		t.Fatalf("created %d agentpods, want 2", len(got))
 	}
 	cond, ok := degradedCondition(t, getPool(t, c))
 	if !ok {
@@ -114,7 +114,7 @@ func TestReconcileRuntimeClassPresent_spec_5_3(t *testing.T) {
 func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10))
+	c := newClient(t, s, pool(ns, 2, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
 
@@ -130,8 +130,8 @@ func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 	if cond, _ := degradedCondition(t, getPool(t, c)); cond.Status != metav1.ConditionFalse {
 		t.Errorf("after recovery Degraded = %q, want False", cond.Status)
 	}
-	if got := poolSandboxes(t, c); len(got) != 2 {
-		t.Errorf("after recovery created %d sandboxes, want 2", len(got))
+	if got := poolAgentPods(t, c); len(got) != 2 {
+		t.Errorf("after recovery created %d agentpods, want 2", len(got))
 	}
 }
 
@@ -143,14 +143,14 @@ func TestReconcileRuntimeClassRecovers_spec_5_3(t *testing.T) {
 func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 	stub := &stubRuntimeClassChecker{err: errors.New("apiserver unreachable")}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
 	if _, err := r.Reconcile(testContext(), reconcileRequest(ns)); err == nil {
 		t.Fatal("Reconcile returned nil error on RuntimeClass check failure, want error")
 	}
-	if got := poolSandboxes(t, c); len(got) != 0 {
+	if got := poolAgentPods(t, c); len(got) != 0 {
 		t.Errorf("created %d sandboxes despite check failure, want 0", len(got))
 	}
 }
@@ -163,12 +163,12 @@ func TestReconcileRuntimeClassCheckerError_spec_5_3(t *testing.T) {
 func TestReconcileNilRuntimeClassChecker_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10))
+	c := newClient(t, s, pool(ns, 2, 10))
 
 	reconcile(t, c, s) // builds a Reconciler with no RuntimeClasses checker
 
-	if got := poolSandboxes(t, c); len(got) != 2 {
-		t.Fatalf("created %d sandboxes, want 2", len(got))
+	if got := poolAgentPods(t, c); len(got) != 2 {
+		t.Fatalf("created %d agentpods, want 2", len(got))
 	}
 	if _, ok := degradedCondition(t, getPool(t, c)); ok {
 		t.Error("pool carries a Degraded condition with no checker wired; want none")
@@ -206,9 +206,9 @@ func TestReaderRuntimeClassChecker_spec_5_3(t *testing.T) {
 func TestReconcileUnsetProfileSkipsRuntimeClassCheck_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	tmpl := template(ns)
+	tmpl := pool(ns, 1, 10)
 	tmpl.Spec.IsolationProfile = "" // optional; maps to no RuntimeClass
-	c := newClient(t, s, tmpl, pool(ns, 1, 10))
+	c := newClient(t, s, tmpl)
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: stub}
@@ -227,7 +227,7 @@ func TestReconcileUnsetProfileSkipsRuntimeClassCheck_spec_5_3(t *testing.T) {
 func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 	r := &warmpool.Reconciler{Client: c, Scheme: s, RuntimeClasses: &stubRuntimeClassChecker{exists: false}}
 	reconcileWith(t, r)
 	cond, _ := degradedCondition(t, getPool(t, c))
@@ -243,7 +243,7 @@ func TestRuntimeClassMissingMessageActionable_spec_5_3(t *testing.T) {
 func TestRuntimeClassOverrideRoutesPresenceCheck_spec_17_5(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 	stub := &stubRuntimeClassChecker{exists: false}
 
 	r := &warmpool.Reconciler{

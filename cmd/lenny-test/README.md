@@ -14,7 +14,7 @@ go install ./cmd/lenny-test
 
 This is the skeleton. It implements:
 
-- Flag parsing and selector resolution against `tests/groups.yaml`, `tests/spec-map.json`, and `tests/change-graph.json`.
+- Flag parsing and selector resolution against `tests/groups.yaml` and `tests/change-graph.json`, and `--spec` resolution through the annotation index.
 - The `list`, `validate-maps`, `validate-diagnosis`, `infra`, and `version` subcommands.
 - A `--dry-run` mode that prints the resolved selector and the tests it would run.
 - The default run command, which dispatches the static tier to `go vet ./...` and the unit tier to `go test ./...` over whatever exists in `pkg/`. Higher tiers are recorded as `skipped` with reason `phase-0-not-implemented`.
@@ -43,7 +43,7 @@ lenny-test --changed --dry-run
 lenny-test --since main --max-tier unit --dry-run   # branch diff from its merge base
 lenny-test --since main --tier unit --dry-run       # the same diff, unit tier only
 lenny-test --since A...B --dry-run                   # any explicit range
-lenny-test --spec 4.6.1,12.3 --dry-run
+lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotations cite them
 
 # The merge gate, in the gate container (TESTING.md "Merge gate")
 lenny-test gate
@@ -53,6 +53,22 @@ lenny-test gate --here      # the gate's tiers in this environment; UNVERIFIED o
 lenny-test --tier static
 lenny-test --tier unit
 lenny-test --group pr-fast
+```
+
+## Coverage view
+
+`lenny-test coverage --spec` reports what the `// spec:` annotations say about the specification. The harness builds an annotation index of the tracked Go files on each run (`scripts/specshift/annotation`), joins it with `spec/registry.json`, the successor stubs of the numbered files, and the open and planned issues under `issues/`, and commits nothing. TESTING.md §5 ("Coverage view") states what each row holds.
+
+```bash
+lenny-test coverage --spec                     # one line per page, identifier, and numbered heading
+lenny-test coverage --spec POOL-R5             # its tests by tier, direct and through a stub, its code, and its issues
+lenny-test coverage --spec POOL                # a page and its identifiers
+lenny-test coverage --spec §4.6.1              # a numbered heading and the identifiers its stub lists
+lenny-test coverage --spec --area sessions     # the pages of one area
+lenny-test coverage --spec --json              # the same rows as JSON
+lenny-test coverage --spec --threshold 0.40    # exit 1 when fewer rows have a citing test
+lenny-test list --specs                        # the page codes, identifiers, and numbered sections
+lenny-test list --spec POOL-R5,§4.6.1          # the tests that cite them
 ```
 
 ## Per-tier timeouts
@@ -82,5 +98,8 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `cmd_infra.go` | `infra up/down/status/prune` (Phase 0 stubs) |
 | `tiers.go` | Tier ordering and group-to-tier resolution |
 | `cmd_run_resolve.go` | `--changed`, `--spec`, and `--pkg` resolution into a tier plan |
+| `spec_index.go` | The specification model: the annotation index, the identifier registry, the successor stubs of the numbered files, and the issue records, and the resolution of an identifier, a page code, or `§N.M` to its tests |
+| `cmd_coverage_spec.go`, `cmd_coverage_spec_text.go` | `coverage --spec`: the coverage view and its text rendering |
+| `gotest_json.go` | `go test -json` parsing, and the `spec_sections` of each failure from the annotation index |
 | `changed_select.go` | Unit-tier package scope for `--changed`: owning packages, change-graph unit targets, and in-module importers |
 | `verdict.go` | JSON verdict writer per TESTING.md §7 |

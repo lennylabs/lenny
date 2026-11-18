@@ -18,7 +18,7 @@ import (
 // recycle-counter accessors touch: the base table from migration 0001 plus
 // the nullable sessions_served / scrub_failure_count columns added by
 // migration 0167. The accessors do not depend on runtime_definitions or
-// sandbox_warm_pools (which 0167 also alters), so the test applies only
+// the pool-record table (which 0167 also alters), so the test applies only
 // this slice rather than the full migration chain. spec: §12.6.
 const recycleSchema = `
 CREATE TABLE agent_pod_state (

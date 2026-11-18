@@ -94,7 +94,7 @@ func eventCount(bus *sessionevents.Bus, id, typ string) int {
 //
 // spec: §7.3 (Resume driver)
 func TestClassifyCommitCoversEveryRow_spec_7_3(t *testing.T) {
-	binder := commitBaseline{gen: 7, sandbox: "sbx-new", recoveryGen: 2}
+	binder := commitBaseline{gen: 7, agentPod: "sbx-new", recoveryGen: 2}
 	binderless := commitBaseline{recoveryGen: 2, binderless: true}
 	row := func(st session.State, pod string, gen, rec int64) sessionstore.Session {
 		return sessionstore.Session{UserID: testOwner, State: st, PodAssignment: pod, CoordinationGeneration: gen, RecoveryGeneration: rec}
@@ -396,19 +396,17 @@ func TestRecordResumeAttemptCountsOnlyEnteredIncarnations_spec_16_1(t *testing.T
 func serviceModeResumeServer(t *testing.T, store sessionstore.Store, inner sessionstore.Store, inc func(pool, outcome string)) (*Server, sessionstore.Session) {
 	t.Helper()
 	const ns = "lenny-agents"
-	pool := &lennyv1.SandboxWarmPool{
+	pool := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "svc-pool", Namespace: ns},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "svc-tmpl", MinWarm: 1, MaxWarm: 5},
-	}
-	tmpl := &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "svc-tmpl", Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "svc-runtime",
 			IsolationProfile: string(isolation.ProfileSandboxed),
 			ExecutionMode:    string(runtimestore.ExecutionModeService),
+			MinWarm:          1,
+			MaxWarm:          5,
 		},
 	}
-	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool, tmpl).Build()
+	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(pool).Build()
 	if err := inner.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
 		ID:     "svc", TenantID: "acme", RuntimeRef: "svc-runtime", IsolationProfile: isolation.ProfileSandboxed,

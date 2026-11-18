@@ -447,7 +447,7 @@ type commitObservation struct {
 // classification the binderless path applies, which has no sandbox to match.
 type commitBaseline struct {
 	gen         int64
-	sandbox     string
+	agentPod    string
 	recoveryGen int64
 	binderless  bool
 }
@@ -491,7 +491,7 @@ func classifyCommit(o commitObservation, b commitBaseline) commitOutcome {
 		return commitNotLanded
 	}
 	r := o.row
-	ours := r.PodAssignment == b.sandbox && r.RecoveryGeneration > b.recoveryGen && podHeldOrTerminal(r)
+	ours := r.PodAssignment == b.agentPod && r.RecoveryGeneration > b.recoveryGen && podHeldOrTerminal(r)
 	switch {
 	case ours && r.CoordinationGeneration == b.gen:
 		return commitLanded
@@ -526,8 +526,8 @@ func (s *Server) commitResume(ctx context.Context, row sessionstore.Session, b c
 			// states) — the idle clock starts fresh on entry to running.
 			r.LastAgentActivityAt = now
 			r.RecoveryGeneration++
-			if !b.binderless && b.sandbox != "" {
-				r.PodAssignment = b.sandbox
+			if !b.binderless && b.agentPod != "" {
+				r.PodAssignment = b.agentPod
 			}
 			return nil
 		})
@@ -583,7 +583,7 @@ func (s *Server) completeResume(row sessionstore.Session, gen int64, out resumeO
 	defer unlock()
 	b := commitBaseline{gen: gen, recoveryGen: row.RecoveryGeneration, binderless: s.podBinder == nil}
 	if out.result != nil {
-		b.sandbox = out.result.SandboxName
+		b.agentPod = out.result.AgentPodName
 	}
 	obs, ok := s.commitResume(ctx, row, b)
 	if !ok {

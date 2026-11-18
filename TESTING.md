@@ -60,7 +60,7 @@ This file changes when the test taxonomy changes, when a new dependency is intro
 
 The infrastructure is complete when an implementing agent can:
 
-1. Run `lenny-test --spec <section>` and get every test that encodes that spec section.
+1. Run `lenny-test --spec <identifier | code | §N.M>` and get every test whose `// spec:` annotation cites that requirement, page, or section.
 2. Run `lenny-test --changed` and get the minimal set of tests affected by uncommitted changes.
 3. Run `lenny-test --group pr` and get the PR gate suite that completes in under fifteen minutes on a laptop.
 4. Run `lenny-test --group nightly` and get the nightly suite that includes e2e on Kind and a representative load and chaos pass.
@@ -300,9 +300,31 @@ lenny/
 
 ## 5. Spec traceability and the change graph
 
+### Annotation index
+
+The `// spec:` annotations are the record of what each test verifies and of which code makes the decision a requirement states (`.claude/rules/spec-annotations.md`). `scripts/specshift/annotation` reads them into an index: every annotation in the Go files of the shared read domain, with its file, line, the declaration whose doc comment carries it, its site kind (test, code, or package doc comment), the identifiers its items cite, and the section numbers its items cite. The index also lists every top-level test function, annotated or not. It leaves out `testdata/` directories, generated files (a `// Code generated ... DO NOT EDIT.` line before the package clause), the change records, and the staged proposals. It refuses a symbolic link and a file whose folder resolves outside the repository, and reports each file it could not read rather than failing. An annotation counts for a test only inside the test's doc comment, so a `// spec:` comment separated from its function by a blank line leaves the test unannotated. The index is computed on each run and never committed; reading the whole tree takes about two seconds.
+
+The tier of a test is the tier whose directory holds its package, from the table in `cmd/lenny-test/tiers.go`. A test outside the tier directories is a unit test.
+
+The index serves `lenny-test coverage --spec`, `lenny-test list --spec`, `lenny-test --spec`, the `spec_sections` of a verdict's failures, and the site lists of `specshift where` and `specshift digest`. The harness indexes the tracked files. `where` and `digest` index the working tree, including untracked files that are not ignored, so they report on work not yet committed.
+
+### Coverage view
+
+`lenny-test coverage --spec [<identifier | code | §N.M>...] [--area <area>] [--json]` prints what the index says about the specification. It reads the index, `spec/registry.json`, the successor stubs of the numbered files, and the open and planned issues under `issues/`.
+
+- **Identifiers.** For each requirement, operation, and definition block in the registry, the view lists the tests that cite it, grouped by tier, the code that cites it, and the open and planned issues whose `requirements` list names it. It also lists the tests that reach the identifier indirectly: a test that cites a numbered section whose successor stub links the identifier. The test has to cite the stub's own section, because a stub lists the successors of its own heading's body and a subsection carries its own stub.
+- **Pages.** For each page, the view lists the code and the tests that cite its page code, and the identifiers the page holds.
+- **Numbered sections.** For each numbered heading that is not a full successor stub, the view lists the tests that cite the section or one of its subsections. A heading with no citing test is reported as uncovered, and the reader judges whether it states behavior.
+- **Unresolved citations.** Cited section numbers that name no numbered heading, and cited identifiers that neither the registry nor an issue record carries, are listed with the annotations that cite them. Each area change fixes the ones in its packages when it re-annotates them.
+- **Unannotated tests.** The view counts the test functions with no annotation, per tier and per package.
+
+With no argument the view prints one line per page, identifier, and numbered heading, followed by the unresolved citations and the unannotated tests. Each argument selects rows and prints every test, code site, and issue of each: an identifier selects itself, a page code selects the page and its identifiers, and `§N.M` (or `N.M`) selects the numbered heading and the identifiers its stub lists. `--area` selects the pages whose front matter names the area, given by its folder name or by the code of one of its pages, and leaves the numbered sections out. `--json` prints the same rows as JSON. The rate is the share of identifier and numbered-heading rows with at least one citing test, direct or indirect, and `--threshold <fraction>` fails the command when the rate falls below it.
+
+`lenny-test list --spec` and `lenny-test --spec` resolve their arguments the same way. An identifier resolves to the tests that cite it directly or through a stub, a page code to those of every identifier on the page and the tests that cite the code, and a numbered section to the tests that cite it or a subsection and those of the identifiers its stub lists. Until change 0116 shows the coverage view equivalent to `tests/spec-map.json` and retires the map, each query also adds the tests the map lists under its section number, so no query selects less than the map did; a map key with no numbered heading still resolves. A query that names no identifier, page code, numbered section, or map key fails the command with exit code 2, as it does in `coverage --spec`.
+
 ### Spec map
 
-`tests/spec-map.json` maps every spec section to the tests, packages, migrations, and chart templates that encode it.
+`tests/spec-map.json` maps every spec section to the tests, packages, migrations, and chart templates that encode it. The coverage view does not read it. `list --spec` and `--spec` add its entries to what the index resolves, as "Coverage view" states, and `lenny-test validate-maps` still checks it, until change 0116 retires it with its exceptions file.
 
 ```json
 {
@@ -311,14 +333,14 @@ lenny/
     "4.6.1": {
       "title": "Warm Pool Controller — Pod Lifecycle",
       "tests": [
-        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestSandboxClaimSkipLocked",
+        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestPodClaimSkipLocked",
         "tests/e2e_kind/sandbox_claim_test.go::TestConcurrentClaimNoDoubleAssignment",
-        "tests/chaos/concurrent_claim_test.go::TestSandboxClaimUnder100Goroutines"
+        "tests/chaos/concurrent_claim_test.go::TestPodClaimUnder100Goroutines"
       ],
       "packages": ["pkg/controller/warmpool", "pkg/store/podregistry"],
       "schemas": ["api/crds/sandbox_claim.yaml"],
       "migrations": ["0007_sandbox_claim_lock.sql"],
-      "chart_templates": ["charts/lenny/templates/admission/sandboxclaim-guard.yaml"],
+      "chart_templates": ["charts/lenny/templates/admission/podclaim-guard.yaml"],
       "depends_on_sections": ["4.6", "12.3", "13.2"],
       "blocked_until_phase": "3.5"
     }
@@ -380,7 +402,7 @@ Every component-and-higher test must carry a `// diagnosis:` comment immediately
 // diagnosis: ClaimSandbox returned a row that was already claimed.
 //            Likely missing transaction isolation in pkg/controller/warmpool/claim.go,
 //            or SELECT ... FOR UPDATE SKIP LOCKED is wrapping the wrong query.
-func TestSandboxClaimSkipLocked(t *testing.T) { ... }
+func TestPodClaimSkipLocked(t *testing.T) { ... }
 ```
 
 Diagnosis strings are not stack traces. They explain the most common cause of the most-likely failure mode. The author of the test owns the diagnosis.
@@ -405,7 +427,7 @@ lenny-test --changed --max-tier component         # Layered escalation
 lenny-test --since main                           # Diff from the merge base with main
 lenny-test --changed --rdeps-depth -1             # Unit scope takes every transitive importer
 lenny-test --changed --all                        # Unit tier runs every package
-lenny-test --spec 4.2,12.3                        # Spec sections
+lenny-test --spec POOL-R5,§4.2                    # Identifiers, page codes, or numbered sections
 lenny-test --pkg pkg/store/session                # Explicit package
 
 # Persona journeys (see §12.13); outside --max-tier and the merge gate
@@ -445,7 +467,7 @@ lenny-test watch  --changed
 
 # Coverage
 lenny-test coverage --go                          # Go coverage from tests/results/cover.out
-lenny-test coverage --spec                        # spec-section coverage
+lenny-test coverage --spec [<id | code | §N.M>]   # coverage view from the annotations (see §5)
 lenny-test coverage --diff <ref>                  # coverage of lines changed since <ref>
 
 # Mutation (§19.3)
@@ -478,7 +500,7 @@ lenny-test --verdict-file tests/results/<name>.json
    - `--max-tier` → all tests with tags up to and including that tier.
    - `--group` → the set named in `tests/groups.yaml`.
    - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph. `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The change graph selects the tiers. The unit tier runs a package scope rather than `./...`: the unit targets the change graph lists for each changed path, the Go package that owns each changed path, and the in-module packages that import an owning package (test imports included) to the depth `--rdeps-depth` sets. The default depth is 1; 0 runs the owning packages alone, and -1 walks the full transitive closure. The static tier type-checks every package with `go vet ./...`, so a signature change that breaks a distant importer still fails the run. A changed path that no change-graph key covers is reported, and its owning package joins the unit scope, so an unmapped change still runs the nearest tests. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints the scope and these reports without running anything.
-   - `--spec` → resolves each section through the spec map.
+   - `--spec` → resolves each identifier, page code, or numbered section (`§N.M` or `N.M`) through the annotation index, together with the tests the spec map lists under the section number, to its tests (see §5, "Coverage view"). Each tier that holds such a test runs. The unit tier runs whole when the spec map lists a unit test for the query or carries the query as a key that names no tier, and is otherwise scoped to the packages of the unit tests the index found. When no test resolves, the unit tier runs whole. An unknown query exits 2.
    - `--pkg` → resolves through the change graph. The unit tier runs the named package recursively plus the unit targets of the change-graph keys it matches.
 2. Intersect with `--max-tier` if both selectors are present.
 3. Order by tier ascending. Within a tier, group by package to maximize test-binary reuse.
@@ -592,7 +614,7 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
           "package": "tests/component/stores",
           "file": "tests/component/stores/session_store_test.go",
           "line": 142,
-          "spec_sections": ["4.2", "4.6"],
+          "spec_sections": ["POOL-R5", "§4.2", "§4.6"],
           "diagnosis": "SELECT ... FOR UPDATE SKIP LOCKED returned an already-claimed row. ...",
           "error": "expected session claimed by gateway-1, got gateway-2",
           "duration_ms": 340,
@@ -619,7 +641,8 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
 - `verdict` is one of `PASS`, `FAIL`, `INCONCLUSIVE`, and `UNVERIFIED`. `INCONCLUSIVE` means the harness could not complete the run (for example, infrastructure failed to start), and the harness exits 2. `UNVERIFIED` means a check could not reach a conclusion, so the run establishes neither success nor failure, and the harness exits 3.
 - `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, `inconclusive`, `unverified`, and `not-selected`. `skipped` carries a `reason`. `inconclusive` marks a tier whose failure the harness classified as infrastructure-class rather than a test failure. `unverified` marks a tier in which a check could not reach a conclusion.
 - `next_action` is one short, machine-readable sentence describing what the implementing agent should do next.
-- `spec_section_status` aggregates test results by spec section. An agent working on section 4.2 reads this field to know whether the section is currently green.
+- `spec_sections` lists what the failing test's `// spec:` annotation cites, read from the annotation index (§5): its identifiers, then its section numbers written `§N.M`. A failing subtest reports the annotation of its top-level test.
+- `spec_section_status` aggregates test results by the values of `spec_sections`. An agent working on section 4.2 or on a requirement reads this field to know whether it is currently green.
 - `rerun_command` is a copy-paste-ready command that runs the single failing test.
 
 ### Auxiliary formats
@@ -654,7 +677,7 @@ groups:
         - tier: security
           subset: tenant-isolation,tls,admission
         - tier: chaos
-          subset: core              # pod-kill, sandbox-claim-race, redis-down
+          subset: core              # pod-kill, pod-claim-race, redis-down
         - tier: conformance
           subset: bundled-runtimes
         - tier: docs
@@ -937,7 +960,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
     - `go test ./tests/static/build/...` — build and generated-artifact drift: the license header on every source file, the CRD and JSON Schema inventories, the migration numbering, the supervisor binary, the workflow tool staging, the change records, and the generated-code no-drift checks for `pkg/proto/` and the API code.
     - `go test ./tests/static/chart/...` — the Helm chart render and the deployment boundary: flags the chart renders parse against their binaries, the profiles, RBAC, the adapter inputs, and the chart's agreement with the specification's ops RBAC block and OpenSLO fragment.
     - `go test ./tests/static/lint/...` — code-invariant lints over Go source and test-hygiene lints: the coordinator-hold allowlist, Redis cluster safety, the erasure writers, the production-mode carrier, dead code, retired symbols, proto addressing, ephemeral ports, temp roots, and provider coverage.
-    - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the claim register, the skip-reason classifier, the gates of the specification tree, and the self-tests of the spec map and the change graph.
+    - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the skip-reason classifier, the gates of the specification tree, and the self-tests of the spec map and the change graph.
 
     The no-drift test in the build package reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A static-tier test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
 22. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
@@ -968,7 +991,6 @@ The structure package carries the gates of the channel-naming and line-citation 
 | `TestDegradationMatrixCorrespondsOneToOneWithTheChannelRegister` | The degradation matrix matches the channel register | No. Kept. |
 | `TestResidualGateCertifiesTheTree` | Every member of a migration class is classified | No. Kept until the migration registers retire. |
 | `TestEveryMigrationGateIsRegisteredAtTierZero` | Every migration gate is still hard-gated | No. Kept while the gates it lists remain. |
-| `TestClaimRegisterSaysWhatTheSpecificationRequires`, `TestClaimRegisterIsReproducibleFromItsGenerator`, and `TestClaimRegisterAgreesWithTheAdapterProto` | The claim register's form, its generator, and its agreement with the adapter proto | No. Kept. |
 | `TestComplianceFullChecksNamedForTheirChannel` | The compliance checks carry their channel's identifier | No. Kept. |
 
 **Wall-clock target.** Under 30 seconds on a laptop for each check other than the structure package, which has the budget above.
@@ -982,7 +1004,7 @@ The structure package carries the gates of the channel-naming and line-citation 
 - State machines. Every state machine in the platform has table-driven transition tests with full coverage of valid and invalid transitions.
   - Session state machine (created → finalizing → ready → starting → running → completed/failed/cancelled/expired, with the suspended and resume_pending intermediates).
   - Pod state machine (pod-warm, SDK-warm, claimed, running, draining, terminated, failed).
-  - SandboxClaim state machine (pending, granted, fenced, released, expired).
+  - PodClaim state machine (pending, granted, fenced, released, expired).
   - TaskRecord state machine (submitted, running, completed, failed, cancelled, expired, input_required).
   - Lease-extension state machine including cool-off and rejection flag.
   - Pool upgrade state machine (scaling, expanding, draining, contracting, complete) with pause/resume/rollback.
@@ -1199,7 +1221,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 | Suite | Coverage |
 |:------|:---------|
 | warm_pool | Pool scaling to `minWarm`; scale-up on claim; scale-down on idle; PDB respected during drain |
-| sandbox_claim | Optimistic locking under concurrent goroutines; zero double-claims; `lenny-sandboxclaim-guard` webhook fences stale claims |
+| sandbox_claim | Optimistic locking under concurrent goroutines; zero double-claims; `lenny-podclaim-guard` webhook fences stale claims |
 | pod_lifecycle | Claim → assign credentials → workspace materialize → prompt → checkpoint → release; pod returns to pool |
 | node_drain | `kubectl drain` triggers preStop checkpoint; session resumes on new pod; workspace intact |
 | admission_policy | Controller-generated pod specs pass PSS admission for each RuntimeClass. Violations are rejected with the documented error codes |
@@ -1209,7 +1231,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 | mtls_enforcement | Gateway ↔ pod gRPC over mTLS; plain text rejected; cert auto-renewal at 2/3 lifetime |
 | label_immutability | `lenny-label-immutability` webhook prevents post-creation label mutation; non-WarmPoolController creator setting `lenny.dev/managed: "true"` is rejected |
 | sandbox_finalizer | Delete sandbox with active session blocked by finalizer; checkpoint completes; finalizer removed; pod deleted |
-| orphan_claim_gc | Gateway crash after SandboxClaim creation; controller detects orphan and cleans up |
+| orphan_claim_gc | Gateway crash after PodClaim creation; controller detects orphan and cleans up |
 | drain_readiness_webhook | MinIO unhealthy; `lenny-drain-readiness` webhook blocks pod eviction; forced drain falls back to minimal state |
 | tenant_namespace_isolation | Tenant A pods cannot reach tenant B namespace (NetworkPolicy validated end-to-end) |
 | pool_upgrade | `lenny-ctl admin pools upgrade start` drives the state machine through expanding, draining, contracting, complete; pause/resume/rollback work |
@@ -1304,7 +1326,7 @@ The load_local tier runs on every PR.
 
 #### 12.7.b Load and SLO, Kind (`load_kind`)
 
-**Scope.** Cases that require Kind. Real `kubelet` pod-startup latency under concurrent SandboxClaim CREATE, real `kube-scheduler` placement under affinity and topology spread, real chart rollout under traffic, real `cert-manager` and webhook TLS rotation under load, real NetworkPolicy enforcement count, per-RuntimeClass startup-latency comparison (runc against gVisor).
+**Scope.** Cases that require Kind. Real `kubelet` pod-startup latency under concurrent PodClaim CREATE, real `kube-scheduler` placement under affinity and topology spread, real chart rollout under traffic, real `cert-manager` and webhook TLS rotation under load, real NetworkPolicy enforcement count, per-RuntimeClass startup-latency comparison (runc against gVisor).
 
 **Tooling.** `k6` is the primary load generator. `tests/load_kind/scenarios/<name>/main.js` holds the scenario scripts; the Go wrapper port-forwards the gateway, invokes k6, and diffs the result against `tests/load_kind/baselines/<scenario>.json`.
 
@@ -1317,7 +1339,7 @@ The load_local tier runs on every PR.
 | delegation_fanout | Single root with N=50 concurrent children, depth=10 | Tree completes within 30 seconds; budget enforcement correct |
 | credential_rotation_under_load | 200 concurrent sessions, rotate provider credentials | Rotation propagation P95 < 5 seconds; in-flight requests succeed |
 | checkpoint_duration | Workspaces at 10MB, 100MB, 500MB | ≤ 100MB checkpoint P95 < 2s with cooperative quiescence overhead included |
-| pod_claim_latency | 100 concurrent claims | P99 < 100ms cache-warm; SandboxClaim CAS under 50ms |
+| pod_claim_latency | 100 concurrent claims | P99 < 100ms cache-warm; PodClaim CAS under 50ms |
 | postgres_write_burst | Quota-flush burst pattern at Tier 3 | Sustained IOPS within `postgres.writeCeilingIops`; burst within 3× ceiling |
 | playground_revocation | 1000 active playground sessions; tenant-wide revoke | P99 propagation ≤ 500ms |
 | audit_lock | 1000 audit-event writes/sec at single-tenant burst | `pg_advisory_xact_lock` P95 < 50ms |
@@ -1353,7 +1375,7 @@ The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streamin
 - Credential failures: emergency revocation during active session, rotation failure, deny-list propagation under Redis outage, credential pool exhaustion.
 - Delegation failures: child crash mid-task, parent crash during await_children, budget exhaustion, lease-extension cool-off persistence across restart.
 - Compliance failures: erasure job failure mid-sequence, legal-hold override flow, T3/T4 SLA breach, audit-chain gap detection.
-- Concurrency: SandboxClaim race under 100+ goroutines, double-claim verification (ADR-007), elicitation deadlock detection, deadlock detection across delegation depth.
+- Concurrency: PodClaim race under 100+ goroutines, double-claim verification (ADR-007), elicitation deadlock detection, deadlock detection across delegation depth.
 - Time: gateway clock drift, certificate expiry advance.
 - Configuration: pool config drift, NetworkPolicy drift, schema migration failure (dirty flag), CRD upgrade with immutable field changes.
 
@@ -1389,7 +1411,7 @@ Every documented admission rejection is verified:
 - `POD_SPEC_CRED_GROUP_OVERBROAD`: non-adapter, non-agent container declaring `lenny-cred-readers`.
 - `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN`: ephemeral container with adapter or agent UID or `lenny-cred-readers` GID.
 - `lenny-label-immutability`: post-creation label mutation, non-WarmPoolController creator setting `lenny.dev/managed: "true"`.
-- `lenny-sandboxclaim-guard`: double claim attempt.
+- `lenny-podclaim-guard`: double claim attempt.
 - `lenny-pool-config-validator`: pool-config violations (tiered-cap, grace-budget, checkpoint-barrier-ack-timeout).
 - `lenny-direct-mode-isolation`: `tenancy.mode: multi` plus `deliveryMode: direct` + `isolationProfile: standard`, and `deliveryMode: proxy` + `spiffeBinding: disabled`.
 - `lenny-drain-readiness`: pod eviction during MinIO outage.
@@ -1702,7 +1724,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `tests/spec-map.json` and `tests/change-graph.json` seeded with the spec's table of contents and an initial change-graph entry per planned package.
 - `tests/groups.yaml` with `pr`, `pr-fast`, `nightly`, `pre-release`, and per-phase placeholder groups.
 - `scripts/setup-dev.sh`, `scripts/preflight.sh`, `scripts/setup-cluster.sh`.
-- ADR-007 (SandboxClaim optimistic locking) authored. ADR-008 (license) committed. LICENSE file at repo root.
+- ADR-007 (PodClaim optimistic locking) authored. ADR-008 (license) committed. LICENSE file at repo root.
 - `tests/testinfra/timectl/` and `tests/testinfra/randctl/`.
 - The static tier is partially live: license header check, markdown link check, ADR catalog cross-check, basic golangci-lint.
 - The docs tier is partially live: link check, code-block syntax check.
@@ -1712,7 +1734,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.1 Phase 1 — Core types and wire contracts
 
-**Spec/18 components.** Core types (`Runtime`, `SandboxTemplate`, etc.). Wire-contract artifacts under `schemas/` (`lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, `workspaceplan-v1.json`).
+**Spec/18 components.** Core types (`Runtime`, `PodSet`, etc.). Wire-contract artifacts under `schemas/` (`lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, `workspaceplan-v1.json`).
 
 **Test infrastructure to land.**
 - Proto and JSON Schema compilation in the static tier.
@@ -1814,12 +1836,12 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.7 Phase 3.5 — Admission policies + `lenny-ops` first deploy
 
-**Spec/18 components.** Default-deny NetworkPolicy. gVisor RuntimeClass validation. Admission webhooks (`lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, `lenny-ephemeral-container-cred-guard`). PoolScalingController admission-denied integration test. mTLS end-to-end verification. Mandatory `lenny-ops` first deploy.
+**Spec/18 components.** Default-deny NetworkPolicy. gVisor RuntimeClass validation. Admission webhooks (`lenny-label-immutability`, `lenny-podclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, `lenny-ephemeral-container-cred-guard`). PoolScalingController admission-denied integration test. mTLS end-to-end verification. Mandatory `lenny-ops` first deploy.
 
 **Test infrastructure delivered in Phase 3.5.**
-- `pkg/admission/sandboxclaim_guard` is the pure-decision logic for the `lenny-sandboxclaim-guard` webhook from §4.6.1 (ADR-007). The guard enforces per-pod claim uniqueness at CREATE only: CREATE rejects when a non-terminal `SandboxClaim` already exists for the same `Sandbox`. The webhook does not gate PATCH/PUT; the per-pod claim spec is immutable after CREATE and binding-state transitions are `SandboxClaim.status`-subresource writes serialized by the §4.6.1 `resourceVersion`-precondition mechanism. The CREATE rejection message matches the spec verbatim.
+- `pkg/admission/podclaim_guard` is the pure-decision logic for the `lenny-podclaim-guard` webhook from §4.6.1 (ADR-007). The guard enforces per-pod claim uniqueness at CREATE only: CREATE rejects when a non-terminal `PodClaim` already exists for the same `AgentPod`. The webhook does not gate PATCH/PUT; the per-pod claim spec is immutable after CREATE and binding-state transitions are `PodClaim.status`-subresource writes serialized by the §4.6.1 `resourceVersion`-precondition mechanism. The CREATE rejection message matches the spec verbatim.
 - `pkg/admission/label_immutability` is the pure-decision logic for the `lenny-label-immutability` webhook from §17.2 item 5 / §5.2 NET-003. The three immutable agent-pod labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`) reject any mutation; `lenny.dev/tenant-id` allows `unset → {tenant_id}` only for the gateway ServiceAccount and `{tenant_id} → unassigned` only for the WarmPoolController ServiceAccount.
-- `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `SandboxTemplate`, `SandboxWarmPool` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `Sandbox`, and `SandboxClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
+- `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `PodSet` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `AgentPod`, and `PodClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
 
 **Test infrastructure deferred to later phases.**
 - The webhook binaries that wrap each decision package with a `k8s.io/api/admission/v1` AdmissionReview HTTP handler are deferred to the K8s-integration phase. The handlers are thin shims over the decision packages above; they need the controller-runtime stack and a cert-manager-issued serving certificate.
@@ -1844,7 +1866,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure deferred to later phases.**
 - `tests/integration/session_lifecycle_test.go` (`create → upload → attach → complete` against the compose stack with real Postgres + MinIO) is deferred. It needs the workspace materialization, the upload handler, and the gateway-to-pod attach path; the contract tests above cover the state-machine surface against the in-memory backend.
 - The integration profile (`docker compose --profile default up` bringing up gateway, controller-sim, stores) is deferred to the K8s-integration phase. The fixtures it composes do not exist yet.
-- `tests/component/gateway_subsystems/session_orchestrator_test.go` (orchestrator-in-isolation against an envtest API server with the pod-claim path wired in) is deferred. The minimal gateway's transitions short-circuit pod claim; the real orchestrator binary that ships in a later phase drives the WarmPoolController and asserts the resulting `Sandbox` state.
+- `tests/component/gateway_subsystems/session_orchestrator_test.go` (orchestrator-in-isolation against an envtest API server with the pod-claim path wired in) is deferred. The minimal gateway's transitions short-circuit pod claim; the real orchestrator binary that ships in a later phase drives the WarmPoolController and asserts the resulting `AgentPod` state.
 - The OpenAPI document served at `GET /openapi.yaml` is deferred. The minimal gateway has no `/openapi.yaml` route; the production gateway will surface it.
 - The upload pipeline, the derive / replay flows, message injection, the elicitation / tool-approval endpoints, and the §11.6 admission controller wiring are deferred to their respective phases.
 
@@ -2389,7 +2411,7 @@ Above every test function:
 // diagnosis: ClaimSandbox returned a row already claimed by another goroutine.
 //            Likely missing transaction isolation in pkg/controller/warmpool/claim.go,
 //            or SELECT ... FOR UPDATE SKIP LOCKED applied to the wrong query.
-func TestSandboxClaimSkipLocked(t *testing.T) { ... }
+func TestPodClaimSkipLocked(t *testing.T) { ... }
 ```
 
 - `spec:` is mandatory on every test in the component tier and the tiers after it. It lists every spec section the test encodes.
@@ -2524,7 +2546,7 @@ Each fuzz target runs with a small corpus per PR and a longer corpus nightly. Cr
 
 ### 19.3 Mutation
 
-`gremlins` runs weekly on `main` with the release gate (`.claude/rules/test-coverage.md`, "Gates"), on the unit tier of the critical packages: `pkg/sandboxclaim` (claims), `pkg/admission`, and `pkg/credential`. The run is `lenny-test mutation --pkg <path>` for each package. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests, and a surviving mutant is resolved by a stronger test or a justified suppression.
+`gremlins` runs weekly on `main` with the release gate (`.claude/rules/test-coverage.md`, "Gates"), on the unit tier of the critical packages: `pkg/podclaim` (claims), `pkg/admission`, and `pkg/credential`. The run is `lenny-test mutation --pkg <path>` for each package. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests, and a surviving mutant is resolved by a stronger test or a justified suppression.
 
 ---
 
@@ -2853,7 +2875,7 @@ The infrastructure ships with quality metrics that go-live gates enforce.
 
 - Unit-tier coverage on new code: 80%, a floor a reviewer may waive for wiring code, naming the code waived (`.claude/rules/test-coverage.md`).
 - Repository coverage: tracked but not gated. Refactoring is not penalized.
-- Mutation score on the critical packages `pkg/sandboxclaim`, `pkg/admission`, and `pkg/credential`: reported per package by the weekly mutation run of the release gate (§19.3). It gates nothing.
+- Mutation score on the critical packages `pkg/podclaim`, `pkg/admission`, and `pkg/credential`: reported per package by the weekly mutation run of the release gate (§19.3). It gates nothing.
 
 ### 22.2 Spec coverage
 

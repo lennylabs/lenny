@@ -219,7 +219,7 @@ func (e *recordingPodExecutor) releases() []executor.Disposition {
 // streamFailureFixture is one replica serving one bound pod-backed session.
 type streamFailureFixture struct {
 	id       string
-	sandbox  string
+	agentPod string
 	store    sessionstore.Store
 	registry *podsession.Registry
 	exec     *recordingPodExecutor
@@ -244,7 +244,7 @@ type streamFailureReplica struct {
 // used. The replica's executor reports a failed stream to its session server.
 func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string, st session.State, retries int64, rep streamFailureReplica) *streamFailureFixture {
 	t.Helper()
-	f := &streamFailureFixture{id: id, sandbox: "sbx-" + id, registry: podsession.NewRegistry(), attaches: &attachCounter{}}
+	f := &streamFailureFixture{id: id, agentPod: "sbx-" + id, registry: podsession.NewRegistry(), attaches: &attachCounter{}}
 	if rep.store == nil {
 		rep.store = memstore.New()
 	}
@@ -254,7 +254,7 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 		t.Fatalf("StartSession: %v", err)
 	}
 	f.registry.Put(&podsession.BindResult{
-		SessionID: id, TenantID: "acme", SandboxName: f.sandbox, Adapter: cl, CoordinationGeneration: 1,
+		SessionID: id, TenantID: "acme", AgentPodName: f.agentPod, Adapter: cl, CoordinationGeneration: 1,
 	})
 	binder := rep.binder
 	if binder == nil {
@@ -280,7 +280,7 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 	hs := httptest.NewServer(ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 	f.base = hs.URL
-	streamFailureSeed(t, f.store, id, f.sandbox, st, retries)
+	streamFailureSeed(t, f.store, id, f.agentPod, st, retries)
 	return f
 }
 
@@ -307,7 +307,7 @@ func streamFailureAdapter(t *testing.T, rt adapter.RuntimeProcess, attaches *att
 	return cl
 }
 
-// streamFailureFakeCluster is a cluster holding no Sandbox, so the failed
+// streamFailureFakeCluster is a cluster holding no AgentPod, so the failed
 // release's pod drain finds nothing to delete after it has sent the adapter
 // its Shutdown. The release error is logged by the failure funnel.
 func streamFailureFakeCluster(t *testing.T) client.Client {
@@ -321,13 +321,13 @@ func streamFailureFakeCluster(t *testing.T) client.Client {
 
 // streamFailureSeed commits the session row bound to sandbox at coordination
 // generation 1, with retries already used out of a budget of one.
-func streamFailureSeed(t *testing.T, store sessionstore.Store, id, sandbox string, st session.State, retries int64) {
+func streamFailureSeed(t *testing.T, store sessionstore.Store, id, agentPod string, st session.State, retries int64) {
 	t.Helper()
 	now := time.Now().UTC()
 	if err := store.Create(context.Background(), sessionstore.Session{
 		UserID: ownerprincipal.Alice,
 		ID:     id, TenantID: "acme", State: st, RuntimeRef: matOKRuntime,
-		IsolationProfile: isolation.ProfileSandboxed, PodAssignment: sandbox,
+		IsolationProfile: isolation.ProfileSandboxed, PodAssignment: agentPod,
 		CoordinationGeneration: 1, RetryCount: retries,
 		RetryPolicy:       &session.RetryPolicy{MaxRetries: 1},
 		WorkspaceSnapshot: &sessionstore.WorkspaceSnapshot{Ref: "ckpt-1", Source: sessionstore.WorkspaceSnapshotCheckpoint},

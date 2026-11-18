@@ -76,11 +76,11 @@ func TestEnsureAgentNamespaceCreatesAndIsIdempotent_spec_4_6_2(t *testing.T) {
 // echo seed and the containerd image also carry passes admission.
 //
 // diagnosis: a failure means the embedded bring-up cannot register the echo
-// Runtime CR the Sandbox controller resolves the runtime from by name, so the
+// Runtime CR the AgentPod controller resolves the runtime from by name, so the
 // seeded warm pool's pod never renders the §4.7 embedded single-container model.
 //
 // spec: §4.7 (embedded deployment model), §5.1 (the Runtime CR is the
-// declarative source the Sandbox controller resolves by name).
+// declarative source the AgentPod controller resolves by name).
 func TestApplyEchoRuntimeCRCreatesAndReconverges_spec_4_7(t *testing.T) {
 	env := sharedEnv.Start(t)
 	ctx := context.Background()
@@ -137,7 +137,7 @@ func TestApplyEchoRuntimeCRCreatesAndReconverges_spec_4_7(t *testing.T) {
 //
 // diagnosis: a failure means the digest-pinning admission the CRD pattern
 // encodes is not enforced, so a tag-pinned (mutable) echo image could reach a
-// Sandbox pod, violating the §5.3 supply-chain MUST.
+// AgentPod pod, violating the §5.3 supply-chain MUST.
 //
 // spec: §5.1 (Runtime image must be digest-pinned), §5.3 (supply-chain digest
 // pin).
@@ -213,9 +213,9 @@ func TestPlacementWrappersDriveActivationFromKubeconfig_spec_4_7(t *testing.T) {
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Name: stack.EchoRuntimeName}, &rt); err != nil {
 		t.Errorf("echo Runtime CR not applied: %v", err)
 	}
-	var pool lennyv1alpha1.SandboxWarmPool
+	var pool lennyv1alpha1.PodSet
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Namespace: ns, Name: stack.EchoPoolName}, &pool); err != nil {
-		t.Errorf("echo SandboxWarmPool not applied: %v", err)
+		t.Errorf("echo PodSet not applied: %v", err)
 	}
 }
 

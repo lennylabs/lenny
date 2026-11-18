@@ -136,13 +136,13 @@ func newFunnelRaceFixture(t *testing.T, n int) *funnelRaceFixture {
 		t.Fatalf("AddToScheme corev1: %v", err)
 	}
 	cl := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "pool-c", Namespace: funnelRaceNS},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "tmpl-c", MinWarm: 1, MaxWarm: 2},
-		},
-		&lennyv1.SandboxTemplate{
-			ObjectMeta: metav1.ObjectMeta{Name: "tmpl-c", Namespace: funnelRaceNS},
-			Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo"},
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef: "echo",
+				MinWarm:    1,
+				MaxWarm:    2,
+			},
 		},
 	).WithInterceptorFuncs(interceptor.Funcs{
 		Patch: func(ctx context.Context, c client.WithWatch, obj client.Object, p client.Patch, opts ...client.PatchOption) error {
@@ -185,7 +185,7 @@ func (f *funnelRaceFixture) seedSlot(t *testing.T, id, pod string, retries int64
 	}); err != nil {
 		t.Fatalf("seed %s: %v", id, err)
 	}
-	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: pod, SlotID: id})
+	f.registry.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", AgentPodName: pod, SlotID: id})
 }
 
 func (f *funnelRaceFixture) replacementCount() int {

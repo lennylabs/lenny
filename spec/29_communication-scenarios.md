@@ -106,8 +106,8 @@ happens, the step records that the specification does not state it, in those wor
 the §28.8 matrix carry: a reader cannot afterwards distinguish a behaviour the specification fixes from one
 a trace invented. An `unstated` step keeps its number and its position in the sequence, so the gap is
 visible where it occurs rather than omitted from the trace. A step whose mechanism is specified and not
-implemented is stated normally and carries its implementation status in the §28.4 claim register, which is
-a separate case from an `unstated` step.
+implemented is stated normally, and its implementation status is recorded as an issue, as §28.4 states.
+That case is separate from an `unstated` step.
 
 ### 29.2 Session start
 
@@ -159,9 +159,9 @@ state that the READY signal is one of them.
 
 6. On a pod not held for the same tenant under a `reserved` claim within its hold window: `gateway` →
    `control plane`, `REG-CLAIM`, Kubernetes API. The gateway acquires the pod by creating a
-   `SandboxClaim` with the deterministic name `claim-<podName>`, carrying `sandboxRef` and `tenantId` in
+   `PodClaim` with the deterministic name `claim-<podName>`, carrying `agentPodRef` and `tenantId` in
    its spec. Exactly one replica's `CREATE` succeeds; another receives an `AlreadyExists` conflict or an
-   admission rejection from the `lenny-sandboxclaim-guard` webhook, re-reads the idle inventory, and
+   admission rejection from the `lenny-podclaim-guard` webhook, re-reads the idle inventory, and
    retries with a different pod ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle),
    §28.3).
 
@@ -1128,8 +1128,8 @@ coordination lease `REG-COORDLEASE` and runs the §7.3 resume driver, and the po
    ([§7.3](07_session-lifecycle.md#73-retry-and-resume) **Resume driver.**).
 
 4. `gateway` → `control plane`, `REG-CLAIM`, Kubernetes API. The gateway allocates a replacement warm pod,
-   which it acquires by creating a `SandboxClaim` with the deterministic name `claim-<podName>` carrying
-   `sandboxRef` and `tenantId` in its spec, and may wait when the pool is temporarily exhausted
+   which it acquires by creating a `PodClaim` with the deterministic name `claim-<podName>` carrying
+   `agentPodRef` and `tenantId` in its spec, and may wait when the pool is temporarily exhausted
    ([§7.3](07_session-lifecycle.md#73-retry-and-resume),
    [§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.3). A claim failure
    and the `resume_pending → resuming` write follow
@@ -1445,7 +1445,7 @@ subresource and the pod's preStop hook runs before the pod is allowed to termina
 ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle), §28.5.6 `CH-ADMISSION`). Other
 entry points and outcomes are named here and are not traced. A spontaneous node failure, an OOM kill, and
 a preemption bypass the eviction API and open no `CH-ADMISSION` channel (§28.5.6). The eviction of a warm
-pod carries no session, and the per-`SandboxTemplate` pod disruption budget selects idle pods alone, so an
+pod carries no session, and the per-`PodSet` pod disruption budget selects idle pods alone, so an
 active session pod has no voluntary-disruption protection beyond its preStop hook
 ([§4.6.1](04_system-components.md#461-warm-pool-controller-pod-lifecycle)). The drain of a gateway replica
 is §29.7 rather than part of this trace. When the coordinating replica is unreachable no replica drives

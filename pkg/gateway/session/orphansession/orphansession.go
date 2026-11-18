@@ -5,7 +5,7 @@
 // A pod whose coordinating gateway replica is lost enters hold state and,
 // after coordinatorHoldTimeoutSeconds, terminates. Agent pods carry zero
 // RBAC and no network path to the kube-apiserver (§10.3, §13.2), so a
-// terminating pod cannot write its own `Sandbox.status.phase = failed`
+// terminating pod cannot write its own `AgentPod.status.phase = failed`
 // CRD update; it can only attempt an AdapterTerminating gRPC message to
 // the gateway. When that channel is also down (the coordinating replica
 // itself crashed), the session row is left in a non-terminal state with a
@@ -17,7 +17,7 @@
 // transitioned to `failed` with reason `orphan_pod_terminated`. When the
 // mirror for a pool is stale (lag > 60s, e.g. during a WarmPoolController
 // failover) or carries no row for the bound pod, the reconciler falls
-// back to a direct Kubernetes read of the Sandbox phase so stale mirror
+// back to a direct Kubernetes read of the AgentPod phase so stale mirror
 // data cannot silently block orphan detection.
 //
 // The transition is idempotent across gateway replicas: the store Update
@@ -51,7 +51,7 @@ const (
 	// direct Kubernetes read ("When mirror staleness exceeds 60s …").
 	DefaultStaleMirrorThreshold = 60 * time.Second
 	// podPhaseTerminated is the §6.2 phase written into the mirror's
-	// state column (and Sandbox.status.phase) when a pod has torn down.
+	// state column (and AgentPod.status.phase) when a pod has torn down.
 	// Kept as a local literal so the reconciler does not pull the
 	// controller-runtime dependency the podlifecycle package carries.
 	// spec: §6.2 — terminal pod phase.
@@ -106,7 +106,7 @@ type MirrorPod struct {
 // PodPhaseReader is the §10.1.4 direct-Kubernetes fallback,
 // consulted when the mirror is stale for the pool or carries no row for
 // the bound pod. It wraps the gateway's PodLifecycleManager.GetPodStatus.
-// found=false reports that the Sandbox no longer exists, itself a
+// found=false reports that the AgentPod no longer exists, itself a
 // terminal signal (the pod is gone). A nil PodPhaseReader disables the
 // fallback; the reconciler then conservatively skips a session it cannot
 // resolve from the mirror.
@@ -367,7 +367,7 @@ func (r *Reconciler) poolLag(ctx context.Context, pool string, lagByPool map[str
 }
 
 // fallbackOrphaned consults the direct-Kubernetes phase reader. A
-// missing Sandbox (found=false) means the pod is gone, a terminal
+// missing AgentPod (found=false) means the pod is gone, a terminal
 // signal. A read error propagates so the caller skips this session
 // rather than forcing a false transition. With no fallback wired the
 // reconciler conservatively reports not-orphaned.

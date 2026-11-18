@@ -738,7 +738,7 @@ func main() {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	// Register lenny.dev/v1alpha1 so the §5.2 node-drain-timeout
-	// warning can list SandboxTemplate pools.
+	// warning can list PodSet pools.
 	utilruntime.Must(lennyv1.AddToScheme(scheme))
 	// spec: §10 — the crd-schema-version check fetches the
 	// installed CRDs by name; register apiextensions.k8s.io/v1 so the

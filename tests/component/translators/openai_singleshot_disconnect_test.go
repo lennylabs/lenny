@@ -162,9 +162,8 @@ var _ executor.SessionReleaser = (*ssDisconnectSpy)(nil)
 func TestSingleShotDisconnectMidTurnEndsTheStreamOnlyAtRelease_spec_28_5_1(t *testing.T) {
 	cluster := ssEnvClient(
 		t,
-		ssWarmPool("echo-pool", "echo-tmpl"),
-		ssTemplate("echo-tmpl", "echo"),
-		ssIdleSandbox("sbx-1", "echo-pool", "10.244.2.5"),
+		ssPodSet("echo-pool", "echo"),
+		ssIdleAgentPod("sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	rt := &ssSilentRuntime{out: make(chan []byte, 8), received: make(chan struct{})}
 	attach := newSSAttachEndRecorder()

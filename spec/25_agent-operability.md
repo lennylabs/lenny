@@ -3088,7 +3088,7 @@ GET /v1/admin/diagnostics/pools/<pool-name>
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandboxes -n lenny-agents -l pool=<pool-name>
+kubectl get agentpods -n lenny-agents -l pool=<pool-name>
 kubectl describe sandbox <pod-name> -n lenny-agents
 ```
 ~~~~
@@ -3106,7 +3106,7 @@ The `<!-- access: ... -->` comment lines are invisible to humans reading the ren
         "paths": [
           {"access": "lenny-ctl", "command": "lenny-ctl diagnose pool <pool-name>"},
           {"access": "api", "method": "GET", "path": "/v1/admin/diagnostics/pools/{name}"},
-          {"access": "kubectl", "requires": "cluster-access", "commands": ["kubectl get sandboxes ...", "kubectl describe sandbox ..."]}
+          {"access": "kubectl", "requires": "cluster-access", "commands": ["kubectl get agentpods ...", "kubectl describe sandbox ..."]}
         ]
       }
     ]

@@ -25,6 +25,12 @@ const migrationToolingPath = "github.com/lennylabs/lenny/scripts/specshift"
 // tooling's predicates over the tracked tree on every static-tier run.
 const gateBatteryDir = "../../tests/static"
 
+// harnessDir holds the test harness, which reads the annotation index and
+// the successor stubs through the tooling's exported symbols for its
+// coverage view and its selection by specification (change 0116). Its
+// non-test sources call those symbols on every harness run.
+const harnessDir = "../../cmd/lenny-test"
+
 // TestEveryMigrationToolingPackageIsReachableFromAnEntryPoint pins that
 // the tooling ships no package with no caller. The tooling has two entry
 // points, the command and the static-tier gate battery, and every
@@ -240,6 +246,11 @@ var exportedSymbolsWithTestCallersOnly = map[string]bool{
 // in it, so an exported function added to a live package and called from
 // a check elsewhere in the suite alone reads as reachable.
 //
+// The test harness under cmd/lenny-test reads the annotation index and
+// the successor stubs for its coverage view, so a symbol its non-test
+// sources name as `pkg.Sym`, through an import of the tooling, has a
+// caller on every harness run and counts as entered.
+//
 // An exported symbol whose only references are test files is a surface
 // of the tooling that no run of the migration reaches. The walk it
 // implements belongs with the case that wants it, where the package's
@@ -277,6 +288,19 @@ func TestEveryExportedMigrationToolingSymbolHasANonTestCaller(t *testing.T) {
 		t.Fatalf("the gates under %s reference no identifier, so the walk read no gate", gateBatteryDir)
 	}
 	for name, count := range gateReferences {
+		referenced[name] += count
+	}
+	// The harness's own sources enter the symbols they call on every
+	// harness run, so a symbol the harness calls has a caller outside the
+	// tests.
+	harnessReferences, err := harnessIdentReferences(harnessDir)
+	if err != nil {
+		t.Fatalf("read the identifier references of the test harness: %v", err)
+	}
+	if len(harnessReferences) == 0 {
+		t.Fatalf("the harness under %s references no identifier, so the walk read no harness source", harnessDir)
+	}
+	for name, count := range harnessReferences {
 		referenced[name] += count
 	}
 
@@ -444,6 +468,77 @@ func gateBatteryIdentReferences(dir string) (map[string]int, error) {
 	if err != nil {
 		return nil, err
 	}
+	return identReferences(files)
+}
+
+// harnessIdentReferences counts, in the harness's non-test sources, the
+// selector expressions `pkg.Sym` whose `pkg` names an import of a
+// package of the tooling, by `Sym`. Its tests are left out, because a
+// symbol that only a harness test calls has no caller on a harness run.
+// A bare identifier is not counted, because a name the harness declares
+// for itself is not a reference to the tooling's symbol of the same name.
+func harnessIdentReferences(dir string) (map[string]int, error) {
+	all, err := gateBatteryFiles(dir)
+	if err != nil {
+		return nil, err
+	}
+	counts := map[string]int{}
+	for _, f := range all {
+		if strings.HasSuffix(f, "_test.go") {
+			continue
+		}
+		if err := countToolingSelectors(f, counts); err != nil {
+			return nil, err
+		}
+	}
+	return counts, nil
+}
+
+// countToolingSelectors adds to counts the selector expressions of one Go
+// file whose qualifier is the name of an import of the tooling.
+func countToolingSelectors(file string, counts map[string]int) error {
+	source, err := os.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, source, 0)
+	if err != nil {
+		return err
+	}
+	qualifiers := map[string]bool{}
+	for _, spec := range parsed.Imports {
+		imported, err := strconv.Unquote(spec.Path.Value)
+		if err != nil {
+			return err
+		}
+		if imported != migrationToolingPath && !strings.HasPrefix(imported, migrationToolingPath+"/") {
+			continue
+		}
+		name := path.Base(imported)
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		qualifiers[name] = true
+	}
+	if len(qualifiers) == 0 {
+		return nil
+	}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		sel, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if x, ok := sel.X.(*ast.Ident); ok && qualifiers[x.Name] {
+			counts[sel.Sel.Name]++
+		}
+		return true
+	})
+	return nil
+}
+
+// identReferences counts the identifier occurrences in the named Go
+// files.
+func identReferences(files []string) (map[string]int, error) {
 	counts := map[string]int{}
 	for _, current := range files {
 		source, err := os.ReadFile(current)

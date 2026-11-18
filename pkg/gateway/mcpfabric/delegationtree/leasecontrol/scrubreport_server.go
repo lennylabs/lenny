@@ -23,7 +23,7 @@ import (
 // writes on agent_pod_state, the unhealthy-threshold drain ledger behind
 // the lenny.dev/drain-request annotation, the §6.2 host-node
 // schedulability read, the podscrub recycle disposition, and the
-// SandboxClaim binding-state patches that drive the recycle or retire.
+// PodClaim binding-state patches that drive the recycle or retire.
 //
 // The interface is defined at the consumer so leasecontrol stays free of a
 // direct dependency on the Kubernetes client, agentpodstate, slothealth,
@@ -303,7 +303,7 @@ type PodInspector interface {
 }
 
 // ClaimDispositionDriver applies a resolved recycle disposition to the
-// pod's SandboxClaim binding state. The gateway satisfies it with the
+// pod's PodClaim binding state. The gateway satisfies it with the
 // podclaim binding-state writers (WriteRewarmStartedStatus,
 // WriteReservedStatus, WriteDispositionStatus). The interface keeps
 // leasecontrol free of the Kubernetes client and podclaim import.

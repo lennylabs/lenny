@@ -10,11 +10,11 @@ import (
 
 func TestObjectStoreCreateGet(t *testing.T) {
 	s := NewObjectStore()
-	obj := &Object{Kind: "Sandbox", Namespace: "lenny-agents", Name: "pod-1"}
+	obj := &Object{Kind: "AgentPod", Namespace: "lenny-agents", Name: "pod-1"}
 	if err := s.Create(obj); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	got, err := s.Get("Sandbox", "lenny-agents", "pod-1")
+	got, err := s.Get("AgentPod", "lenny-agents", "pod-1")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -54,8 +54,8 @@ func TestObjectStoreUpdateConflictOnStaleRV(t *testing.T) {
 // invariant SSA enforces.
 func TestObjectStoreSSAConflictUnderRace(t *testing.T) {
 	s := NewObjectStore()
-	_ = s.Create(&Object{Kind: "Sandbox", Name: "pod-x"})
-	observed, _ := s.Get("Sandbox", "", "pod-x")
+	_ = s.Create(&Object{Kind: "AgentPod", Name: "pod-x"})
+	observed, _ := s.Get("AgentPod", "", "pod-x")
 	const N = 50
 	var wg sync.WaitGroup
 	var success, conflicts int

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-// Package state defines the Sandbox CRD coarse pod-occupancy state machine,
+// Package state defines the AgentPod CRD coarse pod-occupancy state machine,
 // per spec §6.2.
 //
 // The State enum and ValidTransitions() form the authoritative contract for
-// the values the WarmPoolController writes to Sandbox.status.phase. IsValid
+// the values the WarmPoolController writes to AgentPod.status.phase. IsValid
 // returns nil for an edge present in ValidTransitions() and an
 // InvalidTransitionError otherwise. The fine session-lifecycle states
 // (running, suspended, resume_pending, resuming, awaiting_client_action, and
@@ -19,24 +19,24 @@ package state
 
 import "fmt"
 
-// State is the Sandbox coarse pod-occupancy phase, written to
-// Sandbox.status.phase. spec: §6.2 — the enum is warming, idle, reserved,
+// State is the AgentPod coarse pod-occupancy phase, written to
+// AgentPod.status.phase. spec: §6.2 — the enum is warming, idle, reserved,
 // claimed, sdk_connecting, draining, failed, terminated.
 type State string
 
-// LabelState is the pod label the Sandbox-to-Pod reconciler keeps in
-// sync with the Sandbox's §6.2 phase. The §4.6.1 per-pool
+// LabelState is the pod label the AgentPod-to-Pod reconciler keeps in
+// sync with the AgentPod's §6.2 phase. The §4.6.1 per-pool
 // PodDisruptionBudget selects warm pods by this label
 // (lenny.dev/state: idle) so disruption protection targets only
 // unclaimed pods. spec: §4.6.1 "Disruption protection for agent pods".
 //
 // The label carries only the coarse operational value set (see
 // CoarseState), not the full §6.2 phase: spec §6.2 reserves the full phase
-// for Sandbox.status.phase and restricts the pod label to
+// for AgentPod.status.phase and restricts the pod label to
 // idle/active/draining for selectors, monitoring, and NetworkPolicies.
 const LabelState = "lenny.dev/state"
 
-// LabelRuntime is the pod label carrying the runtime name (the Sandbox's
+// LabelRuntime is the pod label carrying the runtime name (the AgentPod's
 // RuntimeRef). spec: §6.2 — operators select pods by runtime type through
 // this coarse label. It is immutable for a pod's lifetime, stamped once at
 // pod creation.
@@ -132,7 +132,7 @@ const (
 )
 
 // All returns every coarse §6.2 pod-occupancy phase the WarmPoolController
-// writes to Sandbox.status.phase.
+// writes to AgentPod.status.phase.
 func All() []State {
 	return []State{
 		Warming, SDKConnecting, Idle, Reserved, Claimed,
@@ -186,7 +186,7 @@ func ValidTransitions() []Transition {
 		{SDKConnecting, Failed},
 		{SDKConnecting, Terminated},
 		// Occupancy projection (WarmPoolController-computed from the per-pod
-		// SandboxClaim).
+		// PodClaim).
 		{Idle, Claimed},
 		// claimed → claimed is the concurrent-occupancy self-edge: an
 		// additional session is assigned or an existing session completes

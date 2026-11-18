@@ -151,7 +151,7 @@ The session's retry policy (`retryPolicy`) classifies each pod or runtime failur
 
 ## Pod state machine
 
-`Sandbox.status.phase` carries the coarse pod-occupancy enum: `warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`. Pod states are internal to the platform and are NOT exposed via the client API. The WarmPoolController is the sole writer of the phase and computes it as a level-triggered projection of per-pod `SandboxClaim` existence, the claim's binding state and disposition, `sessionPolicy`, and the phase the pod currently projects. A pod in a warm-inventory phase with no claim projects `idle`; a `bound` claim projects `claimed`; a `recycling` claim projects `claimed` until its whole-pod scrub reports successful and `sdk_connecting` during the preConnect SDK re-warm leg that follows; a `reserved` claim projects `reserved`; a claim deleted while the pod projects `reserved`, its scrub and any re-warm already complete, projects `idle`; and a terminal claim disposition (`released` or `failed`), or a claim deleted while the pod projects `claimed`, on a pool of either recycle setting, projects `draining` then `terminated`. The fine session-lifecycle states live in the Postgres session model and are not projected onto the CRD.
+`AgentPod.status.phase` carries the coarse pod-occupancy enum: `warming`, `idle`, `reserved`, `claimed`, `sdk_connecting`, `draining`, `failed`, and `terminated`. Pod states are internal to the platform and are NOT exposed via the client API. The WarmPoolController is the sole writer of the phase and computes it as a level-triggered projection of per-pod `PodClaim` existence, the claim's binding state and disposition, `sessionPolicy`, and the phase the pod currently projects. A pod in a warm-inventory phase with no claim projects `idle`; a `bound` claim projects `claimed`; a `recycling` claim projects `claimed` until its whole-pod scrub reports successful and `sdk_connecting` during the preConnect SDK re-warm leg that follows; a `reserved` claim projects `reserved`; a claim deleted while the pod projects `reserved`, its scrub and any re-warm already complete, projects `idle`; and a terminal claim disposition (`released` or `failed`), or a claim deleted while the pod projects `claimed`, on a pool of either recycle setting, projects `draining` then `terminated`. The fine session-lifecycle states live in the Postgres session model and are not projected onto the CRD.
 
 ### Pod-warm path diagram
 
@@ -248,7 +248,7 @@ The reserved hold extends an occupancy episode across an idle gap: a recycled po
 
 ### Per-slot sub-states
 
-Every session is bound to a [slot](glossary#slot) on the pod that runs it, whatever the pool's `maxConcurrentSessions`, and each slot progresses through its own sub-states beside the pod-level phase. The sub-states are tracked per session and are never projected onto `Sandbox.status.phase`.
+Every session is bound to a [slot](glossary#slot) on the pod that runs it, whatever the pool's `maxConcurrentSessions`, and each slot progresses through its own sub-states beside the pod-level phase. The sub-states are tracked per session and are never projected onto `AgentPod.status.phase`.
 
 | From | To | Trigger |
 |:-----|:---|:--------|
@@ -404,7 +404,7 @@ stateDiagram-v2
     Pending --> Expanding : proceed (or autoAdvance)
     Expanding --> Draining : New pool stable, proceed
     Draining --> Contracting : Old pool drained (activePodCount == 0)
-    Contracting --> Complete : Old SandboxTemplate deleted
+    Contracting --> Complete : Old PodSet deleted
 
     Pending --> Paused : pause
     Expanding --> Paused : pause
@@ -426,10 +426,10 @@ stateDiagram-v2
 
 | State | Description | Entry condition | Exit condition |
 |:------|:------------|:----------------|:---------------|
-| `Pending` | Upgrade registered. Both old and new `SandboxTemplate` CRDs exist. New pool has `minWarm: 0`. | `lenny-ctl admin pools upgrade start` | `proceed` or `autoAdvance: true` |
+| `Pending` | Upgrade registered. Both old and new `PodSet` CRDs exist. New pool has `minWarm: 0`. | `lenny-ctl admin pools upgrade start` | `proceed` or `autoAdvance: true` |
 | `Expanding` | New pool ramping up. `minWarm` set to target. New sessions routed to new pool (or canary split via `canaryPercent`). | Proceed from `Pending` | New pool `idlePodCount >= minWarm` for `stabilizationWindowSeconds` (default: 120s) and health check passes. |
 | `Draining` | Old pool accepts no new sessions (`minWarm = 0`). Existing sessions run to completion. | Proceed from `Expanding` | Old pool `activePodCount == 0` or `drainTimeoutSeconds` expires. On timeout, remaining sessions force-terminated with checkpoint. |
-| `Contracting` | Old `SandboxTemplate` CRD and pool record being deleted. | Proceed from `Draining` | Old pool deletion confirmed. |
+| `Contracting` | Old `PodSet` CRD and pool record being deleted. | Proceed from `Draining` | Old pool deletion confirmed. |
 | `Complete` | Upgrade finished. Only new pool remains. | Proceed from `Contracting` | Terminal. |
 | `Paused` | All state machine activity halted. New pool may continue serving; old pool retains current state. | `pause` from any non-terminal state | `resume` |
 
@@ -438,12 +438,12 @@ stateDiagram-v2
 | From state | Command | Behavior |
 |:-----------|:--------|:---------|
 | `Expanding` | `lenny-ctl admin pools upgrade rollback` | Sets new pool `minWarm` to 0, restores full routing to old pool, transitions to `Paused`. |
-| `Draining` or `Contracting` | `lenny-ctl admin pools upgrade rollback --restore-old-pool` | Recreates old pool from `RuntimeUpgrade.previousPoolSpec` and restores routing. Only valid while old `SandboxTemplate` CRD still exists. |
-| Late `Contracting` (CRD deleted) | Manual recreation | Operator must manually recreate old `SandboxTemplate` from version control or Helm values. |
+| `Draining` or `Contracting` | `lenny-ctl admin pools upgrade rollback --restore-old-pool` | Recreates old pool from `RuntimeUpgrade.previousPoolSpec` and restores routing. Only valid while old `PodSet` CRD still exists. |
+| Late `Contracting` (CRD deleted) | Manual recreation | Operator must manually recreate old `PodSet` from version control or Helm values. |
 
 ### Safety invariant
 
-The old `SandboxTemplate` CRD is never deleted until the state machine explicitly reaches `Contracting` -> `Complete`. The WarmPoolController blocks `SandboxTemplate` deletion when an active `RuntimeUpgrade` references it.
+The old `PodSet` CRD is never deleted until the state machine explicitly reaches `Contracting` -> `Complete`. The WarmPoolController blocks `PodSet` deletion when an active `RuntimeUpgrade` references it.
 
 <!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
 <!-- generated:reference-state-machines -->

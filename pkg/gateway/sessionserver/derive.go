@@ -33,7 +33,7 @@ type DeriveRequest struct {
 	// ExternalAdapterRegistry per §15.4.
 	RuntimeRef string `json:"runtimeRef,omitempty"`
 
-	// TargetPool identifies the `SandboxWarmPool` the derived session
+	// TargetPool identifies the `PodSet` the derived session
 	// runs against. Optional — when blank, the derived session
 	// inherits the source's pool. Production resolves this through
 	// the registry per §5.3.

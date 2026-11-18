@@ -43,11 +43,10 @@ type crdManifest struct {
 // platform-global and cluster-scoped; the pod-fabric CRDs live in agent
 // namespaces and are namespaced.
 var expectedCRDs = map[string]string{
-	"Runtime":         "Cluster",
-	"Sandbox":         "Namespaced",
-	"SandboxClaim":    "Namespaced",
-	"SandboxTemplate": "Namespaced",
-	"SandboxWarmPool": "Namespaced",
+	"Runtime":  "Cluster",
+	"AgentPod": "Namespaced",
+	"PodClaim": "Namespaced",
+	"PodSet":   "Namespaced",
 }
 
 func crdDir(t *testing.T) string {
@@ -307,7 +306,7 @@ func TestDeepCopyInSyncWithGoTypes(t *testing.T) {
 
 	// The same two steps the Makefile generate target runs, with the output
 	// redirected so the check never writes to the tree.
-	cmd := exec.Command(cg, "object:headerFile=hack/boilerplate.go.txt",
+	cmd := exec.Command(cg, "object:headerFile=scripts/codegen/boilerplate.go.txt",
 		"paths=./pkg/apis/lenny/v1alpha1/...",
 		"output:object:dir="+tmp)
 	cmd.Dir = root

@@ -136,7 +136,7 @@ func TestSpecContributionGateReadsTheRenderedChart(t *testing.T) {
 
 	fixture := t.TempDir()
 	page := "---\ncode: GW\ntype: component\nsummary: The gateway.\n---\n# Gateway\n\n" +
-		"<a id=\"rbac-grant-sandboxclaims-create\"></a>\n\n```lenny-def\nkind: rbac-grant\nname: sandboxclaims create\nunit: GW\napi-groups: [lenny.dev]\nresources: [sandboxclaims]\nverbs: [create]\nnamespace-scope: cluster\nrequirement: GW-R1\n```\n\n" +
+		"<a id=\"rbac-grant-podclaims-create\"></a>\n\n```lenny-def\nkind: rbac-grant\nname: podclaims create\nunit: GW\napi-groups: [lenny.dev]\nresources: [podclaims]\nverbs: [create]\nnamespace-scope: cluster\nrequirement: GW-R1\n```\n\n" +
 		"<a id=\"rbac-grant-leases-update\"></a>\n\n```lenny-def\nkind: rbac-grant\nname: leases update\nunit: GW\napi-groups: [coordination.k8s.io]\nresources: [leases]\nverbs: [update]\nnamespace-scope: lenny-system\nrequirement: GW-R2\n```\n\n" +
 		"<a id=\"network-rule-to-token-service\"></a>\n\n```lenny-def\nkind: network-rule\nname: to token service\nunit: GW\ndirection: egress\npeer: TOKSVC\nports: [50052/TCP]\nrequirement: GW-R3\n```\n\n" +
 		"<a id=\"rbac-grant-secrets-delete\"></a>\n\n```lenny-def\nkind: rbac-grant\nname: secrets delete\nunit: GW\napi-groups: [\"\"]\nresources: [secrets]\nverbs: [delete]\nnamespace-scope: cluster\nrequirement: GW-R4\n```\n"

@@ -109,7 +109,7 @@ type Session struct {
 	WorkspacePlan json.RawMessage `json:"workspacePlan,omitempty"`
 
 	// PodAssignment is the §4.6 name of the agent pod the gateway bound
-	// this session to (the SandboxClaim/Sandbox name). Empty on a
+	// this session to (the PodClaim/AgentPod name). Empty on a
 	// service-mode session, which is claimless (§5.2).
 	PodAssignment string `json:"podAssignment,omitempty"`
 
@@ -445,7 +445,7 @@ func (d *Driver) CreateSessionWithOptions(ctx context.Context, tenantID, runtime
 		runtimeRef = defaultRuntime
 	}
 	// §5.3 standard isolation maps to the Kind cluster's runc handler;
-	// the e2e agent-workload.yaml only ships SandboxTemplates with
+	// the e2e agent-workload.yaml only ships PodSets with
 	// `isolationProfile: standard` so the gateway-side ResolvePool
 	// match needs the same profile on the session record. Without
 	// this override the gateway falls back to its default
@@ -527,7 +527,7 @@ type sessionBody struct {
 }
 
 // startBody builds the creation body for runtimeRef under the standard
-// isolation profile the e2e SandboxTemplates carry.
+// isolation profile the e2e PodSets carry.
 func startBody(runtimeRef string, opts StartOptions) sessionBody {
 	return sessionBody{
 		RuntimeRef: runtimeRef, IsolationProfile: "standard",
@@ -544,7 +544,7 @@ func (d *Driver) CreateAndStartWithOptions(ctx context.Context, tenantID, runtim
 		runtimeRef = defaultRuntime
 	}
 	// §5.3 standard isolation maps to the Kind cluster's runc handler;
-	// the e2e agent-workload.yaml only ships SandboxTemplates with
+	// the e2e agent-workload.yaml only ships PodSets with
 	// `isolationProfile: standard` so the gateway-side ResolvePool
 	// match needs the same profile on the session record. Without
 	// this override the gateway falls back to its default

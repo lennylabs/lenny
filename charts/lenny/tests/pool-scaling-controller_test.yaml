@@ -19,7 +19,7 @@ tests:
           path: metadata.name
           value: lenny-pool-scaling-controller
 
-  - it: grants create/update/delete on the PSC-owned CRD pair
+  - it: grants create/update/delete on the PSC-owned PodSet
     template: pool-scaling-controller-rbac.yaml
     documentIndex: 1
     asserts:
@@ -29,13 +29,13 @@ tests:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxtemplates", "sandboxwarmpools"]
+            resources: ["podsets"]
             verbs: ["get", "list", "watch", "create", "update", "delete"]
       - contains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxwarmpools/status"]
+            resources: ["podsets/status"]
             verbs: ["get", "update", "patch"]
 
   - it: does not render the Deployment without a Postgres DSN

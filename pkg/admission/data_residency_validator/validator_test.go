@@ -28,7 +28,7 @@ func TestAdmitsResourceWithNoRegion(t *testing.T) {
 	// A resource declaring no region and inheriting none carries no
 	// residency constraint and is admitted unchanged.
 	d := drv.Decide(drv.Request{
-		Kind:            "SandboxClaim",
+		Kind:            "PodClaim",
 		DeclaredRegions: regions("eu-west-1"),
 	})
 	if !d.Allowed {
@@ -166,7 +166,7 @@ func TestEnvironmentDivergingFromTenantRegionRejected(t *testing.T) {
 // spec: §12.9.
 func TestT4SessionScopedCrossRegionTransferRejected(t *testing.T) {
 	d := drv.Decide(drv.Request{
-		Kind:            "SandboxClaim",
+		Kind:            "PodClaim",
 		WorkspaceTier:   drv.TierT4,
 		Region:          "us-east-1",
 		TenantRegion:    "eu-west-1",
@@ -190,7 +190,7 @@ func TestT4SessionScopedCrossRegionTransferRejected(t *testing.T) {
 // spec: §12.9.
 func TestT3SessionScopedDifferentDeclaredRegionAdmitted(t *testing.T) {
 	d := drv.Decide(drv.Request{
-		Kind:            "SandboxClaim",
+		Kind:            "PodClaim",
 		WorkspaceTier:   "T3",
 		Region:          "us-east-1",
 		TenantRegion:    "eu-west-1",
@@ -208,7 +208,7 @@ func TestT3SessionScopedDifferentDeclaredRegionAdmitted(t *testing.T) {
 // spec: §12.9.
 func TestT4MatchingTenantRegionAdmitted(t *testing.T) {
 	d := drv.Decide(drv.Request{
-		Kind:            "SandboxClaim",
+		Kind:            "PodClaim",
 		WorkspaceTier:   drv.TierT4,
 		Region:          "eu-west-1",
 		TenantRegion:    "eu-west-1",
@@ -250,7 +250,7 @@ func TestT4EnvironmentDivergenceReportedAsCrossTransfer(t *testing.T) {
 // spec: §12.9.
 func TestT4WithNoTenantRegionAdmitted(t *testing.T) {
 	d := drv.Decide(drv.Request{
-		Kind:            "SandboxClaim",
+		Kind:            "PodClaim",
 		WorkspaceTier:   drv.TierT4,
 		Region:          "eu-west-1",
 		DeclaredRegions: regions("eu-west-1"),
@@ -262,7 +262,7 @@ func TestT4WithNoTenantRegionAdmitted(t *testing.T) {
 
 func TestRejectionNamesOffendingField(t *testing.T) {
 	d := drv.Decide(drv.Request{
-		Kind:            "SandboxClaim",
+		Kind:            "PodClaim",
 		Field:           "spec.dataResidencyRegion",
 		Region:          "ap-south-1",
 		DeclaredRegions: regions("eu-west-1"),

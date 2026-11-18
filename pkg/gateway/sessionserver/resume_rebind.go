@@ -182,7 +182,7 @@ func (s *Server) releaseEarlierBinding(ctx context.Context, row sessionstore.Ses
 	}
 	defer unlock()
 	if bind := s.snapshotBinding(row.ID); bind != nil {
-		if err := s.clearRecoveryPod(ctx, row, bind.SandboxName); err != nil {
+		if err := s.clearRecoveryPod(ctx, row, bind.AgentPodName); err != nil {
 			return err
 		}
 	}
@@ -197,13 +197,13 @@ func (s *Server) releaseEarlierBinding(ctx context.Context, row sessionstore.Ses
 var errRecoveryPodGuardMiss = errors.New("sessionserver: recovery row does not name the binding's pod")
 
 // clearRecoveryPod clears pod_assignment on row when the locked row is in a
-// recovery state and names sandboxName. A guard miss is not an error.
+// recovery state and names agentPodName. A guard miss is not an error.
 //
 // spec: §5.2 (Post-recovery rehydration atomicity), §7.3 (Resume flow after
 // pod failure).
-func (s *Server) clearRecoveryPod(ctx context.Context, row sessionstore.Session, sandboxName string) error {
+func (s *Server) clearRecoveryPod(ctx context.Context, row sessionstore.Session, agentPodName string) error {
 	_, err := s.store.Update(ctx, row.TenantID, row.ID, func(r *sessionstore.Session) error {
-		if !session.IsRecovery(r.State) || sandboxName == "" || r.PodAssignment != sandboxName {
+		if !session.IsRecovery(r.State) || agentPodName == "" || r.PodAssignment != agentPodName {
 			return errRecoveryPodGuardMiss
 		}
 		r.PodAssignment = ""

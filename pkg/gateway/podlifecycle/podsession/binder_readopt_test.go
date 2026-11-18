@@ -121,7 +121,7 @@ func TestReadoptConnectSkipsVersionHandshakeSoFenceIsFirst_spec_10_1(t *testing.
 	srv.Runtime = rt
 
 	rec := &readoptRecorder{}
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, recordingAdapterDialer(t, srv, rec))
 
 	// A session is started on the pod, so it is a still-running pod a crash
@@ -220,7 +220,7 @@ func TestReadoptConnectFailsWhenBoundPodIsGone_spec_10_1(t *testing.T) {
 	ns := testNamespace(t)
 	rec := &readoptRecorder{}
 	srv := adapter.New("adapter-test")
-	// No Sandbox is seeded, so resolveSandbox cannot find the bound pod.
+	// No AgentPod is seeded, so resolveAgentPod cannot find the bound pod.
 	c := k8sClient(t)
 	binder := newBinder(ns, c, recordingAdapterDialer(t, srv, rec))
 

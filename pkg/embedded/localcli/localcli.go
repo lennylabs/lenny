@@ -165,8 +165,8 @@ Embedded Mode commands (§17.4, §24.19):
                            client SDK; new --runtime <name> starts one.
                            --api-url / --token target a remote gateway
   runtime apply --file <path>
-                           Apply a runtime's Runtime/SandboxTemplate/
-                           SandboxWarmPool CRD set to the embedded cluster so
+                           Apply a runtime's Runtime/PodSet/
+                           PodSet CRD set to the embedded cluster so
                            the gateway resolves it by name and a pool warms
   version                  Print the local CLI build version (offline)
 

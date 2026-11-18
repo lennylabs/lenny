@@ -79,14 +79,14 @@ func TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5(t *testing.T) {
 
 	for attempt := 0; attempt < raceAttempts; attempt++ {
 		id := fmt.Sprintf("sess-stale-%d", attempt)
-		sandbox := "sbx-" + id
+		agentPod := "sbx-" + id
 		if err := store.Create(ctx, sessionstore.Session{
 			ID: id, TenantID: "acme", RuntimeRef: "echo", State: session.StateRunning,
-			CoordinationGeneration: 2, PodAssignment: sandbox,
+			CoordinationGeneration: 2, PodAssignment: agentPod,
 		}); err != nil {
 			t.Fatalf("seed %s: %v", id, err)
 		}
-		reg.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", SandboxName: sandbox, Adapter: cl, CoordinationGeneration: 1})
+		reg.Put(&podsession.BindResult{SessionID: id, TenantID: "acme", AgentPodName: agentPod, Adapter: cl, CoordinationGeneration: 1})
 		if err := heldSend(t, ctx, pe.PodExecutor, id, "open"); err != nil {
 			t.Fatalf("open the held stream of %s: %v", id, err)
 		}
@@ -97,7 +97,7 @@ func TestStaleGenerationReportRacesSweeperEviction_spec_10_1_5(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			start.arrive()
-			srv.ReportAttachStreamFailure("acme", id, sandbox, status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline"))
+			srv.ReportAttachStreamFailure("acme", id, agentPod, status.Error(codes.DeadlineExceeded, "runtime missed heartbeat ack deadline"))
 		}()
 		go func() {
 			defer wg.Done()

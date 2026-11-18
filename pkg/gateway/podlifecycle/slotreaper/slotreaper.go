@@ -77,7 +77,7 @@ type StaleResolver interface {
 // several failures; a failure with a SessionID method names the one member
 // it kept, and the reaper logs it against that session.
 type Releaser interface {
-	ReapStaleSlots(ctx context.Context, sandboxName string, sessionIDs []string, wait func(context.Context) error) (int, error)
+	ReapStaleSlots(ctx context.Context, agentPodName string, sessionIDs []string, wait func(context.Context) error) (int, error)
 }
 
 // ReservationReclaimer deletes the abandoned §12.4 slot reservation records:
@@ -233,7 +233,7 @@ func (r *Reaper) Pass(ctx context.Context) PassStats {
 // failure is logged and leaves the records for the next pass. The call is
 // bounded by Interval, because it runs at the head of the pass and a stalled
 // delete must not stop the pass's member releases.
-// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
+// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned PodClaim
 // detection).
 func (r *Reaper) reclaimReservations(ctx context.Context) int {
 	if r.cfg.Reservations == nil {
@@ -368,7 +368,7 @@ type sessionScoped interface {
 
 // logReleaseErrors logs each failure a release returned. A failure that
 // names its session is logged against that session; any other failure (a
-// Sandbox read, dial, negotiation, or limiter error) applies to every
+// AgentPod read, dial, negotiation, or limiter error) applies to every
 // identifier offered for the pod and is logged against the whole list.
 func (r *Reaper) logReleaseErrors(pod string, ids []string, released int, err error) {
 	if err == nil {

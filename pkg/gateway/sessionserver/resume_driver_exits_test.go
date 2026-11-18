@@ -23,8 +23,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 var errDriverStore = errors.New("injected store error")
@@ -87,7 +87,7 @@ func (c *attemptCounter) list() []string {
 }
 
 // driverFixture is a pod-backed server whose resume driver runs against a
-// real adapter on an envtest cluster with one idle Sandbox, sbx-1.
+// real adapter on an envtest cluster with one idle AgentPod, sbx-1.
 type driverFixture struct {
 	srv      *sessionserver.Server
 	store    *driverStore
@@ -106,9 +106,8 @@ func newDriverFixture(t *testing.T, brokenResume bool) *driverFixture {
 	adapterSrv.Runtime = &podBindRuntime{}
 	cluster := podBindClient(
 		t,
-		podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-		podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-		podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+		podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
+		podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 	)
 	f := &driverFixture{
 		store:    &driverStore{Store: memstore.New(), afterUpdate: map[int]func(){}, failUpdate: map[int]bool{}},
@@ -152,7 +151,7 @@ func (f *driverFixture) drive(t *testing.T) sessionstore.Session {
 
 func (f *driverFixture) claimBound(t *testing.T) bool {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 	if apierrors.IsNotFound(err) {
 		return false
@@ -301,11 +300,11 @@ func TestResumeDriverExits_spec_7_3(t *testing.T) {
 		f := newDriverFixture(t, false)
 		f.store.afterUpdate[1] = func() {
 			// spec: §4.6.1 — an external drain removes the claimed pod's
-			// Sandbox and claim before the restore RPC reaches it.
-			_ = f.cluster.Delete(context.Background(), &lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{
+			// AgentPod and claim before the restore RPC reaches it.
+			_ = f.cluster.Delete(context.Background(), &lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{
 				Name: "claim-sbx-1", Namespace: testNS(t),
 			}})
-			_ = f.cluster.Delete(context.Background(), &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+			_ = f.cluster.Delete(context.Background(), &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{
 				Name: "sbx-1", Namespace: testNS(t),
 			}})
 		}

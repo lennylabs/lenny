@@ -1540,7 +1540,7 @@ type GatewayControlClient interface {
 	ReportSessionScrub(ctx context.Context, in *ReportSessionScrubRequest, opts ...grpc.CallOption) (*ReportSessionScrubResponse, error)
 	// ReportPodScrub reports the binary outcome of the whole-pod scrub the
 	// adapter runs when occupancy reaches zero on a recycling pod and the
-	// gateway has patched the pod's SandboxClaim to recycling (§5.2). The
+	// gateway has patched the pod's PodClaim to recycling (§5.2). The
 	// outcome is SUCCEEDED when the §5.2 scrub sequence completed, or
 	// FAILED otherwise. The gateway resolves the pod from pod_id; on FAILED
 	// it increments scrubFailureCount on the agent_pod_state row and
@@ -1707,7 +1707,7 @@ type GatewayControlServer interface {
 	ReportSessionScrub(context.Context, *ReportSessionScrubRequest) (*ReportSessionScrubResponse, error)
 	// ReportPodScrub reports the binary outcome of the whole-pod scrub the
 	// adapter runs when occupancy reaches zero on a recycling pod and the
-	// gateway has patched the pod's SandboxClaim to recycling (§5.2). The
+	// gateway has patched the pod's PodClaim to recycling (§5.2). The
 	// outcome is SUCCEEDED when the §5.2 scrub sequence completed, or
 	// FAILED otherwise. The gateway resolves the pod from pod_id; on FAILED
 	// it increments scrubFailureCount on the agent_pod_state row and

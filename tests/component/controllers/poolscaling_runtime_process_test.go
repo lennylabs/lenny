@@ -37,8 +37,8 @@ func (r runtimeProcessRows) List(context.Context, poolstore.ListFilter) ([]pools
 
 // spec: §5.2 (Runtime-process lifetime), §4.6.3 (CRD field ownership and write boundaries)
 // diagnosis: the PoolScalingController does not carry
-// sessionPolicy.recycle.runtimeProcess onto SandboxTemplate.spec through the
-// real CRD schema: the SandboxTemplate CRD manifest omits runtimeProcess (so
+// sessionPolicy.recycle.runtimeProcess onto PodSet.spec through the
+// real CRD schema: the PodSet CRD manifest omits runtimeProcess (so
 // the API server prunes it on write), its enum admits a value outside keep
 // and restart, the PoolStoreSource drops the field, or a row that sets only
 // the lifetime yields no recycle block. The WarmPoolController then creates
@@ -79,20 +79,20 @@ func TestPoolScalingControllerWritesRuntimeProcessUnpruned(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 	for name, want := range map[string]string{"keep-pool": "keep", "restart-pool": "restart"} {
-		var tmpl lennyv1.SandboxTemplate
-		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &tmpl); err != nil {
-			t.Fatalf("get template %q: %v", name, err)
+		var ps lennyv1.PodSet
+		if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &ps); err != nil {
+			t.Fatalf("get PodSet %q: %v", name, err)
 		}
-		sp := tmpl.Spec.SessionPolicy
+		sp := ps.Spec.SessionPolicy
 		if sp == nil || sp.Recycle == nil || sp.Recycle.RuntimeProcess != want {
-			t.Errorf("%s: SandboxTemplate.spec.sessionPolicy = %+v, want recycle.runtimeProcess %q", name, sp, want)
+			t.Errorf("%s: PodSet.spec.sessionPolicy = %+v, want recycle.runtimeProcess %q", name, sp, want)
 		}
 	}
 
 	// The CRD enum refuses a value outside keep and restart.
-	bad := &lennyv1.SandboxTemplate{
+	bad := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Namespace: ns, Name: "bad-lifetime"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:    "rt",
 			SessionPolicy: &lennyv1.SessionPolicy{Recycle: &lennyv1.RecyclePolicy{RuntimeProcess: "forever"}},
 		},

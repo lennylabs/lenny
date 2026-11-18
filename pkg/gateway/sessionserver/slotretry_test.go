@@ -35,7 +35,7 @@ type fakeSlotBinder struct {
 	// failed slot is not reclaimed — the §6.2 leak path.
 	releaseErr error
 
-	// drainErrs scripts DrainSandbox outcomes, one per call; a call past
+	// drainErrs scripts DrainAgentPod outcomes, one per call; a call past
 	// the end of the slice succeeds.
 	drainErrs []error
 }
@@ -66,7 +66,7 @@ func (f *fakeSlotBinder) ReleaseSlotReservation(_ context.Context, pod, slotID s
 	return f.releaseErr
 }
 
-func (f *fakeSlotBinder) DrainSandbox(_ context.Context, pod string) error {
+func (f *fakeSlotBinder) DrainAgentPod(_ context.Context, pod string) error {
 	i := len(f.drained)
 	f.drained = append(f.drained, pod)
 	if i < len(f.drainErrs) {
@@ -90,7 +90,7 @@ func req(pool string, maxConcurrentSessions int32) podsession.SlotBindRequest {
 // the retry succeeding yields the bound result and no client error.
 func TestSlotRetryTransientThenSuccess_spec_5_2(t *testing.T) {
 	binder := &fakeSlotBinder{
-		results: []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-a", SlotID: "sess-1"}},
+		results: []*podsession.BindResult{nil, {SessionID: "sess-1", AgentPodName: "pod-a", SlotID: "sess-1"}},
 		errs:    []error{slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable), nil},
 	}
 	health := slothealth.New()
@@ -98,7 +98,7 @@ func TestSlotRetryTransientThenSuccess_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success after one retry, got %v", err)
 	}
-	if res == nil || res.SandboxName != "pod-a" {
+	if res == nil || res.AgentPodName != "pod-a" {
 		t.Fatalf("unexpected result %+v", res)
 	}
 	if binder.bindCall != 2 {
@@ -204,7 +204,7 @@ func TestSlotRetryLeakOnReleaseFailure_spec_6_2(t *testing.T) {
 	// release errors so it is leaked. maxConcurrent=4 → threshold 2, so the
 	// pod is not drained and the leaked slot persists in the gauge.
 	binder := &fakeSlotBinder{
-		results:    []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-a", SlotID: "sess-1"}},
+		results:    []*podsession.BindResult{nil, {SessionID: "sess-1", AgentPodName: "pod-a", SlotID: "sess-1"}},
 		errs:       []error{slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable), nil},
 		releaseErr: errors.New("slot cleanup timed out"),
 	}
@@ -225,7 +225,7 @@ func TestSlotRetryLeakOnReleaseFailure_spec_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("expected success after retry, got %v", err)
 	}
-	if res == nil || res.SandboxName != "pod-a" {
+	if res == nil || res.AgentPodName != "pod-a" {
 		t.Fatalf("unexpected result %+v", res)
 	}
 	// The leaked slot is recorded for the pod and published to the gauge.
@@ -588,7 +588,7 @@ func TestSlotRetryReleasesWithTheReclaimDisposition_spec_7_1(t *testing.T) {
 		sbe := slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable)
 		sbe.Leaked = leaked
 		binder := &fakeSlotBinder{
-			results: []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-b", SlotID: "sess-1"}},
+			results: []*podsession.BindResult{nil, {SessionID: "sess-1", AgentPodName: "pod-b", SlotID: "sess-1"}},
 			errs:    []error{sbe, nil},
 		}
 		if _, err := applySlotRetryPolicy(context.Background(), binder, slothealth.New(), slotstate.NewRegistry(), nil, nil, req("pool-x", 4)); err != nil {
@@ -651,7 +651,7 @@ func TestSlotFailureAccountingReadsTheReclaimDisposition_spec_5_2(t *testing.T) 
 		sbe := slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable)
 		sbe.Leaked = true
 		binder := &fakeSlotBinder{
-			results: []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-b", SlotID: "sess-1"}},
+			results: []*podsession.BindResult{nil, {SessionID: "sess-1", AgentPodName: "pod-b", SlotID: "sess-1"}},
 			errs:    []error{sbe, nil},
 		}
 		health := slothealth.New()
@@ -679,7 +679,7 @@ func TestSlotFailureAccountingReadsTheReclaimDisposition_spec_5_2(t *testing.T) 
 	})
 	t.Run("compensated failure takes the windowed arm", func(t *testing.T) {
 		binder := &fakeSlotBinder{
-			results: []*podsession.BindResult{nil, {SessionID: "sess-1", SandboxName: "pod-b", SlotID: "sess-1"}},
+			results: []*podsession.BindResult{nil, {SessionID: "sess-1", AgentPodName: "pod-b", SlotID: "sess-1"}},
 			errs:    []error{slotBindErr("pod-a", "sess-1", "session_start", codes.Unavailable), nil},
 		}
 		health := slothealth.New()
