@@ -26,6 +26,18 @@
 // retired since a date or a commit, and the Go packages changed since
 // then, grouped by the area of the pages their doc.go names.
 //
+// CheckCoverage is the coverage gate of change 0116, which the static
+// tier runs as TestEveryChangedRequirementHasACitingTest. For each
+// requirement the working tree adds, or whose text it modifies, against
+// its merge base with main, it finds the test functions whose doc-comment
+// annotation cites the requirement directly, in a file the go tool
+// builds, and the open or planned issue records under a registered page
+// code's folder that list it under `requirements`. A requirement with
+// neither fails the gate. An issue record that is a symbolic link, or
+// whose front matter does not parse, covers nothing and is reported. A requirement that moves with its text unchanged, a
+// retired requirement, an operation, a definition block, and a numbered
+// section are outside it.
+//
 // A snapshot of the specification at a commit is read by extracting the
 // commit's spec/ directory and building the reference pass's registry
 // over it, so the identifiers each command compares are the ones the
