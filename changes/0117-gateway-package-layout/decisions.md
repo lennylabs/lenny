@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-None.
+41. **How the session core serves the seams' calls until 0117.S11.** The session server is the core's side of the operations each split seam calls, and the composition root hands that side to the seam through the seam interfaces. 0117.S5 gives the upload handler `sessionserver.UploadSeam`, and 0117.S6 gives the stream proxy `sessionserver.StreamSeam`. Both serve `GWSEAM-LookupSession`, `GWSEAM-AuthorizeSession`, and `GWSEAM-RequestTenant`, so once both branches land the package holds two copies of those three methods and of the function that turns a stored session into a seam session record. (a) One adapter type per seam, holding only the operations that seam calls, with the shared operations' bodies in unexported methods of `Server` that each adapter calls, so the duplicate bodies collapse when the second of 0117.S5 and 0117.S6 merges. (b) One adapter type, such as `sessionserver.Seam`, that serves every operation the core serves to any seam, handed to each seam through the interfaces it holds. (c) Keep both types as they are until 0117.S11 moves the core and settles its side of the seam there. Recommendation: (a), built on 0117.S6 with `StreamSeam` holding only the stream proxy's operations. A seam's adapter then states which core operations that seam reaches, as the per-caller interfaces of 0117.S3 and 0117.S5 do, and the merge removes the duplicated bodies rather than leaving them to a later step. The shared bodies move into `Server` methods at the merge of the second branch, because neither branch can name the other's type.
 
 ## Decisions
 
