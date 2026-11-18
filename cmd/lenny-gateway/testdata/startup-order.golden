@@ -1,0 +1,274 @@
+runGateway:
+  w.buildStartupGates
+  w.buildStores
+    w.buildPersistenceStores
+      w.newPGSessionStore
+      w.assertT4DefaultEncryption
+    w.buildRedisAndQuota
+      w.resolveCoordinationHolder
+    w.buildStoreRouterAndSecurityBus
+    w.buildBillingPipeline
+    w.buildTokenSigningStores
+    w.buildExecutorAndCredentials
+    w.buildPodLifecycle
+      w.runtimeClassOverrides
+    w.buildSessionMessaging
+  w.buildHolderForwardTransport
+  defer func{w.tokenServiceConn.Close}
+  w.tokenServiceConn.Close
+  w.buildMetricsBackfill
+    w.newCoordFencer
+    w.kmsBreakerObs.SetMetrics
+    w.scatterRouter.SetScatterMetrics
+    defer cancel
+    w.inProcessAssign.SetMetrics
+    w.minioStore.SetCatalog
+    go func{w.tenants.List, w.kmsProvider.CurrentKEKVersion}
+    defer cancel
+    w.tenants.List
+    w.kmsProvider.CurrentKEKVersion
+    w.billingPipeline.SetFlushPressureHook
+  w.buildAuditPipeline
+    w.concernRedis.For
+  w.buildAuxStores
+    w.buildOpsEvents
+      w.gwMetrics.Registerer
+      w.concernRedis.For
+      w.auditOpsStore.SetOpsStreamEmitter
+  w.buildPolicyChain
+    w.concernRedis.For
+  w.buildQuotaCheckpoint
+    w.buildDirectUsageRecoveryReader
+    w.tenants.Get
+  w.buildInterceptorRegistration
+  w.buildSessionDeps
+    w.concernRedis.For
+    w.sessions.Update
+    w.newLeaseDenialStore
+    w.newLeaseBudgetSource
+  w.buildSessionServer
+    w.buildBudgetStateSweep
+    w.runtimeClassOverrides
+    w.concernRedis.For
+  w.buildCredentialSurface
+    w.concernRedis.For
+  w.buildMCPSurface
+    w.tenants.Get
+    w.sessions.Get
+  w.buildRevocationWiring
+    w.credAssign.OnAssigned
+  w.buildAdminRouter
+    w.sequenceProvisioningAdminOptions
+    w.buildSessionScopedErasers
+      w.delegationBudgetSessionEraser
+      w.checkpointSessionErasers
+    w.buildUserErasers
+      w.userCacheErasers
+    w.erasureReleaseGate
+    w.tenants.Get
+    defer preflightMu.Unlock
+    w.buildTenantErasers
+      w.tenantErasersBeforeSessions
+      w.tenantErasersAfterSessions
+    w.newTenantSessionTerminator
+  w.buildHTTPSurface
+    w.adminRouter.Handler
+    w.connectors.List
+    w.pools.Get
+    w.concernRedis.For
+    go redisSessions.SubscribeAllRevocations
+    w.adminRouter.WithPlaygroundRevocation
+    go pg.RunIdleSweeper
+    w.Header().Set
+    w.Header
+    w.WriteHeader
+    w.Write
+    w.WriteHeader
+    w.podRegistry.Snapshot
+    w.sessions.Get
+    w.podRegistry.Get
+    w.Header().Set
+    w.Header
+    defer cancel
+    w.WriteHeader
+    w.Write
+  w.buildHolderForwardServer
+    w.responsesHandler.Handler
+  w.buildLLMProxy
+    w.gwMetrics.Registerer
+  w.buildControlServer
+    w.eventBus.Publish
+    w.scrubReportServiceWired
+    w.runtimeClassOverrides
+    w.sessionBudgetEnforcer.SetExtendOnExhaustion
+  w.scrubReportServiceWired
+  defer w.holdCoordinator.Stop
+  w.holdCoordinator.Stop
+  defer w.recycleBoundary.Stop
+  w.recycleBoundary.Stop
+  defer w.watchdogCancel
+  w.watchdogCancel
+  w.startBackgroundWorkers
+    w.mux.Handle
+    go w.wd.Run
+    w.wd.Run
+    go w.uploadRotator.Run
+    w.uploadRotator.Run
+    go func{w.watchdogCtx.Done, w.uploadTracker.Sweep}
+    defer tick.Stop
+    w.watchdogCtx.Done
+    w.uploadTracker.Sweep
+    go func{w.watchdogCtx.Done}
+    defer tick.Stop
+    w.watchdogCtx.Done
+    go w.budgetStateSweep.Run
+    w.budgetStateSweep.Run
+    w.startReconcilerWorkers
+      go orphanSweeper.Run
+      go deadlockDetector.Run
+      go w.dsMonitor.Run
+      w.dsMonitor.Run
+      go recommendations.NewSampler(w.gwMetrics.Gatherer(), w.recommendationStore).Run
+      w.gwMetrics.Gatherer
+      go w.storageRecoveryReconciler.Run
+      w.storageRecoveryReconciler.Run
+      go w.slotCounter.RunRecovery
+      w.slotCounter.RunRecovery
+      go w.delegationBudgetReconciler.Run
+      w.delegationBudgetReconciler.Run
+      go quotaCheckpointReconciler.Run
+      go billingTokenCP.Run
+      go func{w.watchdogCtx.Done}
+      defer tick.Stop
+      w.watchdogCtx.Done
+      go w.quotaBudgetTracker.Run
+      w.quotaBudgetTracker.Run
+    go runReplicationController
+    w.adminRouter.WithArtifactReplication
+    w.startLeaderElectedSweeps
+      w.blobsCataloged.SoftDeleteSession
+      w.retentionGCOptions
+      w.tenants.Get
+      w.auditPruner.Run
+      w.eventBusRetranscriber.Run
+      defer ticker.Stop
+      w.blobsCataloged.HardPrune
+      w.gwMetrics.AddGCTombstonesPruned
+      w.gwMetrics.AddGCTombstonesPruned
+      defer ticker.Stop
+      w.gwMetrics.Registerer
+      go w.tenantDeletion.Start
+      w.tenantDeletion.Start
+      w.addSuspendedBacklogRecheck
+      w.addStaleSlotReaper
+      w.addOrphanSessionReconciler
+      go leaderGate.Run
+    w.startBillingAndSecurityWorkers
+      go w.coordinator.Run
+      w.coordinator.Run
+      go w.breakerCache.Run
+      w.breakerCache.Run
+      go w.billingPipeline.RunFlusher
+      w.billingPipeline.RunFlusher
+      w.billingTier.NewFlusherManager
+      go mgr.Run
+      go sampler.Start
+      go billingPruner.Run
+      go w.revProp.Run
+      w.revProp.Run
+      go w.mtlsDenyProp.Run
+      w.mtlsDenyProp.Run
+      go w.credRenewalProp.Run
+      w.credRenewalProp.Run
+      go w.bindReleaseProp.Run
+      w.bindReleaseProp.Run
+      go w.credRenewalWorker.Run
+      w.credRenewalWorker.Run
+      go w.checkpointSvc.Run
+      w.checkpointSvc.Run
+      go freshnessReaper.Run
+      w.revCache.Rehydrate
+      go func{w.watchdogCtx.Done, w.revCache.Rehydrate, w.watchdogCtx.Err}
+      defer ticker.Stop
+      w.watchdogCtx.Done
+      w.revCache.Rehydrate
+      w.watchdogCtx.Err
+      go w.runCredentialDenyListRebuild
+      w.runCredentialDenyListRebuild
+      go func{w.watchdogCtx.Done}
+      defer ticker.Stop
+      w.watchdogCtx.Done
+      w.startIssuedTokenGC
+        go func{w.watchdogCtx.Done}
+        defer ticker.Stop
+        w.watchdogCtx.Done
+      w.startCredentialLeaseExpiresAtBackfill
+        go runCredentialLeaseExpiresAtBackfill
+      go runCredentialLeaseSweepLoop
+    w.elicitationFloorProvider.Floor
+    go func{w.watchdogCtx.Done}
+    defer ticker.Stop
+    w.watchdogCtx.Done
+    go func{w.watchdogCtx.Done}
+    defer ticker.Stop
+    w.watchdogCtx.Done
+    go func{w.watchdogCtx.Done}
+    defer ticker.Stop
+    w.watchdogCtx.Done
+    go gcCollector.Run
+    go w.driftMonitor.Start
+    w.driftMonitor.Start
+    go func{w.gwMetrics.SetMemoryStoreRecordCount, w.watchdogCtx.Done}
+    defer ticker.Stop
+    defer cancel
+    w.gwMetrics.SetMemoryStoreRecordCount
+    w.watchdogCtx.Done
+    go watcher.Run
+    go (&failopen.ReplicaPoller{…}).Run
+    go (&elicitationfloor.Reconciler{…}).Run
+    go func{w.gwMetrics.SetTokenServiceCircuitState, w.tokenServiceSubsystem.State().MetricValue, w.tokenServiceSubsystem.State, w.watchdogCtx.Done}
+    defer ticker.Stop
+    w.gwMetrics.SetTokenServiceCircuitState
+    w.tokenServiceSubsystem.State().MetricValue
+    w.tokenServiceSubsystem.State
+    w.watchdogCtx.Done
+    go directUsage.Run
+  w.runServers
+gatewayWiring.runServers:
+  w.gwMetrics.Registerer
+  w.gwMetrics.Gatherer
+  w.alertEvalPtr.Store
+  go alertEvaluator.Run
+  go periodic.Run
+  go w.ocsfTranslator.Run
+  w.ocsfTranslator.Run
+  go w.ocsfOutbox.Run
+  w.ocsfOutbox.Run
+  go w.auditBatchBuffer.Run
+  w.auditBatchBuffer.Run
+  go func{w.httpSrv.ListenAndServe}
+  w.httpSrv.ListenAndServe
+  w.startHolderForwardListener
+    go func{w.holderForwardSrv.ServeTLS}
+    w.holderForwardSrv.ServeTLS
+  go func{w.llmProxySrv.ListenAndServe}
+  w.llmProxySrv.ListenAndServe
+  go func{w.gatewayCtrlLis.Addr, w.gatewayCtrlSrv.Serve}
+  w.gatewayCtrlLis.Addr
+  w.gatewayCtrlSrv.Serve
+  w.shutdownSequence(*shutdownTimeout).run
+  w.shutdownSequence
+shutdownSequence.run:
+  q.stopListener
+  q.waitTerminalWork
+  q.sessions.Close
+  defer cancel
+  range q.closers
+finalShutdownSteps:
+  trace
+  llm-proxy
+  gateway-control
+  postgres
+  sqlite
+  redis
+  openfeature

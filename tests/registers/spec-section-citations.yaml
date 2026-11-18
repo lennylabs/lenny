@@ -940,7 +940,7 @@ packages:
     - package: pkg/workspaceplan
       count: 23
     - package: scripts/refactor
-      count: 4
+      count: 2
     - package: scripts/refactor/rewrite
       count: 2
     - package: scripts/specshift

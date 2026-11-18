@@ -45,6 +45,8 @@ Upstreams and removal: LU-1, LU-2, the routes and session binding of LU-3, LU-4,
 
 It needs EG-2 for the removal of `provider-direct`.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-CheckChildCredentials` with the pre-claim credential check (LU-4), and reshapes `GWSEAM-MaterializeChild`, which no longer assigns an LLM credential lease.
+
 ### 0133.S3 Rate cards and credit budgets
 - status: Planned
 - aliases: [LU-C, LU-5, LU-6, LU-7]
@@ -53,6 +55,8 @@ It needs EG-2 for the removal of `provider-direct`.
 - closes: [F-11.2.34]
 
 Rate cards and credit budgets: LU-5 with the fallback entry, LU-6 with the input estimate and best-effort bounds, and the estimated cost of LU-7, with §8.3, §8.6, §11.2, and §11.2.1 in credits.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ExtendForBudget`, `GWSEAM-RaiseBudget`, and `GWSEAM-TerminateForBudget`, and the delegation budget operations (`GWSEAM-ReturnBudget`, `GWSEAM-RearmBudget`, `GWSEAM-ObserveHighWatermark`, `GWSEAM-NodeUsage`, `GWSEAM-TreeUsage`, and `GWSEAM-SubtreeTokens`), which count credits (LU-6).
 
 ### Notes on the steps
 

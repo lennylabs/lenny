@@ -1,273 +1,49 @@
-# `pkg/gateway` group taxonomy
-
-This file is the navigational index for `pkg/gateway`. It records the
-intermediate group directories the gateway subpackages are organized under and
-maps each group to the specification section that defines its concern. It is the
-design artifact authored by proposal 0020 Part B C1; the move from the prior flat
-layout to these groups is executed by Part B C3 from the machine-readable
-manifest at `scripts/refactor/manifest`.
-
-The gateway is one component under Section 4. It is internally partitioned into
-subsystem boundaries that are Go interfaces within a single binary rather than
-separate services (§4.1). The grouping preserves that component boundary: every
-package stays inside `pkg/gateway`, and each §4.1 subsystem and the §4.8 policy
-engine occupies one group subtree, so a future per-pod extraction of a
-subsystem (the LLM Proxy is the named first target, per §2 and §4.1) is a
-directory-subtree move rather than a scattered cherry-pick. The remaining
-packages group by their §10, §11, §12, and §25 concern beneath those boundaries.
-
-## How to use this index
-
-To locate a concern, find its group below and read the spec section the group
-maps to. Package names are unchanged by the regroup; only the import path gains
-the group segment (`pkg/gateway/<pkg>` becomes `pkg/gateway/<group>/<pkg>`). A
-package's own `// spec:` citations remain the authoritative tie to the behavior
-it implements; this index is the coarse map from concern to directory.
-
-## Packages that do not move into a group
-
-- `sessionserver` stays whole at the gateway root. It realizes the §4.1 Stream
-  Proxy and Upload Handler behind their interfaces, so it is not split across
-  groups.
-- `middleware` is already an intermediate group directory and stays at the
-  gateway root. The §11.6 operator-managed circuit-breaker store (`breakerstore`)
-  nests under its existing `middleware/circuitbreaker` package, because the
-  proposal's §1.3 anchors it to the gateway-core circuit breaker it depends on
-  rather than to the persistence cluster.
-- `events` is split by Part B C2 rather than moved by C3. The shared event-type
-  vocabulary (the CloudEvents envelope, the `source` discriminator, and the
-  §16.6 event-type catalog) moves to the neutral `pkg/events` package, out of the
-  gateway, because ~18 external files consume it. The §25.3 in-memory ring buffer
-  stays in the gateway at `pkg/gateway/eventbuffer`.
-
-## Subsystem groups (§4.1 subsystems and the §4.8 policy engine)
-
-These are the primary group boundaries. Each maps to a §4.1 gateway subsystem or
-to the §4.8 policy engine, and each is kept cohesive in one subtree.
-
-### `mcpfabric/` — §4.1 MCP Fabric subsystem
-
-Delegation orchestration, virtual child MCP interfaces, and elicitation chain
-management. §4.1 assigns delegation to this subsystem, so the delegation
-orchestration packages group here rather than in a separate top-level group.
-
-`delegation`, `delegationbudget`, `delegationpolicystore`, `elicitationfloor`,
-`mcp`, `mcpruntimes`, `mcpschemagen`, `mcptools`, `playground`.
-
-The delegation-tree lifecycle packages nest one level deeper under
-`mcpfabric/delegationtree/`, because §4.1 assigns the deep-delegation-tree
-concern (its extraction trigger is `lenny_mcp_fabric_active_delegations`) to the
-MCP Fabric subsystem. Keeping them inside the `mcpfabric/` subtree keeps the
-whole subsystem one extractable subtree rather than splitting it across two
-top-level groups.
-
-`delegationtree/deadlock`, `delegationtree/leasecontrol`,
-`delegationtree/orphancleanup`, `delegationtree/resultrollup`,
-`delegationtree/treearchive`, `delegationtree/treebudget`,
-`delegationtree/treerecovery`.
-
-The §8 delegation-tree lifecycle concerns these packages implement: the §8.8
-result rollup and per-session usage accumulation, §8.10 orphan cleanup, tree
-archive and recovery, tree budget, and the §8.6 lease control.
-
-### `llmproxy/` — §4.1 LLM Proxy subsystem
-
-The credential-injecting reverse proxy for LLM provider traffic (§4.1, §4.9),
-plus the proxy-side cache wiring. This is the named first extraction target, so
-it is kept cohesive in one subtree.
-
-`credrouter`, `llmproxy`, `proxycache`, `semanticcache`.
-
-### `policy/` — §4.8 Gateway Policy Engine
-
-The policy engine is physically embedded in the gateway and is not yet split out
-(§4.8), so it stays in the gateway tree. The `RequestInterceptor` extension point
-(§4.8) and the §11.1 request-rate limiter group here. `interceptorstore` nests
-under `interceptor` because it anchors onto that gateway-core dependency.
-
-`interceptor`, `interceptor/interceptorstore`, `policy`, `ratelimit`.
-
-## Concern groups (§10, §11, §12, and §25 concerns)
-
-These group the remaining packages by the spec subsection that defines their
-concern, beneath the subsystem boundaries above.
-
-### `credentials/` — §4.9 Credential Leasing Service
-
-End-user and pool credential storage, lease lifecycle, renewal, fallback, the
-deny list, the §11.4 full_revoke lease step, and the §13.3 platform-admin
-impersonation path.
-
-`credassign`, `credcache`, `credentialpoolstore`, `credentialserver`,
-`credentialstore`, `credfallback`, `credleasestore`, `credrenewal`, `denylist`,
-`impersonation`, `leaserevoke`, `revocation`, `usercreds`.
-
-### `connectors/` — §9.3 connector access
-
-ConnectorDefinition and connector-credential registries, the connector-access
-authorization boundary, secret resolution, invocation, and tool bridging.
-
-`connectorauthz`, `connectorcredstore`, `connectorinvoke`, `connectorsecret`,
-`connectorstore`, `connectortools`.
-
-### `session/` — §4.2 Session Manager
-
-Session state, routing cache, session-scoped lifecycle workers, interactive
-input and tool-approval registries, message routing, and §9.4 agent memory.
-
-`executor`, `inputwait`, `interactionstore`, `memorystore`, `messagerouting`,
-`orphansession`, `recycle`, `routingcache`, `sessionage`, `sessionbudget`,
-`sessioncallback`, `sessioncheckpointmeta`, `sessionevents`, `sessionidle`,
-`sessioninbox`, `sessionlogstore`, `sessionstore`, `sessionusage`,
-`toolapproval`.
-
-### `runtime/` — §5 runtime and data plane
-
-Runtime registry and capability inference, the §5.2 concurrent-stateless data
-plane and its routing, pool store, adapter contract and client, and the SDK-warm
-and watchdog workers.
-
-`adapter`, `adapterclient`, `adapterregistry`, `agentcard`, `capabilityinference`,
-`externaladapterstore`, `poolstore`, `runtimecapoverride`, `runtimestore`,
-`sdkwarm`, `slothealth`, `statelessproxy`, `statelessrouting`, `tenantaffinity`,
-`watchdog`.
-
-### `podlifecycle/` — §4.6 pod lifecycle
-
-Pod claim and session placement, termination, the PreStop path, the
-drain-readiness endpoint, and the stale-slot reaper.
-
-`bindrelease`, `drainreadiness`, `podclaim`, `podsession`, `prestop`,
-`slotreaper`.
-
-### `checkpoint/` — §4.4 Event / Checkpoint Store
-
-Workspace checkpoint drivers, checkpoint retention, and the partial-manifest
-store.
-
-`checkpointer`, `checkpointretention`, `partialmanifeststore`.
-
-### `quota/` — §11.2 and §12.4 quota
-
-Quota store, in-memory quota budget, quota checkpointing, quota erasure, the
-quota fail-open path, and storage quota.
-
-`quotabudget`, `quotacheckpoint`, `quotaerasure`, `quotafailopen`, `quotastore`,
-`storagequota`.
-
-### `billing/` — §11.2.1 billing events
-
-The billing event ledger, checkpoint emission, fan-out, retention, delivery sink,
-pending corrections, and the usage accumulator.
-
-`billingcheckpoint`, `billingfanout`, `billingretention`, `billingsink`,
-`billingstore`, `correctionstore`, `usagestore`.
-
-### `audit/` — §11.7 and §16.4 audit
-
-The Postgres audit hash chain, the write-time tenant-scope guard, audit-log
-retention, and JWT signing-key rotation audit.
-
-`auditretention`, `auditscope`, `auditstore`, `jwtaudit`.
-
-### `storage/` — §12 storage substrate and reliability
-
-The dual-store reliability layer, eviction state, the token-issuance and lease
-stores, erasure and legal-hold workers, partition maintenance, retention GC, the
-Postgres and Redis substrate helpers, and the embedded SQLite store.
-
-`deadletterredaction`, `derivelock`, `dualstore`, `erasure`, `erasurejob`,
-`eventbus`, `evictionfallback`, `evictionstatestore`, `failopen`,
-`issuedtokenstore`, `leasestore`, `legalholdreconciler`, `partitionmaint`,
-`pgnotify`, `pgtenant`, `pubsub`, `rediskeys`, `redistopology`, `retentiongc`,
-`slotcounter`, `sqlitestore`.
-
-### `coordination/` — §10.1 coordination and leader election
-
-Session coordination, the checkpoint barrier and fence, the gateway-scoped leader,
-and the PodDisruptionBudget watcher.
-
-`barrier`, `coordfence`, `coordination`, `coordlease`, `gatewayleader`,
-`pdbwatcher`.
-
-### `pki/` — §10.3 mTLS PKI
-
-The CA-rotation state machine and its store, and the startup TLS probe.
-
-`carotation`, `carotationstore`, `tlsprobe`.
-
-### `upgrade/` — §10.5 runtime upgrade and rollback
-
-The RuntimeUpgrade state machine, its readiness guard, and its store.
-
-`runtimeupgrade`, `runtimeupgradeguard`, `runtimeupgradestore`.
-
-### `environment/` — §10.6 environment and §10.2 RBAC (gateway-internal)
-
-The Environment registry and access computation, the custom-role and
-tenant-access stores, tenant and user stores, the transcript store, the
-deployment-config store, and the environment endpoint translator. §10.6 scopes
-the environment model to the gateway, so these stay gateway-internal.
-
-`customrolestore`, `deploymentconfigstore`, `envaccess`, `environmentstore`,
-`tenantaccessstore`, `tenantstore`, `transcriptstore`, `translator`, `userstore`.
-
-### `experiment/` — §10.7 experiment primitives (gateway-internal)
-
-The experiment registry, the built-in OpenFeature provider, sticky variant
-assignment, the eval store, and the OFREP client. §10.7 scopes the experiment
-primitives to the gateway.
-
-`evalstore`, `experimentprovider`, `experimentsticky`, `experimentstore`,
-`ofrep`.
-
-### `provisioning/` — §14 sandbox provisioning
-
-The deployer-configured environment-variable block, the gitClone ref resolution
-backend, and the VCS credential materialization.
-
-`envblock`, `gitref`, `vcscred`.
-
-### `gatewaycontrol/` — §9.1 GatewayControl platform tools
-
-The bridge for the §9.1 GatewayControl platform tool surface.
-
-`platformtools`.
-
-### `externalapi/` — §15 external API surface
-
-The OpenAPI specification endpoint, canonical cursor pagination, the §15.2.1
-error classifier, the §15.4 output-part fidelity helper, the admin API router,
-and the §17.6 initial-admin-token provisioner.
-
-`admin`, `admintoken`, `errorclassify`, `openapi`, `outputpartfidelity`,
-`pagination`.
-
-### `metrics/` — §16.1 gateway metrics
-
-The gateway metrics registry, the GC-pause gauge, the §4.1 extraction-threshold
-reader, and the §17.8.2 capacity-tier carrier.
-
-`capacityplanning`, `extractionthreshold`, `gatewaymetrics`, `gcpause`.
-
-### `operability/` — §25.3 gateway-side ops endpoints
-
-The in-process operability endpoints that read in-process state: the health
-service and its runbook link table, and the capacity recommendations service.
-The target paths `operability/health` and `operability/recommendations` are
-pinned by §4.0 of the specification.
-
-`health`, `recommendations`.
-
-### `deployment/` — §17.4 deployment
-
-The dev-mode TLS guard rails.
-
-`devmode`.
-
-### `core/` — gateway-core shared primitives
-
-The shared subsystem concurrency primitives the §4.1 isolation guarantees rest
-on, and the semver comparison helper.
-
-`semver`, `subsystem`.
+# `pkg/gateway` layout
+
+This file maps each directory of `pkg/gateway` to the part of the gateway it holds and to the specification page that states that part. Change 0117 (gateway package layout) defines the layout. The gateway is one binary partitioned into seams, the session core, and parts that apply to the whole replica, as the gateway index page (`spec/components/gateway/index.md`) states.
+
+## Parts and directories
+
+| Directory | Part | Page |
+| :-- | :-- | :-- |
+| `seam` | The seam interface: the Go interfaces through which the seams and the session core reach each other, the route registration interface, and the values they carry. Under it, `seam/subsystem` and `seam/extractionthreshold` hold the seam model: the breaker, the limiter, the per-seam metrics, and the extraction-threshold reader. | `spec/interfaces/gateway-seams.md` (GWSEAM); the seam model on `spec/components/gateway/index.md` (GW) |
+| `streamproxy` | The stream proxy seam: the session event bus, session attachment, and the event and log streams. | `spec/components/gateway/stream-proxy.md` (GWSTREAM) |
+| `uploadhandler` | The upload handler seam: upload proxying, validation, and staging. | `spec/components/gateway/upload-handler.md` (GWUPLOAD) |
+| `platformtools` | The platform tools seam: platform tool calls from pods, delegation orchestration and the delegation tree, the elicitation chain, input waits, and tool approvals. | `spec/components/gateway/platform-tools.md` (GWTOOLS) |
+| `meteringproxy` | The metering proxy seam for LLM upstream calls. | `spec/components/gateway/metering-proxy.md` (GWLLM) |
+| `core/coordination` | Session coordination: the coordination lease, fencing, and their stores. | `spec/components/gateway/session-coordination.md` (GWCOORD) |
+| `core/podclaim` | The pod claimer. | `spec/components/gateway/pod-claimer.md` (GWCLAIM) |
+| `core/checkpoint` | The checkpoint barrier, the checkpointer, and the eviction fallback. | `spec/components/gateway/checkpoint-barrier.md` (GWBARRIER) |
+| `core/session` | The session operations of the session core: create, start, bind, resume, suspend, terminate, and message delivery, with the pod session registry, the executor, and the adapter client. | The capability pages of the sessions and messaging areas |
+| `api` | The API front: the request pipeline, middleware, route registration, service identity, and the admin handlers. | `spec/components/gateway/api-front.md` (GWAPI) |
+| `drain` | The preStop drain of a replica. | `spec/components/gateway/drain.md` (GWDRAIN) |
+| `scaling` | Scaling and capacity signals. | `spec/components/gateway/scaling-and-capacity.md` (GWSCALE) |
+| `opsendpoints` | The health service and the other ops endpoints. | `spec/components/gateway/ops-endpoints.md` (GWOPS) |
+| `replica` | The replica as a unit: gateway metrics, leader election, the disruption budget watcher, development mode, and the TLS probe. | `spec/components/gateway/index.md` (GW) |
+| `playground` | The web playground. | `spec/components/web-playground.md` (PLAY) |
+
+Domain logic and stores do not belong to a gateway part. They live in concern directories under `pkg/`, such as `pkg/quota`, `pkg/audit`, `pkg/session`, and `pkg/tenancy`, where any component can import them.
+
+## The import rule
+
+- A package of a seam imports, from `pkg/gateway`, only `pkg/gateway/seam` and its subpackages and the packages of its own seam.
+- A package of the session core imports no seam package and no API front package.
+- A package of the API front imports no seam package and no session core package. Each part registers its own routes through the route registration interface of `pkg/gateway/seam`.
+- `pkg/gateway/seam` imports no other package of `pkg/gateway`.
+- No package outside `pkg/gateway` and `cmd/lenny-gateway` imports a package of `pkg/gateway`, except test packages under `tests/`.
+- A package of another replica-level part, or of the web playground, imports no seam package.
+- Only the session core, the metering proxy, and `cmd/lenny-gateway` import the confined packages: the credential packages, the token and key packages, the admission packages (the authentication middleware, quota, policy, and the tenant store), and the authorization predicates. The API front imports those its request pipeline and admin handlers read. `tests/static/lint/gatewaylayout/confined.go` lists them and marks the API front's. The rule governs direct imports.
+- Every package of `pkg/gateway` sits in a directory of the table above.
+
+The replica-level parts other than the API front may import the session core and the seam interface. `cmd/lenny-gateway` imports every part and wires each concrete type into the interfaces of `pkg/gateway/seam`.
+
+The layout gate, `TestGatewayLayoutHoldsTheImportRule` in `tests/static/lint`, holds these rules over the non-test import graph. Its directory table is in `tests/static/lint/gatewaylayout/layout.go`. The wiring check, `TestGatewayWiringCrossesOnlyThroughTheSeam` in the same package, reads `cmd/lenny-gateway` with full type information and refuses a value of one part passed where another part expects an interface or a function not declared in `pkg/gateway/seam`, where the import rules refuse the receiving part importing the value's package. It attributes each value to the parts it reaches, following locals, the composition root's struct fields, adapters, closures, and the composition root's own functions and methods. It also reports a value attributed to a confined package that the composition root hands to a part GW-R2 does not allow. A crossing is judged and keyed by its receiving part, the package whose struct field or function parameter takes the value, and interfaces of the standard library or a dependency are not crossing targets. `tests/registers/gateway-wiring.yaml` lists the crossings each move step routes through the seam interface, and it only shrinks.
+
+## Packages that have not moved yet
+
+The steps of change 0117 move the packages into this layout one part at a time. Until a package's step runs, the package stays in its earlier directory, and two records track it:
+
+- `tests/registers/gateway-layout.yaml` lists each package outside the directory of its part, with the part it belongs to and the step that moves it, or with the member change of the v1 program that removes it. It also lists each import that breaks the rule above, with the step that ends it. The layout gate refuses a violation the register does not carry and a row that no longer occurs. `TestGatewayLayoutRegisterOnlyShrinks` compares the register with its copy at the merge base: a branch deletes rows, and adds or rewrites one only where a move rewrote its paths or in the step that moves its package.
+- `scripts/refactor/manifest` lists the old and new import path of every move, with its step. The move driver in `scripts/refactor` applies one step with `go run ./scripts/refactor -step <step>`. After a move runs, the manifest stays as the translation table for any text that still names an old path.
+
+Each move step settles the names of the packages it moves, and a step that renames a package edits its manifest line before it runs the driver.

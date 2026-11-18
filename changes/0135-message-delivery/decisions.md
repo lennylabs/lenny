@@ -146,3 +146,5 @@ Settled by the owner on 2026-11-15 and applied with revision 21.
 | ID | Question | Decision | Where |
 | :-- | :-- | :-- | :-- |
 | U1 | How a reader treats an unknown value of a known enum member, such as a child event's `event` or `state`, a tool result's content type, or an error code. | "2.2: ok": the value is handled as `other` and is never an error, in both directions. A value that selects what the adapter does, such as a `request`'s `kind`, keeps the malformed-frame rule, which answers with an `error` frame and continues the session. | MD-24, MDR-57 |
+
+**Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0135.S1, 0135.S4, and 0135.S5, whose entries in `steps.md` name the operations.

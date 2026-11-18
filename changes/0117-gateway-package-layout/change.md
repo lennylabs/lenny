@@ -1,6 +1,6 @@
 # Gateway package layout
 
-Status: `Decided`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M2.
+Status: `In progress`, revision 2, 2026-11-18. Programs: [v1](../programs/v1.md), milestone M2.
 
 ## Problem
 
@@ -224,7 +224,11 @@ Extracting the platform tools seam into its own service would put a client of `s
 
 ## Documentation
 
-No client, operator, or runtime-author behavior changes, so no page under `docs/` changes: no published page names a gateway package path today. For contributors:
+No client, operator, or runtime-author behavior changes, so no page under `docs/` changes: no published page names a gateway package path today.
+
+- No reader-facing behavior changes: GWSEAM, GW.
+
+For contributors:
 
 - `pkg/gateway/ARCHITECTURE.md` becomes the map from each directory to its component page and part, in place of the groups of proposal 0020.
 - `TESTING.md` takes the new paths in its three references to `sessionstore`, `memstore`, and `sessionserver`.

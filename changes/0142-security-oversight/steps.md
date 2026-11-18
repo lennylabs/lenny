@@ -72,6 +72,8 @@ Operator access requests, the approval gate, and the emergency path. It needs th
 
 `security_approvals`, the approvals API, and the tool hold at MCP dispatch and on relayed frames. It needs the role and the rules. It addresses F-7.2.46.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the tool approvals (`GWSEAM-RegisterApproval`, `GWSEAM-CancelApproval`, `GWSEAM-ResolveApproval`, and `GWSEAM-AwaitApproval`) for approvals routed to security (SO-5a).
+
 ### 0142.S7 Repository write approvals
 - status: Planned
 - aliases: [SO-5b, SO-5 (part)]

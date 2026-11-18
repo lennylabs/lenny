@@ -392,9 +392,9 @@ A page carries a generated section between the marker comments `<!-- generated:<
 
 | Field | Type | Required | Meaning |
 | :-- | :-- | :-- | :-- |
-| `name` | string | yes | The operation's own name in its interface: the OpenAPI `operationId`, the gRPC method, the Kubernetes verb, or the CLI command words, such as `createPool`. |
-| `method` | string | no | The HTTP method, the RPC kind, or the Kubernetes verb. |
-| `path` | string | no | The HTTP path or the resource the operation acts on. |
+| `name` | string | yes | The operation's own name in its interface: the OpenAPI `operationId`, the gRPC method, the Kubernetes verb, the CLI command words, or, on an in-process interface page such as the gateway seams, the Go method, such as `createPool` or `LookupSession`. |
+| `method` | string | no | The HTTP method, the RPC kind, the Kubernetes verb, or `Go method` for an operation of an in-process interface page. |
+| `path` | string | no | The HTTP path, the resource the operation acts on, or, for an operation of an in-process interface page, the Go interface that declares it, such as `seam.Sessions`. |
 | `returns` | list | no | The error codes and refusals the operation returns, by name. |
 | `requirements` | list | no | The identifiers of the requirements behind the operation's outcomes. |
 | `summary` | string | yes | One sentence that says what the defined thing is, used in the catalog row. |
@@ -515,7 +515,7 @@ Numbers are never reused. A retired requirement keeps its number with a successo
 
 **Issues.** An issue about a requirement of a page is identified `<CODE>-I<n>` and lives under `issues/<CODE>/` as `<CODE>-I<n>-<slug>.md`. Issue numbers are never reused within a code.
 
-**Operations.** An interface operation has the identifier `<CODE>-<operation name>`, where the operation name is the interface's own: the gRPC method name (`ADAPTERRPC-ReportPodScrub`), the OpenAPI `operationId` (`ADMPOOLS-createPool`), the Kubernetes API verb (`KPCLAIM-create`, `KPCLAIM-updateStatus`), or the CLI command words (`CLIPOOL-poolCreate`). Its anchor is the identifier lower-cased (`kpclaim-create`). Each REST operation has an `operationId` in the specification, and the generated OpenAPI document and SDKs use it.
+**Operations.** An interface operation has the identifier `<CODE>-<operation name>`, where the operation name is the interface's own: the gRPC method name (`ADAPTERRPC-ReportPodScrub`), the OpenAPI `operationId` (`ADMPOOLS-createPool`), the Kubernetes API verb (`KPCLAIM-create`, `KPCLAIM-updateStatus`), the CLI command words (`CLIPOOL-poolCreate`), or, on an interface page between parts of one process, the Go method that declares the operation (`GWSEAM-LookupSession`), whose block's `method` is `Go method` and whose `path` names the Go interface (`seam.Sessions`). Its anchor is the identifier lower-cased (`kpclaim-create`). Each REST operation has an `operationId` in the specification, and the generated OpenAPI document and SDKs use it.
 
 **Grammar.** Every identifier has the form `<CODE>-<suffix>`. A suffix of `R` and a number is a requirement, a suffix of `I` and a number is an issue, and any other suffix is an operation. The registry refuses a collision.
 
@@ -910,7 +910,7 @@ The table lists every page code with its page type, its path relative to `spec/`
 | `EVTOPS` | interface | [`interfaces/events/operational-events.md`](interfaces/events/operational-events.md) | The operational event types and their data schemas. |
 | `EVTHOOK` | interface | [`interfaces/events/session-webhooks.md`](interfaces/events/session-webhooks.md) | The session callback webhooks and their signing. |
 | `EXT` | interface | [`interfaces/extension-points.md`](interfaces/extension-points.md) | The Go extension points a deployer can replace: storage backends, the pool manager, and the cluster registry. |
-| `GWSEAM` | interface | [`interfaces/gateway-seams.md`](interfaces/gateway-seams.md) | The boundary between each gateway seam and the session core. |
+| `GWSEAM` | interface | [`interfaces/gateway-seams.md`](interfaces/gateway-seams.md) | The boundary between each gateway seam and the session core: the operations each side calls on the other, the values they carry, and the route registration interface of the API front. |
 | `IFS` | index | [`interfaces/index.md`](interfaces/index.md) | Lists the interfaces, the parties on each side, and the page that owns each. |
 | `INTCPTIF` | interface | [`interfaces/interceptor-protocol.md`](interfaces/interceptor-protocol.md) | The protocol between the gateway and a request interceptor: phases, payloads, verdicts, and authentication. |
 | `KADMIT` | interface | [`interfaces/kubernetes/admission.md`](interfaces/kubernetes/admission.md) | The writes Lenny's admission webhooks and policies refuse, with the refusal each returns. |

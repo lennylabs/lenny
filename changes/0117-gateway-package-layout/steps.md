@@ -13,17 +13,17 @@
 The import sites in each title are counted over the packages the step moves, as [evidence/packages.tsv](evidence/packages.tsv) gives them on 2026-11-16. Every step after 0117.S2 removes its rows from the layout gate's register. The code registry and placeholder pages of 0115 must have merged before 0117.S1 starts and before any `doc.go` names a page code; 0115's steps are framed on its branch, so the edge is stated here rather than listed.
 
 ### 0117.S1 The seam interface page and the import rule
-- status: Planned
+- status: Landed
 - lanes: [specification]
 
 `spec/interfaces/gateway-seams.md` written with the operations of "SP-2", each with its identifier, caller, callee, and result, and GW-R1 on `spec/components/gateway/index.md` with the page marked `status: partial`. §4.1 "Gateway Internal Subsystems" gains a link to the seam interface page. It lands after the validation owed on the operations list.
 
 ### 0117.S2 The seam interface package, the layout gate, and the move driver
-- status: Planned
-- lanes: [code, documentation]
+- status: Landed
+- lanes: [specification, code, documentation]
 - depends-on: [0117.S1, 0155.S1]
 
-`pkg/gateway/seam` with the interfaces of "SP-2", including the route registration interface, which the later steps implement; the tier-0 layout gate of "SP-3" with its fixtures; `tests/registers/gateway-layout.yaml` with every violation and every package awaiting removal that exists when it lands; `scripts/refactor` with 0117's manifest and the register rewrites of "SP-4", the retirement of the layout tests in `scripts/refactor/manifest_layout_test.go`, `pkg/gateway/ARCHITECTURE.md` rewritten as the map of "SP-1", and the bullet in `code-best-practices.md`. It follows 0155.S1 so the gate is written in the renamed static tier.
+`pkg/gateway/seam` with the interfaces of "SP-2", including the route registration interface, which the later steps implement; the tier-0 layout gate of "SP-3" with its fixtures; `tests/registers/gateway-layout.yaml` with every violation and every package awaiting removal that exists when it lands; `scripts/refactor` with 0117's manifest and the register rewrites of "SP-4", the retirement of the layout tests in `scripts/refactor/manifest_layout_test.go`, `pkg/gateway/ARCHITECTURE.md` rewritten as the map of "SP-1", and the bullet in `code-best-practices.md`. It follows 0155.S1 so the gate is written in the renamed static tier. Under decision 9, GW-R1 states the wiring form of the rule, and a static check of `cmd/lenny-gateway` refuses a value of one part passed where another part expects an interface not declared in `pkg/gateway/seam`, with today's crossings in `tests/registers/gateway-wiring.yaml`, which only shrinks. Under decision 10, GW-R2 confines the credential and admission packages, and the layout gate holds it, with today's other importers in `tests/registers/gateway-layout.yaml`.
 
 ### 0117.S3 Metering proxy (51 import sites)
 - status: Planned
@@ -58,14 +58,14 @@ The import sites in each title are counted over the packages the step moves, as 
 - lanes: [code]
 - depends-on: [0117.S6, 0137.S5, 0155.S1]
 
-The `mcpfabric` packages that no change removes, `gatewaycontrol/*`, `session/inputwait`, and `session/toolapproval` to `pkg/gateway/platformtools`, and `sessionserver`'s twelve platform tools files to a new package there. The platform tools' imports of `sessionserver`, `podsession`, `executor`, `messagerouting`, `sessioninbox`, `runtime/adapter`, and `adapterclient` become calls on the seam interface, and the core's imports of the delegation tree, `mcp`, `platformtools`, `inputwait`, and `toolapproval` become calls on the interfaces this seam serves. It follows 0117.S6 because its publishers use the stream proxy's publish operation. `mcpfabric/delegationpolicystore` leaves with the domain packages in 0117.S9.
+The `mcpfabric` packages that no change removes, `gatewaycontrol/*`, `session/inputwait`, and `session/toolapproval` to `pkg/gateway/platformtools`, and `sessionserver`'s twelve platform tools files to a new package there. The platform tools' imports of `sessionserver`, `podsession`, `executor`, `messagerouting`, `sessioninbox`, `runtime/adapter`, and `adapterclient` become calls on the seam interface, and the core's imports of the delegation tree, `mcp`, `platformtools`, `inputwait`, and `toolapproval` become calls on the interfaces this seam serves. It follows 0117.S6 because its publishers use the stream proxy's publish operation. `mcpfabric/delegationpolicystore` leaves with the domain packages in 0117.S9. `mcptools/internal/genmcpschemas`, the `go:generate` tool of `mcptools` that 0138 removes, moves with `mcptools`, which runs it by a relative path, as an exception to decision 5: this step deletes its register row, and it belongs to the platform tools seam until 0138 removes it. When the step adds seam operations, it also adds the line of decision 8 to the member change behind each mechanism those operations serve, such as 0141.S1's correction of the delegation `PreRoute`.
 
 ### 0117.S8 API front and the shared API conventions (497 import sites)
 - status: Planned
 - lanes: [code]
 - depends-on: [0117.S5, 0117.S6, 0117.S7, 0137.S5, 0155.S1]
 
-`middleware/auth` and `callercheck` to `pkg/auth`, `middleware/idempotency` to `pkg/idempotency`, `middleware/environment` to `pkg/environment`, and `externalapi/{errorclassify, pagination, openapi}` to `pkg/api`; the rest of `middleware`, `serviceidentity`, and `externalapi/{admin, admintoken}` to `pkg/gateway/api`; and `sessionserver`'s pipeline files to a new package there with the route registration interface of decision 3. `quota/quotacheckpoint`'s adapter for `admin.QuotaReconciler` moves to the admin package's side so that the quota package imports no part. Until this step, `cmd/lenny-gateway` mounts the routes that the split packages register on today's mux. It follows the three splits so that the plumbing files it moves are the ones left in `sessionserver` after them.
+`middleware/auth` and `callercheck` to `pkg/auth`, `middleware/idempotency` to `pkg/idempotency`, `middleware/environment` to `pkg/environment`, and `externalapi/{errorclassify, pagination, openapi}` to `pkg/api`; the rest of `middleware`, `serviceidentity`, and `externalapi/{admin, admintoken}` to `pkg/gateway/api`; and `sessionserver`'s pipeline files to a new package there with the route registration interface of decision 3. `quota/quotacheckpoint`'s adapter for `admin.QuotaReconciler` moves to the admin package's side so that the quota package imports no part. Until this step, `cmd/lenny-gateway` mounts the routes that the split packages register on today's mux. It follows the three splits so that the plumbing files it moves are the ones left in `sessionserver` after them. When the step adds seam operations, it also adds the line of decision 8 to the member change behind each mechanism those operations serve, such as 0141.S1's correction of the delegation `PreRoute`.
 
 ### 0117.S9 Domain packages, first group (694 import sites)
 - status: Planned
@@ -97,6 +97,7 @@ The rest of `sessionserver` and the core packages of "SP-1" to `pkg/gateway/core
 
 ### Notes on the steps
 
+- A move step deletes the rows of the violations it removes and adds no row to the layout or the wiring register (decision 15). A row whose paths the step's move rewrites maps back to its old paths; a crossing or an import the step would create goes through the seam interface instead.
 - Steps 0117.S3 to 0117.S12 are refactors under the escape hatch of `spec-driven-development.md` for a change that alters no behavior: each passes the same tests before and after, less the wiring tests "SP-4" deletes.
 - The domain steps 0117.S9, 0117.S10, and 0117.S12 depend on nothing but the gate and may run in any order relative to the splits; they are numbered by import sites. Steps that share no package may share a branch, as `changes/README.md` allows.
 - Member changes whose code steps edit a package this change moves land after the step that moves it, which milestone M2's place before the areas gives. 0153.S3 removes the archive extraction from the core after 0117.S11, and 0133.S2, 0138.S6, and 0124's removal delete packages the register lists.
@@ -106,7 +107,7 @@ The rest of `sessionserver` and the core packages of "SP-1" to `pkg/gateway/core
 - lanes: [code, documentation]
 - depends-on: [0117.S12]
 
-Runs before v1 closes, after the member changes that remove packages listed in the layout gate's register have landed (decision 5). Every package in that register that its change did not delete, and every part of one that remains, moves into the layout as decision 2 places it and is named as decision 6 states. The step lands when the register is empty.
+Runs before v1 closes, after the member changes that remove packages listed in the layout gate's register have landed (decision 5). Every package in that register that its change did not delete, and every part of one that remains, moves into the layout as decision 2 places it and is named as decision 6 states. The step lands when the register is empty. A leftover it moves under a confined path stays confined under GW-R2: `credfallback`, `credrenewal`, and `leaserevoke`, which 0133 removes, and `connectorauthz`, which 0124 removes.
 
 ### Notes on package names
 

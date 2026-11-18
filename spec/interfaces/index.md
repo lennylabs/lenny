@@ -23,7 +23,7 @@ Lists the interfaces, the parties on each side, and the page that owns each.
 | [Deployment configuration](deployment-configuration/index.md) | `DCFG` | The deployment configuration: the Helm values structure, the values schema, chart-rendered resources, and feature gates. |
 | [Events](events/index.md) | `EVT` | The CloudEvents envelope and the transports that carry Lenny's events. |
 | [Extension points](extension-points.md) | `EXT` | The Go extension points a deployer can replace: storage backends, the pool manager, and the cluster registry. |
-| [Gateway seams](gateway-seams.md) | `GWSEAM` | The boundary between each gateway seam and the session core. |
+| [Gateway seams](gateway-seams.md) | `GWSEAM` | The boundary between each gateway seam and the session core: the operations each side calls on the other, the values they carry, and the route registration interface of the API front. |
 | [Interceptor protocol](interceptor-protocol.md) | `INTCPTIF` | The protocol between the gateway and a request interceptor: phases, payloads, verdicts, and authentication. |
 | [Kubernetes](kubernetes/index.md) | `KAPI` | Lenny's Kubernetes API conventions: the API group and version, the shipped CRDs and their schema version, field ownership, validation, and how an admission refusal reaches a client. |
 | [Ops API](ops-api/index.md) | `OPSAPI` | The ops API served by the gateway and lenny-ops: terminology, envelopes, pagination, rate limits, and the operation groups. |

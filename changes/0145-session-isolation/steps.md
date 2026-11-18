@@ -252,3 +252,5 @@ User namespaces on runc pools by default, the `uid_map` check, and the Kata `blo
 - depends-on: [0145.S1, 0145.S3]
 
 Recycling after the release: the one-slot disposition, the **Runtime refused** retirement in place of "Runtime not live", dead slots in place of `leaked` slots with `agent_pod_state.dead_slots` and their rehydration, and the scrub profiles `standard` and `vm-restart` (D36 to D39). PM-A's removal of `allowCrossTenantReuse` lands in the same release.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the pod recycle operations (`GWSEAM-IncrementSessionsServed`, `GWSEAM-IncrementScrubFailureCount`, `GWSEAM-RecycleCounters`, `GWSEAM-RecordLeak`, `GWSEAM-RetireOnSessionCount`, `GWSEAM-InspectForRecycle`, `GWSEAM-RecyclePod`, and `GWSEAM-RetirePod`) for the dead slot and the pod-wide scrub (D37 to D39).

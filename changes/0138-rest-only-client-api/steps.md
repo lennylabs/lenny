@@ -25,6 +25,8 @@ The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, and R19, R
 
 This step goes first because every adapter and every Lenny client depends on it.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-Publish`, which returns the assigned sequence number (R1), and `GWSEAM-HandleRoute` and `GWSEAM-RegisterRoutes` for the route tags (R7), and adds the pending elicitation and approval lists (R4), a crossing that has no operation yet.
+
 ### 0138.S2 Authorization of adapter requests
 - status: Planned
 - aliases: [RO-B, RO-4, R9]
@@ -34,6 +36,8 @@ This step goes first because every adapter and every Lenny client depends on it.
 
 R9 and the rules of "RO-4": the adapter registry, computed identifiers, audiences, metadata, challenges, narrowing, evaluation, leaf enforcement, minting refusals, the refusal code, the adapter listener, and their tests. It needs 0138.S1 for R7's tags and R5's key scope.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-HandleRoute` and `GWSEAM-RegisterRoutes`, which bind each route's `operationId` at registration (RO-4).
+
 ### 0138.S3 Webhook subscriptions
 - status: Planned
 - aliases: [RO-C, R6]
@@ -41,6 +45,8 @@ R9 and the rules of "RO-4": the adapter registry, computed identifiers, audience
 - depends-on: [0138.S1, 0138.S2]
 
 R6 webhook subscriptions with their target, capability, and lifetime rules, and `callbackUrl` as a subscription under O2.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It adds webhook subscriptions to the event bus (R6), a crossing that has no operation yet.
 
 ### 0138.S4 Lenny's clients on REST
 - status: Planned
@@ -68,3 +74,5 @@ The conformance kit, the umbrella chart's dependencies and routes, and the creat
 The removal of "RO-11" from the specification, the code, the chart, and the documentation, and the BUILD-GAPS closures. It needs 0138.S5 for the MCP adapter, so that a default deployment serves MCP throughout.
 
 This step goes last so that the MCP surface and the playground never disappear between steps, although Lenny has no deployments to protect.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-CreateSession` and `GWSEAM-InvokeClientAPI`, and the `send_message` and `cancel_session` forwards of `GWSEAM-ForwardToolCall`, with the client MCP tools (RO-11 and RO-12).

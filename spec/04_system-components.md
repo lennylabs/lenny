@@ -98,7 +98,7 @@ This calibration must be completed as a Phase 2 exit criterion, aligned with the
 
 #### Gateway Internal Subsystems
 
-The gateway binary is internally partitioned into four subsystem boundaries. These are **not** separate services — they are Go interfaces within a single binary that enforce isolation at the concurrency and failure-domain level, so that a problem in one area (e.g., a slow upload) cannot starve or crash another (e.g., MCP streaming).
+The gateway binary is internally partitioned into four subsystem boundaries. These are **not** separate services — they are Go interfaces within a single binary that enforce isolation at the concurrency and failure-domain level, so that a problem in one area (e.g., a slow upload) cannot starve or crash another (e.g., MCP streaming). The [gateway seams](interfaces/gateway-seams.md) interface page states every operation through which a subsystem and the session core reach each other.
 
 **Subsystems:**
 
