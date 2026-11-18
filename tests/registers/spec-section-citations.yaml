@@ -666,7 +666,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3081
+      count: 3089
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
@@ -718,7 +718,7 @@ packages:
     - package: pkg/gateway/streamproxy
       count: 16
     - package: pkg/gateway/streamproxy/sessionevents
-      count: 22
+      count: 25
     - package: pkg/gateway/upgrade/runtimeupgrade
       count: 5
     - package: pkg/gateway/upgrade/runtimeupgradeguard

@@ -165,7 +165,7 @@ func TestRecordExperimentIsolationRejectionExposesCounter(t *testing.T) {
 // spec: §15.1 GET /v1/sessions/{id}/events (SSE event stream)
 // diagnosis: the §16.1 metrics middleware wraps the response writer
 // in statusRecorder. When the wrapper does not forward http.Flusher,
-// the SSE handler at pkg/gateway/sessionserver/events.go:50 fails its
+// the SSE handler in pkg/gateway/streamproxy/events.go fails its
 // http.Flusher type assertion and returns 500 "response writer does
 // not support streaming", breaking every streaming surface that
 // passes through the middleware (SSE events, the §4.9 LLM-proxy

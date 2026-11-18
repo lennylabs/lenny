@@ -16,7 +16,7 @@ requirements: []
 
 - Claim register row (`tests/claim-map.json`, retired by 0116.S5): claim "SSE live tail across replicas", status `UNWIRED`, anchor `#2857-gateway-to-store`, deferral `R19`.
 - Surface recorded on the row: "`pkg/gateway/session/sessionevents/redisrelay.go:157` has no caller".
-- `RedisRelay.LiveFromCursor` in `pkg/gateway/session/sessionevents/redisrelay.go` has no caller (triage, 2026-11-17).
+- `RedisRelay.LiveFromCursor` in `pkg/gateway/streamproxy/sessionevents/redisrelay.go` (formerly `pkg/gateway/session/sessionevents/redisrelay.go`) has no caller (triage, 2026-11-17).
 
 ## Gap
 

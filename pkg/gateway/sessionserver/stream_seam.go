@@ -21,8 +21,7 @@ import (
 // operation, which the session server's request plumbing holds until the
 // API front holds it. The composition root hands it to the stream proxy
 // through the seam interfaces. The operations every seam calls run in
-// methods of Server that each seam's adapter shares (decision 41 of change
-// 0117).
+// methods of Server that each seam's adapter shares.
 type StreamSeam struct {
 	s *Server
 }
@@ -117,7 +116,8 @@ func (s *Server) lookupSeamSession(ctx context.Context, tenantID, sessionID stri
 // with seam.ErrForbidden; the principal subject, whose absence is
 // seam.ErrUnauthenticated; and the ownership rule, under which a session
 // the caller may not read or act on answers seam.ErrSessionNotFound, as a
-// missing session does.
+// missing session does. A principal bound to a tenant other than tenantID
+// answers seam.ErrSessionNotFound before the session is read.
 //
 // spec: GWSEAM-AuthorizeSession; §10.2 (Session ownership) rules 3, 5, 6,
 // and 7.
@@ -133,8 +133,15 @@ func (s *Server) authorizeSeamSession(ctx context.Context, tenantID, sessionID s
 	if !s.permissionGranted(ctx, perm) {
 		return seam.Session{}, fmt.Errorf("permission %s: %w", perm, seam.ErrForbidden)
 	}
-	if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
+	p, ok := authmw.FromContext(ctx)
+	if !ok || p.Subject == "" {
 		return seam.Session{}, seam.ErrUnauthenticated
+	}
+	// A principal bound to one tenant never reaches another tenant's
+	// session through the tenant its caller passes, even when the other
+	// tenant's session names the same subject.
+	if p.TenantID != "" && p.TenantID != tenantID {
+		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
 	}
 	row, err := s.accessRow(ctx, tenantID, sessionID)
 	if errors.Is(err, sessionstore.ErrNotFound) {

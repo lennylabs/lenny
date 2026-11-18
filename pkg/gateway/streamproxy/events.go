@@ -120,7 +120,7 @@ func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
 
 	afterSeq := resumeCursor(r)
 	// §7.2 defense-in-depth: the bus enforces the tenant binding even
-	// if a future caller drops the store.Get precheck above.
+	// if a future caller drops the session lookup above.
 	sub, err := h.events.Subscribe(tenantID, id, afterSeq, 64)
 	if err != nil {
 		errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
@@ -381,7 +381,7 @@ func (h *Handler) serveEventsJSON(w http.ResponseWriter, r *http.Request, tenant
 	// Subscribe + Close reads the retained backlog under the
 	// same §7.2 tenant-binding check the SSE path uses, so a foreign
 	// session cannot reach the JSON envelope even if the per-handler
-	// store.Get pre-check is bypassed by a future refactor.
+	// session lookup is bypassed by a future refactor.
 	sub, err := h.events.Subscribe(tenantID, id, afterSeq, 1)
 	if err != nil {
 		errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)

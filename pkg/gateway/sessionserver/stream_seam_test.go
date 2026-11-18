@@ -110,8 +110,8 @@ func TestStreamSeamLookupCarriesNoNegativeSequence(t *testing.T) {
 // TestStreamSeamAuthorizeAppliesThePermissionGateAndTheOwnershipRule checks
 // the order and the outcomes of the authorization operation: the permission
 // gate refuses with ErrForbidden, a caller with no subject is
-// ErrUnauthenticated, and a session the caller may not use answers as a
-// missing one.
+// ErrUnauthenticated, and a session the caller may not use, including one
+// in a tenant other than the principal's, answers as a missing one.
 //
 // spec: GWSEAM-AuthorizeSession; §10.2 (Session ownership) rules 3, 5, 6,
 // and 7.
@@ -133,6 +133,7 @@ func TestStreamSeamAuthorizeAppliesThePermissionGateAndTheOwnershipRule(t *testi
 		{"unknown action", as("bob@acme.com", auth.RoleUser), "sess-stream", seam.SessionAction(99), seam.ErrForbidden},
 		{"missing session", as("bob@acme.com", auth.RoleUser), "sess-none", seam.SessionRead, seam.ErrSessionNotFound},
 		{"another user's session", as("alice@acme.com", auth.RoleUser), "sess-stream", seam.SessionManage, seam.ErrSessionNotFound},
+		{"owner's subject in another tenant", authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "bob@acme.com", TenantID: "globex", Roles: []auth.Role{auth.RoleUser}}), "sess-stream", seam.SessionRead, seam.ErrSessionNotFound},
 		{"owner manages", as("bob@acme.com", auth.RoleUser), "sess-stream", seam.SessionManage, nil},
 		{"tenant reader reads", as("carol@acme.com", auth.RoleTenantViewer), "sess-stream", seam.SessionRead, nil},
 	}
