@@ -97,7 +97,7 @@ func TestWorkspaceWriteErrorMatchesItsSentinelAndTheAdapterError(t *testing.T) {
 // the caller reports.
 // spec: GWSEAM-ReserveStorage
 func TestStorageQuotaErrorCarriesUsageAndMatchesItsSentinel(t *testing.T) {
-	var err error = fmt.Errorf("wrapped: %w", &StorageQuotaError{CurrentBytes: 90, LimitBytes: 100})
+	err := fmt.Errorf("wrapped: %w", &StorageQuotaError{CurrentBytes: 90, LimitBytes: 100})
 	if !errors.Is(err, ErrStorageQuotaExceeded) {
 		t.Fatal("a quota refusal does not match ErrStorageQuotaExceeded")
 	}
