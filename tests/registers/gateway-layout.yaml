@@ -896,26 +896,6 @@ imports:
     to: pkg/gateway/podlifecycle/podclaim
     rule: outside-imports
     step: 0117.S11
-  - from: pkg/gateway/externalapi/admin
-    to: pkg/gateway/environment/tenantstore
-    rule: confined-imports
-    step: 0117.S8
-  - from: pkg/gateway/externalapi/admin
-    to: pkg/gateway/policy/interceptor
-    rule: confined-imports
-    step: 0117.S8
-  - from: pkg/gateway/externalapi/admin
-    to: pkg/gateway/policy/interceptor/interceptorstore
-    rule: confined-imports
-    step: 0117.S8
-  - from: pkg/gateway/externalapi/admin
-    to: pkg/gateway/policy/ratelimit
-    rule: confined-imports
-    step: 0117.S8
-  - from: pkg/gateway/externalapi/admin
-    to: pkg/quota
-    rule: confined-imports
-    step: 0117.S8
   - from: pkg/gateway/gatewaycontrol/platformtools
     to: pkg/gateway/middleware/auth
     rule: confined-imports
@@ -952,7 +932,47 @@ imports:
     to: pkg/gateway/policy/ratelimit
     rule: confined-imports
     step: 0117.S7
-  - from: pkg/gateway/middleware/ratelimit
-    to: pkg/gateway/policy/ratelimit
+  - from: pkg/gateway/mcpfabric/delegation
+    to: pkg/gateway/mcpfabric/delegationpolicystore
     rule: confined-imports
-    step: 0117.S8
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/mcptools
+    to: pkg/gateway/callercheck
+    rule: confined-imports
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/mcptools
+    to: pkg/gateway/credentials/credassign
+    rule: confined-imports
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/mcptools
+    to: pkg/gateway/credentials/credentialpoolstore
+    rule: confined-imports
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/mcptools
+    to: pkg/gateway/environment/envaccess
+    rule: confined-imports
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/mcptools
+    to: pkg/gateway/llmproxy/credrouter
+    rule: confined-imports
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/mcptools
+    to: pkg/gateway/mcpfabric/delegationpolicystore
+    rule: confined-imports
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/mcptools
+    to: pkg/gateway/provisioning/vcscred
+    rule: confined-imports
+    step: 0117.S7
+  - from: pkg/gateway/mcpfabric/playground
+    to: pkg/auth/jwt
+    rule: confined-imports
+    step: 0117.S4
+  - from: pkg/gateway/mcpfabric/playground
+    to: pkg/gateway/storage/issuedtokenstore
+    rule: confined-imports
+    step: 0117.S4
+  - from: pkg/gateway/metrics/gatewaymetrics
+    to: pkg/auth/jwt
+    rule: confined-imports
+    step: 0117.S4

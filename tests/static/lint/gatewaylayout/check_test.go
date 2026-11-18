@@ -474,9 +474,10 @@ func TestParseRegisterRefusesMalformedYAML(t *testing.T) {
 // fixed modules: with no confined import the check is clean; the session
 // core, the metering proxy, the composition root, packages outside the
 // gateway, and packages in transit import every confined package; the API
-// front imports the authentication middleware and nothing else confined;
-// and every other part imports none, before and after the confined package
-// moves to its concern directory.
+// front imports the authentication middleware and the stores and packages
+// its admin handlers read, and nothing else confined; and every other part
+// imports none, before and after the confined package moves to its concern
+// directory.
 // spec: GW-R2
 func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 	assertClean(t, check(t, base(), Register{}))
@@ -486,6 +487,7 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		pkg("pkg/gateway/core/admission", "pkg/gateway/quota/quotastore", "pkg/policy/policy", "pkg/gateway/credentials/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
+		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore"),
 		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),
 		pkg("pkg/gateway/billing/usage", "pkg/gateway/quota/quotastore"),
@@ -524,6 +526,26 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		{
 			"the seam interface imports quota", pkg("pkg/gateway/seam/q", "pkg/quota"),
 			Violation{RuleConfinedImports, "pkg/gateway/seam/q", "pkg/quota"},
+		},
+		{
+			"a seam imports the JWT package", pkg("pkg/gateway/platformtools/tools", "pkg/auth/jwt"),
+			Violation{RuleConfinedImports, "pkg/gateway/platformtools/tools", "pkg/auth/jwt"},
+		},
+		{
+			"a replica-level part imports KMS", pkg("pkg/gateway/replica/k", "pkg/kms"),
+			Violation{RuleConfinedImports, "pkg/gateway/replica/k", "pkg/kms"},
+		},
+		{
+			"the API front imports KMS outside rekey", pkg("pkg/gateway/api/k", "pkg/kms/aws"),
+			Violation{RuleConfinedImports, "pkg/gateway/api/k", "pkg/kms/aws"},
+		},
+		{
+			"the API front imports the credential store", pkg("pkg/gateway/api/c", "pkg/credential/credentialstore"),
+			Violation{RuleConfinedImports, "pkg/gateway/api/c", "pkg/credential/credentialstore"},
+		},
+		{
+			"a seam imports an authorization predicate", pkg("pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"),
+			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"},
 		},
 	}
 	for _, tc := range cases {
