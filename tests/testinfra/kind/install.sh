@@ -1013,8 +1013,11 @@ migration_content_mismatch() {
 migration_guard() {
   local procedure='tests/testinfra/README.md, section "Shared Kind cluster database"'
   local highest
-  highest="$(find "${REPO_ROOT}/migrations" -maxdepth 1 -name '[0-9]*.up.sql' -printf '%f\n' \
-    | sed -E 's/^0*([0-9]+)_.*/\1/' | sort -n | tail -n 1)"
+  # A glob rather than find -printf, which macOS find lacks.
+  local f
+  highest="$(for f in "${REPO_ROOT}"/migrations/[0-9]*.up.sql; do
+    [[ -e "${f}" ]] && printf '%s\n' "${f##*/}"
+  done | sed -E 's/^0*([0-9]+)_.*/\1/' | sort -n | tail -n 1)"
   if [[ -z "${highest}" ]]; then
     echo "error: migration guard: no migrations found under ${REPO_ROOT}/migrations" >&2
     return 1
