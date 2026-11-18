@@ -37,7 +37,7 @@ Domain logic and stores do not belong to a gateway part. They live in concern di
 
 The replica-level parts other than the API front may import the session core and the seam interface. `cmd/lenny-gateway` imports every part and wires each concrete type into the interfaces of `pkg/gateway/seam`.
 
-The layout gate, `TestGatewayLayoutHoldsTheImportRule` in `tests/static/lint`, holds these rules over the non-test import graph. Its directory table is in `tests/static/lint/gatewaylayout/layout.go`.
+The layout gate, `TestGatewayLayoutHoldsTheImportRule` in `tests/static/lint`, holds these rules over the non-test import graph. Its directory table is in `tests/static/lint/gatewaylayout/layout.go`. The wiring check, `TestGatewayWiringCrossesOnlyThroughTheSeam` in the same package, reads `cmd/lenny-gateway` with full type information and refuses a value of one part passed where another part expects an interface or a function not declared in `pkg/gateway/seam`. `tests/registers/gateway-wiring.yaml` lists the crossings each move step routes through the seam interface, and it only shrinks.
 
 ## Packages that have not moved yet
 

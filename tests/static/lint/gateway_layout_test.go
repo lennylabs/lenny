@@ -88,6 +88,15 @@ func TestGatewayLayoutRegisterOnlyShrinks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	moves := manifestMoves(t, root)
+	for _, problem := range gatewaylayout.Ratchet(baseReg, reg, moves, gatewaylayout.Layout) {
+		t.Errorf("%s", strings.TrimSpace(problem))
+	}
+}
+
+// manifestMoves reads the move manifest as repository-relative moves.
+func manifestMoves(t *testing.T, root string) []gatewaylayout.Move {
+	t.Helper()
 	f, err := os.Open(filepath.Join(root, "scripts", "refactor", "manifest"))
 	if err != nil {
 		t.Fatal(err)
@@ -101,7 +110,5 @@ func TestGatewayLayoutRegisterOnlyShrinks(t *testing.T) {
 	for _, m := range manifest {
 		moves = append(moves, gatewaylayout.Move{Old: rewrite.RepoRel(m.Old), New: rewrite.RepoRel(m.New), Step: m.Step})
 	}
-	for _, problem := range gatewaylayout.Ratchet(baseReg, reg, moves, gatewaylayout.Layout) {
-		t.Errorf("%s", strings.TrimSpace(problem))
-	}
+	return moves
 }

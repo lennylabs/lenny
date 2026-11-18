@@ -511,6 +511,7 @@ var pathCarriers = []string{
 	"tests/registers/spec-section-citations.yaml",
 	"tests/registers/identifier-senses.yaml",
 	"tests/registers/gateway-layout.yaml",
+	"tests/registers/gateway-wiring.yaml",
 }
 
 // rewritePathCarriers rewrites the package-path references in every carrier
