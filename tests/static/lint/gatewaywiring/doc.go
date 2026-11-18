@@ -16,20 +16,31 @@
 // local, index, and tuple assignments, variable declarations, return
 // statements, and channel sends. It counts a crossing only where the import
 // rules of the layout refuse the receiving part importing the value's
-// package (decision 12 of change 0117).
+// package (decision 12 of change 0117). The receiving part is the package of
+// the struct field or function parameter that takes the value, where the
+// composition root names one, and otherwise the package that declares the
+// target type; the register keys each crossing by its receiver. Target
+// types from the standard library or a dependency, net/http.Handler among
+// them, are left out under decision 17 (GW-R1).
 //
 // The resolver attributes each value to the parts it reaches. It follows a
 // value through conversions and type assertions, through local variables
 // and every value they are given, through fields of the composition root's
 // structs and every value they are given, through calls to composition-root
-// functions and the values they return, through adapters (structs the
-// composition root declares) by their field values, nested adapters
-// included, and through function literals, methods, and functions of the
-// composition root by what their bodies call and capture, calls to other
-// composition-root functions included. A function read from another part's
-// struct field, or returned by another part's function, is attributed to
-// that part. The resolver stops after a bounded number of hops and never
-// visits a variable, field, type, or function twice for one value.
+// functions, local function values, and invoked closures and the values
+// they return, through adapters (structs the composition root declares) by
+// every value their fields are given, in the literal that builds them or
+// later by assignment or through a setter, nested adapters included, and
+// through function literals, methods, and functions of the composition root
+// by what their bodies call, capture, and read from the composition root's
+// struct fields, calls to other composition-root functions included. A
+// method value through an interface is attributed to what the receiver
+// resolves to, a promoted method to the package that declares it, and a
+// function read from another part's struct field, or returned by another
+// part's function, to that part. The resolver memoizes what each variable,
+// field, type, and function resolves to, cuts cycles, and fails the check
+// when a chain reaches its depth bound rather than passing on a partial
+// answer.
 //
 // The check also reports a value attributed to a package GW-R2 confines,
 // handed to a struct field, parameter, or result of a part GW-R2 does not

@@ -8,11 +8,11 @@ import (
 	"go/types"
 )
 
-// maxDepth bounds how many hops the resolver follows through variables,
-// fields, adapters, and composition-root functions before it gives up on a
-// value. The composition root's chains are short; the bound keeps a cycle
-// or a long chain from running away.
-const maxDepth = 8
+// maxDepth bounds how deep the resolver's chain of nested resolutions may
+// grow for one value. The composition root's chains are far shorter; a
+// chain that reaches the bound fails the check rather than passing it on a
+// partial answer.
+const maxDepth = 64
 
 // origin is a package and a name a value is attributed to.
 type origin struct {
@@ -182,26 +182,62 @@ func (w *walker) isRootLocal(v *types.Var) bool {
 	return v.Pkg() == w.p.Pkg && !v.IsField() && v.Parent() != w.p.Pkg.Scope()
 }
 
-// resolver follows one value through the composition root.
+// resolver follows the values of one check through the composition root.
+// It memoizes what each variable, field, adapter type, function, and call
+// result resolves to on the walker, so a node reached by a short path
+// after a long one is not lost, and it records when a chain runs past
+// maxDepth so the check fails instead of passing on a partial answer.
 type resolver struct {
-	w       *walker
-	visited map[any]bool
+	w         *walker
+	stack     int
+	cycle     bool
+	truncated bool
 }
 
-func (w *walker) newResolver() *resolver { return &resolver{w: w, visited: map[any]bool{}} }
+func (w *walker) newResolver() *resolver { return &resolver{w: w} }
+
+// node resolves one memoized node. A node already being resolved further
+// up the chain is a cycle: it contributes nothing there, and no node whose
+// result a cycle cut short is memoized.
+func (r *resolver) node(key any, compute func() []origin) []origin {
+	if out, ok := r.w.memo[key]; ok {
+		return out
+	}
+	if r.w.inProgress[key] {
+		r.cycle = true
+		return nil
+	}
+	r.w.inProgress[key] = true
+	outer := r.cycle
+	r.cycle = false
+	out := compute()
+	delete(r.w.inProgress, key)
+	if !r.cycle && !r.truncated {
+		r.w.memo[key] = out
+	}
+	r.cycle = r.cycle || outer
+	return out
+}
 
 // originsOf returns what a value is attributed to, following it through
 // conversions, type assertions, local variables and their assignments,
 // fields of the composition root's structs and every value given to them,
-// calls to composition-root functions and their returns, adapters (structs
-// the composition root declares) by their field values, and function
-// literals, methods, and functions of the composition root by what their
-// bodies call and capture. A value of another part's package is attributed
-// to that package: its named type, its method or function, the field of
-// another part's struct it is read from, or the function of another part
-// that returns it.
+// calls to composition-root functions, local function values, and function
+// literals and the values they return, adapters (structs the composition
+// root declares) by their field values, and function literals, methods,
+// and functions of the composition root by what their bodies call and
+// capture. A value of another part's package is attributed to that
+// package: its named type, its method or function (a promoted method by the
+// package that declares it), the field of another part's struct it is read
+// from, or the function of another part that returns it.
 func (r *resolver) originsOf(v valueRef, depth int) []origin {
-	if depth > maxDepth || v.expr == nil {
+	if v.expr == nil {
+		return nil
+	}
+	r.stack++
+	defer func() { r.stack-- }()
+	if r.stack > maxDepth {
+		r.truncated = true
 		return nil
 	}
 	info := r.w.p.Info
@@ -241,20 +277,15 @@ func (r *resolver) originsOf(v valueRef, depth int) []origin {
 				}
 				out = merge(out, r.originsOf(ref(elt), depth+1))
 			}
-			return out
+			// The fields the composition root sets after the literal, by
+			// assignment or through a setter, belong to the value too.
+			return merge(out, r.namedType(info.TypeOf(x), depth))
 		}
 	case *ast.SelectorExpr:
 		if s := info.Selections[x]; s != nil {
 			switch s.Kind() {
 			case types.MethodVal:
-				named := namedOf(s.Recv())
-				if named == nil {
-					return nil
-				}
-				if named.Obj().Pkg() == r.w.p.Pkg {
-					return r.decl(s.Obj(), depth+1)
-				}
-				return []origin{{named.Obj().Pkg(), named.Obj().Name() + "." + x.Sel.Name}}
+				return r.methodValue(x, s, depth)
 			case types.FieldVal:
 				fv := s.Obj().(*types.Var)
 				if fv.Pkg() == r.w.p.Pkg {
@@ -286,6 +317,29 @@ func (r *resolver) originsOf(v valueRef, depth int) []origin {
 	return r.namedType(info.TypeOf(e), depth)
 }
 
+// methodValue attributes a method value: through an interface, to what the
+// receiver expression resolves to, together with the interface's method
+// when another package declares the interface; a method the composition
+// root declares, to its body; and any other method, promoted ones
+// included, to the package that declares it.
+func (r *resolver) methodValue(x *ast.SelectorExpr, s *types.Selection, depth int) []origin {
+	if types.IsInterface(s.Recv()) {
+		out := r.originsOf(ref(x.X), depth+1)
+		if fn, ok := s.Obj().(*types.Func); ok && fn.Pkg() != nil && fn.Pkg() != r.w.p.Pkg {
+			out = merge(out, []origin{{fn.Pkg(), funcName(fn)}})
+		}
+		return out
+	}
+	fn, ok := s.Obj().(*types.Func)
+	if !ok || fn.Pkg() == nil {
+		return nil
+	}
+	if fn.Pkg() == r.w.p.Pkg {
+		return r.decl(fn, depth+1)
+	}
+	return []origin{{fn.Pkg(), funcName(fn)}}
+}
+
 // namedType attributes a value by its static type: another part's named
 // type, or, for a struct the composition root declares, every value its
 // fields are given.
@@ -300,43 +354,37 @@ func (r *resolver) namedType(t types.Type, depth int) []origin {
 	if named.Obj().Pkg() != r.w.p.Pkg {
 		return []origin{{named.Obj().Pkg(), named.Obj().Name()}}
 	}
-	if r.visited[named.Obj()] {
-		return nil
-	}
-	r.visited[named.Obj()] = true
 	st, ok := named.Underlying().(*types.Struct)
 	if !ok {
 		return nil
 	}
-	var out []origin
-	for i := 0; i < st.NumFields(); i++ {
-		out = merge(out, r.field(st.Field(i), depth+1))
-	}
-	return out
+	return r.node(named.Obj(), func() []origin {
+		var out []origin
+		for i := 0; i < st.NumFields(); i++ {
+			out = merge(out, r.field(st.Field(i), depth+1))
+		}
+		return out
+	})
 }
 
 func (r *resolver) field(fv *types.Var, depth int) []origin {
-	if r.visited[fv] {
-		return nil
-	}
-	r.visited[fv] = true
-	var out []origin
-	for _, v := range r.w.ix.fields[fv] {
-		out = merge(out, r.originsOf(v, depth))
-	}
-	return out
+	return r.node(fv, func() []origin {
+		var out []origin
+		for _, v := range r.w.ix.fields[fv] {
+			out = merge(out, r.originsOf(v, depth))
+		}
+		return out
+	})
 }
 
 func (r *resolver) local(v *types.Var, depth int) []origin {
-	if r.visited[v] {
-		return nil
-	}
-	r.visited[v] = true
-	var out []origin
-	for _, val := range r.w.ix.locals[v] {
-		out = merge(out, r.originsOf(val, depth))
-	}
-	return out
+	return r.node(v, func() []origin {
+		var out []origin
+		for _, val := range r.w.ix.locals[v] {
+			out = merge(out, r.originsOf(val, depth))
+		}
+		return out
+	})
 }
 
 // funcValue attributes a function given as a value: a function of another
@@ -352,24 +400,39 @@ func (r *resolver) funcValue(fn *types.Func, depth int) []origin {
 }
 
 // callResult attributes the index-th result of a call: a call to a
-// composition-root function by the values it returns at that index, and a
-// call to another part's function by the function, when the result is a
-// function or an interface, or else by the result's named type.
+// composition-root function, a function literal, or a local function value
+// by the values it returns at that index, and a call to another part's
+// function by the function, when the result is a function or an interface,
+// or else by the result's named type.
 func (r *resolver) callResult(call *ast.CallExpr, i int, depth int) []origin {
 	info := r.w.p.Info
+	switch f := ast.Unparen(call.Fun).(type) {
+	case *ast.FuncLit:
+		return r.literalResult(f, i, depth)
+	case *ast.Ident:
+		if v, ok := info.Uses[f].(*types.Var); ok && r.w.isRootLocal(v) {
+			return r.node([2]any{v, i}, func() []origin {
+				var out []origin
+				for _, val := range r.w.ix.locals[v] {
+					if lit, ok := ast.Unparen(val.expr).(*ast.FuncLit); ok && val.index < 0 {
+						out = merge(out, r.literalResult(lit, i, depth))
+					}
+				}
+				return out
+			})
+		}
+	}
 	fn := calleeFunc(info, call.Fun)
 	if fn != nil && fn.Pkg() == r.w.p.Pkg {
-		if r.visited[[2]any{fn, i}] {
-			return nil
-		}
-		r.visited[[2]any{fn, i}] = true
-		var out []origin
-		for _, results := range r.w.ix.returns[fn] {
-			if i < len(results) {
-				out = merge(out, r.originsOf(results[i], depth+1))
+		return r.node([2]any{fn, i}, func() []origin {
+			var out []origin
+			for _, results := range r.w.ix.returns[fn] {
+				if i < len(results) {
+					out = merge(out, r.originsOf(results[i], depth+1))
+				}
 			}
-		}
-		return out
+			return out
+		})
 	}
 	sig, ok := info.TypeOf(call.Fun).Underlying().(*types.Signature)
 	if !ok || i >= sig.Results().Len() {
@@ -382,29 +445,36 @@ func (r *resolver) callResult(call *ast.CallExpr, i int, depth int) []origin {
 	return r.namedType(rt, depth)
 }
 
+// literalResult attributes the index-th result of a function literal by
+// the values its return statements give.
+func (r *resolver) literalResult(lit *ast.FuncLit, i int, depth int) []origin {
+	var out []origin
+	for _, results := range r.w.returnsOf(lit.Body) {
+		if i < len(results) {
+			out = merge(out, r.originsOf(results[i], depth+1))
+		}
+	}
+	return out
+}
+
 // decl attributes a function or method of the composition root, given as a
 // value, to what its body calls and captures.
-func (r *resolver) decl(obj types.Object, depth int) []origin {
-	fn, ok := obj.(*types.Func)
-	if !ok || r.visited[fn] {
-		return nil
-	}
-	r.visited[fn] = true
+func (r *resolver) decl(fn *types.Func, depth int) []origin {
 	fd := r.w.ix.decls[fn]
 	if fd == nil {
 		return nil
 	}
-	return r.body(fd.Body, fd.Pos(), fd.End(), depth)
+	return r.node(fn, func() []origin {
+		return r.body(fd.Body, fd.Pos(), fd.End(), depth)
+	})
 }
 
 // body attributes a function body to the functions and methods of other
 // parts it calls, to the bodies of the composition-root functions it calls,
-// and to what the variables it captures resolve to: those declared outside
-// the range [start, end).
+// to the values given to the composition root's struct fields it reads,
+// interface-typed ones included, and to what the variables it captures
+// resolve to: those declared outside the range [start, end).
 func (r *resolver) body(b *ast.BlockStmt, start, end token.Pos, depth int) []origin {
-	if depth > maxDepth {
-		return nil
-	}
 	info := r.w.p.Info
 	var out []origin
 	ast.Inspect(b, func(n ast.Node) bool {
@@ -418,6 +488,12 @@ func (r *resolver) body(b *ast.BlockStmt, start, end token.Pos, depth int) []ori
 				out = merge(out, r.decl(fn, depth+1))
 			} else {
 				out = merge(out, []origin{{fn.Pkg(), funcName(fn)}})
+			}
+		case *ast.SelectorExpr:
+			if s := info.Selections[n]; s != nil && s.Kind() == types.FieldVal {
+				if fv := s.Obj().(*types.Var); fv.Pkg() == r.w.p.Pkg {
+					out = merge(out, r.field(fv, depth+1))
+				}
 			}
 		case *ast.Ident:
 			v, ok := info.Uses[n].(*types.Var)

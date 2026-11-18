@@ -49,14 +49,34 @@ crossings:
     type: Prober.Start
     step: 0117.S4
   - to: pkg/gateway/externalapi/admin
-    interface: CRDGenerationReader
-    from: pkg/gateway/podlifecycle/podsession
-    type: PoolStatusLookup
-    step: 0117.S8
-  - to: pkg/gateway/externalapi/admin
     interface: ConnectorOAuth.ClientSecrets
     from: pkg/gateway/connectors/connectorsecret
     type: KubeResolver
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: DrainSessions(2)
+    from: pkg/gateway/sessionserver
+    type: Server.BeginTerminal
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: DrainSessions(2)
+    from: pkg/gateway/sessionserver
+    type: Server.OnSessionTerminal
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: DrainSessions(3)
+    from: pkg/gateway/podlifecycle/bindrelease
+    type: Propagator
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: DrainSessions(3)
+    from: pkg/gateway/podlifecycle/podsession
+    type: Registry
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: DrainSessions(3)
+    from: pkg/gateway/sessionserver
+    type: Server
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
     interface: DrainTerminator
@@ -69,24 +89,9 @@ crossings:
     type: Server.OnSessionTerminal
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
-    interface: LeaseDenialClearer
-    from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    type: StoreBudgetSource
-    step: 0117.S8
-  - to: pkg/gateway/externalapi/admin
-    interface: PoolBootstrapStatusReader
+    interface: Router.WithCRDGenerationReader(0)
     from: pkg/gateway/podlifecycle/podsession
     type: PoolStatusLookup
-    step: 0117.S8
-  - to: pkg/gateway/externalapi/admin
-    interface: PoolStatusReader
-    from: pkg/gateway/podlifecycle/podsession
-    type: PoolStatusLookup
-    step: 0117.S8
-  - to: pkg/gateway/externalapi/admin
-    interface: RevokeHook
-    from: pkg/gateway/sessionserver
-    type: Server
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
     interface: Router.WithElicitationFloorProvider(0)
@@ -104,9 +109,54 @@ crossings:
     type: Lifecycle
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
+    interface: Router.WithLeaseDenials(0)
+    from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    type: StoreBudgetSource
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithPoolBootstrapStatusReader(0)
+    from: pkg/gateway/podlifecycle/podsession
+    type: PoolStatusLookup
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
     interface: Router.WithPoolCredentialRevocation(0)
     from: pkg/gateway/credentials/credrenewal/propagator
     type: Propagator
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithPoolStatusReader(0)
+    from: pkg/gateway/podlifecycle/podsession
+    type: PoolStatusLookup
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithRevokeHook(0)
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithSessionAdmin(0)
+    from: pkg/gateway/sessionserver
+    type: Server.BeginTerminal
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithSessionAdmin(0)
+    from: pkg/gateway/sessionserver
+    type: Server.OnSessionTerminal
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithUserRevocation(0)
+    from: pkg/gateway/podlifecycle/bindrelease
+    type: Propagator
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithUserRevocation(0)
+    from: pkg/gateway/podlifecycle/podsession
+    type: Registry
+    step: 0117.S8
+  - to: pkg/gateway/externalapi/admin
+    interface: Router.WithUserRevocation(0)
+    from: pkg/gateway/sessionserver
+    type: Server
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
     interface: Router.WithUserRevocation(1)
@@ -114,14 +164,9 @@ crossings:
     type: Revoker
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
-    interface: SessionAdmin
-    from: pkg/gateway/sessionserver
-    type: Server.BeginTerminal
-    step: 0117.S8
-  - to: pkg/gateway/externalapi/admin
-    interface: SessionAdmin
-    from: pkg/gateway/sessionserver
-    type: Server.OnSessionTerminal
+    interface: UserPodTerminator
+    from: pkg/gateway/podlifecycle/bindrelease
+    type: Propagator
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
     interface: UserPodTerminator
@@ -144,7 +189,7 @@ crossings:
     type: Propagator
     step: 0117.S8
   - to: pkg/gateway/gatewaycontrol/inputwaitrecovery
-    interface: EventPublisher
+    interface: Writer.Events
     from: pkg/gateway/session/sessionevents
     type: Bus
     step: 0117.S7
@@ -169,30 +214,30 @@ crossings:
     type: Registry
     step: 0117.S3
   - to: pkg/gateway/llmproxy/llmproxy
-    interface: Metrics
-    from: pkg/gateway/metrics/gatewaymetrics
-    type: Metrics
-    step: 0117.S4
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: Auditor
+    interface: Handler.FallbackAudit
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: BudgetKeysExpiredHandler
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: ExperimentRouter
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: MetricsRecorder
+  - to: pkg/gateway/llmproxy/llmproxy
+    interface: Handler.FallbackMetrics
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
-    step: 0117.S7
+    step: 0117.S4
+  - to: pkg/gateway/llmproxy/llmproxy
+    interface: Handler.FallbackRotator
+    from: pkg/gateway/podlifecycle/podsession
+    type: Registry
+    step: 0117.S3
+  - to: pkg/gateway/llmproxy/llmproxy
+    interface: Handler.Metrics
+    from: pkg/gateway/metrics/gatewaymetrics
+    type: Metrics
+    step: 0117.S4
+  - to: pkg/gateway/llmproxy/llmproxy
+    interface: UsageRecorder
+    from: pkg/gateway/session/sessionidle
+    type: Stamper
+    step: 0117.S3
   - to: pkg/gateway/mcpfabric/delegation
     interface: NewChainExportScanResolver(0)
     from: pkg/gateway/policy/interceptor
@@ -204,9 +249,29 @@ crossings:
     type: ExportScanObserver
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation
+    interface: Options.Auditor
+    from: pkg/gateway/externalapi/admin
+    type: AuditSink
+    step: 0117.S8
+  - to: pkg/gateway/mcpfabric/delegation
+    interface: Options.BudgetKeysExpired
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegation
+    interface: Options.ExperimentRouter
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegation
     interface: Options.InterceptorCooldown
     from: pkg/gateway/policy/interceptor/interceptorstore
     type: CooldownResolver
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegation
+    interface: Options.Metrics
+    from: pkg/gateway/metrics/gatewaymetrics
+    type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation
     interface: Options.Policies
@@ -219,14 +284,19 @@ crossings:
     type: Store
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation/export
-    interface: Auditor
+    interface: NewMaterializer(2)
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
   - to: pkg/gateway/mcpfabric/delegationbudget
-    interface: MetricEmitter
+    interface: Reconciler.Metrics
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationbudget
+    interface: SessionTreeLister.Tenants
+    from: pkg/gateway/environment/tenantstore
+    type: Memory
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationbudget
     interface: SessionTreeLister.Tenants
@@ -238,18 +308,28 @@ crossings:
     from: pkg/gateway/environment/tenantstore
     type: Store.List
     step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationbudget
+    interface: SessionTreeLister.Tenants
+    from: pkg/gateway/environment/tenantstore/pgstore
+    type: Store
+    step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/deadlock
-    interface: FailFunc
+    interface: NewDetector(4)
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/deadlock
+    interface: NewDetector(4)
     from: pkg/gateway/sessionserver
     type: Server.BeginTerminal
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/deadlock
-    interface: FailFunc
+    interface: NewDetector(4)
     from: pkg/gateway/sessionserver
     type: Server.OnSessionTerminal
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/deadlock
-    interface: MetricsSink
+    interface: NewManager(1)
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
     step: 0117.S7
@@ -279,14 +359,34 @@ crossings:
     type: NewPodInspector
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    interface: RecycleCounterStore
+    interface: ScrubReporterOptions.Counters
     from: pkg/gateway/session/recycle
     type: NewRecycleCounterStore
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    interface: RetirementMetrics
+    interface: ScrubReporterOptions.Driver
+    from: pkg/gateway/session/recycle
+    type: NewClaimDispositionDriver
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: ScrubReporterOptions.Inspector
+    from: pkg/gateway/session/recycle
+    type: NewPodInspector
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: ScrubReporterOptions.Ledger
+    from: pkg/gateway/session/recycle
+    type: NewDrainLedger
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: ScrubReporterOptions.Metrics
     from: pkg/gateway/session/recycle
     type: NewRetirementMetrics
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: ScrubReporterOptions.SessionRetirer
+    from: pkg/gateway/session/recycle
+    type: NewSessionCountRetirer
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     interface: Service.SetReclaimer(0)
@@ -295,28 +395,43 @@ crossings:
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     interface: Service.SetReclaimer(0)
+    from: pkg/gateway/quota/quotabudget
+    type: Tracker
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: Service.SetReclaimer(0)
+    from: pkg/gateway/quota/quotafailopen
+    type: Accumulator
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: Service.SetReclaimer(0)
     from: pkg/gateway/quota/quotastore
     type: Counter
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: Service.SetReclaimer(0)
+    from: pkg/gateway/session/sessionbudget
+    type: Enforcer
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    interface: Service.SetReclaimer(0)
+    from: pkg/gateway/session/sessionidle
+    type: Stamper
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     interface: SessionCountRetirer
     from: pkg/gateway/session/recycle
     type: NewSessionCountRetirer
     step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    interface: SessionReclaimer
-    from: pkg/gateway/session/sessionbudget
-    type: Enforcer
+  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
+    interface: Config.Publish
+    from: pkg/gateway/session/sessionevents
+    type: Bus
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
-    interface: Publisher
+    interface: Config.Publish
     from: pkg/gateway/session/sessionevents
     type: Bus.Publish
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
-    interface: MetricsSink
-    from: pkg/gateway/metrics/gatewaymetrics
-    type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
     interface: New(1)
@@ -329,14 +444,14 @@ crossings:
     type: Store
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
-    interface: TerminalHook
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/treerecovery
-    interface: Metrics
+    interface: Options.Metrics
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
+    interface: Options.Terminal
+    from: pkg/gateway/sessionserver
+    type: Server
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
     interface: AttachConfig.Authorize
@@ -349,14 +464,14 @@ crossings:
     type: Server.SessionAccessible
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
+    interface: AttachConfig.Events
+    from: pkg/gateway/session/sessionevents
+    type: Bus
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcp
     interface: AttachConfig.TenantFromRequest
     from: pkg/gateway/middleware/auth
     type: FromContext
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: RevocationChecker
-    from: pkg/gateway/mcpfabric/playground
-    type: Handler
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
     interface: Server.SetWebSocketAuth(0)
@@ -364,9 +479,9 @@ crossings:
     type: FromContext
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
-    interface: SessionEventSource
-    from: pkg/gateway/session/sessionevents
-    type: Bus
+    interface: Server.SetWebSocketAuth(1)
+    from: pkg/gateway/mcpfabric/playground
+    type: Handler
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcp
     interface: WebSocketBearerCarrier(0)
@@ -374,34 +489,84 @@ crossings:
     type: Wrap
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
-    interface: ChildMaterializer
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: CredentialAvailabilityChecker
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: DelegationAuditor
-    from: pkg/gateway/externalapi/admin
-    type: AuditSink
-    step: 0117.S8
-  - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.ActivityStamper
     from: pkg/gateway/session/sessionidle
     type: Stamper
     step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.Audit
+    from: pkg/gateway/externalapi/admin
+    type: AuditSink
+    step: 0117.S8
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.CallerCheck
     from: pkg/gateway/callercheck
     type: Deps
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.ChildMaterializer
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.CredAvailability
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.Delivery
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.ElicitationLifecycleMetrics
+    from: pkg/gateway/metrics/gatewaymetrics
+    type: Metrics
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.ElicitationMetrics
+    from: pkg/gateway/metrics/gatewaymetrics
+    type: Metrics
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.ElicitationModeResolver
+    from: pkg/gateway/environment/tenantstore
+    type: Memory
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.ElicitationModeResolver
     from: pkg/gateway/environment/tenantstore
     type: Store.Get
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.ElicitationModeResolver
+    from: pkg/gateway/environment/tenantstore/pgstore
+    type: Store
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.ElicitationTamperMetrics
+    from: pkg/gateway/metrics/gatewaymetrics
+    type: Metrics
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.Executor
+    from: pkg/gateway/session/executor
+    type: EchoExecutor
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.Executor
+    from: pkg/gateway/session/executor
+    type: PodExecutor
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.Executor
+    from: pkg/gateway/session/executor
+    type: SubprocessExecutor
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.HolderForward
+    from: pkg/gateway/sessionserver
+    type: Server
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.Interceptors
@@ -424,6 +589,21 @@ crossings:
     type: AuditSink
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.RetryBudget
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.SessionCreator
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.SessionService
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.Tenants
     from: pkg/gateway/environment/tenantstore
     type: Memory
@@ -434,6 +614,16 @@ crossings:
     type: Store
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.Terminal
+    from: pkg/gateway/sessionserver
+    type: Server
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
+    interface: Deps.TreeCycleObserver
+    from: pkg/gateway/metrics/gatewaymetrics
+    type: Metrics
+    step: 0117.S7
+  - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.VCSCreds
     from: pkg/gateway/provisioning/vcscred
     type: Resolver
@@ -442,56 +632,6 @@ crossings:
     interface: Deps.VCSLeaseAuditor
     from: pkg/gateway/policy/policy
     type: AuditAppender
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: ElicitationDropRecorder
-    from: pkg/gateway/metrics/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: ElicitationLifecycleRecorder
-    from: pkg/gateway/metrics/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: ElicitationTamperRecorder
-    from: pkg/gateway/metrics/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: HolderForwarder
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: RetryBudget
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: SessionCreator
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: SessionDelivery
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: SessionService
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Terminal
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: TreeCycleObserver
-    from: pkg/gateway/metrics/gatewaymetrics
-    type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/playground
     interface: IDTokenValidatorFromVerifier(0)
@@ -548,6 +688,21 @@ crossings:
     from: pkg/gateway/policy/policy
     type: AuditAppender
     step: 0117.S4
+  - to: pkg/gateway/runtime/watchdog
+    interface: Watchdog.WithTreeArchive(0)
+    from: pkg/gateway/mcpfabric/delegationtree/treearchive
+    type: Cached
+    step: 0117.S7
+  - to: pkg/gateway/runtime/watchdog
+    interface: Watchdog.WithTreeArchive(0)
+    from: pkg/gateway/mcpfabric/delegationtree/treearchive
+    type: Memory
+    step: 0117.S7
+  - to: pkg/gateway/serviceidentity
+    interface: Config.Verifier
+    from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    type: TokenReviewVerifier
+    step: 0117.S8
   - to: pkg/gateway/serviceidentity
     interface: SATokenAuthenticator
     from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
@@ -556,7 +711,17 @@ crossings:
   - to: pkg/gateway/session/budgetstate
     interface: Config.Forget
     from: pkg/gateway/session/sessionbudget
+    type: Enforcer
+    step: 0117.S3
+  - to: pkg/gateway/session/budgetstate
+    interface: Config.Forget
+    from: pkg/gateway/session/sessionbudget
     type: Enforcer.Forget
+    step: 0117.S3
+  - to: pkg/gateway/session/budgetstate
+    interface: Config.Tracked
+    from: pkg/gateway/session/sessionbudget
+    type: Enforcer
     step: 0117.S3
   - to: pkg/gateway/session/budgetstate
     interface: Config.Tracked
@@ -564,10 +729,25 @@ crossings:
     type: Enforcer.TrackedSessions
     step: 0117.S3
   - to: pkg/gateway/session/sessionbudget
+    interface: Enforcer.SetExtendOnExhaustion(0)
+    from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    type: Service.ExtendForBudget
+    step: 0117.S7
+  - to: pkg/gateway/session/sessionbudget
     interface: ExtendOnExhaustion
     from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     type: Service.ExtendForBudget
     step: 0117.S7
+  - to: pkg/gateway/session/sessionbudget
+    interface: New(0)
+    from: pkg/gateway/sessionserver
+    type: Server.BeginTerminal
+    step: 0117.S3
+  - to: pkg/gateway/session/sessionbudget
+    interface: New(0)
+    from: pkg/gateway/sessionserver
+    type: Server.OnSessionTerminal
+    step: 0117.S3
   - to: pkg/gateway/session/sessionbudget
     interface: New(2)
     from: pkg/gateway/metrics/gatewaymetrics
@@ -578,6 +758,16 @@ crossings:
     from: pkg/gateway/metrics/gatewaymetrics
     type: Metrics.IncSessionBudgetExceeded
     step: 0117.S4
+  - to: pkg/gateway/session/sessionbudget
+    interface: Terminator
+    from: pkg/gateway/sessionserver
+    type: Server.BeginTerminal
+    step: 0117.S3
+  - to: pkg/gateway/session/sessionbudget
+    interface: Terminator
+    from: pkg/gateway/sessionserver
+    type: Server.OnSessionTerminal
+    step: 0117.S3
   - to: pkg/gateway/sessionserver
     interface: BudgetKeyRearmer
     from: pkg/gateway/mcpfabric/delegationtree/treebudget
@@ -589,22 +779,52 @@ crossings:
     type: Reserver
     step: 0117.S7
   - to: pkg/gateway/sessionserver
-    interface: ExperimentRejectionReporter
-    from: pkg/gateway/externalapi/admin
-    type: AuditSink
-    step: 0117.S8
+    interface: NewHolderForwardHandler(2)
+    from: pkg/gateway/gatewaycontrol/platformtools
+    type: SessionResolver
+    step: 0117.S7
+  - to: pkg/gateway/sessionserver
+    interface: Options.BudgetForget
+    from: pkg/gateway/session/sessionbudget
+    type: Enforcer
+    step: 0117.S3
   - to: pkg/gateway/sessionserver
     interface: Options.BudgetForget
     from: pkg/gateway/session/sessionbudget
     type: Enforcer.Forget
     step: 0117.S3
   - to: pkg/gateway/sessionserver
-    interface: TreeBudgetReturner
+    interface: Options.BudgetKeyRearmer
+    from: pkg/gateway/mcpfabric/delegationtree/treebudget
+    type: Reserver
+    step: 0117.S7
+  - to: pkg/gateway/sessionserver
+    interface: Options.ExperimentRejections
+    from: pkg/gateway/externalapi/admin
+    type: AuditSink
+    step: 0117.S8
+  - to: pkg/gateway/sessionserver
+    interface: Options.HighWatermarkReader
+    from: pkg/gateway/mcpfabric/delegationtree/treebudget
+    type: Reserver
+    step: 0117.S7
+  - to: pkg/gateway/sessionserver
+    interface: Options.TreeArchive
+    from: pkg/gateway/mcpfabric/delegationtree/treearchive
+    type: Cached
+    step: 0117.S7
+  - to: pkg/gateway/sessionserver
+    interface: Options.TreeArchive
+    from: pkg/gateway/mcpfabric/delegationtree/treearchive
+    type: Memory
+    step: 0117.S7
+  - to: pkg/gateway/sessionserver
+    interface: Options.TreeBudgetReturner
     from: pkg/gateway/mcpfabric/delegationtree/treebudget
     type: Reserver
     step: 0117.S7
   - to: pkg/gateway/storage/dualstore
-    interface: Broadcaster
+    interface: Monitor.Streams
     from: pkg/gateway/session/sessionevents
     type: Bus
     step: 0117.S6

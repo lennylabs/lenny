@@ -47,7 +47,11 @@ func TestGatewayWiringCrossesOnlyThroughTheSeam(t *testing.T) {
 		t.Fatalf("load cmd/lenny-gateway: %v", err)
 	}
 	cl := gatewaylayout.NewClassifier(gatewaylayout.Layout, layout)
-	res := gatewaywiring.Reconcile(gatewaywiring.Crossings(prog, cl), reg)
+	crossings, err := gatewaywiring.Crossings(prog, cl)
+	if err != nil {
+		t.Errorf("the wiring check cannot vouch for every value: %v", err)
+	}
+	res := gatewaywiring.Reconcile(crossings, reg)
 	for _, m := range res.Malformed {
 		t.Errorf("malformed register row: %s", m)
 	}

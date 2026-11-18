@@ -8,6 +8,7 @@ import (
 	"go/types"
 	"path/filepath"
 	"sort"
+	"strings"
 
 	"github.com/lennylabs/lenny/tests/static/lint/gatewaylayout"
 )
@@ -16,14 +17,15 @@ import (
 // interface or a function, or one value of a confined package handed to a
 // part GW-R2 does not allow that package.
 type Crossing struct {
-	// To is the repository-relative package that declares the target: the
-	// interface or function type, or, for an unnamed type, the struct or
-	// function whose field, parameter, or result it is. For a confined
-	// value it is the package of the struct or function that receives it.
+	// To is the repository-relative package that receives the value: the
+	// package of the struct whose field, or the function whose parameter,
+	// takes it. Where the receiver is not known, as for a return statement,
+	// a variable, or a channel, it is the package that declares the target
+	// type.
 	To string
-	// Interface names the target in To: a type name, Struct.Field,
-	// Func(n) for the n-th parameter of a function or method, or Func.n for
-	// its n-th result.
+	// Interface names the receiving slot in To: Struct.Field, Func(n) for
+	// the n-th parameter of a function or method, or, where the receiver is
+	// not known, the target type's name.
 	Interface string
 	// From is the repository-relative package the value is attributed to.
 	From string
@@ -65,8 +67,8 @@ type Layout interface {
 // local variables, and index expressions (tuple assignments included),
 // variable declarations, return statements against the enclosing
 // function's results, and channel sends.
-func Crossings(p *Program, layout Layout) []Crossing {
-	w := &walker{p: p, layout: layout, seen: map[string]bool{}}
+func Crossings(p *Program, layout Layout) ([]Crossing, error) {
+	w := &walker{p: p, layout: layout, seen: map[string]bool{}, memo: map[any][]origin{}, inProgress: map[any]bool{}}
 	w.buildIndex()
 	for _, f := range p.Files {
 		for _, decl := range f.Decls {
@@ -87,15 +89,22 @@ func Crossings(p *Program, layout Layout) []Crossing {
 		}
 	}
 	sort.Slice(w.out, func(i, j int) bool { return w.out[i].Key() < w.out[j].Key() })
-	return w.out
+	if len(w.truncated) > 0 {
+		sort.Strings(w.truncated)
+		return w.out, fmt.Errorf("the resolver reached its depth bound of %d at %s; the check cannot vouch for those values", maxDepth, strings.Join(w.truncated, ", "))
+	}
+	return w.out, nil
 }
 
 type walker struct {
-	p      *Program
-	layout Layout
-	seen   map[string]bool
-	out    []Crossing
-	ix     *index
+	p          *Program
+	layout     Layout
+	seen       map[string]bool
+	out        []Crossing
+	ix         *index
+	memo       map[any][]origin
+	inProgress map[any]bool
+	truncated  []string
 }
 
 // body walks a function body, checking its return statements against the
@@ -156,7 +165,11 @@ func (w *walker) call(call *ast.CallExpr) {
 		default:
 			continue
 		}
-		w.check(pt, ownerPkg, fmt.Sprintf("%s(%d)", ownerName, i), ref(arg), arg)
+		slot := i
+		if sig.Variadic() && slot >= params.Len()-1 {
+			slot = params.Len() - 1
+		}
+		w.check(pt, ownerPkg, fmt.Sprintf("%s(%d)", ownerName, slot), ref(arg), arg)
 	}
 }
 
@@ -311,32 +324,31 @@ func (w *walker) ret(r *ast.ReturnStmt, sig *types.Signature, fn *types.Func) {
 }
 
 // check records the crossings one value makes at one target: a crossing of
-// a part boundary when the target is an interface or a function of another
-// part, and a confined value when the receiving part may not hold it.
+// a part boundary when the target is an interface or a function and the
+// receiving part may not import the value's package, and a confined value
+// when the receiving part may not hold it. The receiving part is the
+// package of the struct field or function parameter that takes the value
+// (ownerPkg), and the package that declares the target type where that is
+// not known. Target types from the standard library or a dependency are
+// left out (decision 17 of change 0117).
 func (w *walker) check(target types.Type, ownerPkg *types.Package, ownerName string, v valueRef, site ast.Node) {
-	origins := w.newResolver().originsOf(v, 0)
-	if len(origins) == 0 {
+	to, toName, crossing := w.receiver(target, ownerPkg, ownerName)
+	confined := w.holdsConfined(ownerPkg)
+	if !crossing && !confined {
 		return
 	}
-	w.confined(ownerPkg, ownerName, origins, site)
-	if !isFuncOrInterface(target) {
+	r := w.newResolver()
+	origins := r.originsOf(v, 0)
+	if r.truncated {
+		w.truncated = append(w.truncated, w.site(site))
+	}
+	if confined {
+		w.confined(ownerPkg, ownerName, origins, site)
+	}
+	if !crossing {
 		return
 	}
-	toPkg, toName := ownerPkg, ownerName
-	if named, ok := types.Unalias(target).(*types.Named); ok {
-		toPkg, toName = named.Obj().Pkg(), named.Obj().Name()
-	}
-	if toPkg == nil {
-		return
-	}
-	to, ok := w.p.Rel(toPkg.Path())
-	if !ok {
-		return
-	}
-	toPart, toKind := w.layout.Part(to)
-	if !gatewaylayout.IsGatewayPart(toKind) || toKind == gatewaylayout.KindSeamInterface {
-		return
-	}
+	toPart, _ := w.layout.Part(to)
 	for _, o := range origins {
 		from, ok := w.p.Rel(o.pkg.Path())
 		if !ok {
@@ -348,6 +360,59 @@ func (w *walker) check(target types.Type, ownerPkg *types.Package, ownerName str
 		}
 		w.record(Crossing{To: to, Interface: toName, From: from, Type: o.name, Site: w.site(site)})
 	}
+}
+
+// receiver returns the receiving package and slot of a target that can be
+// crossed: an interface or a function type, not declared outside the module
+// or in the seam interface, received by a gateway part other than the seam
+// interface.
+func (w *walker) receiver(target types.Type, ownerPkg *types.Package, ownerName string) (string, string, bool) {
+	if !isFuncOrInterface(target) {
+		return "", "", false
+	}
+	named, _ := types.Unalias(target).(*types.Named)
+	if named != nil {
+		tpkg := named.Obj().Pkg()
+		if tpkg == nil {
+			return "", "", false
+		}
+		rel, inModule := w.p.Rel(tpkg.Path())
+		if !inModule {
+			return "", "", false
+		}
+		if _, kind := w.layout.Part(rel); kind == gatewaylayout.KindSeamInterface {
+			return "", "", false
+		}
+	}
+	recvPkg, recvName := ownerPkg, ownerName
+	if recvPkg == nil || recvPkg == w.p.Pkg {
+		if named == nil {
+			return "", "", false
+		}
+		recvPkg, recvName = named.Obj().Pkg(), named.Obj().Name()
+	}
+	to, ok := w.p.Rel(recvPkg.Path())
+	if !ok {
+		return "", "", false
+	}
+	if _, kind := w.layout.Part(to); !gatewaylayout.IsGatewayPart(kind) || kind == gatewaylayout.KindSeamInterface {
+		return "", "", false
+	}
+	return to, recvName, true
+}
+
+// holdsConfined reports whether the receiving package is a gateway part, so
+// a confined value it receives is worth checking.
+func (w *walker) holdsConfined(ownerPkg *types.Package) bool {
+	if ownerPkg == nil {
+		return false
+	}
+	to, ok := w.p.Rel(ownerPkg.Path())
+	if !ok {
+		return false
+	}
+	_, kind := w.layout.Part(to)
+	return gatewaylayout.IsGatewayPart(kind)
 }
 
 // confined records each origin of a value that a confined package
