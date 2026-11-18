@@ -13,6 +13,17 @@
    - (c) No exemption: every test from the component tier on carries an annotation, and a test that verifies no requirement moves to the unit tier or to `tests/testinfra/`.
    - **Recommendation: (a).** It reads the sentence the rule already asks for, needs no change to the annotation lint, and no test in those tiers uses it today, so it binds nothing yet. 0116.S6 builds (a); the phrase is `noRequirementPhrase` in `cmd/lenny-test/cmd_validate_annotated.go`, and the rule's "Tests" bullet would name it if the owner keeps it.
 
+10. **Ending the selection union without coverage equivalence (0116.S6).** "Validation owed" in `steps.md` has 0116.S6 remove the spec map's half of the `list --spec` and `run --spec` union "after the coverage-equivalence item above shows that the index selects at least what the map did for every key". The comparison in [`evidence/coverage-equivalence.md`](evidence/coverage-equivalence.md) shows that it does not: of 213 keys with tests, 49 lose a tier (21 of them a merge-gate tier) and the index selects no test for 15. Every test the index leaves out cites a parent or sibling section, carries no annotation, or no longer exists, so `--spec` of what its annotation cites, `--changed`, `--pkg`, and the gates still reach it. The build brief allowed recording the shortfall in place of equivalence.
+    - (a) Accept the measured loss: `--spec` selects what the annotations cite, the record stands in `evidence/coverage-equivalence.md`, and each area's re-annotation narrows the gap.
+    - (b) Keep the union until the areas re-annotate: restore `tests/spec-map.json` as a read-only input of `--spec` alone, with no check over it, and remove it when the last area exits.
+    - (c) Re-annotate the tests the 49 keys lose before the map goes, citing the subsection the map named.
+    - **Recommendation: (a).** The tests stay reachable by every other selector and by the gates, the map the union read is the hand-kept file 0116 exists to retire, and (c) is the area work `change.md` puts out of scope. 0116.S6 builds (a); (b) restores one file and the read 0116.S1 added, from git.
+
+11. **The scope of the infrastructure-free bound (0116.S4).** CS-7 states the bound for `run --changed`: without `--tier` or `--gate` it runs the static, unit, component, and contract tiers. The review of 0116.S4 found the first build applied it to `--spec` and `--pkg` too, so `--spec 13.2.3`, whose tests sit in the security tier, ran only the unit tier.
+    - (a) Bound `--changed` and `--since` only; `--spec` and `--pkg` name their tests and run every tier they resolve.
+    - (b) Bound every discovery selector, as the first build did, with the note naming what a gate or `--tier` would add.
+    - **Recommendation: (a).** It is what CS-7 states, and a developer who names a section or a package asks for its tests. 0116.S4 builds (a) after the review; (b) is the `!s.changed` guard in `selector.boundDiscovery`.
+
 ## Decisions
 
 Settled by the owner on 2026-11-17 ("go with all your recommendations, except ..."); the questions as framed are in `review-history.md`.
