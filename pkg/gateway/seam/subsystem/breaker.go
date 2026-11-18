@@ -1,23 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-// Package subsystem provides the shared concurrency primitives the
-// §4.1 gateway subsystem boundaries enforce: an in-memory circuit
-// breaker and a max-concurrent semaphore (Limiter), wired together
-// into a Subsystem value whose Do method gates handler execution.
-//
-// The §4.1 partial-degradation contract requires that a problem in one
-// subsystem (e.g., a slow upload) cannot starve or crash another
-// (e.g., MCP streaming). Each subsystem owns its own Breaker and
-// Limiter so a saturated Upload Handler cannot consume goroutines
-// needed by the Stream Proxy, and a failing upstream tripping the
-// Upload Handler breaker does not affect the Stream Proxy or MCP
-// Fabric. Per-subsystem metrics (queue depth, circuit state, error
-// counters) are emitted from this package so the §16.5 alerts and
-// dashboards observe each subsystem independently.
-//
-// The breakers in this package are per-replica and in-memory; the
-// operator-managed §11.6 platform-wide circuit breakers (Redis-backed,
-// cross-replica) are a separate surface — see §4.1.
 package subsystem
 
 import (

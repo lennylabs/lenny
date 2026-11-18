@@ -39,19 +39,14 @@ import (
 // allow-all so a created session needs no provisioned environment.
 const isolationTenant = "acme"
 
-// spec: §4.1 (Per-subsystem isolation guarantees) — "A saturated Upload
-// Handler cannot consume goroutines needed by the Stream Proxy." and
-// "The Upload Handler can trip to half-open or open state — returning
-// 503 for uploads — while the Stream Proxy and MCP Fabric continue
-// serving normally. This is the primary mechanism for partial gateway
-// degradation."
+// spec: §4.1 (Per-subsystem isolation guarantees)
 //
 // diagnosis: a failure here means the gateway's §4.1 Upload Handler
 // subsystem boundary does not isolate upload saturation from the other
-// subsystems. Either a saturated Upload Handler fails to shed load with
-// 503 SUBSYSTEM_UNAVAILABLE (the acquireUploadSlot gate in
-// pkg/gateway/sessionserver/upload.go over pkg/gateway/seam/subsystem's
-// Limiter), or upload saturation starves the Stream Proxy / non-upload
+// subsystems. Either the Upload Handler, with its limiter full, fails to
+// shed load with 503 SUBSYSTEM_UNAVAILABLE (the acquireUploadSlot gate in
+// pkg/gateway/sessionserver/upload.go over the Limiter of
+// pkg/gateway/seam/subsystem), or upload saturation starves the Stream Proxy / non-upload
 // paths so they hang or 503 too, or the §16.1 per-subsystem metrics do
 // not reflect the in-flight saturation.
 func TestUploadHandlerSaturationDoesNotStarveOtherSubsystems(t *testing.T) {

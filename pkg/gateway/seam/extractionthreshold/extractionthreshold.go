@@ -1,18 +1,5 @@
 // SPDX-License-Identifier: MIT
 
-// Package extractionthreshold reads the §4.1 per-subsystem
-// extraction-threshold Helm values from environment variables and
-// emits them on the lenny_gateway_extraction_threshold gauge at
-// startup.
-//
-// The §4.1 spec requires that the indicative threshold values in the
-// extraction-trigger table are configurable at deploy time via
-// gateway.extractionThresholds.<subsystem>.<metric> Helm values, and
-// that the values used for an extraction decision are auditable in the
-// Helm release history. The Helm chart surfaces each value as an env
-// var (`LENNY_EXTRACTION_THRESHOLD_<SUBSYSTEM>_<METRIC>`); this
-// package reads them at startup, fills in the §4.1 provisional
-// defaults for any unset entries, and pushes each value to the gauge.
 package extractionthreshold
 
 import (
