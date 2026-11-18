@@ -257,6 +257,15 @@ type uploadDriver struct {
 	confirmedCount int              // number of chunks Stat-confirmed
 	reservedBytes  int64            // the reservation taken from the probe
 	signedTotal    int64            // sum of Content-Lengths signed so far
+	// confirmedSize holds each Stat-confirmed chunk's size by index, and
+	// prefixCount and prefixBytes are the length and byte sum of the
+	// contiguous confirmed run 0..prefixCount-1. The manifest row is written
+	// from the prefix alone (see recordConfirmedLocked), so its chunk_count and
+	// workspace_bytes_uploaded always describe the same set of chunks however
+	// the per-ack confirm goroutines interleave.
+	confirmedSize map[uint32]int64
+	prefixCount   int
+	prefixBytes   int64
 	// quotaCap is the ceiling on signedTotal: the attempt's reservation plus
 	// the tenant's remaining headroom (limit − prior usage). quotaCapSet is
 	// false on the dev-mode / test path where no reservation is taken, which
@@ -703,12 +712,10 @@ func (d *uploadDriver) confirmChunk(index uint32, signed int64) {
 		_ = c.Cataloging.RecordPut(uri, info.Size, chunkMimeType)
 	}
 	d.mu.Lock()
-	d.confirmedBytes += info.Size
-	d.confirmedCount++
-	total := d.confirmedBytes
+	advanced, count, bytes := d.recordConfirmedLocked(index, info.Size)
 	d.mu.Unlock()
-	if c.Manifests != nil {
-		_ = c.Manifests.ConfirmChunk(d.ctx, d.tenantID, d.checkpointID, int(index), total)
+	if advanced && c.Manifests != nil {
+		_ = c.Manifests.ConfirmChunk(d.ctx, d.tenantID, d.checkpointID, count-1, bytes)
 	}
 	// spec: §11.2 — a body larger than the signed Content-Length on a
 	// non-enforcing backend is caught here, not by the object store. Abort
@@ -719,9 +726,57 @@ func (d *uploadDriver) confirmChunk(index uint32, signed int64) {
 	}
 }
 
+// recordConfirmedLocked records chunk index as Stat-confirmed at size and
+// advances the contiguous confirmed prefix over it and over any later indices
+// that confirmed ahead of it. It reports whether the prefix advanced, with the
+// new prefix length and byte sum, which is the only pair the caller persists.
+// A repeat confirm of an index already recorded changes nothing, so a chunk is
+// never counted twice. The caller holds d.mu.
+//
+// The confirm goroutines run concurrently, so a higher index can confirm
+// before a lower one. Persisting a running total keyed on the confirming
+// chunk's own index lets the higher index win the monotonic chunk_count guard
+// with a total that is missing the lower chunk's bytes, and the lower index's
+// later write then loses the guard. Writing (prefix length, prefix sum) makes
+// the persisted pair a function of the prefix length alone: a larger count
+// always carries the larger sum of the same chunks, so the guard keeps the
+// right row whichever concurrent write lands last, and the row never counts a
+// chunk the resume path would find missing below chunk_count.
+//
+// spec: §10.1.7 (preStop Hook Drain), §11.2 (Budgets and Quotas)
+func (d *uploadDriver) recordConfirmedLocked(index uint32, size int64) (bool, int, int64) {
+	if d.confirmedSize == nil {
+		d.confirmedSize = map[uint32]int64{}
+	}
+	if _, dup := d.confirmedSize[index]; dup {
+		return false, d.prefixCount, d.prefixBytes
+	}
+	d.confirmedSize[index] = size
+	d.confirmedBytes += size
+	d.confirmedCount++
+	advanced := false
+	for {
+		next, ok := d.confirmedSize[uint32(d.prefixCount)]
+		if !ok {
+			break
+		}
+		d.prefixCount++
+		d.prefixBytes += next
+		advanced = true
+	}
+	return advanced, d.prefixCount, d.prefixBytes
+}
+
 // onSummary verifies every confirmed byte matches the adapter's declared
 // total, finalises the manifest row complete (partial = false), and
-// reconciles the reservation against the confirmed total.
+// reconciles the reservation against the confirmed total. The confirmed
+// chunks must also form the contiguous run 0..chunk_count-1: the manifest row
+// records only that run, so a summary whose confirmed indices leave a gap
+// would finalise a complete row whose chunk_count and
+// workspace_bytes_uploaded omit confirmed chunks, and the resume path could
+// not reassemble it.
+//
+// spec: §4.4.2 (Checkpoint Atomicity and Partial Manifests), §10.1.7 (preStop Hook Drain)
 func (d *uploadDriver) onSummary(s *adapterv1.CheckpointSummary) (string, int64, error) {
 	d.confirmWG.Wait()
 	d.mu.Lock()
@@ -729,20 +784,26 @@ func (d *uploadDriver) onSummary(s *adapterv1.CheckpointSummary) (string, int64,
 	reason := d.abortReason
 	confirmedBytes := d.confirmedBytes
 	confirmedCount := d.confirmedCount
+	prefixCount := d.prefixCount
+	prefixBytes := d.prefixBytes
 	d.mu.Unlock()
 	if aborted {
 		return d.terminalAbort(reason)
 	}
-	// spec: §10.1 — the terminal summary finalises complete only when
-	// every declared byte is Stat-confirmed. When no confirm seam is
-	// wired (dev-mode), the adapter's reported total is authoritative.
+	// The terminal summary finalises complete only when every declared byte
+	// is Stat-confirmed. When no confirm seam is wired (dev-mode), the
+	// adapter's reported total is authoritative.
 	if d.c.ObjectStore != nil {
-		if confirmedBytes != s.GetTotalBytes() || confirmedCount != int(s.GetChunkCount()) {
+		if confirmedBytes != s.GetTotalBytes() || confirmedCount != int(s.GetChunkCount()) ||
+			prefixCount != confirmedCount {
 			return d.terminalAbort(partialmanifeststore.ReasonStreamTruncated)
 		}
 	}
 	total := s.GetTotalBytes()
 	if d.c.Manifests != nil {
+		if err := d.flushPrefix(d.ctx, prefixCount, prefixBytes); err != nil {
+			return "", 0, fmt.Errorf("checkpointer: flush confirmed chunks: %w", err)
+		}
 		if err := d.c.Manifests.Finalise(d.ctx, d.tenantID, d.checkpointID,
 			false, partialmanifeststore.ReasonComplete); err != nil {
 			return "", 0, fmt.Errorf("checkpointer: finalise complete: %w", err)
@@ -880,6 +941,9 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 		d.abortReason = reason
 	}
 	confirmed := d.confirmedBytes
+	confirmedCount := d.confirmedCount
+	prefixCount := d.prefixCount
+	prefixBytes := d.prefixBytes
 	d.mu.Unlock()
 	// Commit the durable finalisation, reservation release, and chunk sweep
 	// on a context detached from the attempt's already-cancelled or
@@ -895,6 +959,10 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// left active for the resume path or a downstream reclaimer.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(d.ctx), cleanupTimeout)
 	defer cancel()
+	// The flush is best-effort here: the abort arm still finalises the row and
+	// releases the reservation when it fails, and the abort's own error path
+	// takes precedence over a counter correction.
+	_ = d.flushPrefix(ctx, prefixCount, prefixBytes)
 	if err := c.Manifests.Finalise(ctx, d.tenantID, d.checkpointID, true, reason); err != nil {
 		return fmt.Errorf("checkpointer: finalise partial (%s): %w", reason, err)
 	}
@@ -932,7 +1000,7 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// a stream_truncated / superseded / quota_exceeded abort does not leave an
 	// emptied active partial row for the resume selector to pick.
 	// spec: §4.4 "Checkpoint abort cleanup"; §4.4.
-	if reason != partialmanifeststore.ReasonTimeout && c.ChunkCatalog != nil && c.ChunkObjects != nil && d.prefix != "" {
+	if abortSweepsChunks(reason, prefixCount, confirmedCount) && c.ChunkCatalog != nil && c.ChunkObjects != nil && d.prefix != "" {
 		if err := releaseChunkObjectsUnderPrefix(ctx, c.ChunkCatalog, c.ChunkObjects,
 			d.chunkPrefixURI(), d.prefix, c.tombstoneRetention(), d.onOrphanedObject); err == nil {
 			_ = finaliseReclaimedManifest(ctx, c.Manifests, c.ChunkObjects,
@@ -945,6 +1013,37 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 		}
 	}
 	return nil
+}
+
+// flushPrefix re-issues the manifest counter update for the contiguous
+// confirmed run of count chunks totalling bytes, ahead of a Finalise. Each
+// confirm writes the run as it grows, but that write is best-effort, so a
+// failed write would otherwise leave the finalised row behind the chunks the
+// attempt confirmed. When the earlier write landed, the monotonic chunk_count
+// guard makes this one a no-op. A run of zero chunks writes nothing.
+//
+// spec: §10.1.7 (preStop Hook Drain)
+func (d *uploadDriver) flushPrefix(ctx context.Context, count int, bytes int64) error {
+	if count == 0 {
+		return nil
+	}
+	return d.c.Manifests.ConfirmChunk(ctx, d.tenantID, d.checkpointID, count-1, bytes)
+}
+
+// abortSweepsChunks reports whether an abort arm releases the attempt's chunk
+// objects. Every arm other than a deadline fire releases them, because no
+// resume consumes its row. A deadline fire keeps its row and chunks for the
+// resume path, except when the confirmed run is empty although chunks past
+// index 0 confirmed: Finalise soft-deletes that zero-chunk row, so no resume
+// and no backstop selects it, and without this sweep those chunks would stay
+// in the object store with live catalog rows still charged to the tenant.
+//
+// spec: §10.1.7 (preStop Hook Drain), §4.4.2 (Checkpoint Atomicity and Partial Manifests), §12.5 (Artifact Store)
+func abortSweepsChunks(reason string, prefixCount, confirmedCount int) bool {
+	if reason != partialmanifeststore.ReasonTimeout {
+		return true
+	}
+	return prefixCount == 0 && confirmedCount > 0
 }
 
 // onOrphanedObject stamps the §4.4

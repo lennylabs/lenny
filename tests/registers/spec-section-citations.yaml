@@ -292,7 +292,7 @@ packages:
     - package: pkg/gateway/callercheck
       count: 14
     - package: pkg/gateway/checkpoint/checkpointer
-      count: 278
+      count: 301
     - package: pkg/gateway/checkpoint/checkpointretention
       count: 18
     - package: pkg/gateway/checkpoint/partialmanifeststore
