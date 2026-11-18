@@ -3,13 +3,9 @@
 package lint
 
 import (
-	"context"
-	"errors"
-	"os/exec"
 	"path/filepath"
 	"testing"
 
-	"github.com/lennylabs/lenny/scripts/specshift/annotation"
 	"github.com/lennylabs/lenny/tests/static/lint/gatewaylayout"
 	"github.com/lennylabs/lenny/tests/static/lint/gatewaywiring"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -28,7 +24,7 @@ const gatewayWiringRegister = "tests/registers/gateway-wiring.yaml"
 // part into another part's own interface; declare the interface in
 // pkg/gateway/seam and wire it there. A stale row means a step routed a
 // crossing through the seam interface; delete its row in the same commit.
-// spec: GW-R1
+// spec: GW-R1, GW-R2
 func TestGatewayWiringCrossesOnlyThroughTheSeam(t *testing.T) {
 	root := schematest.RepoRoot(t)
 	layout, err := gatewaylayout.LoadRegister(filepath.Join(root, filepath.FromSlash(gatewayLayoutRegister)))
@@ -59,35 +55,33 @@ func TestGatewayWiringCrossesOnlyThroughTheSeam(t *testing.T) {
 // TestGatewayWiringRegisterOnlyShrinks compares the wiring register with
 // its copy at the merge base with main: a branch may delete rows, and may
 // add or rewrite one only where a move of the manifest rewrote its paths or
-// in the step that moves one of its packages.
+// in the step of a move the branch performs. Any row naming a step that has
+// landed is refused.
 //
 // diagnosis: a refused row means a change registered a new crossing
-// instead of routing it through pkg/gateway/seam.
-// spec: GW-R1
+// instead of routing it through pkg/gateway/seam, or a landed step left a
+// crossing behind.
+// spec: GW-R1, GW-R2
 func TestGatewayWiringRegisterOnlyShrinks(t *testing.T) {
 	root := schematest.RepoRoot(t)
-	ctx := context.Background()
-	base, ref, err := annotation.MergeBase(ctx, root)
-	if errors.Is(err, annotation.ErrNoBase) {
-		t.Skipf("not-yet-applicable: %v, as in a shallow clone, so there is no merge-base register to compare with", err)
-	}
+	reg, err := gatewaywiring.LoadRegister(filepath.Join(root, filepath.FromSlash(gatewayWiringRegister)))
 	if err != nil {
 		t.Fatal(err)
 	}
-	baseData, err := exec.CommandContext(ctx, "git", "-C", root, "show", base+":"+gatewayWiringRegister).Output()
-	if err != nil {
-		t.Logf("the register does not exist at %s (%s), so the branch introduces it and the ratchet starts from this copy", base, ref)
+	r := newRatchetContext(t, root)
+	for _, problem := range gatewaywiring.LandedRows(reg, r.input.Landed) {
+		t.Error(problem)
+	}
+	baseData, ok := r.baseFile(t, gatewayWiringRegister)
+	if !ok {
+		t.Logf("the register does not exist at the merge base %s, so the branch introduces it and the ratchet starts from this copy", r.base)
 		return
 	}
 	baseReg, err := gatewaywiring.ParseRegister(baseData)
 	if err != nil {
 		t.Fatalf("decode the merge-base register: %v", err)
 	}
-	reg, err := gatewaywiring.LoadRegister(filepath.Join(root, filepath.FromSlash(gatewayWiringRegister)))
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, problem := range gatewaywiring.Ratchet(baseReg, reg, manifestMoves(t, root)) {
+	for _, problem := range gatewaywiring.Ratchet(baseReg, reg, r.input) {
 		t.Error(problem)
 	}
 }

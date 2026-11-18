@@ -112,8 +112,8 @@ func Reconcile(crossings []Crossing, reg Register) Result {
 // Ratchet returns the rows the branch added since the merge base that the
 // ratchet refuses. A row passes when mapping its package paths back through
 // the moves gives a row of the base register, or when its step is the step
-// that moves one of its packages.
-func Ratchet(base, current Register, moves []gatewaylayout.Move) []string {
+// of a move this branch performs that lands one of its packages.
+func Ratchet(base, current Register, in gatewaylayout.RatchetInput) []string {
 	baseRows := map[string]bool{}
 	for _, row := range base.Crossings {
 		baseRows[row.key()+"\x00"+row.Step] = true
@@ -124,13 +124,25 @@ func Ratchet(base, current Register, moves []gatewaylayout.Move) []string {
 			continue
 		}
 		back := row
-		back.To, back.From = gatewaylayout.MapBack(row.To, moves), gatewaylayout.MapBack(row.From, moves)
+		back.To, back.From = gatewaylayout.MapBack(row.To, in.Moves), gatewaylayout.MapBack(row.From, in.Moves)
 		if baseRows[back.key()+"\x00"+back.Step] ||
-			gatewaylayout.MovedAtStep(row.To, row.Step, moves) || gatewaylayout.MovedAtStep(row.From, row.Step, moves) {
+			gatewaylayout.MovedAtStep(row.To, row.Step, in.Performed) || gatewaylayout.MovedAtStep(row.From, row.Step, in.Performed) {
 			continue
 		}
 		out = append(out, "row "+row.String()+": the row is new since the merge base; the register only shrinks, except in the step that moves one of its packages")
 	}
 	sort.Strings(out)
+	return out
+}
+
+// LandedRows returns every row that names a step the change records as
+// Landed.
+func LandedRows(reg Register, landed map[string]bool) []string {
+	var out []string
+	for _, row := range reg.Crossings {
+		if landed[row.Step] {
+			out = append(out, fmt.Sprintf("row %s names step %s, which has landed", row, row.Step))
+		}
+	}
 	return out
 }

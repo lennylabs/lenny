@@ -259,19 +259,19 @@ func TestRatchetRefusesNewWiringRows(t *testing.T) {
 		{To: "pkg/gateway/mcpfabric/mcptools", Interface: "Terminal", From: "pkg/gateway/sessionserver", Type: "Server", Step: "0117.S7"},
 	}}
 	moves := []gatewaylayout.Move{{Old: "pkg/gateway/mcpfabric/mcptools", New: "pkg/gateway/platformtools/mcptools", Step: "0117.S7"}}
-	if got := Ratchet(base, Register{Version: 1}, moves); len(got) != 0 {
+	if got := Ratchet(base, Register{Version: 1}, gatewaylayout.RatchetInput{Moves: moves, Performed: moves}); len(got) != 0 {
 		t.Errorf("a deletion was refused: %v", got)
 	}
 	moved := Register{Version: 1, Crossings: []Row{{To: "pkg/gateway/platformtools/mcptools", Interface: "Terminal", From: "pkg/gateway/sessionserver", Type: "Server", Step: "0117.S7"}}}
-	if got := Ratchet(base, moved, moves); len(got) != 0 {
+	if got := Ratchet(base, moved, gatewaylayout.RatchetInput{Moves: moves, Performed: moves}); len(got) != 0 {
 		t.Errorf("a row a move rewrote was refused: %v", got)
 	}
 	added := Register{Version: 1, Crossings: append(base.Crossings, Row{To: "pkg/gateway/x", Interface: "I", From: "pkg/gateway/y", Type: "T", Step: "0117.S11"})}
-	if got := Ratchet(base, added, moves); len(got) != 1 || !strings.Contains(got[0], "new since the merge base") {
+	if got := Ratchet(base, added, gatewaylayout.RatchetInput{Moves: moves, Performed: moves}); len(got) != 1 || !strings.Contains(got[0], "new since the merge base") {
 		t.Errorf("a new row was not refused: %v", got)
 	}
 	restepped := Register{Version: 1, Crossings: []Row{{To: "pkg/gateway/mcpfabric/mcptools", Interface: "Terminal", From: "pkg/gateway/sessionserver", Type: "Server", Step: "0117.S8"}}}
-	if got := Ratchet(base, restepped, moves); len(got) != 1 {
+	if got := Ratchet(base, restepped, gatewaylayout.RatchetInput{Moves: moves, Performed: moves}); len(got) != 1 {
 		t.Errorf("a re-stepped row was not refused: %v", got)
 	}
 }
@@ -319,5 +319,27 @@ func TestLoadProgramFailsOnACompileErrorAndOnNoGoFiles(t *testing.T) {
 	}
 	if _, err := LoadProgram(empty, "./cmd/lenny-gateway"); err == nil || !strings.Contains(err.Error(), "no Go files") {
 		t.Errorf("a target with no Go files: %v", err)
+	}
+}
+
+// TestWiringRatchetGrantsTheStepExemptionOnlyToPerformedMovesAndReportsLandedSteps
+// checks the step exemption and the landed-step report of the wiring
+// register.
+// spec: GW-R1
+func TestWiringRatchetGrantsTheStepExemptionOnlyToPerformedMovesAndReportsLandedSteps(t *testing.T) {
+	moves := []gatewaylayout.Move{{Old: "pkg/gateway/mcpfabric/mcptools", New: "pkg/gateway/platformtools/mcptools", Step: "0117.S7"}}
+	row := Row{To: "pkg/gateway/platformtools/mcptools", Interface: "Terminal", From: "pkg/gateway/core/session", Type: "Server", Step: "0117.S7"}
+	current := Register{Version: 1, Crossings: []Row{row}}
+	if got := Ratchet(Register{Version: 1}, current, gatewaylayout.RatchetInput{Moves: moves, Performed: moves}); len(got) != 0 {
+		t.Errorf("a row added by the step whose move this branch performs was refused: %v", got)
+	}
+	if got := Ratchet(Register{Version: 1}, current, gatewaylayout.RatchetInput{Moves: moves}); len(got) != 1 {
+		t.Errorf("a row whose move this branch does not perform passed on its step: %v", got)
+	}
+	if got := LandedRows(current, map[string]bool{"0117.S7": true}); len(got) != 1 || !strings.Contains(got[0], "which has landed") {
+		t.Errorf("a row naming a landed step: %v", got)
+	}
+	if got := LandedRows(current, map[string]bool{"0117.S8": true}); len(got) != 0 {
+		t.Errorf("a row naming a step that has not landed: %v", got)
 	}
 }

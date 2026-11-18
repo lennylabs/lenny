@@ -415,20 +415,20 @@ func TestRatchetAcceptsDeletionsAndMovesAndRefusesNewRows(t *testing.T) {
 	current := Register{Version: 1, Packages: base.Packages[2:], Imports: []ImportRow{
 		{From: "pkg/gateway/sessionserver", To: "pkg/gateway/mcpfabric/mcp", Rule: RuleCoreImports, Step: "0117.S7"},
 	}}
-	if got := Ratchet(base, current, moves, Layout); len(got) != 0 {
+	if got := Ratchet(base, current, RatchetInput{Moves: moves, Performed: moves}, Layout); len(got) != 0 {
 		t.Fatalf("deletions were refused: %v", got)
 	}
 	carried := current
 	carried.Imports = append([]ImportRow{}, base.Imports...)
 	carried.Imports[0].To = "pkg/gateway/streamproxy/sessionevents"
-	if got := Ratchet(base, carried, moves, Layout); len(got) != 0 {
+	if got := Ratchet(base, carried, RatchetInput{Moves: moves, Performed: moves}, Layout); len(got) != 0 {
 		t.Fatalf("a row whose path a move rewrote was refused: %v", got)
 	}
 
 	// A row the step that moves its package adds passes.
 	atStep := current
 	atStep.Imports = append(atStep.Imports, ImportRow{From: "pkg/gateway/platformtools/mcptools", To: "pkg/gateway/core/session", Rule: RuleSeamImports, Step: "0117.S7"})
-	if got := Ratchet(base, atStep, moves, Layout); len(got) != 0 {
+	if got := Ratchet(base, atStep, RatchetInput{Moves: moves, Performed: moves}, Layout); len(got) != 0 {
 		t.Fatalf("a row added by the step that moves its package was refused: %v", got)
 	}
 
@@ -441,10 +441,10 @@ func TestRatchetAcceptsDeletionsAndMovesAndRefusesNewRows(t *testing.T) {
 		PackageRow{Package: "pkg/gateway/platformtools/mcptools/internal/gen", Part: PartRemoved, RemovedBy: "0138"},
 	)
 	added.Imports = append(added.Imports, ImportRow{From: "pkg/gateway/x", To: "pkg/gateway/y", Rule: RuleCoreImports, Step: "0117.S11"})
-	got := strings.Join(Ratchet(base, added, moves, Layout), "\n")
+	got := strings.Join(Ratchet(base, added, RatchetInput{Moves: moves, Performed: moves}, Layout), "\n")
 	for _, want := range []string{
 		"package row pkg/gateway/quota/newstore: the row is new since the merge base",
-		"package row pkg/gateway/platformtools/mcptools/internal/gen: a removed package sits in pkg/gateway/platformtools",
+		"package row pkg/gateway/platformtools/mcptools/internal/gen: a package of part removed sits in pkg/gateway/platformtools",
 		"import row pkg/gateway/x -> pkg/gateway/y: the row is new since the merge base",
 	} {
 		if !strings.Contains(got, want) {
@@ -454,7 +454,7 @@ func TestRatchetAcceptsDeletionsAndMovesAndRefusesNewRows(t *testing.T) {
 
 	// A row whose step changed is new.
 	restepped := Register{Version: 1, Packages: []PackageRow{{Package: "pkg/gateway/llmproxy/llmproxy", Part: "metering-proxy", Step: "0117.S4"}}}
-	if got := Ratchet(base, restepped, moves, Layout); len(got) != 1 {
+	if got := Ratchet(base, restepped, RatchetInput{Moves: moves, Performed: moves}, Layout); len(got) != 1 {
 		t.Errorf("a re-stepped row was not refused: %v", got)
 	}
 }
@@ -543,5 +543,65 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 	res = check(t, append(append([]Package{}, allowed...), pkg("pkg/gateway/platformtools/tools")), withRow)
 	if len(res.Stale) != 1 || !strings.Contains(res.Stale[0], "no longer breaks a rule") {
 		t.Fatalf("a registered confined import that went is not stale: %v", res.Stale)
+	}
+}
+
+// TestRatchetGrantsTheStepExemptionOnlyToMovesThisBranchPerforms checks
+// that a new row passes on its step only when the branch performs the move
+// that lands its package, that a new row placing a package in another
+// part's directory is refused, and that rows naming a landed step are
+// reported.
+// spec: GW-R1
+func TestRatchetGrantsTheStepExemptionOnlyToMovesThisBranchPerforms(t *testing.T) {
+	moves := []Move{
+		{Old: "pkg/gateway/mcpfabric/mcptools", New: "pkg/gateway/platformtools/mcptools", Step: "0117.S7"},
+		{Old: "pkg/gateway/llmproxy/llmproxy", New: "pkg/gateway/meteringproxy/llmproxy", Step: "0117.S3"},
+	}
+	row := ImportRow{From: "pkg/gateway/platformtools/mcptools", To: "pkg/gateway/core/session", Rule: RuleSeamImports, Step: "0117.S7"}
+	current := Register{Version: 1, Imports: []ImportRow{row}}
+	if got := Ratchet(Register{Version: 1}, current, RatchetInput{Moves: moves, Performed: moves[:1]}, Layout); len(got) != 0 {
+		t.Errorf("a row added by the step whose move this branch performs was refused: %v", got)
+	}
+	if got := Ratchet(Register{Version: 1}, current, RatchetInput{Moves: moves, Performed: moves[1:]}, Layout); len(got) != 1 {
+		t.Errorf("a row whose move this branch does not perform passed on its step: %v", got)
+	}
+
+	misplaced := Register{Version: 1, Packages: []PackageRow{{Package: "pkg/gateway/core/x", Part: "platform-tools", Step: "0117.S7"}}}
+	got := Ratchet(Register{Version: 1}, misplaced, RatchetInput{Moves: moves, Performed: moves}, Layout)
+	if len(got) != 1 || !strings.Contains(got[0], "a package of part platform-tools sits in pkg/gateway/core") {
+		t.Errorf("a new row placing a package in another part's directory: %v", got)
+	}
+
+	landed := LandedRows(Register{
+		Version:  1,
+		Packages: []PackageRow{{Package: "pkg/gateway/llmproxy/llmproxy", Part: "metering-proxy", Step: "0117.S3"}},
+		Imports:  []ImportRow{row},
+	}, map[string]bool{"0117.S3": true, "0117.S7": true})
+	if len(landed) != 2 || !strings.Contains(landed[0], "which has landed") {
+		t.Errorf("rows naming landed steps: %v", landed)
+	}
+	if got := LandedRows(current, map[string]bool{}); len(got) != 0 {
+		t.Errorf("no landed step reported rows: %v", got)
+	}
+}
+
+// TestPerformedMovesAndLandedStepsReadTheBranchAndTheRecords checks the
+// two inputs the tree tests derive.
+func TestPerformedMovesAndLandedStepsReadTheBranchAndTheRecords(t *testing.T) {
+	moves := []Move{
+		{Old: "pkg/gateway/a", New: "pkg/gateway/core/a", Step: "0117.S11"},
+		{Old: "pkg/gateway/b", New: "pkg/gateway/core/b", Step: "0117.S11"},
+		{Old: "pkg/gateway/c", New: "pkg/gateway/core/c", Step: "0117.S11"},
+	}
+	base := moves[:2]
+	exists := map[string]bool{"pkg/gateway/a": true, "pkg/gateway/b": true, "pkg/gateway/core/b": true}
+	got := PerformedMoves(moves, base, func(p string) bool { return exists[p] })
+	if len(got) != 2 || got[0].Old != "pkg/gateway/a" || got[1].Old != "pkg/gateway/c" {
+		t.Errorf("PerformedMoves = %+v", got)
+	}
+	steps := "### 0117.S1 Spec\n- status: Landed\n\n### 0117.S2 Code\n- status: Building\n\n### 0117.S3 Move\n- status: Landed\n"
+	landed := LandedSteps(steps)
+	if !landed["0117.S1"] || landed["0117.S2"] || !landed["0117.S3"] || len(landed) != 2 {
+		t.Errorf("LandedSteps = %v", landed)
 	}
 }
