@@ -7,7 +7,6 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -78,6 +77,10 @@ type Runner struct {
 	// defaults.
 	Interval time.Duration
 	Sleep    func(context.Context, time.Duration) error
+
+	// published collects every trial's expanded public values, which the
+	// run-level redactor keeps (runRedactor).
+	published []string
 }
 
 // TrialRecord is the record of one trial, written as result.json.
@@ -150,7 +153,21 @@ func (r *Runner) Run(ctx context.Context, scenarios []*Scenario) (*RunSummary, e
 	if err := r.writeSummary(sum); err != nil {
 		return sum, errors.Join(runErr, err)
 	}
-	return sum, runErr
+	return sum, errors.Join(runErr, r.sweepRecords())
+}
+
+// sweepRecords reads the run's records back and redacts any that still
+// holds a credential form. Such a record was written outside the record
+// writers, so the run reports it as an error.
+func (r *Runner) sweepRecords() error {
+	rewritten, err := SweepRecords(r.runRedactor(), filepath.Join(r.ResultsDir, r.RunID))
+	if err != nil {
+		return fmt.Errorf("check the records: %w", err)
+	}
+	if len(rewritten) > 0 {
+		return fmt.Errorf("records held credentials after they were written and were redacted again: %v", rewritten)
+	}
+	return nil
 }
 
 func (r *Runner) runAll(ctx context.Context, scenarios []*Scenario, sum *RunSummary) error {
@@ -213,6 +230,9 @@ func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, s
 		Dir: filepath.Join(r.ResultsDir, r.RunID, s.Name, fmt.Sprintf("trial-%d", n)),
 	}
 	red := NewRedactor(r.Secrets...)
+	public := r.publicValues(s, target, rec.Nonce)
+	red.Keep(public...)
+	r.published = append(r.published, public...)
 	tornDown := false
 	defer func() {
 		if !tornDown {
@@ -236,10 +256,31 @@ func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, s
 	}
 	rec.Verdict = Decide(infraErr, rec.Agent.Stop, rec.Agent.StopDetail, rec.Postconditions)
 	redactRecord(&rec, red)
-	if err := writeJSON(filepath.Join(rec.Dir, "result.json"), rec); err != nil {
+	if err := red.WriteJSON(filepath.Join(rec.Dir, "result.json"), rec); err != nil {
 		r.logf("    cannot write the trial record: %v", err)
 	}
 	return rec
+}
+
+// publicValues returns the scenario's published placeholder credentials
+// expanded for this trial, which the trial's records keep under a
+// credential key.
+func (r *Runner) publicValues(s *Scenario, target Target, nonce string) []string {
+	vars := r.trialVars(s, target, nonce)
+	out := make([]string, 0, len(s.PublicValues))
+	for _, v := range s.PublicValues {
+		out = append(out, Expand(v, vars))
+	}
+	return out
+}
+
+// runRedactor redacts the run-level records, the summary and the
+// read-back of every record: it knows the values every trial shares and
+// keeps every trial's published values.
+func (r *Runner) runRedactor() *Redactor {
+	red := NewRedactor(r.Secrets...)
+	red.Keep(r.published...)
+	return red
 }
 
 // redactRecord removes secrets from every free-text field of a record.
@@ -273,18 +314,6 @@ func mkdirPrivate(dir string) error {
 	return os.Chmod(dir, 0o700)
 }
 
-// createPrivate creates a record file at 0600.
-func createPrivate(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
-}
-
-func writePrivate(path string, data []byte) error {
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	return os.Chmod(path, 0o600)
-}
-
 // provision creates the cluster. Its output is held in memory and
 // written to provision.log redacted, with the new cluster's kubeconfig
 // secrets added to the redactor first, because the output streams arrive
@@ -294,7 +323,7 @@ func (r *Runner) provision(ctx context.Context, target Target, s *Scenario, dir 
 	r.logf("    creating the %s cluster (setup %s)", target.Name(), s.Setup)
 	createErr := target.Create(ctx, s.Setup, &log)
 	red.Add(KubeconfigSecrets(target.Kubeconfig())...)
-	if err := writePrivate(filepath.Join(dir, "provision.log"), red.Redact(log.Bytes())); err != nil && createErr == nil {
+	if err := red.WriteFile(filepath.Join(dir, "provision.log"), log.Bytes()); err != nil && createErr == nil {
 		return err
 	}
 	if createErr != nil {
@@ -404,11 +433,15 @@ func (r *Runner) runAgent(ctx context.Context, s *Scenario, target Target, acces
 	if err != nil {
 		return err
 	}
-	transcript, err := createPrivate(filepath.Join(rec.Dir, "transcript.jsonl"))
+	transcript, err := red.Create(filepath.Join(rec.Dir, "transcript.jsonl"))
 	if err != nil {
 		return err
 	}
-	defer transcript.Close()
+	// The close writes the transcript's last partial line, so its error
+	// counts once the agent has run; the deferred call covers the early
+	// returns.
+	closeTranscript := sync.OnceValue(transcript.Close)
+	defer func() { _ = closeTranscript() }()
 	var stderr bytes.Buffer
 	run := AgentRun{
 		Name:  fmt.Sprintf("%s-%s-%s-%d", AgentImageRepo, r.RunID, s.Name, rec.Trial),
@@ -416,14 +449,14 @@ func (r *Runner) runAgent(ctx context.Context, s *Scenario, target Target, acces
 		DocsDir: dirs.docs, JourneyDir: dirs.journey, HarnessDir: dirs.harness, HomeDir: dirs.home,
 		Settings: settings, SystemPrompt: SystemPrompt(s), Prompt: UserPrompt(s, vars),
 		Env: grant.Env, GatewayForward: grant.GatewayForward, TimeLimit: s.Limit(),
-		Transcript: red.Writer(transcript), Stderr: &stderr,
+		Transcript: transcript, Stderr: &stderr,
 	}
 	rec.Command = r.Agent.CommandLine(run)
 	prompt := "# System prompt (appended)\n\n" + run.SystemPrompt + "\n\n# Prompt\n\n" + run.Prompt
-	if err := writePrivate(filepath.Join(rec.Dir, "prompt.md"), []byte(prompt)); err != nil {
+	if err := red.WriteFile(filepath.Join(rec.Dir, "prompt.md"), []byte(prompt)); err != nil {
 		return err
 	}
-	if err := writePrivate(filepath.Join(rec.Dir, "settings.json"), settings); err != nil {
+	if err := red.WriteFile(filepath.Join(rec.Dir, "settings.json"), settings); err != nil {
 		return err
 	}
 	r.logf("    running the agent (cap $%.2f, limit %s)", r.RunCapUSD, s.Limit())
@@ -431,7 +464,10 @@ func (r *Runner) runAgent(ctx context.Context, s *Scenario, target Target, acces
 	// The result carries the run's cost, which the ledger settles at, so
 	// it is kept even when the run or the record below fails.
 	rec.Agent = res
-	if err := writePrivate(filepath.Join(rec.Dir, "agent-stderr.log"), red.Redact(stderr.Bytes())); err != nil && runErr == nil {
+	if err := closeTranscript(); err != nil && runErr == nil {
+		runErr = err
+	}
+	if err := red.WriteFile(filepath.Join(rec.Dir, "agent-stderr.log"), stderr.Bytes()); err != nil && runErr == nil {
 		runErr = err
 	}
 	if runErr != nil {
@@ -467,7 +503,7 @@ func (r *Runner) teardown(target Target, dir string, red *Redactor) TeardownReco
 	defer cancel()
 	var log lockedBuffer
 	defer func() {
-		_ = writePrivate(filepath.Join(dir, "teardown.log"), red.Redact(log.Bytes()))
+		_ = red.WriteFile(filepath.Join(dir, "teardown.log"), log.Bytes())
 	}()
 	r.logf("    deleting the %s cluster", target.Name())
 	var rec TeardownRecord
@@ -517,10 +553,14 @@ func (r *Runner) writeSummary(sum *RunSummary) error {
 			return err
 		}
 	}
-	if err := writeJSON(filepath.Join(dir, "summary.json"), sum); err != nil {
+	// Each trial record in the summary was redacted with its trial's
+	// values; the run's redactor covers the values every trial shares and
+	// the credential forms.
+	red := r.runRedactor()
+	if err := red.WriteJSON(filepath.Join(dir, "summary.json"), sum); err != nil {
 		return err
 	}
-	return writePrivate(filepath.Join(dir, "summary.md"), []byte(SummaryMarkdown(sum)))
+	return red.WriteFile(filepath.Join(dir, "summary.md"), []byte(SummaryMarkdown(sum)))
 }
 
 // SummaryMarkdown renders the run summary as the table a step's digest
@@ -536,14 +576,6 @@ func SummaryMarkdown(sum *RunSummary) string {
 		s += "\nThe run stopped early: " + sum.Stopped + "\n"
 	}
 	return s
-}
-
-func writeJSON(path string, v any) error {
-	b, err := json.MarshalIndent(v, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writePrivate(path, append(b, '\n'))
 }
 
 func (r *Runner) now() time.Time {

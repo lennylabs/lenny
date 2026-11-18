@@ -165,6 +165,9 @@ func ProbeAgent(ctx context.Context, cfg AgentConfig, in ProbeInput) (rep ProbeR
 	res, err := cfg.Run(ctx, run)
 	rep.CostUSD, rep.FinalText, rep.Stop = res.CostUSD, in.Redactor.String(res.FinalText), res.Stop
 	rep.StopDetail, rep.ExitCode = in.Redactor.String(res.StopDetail), res.ExitCode
+	// Transcript and Stderr can be any writer, so the probe redacts
+	// before writing. lenny-test passes record streams that redact again,
+	// which leaves redacted text unchanged.
 	if _, werr := in.Transcript.Write(in.Redactor.Redact(transcript.Bytes())); werr != nil && err == nil {
 		err = werr
 	}
