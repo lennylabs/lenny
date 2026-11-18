@@ -879,6 +879,19 @@ requirements: [GW-R1]
 summary: Ends a session whose budget extension was refused.
 ```
 
+## Operations served by the API front to every seam that serves client requests
+
+<a id="gwseam-requesttenant"></a>
+
+```lenny-def
+kind: operation
+name: RequestTenant
+method: Go method
+path: seam.RequestIdentity
+requirements: [GW-R1]
+summary: Returns the tenant that a client request runs as, which the API front's tenant check resolved before the handler ran.
+```
+
 ## Operations served by the API front to the platform tools seam
 
 <a id="gwseam-isbearerrevoked"></a>
@@ -915,7 +928,7 @@ name: Subscribe
 method: Go method
 path: seam.Events
 requirements: [GW-R1]
-summary: Opens a subscription to a session's stream in a tenant from after a sequence number, and returns the channel of events and the function that closes the subscription.
+summary: Opens a subscription to a session's stream in a tenant from after a sequence number, and returns the retained events after that sequence number, the channel of later events, and the function that closes the subscription; a tenant other than the one that owns the session is refused.
 ```
 
 <a id="gwseam-oldestretainedseq"></a>

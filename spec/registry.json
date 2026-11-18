@@ -2006,6 +2006,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-RequestTenant",
+      "anchor": "gwseam-requesttenant",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ResolveApproval",
       "anchor": "gwseam-resolveapproval",
       "file": "spec/interfaces/gateway-seams.md"
