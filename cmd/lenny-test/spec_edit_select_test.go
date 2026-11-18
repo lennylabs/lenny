@@ -280,6 +280,37 @@ func TestSelectSpecEditsReadsTheDiffOfATree(t *testing.T) {
 	}
 }
 
+// TestTaggedTestsOutsideTheTierDirectoriesRunInTheirTier pins that a test
+// whose file carries a tier's build tag runs by name in that tier, with the
+// tag, rather than in the unit tier where it would match nothing.
+func TestTaggedTestsOutsideTheTierDirectoriesRunInTheirTier(t *testing.T) {
+	files := map[string]string{
+		"cmd/gw/integ_test.go":       "// SPDX-License-Identifier: MIT\n\n//go:build integration\n\npackage main\n",
+		"cmd/gw/plain_test.go":       "package main\n",
+		"cmd/gw/linux_test.go":       "//go:build linux\n\npackage main\n",
+		"cmd/gw/notcomp_test.go":     "//go:build !component\n\npackage main\n",
+		"tests/contract/a/a_test.go": "//go:build contract\n\npackage a\n",
+	}
+	tests := []annotation.TestFunc{
+		{Dir: "cmd/gw", Path: "cmd/gw/integ_test.go", Name: "TestInteg"},
+		{Dir: "cmd/gw", Path: "cmd/gw/plain_test.go", Name: "TestPlain"},
+		{Dir: "cmd/gw", Path: "cmd/gw/linux_test.go", Name: "TestLinux"},
+		{Dir: "cmd/gw", Path: "cmd/gw/notcomp_test.go", Name: "TestNotComp"},
+		{Dir: "tests/contract/a", Path: "tests/contract/a/a_test.go", Name: "TestA"},
+	}
+	tiers := taggedTestTiers(tests, func(p string) string { return files[p] })
+	if !reflect.DeepEqual(tiers, map[string]string{"cmd/gw/integ_test.go::TestInteg": tierIntegration}) {
+		t.Fatalf("tiers = %v", tiers)
+	}
+	plan := planOf(selectChanged(nil, fixtureGraph(), nil, specEdits{tests: tests, tiers: tiers}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	if got := plan[tierIntegration].funcs; !reflect.DeepEqual(got, map[string][]string{"./cmd/gw": {"TestInteg"}}) {
+		t.Errorf("integration by-name = %v", got)
+	}
+	if got := plan[tierUnit].funcs["./cmd/gw"]; !reflect.DeepEqual(got, []string{"TestLinux", "TestNotComp", "TestPlain"}) {
+		t.Errorf("unit by-name = %v", got)
+	}
+}
+
 // TestPlanEntriesListWholeTiersPackagesAndFunctions pins what `list
 // --changed` and `list --pkg` print for a plan.
 func TestPlanEntriesListWholeTiersPackagesAndFunctions(t *testing.T) {

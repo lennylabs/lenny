@@ -4,9 +4,11 @@
 #
 # `lenny-test run --changed` selects a changed Go file, and a file a Go
 # package embeds or keeps under its directory, through the import graph.
-# This list covers the tracked files outside every Go package directory
-# that a test reads, executes, renders, or deploys. Each row names path
-# patterns, the targets that read them, and a reason.
+# This list covers the files a test reads, executes, renders, or deploys by
+# path rather than by import: the tracked files outside every Go package
+# directory, and files inside one, such as the migrations and the schemas,
+# that tests outside the owning package's importers open by path. Each row
+# names path patterns, the targets that read them, and a reason.
 #
 # - `paths`: repo-relative patterns. `*` matches within one path segment,
 #   `**` across segments, and `?` one character of a segment.
@@ -216,6 +218,85 @@ inputs:
     reason: >-
       The tooling's package reachability test reads the harness's non-test
       sources, and a documentation-tier test reads the static tier's check list.
+  - paths: ["migrations/**"]
+    runs:
+      - chaos
+      - docs
+      - integration
+      - load_local
+      - security
+      - tests/testinfra/containers
+      - tests/testinfra/kind
+      - tests/testinfra/lifecycleharness
+      - tests/component/auditintegrity
+      - tests/component/auditstore
+      - tests/component/evalaggregates
+      - tests/component/gateway_subsystems
+      - tests/component/issuedtokencascade
+      - tests/component/leasedenial
+      - tests/component/leases
+      - tests/component/legalholdescrow
+      - tests/component/legalholdreconciler
+      - tests/component/lifecycle
+      - tests/component/migrations
+      - tests/component/opsaudit
+      - tests/component/opsidem
+      - tests/component/opsrevocation
+      - tests/component/poolresume
+      - tests/component/rls
+      - tests/component/runtimecapoverride
+      - tests/component/stores
+      - tests/component/tenantsalt
+      - tests/component/watchdog
+      - cmd/lenny-gateway
+      - pkg/ctlcli
+      - pkg/gateway/externalapi/admin
+    reason: >-
+      These packages apply or read the migration files by path rather than
+      through the embedding package: the container, Kind, and lifecycle
+      helpers migrate the databases they start, and the tests named here pass
+      the migrations directory to them or read it.
+  - paths: ["schemas/**"]
+    runs:
+      - conformance
+      - docs
+      - tests/contract/adapter_artifact_scope
+      - tests/contract/adapter_bind_attempt
+      - tests/contract/adapter_checkpointbarrier
+      - tests/contract/adapter_chunk_encoding
+      - tests/contract/adapter_events
+      - tests/contract/adapter_extendcredlease
+      - tests/contract/adapter_generation_fence
+      - tests/contract/adapter_jsonl
+      - tests/contract/adapter_observedlevel
+      - tests/contract/adapter_reportusage
+      - tests/contract/adapter_session_address
+      - tests/contract/adapter_workspace_restore
+      - tests/contract/admin_impersonation
+      - tests/contract/checkpoint_stream
+      - tests/contract/gatewaycontrol_scrub
+      - tests/contract/interceptor_proto
+      - tests/contract/lifecycle_tokens
+      - tests/contract/ocsf_audit
+      - tests/contract/rest_pools
+      - tests/contract/rest_sessions
+      - tests/contract/runtimeops_emitted
+      - tests/contract/sdks
+      - tests/contract/workspaceplan
+      - tests/testinfra/fixtures/generators
+      - cmd/lenny-compliance
+      - pkg/adapter
+      - pkg/audit/ocsf
+      - pkg/gateway/externalapi/openapi
+      - pkg/gateway/mcpfabric/mcpschemagen
+      - pkg/workspaceplan
+    reason: >-
+      These packages read the schema, proto, and mapping files by path rather
+      than through the embedding package.
+  - paths: ["tests/testinfra/fixtures/expand_contract_migration/**"]
+    runs:
+      - integration
+    reason: The schema migration journey test reads these migration fixtures by path.
   - paths: ["tests/journeys/**"]
     runs:
       - cmd/lenny-test/journeys

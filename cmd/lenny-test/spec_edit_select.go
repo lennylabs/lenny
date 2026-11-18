@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"context"
 	"fmt"
+	"go/build/constraint"
 	"os"
 	"os/exec"
 	"path"
@@ -433,5 +434,50 @@ func selectSpecEdits(ctx context.Context, root, since string, paths []string) sp
 		}
 	}
 	e.tests = dedupeTests(e.tests)
+	e.tiers = taggedTestTiers(e.tests, func(p string) string { return readAt(ctx, root, "", p) })
 	return e
+}
+
+// taggedTestTiers returns, for each test outside the tier directories
+// whose file carries a tier's build tag, that tier, keyed by the test's
+// `path::Name`. Such a test runs only under its tag, so a by-name run in
+// the unit tier would match nothing.
+func taggedTestTiers(tests []annotation.TestFunc, read func(path string) string) map[string]string {
+	out := map[string]string{}
+	for _, t := range tests {
+		if tierOfDir(t.Dir) != "" {
+			continue
+		}
+		if tier := fileTier(read(t.Path)); tier != "" {
+			out[t.String()] = tier
+		}
+	}
+	return out
+}
+
+// fileTier returns the tier whose build tag a Go file's constraint needs:
+// the first tier whose tag alone satisfies the constraint, when the
+// constraint does not hold with no tag set. It returns "" for an untagged
+// file.
+func fileTier(content string) string {
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "package ") {
+			return ""
+		}
+		if !constraint.IsGoBuild(line) {
+			continue
+		}
+		expr, err := constraint.Parse(line)
+		if err != nil || expr.Eval(func(string) bool { return false }) {
+			return ""
+		}
+		for _, t := range allTiers() {
+			tag := tierBuildTag(t)
+			if tag != "" && expr.Eval(func(s string) bool { return s == tag }) {
+				return t
+			}
+		}
+		return ""
+	}
+	return ""
 }

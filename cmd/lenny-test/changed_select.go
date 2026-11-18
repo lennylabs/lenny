@@ -173,36 +173,44 @@ func (g *pkgGraph) ownersOf(p string) []string {
 // dependents returns the in-module packages whose build or test build
 // depends on any of roots, walking at most depth hops; a negative depth
 // walks the full closure. A build importer is walked on, and a test
-// importer is selected and not walked on (see pkgGraph). The roots
-// themselves are not in the result.
+// importer is selected and not walked on (see pkgGraph). The walk runs in
+// two passes: the build closure first, then the test importers of the
+// roots and of every closure member a hop short of the depth. A single
+// pass would mark a package reached first through a test edge as seen and
+// never walk the build edge that reaches it later, dropping its importers.
+// The roots themselves are not in the result.
 func (g *pkgGraph) dependents(roots []string, depth int) []string {
-	seen := map[string]bool{}
+	hops := map[string]int{}
 	for _, r := range roots {
-		seen[r] = true
+		hops[r] = 0
 	}
 	frontier := append([]string(nil), roots...)
-	out := []string{}
 	for hop := 0; len(frontier) > 0 && (depth < 0 || hop < depth); hop++ {
 		next := []string{}
 		for _, p := range frontier {
 			for _, imp := range g.importers[p] {
-				if !seen[imp] {
-					seen[imp] = true
-					out = append(out, imp)
+				if _, ok := hops[imp]; !ok {
+					hops[imp] = hop + 1
 					next = append(next, imp)
-				}
-			}
-			for _, imp := range g.testImporters[p] {
-				if !seen[imp] {
-					seen[imp] = true
-					out = append(out, imp)
 				}
 			}
 		}
 		frontier = next
 	}
-	sort.Strings(out)
-	return out
+	selected := map[string]bool{}
+	for p, h := range hops {
+		selected[p] = true
+		if depth >= 0 && h >= depth {
+			continue
+		}
+		for _, imp := range g.testImporters[p] {
+			selected[imp] = true
+		}
+	}
+	for _, r := range roots {
+		delete(selected, r)
+	}
+	return sortedKeys(selected)
 }
 
 // goListPackage is the part of `go list -json` output the graph reads.
@@ -450,6 +458,9 @@ type specEdits struct {
 	unitDirs []string
 	// notes are the operator-facing notes the edits raised.
 	notes []string
+	// tiers maps a test's `path::Name` to the tier whose build tag its file
+	// needs, for a test outside the tier directories.
+	tiers map[string]string
 	// failed reports that the edits could not be read, so the selection
 	// runs the fail-safe tiers whole.
 	failed bool
@@ -512,7 +523,11 @@ func selectChanged(paths []string, g *pkgGraph, inputs *nonGoInputs, spec specEd
 	}
 	for _, t := range spec.tests {
 		if !runsInStaticTier(t.Dir) {
-			sel.addFunc(testTier(t), t.Dir, t.Name)
+			tier := testTier(t)
+			if tagged, ok := spec.tiers[t.String()]; ok {
+				tier = tagged
+			}
+			sel.addFunc(tier, t.Dir, t.Name)
 		}
 	}
 	if spec.failed {

@@ -125,6 +125,19 @@ func TestATestImportEndsTheWalk(t *testing.T) {
 	if contains(deps, moduleImportPath+"/pkg/sidedep") {
 		t.Errorf("dependents = %v include pkg/sidedep, which imports only pkg/side's build", deps)
 	}
+
+	// A package reached through a test edge and a build edge is walked on
+	// through the build edge: x's tests import a, and x's build imports b,
+	// which imports a, so y, which imports x, depends on a.
+	m := moduleImportPath + "/"
+	both := newPkgGraph()
+	both.addPackage(m+"a", "a", nil, nil, nil)
+	both.addPackage(m+"b", "b", []string{m + "a"}, nil, nil)
+	both.addPackage(m+"x", "x", []string{m + "b"}, []string{m + "a"}, nil)
+	both.addPackage(m+"y", "y", []string{m + "x"}, nil, nil)
+	if got := both.dependents([]string{m + "a"}, -1); !reflect.DeepEqual(got, []string{m + "b", m + "x", m + "y"}) {
+		t.Errorf("dependents through a test edge and a build edge = %v, want b, x, and y", got)
+	}
 }
 
 // TestRdepsDepthNarrowsTheWalk pins the operator flag: zero selects the

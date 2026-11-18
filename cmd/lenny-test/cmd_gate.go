@@ -164,6 +164,9 @@ type gateRecord struct {
 	// unit tier and every test of tiers 2 to 4 rather than the --changed
 	// selection.
 	All bool `json:"all,omitempty"`
+	// RdepsDepth is the dependent depth the selection walked; -1 is the
+	// full closure the merge gate runs.
+	RdepsDepth int `json:"rdeps_depth"`
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
@@ -711,6 +714,10 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 
 	g.record(v, tierDocs, g.docs)
+	v.Gate.RdepsDepth = o.rdepsDepth
+	if o.rdepsDepth >= 0 && !o.all {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
+	}
 	withholdGatePass(v, dirty, o.environmentErr)
 	return v
 }

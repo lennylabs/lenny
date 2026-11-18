@@ -15,9 +15,6 @@ import (
 // diff the selector replays (`--since A..B`) names a head that is not the
 // working tree.
 func CompareSpecRevisions(ctx context.Context, root, base, head string) (*SpecChanges, error) {
-	if head == "" {
-		return CompareSpec(ctx, root, base)
-	}
 	r := repo{root: root}
 	scratch, err := os.MkdirTemp("", "specshift-compare-")
 	if err != nil {
@@ -28,7 +25,12 @@ func CompareSpecRevisions(ctx context.Context, root, base, head string) (*SpecCh
 	if err != nil {
 		return nil, err
 	}
-	after, err := revSnapshot(ctx, r, head, scratch)
+	var after *Snapshot
+	if head == "" {
+		after, err = worktreeSnapshot(ctx, r)
+	} else {
+		after, err = revSnapshot(ctx, r, head, scratch)
+	}
 	if err != nil {
 		return nil, err
 	}
