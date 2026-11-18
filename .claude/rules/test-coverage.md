@@ -66,7 +66,7 @@ The merge, area, and release gates state which tiers run and what must be green.
 | Area | Each milestone exit from M3 on | e2e_kind, chaos core, security, conformance, and docs for the area, plus the area's journeys | Close the milestone |
 | Release | Before a release, and weekly on `main` | e2e_cloud, load_local, load_kind, load_cloud, chaos in full, and all journeys | Tag a release |
 
-`lenny-test gate` runs the merge gate in one canonical environment, the Linux container it builds from `tests/gate/Dockerfile`, and writes `tests/results/gate-<run>.json` (TESTING.md, "Merge gate"). Only a run in that container yields a merge verdict. `lenny-test gate --here` runs the tiers in the current environment, and outside the gate image (when `LENNY_GATE_IMAGE` is not set, or does not name the image that `tests/gate/Dockerfile` at the commit defines) its verdict is `UNVERIFIED` at best and its exit code is non-zero, with the reason recorded under `gate.unverified`. A run on a tree with uncommitted changes is `UNVERIFIED` at best in the same way. Until the area and release gates have their own commands, run their tiers with `lenny-test --tier <name>`.
+`lenny-test gate` runs the merge gate in one canonical environment, the Linux container it builds from `tests/gate/Dockerfile`, and writes `tests/results/gate-<run>.json` (TESTING.md, "Merge gate"). Only a run in that container yields a merge verdict. `lenny-test gate --here` runs the tiers in the current environment, and outside the gate image (when `LENNY_GATE_IMAGE` is not set, or does not name the image that `tests/gate/Dockerfile` at the commit defines) its verdict is `UNVERIFIED` at best and its exit code is non-zero, with the reason recorded under `gate.unverified`. A run on a tree with uncommitted changes is `UNVERIFIED` at best in the same way. Until the area and release gates have their own commands, run their tiers with `lenny-test --gate area` or `lenny-test --gate release`, which run each of the gate's tiers whole, or with `lenny-test --tier <name>`.
 
 The merge policy:
 
@@ -104,7 +104,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 
 ## How to run
 
-- `lenny-test run --changed` runs the static, unit, component, and contract tiers that your diff reaches, which start no compose stack and no cluster; start here. Add `--tier <name>[,<name>...]` to run other tiers the diff reaches, such as `--tier integration` after `lenny-test infra up --profile compose`, or `--gate merge` for every merge-gate tier.
+- `lenny-test run --changed` runs the static, unit, component, and contract tiers that your diff reaches, which start no compose stack and no cluster; start here. `--tier <name>[,<name>...]` replaces that set with the tiers it names, such as `--tier static,unit,component,contract,integration` after `lenny-test infra up --profile compose`, and `--gate merge` runs every merge-gate tier the diff reaches.
 - `lenny-test gate merge` (or `lenny-test gate`) runs the merge gate on the committed head in the gate container and writes its verdict. Run it before reporting a step done and before a merge.
 - `lenny-test --tier <name>` runs one tier whole, and a comma-separated list runs several; `--gate <name>` runs a gate's tiers whole; `--pkg <path>` scopes to a package.
 - Bring infrastructure up with `lenny-test infra up --profile compose|kind|all` before integration and higher tiers; see the AVAILABLE INFRASTRUCTURE the build loops document for standing clusters and stacks.
@@ -115,7 +115,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 
 1. Identify every tier the change reaches from the table above before writing code.
 2. Write the tests for those tiers alongside the code, covering the non-happy paths.
-3. Iterate with `lenny-test run --changed`, adding `--tier <name>` for each reached tier that needs infrastructure, then commit and run `lenny-test gate merge`; fix the code until the verdict for the head commit is `PASS`.
+3. Iterate with `lenny-test run --changed`, then with `--tier` naming each reached tier that needs infrastructure, then commit and run `lenny-test gate merge`; fix the code until the verdict for the head commit is `PASS`.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
 5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to the tests of the component tier and the tiers after it.
 
