@@ -52,9 +52,20 @@ func TestManifestAgreesWithTheLayoutRegister(t *testing.T) {
 		info, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
 		return err == nil && info.IsDir()
 	}
-	for _, problem := range manifestProblems(moves, reg, gatewaylayout.Layout, exists) {
+	for _, problem := range manifestProblems(moves, reg, gatewaylayout.Layout, exists, carriedRemovals) {
 		t.Error(problem)
 	}
+}
+
+// carriedRemovals lists each package a member change removes that moves
+// with the directory it is nested in, with the step whose move carries it.
+// steps.md records each one on its step: the step deletes the package's
+// register row, and the package belongs to its parent's part until the
+// change removes it.
+var carriedRemovals = map[string]string{
+	// The go:generate tool of mcptools, which 0138 removes. It moves with
+	// mcptools because mcptools runs it by a relative path.
+	"pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas": "0117.S7",
 }
 
 // manifestProblems returns every disagreement between the manifest and the
@@ -68,8 +79,10 @@ func TestManifestAgreesWithTheLayoutRegister(t *testing.T) {
 //     destination exists;
 //   - every register row of a package that moves is covered by a move of
 //     the package or of the directory it is nested in, at the same step;
-//   - no two moves share a destination.
-func manifestProblems(moves []rewrite.Move, reg gatewaylayout.Register, table []gatewaylayout.Dir, exists func(string) bool) []string {
+//   - no two moves share a destination;
+//   - a package a change removes is not nested in a directory that moves,
+//     unless carried lists it at the step of that move.
+func manifestProblems(moves []rewrite.Move, reg gatewaylayout.Register, table []gatewaylayout.Dir, exists func(string) bool, carried map[string]string) []string {
 	var out []string
 	rows := map[string]gatewaylayout.PackageRow{}
 	for _, row := range reg.Packages {
@@ -106,6 +119,9 @@ func manifestProblems(moves []rewrite.Move, reg gatewaylayout.Register, table []
 	}
 	for _, row := range reg.Packages {
 		if row.Part == gatewaylayout.PartRemoved {
+			if m, ok := coveringMove(row.Package, byOld); ok && rewrite.RepoRel(m.Old) != row.Package && carried[row.Package] != m.Step {
+				out = append(out, "register row "+row.Package+": removed by "+row.RemovedBy+", but the move of "+rewrite.RepoRel(m.Old)+" at "+m.Step+" carries it; record it on that step and in carriedRemovals, or exclude it")
+			}
 			continue
 		}
 		if m, ok := coveringMove(row.Package, byOld); !ok {
@@ -177,6 +193,8 @@ func TestManifestProblemsReportsEachDisagreement(t *testing.T) {
 		{Package: "pkg/gateway/session/sessionevents", Part: "stream-proxy", Step: "0117.S6"},
 		{Package: "pkg/gateway/x/wrongstep", Part: "core", Step: "0117.S7"},
 		{Package: "pkg/gateway/connectors/conn", Part: gatewaylayout.PartRemoved, RemovedBy: "0124"},
+		{Package: "pkg/gateway/audit/auditstore/legacy", Part: gatewaylayout.PartRemoved, RemovedBy: "0124"},
+		{Package: "pkg/gateway/audit/auditstore/gen", Part: gatewaylayout.PartRemoved, RemovedBy: "0138"},
 		{Package: "pkg/gateway/orphan/pkg", Part: "core", Step: "0117.S11"},
 		{Package: "pkg/gateway/x/badpart", Part: "nowhere", Step: "0117.S11"},
 		{Package: "pkg/gateway/x/dup", Part: "core", Step: "0117.S11"},
@@ -188,7 +206,8 @@ func TestManifestProblemsReportsEachDisagreement(t *testing.T) {
 		}
 		return present[rel] || !strings.HasPrefix(rel, "pkg/gateway/core/") && !strings.HasPrefix(rel, "pkg/gateway/meteringproxy/") && !strings.HasPrefix(rel, "pkg/audit/") && !strings.HasPrefix(rel, "pkg/gateway/quota2/")
 	}
-	got := strings.Join(manifestProblems(moves, reg, gatewaylayout.Layout, exists), "\n")
+	carried := map[string]string{"pkg/gateway/audit/auditstore/gen": "0117.S9"}
+	got := strings.Join(manifestProblems(moves, reg, gatewaylayout.Layout, exists, carried), "\n")
 	for _, want := range []string{
 		"move of pkg/gateway/quota/quotastore: a package leaving the gateway moves to pkg/gateway/quota2/quotastore",
 		"move of pkg/gateway/session/sessionevents: the destination pkg/gateway/core/sessionevents is outside pkg/gateway/streamproxy",
@@ -200,12 +219,13 @@ func TestManifestProblemsReportsEachDisagreement(t *testing.T) {
 		"move of pkg/gateway/x/badpart: unknown part nowhere",
 		"register row pkg/gateway/orphan/pkg: no manifest move carries it",
 		"register row pkg/gateway/audit/auditstore/late: carried by a move at step 0117.S9, registered at 0117.S10",
+		"register row pkg/gateway/audit/auditstore/legacy: removed by 0124, but the move of pkg/gateway/audit/auditstore at 0117.S9 carries it",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("problems lack %q in:\n%s", want, got)
 		}
 	}
-	for _, unwanted := range []string{"llmproxy", "auditstore:", "auditbatch", "done/moved"} {
+	for _, unwanted := range []string{"llmproxy", "auditstore:", "auditbatch", "done/moved", "auditstore/gen"} {
 		if strings.Contains(got, unwanted) {
 			t.Errorf("problems report the agreeing entry %q:\n%s", unwanted, got)
 		}
