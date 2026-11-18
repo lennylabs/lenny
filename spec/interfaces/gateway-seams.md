@@ -1000,7 +1000,7 @@ No route takes a default check: a zero or unknown access check is refused at reg
 
 ## Crossings without an operation
 
-- Each part emits its metrics into the gateway's metric registry through a metrics interface the part declares itself. A metrics interface is not an operation of the seam interface.
+- Each part emits its metrics into the gateway's metric registry. A seam registers its own metric collectors on the registry, because a seam holds no value of a replica-level part. The session core and the replica-level parts register their own collectors or emit through a metrics interface they declare, which the gateway's metric set satisfies. Neither form is an operation of the seam interface.
 - The API front reads pool status through the session core's pool status reader, and authenticates service-account tokens through the platform tools seam's token verifier. Neither is an operation of the seam interface: each is domain logic that belongs in a concern package outside the gateway.
 
 ## Compatibility
