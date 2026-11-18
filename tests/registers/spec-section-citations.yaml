@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1599
+      count: 1596
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -530,7 +530,7 @@ packages:
     - package: pkg/gateway/pki/carotationstore/pgstore
       count: 1
     - package: pkg/gateway/playground
-      count: 93
+      count: 95
     - package: pkg/gateway/podlifecycle/bindrelease
       count: 6
     - package: pkg/gateway/podlifecycle/podclaim

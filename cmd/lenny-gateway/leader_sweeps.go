@@ -28,9 +28,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
-func (w *gatewayWiring) startLeaderElectedSweeps() {
+func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
 	f := w.f
-	gatewayLeaderElection := f.gatewayLeaderElection
+	gatewayLeaderElection := leader.Election
 	gatewayNamespace := f.gatewayNamespace
 	gcCycleIntervalSeconds := f.gcCycleIntervalSeconds
 	gcTombstoneRetentionSeconds := f.gcTombstoneRetentionSeconds

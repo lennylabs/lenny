@@ -55,11 +55,12 @@ func main() {
 	// spec: §4.1 gateway subsystem seams — parse the composition-root
 	// inputs once, finalize the §4 / §17.5 KMS provider selection, then
 	// hand off to runGateway, which wires and starts every subsystem.
+	parts := registerPartFlags()
 	f := parseFlags()
 	if err := f.kmsFinalize(); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
-	runGateway(f)
+	runGateway(f, parts)
 }
 
 // runGateway wires and starts every gateway subsystem from the parsed
@@ -83,7 +84,7 @@ func main() {
 // spec: §4.1 — the gateway is one component internally partitioned into
 // subsystem boundaries (Go interfaces within a single binary); this
 // function constructs each in dependency order.
-func runGateway(f *gatewayFlags) {
+func runGateway(f *gatewayFlags, parts *partFlags) {
 	w := &gatewayWiring{f: f}
 
 	// Each step below constructs one subsystem, records its outputs on the
@@ -93,7 +94,7 @@ func runGateway(f *gatewayFlags) {
 	// argument. spec: §4.1.
 
 	// §10.3/§17.4/§16.3/§16.5 startup gates and process-wide providers.
-	w.buildStartupGates()
+	w.buildStartupGates(parts.tlsProbe)
 	elicitationFloorProvider := w.elicitationFloorProvider
 	resolvedNoEnvPolicy := w.resolvedNoEnvPolicy
 
@@ -229,7 +230,7 @@ func runGateway(f *gatewayFlags) {
 	)
 
 	// §15.1 REST mux and HTTP server. Records w.mux and w.httpSrv.
-	w.buildHTTPSurface(
+	w.buildHTTPSurface(parts.playground,
 		gwMetrics, sessionSrv, w.openaiHandler, w.responsesHandler, w.credServer,
 		mcpSrv, policyChain, auditSink, auditAppender, opsEmitter, environments,
 		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
@@ -277,7 +278,7 @@ func runGateway(f *gatewayFlags) {
 	// background-worker step (it reads w.sessionSrv and the recorded
 	// propagators to drive the periodic sweepers).
 	w.sessionSrv = sessionSrv
-	w.startBackgroundWorkers()
+	w.startBackgroundWorkers(parts.pdbWatcher, parts.leader)
 
 	// §17 — record the LLM proxy server, then hand off to runServers (the
 	// §25.13 alert tracker, the signal handler, and the run-and-shutdown loop).

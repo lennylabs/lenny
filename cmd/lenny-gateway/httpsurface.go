@@ -68,6 +68,7 @@ import (
 )
 
 func (w *gatewayWiring) buildHTTPSurface(
+	pgFlags *playground.Flags,
 	gwMetrics *gatewaymetrics.Metrics,
 	sessionSrv *sessionserver.Server,
 	openaiHandler *translator.OpenAIChatHandler,
@@ -107,16 +108,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	quotaUserFailOpenFraction := f.quotaUserFailOpenFraction
 	quotaPerReplicaHardCap := f.quotaPerReplicaHardCap
 	quotaFailOpenCumulativeMaxSeconds := f.quotaFailOpenCumulativeMaxSeconds
-	playgroundEnabled := f.playgroundEnabled
-	playgroundAuthMode := f.playgroundAuthMode
-	playgroundDevTenantID := f.playgroundDevTenantID
-	playgroundAllowedRuntimes := f.playgroundAllowedRuntimes
-	playgroundSessionLabels := f.playgroundSessionLabels
-	playgroundMaxSessionMinutes := f.playgroundMaxSessionMinutes
-	playgroundMaxIdleTimeSeconds := f.playgroundMaxIdleTimeSeconds
 	capabilityTokenTTL := f.capabilityTokenTTL
-	playgroundGatewayHost := f.playgroundGatewayHost
-	playgroundOIDCSessionTTL := f.playgroundOIDCSessionTTL
 	mux := http.NewServeMux()
 	mux.Handle("/v1/sessions", sessionSrv.Handler())
 	mux.Handle("/v1/sessions/", sessionSrv.Handler())
@@ -363,20 +355,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// nil when the playground is disabled, leaving the auth hot path
 	// unchanged. F-27.6.3 / F-27.3.1.
 	var playgroundRevocations authmw.PlaygroundRevocationChecker
-	if *playgroundEnabled {
-		pgCfg := playground.Config{
-			Enabled:            true,
-			AuthMode:           playground.AuthMode(*playgroundAuthMode),
-			DevTenantID:        *playgroundDevTenantID,
-			AllowedRuntimes:    splitCSV(*playgroundAllowedRuntimes),
-			MaxSessionMinutes:  *playgroundMaxSessionMinutes,
-			MaxIdleTimeSeconds: *playgroundMaxIdleTimeSeconds,
-			OIDCSessionTTL:     time.Duration(*playgroundOIDCSessionTTL) * time.Second,
-			CapabilityTokenTTL: time.Duration(*capabilityTokenTTL) * time.Second,
-			MultiTenant:        *multiTenant,
-			GatewayHost:        *playgroundGatewayHost,
-			SessionLabels:      parseKeyValueCSV(*playgroundSessionLabels),
-		}
+	if *pgFlags.Enabled {
+		pgCfg := pgFlags.Config(time.Duration(*capabilityTokenTTL)*time.Second, *multiTenant)
 		// §27.3 dev mode is permitted only under global devMode; the
 		// chart rejects authMode=dev otherwise, and this is the
 		// backstop for a deployment that bypassed Helm-validate.
