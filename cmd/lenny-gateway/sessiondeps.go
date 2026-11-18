@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
@@ -66,10 +67,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	if err != nil {
 		log.Fatalf("lenny-gateway: upload metrics: %v", err)
 	}
-	// §16.1: the metering proxy's metrics, registered whether or not the
-	// proxy listener is enabled, as they were while the gateway metrics
-	// held them.
-	meteringMetrics, err := llmproxy.NewPromMetrics(gwMetrics.Registerer())
+	meteringMetrics, err := registerMeteringMetrics(gwMetrics)
 	if err != nil {
 		log.Fatalf("lenny-gateway: metering proxy metrics: %v", err)
 	}
@@ -243,4 +241,12 @@ func (w *gatewayWiring) buildSessionDeps() {
 	w.leaseBudgets = leaseBudgets
 	w.activityStamper = activityStamper
 	w.slotHealth = slotHealth
+}
+
+// registerMeteringMetrics registers the metering proxy's metric set on the
+// gateway's registry, whether or not the proxy listener is enabled, as the
+// gateway metrics registered those series before the metering proxy owned
+// them, so the gateway's /metrics exposes them from startup.
+func registerMeteringMetrics(gwMetrics *gatewaymetrics.Metrics) (*llmproxy.PromMetrics, error) {
+	return llmproxy.NewPromMetrics(gwMetrics.Registerer())
 }

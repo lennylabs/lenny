@@ -25,7 +25,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/partitionmaint"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
-	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
 func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
@@ -89,7 +88,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
 	// coreLeaderJobs holds the gateway-singleton jobs that act on a package
 	// GW-R2 confines. The leader gate runs the set as one job, so the gate,
 	// a replica-level part, holds a session core value rather than the
-	// confined package's (decision 23 of change 0117, open).
+	// confined package's (decision 23 of change 0117).
 	var coreLeaderJobs leaderjobs.Set
 
 	// ----- §7.1 artifact-retention GC -----
@@ -395,27 +394,20 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
 	// the admin t4KmsLastProbeSuccessAt field observe silent
 	// post-provisioning key drift. The token-bucket rate ceiling caps
 	// KMS API spend; the cadence floor is enforced inside Prober.Start.
-	{
-		probeMetrics, err := tenantkms.NewProbeMetrics(w.gwMetrics.Registerer())
-		if err != nil {
-			log.Fatalf("lenny-gateway: §12.5 T4 KMS probe metrics: %v", err)
-		}
-		prober := &tenantkms.Prober{
-			Lifecycle: w.kmsProbeLifecycle,
-			Tenants:   t4TenantSource{w.tenants},
-			Metrics:   probeMetrics,
-			Interval:  time.Duration(*t4KmsProbeIntervalSeconds) * time.Second,
-			RateLimit: *t4KmsProbeRateLimit,
-			Now:       clockinject.Now,
-		}
-		log.Printf("lenny-gateway: §12.5 continuous T4 KMS probe interval=%ds rate=%.1f/s",
-			*t4KmsProbeIntervalSeconds, *t4KmsProbeRateLimit)
-		coreLeaderJobs.Add("t4-kms-probe", func(ctx context.Context) {
-			if err := prober.Start(ctx); err != nil {
-				log.Printf("lenny-gateway: §12.5 T4 KMS probe loop exited: %v", err)
-			}
-		})
+	// The session core's leader jobs build the probe from these inputs, so
+	// the probe and its key lifecycle stay values of the session core.
+	if err := coreLeaderJobs.AddT4KMSProbe(leaderjobs.T4KMSProbe{
+		Lifecycle:  w.kmsProbeLifecycle,
+		Tenants:    t4TenantSource{w.tenants},
+		Registerer: w.gwMetrics.Registerer(),
+		Interval:   time.Duration(*t4KmsProbeIntervalSeconds) * time.Second,
+		RateLimit:  *t4KmsProbeRateLimit,
+		Now:        clockinject.Now,
+	}); err != nil {
+		log.Fatalf("lenny-gateway: §12.5 %v", err)
 	}
+	log.Printf("lenny-gateway: §12.5 continuous T4 KMS probe interval=%ds rate=%.1f/s",
+		*t4KmsProbeIntervalSeconds, *t4KmsProbeRateLimit)
 
 	// ----- §13.3 admin-token reclaimer sweep (C7 crash recovery) -----
 	// The §17.6 gateway-mediated bootstrap admin-credential rotation patches

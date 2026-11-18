@@ -3,7 +3,7 @@
 // Package jwtaudit emits the `platform.ca_rotated` audit row for §10.3
 // CA-rotation stage transitions. The package is the bridge between
 // pkg/mtls (which knows when a rotation happened but not how the audit
-// chain is wired) and pkg/gateway/audit.Appender (the per-tenant
+// chain is wired) and pkg/audit.Appender (the per-tenant
 // chain writer). It also names the platform tenant that platform-wide
 // audit rows are committed under.
 package jwtaudit

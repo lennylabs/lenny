@@ -37,7 +37,7 @@ func (f *fakeRecorder) AddInflightRequests(delta int64) {
 	}
 }
 
-// spec: §16.1 (Gateway metrics)
+// spec: §16.1 (Metrics)
 func TestWrapRecordsEachRequestByRouteAndStatusClass(t *testing.T) {
 	rec := &fakeRecorder{}
 	cases := []struct {
@@ -68,7 +68,7 @@ func TestWrapRecordsEachRequestByRouteAndStatusClass(t *testing.T) {
 	}
 }
 
-// spec: §16.1 (Gateway metrics)
+// spec: §16.1 (Metrics)
 func TestWrapCountsAWriteWithoutAHeaderAsSuccess(t *testing.T) {
 	rec := &fakeRecorder{}
 	h := requestmetrics.Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -81,7 +81,7 @@ func TestWrapCountsAWriteWithoutAHeaderAsSuccess(t *testing.T) {
 	}
 }
 
-// spec: §16.1 (Gateway metrics)
+// spec: §16.1 (Metrics)
 func TestWrapHoldsTheInflightCountWhileTheRequestRuns(t *testing.T) {
 	rec := &fakeRecorder{}
 	started, release := make(chan struct{}), make(chan struct{})

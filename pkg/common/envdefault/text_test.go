@@ -38,7 +38,7 @@ func TestFlagReadsOnlyTheSwitchOnWords(t *testing.T) {
 	}
 }
 
-func TestBoolParsesTheVariableAndFallsBackOnUnsetBlankOrMalformed(t *testing.T) {
+func TestParseBoolParsesTheVariableAndFallsBackOnUnsetBlankOrMalformed(t *testing.T) {
 	const name = "LENNY_ENVDEFAULT_TEST_BOOL"
 	cases := []struct {
 		value string
@@ -55,8 +55,8 @@ func TestBoolParsesTheVariableAndFallsBackOnUnsetBlankOrMalformed(t *testing.T) 
 	}
 	for _, c := range cases {
 		t.Setenv(name, c.value)
-		if got := Bool(name, c.def); got != c.want {
-			t.Errorf("Bool(%q, %v) = %v, want %v", c.value, c.def, got, c.want)
+		if got := ParseBool(name, c.def); got != c.want {
+			t.Errorf("ParseBool(%q, %v) = %v, want %v", c.value, c.def, got, c.want)
 		}
 	}
 }

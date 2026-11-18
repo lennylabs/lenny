@@ -29,9 +29,9 @@ func Flag(name string) bool {
 	}
 }
 
-// Bool returns the variable name parsed by strconv.ParseBool, or def when
+// ParseBool returns the variable name parsed by strconv.ParseBool, or def when
 // it is unset, blank, or does not parse.
-func Bool(name string, def bool) bool {
+func ParseBool(name string, def bool) bool {
 	v := strings.TrimSpace(os.Getenv(name))
 	if v == "" {
 		return def
