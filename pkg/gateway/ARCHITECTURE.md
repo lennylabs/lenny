@@ -31,6 +31,7 @@ Domain logic and stores do not belong to a gateway part. They live in concern di
 - A package of the API front imports no seam package and no session core package. Each part registers its own routes through the route registration interface of `pkg/gateway/seam`.
 - `pkg/gateway/seam` imports no other package of `pkg/gateway`.
 - No package outside `pkg/gateway` and `cmd/lenny-gateway` imports a package of `pkg/gateway`, except test packages under `tests/`.
+- A package of another replica-level part, or of the web playground, imports no seam package.
 - Every package of `pkg/gateway` sits in a directory of the table above.
 
 The replica-level parts other than the API front may import the session core and the seam interface. `cmd/lenny-gateway` imports every part and wires each concrete type into the interfaces of `pkg/gateway/seam`.
@@ -41,7 +42,7 @@ The layout gate, `TestGatewayLayoutHoldsTheImportRule` in `tests/static/lint`, h
 
 The steps of change 0117 move the packages into this layout one part at a time. Until a package's step runs, the package stays in its earlier directory, and two records track it:
 
-- `tests/registers/gateway-layout.yaml` lists each package outside the directory of its part, with the part it belongs to and the step that moves it, or with the member change of the v1 program that removes it. It also lists each import that breaks the rule above, with the step that ends it. The layout gate refuses a violation the register does not carry and a row that no longer occurs.
+- `tests/registers/gateway-layout.yaml` lists each package outside the directory of its part, with the part it belongs to and the step that moves it, or with the member change of the v1 program that removes it. It also lists each import that breaks the rule above, with the step that ends it. The layout gate refuses a violation the register does not carry and a row that no longer occurs. `TestGatewayLayoutRegisterOnlyShrinks` compares the register with its copy at the merge base: a branch deletes rows, and adds or rewrites one only where a move rewrote its paths or in the step that moves its package.
 - `scripts/refactor/manifest` lists the old and new import path of every move, with its step. The move driver in `scripts/refactor` applies one step with `go run ./scripts/refactor -step <step>`. After a move runs, the manifest stays as the translation table for any text that still names an old path.
 
 Each move step settles the names of the packages it moves, and a step that renames a package edits its manifest line before it runs the driver.
