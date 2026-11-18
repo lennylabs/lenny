@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
-| Ready | 4 |
+| Building | 2 |
+| Ready | 3 |
 | Waiting on decisions | 40 |
 | Blocked | 146 |
 | Landed | 3 |
@@ -23,7 +23,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0116.S2](0116-coverage-and-selection/steps.md#0116s2-coverage-gate) | Coverage gate | Ready |  |
+| [0116.S2](0116-coverage-and-selection/steps.md#0116s2-coverage-gate) | Coverage gate | Building |  |
 | [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Ready |  |
 | [0116.S7](0116-coverage-and-selection/steps.md#0116s7-identifiers-in-test-names) | Identifiers in test names | Ready |  |
 | [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Blocked | 0116.S3 |

@@ -20,7 +20,7 @@
 The annotation index in `scripts/specshift/annotation` (CS-1), with `survey`'s site finder reading it. `lenny-test coverage --spec` over the index, the registry, the successor stubs, and the issues (CS-2). `list --spec` and `run --spec` resolving identifiers, page codes, and `§N.M` through the index, and the verdict's annotation lookup in `gotest_json.go` replaced. `TESTING.md` §5 and `cmd/lenny-test/README.md` describe the view. It needs the annotation parser of 0115.S5, the stub lookup of 0115.S7 for indirect coverage, and the site finder of 0115.S8.
 
 ### 0116.S2 Coverage gate
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0116.S1]
 
