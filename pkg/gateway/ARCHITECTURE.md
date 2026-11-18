@@ -10,7 +10,7 @@ This file maps each directory of `pkg/gateway` to the part of the gateway it hol
 | `streamproxy` | The stream proxy seam: the session event bus, session attachment, and the event and log streams. | `spec/components/gateway/stream-proxy.md` (GWSTREAM) |
 | `uploadhandler` | The upload handler seam: upload proxying, validation, and staging. | `spec/components/gateway/upload-handler.md` (GWUPLOAD) |
 | `platformtools` | The platform tools seam: platform tool calls from pods, delegation orchestration and the delegation tree, the elicitation chain, input waits, and tool approvals. | `spec/components/gateway/platform-tools.md` (GWTOOLS) |
-| `meteringproxy` | The metering proxy seam for LLM upstream calls. | `spec/components/gateway/metering-proxy.md` (GWLLM) |
+| `meteringproxy` | The metering proxy seam for LLM upstream calls: `llmproxy`, the LLM reverse proxy with its flags and its own listener; `sessionbudget`, the mid-session token-budget enforcer; and `metering`, the usage recorder and the per-session budget state the proxy serves through the seam interface. | `spec/components/gateway/metering-proxy.md` (GWLLM) |
 | `core/coordination` | Session coordination: the coordination lease, fencing, and their stores. | `spec/components/gateway/session-coordination.md` (GWCOORD) |
 | `core/podclaim` | The pod claimer. | `spec/components/gateway/pod-claimer.md` (GWCLAIM) |
 | `core/checkpoint` | The checkpoint barrier, the checkpointer, and the eviction fallback. | `spec/components/gateway/checkpoint-barrier.md` (GWBARRIER) |
