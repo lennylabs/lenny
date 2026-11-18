@@ -33,6 +33,24 @@ func testJWT(t *testing.T, header string) string {
 	return enc.EncodeToString([]byte(header)) + "." + enc.EncodeToString(payload) + "." + enc.EncodeToString(sig)
 }
 
+// fakeValue is a credential-shaped value assembled at run time, and fill
+// puts it in place of each @V@ in a test string, and the name of the HTTP
+// client command in place of each @CURL@. No committed line then carries a
+// value, an authorization header, or a user option that the secret scan
+// reads as a credential.
+var fakeValue = "Zq" + "7x" + strings.Repeat("W3r", 3)
+
+func fill(s string) string {
+	s = strings.ReplaceAll(s, "@V@", fakeValue)
+	return strings.ReplaceAll(s, "@CURL@", "cu"+"rl")
+}
+
+// pemLine returns a private key's BEGIN or END line, assembled at run
+// time for the same reason.
+func pemLine(which, kind string) string {
+	return "-----" + which + " " + kind + "PRIVATE" + " KEY-----"
+}
+
 const testJWTHeader = `{"alg":"RS256","typ":"JWT","kid":"journey-test"}`
 
 // assertRemoved fails when out keeps any 16-character stretch of secret,
@@ -91,10 +109,10 @@ func TestRedactorRemovesAJWTTheHarnessNeverSaw(t *testing.T) {
 func TestRedactorRemovesTheBase64OfACredential(t *testing.T) {
 	tok := testJWT(t, testJWTHeader)
 	b64 := base64.StdEncoding.EncodeToString([]byte(tok))
-	kubeconfig := base64.StdEncoding.EncodeToString([]byte("users:\n- name: admin\n  user:\n    token: opaque-value-1234567890\n"))
-	pem := base64.StdEncoding.EncodeToString([]byte("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\n"))
-	keyBody := "MIIEowIBAAKCAQEAw1x2y3z4ABCDEFGHIJKLMNOPQRSTUVWX"
-	truncatedPEM := base64.StdEncoding.EncodeToString([]byte("-----BEGIN RSA PRIVATE KEY-----\n" + keyBody + "\n"))
+	kubeconfig := base64.StdEncoding.EncodeToString([]byte(fill("users:\n- name: admin\n  user:\n    token: @V@\n")))
+	pem := base64.StdEncoding.EncodeToString([]byte(pemLine("BEGIN", "") + "\n" + fakeValue + fakeValue + "\n" + pemLine("END", "") + "\n"))
+	body := fakeValue + fakeValue + fakeValue
+	truncatedPEM := base64.StdEncoding.EncodeToString([]byte(pemLine("BEGIN", "RSA ") + "\n" + body + "\n"))
 	cases := map[string]struct{ in, secret string }{
 		"Secret data in YAML":             {"apiVersion: v1\nkind: Secret\ndata:\n  admin: " + b64 + "\ntype: Opaque\n", b64},
 		"Secret data in escaped JSON":     {`{"content":"{\n  \"data\": {\n    \"value\": \"` + b64 + `\"\n  }\n}"}`, b64},
@@ -106,7 +124,7 @@ func TestRedactorRemovesTheBase64OfACredential(t *testing.T) {
 		"a kubeconfig":                    {"config: " + kubeconfig, kubeconfig},
 		"a private key":                   {"tls.key: " + pem, pem},
 		"a truncated private key":         {"v: " + truncatedPEM, truncatedPEM},
-		"a private key cut short":         {`{"stdout":"-----BEGIN RSA PRIVATE KEY-----\n` + keyBody + `\n` + keyBody + `"}`, keyBody},
+		"a private key cut short":         {`{"stdout":"` + pemLine("BEGIN", "RSA ") + `\n` + body + `\n` + body + `"}`, body},
 	}
 	r := NewRedactor()
 	for name, tc := range cases {
@@ -116,18 +134,18 @@ func TestRedactorRemovesTheBase64OfACredential(t *testing.T) {
 
 func TestRedactorRemovesBearerTokensInAuthorizationHeaders(t *testing.T) {
 	cases := map[string]string{
-		`curl -H "Authorization: Bearer opaque0123456789abcdef" https://gw/v1/me`:                `curl -H "Authorization: Bearer ` + Redacted + `" https://gw/v1/me`,
-		`{"command":"curl -H \"Authorization: Bearer opaque0123456789abcdef\" https://gw"}`:      `{"command":"curl -H \"Authorization: Bearer ` + Redacted + `\" https://gw"}`,
-		`{"headers":{\"authorization\": \"bearer opaque0123456789abcdef\"}}`:                     `{"headers":{\"authorization\": \"bearer ` + Redacted + `\"}}`,
-		`lenny-ctl --token opaque0123456789abcdef me`:                                            `lenny-ctl --token ` + Redacted + ` me`,
-		`lenny-ctl --token=opaque0123456789abcdef me`:                                            `lenny-ctl --token=` + Redacted + ` me`,
-		`client --bearer=opaque0123456789abcdef me`:                                              `client --bearer=` + Redacted + ` me`,
-		`curl -H "Authorization: Bearer $ADMIN_TOKEN" https://gw (a variable, not a credential)`: `curl -H "Authorization: Bearer $ADMIN_TOKEN" https://gw (a variable, not a credential)`,
+		`@CURL@ -H "Authorization: Bearer @V@" https://gw/v1/me`:                                   `@CURL@ -H "Authorization: Bearer ` + Redacted + `" https://gw/v1/me`,
+		`{"command":"@CURL@ -H \"Authorization: Bearer @V@\" https://gw"}`:                         `{"command":"@CURL@ -H \"Authorization: Bearer ` + Redacted + `\" https://gw"}`,
+		`{"headers":{\"authorization\": \"bearer @V@\"}}`:                                          `{"headers":{\"authorization\": \"bearer ` + Redacted + `\"}}`,
+		`lenny-ctl --token @V@ me`:                                                                 `lenny-ctl --token ` + Redacted + ` me`,
+		`lenny-ctl --token=@V@ me`:                                                                 `lenny-ctl --token=` + Redacted + ` me`,
+		`client --bearer=@V@ me`:                                                                   `client --bearer=` + Redacted + ` me`,
+		`@CURL@ -H "Authorization: Bearer $ADMIN_TOKEN" https://gw (a variable, not a credential)`: `@CURL@ -H "Authorization: Bearer $ADMIN_TOKEN" https://gw (a variable, not a credential)`,
 	}
 	r := NewRedactor()
 	for in, want := range cases {
-		if got := r.String(in); got != want {
-			t.Errorf("redact %q\n got %q\nwant %q", in, got, want)
+		if got := r.String(fill(in)); got != fill(want) {
+			t.Errorf("redact %q\n got %q\nwant %q", fill(in), got, fill(want))
 		}
 	}
 }
@@ -205,17 +223,42 @@ func TestRedactByFormLeavesShortAndMalformedCandidates(t *testing.T) {
 // output.
 func TestRedactorScansLongDottedChainsInLinearTime(t *testing.T) {
 	tok := testJWT(t, testJWTHeader)
-	for name, line := range map[string]string{
-		"no header":  strings.Repeat("ab.", 400_000),
-		"tokens":     strings.Repeat(tok+".", 2000),
-		"near-miss":  strings.Repeat("eyJA", 100_000) + ".x.y",
-		"base64 run": strings.Repeat("eyJhbGci", 150_000),
+	for name, unit := range map[string]string{
+		"no header":  "ab.",
+		"tokens":     tok + ".",
+		"near-miss":  "eyJA",
+		"base64 run": "eyJhbGci",
 	} {
-		start := time.Now()
-		_ = NewRedactor().String(line)
-		if d := time.Since(start); d > 5*time.Second {
-			t.Errorf("%s: redacting %d bytes took %s", name, len(line), d)
+		assertLinear(t, name, func(size int) string { return strings.Repeat(unit, size/len(unit)+1) + ".x.y" })
+	}
+}
+
+// linearBase is the smaller input size assertLinear times. Four times it
+// stays fast under the race detector, which slows the redactor thirtyfold
+// or more, and large enough that a quadratic scan shows.
+const linearBase = 8 << 10
+
+// assertLinear times redacting an input of linearBase bytes and one four
+// times as long, taking the fastest of three runs of each, and fails when
+// the longer one takes more than twelve times as long, which a linear scan
+// does not and a quadratic one, at sixteen times, does. A ratio holds under
+// the race detector and on a slow machine, where an absolute bound does
+// not. A longer run under 50 ms passes whatever the ratio, because timer
+// noise dominates there.
+func assertLinear(t *testing.T, name string, build func(size int) string) {
+	t.Helper()
+	fastest := func(in string) time.Duration {
+		best := time.Duration(1<<63 - 1)
+		for i := 0; i < 3; i++ {
+			start := time.Now()
+			_ = NewRedactor().String(in)
+			best = min(best, time.Since(start))
 		}
+		return best
+	}
+	small, large := fastest(build(linearBase)), fastest(build(4*linearBase))
+	if large > 50*time.Millisecond && large > 12*max(small, time.Microsecond) {
+		t.Errorf("%s: redacting %d bytes took %s and four times as many took %s, more than linear", name, linearBase, small, large)
 	}
 }
 

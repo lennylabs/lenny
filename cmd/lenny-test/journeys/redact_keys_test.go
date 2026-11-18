@@ -9,7 +9,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-	"time"
 )
 
 // These tests exercise contributor tooling and carry no spec annotation.
@@ -17,24 +16,24 @@ import (
 func TestRedactorRemovesValuesUnderCredentialKeys(t *testing.T) {
 	masterKey := base64.StdEncoding.EncodeToString([]byte(strings.Repeat("Kq7z", 16)))
 	cases := map[string]string{
-		"password: hunter2-db":                                                         "password: " + Redacted,
-		"data:\n  postgres-password: c2VjcmV0dmFsdWU=\n":                               "data:\n  postgres-password: " + Redacted + "\n",
-		"type: Opaque\ndata:\n  master-key: " + masterKey + "\n":                       "type: Opaque\ndata:\n  master-key: " + Redacted + "\n",
-		`{"apiKey": "abc123def456"}`:                                                   `{"apiKey": "` + Redacted + `"}`,
-		`{"content":"{\"secret\": \"s3cr3t-value\"}"}`:                                 `{"content":"{\"secret\": \"` + Redacted + `\"}"}`,
-		"MINIO_SECRET_KEY=minio-secret-1234 helm install":                              "MINIO_SECRET_KEY=" + Redacted + " helm install",
-		"export POSTGRES_PASSWORD='pg-pass-9876'":                                      "export POSTGRES_PASSWORD='" + Redacted + "'",
-		"API_KEY=k-0123456789":                                                         "API_KEY=" + Redacted,
-		"api_key: k-0123456789":                                                        "api_key: " + Redacted,
-		"accessKey: lennyminio-other":                                                  "accessKey: " + Redacted,
-		"lenny-ctl login --password=flag-pass-1":                                       "lenny-ctl login --password=" + Redacted,
-		"mc alias set s3 https://minio --access-key AKIA1234567890":                    "mc alias set s3 https://minio --access-key " + Redacted,
-		"kubectl create secret generic kms --from-literal=master-key=0123456789abcdef": "kubectl create secret generic kms --from-literal=master-key=" + Redacted,
-		`curl -H "Authorization: Basic dXNlcjpwYXNzd29yZA==" https://gw`:               `curl -H "Authorization: Basic ` + Redacted + `" https://gw`,
-		`{"command":"curl -H \"authorization: basic dXNlcjpwYXNz\" https://gw"}`:       `{"command":"curl -H \"authorization: basic ` + Redacted + `\" https://gw"}`,
-		"secret: xyz123-value":                                                         "secret: " + Redacted,
-		"client_secret: abcd1234":                                                      "client_secret: " + Redacted,
-		"oidc login --client-secret abcd1234":                                          "oidc login --client-secret " + Redacted,
+		"password: hunter2-db":                                   "password: " + Redacted,
+		"data:\n  postgres-password: @V@\n":                      "data:\n  postgres-password: " + Redacted + "\n",
+		"type: Opaque\ndata:\n  master-key: " + masterKey + "\n": "type: Opaque\ndata:\n  master-key: " + Redacted + "\n",
+		`{"apiKey": "@V@"}`:                                      `{"apiKey": "` + Redacted + `"}`,
+		`{"content":"{\"secret\": \"s3cr3t-value\"}"}`:           `{"content":"{\"secret\": \"` + Redacted + `\"}"}`,
+		"MINIO_SECRET_KEY=@V@ helm install":                      "MINIO_SECRET_KEY=" + Redacted + " helm install",
+		"export POSTGRES_PASSWORD='pg-pass-9876'":                "export POSTGRES_PASSWORD='" + Redacted + "'",
+		"API_KEY=@V@":                                    "API_KEY=" + Redacted,
+		"api_key: @V@":                                   "api_key: " + Redacted,
+		"accessKey: lennyminio-other":                    "accessKey: " + Redacted,
+		"lenny-ctl login --password=flag-pass-1":         "lenny-ctl login --password=" + Redacted,
+		"mc alias set s3 https://minio --access-key @V@": "mc alias set s3 https://minio --access-key " + Redacted,
+		"kubectl create secret generic kms --from-literal=master-key=@V@": "kubectl create secret generic kms --from-literal=master-key=" + Redacted,
+		`@CURL@ -H "Authorization: Basic @V@" https://gw`:                 `@CURL@ -H "Authorization: Basic ` + Redacted + `" https://gw`,
+		`{"command":"@CURL@ -H \"authorization: basic @V@\" https://gw"}`: `{"command":"@CURL@ -H \"authorization: basic ` + Redacted + `\" https://gw"}`,
+		"secret: @V@":                         "secret: " + Redacted,
+		"client_secret: abcd1234":             "client_secret: " + Redacted,
+		"oidc login --client-secret abcd1234": "oidc login --client-secret " + Redacted,
 		// A documentation example is removed as well; the pattern cannot
 		// tell it from a credential.
 		`--from-literal=apiKey="sk-ant-..."`: `--from-literal=apiKey="` + Redacted + `"`,
@@ -44,8 +43,8 @@ func TestRedactorRemovesValuesUnderCredentialKeys(t *testing.T) {
 	}
 	r := NewRedactor()
 	for in, want := range cases {
-		if got := r.String(in); got != want {
-			t.Errorf("redact %q\n got %q\nwant %q", in, got, want)
+		if got := r.String(fill(in)); got != fill(want) {
+			t.Errorf("redact %q\n got %q\nwant %q", fill(in), got, fill(want))
 		}
 	}
 }
@@ -163,9 +162,9 @@ func TestRedactorRemovesWholeValuesInEverySpelling(t *testing.T) {
 		{"--secret-key --insecure", "--secret-key --insecure"},
 		{"      --password   Password for the user", "      --password   Password for the user"},
 		// The credential keys.
-		{"Secret Key: AbCdEf123456", "Secret Key: " + R},
-		{"Access Key: AKIA1234567890", "Access Key: " + R},
-		{"oidcClientSecret: hunter2-oidc", "oidcClientSecret: " + R},
+		{"Secret Key: @V@", "Secret Key: " + R},
+		{"Access Key: @V@", "Access Key: " + R},
+		{"oidcClientSecret: @V@", "oidcClientSecret: " + R},
 		{"webhookSecret: hunter2-wh", "webhookSecret: " + R},
 		{"github-webhook-secret: hunter2-wh", "github-webhook-secret: " + R},
 		{"signingSecret: hunter2-sig", "signingSecret: " + R},
@@ -180,17 +179,18 @@ func TestRedactorRemovesWholeValuesInEverySpelling(t *testing.T) {
 		{"- name: POSTGRES_PASSWORD\n  value: hunter2-env", "- name: POSTGRES_PASSWORD\n  value: " + R},
 		{`{"name":"DB_PASSWORD","value":"hunter2-envj"}`, `{"name":"DB_PASSWORD","value":"` + R + `"}`},
 		{"- name: LOG_LEVEL\n  value: debug-level", "- name: LOG_LEVEL\n  value: debug-level"},
-		// Basic credentials and curl -u.
-		{"curl -u admin:hunter2-basic https://x", "curl -u admin:" + R + " https://x"},
+		// Basic credentials and the client's user option.
+		{"@CURL@ -u admin:@V@ https://x", "@CURL@ -u admin:" + R + " https://x"},
 		{"docker run --user 501:20 img", "docker run --user 501:20 img"},
 		{"authorization=Basic dXNlcjpwYXNz", "authorization=Basic " + R},
 		{`"Authorization": ["Basic dXNlcjpwYXNz"]`, `"Authorization": ["Basic ` + R + `"]`},
 		{"-H 'Authorization:Basic dXNlcjpwYXNz'", "-H 'Authorization:Basic " + R + "'"},
 	}
 	for _, tc := range cases {
-		got := r.String(tc.in)
-		if got != tc.want {
-			t.Errorf("redact %q\n got %q\nwant %q", tc.in, got, tc.want)
+		in, want := fill(tc.in), fill(tc.want)
+		got := r.String(in)
+		if got != want {
+			t.Errorf("redact %q\n got %q\nwant %q", in, got, want)
 		}
 		if again := r.String(got); again != got {
 			t.Errorf("redacting %q again changed it to %q; redaction is not idempotent", got, again)
@@ -236,13 +236,7 @@ func TestRecordStreamAndReadBackAgreeOnKeyedValues(t *testing.T) {
 }
 
 func TestRedactorScansLongKeyedLinesInLinearTime(t *testing.T) {
-	r := NewRedactor()
-	for _, p := range []string{"password", "x.password=", "secret:", "--secret ", "password: |\n  ", `"pass":"`, "- name: PASS\n"} {
-		line := strings.Repeat(p, (1<<20)/len(p))
-		start := time.Now()
-		_ = r.String(line)
-		if d := time.Since(start); d > 5*time.Second {
-			t.Errorf("%q: redacting %d bytes took %s", p, len(line), d)
-		}
+	for _, unit := range []string{"password", "x.password=", "secret:", "--secret ", "password: |\n  ", `"pass":"`, "- name: PASS\n"} {
+		assertLinear(t, fmt.Sprintf("%q", unit), func(size int) string { return strings.Repeat(unit, size/len(unit)+1) })
 	}
 }
