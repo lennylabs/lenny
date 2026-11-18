@@ -1696,6 +1696,21 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-AfterRevokeWrite",
+      "anchor": "gwseam-afterrevokewrite",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-AfterTerminalWrite",
+      "anchor": "gwseam-afterterminalwrite",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ApplyExperimentRouting",
+      "anchor": "gwseam-applyexperimentrouting",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ArchiveNode",
       "anchor": "gwseam-archivenode",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1721,6 +1736,21 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-AwaitApproval",
+      "anchor": "gwseam-awaitapproval",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-BeginTerminal",
+      "anchor": "gwseam-beginterminal",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-Broadcast",
+      "anchor": "gwseam-broadcast",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-CancelApproval",
       "anchor": "gwseam-cancelapproval",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1733,6 +1763,11 @@
     {
       "id": "GWSEAM-ChildrenReattachedFrame",
       "anchor": "gwseam-childrenreattachedframe",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ClearSubtreeDenial",
+      "anchor": "gwseam-clearsubtreedenial",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -1756,6 +1791,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ElicitationFloor",
+      "anchor": "gwseam-elicitationfloor",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-EnqueueInbox",
       "anchor": "gwseam-enqueueinbox",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1766,8 +1806,23 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ExtendForBudget",
+      "anchor": "gwseam-extendforbudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-FailNode",
       "anchor": "gwseam-failnode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ForceTerminate",
+      "anchor": "gwseam-forceterminate",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ForgetBudget",
+      "anchor": "gwseam-forgetbudget",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -1831,6 +1886,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-IsBearerRevoked",
+      "anchor": "gwseam-isbearerrevoked",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ListTree",
       "anchor": "gwseam-listtree",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1866,6 +1926,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-OnSessionTerminal",
+      "anchor": "gwseam-onsessionterminal",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-Orphaned",
       "anchor": "gwseam-orphaned",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1881,6 +1946,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-RaiseBudget",
+      "anchor": "gwseam-raisebudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-RearmBudget",
       "anchor": "gwseam-rearmbudget",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1888,6 +1958,16 @@
     {
       "id": "GWSEAM-ReattachNode",
       "anchor": "gwseam-reattachnode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ReclaimRevokedPreRunning",
+      "anchor": "gwseam-reclaimrevokedprerunning",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RecordExtractionAbort",
+      "anchor": "gwseam-recordextractionabort",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -1961,8 +2041,18 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-StampActivity",
+      "anchor": "gwseam-stampactivity",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-StartNode",
       "anchor": "gwseam-startnode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-StreamStats",
+      "anchor": "gwseam-streamstats",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -1973,6 +2063,21 @@
     {
       "id": "GWSEAM-SubtreeTokens",
       "anchor": "gwseam-subtreetokens",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-TerminateForBudget",
+      "anchor": "gwseam-terminateforbudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-TerminateUserSessions",
+      "anchor": "gwseam-terminateusersessions",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-TrackedBudgetSessions",
+      "anchor": "gwseam-trackedbudgetsessions",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {

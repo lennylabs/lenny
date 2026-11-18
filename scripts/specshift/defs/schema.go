@@ -293,9 +293,9 @@ var kinds = []*Kind{
 		Name: KindOperation, Title: "operation", NameField: "name", Catalog: "api-operations",
 		Owner: "The interface page that defines the operation. The block's anchor is the operation identifier `<CODE>-<name>` lower-cased, such as `admpools-createpool`.",
 		Fields: []Field{
-			fieldName("The operation's own name in its interface: the OpenAPI `operationId`, the gRPC method, the Kubernetes verb, or the CLI command words, such as `createPool`."),
-			{Name: "method", Type: TypeString, Doc: "The HTTP method, the RPC kind, or the Kubernetes verb."},
-			{Name: "path", Type: TypeString, Doc: "The HTTP path or the resource the operation acts on."},
+			fieldName("The operation's own name in its interface: the OpenAPI `operationId`, the gRPC method, the Kubernetes verb, the CLI command words, or, on an in-process interface page such as the gateway seams, the Go method, such as `createPool` or `LookupSession`."),
+			{Name: "method", Type: TypeString, Doc: "The HTTP method, the RPC kind, the Kubernetes verb, or `Go method` for an operation of an in-process interface page."},
+			{Name: "path", Type: TypeString, Doc: "The HTTP path, the resource the operation acts on, or, for an operation of an in-process interface page, the Go interface that declares it, such as `seam.Sessions`."},
 			{Name: "returns", Type: TypeList, Doc: "The error codes and refusals the operation returns, by name."},
 			{Name: "requirements", Type: TypeList, Doc: "The identifiers of the requirements behind the operation's outcomes."},
 			fieldSummary,
