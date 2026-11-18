@@ -58,6 +58,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
@@ -1437,11 +1438,13 @@ type Options struct {
 	// emits no operational events for session transitions.
 	OpsEmitter events.EventEmitter
 
-	// BudgetForget drops a settled session's §11.2 mid-session
-	// token-budget accounting from the LLM-proxy enforcer so the
-	// per-session map does not grow without bound. Optional — when nil,
-	// the terminal pipeline performs no budget cleanup. spec: §11.2.
-	BudgetForget func(sessionID string)
+	// BudgetTracking is the metering proxy's per-session budget state,
+	// reached through the seam interface. The terminal pipeline drops a
+	// settled session's mid-session token-budget accounting through its
+	// GWSEAM-ForgetBudget, so the per-session maps do not grow without
+	// bound. Optional: when nil, the terminal pipeline performs no budget
+	// cleanup.
+	BudgetTracking seam.BudgetTracking
 
 	// RefResolver pins each §14 gitClone source's ref to an immutable
 	// commit SHA at session creation. Optional — when nil, the gateway
@@ -1783,7 +1786,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		environments:               opts.Environments,
 		tenantAccess:               opts.TenantAccess,
 		opsEmitter:                 opts.OpsEmitter,
-		budgetForget:               opts.BudgetForget,
+		budgetForget:               forgetBudgetOf(opts.BudgetTracking),
 		refResolver:                opts.RefResolver,
 		credPools:                  opts.CredentialPools,
 		vcsCreds:                   opts.VCSCredentials,

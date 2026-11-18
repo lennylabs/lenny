@@ -19,11 +19,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
@@ -37,8 +37,8 @@ import (
 // listener, the watchdog, and the watchdog context (plus its cancel) on the
 // accumulator for the run loop. It also wires the leasecontrol.Service it
 // builds into the proxy's sessionbudget enforcer as the §8.6 in-process
-// budget-exhaustion extension seam and takes that enforcer as the episode
-// fan-out's SessionReclaimer (proposal 0023 S6).
+// budget-exhaustion extension seam, and gives the episode fan-out the
+// metering proxy's budgets over that enforcer (proposal 0023 S6).
 //
 // The process-lifetime defers the original inline block registered (the
 // watchdog-context cancel and the hold and recycle coordinator
@@ -164,25 +164,22 @@ func (w *gatewayWiring) buildControlServer(
 	// derived in-path wait, and mapping leasecontrol.Outcome onto the
 	// enforcer's own tri-state.
 	//
-	// The SessionReclaimer the episode fan-out (and the in-path Granted path)
-	// applies each grant through is the §4.9 usage recorder, not the enforcer
-	// directly: the recorder both raises the enforcer budget AND accumulates
+	// The episode fan-out (and the in-path Granted path) applies each grant
+	// through the metering proxy's budgets, GWSEAM-RaiseBudget and
+	// GWSEAM-TerminateForBudget. With a usage recorder attached they reach
+	// the recorder, which both raises the enforcer budget AND accumulates
 	// the granted token delta so RecordUsage adds it to the base
 	// MaxTokenBudget on the next settlement, keeping the raise alive across the
-	// next Enforcer.Record (proposal 0023 S3/S4 raise-survival). When the
-	// recorder is nil (no usagestore wired) the enforcer is the reclaimer
-	// directly, which still clears the deny flag and terminates a detached
-	// session even though no usage settlement will follow to re-exhaust it.
+	// next Enforcer.Record (proposal 0023 S3/S4 raise-survival). With no
+	// recorder (no usagestore wired) they reach the enforcer directly, which
+	// still clears the deny flag and terminates a detached session even
+	// though no usage settlement will follow to re-exhaust it.
 	// A nil leaseControlSvc (no --grpc-addr, the local-development path)
 	// leaves the enforcer's nil seam in place, so exhaustion still denies and
 	// terminates immediately. proposal 0023 S6.
 	if leaseControlSvc != nil && w.sessionBudgetEnforcer != nil {
 		w.sessionBudgetEnforcer.SetExtendOnExhaustion(leaseExtendSeam(leaseControlSvc))
-		if w.proxyUsageRec != nil {
-			leaseControlSvc.SetReclaimer(w.proxyUsageRec)
-		} else {
-			leaseControlSvc.SetReclaimer(w.sessionBudgetEnforcer)
-		}
+		leaseControlSvc.SetReclaimer(w.meteringBudgets)
 	}
 
 	// ----- §6.2 / §11.3 pre-running watchdog -----

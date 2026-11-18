@@ -4,7 +4,7 @@
 
 // Component-tier coverage for the §4.8 LLM interceptor phases
 // (PreLLMRequest, PostLLMResponse) on the §4.9 LLM reverse proxy. The
-// unit suite in pkg/gateway/llmproxy/llmproxy covers these phases against
+// unit suite in pkg/gateway/meteringproxy/llmproxy covers these phases against
 // an in-process httptest upstream; this suite drives the same phases
 // through the proxy Handler wired to a real Postgres-backed credential
 // lease store and the mock LLM provider recorder (the mocked upstream
@@ -22,7 +22,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )

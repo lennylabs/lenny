@@ -241,7 +241,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	w.buildHolderForwardServer(sessionSrv, mcpSrv)
 
 	// §4.9 LLM Proxy subsystem (a named §4.1 extraction target).
-	llmProxySrv := w.buildLLMProxy(policyChain,
+	llmProxySrv := w.buildLLMProxy(parts.llmProxy, parts.metering, policyChain,
 		sessionBudgetEnforcer, activityStamper, auditSink, erasureSemanticCache,
 		usage, quotaCounter, w.tenantLimits)
 

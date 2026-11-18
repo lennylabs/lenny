@@ -15,7 +15,7 @@
 //   - the gateway's session-scoped ReportUsage pull
 //     (adapterclient.Client.ReportUsageForLease), the same pull the
 //     directUsageLoop issues each tick, reading the incremental delta;
-//   - the production gateway usage sink (*proxyUsageRecorder.RecordDirectUsage
+//   - the production gateway usage sink (*metering.Recorder.RecordDirectUsage
 //     → recordAccounting → recordQuota → AddHierarchical), the fan-out the
 //     direct-mode poll loop hands each pulled delta to; and
 //   - a Redis-container-backed §11.2 hierarchical quota counter
@@ -34,7 +34,7 @@
 // components surfaces here.
 //
 // This test lives in package main because the production sink
-// (*proxyUsageRecorder) is unexported; the tier-4 flow the proposal names
+// (*metering.Recorder) is unexported; the tier-4 flow the proposal names
 // reaches the quota counter through that recorder, so the test is colocated
 // with it rather than reimplementing the sink from an external package.
 //
@@ -66,7 +66,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
@@ -331,13 +332,13 @@ func TestDirectModeUsageFlowsToQuotaCounter_spec_11_2(t *testing.T) {
 	var usageStore usagestore.Store = usagestore.NewMemory()
 	sessUsage := sessionusage.NewMemory()
 	now := time.Now().UTC()
-	rec := newProxyUsageRecorder(usageStore, sessions, sessUsage, counter, directQuotaLimits{}, nil)
+	rec := metering.NewRecorder(usageStore, sessions, sessUsage, counter, directQuotaLimits{}, nil)
 	if rec == nil {
-		t.Fatal("newProxyUsageRecorder returned nil with a usage store set")
+		t.Fatal("metering.NewRecorder returned nil with a usage store set")
 	}
 	// Pin the recorder's quota-window clock so recordQuota keys the same hourly
 	// window UsageHierarchical reads back below.
-	rec.now = func() time.Time { return now }
+	rec.SetClock(func() time.Time { return now })
 
 	// Real wired adapter over gRPC + a real lifecycle socket: the adapter the
 	// production cmd/lenny-adapter assembles for a direct-mode pod.

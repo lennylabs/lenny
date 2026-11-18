@@ -5,8 +5,8 @@ package rewrite
 import "strings"
 
 // PathTokens rewrites the repository-relative package paths that a register
-// or a list names as bare tokens, quoted or not, such as the YAML registers
-// under tests/registers and the pending lists beside the test maps. A token
+// names as bare tokens, quoted or not, such as the YAML registers under
+// tests/registers. A token
 // is a maximal run of the characters a path is spelled with (letters,
 // digits, '_', '-', '.', and '/'), so the rewrite is anchored on whatever
 // bounds the run: a space, a quote, a colon, a comma, a bracket, or the
@@ -21,7 +21,7 @@ import "strings"
 // that matches the longest moved path, so a rewritten token is never
 // examined again.
 func PathTokens(content string, moves []Move) string {
-	pairs := jsonOldNew(moves)
+	pairs := relOldNew(moves)
 	if len(pairs) == 0 {
 		return content
 	}

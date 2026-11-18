@@ -58,7 +58,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -179,7 +179,7 @@ func (r *tier9Reclaimer) RaiseBudget(string, int64) {
 	r.mu.Unlock()
 }
 
-func (r *tier9Reclaimer) TerminateSession(string) {}
+func (r *tier9Reclaimer) TerminateForBudget(string) {}
 
 func (r *tier9Reclaimer) count() int {
 	r.mu.Lock()
@@ -472,7 +472,7 @@ type terminatorSpy struct {
 	calls []string
 }
 
-func (s *terminatorSpy) TerminateSession(sessionID, _ /*reason*/ string) {
+func (s *terminatorSpy) ExpireSession(sessionID, _ /*reason*/ string) {
 	s.mu.Lock()
 	s.calls = append(s.calls, sessionID)
 	s.mu.Unlock()

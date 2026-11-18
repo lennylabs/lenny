@@ -10,8 +10,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -25,8 +26,10 @@ import (
 //
 // spec: §4.9.
 
-// proxyFallbackRotator mints a §4.9 replacement lease from the fallback
-// chain's next pool and pushes it to the session's pod. It reuses the
+// proxyFallbackRotator is the session core's side of GWSEAM-RotateCredential,
+// which the metering proxy's credential fallback calls. It mints a §4.9
+// replacement lease from the fallback chain's next pool and pushes it to the
+// session's pod. It reuses the
 // credential-assignment service and warm-pod registry the proactive
 // renewal loop uses. A nil assigner or registry degrades to a no-op
 // push, consistent with the renewal wiring's nil-receiver behavior.
@@ -35,10 +38,51 @@ type proxyFallbackRotator struct {
 	registry *podsession.Registry
 }
 
-// Rotate issues a replacement lease for the faulted lease's provider
-// from nextPool and pushes it to the session's pod (Fallback Flow steps
-// 5-7). spec: §4.9.
-func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) {
+// RotateCredential is GWSEAM-RotateCredential: it issues a replacement lease
+// for the faulted lease's provider from the next pool and pushes it to the
+// session's pod (Fallback Flow steps 5-7). The RPC is bounded by
+// credRotateRPCTimeout under ctx.
+// spec: §4.9, GWSEAM-RotateCredential
+func (r proxyFallbackRotator) RotateCredential(ctx context.Context, rot seam.CredentialRotation) {
+	r.rotate(ctx, leaseRotation{
+		tenantID:   rot.TenantID,
+		sessionID:  rot.SessionID,
+		provider:   rot.Provider,
+		generation: rot.CoordinationGeneration,
+		nextPool:   rot.NextPool,
+		trigger:    credential.RotationTrigger(rot.Trigger),
+	})
+}
+
+// rotateLease rotates a lease's session off the lease for the emergency
+// revocation's direct-mode rotate, which holds the lease itself. The rotate
+// carries no caller context, so the RPC is bounded by credRotateRPCTimeout
+// alone.
+func (r proxyFallbackRotator) rotateLease(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) {
+	r.rotate(context.Background(), leaseRotation{
+		tenantID:   faulted.TenantID,
+		sessionID:  faulted.SessionID,
+		provider:   string(faulted.Provider),
+		generation: faulted.CoordinationGeneration,
+		nextPool:   nextPool,
+		trigger:    trigger,
+	})
+}
+
+// leaseRotation names the session, tenant, provider, and coordination
+// generation a replacement lease is minted and attributed under, the pool it
+// comes from, and the rotation trigger the pod's in-flight gate reads.
+type leaseRotation struct {
+	tenantID   string
+	sessionID  string
+	provider   string
+	generation int64
+	nextPool   string
+	trigger    credential.RotationTrigger
+}
+
+// rotate mints the replacement lease and pushes it to the session's pod.
+func (r proxyFallbackRotator) rotate(ctx context.Context, lr leaseRotation) {
 	if r.assign == nil {
 		return
 	}
@@ -48,16 +92,16 @@ func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, 
 	// spec: §7.3 (Credential leases on the replacement pod) — the
 	// replacement records the faulted lease's coordination generation, so
 	// the session's pod release scopes it as it scoped the faulted lease.
-	wire, err := r.assign.AssignProto(nextPool, faulted.SessionID, "", faulted.TenantID, faulted.CoordinationGeneration)
+	wire, err := r.assign.AssignProto(lr.nextPool, lr.sessionID, "", lr.tenantID, lr.generation)
 	if err != nil {
 		log.Printf("lenny-gateway: §4.9 fallback: mint replacement for session %s from pool %s: %v",
-			faulted.SessionID, nextPool, err)
+			lr.sessionID, lr.nextPool, err)
 		return
 	}
 	if r.registry == nil {
 		return
 	}
-	bind, ok := r.registry.Get(faulted.SessionID)
+	bind, ok := r.registry.Get(lr.sessionID)
 	if !ok || bind.Adapter == nil {
 		// No pod binding on this replica: the replacement lease is
 		// recorded, but there is no local pod to push the rotation to.
@@ -66,9 +110,8 @@ func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, 
 	// The §4.7 RotateCredentials leases map is keyed by the
 	// runtime-facing provider; the adapter rewrites only that provider's
 	// credential-file entry and retains the rest.
-	provider := string(faulted.Provider)
-	wire.Provider = provider
-	ctx, cancel := context.WithTimeout(context.Background(), credRotateRPCTimeout)
+	wire.Provider = lr.provider
+	ctx, cancel := context.WithTimeout(ctx, credRotateRPCTimeout)
 	defer cancel()
 	// §4.9 / §4.7: the fault trigger that drove this
 	// fallback rides the RPC so the adapter applies the 300s in-flight
@@ -76,10 +119,10 @@ func (r proxyFallbackRotator) Rotate(faulted credential.Lease, nextPool string, 
 	// faulted credential is no longer trustworthy. An empty trigger
 	// (which AllRotationTriggers excludes) is treated as a fault by the
 	// adapter for fail-closed safety. F-13.3.10.
-	if err := bind.Adapter.RotateCredentials(ctx, faulted.SessionID,
-		map[string]*adapterv1.CredentialLease{provider: wire}, trigger); err != nil {
+	if err := bind.Adapter.RotateCredentials(ctx, lr.sessionID,
+		map[string]*adapterv1.CredentialLease{lr.provider: wire}, lr.trigger); err != nil {
 		log.Printf("lenny-gateway: §4.9 fallback: RotateCredentials push to session %s pod failed: %v",
-			faulted.SessionID, err)
+			lr.sessionID, err)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
@@ -65,7 +66,7 @@ func (p *stubPuller) pullCount() int {
 // injecting a stub puller so the registry-keyed teardown logic runs without a
 // live gRPC adapter. The interval is the (post-clamp) minimum so a ticker-based
 // test does not wait long.
-func newLoopUnderTest(t *testing.T, registry *podsession.Registry, leases directUsageLeaseLookup, rec *proxyUsageRecorder, puller directUsagePuller) *directUsageLoop {
+func newLoopUnderTest(t *testing.T, registry *podsession.Registry, leases directUsageLeaseLookup, rec *metering.Recorder, puller directUsagePuller) *directUsageLoop {
 	t.Helper()
 	loop := newDirectUsageLoop(registry, leases, rec, minDirectUsagePollIntervalSeconds, nil)
 	if loop == nil {
@@ -97,7 +98,7 @@ func TestDirectUsageLoopStopsAtTeardown_spec_11_2(t *testing.T) {
 	puller := &stubPuller{reports: map[string]adapterclient.UsageReport{
 		"s_live": {InputTokens: 10, OutputTokens: 5},
 	}}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec := metering.NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	loop := newLoopUnderTest(t, registry, leases, rec, puller)
 
 	// A poll with the session bound pulls it.
@@ -132,7 +133,7 @@ func TestDirectUsageLoopSkipsSessionRemovedMidPoll_spec_11_2(t *testing.T) {
 		"s_gone": directUsage("s_gone", "acme"),
 	}}
 	puller := &stubPuller{reports: map[string]adapterclient.UsageReport{}}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec := metering.NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	loop := newLoopUnderTest(t, registry, leases, rec, puller)
 
 	// Simulate the race directly: pullSession re-reads the registry, so removing
@@ -174,9 +175,9 @@ func TestDirectUsageLoopHungPodIdleTerminates_spec_6_2_253(t *testing.T) {
 	puller := &stubPuller{reports: map[string]adapterclient.UsageReport{
 		"s_hung": {InputTokens: 0, OutputTokens: 0},
 	}}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), store, nil, nil, nil, nil)
+	rec := metering.NewRecorder(usagestore.NewMemory(), store, nil, nil, nil, nil)
 	stamper := sessionidle.NewStamper(store, func() time.Time { return t0 })
-	rec.setActivityStamper(stamper)
+	rec.SetActivity(stamper)
 	loop := newLoopUnderTest(t, registry, leases, rec, puller)
 
 	// Poll the hung pod several times; every pull returns a zero delta.
@@ -218,7 +219,7 @@ func TestDirectUsageLoopSkipsProxyLease_spec_4_9_1468(t *testing.T) {
 	puller := &stubPuller{reports: map[string]adapterclient.UsageReport{
 		"s_direct": {InputTokens: 7, OutputTokens: 3},
 	}}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec := metering.NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	loop := newLoopUnderTest(t, registry, leases, rec, puller)
 
 	loop.pollOnce(ctx)
@@ -250,9 +251,9 @@ func TestDirectUsageLoopFailedPullDoesNotStamp_spec_6_2_253(t *testing.T) {
 		"s_wedged": directUsage("s_wedged", "acme"),
 	}}
 	puller := &stubPuller{err: errors.New("adapter unreachable")}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), store, nil, nil, nil, nil)
+	rec := metering.NewRecorder(usagestore.NewMemory(), store, nil, nil, nil, nil)
 	stamper := sessionidle.NewStamper(store, func() time.Time { return t0 })
-	rec.setActivityStamper(stamper)
+	rec.SetActivity(stamper)
 	loop := newLoopUnderTest(t, registry, leases, rec, puller)
 
 	loop.pollOnce(ctx)
@@ -275,7 +276,7 @@ func TestDirectUsageLoopRunExitsOnContextCancel_spec_4_1(t *testing.T) {
 	registry := podsession.NewRegistry()
 	leases := stubLeaseLookup{leases: map[string]credential.Lease{}}
 	puller := &stubPuller{reports: map[string]adapterclient.UsageReport{}}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec := metering.NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	loop := newLoopUnderTest(t, registry, leases, rec, puller)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -302,7 +303,7 @@ func TestDirectUsageLoopRunExitsOnContextCancel_spec_4_1(t *testing.T) {
 func TestNewDirectUsageLoopNilOnMissingDeps(t *testing.T) {
 	registry := podsession.NewRegistry()
 	leases := stubLeaseLookup{}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec := metering.NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	if l := newDirectUsageLoop(nil, leases, rec, 30, nil); l != nil {
 		t.Error("nil registry must yield a nil loop")
 	}
@@ -316,27 +317,27 @@ func TestNewDirectUsageLoopNilOnMissingDeps(t *testing.T) {
 
 // TestDirectUsageRecorderOrNil_TypedNilRecorderYieldsNilLoop proves the
 // typed-nil normalization at the loop's construction site: a nil
-// *proxyUsageRecorder (what newProxyUsageRecorder returns on a usagestore-less
+// *metering.Recorder (what newProxyUsageRecorder returns on a usagestore-less
 // gateway) is normalized to a genuinely nil directUsageRecorder interface, so
 // newDirectUsageLoop's recorder==nil guard trips and the loop is not
 // constructed on a minimal gateway. It would fail against the pre-fix code that
-// passed the concrete *proxyUsageRecorder straight into the interface parameter:
+// passed the concrete *metering.Recorder straight into the interface parameter:
 // Go wraps a typed nil into a non-nil interface, so newDirectUsageLoop would
 // return a live loop and run an empty ticker every tick instead of a no-op.
 //
 // spec: §11.2, §4.1 (background subsystems are constructed only
 // when their dependencies are present).
-// diagnosis: the direct-mode poll loop was constructed and ran a live ticker on a usagestore-less gateway because a nil *proxyUsageRecorder wrapped into a non-nil directUsageRecorder interface, defeating the recorder==nil short-circuit (proposal 0024 S9 typed-nil no-op contract broken).
+// diagnosis: the direct-mode poll loop was constructed and ran a live ticker on a usagestore-less gateway because a nil *metering.Recorder wrapped into a non-nil directUsageRecorder interface, defeating the recorder==nil short-circuit (proposal 0024 S9 typed-nil no-op contract broken).
 func TestDirectUsageRecorderOrNil_TypedNilRecorderYieldsNilLoop(t *testing.T) {
 	registry := podsession.NewRegistry()
 	leases := stubLeaseLookup{}
 
 	// A usagestore-less gateway: newProxyUsageRecorder returns a nil
-	// *proxyUsageRecorder. This is exactly the value workers.go passes as
+	// *metering.Recorder. This is exactly the value workers.go passes as
 	// w.proxyUsageRec on a minimal gateway.
-	nilRec := newProxyUsageRecorder(nil, nil, nil, nil, nil, nil)
+	nilRec := metering.NewRecorder(nil, nil, nil, nil, nil, nil)
 	if nilRec != nil {
-		t.Fatal("newProxyUsageRecorder(nil, ...) must return a nil *proxyUsageRecorder")
+		t.Fatal("metering.NewRecorder(nil, ...) must return a nil *metering.Recorder")
 	}
 
 	// Reproduce the pre-fix defect: passing the concrete typed nil straight
@@ -350,11 +351,11 @@ func TestDirectUsageRecorderOrNil_TypedNilRecorderYieldsNilLoop(t *testing.T) {
 	// nil interface, so the guard trips and no loop (and no live ticker) is
 	// constructed.
 	if loop := newDirectUsageLoop(registry, leases, directUsageRecorderOrNil(nilRec), 30, nil); loop != nil {
-		t.Fatal("directUsageRecorderOrNil must normalize a nil *proxyUsageRecorder so the loop is not constructed on a minimal gateway")
+		t.Fatal("directUsageRecorderOrNil must normalize a nil *metering.Recorder so the loop is not constructed on a minimal gateway")
 	}
 
 	// A non-nil recorder passes through unchanged and yields a live loop.
-	realRec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	realRec := metering.NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	if loop := newDirectUsageLoop(registry, leases, directUsageRecorderOrNil(realRec), 30, nil); loop == nil {
 		t.Fatal("a present recorder must yield a live loop through directUsageRecorderOrNil")
 	}
@@ -392,5 +393,13 @@ func TestDirectUsagePullTimeout(t *testing.T) {
 		if got := directUsagePullTimeout(c.interval); got != c.want {
 			t.Errorf("directUsagePullTimeout(%s) = %s, want %s", c.interval, got, c.want)
 		}
+	}
+}
+
+// directUsage is a §11.2 direct-mode lease the direct-mode loop tests share.
+func directUsage(sessionID, tenantID string) credential.Lease {
+	return credential.Lease{
+		LeaseID: "cl-direct", SessionID: sessionID, TenantID: tenantID,
+		Source: credential.SourcePool, DeliveryMode: credential.DeliveryDirect,
 	}
 }

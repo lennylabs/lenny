@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -105,7 +105,7 @@ func TestAdminAndBudgetTerminatorsReturnTheChildOnce_spec_8_3(t *testing.T) {
 		}},
 		{"budget terminator", func(store sessionstore.Store, srv *sessionserver.Server) {
 			term := &budgetSessionTerminator{store: store, onTerminal: srv.OnSessionTerminal, beginTerminal: srv.BeginTerminal}
-			term.TerminateSession("child", sessionbudget.ReasonBudgetExhausted)
+			term.ExpireSession("child", sessionbudget.ReasonBudgetExhausted)
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

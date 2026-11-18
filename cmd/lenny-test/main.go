@@ -10,9 +10,9 @@
 //
 // This is the Phase 0 skeleton. It implements:
 //
-//   - Flag parsing and selector resolution against groups.yaml,
-//     spec-map.json, and change-graph.json.
-//   - The "list", "validate-maps", "validate-diagnosis", and "infra" subcommands.
+//   - Flag parsing and selector resolution against groups.yaml, the Go
+//     import graph, the annotation index, and tests/non-go-inputs.yaml.
+//   - The "list", "validate", "validate-diagnosis", and "infra" subcommands.
 //   - A dry-run mode that prints the resolved selector and the tests it would
 //     run, without executing them.
 //   - The default run command, which currently dispatches the unit tier to
@@ -77,8 +77,8 @@ func main() {
 	case "version", "--version":
 		fmt.Printf("lenny-test %s\n", version)
 		os.Exit(0)
-	case "validate-maps":
-		os.Exit(runValidateMaps(args[1:]))
+	case "validate":
+		os.Exit(runValidate(args[1:]))
 	case "validate-diagnosis":
 		os.Exit(runValidateDiagnosis(args[1:]))
 	case "long-funcs":
@@ -130,13 +130,15 @@ func printUsage() {
 
 Usage:
   lenny-test [run] [flags]                 Run tests matching the given selectors.
-  lenny-test validate-maps [flags]         Verify spec-map.json and change-graph.json
-                                           are in sync with the codebase.
+  lenny-test validate [flags]              Check groups.yaml, the subsets, the flake
+                                           budget, the parity matrix, the registers,
+                                           tests/non-go-inputs.yaml, and the spec
+                                           annotation of every component-and-up test.
   lenny-test validate-diagnosis [flags]    Verify every component-and-up test has a
                                            // diagnosis: comment.
   lenny-test long-funcs [flags]            Report functions whose body exceeds a
                                            line threshold (advisory; never fails).
-  lenny-test gate [--base <ref>]           Run the merge gate in the gate container
+  lenny-test gate [merge] [--base <ref>]   Run the merge gate in the gate container
                                            (tests/gate/Dockerfile) and write
                                            tests/results/gate-<run>.json.
   lenny-test secretscan [--root <dir>]     Run the static tier's secret scan on the
@@ -174,13 +176,13 @@ Usage:
 Run flags:
   --group <name>           A named group from tests/groups.yaml (e.g., pr, pr-fast,
                            nightly, pre-release, phase-3.5-gate).
-  --tier <name>            A single tier by name (static, unit, component,
-                           contract, integration, e2e_kind, e2e_cloud,
-                           load_local, load_kind, chaos, security, conformance,
-                           docs, load_cloud). Tier numbers are not accepted.
-                           With --changed, --since, --spec, or --pkg, runs that
-                           selection restricted to the one tier (unit keeps the
-                           selected packages).
+  --tier <t1,t2,...>       Tiers by name (static, unit, component, contract,
+                           integration, e2e_kind, e2e_cloud, load_local,
+                           load_kind, chaos, security, conformance, docs,
+                           load_cloud). Tier numbers are not accepted. Alone,
+                           runs each named tier whole. With --changed, --since,
+                           --spec, or --pkg, runs that selection restricted to
+                           the named tiers (unit keeps the selected packages).
   --tier journeys          The persona journey tier, which takes its own flags:
                            [--journey <name>] [--trials N] [--pilot <name>]
                            [--run-cap-usd 6] [--pilot-cap-usd 54]
@@ -188,10 +190,15 @@ Run flags:
                            Kind cluster per trial and runs a Claude Code agent
                            in a container on the token in
                            ~/.lenny-tmp/journeys/claude-token, so it costs
-                           money; --max-tier never reaches it.
-  --max-tier <name>        Run all tiers up to and including <name>, in the
-                           order the --tier list gives.
+                           money; no --gate bound or --tier list reaches it.
+  --gate <merge|area|release>
+                           Bound the selection at the tiers of that gate.
+                           Alone, runs the gate's tiers whole.
   --changed                Run tests affected by uncommitted changes (git diff).
+                           Without --tier or --gate, --changed and --since run
+                           only the static, unit, component, and contract
+                           tiers they reach, which start no compose stack or
+                           cluster.
   --spec <s1,s2,...>       Run tests covering the given spec sections.
   --pkg <p1,p2,...>        Run tests covering the given source packages.
   --dry-run                Resolve the selector and print what would run; do not

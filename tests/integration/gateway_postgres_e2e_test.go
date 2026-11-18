@@ -251,6 +251,11 @@ func TestGatewayPostgresPersistenceE2E(t *testing.T) {
 // non-production environment the gateway logs a warning and still
 // starts, so StartWith — which waits for the process to become
 // responsive — succeeds.
+//
+// spec: §11.7 (Audit Logging)
+// diagnosis: the gateway refused to start, or never became responsive,
+// against a database whose audit immutability trigger was disabled in a
+// non-production environment, where the integrity check only warns.
 func TestGatewayPostgresIntegrityWarningStartup(t *testing.T) {
 	t.Parallel()
 	gateway.SkipUnlessAvailable(t)

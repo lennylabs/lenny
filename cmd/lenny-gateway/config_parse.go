@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/common/envdefault"
 )
 
 func splitCSV(raw string) []string {
@@ -88,30 +90,14 @@ func envOr(name, def string) string {
 // var is unset or does not parse. Used to default the §27.2
 // playground integer flags.
 func envInt(name string, def int) int {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
+	return envdefault.Int(name, def)
 }
 
 // envDuration mirrors envInt for time.Duration-valued flags. Accepts
 // any value time.ParseDuration parses ("60s", "5m", "1h"); returns def
 // on missing or unparseable env vars.
 func envDuration(name string, def time.Duration) time.Duration {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return def
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return def
-	}
-	return d
+	return envdefault.Duration(name, def)
 }
 
 // envBool returns the env var parsed as a bool, or def when the var is

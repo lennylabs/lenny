@@ -454,8 +454,8 @@ func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *ga
 	// watchdogCtx.Done, so it leaks no goroutine at shutdown. F-15.3.7, F-11.2.20.
 	//
 	// directUsageRecorderOrNil normalizes the recorder before the interface
-	// conversion: on a usagestore-less gateway newProxyUsageRecorder returns a
-	// nil *proxyUsageRecorder, and passing that concrete typed nil directly would
+	// conversion: on a usagestore-less gateway metering.NewRecorder returns a
+	// nil *metering.Recorder, and passing that concrete typed nil directly would
 	// wrap into a non-nil interface, defeating newDirectUsageLoop's recorder==nil
 	// short-circuit and running an empty ticker.
 	directUsage := newDirectUsageLoop(w.podRegistry, w.llmLeases, directUsageRecorderOrNil(w.proxyUsageRec), *f.directUsagePollIntervalSeconds, slog.Default())

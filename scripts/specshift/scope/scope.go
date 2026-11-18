@@ -142,9 +142,6 @@ const (
 	// ClassGeneratedArtifact is the file the generated-artifact rule
 	// selects.
 	ClassGeneratedArtifact Class = "generated-artifacts"
-	// ClassChangeGraphCoverage is the tracked path with no glob key in
-	// the change graph.
-	ClassChangeGraphCoverage Class = "change-graph-coverage"
 	// ClassSkipReason is the skip reason that opens with no category.
 	ClassSkipReason Class = "skip-reasons"
 )
@@ -204,10 +201,6 @@ var classRegisters = map[Class][]string{
 	// residual register alone.
 	ClassGeneratedArtifact: {
 		ClassGeneratedArtifact.ResidualRegister(),
-	},
-	ClassChangeGraphCoverage: {
-		ClassChangeGraphCoverage.ResidualRegister(),
-		"tests/registers/change-graph-coverage.yaml",
 	},
 	ClassSkipReason: {
 		ClassSkipReason.ResidualRegister(),
@@ -305,18 +298,12 @@ const (
 	registerFileExt = ".yaml"
 )
 
-// mapRegisters are the path-keyed test-infrastructure registers that sit
-// outside the register directory: the tier selection map and the
-// specification map, both keyed by tracked path.
-var mapRegisters = []string{
-	"tests/change-graph.json",
-	"tests/spec-map.json",
-}
-
 // pathKeyedRegisterRule states the membership rule in the form an error
 // message names it, so a message reports the rule rather than a snapshot
-// of the tree.
-var pathKeyedRegisterRule = append([]string{registerDir + "*" + registerFileExt}, mapRegisters...)
+// of the tree. Change 0116 retired the two path-keyed maps that sat
+// outside the register directory, the spec map and the change graph, so
+// the register directory is the whole rule.
+var pathKeyedRegisterRule = []string{registerDir + "*" + registerFileExt}
 
 // PathKeyedRegisterRule returns that statement of the rule.
 func PathKeyedRegisterRule() []string { return append([]string(nil), pathKeyedRegisterRule...) }
@@ -341,15 +328,7 @@ func PathKeyedRegisterRule() []string { return append([]string(nil), pathKeyedRe
 // reappears as a resolver failure. Every other register is an ordinary
 // domain member and takes the key rewrite alongside its site rewrite.
 func KeyWritable(target string) bool {
-	if strings.HasPrefix(target, registerDir) && strings.HasSuffix(target, registerFileExt) {
-		return true
-	}
-	for _, r := range mapRegisters {
-		if target == r {
-			return true
-		}
-	}
-	return false
+	return strings.HasPrefix(target, registerDir) && strings.HasSuffix(target, registerFileExt)
 }
 
 // Readable reports whether a tracked path is inside the read domain the

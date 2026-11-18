@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1597
+      count: 1542
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -54,7 +54,7 @@ packages:
     - package: cmd/lenny-preflight
       count: 25
     - package: cmd/lenny-test
-      count: 10
+      count: 8
     - package: cmd/lenny-tier-promote
       count: 1
     - package: cmd/lenny-token-service
@@ -441,8 +441,6 @@ packages:
       count: 9
     - package: pkg/gateway/llmproxy/credrouter
       count: 19
-    - package: pkg/gateway/llmproxy/llmproxy
-      count: 67
     - package: pkg/gateway/llmproxy/proxycache
       count: 1
     - package: pkg/gateway/llmproxy/semanticcache
@@ -497,6 +495,12 @@ packages:
       count: 678
     - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
       count: 1
+    - package: pkg/gateway/meteringproxy/llmproxy
+      count: 71
+    - package: pkg/gateway/meteringproxy/metering
+      count: 53
+    - package: pkg/gateway/meteringproxy/sessionbudget
+      count: 27
     - package: pkg/gateway/middleware/auth
       count: 82
     - package: pkg/gateway/middleware/circuitbreaker
@@ -643,8 +647,6 @@ packages:
       count: 14
     - package: pkg/gateway/session/sessionage
       count: 10
-    - package: pkg/gateway/session/sessionbudget
-      count: 29
     - package: pkg/gateway/session/sessioncallback
       count: 14
     - package: pkg/gateway/session/sessioncheckpointmeta
@@ -948,7 +950,7 @@ packages:
     - package: scripts/refactor/rewrite
       count: 2
     - package: scripts/specshift
-      count: 157
+      count: 156
     - package: scripts/specshift/anchor
       count: 5
     - package: scripts/specshift/gate
@@ -1174,13 +1176,13 @@ packages:
     - package: tests/contract/workspaceplan
       count: 15
     - package: tests/docs
-      count: 1191
+      count: 1187
     - package: tests/e2e_cloud
       count: 77
     - package: tests/e2e_kind
       count: 236
     - package: tests/integration
-      count: 731
+      count: 734
     - package: tests/load_cloud
       count: 13
     - package: tests/load_kind
@@ -1214,7 +1216,7 @@ packages:
     - package: tests/static/lint
       count: 20
     - package: tests/static/structure
-      count: 132
+      count: 100
     - package: tests/testinfra/ackruntime
       count: 2
     - package: tests/testinfra/admission

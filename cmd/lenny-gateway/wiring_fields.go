@@ -24,9 +24,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
@@ -39,7 +39,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
@@ -107,6 +106,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
@@ -124,7 +125,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
@@ -257,17 +257,17 @@ type gatewayWiringFields struct {
 	callbackDispatcher    *sessioncallback.Dispatcher
 	budgetTerminator      *budgetSessionTerminator
 	sessionBudgetEnforcer *sessionbudget.Enforcer
-	// proxyUsageRec is the §4.9 usage recorder buildLLMProxy constructs. It
-	// is recorded here so buildControlServer can wire it as the §8.6
-	// leasecontrol SessionReclaimer: the recorder accumulates each granted
-	// token delta and raises the enforcer budget, keeping the raise alive
-	// across the next Enforcer.Record (proposal 0023 S3/S4). Nil when no
-	// usagestore is wired (the recorder is nil), in which case exhaustion
-	// keeps the §11.2 terminate-immediately posture.
-	proxyUsageRec *proxyUsageRecorder
-	// tokenAnomaly is the §11.2 direct-mode anomaly detector buildLLMProxy
-	// constructs. The budget state sweep reads the sessions it tracks.
-	tokenAnomaly *tokenanomaly.Detector
+	// meteringBudgets is the metering proxy's per-session budget state:
+	// the enforcer, and the usage recorder and anomaly detector
+	// buildLLMProxy attaches. The session server's terminal pipeline and
+	// the budget state sweep reach it, and the §8.6 leasecontrol episode
+	// fan-out raises or ends a detached session's budget through it, all
+	// through seam.BudgetTracking and seam.BudgetResolutions.
+	meteringBudgets *metering.Budgets
+	// proxyUsageRec is the §4.9 usage recorder buildLLMProxy constructs,
+	// which the direct-mode usage loop also feeds. Nil when no usagestore is
+	// wired.
+	proxyUsageRec *metering.Recorder
 	// budgetStateSweep reclaims per-session budget state for sessions that
 	// ended on another replica or were erased. buildSessionServer constructs
 	// it and startBackgroundWorkers runs it. spec: §11.2, §10.1.1.

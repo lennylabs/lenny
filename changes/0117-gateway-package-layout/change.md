@@ -135,7 +135,7 @@ Package names stay as they are and only directories change (decision 6), so most
 | `pkg/gateway/streamproxy` | `components/gateway/stream-proxy.md` (GWSTREAM) | `session/sessionevents`, and a new package from `sessionserver`'s `events.go` and `logs.go`. |
 | `pkg/gateway/uploadhandler` | `components/gateway/upload-handler.md` (GWUPLOAD) | A new package from `sessionserver`'s five upload files. The archive extraction in `podsession` stays until 0153.S3 removes it. |
 | `pkg/gateway/platformtools` | `components/gateway/platform-tools.md` (GWTOOLS) | `mcpfabric/{mcptools, mcp, delegation, delegationbudget, delegationtree, elicitationfloor}`, `gatewaycontrol/{platformtools, inputwaitrecovery}`, `session/{inputwait, toolapproval}`, and a new package from `sessionserver`'s twelve platform tools files. |
-| `pkg/gateway/meteringproxy` | `components/gateway/metering-proxy.md` (GWLLM) | `llmproxy/llmproxy` and `session/sessionbudget`. |
+| `pkg/gateway/meteringproxy` | `components/gateway/metering-proxy.md` (GWLLM) | `llmproxy/llmproxy` and `session/sessionbudget`, and a new package, `metering`, from the usage recorder in `cmd/lenny-gateway`. |
 | `pkg/gateway/core/coordination` | `components/gateway/session-coordination.md` (GWCOORD) | `coordination/{coordination, coordlease, coordfence}`, `storage/{leasestore, dualstore}`. |
 | `pkg/gateway/core/podclaim` | `components/gateway/pod-claimer.md` (GWCLAIM) | `podlifecycle/podclaim`, less the claim-object helpers other components call, which move to `pkg/podregistry`. |
 | `pkg/gateway/core/leaderjobs` | `components/gateway/index.md` (GW) | New at 0117.S4: the session core's gateway-singleton jobs that act on a confined package, which the replica's leader gate runs as one job (open decision 23). |

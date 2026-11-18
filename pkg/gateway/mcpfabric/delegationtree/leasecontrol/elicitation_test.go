@@ -415,7 +415,7 @@ func (r *fakeReclaimer) RaiseBudget(sessionID string, delta int64) {
 	r.mu.Unlock()
 }
 
-func (r *fakeReclaimer) TerminateSession(sessionID string) {
+func (r *fakeReclaimer) TerminateForBudget(sessionID string) {
 	r.mu.Lock()
 	r.terminated[sessionID]++
 	r.mu.Unlock()
@@ -873,7 +873,7 @@ func TestExtendForBudgetAutoModeGrantedInPath_spec_8_6_line_629(t *testing.T) {
 // TestExtendForBudgetInPathGrantRaisesEnforcer_spec_8_6_line_629 is the
 // regression for proposal 0023 findings 1 and 3: an in-path GRANTED extension
 // (the auto-mode fast path that resolves within the caller's in-path wait) must
-// raise the enforcer's per-session budget through the SessionReclaimer, not only
+// raise the enforcer's per-session budget through the metering proxy's budgets, not only
 // the leasecontrol view. Against the pre-fix code the in-path Granted branch
 // returned OutcomeGranted without touching the reclaimer — RaiseBudget fired only
 // on the detached/Pending fan-out path — so the enforcer's c.budget stayed at the

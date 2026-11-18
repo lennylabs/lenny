@@ -10,13 +10,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -192,10 +193,16 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// denies and terminates immediately on exhaustion, preserving the
 	// §11.2 behavior. The proxy-mode extension trigger is injected
 	// by buildControlServer through SetExtendOnExhaustion once the
-	// leasecontrol.Service exists, and that service takes this enforcer as
-	// its episode fan-out SessionReclaimer (proposal 0023 S6).
+	// leasecontrol.Service exists, and that service raises or ends a
+	// detached session's budget through the metering proxy's budgets
+	// (proposal 0023 S6).
 	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator, nil,
 		func(tenantID, _ string, _, _ int64) { meteringMetrics.IncSessionBudgetExceeded(tenantID) })
+	// The metering proxy's per-session budget state, which the session core
+	// and the platform tools seam reach through seam.BudgetTracking and
+	// seam.BudgetResolutions.
+	// buildLLMProxy attaches the usage recorder and the anomaly detector.
+	meteringBudgets := metering.NewBudgets(sessionBudgetEnforcer)
 
 	// §8.6 lease-extension budget state, created when the GatewayControl
 	// listener is enabled via --grpc-addr. One store-backed source serves
@@ -237,6 +244,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	w.callbackDispatcher = callbackDispatcher
 	w.budgetTerminator = budgetTerminator
 	w.sessionBudgetEnforcer = sessionBudgetEnforcer
+	w.meteringBudgets = meteringBudgets
 	w.leaseDenials = leaseDenials
 	w.leaseBudgets = leaseBudgets
 	w.activityStamper = activityStamper
