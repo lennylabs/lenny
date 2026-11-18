@@ -54,8 +54,13 @@ func TestReplayBufferDepthValidateAcceptsOnlyTheStatedRange(t *testing.T) {
 		depth int
 		ok    bool
 	}{
-		{64, true}, {512, true}, {4096, true},
-		{63, false}, {4097, false}, {0, false}, {-1, false},
+		{64, true},
+		{512, true},
+		{4096, true},
+		{63, false},
+		{4097, false},
+		{0, false},
+		{-1, false},
 	} {
 		fs := flag.NewFlagSet("gateway", flag.ContinueOnError)
 		fs.SetOutput(io.Discard)
