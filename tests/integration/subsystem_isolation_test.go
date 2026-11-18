@@ -14,7 +14,7 @@
 // series is exported.
 //
 // This exercises the real gateway wiring (pkg/gateway/core/subsystem +
-// pkg/gateway/sessionserver/upload.go acquireUploadSlot) rather than the
+// pkg/gateway/uploadhandler/upload.go acquireUploadSlot) rather than the
 // in-process worker-pool model in
 // tests/load_local/scenarios/bulkhead_thread_pool_isolation or
 // the unrelated §11.6 operator-managed circuit breaker.

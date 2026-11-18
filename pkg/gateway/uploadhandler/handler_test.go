@@ -318,9 +318,9 @@ func (failingBlobs) Put(blobstore.URI, string, io.Reader) (string, error) {
 // TestMidSessionUploadMapsTheCoresAnswers checks how the mid-session upload
 // answers each outcome of the core's forwarding and workspace write: a
 // delivered forward is the holder's answer, a missing binding or workspace
-// write operation is TARGET_NOT_READY, an unexpected write failure is an
-// audited INTERNAL_ERROR, and a write carries each file's path, content,
-// and trimmed mode.
+// write operation is TARGET_NOT_READY, a failure that names no phase is
+// answered and audited as a staging failure, and a write carries each
+// file's path, content, and trimmed mode.
 //
 // spec: GWSEAM-ForwardRequest, GWSEAM-WriteWorkspace; §7.4.
 func TestMidSessionUploadMapsTheCoresAnswers(t *testing.T) {
@@ -367,11 +367,11 @@ func TestMidSessionUploadMapsTheCoresAnswers(t *testing.T) {
 
 	broken := &fakeCore{session: running, forward: seam.ForwardLocal, writeErr: errors.New("unexpected")}
 	_, mux = newFakeHandler(t, broken, opts)
-	if rr := post(mux); rr.Code != http.StatusInternalServerError {
-		t.Errorf("unexpected write failure: %d, want 500", rr.Code)
+	if rr := post(mux); rr.Code != http.StatusBadGateway || !strings.Contains(rr.Body.String(), "failed to stage mid-session upload onto the pod: unexpected") {
+		t.Errorf("write failure naming no phase: %d %s, want 502 naming staging", rr.Code, rr.Body.String())
 	}
-	if len(broken.audits) != 1 || broken.audits[0].Outcome != seam.UploadRejected || broken.audits[0].Reason != "write_failed" {
-		t.Errorf("audits = %+v, want one rejected write_failed", broken.audits)
+	if len(broken.audits) != 1 || broken.audits[0].Outcome != seam.UploadRejected || broken.audits[0].Reason != "stage_failed" {
+		t.Errorf("audits = %+v, want one rejected stage_failed", broken.audits)
 	}
 
 	ok := &fakeCore{session: running, forward: seam.ForwardLocal, written: 1}

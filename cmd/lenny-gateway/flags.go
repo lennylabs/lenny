@@ -395,17 +395,13 @@ func registerPartFlags() *partFlags {
 	}
 }
 
-// parseFlags defines every gateway flag on flag.CommandLine, parses the
-// command line, and returns the populated gatewayFlags. It performs no
-// wiring; the caller invokes kmsFinalize and then the build helpers.
-//
-// spec: §4.1 gateway subsystem seams — the composition root parses its
-// inputs once and threads them to each subsystem builder.
-// parseFlags defines every gateway flag on flag.CommandLine, parses the
-// command line, and returns the populated gatewayFlags. It performs no
-// wiring; the caller invokes kmsFinalize and then the build helpers. The
-// flag definitions are grouped into per-domain register helpers so each
-// stays a navigable block rather than one flat list.
+// parseFlags defines the composition root's own flags on flag.CommandLine,
+// parses the command line, and returns the populated gatewayFlags. The
+// parts' flags, which registerPartFlags registers first, are parsed in the
+// same pass. It performs no wiring; the caller invokes kmsFinalize and then
+// the build helpers. The flag definitions are grouped into per-domain
+// register helpers so each stays a navigable block rather than one flat
+// list.
 //
 // spec: §4.1 gateway subsystem seams — the composition root parses its
 // inputs once and threads them to each subsystem builder.

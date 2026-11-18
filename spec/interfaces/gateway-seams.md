@@ -108,7 +108,7 @@ requirements: [GW-R1]
 summary: Reports whether a message whose forward to the holder replica was not delivered is held for later delivery, for a session record and a forward kind.
 ```
 
-The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded. The upload handler forwards a mid-session upload with the upload kind. [`GWSEAM-ForwardRequest`](#gwseam-forwardrequest) is an interface of its own, which the seams that serve HTTP requests hold, apart from the operations through which the platform tools seam forwards a tool call.
+The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded. The upload handler forwards a mid-session upload with the upload kind. [`GWSEAM-ForwardRequest`](#gwseam-forwardrequest) is declared on an interface of its own, `seam.RequestForwarding`, which the seams that serve HTTP requests hold, apart from the operations through which the platform tools seam forwards a tool call.
 
 ## Operations served by the session core to the platform tools seam
 
@@ -927,7 +927,7 @@ requirements: [GW-R1]
 summary: Ends a session whose budget extension was refused.
 ```
 
-## Operations served by the API front to every seam
+## Operations served by the API front to every seam that serves client requests
 
 <a id="gwseam-requesttenant"></a>
 

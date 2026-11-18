@@ -70,8 +70,8 @@ type DelegationAdmin interface {
 	ElicitationFloor() string
 }
 
-// RequestIdentity is served by the API front to every seam that serves
-// client requests.
+// RequestIdentity is the request identity the API front answers for the
+// seams that handle client requests.
 type RequestIdentity interface {
 	// RequestTenant is GWSEAM-RequestTenant. It returns the empty string
 	// for a request whose tenant did not resolve, which a route behind the

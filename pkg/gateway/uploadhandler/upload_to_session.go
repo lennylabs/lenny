@@ -132,19 +132,21 @@ func (h *Handler) writeMidSessionUpload(w http.ResponseWriter, r *http.Request, 
 			"session has no live pod binding on this gateway replica; retry after the session is attached",
 			map[string]any{"currentState": string(row.State)})
 		return
-	case errors.As(err, &wwe) && wwe.Phase == seam.WorkspaceStaging:
-		h.emitMidSessionUploadAudit(ctx, row, seam.UploadRejected, "stage_failed", "")
-		h.writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR",
-			"failed to stage mid-session upload onto the pod: "+wwe.Err.Error(), nil)
-		return
-	case errors.As(err, &wwe):
+	case errors.As(err, &wwe) && wwe.Phase == seam.WorkspacePromotion:
 		h.emitMidSessionUploadAudit(ctx, row, seam.UploadRejected, "materialize_failed", "")
 		h.writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR",
 			"failed to materialize mid-session upload into the workspace: "+wwe.Err.Error(), nil)
 		return
 	case err != nil:
-		h.emitMidSessionUploadAudit(ctx, row, seam.UploadRejected, "write_failed", "")
-		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		// A staging failure, and any other failure before promotion,
+		// leaves the live workspace untouched.
+		cause := err
+		if errors.As(err, &wwe) {
+			cause = wwe.Err
+		}
+		h.emitMidSessionUploadAudit(ctx, row, seam.UploadRejected, "stage_failed", "")
+		h.writeError(w, http.StatusBadGateway, "UPSTREAM_ERROR",
+			"failed to stage mid-session upload onto the pod: "+cause.Error(), nil)
 		return
 	}
 
