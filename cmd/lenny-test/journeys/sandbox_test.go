@@ -175,12 +175,12 @@ func TestRunCheckReplacesClaudeWithTheScript(t *testing.T) {
 	}
 }
 
-// TestSandboxNamesResolveAsDNSLabels pins that the names the holder resolves
+// TestJourneyContainerNamesFitDNSLabels pins that the names the holder resolves
 // through Docker's embedded DNS fit a 63-character DNS label for a run name of
 // the length a pilot produces, and that distinct runs get distinct names. A
 // 76-character proxy name made every pilot trial fail to start the gateway
 // port-forward with "no such host".
-func TestSandboxNamesResolveAsDNSLabels(t *testing.T) {
+func TestJourneyContainerNamesFitDNSLabels(t *testing.T) {
 	long := AgentRun{Name: "lenny-journeys-agent-20261118T080243Z-9396c2-tenant-admin-onboarding-3"}
 	other := AgentRun{Name: "lenny-journeys-agent-20261118T080243Z-9396c2-tenant-admin-onboarding-2"}
 	n, m := namesFor(long), namesFor(other)
