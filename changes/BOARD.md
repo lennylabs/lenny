@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
-| Ready | 9 |
+| Building | 2 |
+| Ready | 8 |
 | Waiting on decisions | 40 |
 | Blocked | 136 |
 | Landed | 8 |
@@ -36,12 +36,12 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0117.S5](0117-gateway-package-layout/steps.md#0117s5-upload-handler-split) | Upload handler split | Building |  |
 | [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Building |  |
 | [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Ready |  |
 | [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Ready |  |
 | [0117.S3](0117-gateway-package-layout/steps.md#0117s3-metering-proxy-51-import-sites) | Metering proxy (51 import sites) | Ready |  |
 | [0117.S4](0117-gateway-package-layout/steps.md#0117s4-seam-model-replica-level-parts-and-the-playground-108-import-sites) | Seam model, replica-level parts, and the playground (108 import sites) | Ready |  |
-| [0117.S5](0117-gateway-package-layout/steps.md#0117s5-upload-handler-split) | Upload handler split | Ready |  |
 | [0117.S6](0117-gateway-package-layout/steps.md#0117s6-stream-proxy-split-69-import-sites) | Stream proxy split (69 import sites) | Ready |  |
 | [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Ready |  |
 | [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0117.S8 |

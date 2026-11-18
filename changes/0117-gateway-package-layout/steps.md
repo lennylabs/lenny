@@ -40,7 +40,7 @@ The import sites in each title are counted over the packages the step moves, as 
 `core/subsystem` and `metrics/extractionthreshold` to `pkg/gateway/seam`; `core/semver` to `pkg/common`; the drain, scaling, ops endpoint, and replica packages of "SP-1"; and `mcpfabric/playground` to `pkg/gateway/playground`. §4.0 takes the new path of `operability/health`. The tier-0 tests that name these paths take the new ones.
 
 ### 0117.S5 Upload handler split
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
