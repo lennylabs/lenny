@@ -27,10 +27,10 @@ The import sites in each title are counted over the packages the step moves, as 
 
 ### 0117.S3 Metering proxy (51 import sites)
 - status: Building
-- lanes: [code]
+- lanes: [specification, code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
-`llmproxy/llmproxy` and `session/sessionbudget` to `pkg/gateway/meteringproxy`. The removed `llmproxy` packages of 0132 and 0133 stay where they are. 0133.S2 then edits the proxy at its new path.
+`llmproxy/llmproxy` and `session/sessionbudget` to `pkg/gateway/meteringproxy`. The removed `llmproxy` packages of 0132 and 0133 stay where they are. 0133.S2 then edits the proxy at its new path. The seam interface page gains `GWSEAM-ExpireSession` and `GWSEAM-RotateCredential`, served by the session core to the metering proxy (open decision 20), and the metering proxy's budget operations split into one interface per caller. The usage recorder leaves `cmd/lenny-gateway` for a new package, `pkg/gateway/meteringproxy/metering`, with the per-session budget state the proxy serves through the seam interface, and the proxy's flags and route registration move into `llmproxy` (decision 7).
 
 ### 0117.S4 Seam model, replica-level parts, and the playground (108 import sites)
 - status: Planned

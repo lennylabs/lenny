@@ -56,7 +56,7 @@ Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this st
 
 Rate cards and credit budgets: LU-5 with the fallback entry, LU-6 with the input estimate and best-effort bounds, and the estimated cost of LU-7, with §8.3, §8.6, §11.2, and §11.2.1 in credits.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ExtendForBudget`, `GWSEAM-RaiseBudget`, and `GWSEAM-TerminateForBudget`, and the delegation budget operations (`GWSEAM-ReturnBudget`, `GWSEAM-RearmBudget`, `GWSEAM-ObserveHighWatermark`, `GWSEAM-NodeUsage`, `GWSEAM-TreeUsage`, and `GWSEAM-SubtreeTokens`), which count credits (LU-6).
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ExtendForBudget`, `GWSEAM-RaiseBudget`, and `GWSEAM-TerminateForBudget`, and the delegation budget operations (`GWSEAM-ReturnBudget`, `GWSEAM-RearmBudget`, `GWSEAM-ObserveHighWatermark`, `GWSEAM-NodeUsage`, `GWSEAM-TreeUsage`, and `GWSEAM-SubtreeTokens`), which count credits (LU-6). Open decision 5 settles whether it also removes or keeps `GWSEAM-ExpireSession`, through which the budget enforcer expires a session whose extension was refused.
 
 ### Notes on the steps
 
