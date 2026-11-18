@@ -132,7 +132,7 @@ pr: install ## Run the pr-fast group (changed-only, fast tiers)
 	@lenny-test --group pr-fast --output human
 
 .PHONY: pr-full
-pr-full: install ## Run the full pr group (everything that runs on every push)
+pr-full: install ## Run the pr group (the merge gate's tiers, run whole)
 	@lenny-test --group pr --output human
 
 .PHONY: validate

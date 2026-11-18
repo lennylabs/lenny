@@ -494,10 +494,12 @@ func (d *driver) rewriteGoFiles() error {
 }
 
 // pathCarriers are the files outside Go that key entries by package path:
-// the registers whose entries name a package directory. A move rewrites
-// each one that exists, so a carrier a later change retires is skipped
-// rather than failing the move.
+// the registers whose entries name a package directory, and the non-Go
+// input list, whose rows name test packages that `lenny-test validate`
+// requires to exist. A move rewrites each one that exists, so a carrier a
+// later change retires is skipped rather than failing the move.
 var pathCarriers = []string{
+	"tests/non-go-inputs.yaml",
 	"tests/registers/skip-reasons.yaml",
 	"tests/registers/residual-skip-reasons.yaml",
 	"tests/registers/spec-section-citations.yaml",

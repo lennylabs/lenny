@@ -185,9 +185,12 @@ func TestTrackedComponentAndAboveTestsAreAnnotated(t *testing.T) {
 // directory from the component tier on passes with a `// spec:`
 // annotation or a doc comment saying it verifies no requirement, even
 // wrapped across lines, and fails otherwise, whatever skip its body
-// takes. TestMain, helpers, files outside the tier directories, and
-// testdata/ are outside the check. It tests contributor tooling, so it
-// verifies no requirement.
+// takes. A comment the parser does not attach to the function, a bare
+// `// spec:` line, and an unparseable file fail. A component-tagged test
+// in a tree the component tier runs in-package is checked. TestMain,
+// helpers, untagged files of those trees, files outside the tier
+// directories, and testdata/ are outside the check. It tests contributor
+// tooling, so it verifies no requirement.
 func TestValidateTierTestsAnnotatedFixtures(t *testing.T) {
 	root := t.TempDir()
 	write := func(rel, body string) {
@@ -218,7 +221,21 @@ func helper() {}
 func TestSkipsButCarriesNothing(t *testing.T) {
 	gateway.SkipUnlessAvailable(t)
 }
+
+// spec: §11.6 (Circuit Breakers)
+
+func TestDetachedAnnotation(t *testing.T) {}
+
+// spec:
+// diagnosis: the annotation names nothing.
+func TestBareSpecLine(t *testing.T) {}
+
+// spec:
+// §11.6 (Circuit Breakers), on the line after the marker.
+func TestWrappedSpecLine(t *testing.T) {}
 `)
+	write("cmd/lenny-ops/ops_component_test.go", "//go:build component\n\npackage main\n\nfunc TestTaggedComponent(t *testing.T) {}\n")
+	write("cmd/lenny-ops/ops_test.go", "package main\n\nfunc TestUntaggedUnit(t *testing.T) {}\n")
 	write("tests/component/b/b_test.go", `package b
 
 func TestBare(t *testing.T) {}
@@ -230,12 +247,19 @@ func TestBare(t *testing.T) {}
 	if r.ok {
 		t.Fatalf("the check passed with unannotated tests: %s", r.detail)
 	}
-	for _, want := range []string{"tests/integration/a_test.go:16 TestSkipsButCarriesNothing", "tests/component/b/b_test.go:3 TestBare", "2 test function(s)"} {
+	for _, want := range []string{
+		"tests/integration/a_test.go:16 TestSkipsButCarriesNothing",
+		"tests/integration/a_test.go:22 TestDetachedAnnotation",
+		"tests/integration/a_test.go:26 TestBareSpecLine",
+		"tests/component/b/b_test.go:3 TestBare",
+		"cmd/lenny-ops/ops_component_test.go:5 TestTaggedComponent",
+		"5 test function(s)",
+	} {
 		if !strings.Contains(r.detail, want) {
 			t.Errorf("detail %q does not name %q", r.detail, want)
 		}
 	}
-	for _, not := range []string{"TestAnnotated", "TestHarness", "TestMain", "TestFixture", "TestUnit"} {
+	for _, not := range []string{"TestAnnotated", "TestHarness", "TestMain", "TestFixture", "TestUnit", "TestWrappedSpecLine", "TestUntaggedUnit"} {
 		if strings.Contains(r.detail, not) {
 			t.Errorf("detail %q names %s, which the check accepts or leaves out", r.detail, not)
 		}
@@ -243,7 +267,8 @@ func TestBare(t *testing.T) {}
 
 	write("tests/integration/a_test.go", "package integration\n\n// spec: §11.6 (Circuit Breakers)\nfunc TestAnnotated(t *testing.T) {}\n")
 	write("tests/component/b/b_test.go", "package b\n\n// TestBare verifies no requirement.\nfunc TestBare(t *testing.T) {}\n")
-	if r := validateTierTestsAnnotated(root); !r.ok || !strings.Contains(r.detail, "2 test function(s)") {
+	write("cmd/lenny-ops/ops_component_test.go", "//go:build component\n\npackage main\n\n// spec: §25.4 (ops)\nfunc TestTaggedComponent(t *testing.T) {}\n")
+	if r := validateTierTestsAnnotated(root); !r.ok || !strings.Contains(r.detail, "3 test function(s)") {
 		t.Errorf("the check over annotated tests = %+v", r)
 	}
 
@@ -251,9 +276,16 @@ func TestBare(t *testing.T) {}
 		t.Fatal(err)
 	}
 	if os.Getuid() != 0 {
-		if r := validateTierTestsAnnotated(root); r.ok || !strings.Contains(r.detail, "read ") {
+		if r := validateTierTestsAnnotated(root); r.ok || !strings.Contains(r.detail, "a_test.go") {
 			t.Errorf("an unreadable test file passed: %+v", r)
 		}
+	}
+	if err := os.Chmod(filepath.Join(root, "tests/integration/a_test.go"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	write("tests/component/b/b_test.go", "package b\n\nfunc TestBroken(t *testing.T) {\n")
+	if r := validateTierTestsAnnotated(root); r.ok || !strings.Contains(r.detail, "parse tests/component/b/b_test.go") {
+		t.Errorf("an unparseable test file passed: %+v", r)
 	}
 }
 

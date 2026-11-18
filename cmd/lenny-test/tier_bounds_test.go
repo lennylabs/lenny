@@ -142,13 +142,19 @@ func TestUnboundedDiscoveryRunsOnlyInfrastructureFreeTiers(t *testing.T) {
 		t.Errorf("an empty selection = %v; want the static tier", got)
 	}
 
-	// --pkg is a discovery selector and takes the same bound.
+	// --pkg names its tests directly and keeps every tier it resolves,
+	// as --spec does; beside --changed the bound applies.
 	prev := resolvePkgsPlanFn
 	resolvePkgsPlanFn = func([]string, selectOpts) ([]tierPlan, []string) { return wideChangedPlan(), nil }
 	t.Cleanup(func() { resolvePkgsPlanFn = prev })
 	r = mustResolve(t, selector{pkgs: []string{"pkg/a"}})
+	if got, want := planNames(r.tiers), planNames(wideChangedPlan()); strings.Join(got, ",") != strings.Join(want, ",") || len(r.notes) != 0 {
+		t.Errorf("unbounded --pkg = %v, notes %v; want every resolved tier", got, r.notes)
+	}
+	useChangedPlan(t, nil, nil)
+	r = mustResolve(t, selector{pkgs: []string{"pkg/a"}, changed: true})
 	if planHasTier(r.tiers, tierIntegration) || !planHasTier(r.tiers, tierUnit) {
-		t.Errorf("unbounded --pkg = %v", planNames(r.tiers))
+		t.Errorf("unbounded --pkg --changed = %v", planNames(r.tiers))
 	}
 }
 
@@ -203,6 +209,8 @@ func TestTierListAndGateRefusals(t *testing.T) {
 	}
 	refused := []selector{
 		{gate: "nightly"},
+		{tiers: []string{tierE2EKind}, gate: gateMerge},
+		{tiers: []string{tierUnit, tierDocs}, gate: gateRelease, changed: true},
 		{tiers: []string{"bogus"}},
 		{tiers: []string{tierUnit, tierComponent}, subsets: []string{"stores"}},
 		{subsets: []string{"stores"}, changed: true},

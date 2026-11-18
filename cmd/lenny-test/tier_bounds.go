@@ -44,9 +44,10 @@ func gateTiers(name string) ([]string, bool) {
 	return nil, false
 }
 
-// infraFreeTiers are the tiers a discovery selection (--changed, --since,
-// --spec, or --pkg) runs when neither --tier nor --gate bounds it: the
-// tiers that start no compose stack and no cluster (change 0116, CS-7).
+// infraFreeTiers are the tiers a --changed or --since selection runs when
+// neither --tier nor --gate bounds it: the tiers that start no compose
+// stack and no cluster (change 0116, CS-7). A --spec or --pkg selection
+// names its tests directly and keeps every tier it resolves.
 // The component tier needs a Docker daemon and the envtest binaries,
 // which the developer's host already carries, and starts neither. A tier
 // outside this list runs only when a gate or --tier names it, so the
@@ -152,14 +153,25 @@ func boundByGate(plan []tierPlan, gate string) []tierPlan {
 	return kept
 }
 
-// boundToInfraFree keeps the entries of an unbounded discovery plan that
+// boundToInfraFree keeps the entries of an unbounded --changed plan that
 // need no infrastructure, and returns a note naming the tiers the
 // selection reached and the bound left out, so the developer knows what
-// a gate or --tier would add.
+// a gate or --tier would run.
 func boundToInfraFree(plan []tierPlan) ([]tierPlan, string) {
 	kept, dropped := keepTiers(plan, infraFreeTiers)
 	if len(dropped) == 0 {
 		return kept, ""
 	}
-	return kept, fmt.Sprintf("the selection also reaches the %s tier(s), which run only when --gate or --tier names them (`lenny-test gate` runs the merge gate)", strings.Join(dropped, ", "))
+	return kept, fmt.Sprintf("the selection also reaches the %s tier(s), which run only when --gate or --tier names them", strings.Join(dropped, ", "))
+}
+
+// intersectTiers returns the names in a that b also holds, in a's order.
+func intersectTiers(a, b []string) []string {
+	var out []string
+	for _, t := range a {
+		if contains(b, t) {
+			out = append(out, t)
+		}
+	}
+	return out
 }

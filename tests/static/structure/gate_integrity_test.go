@@ -73,6 +73,12 @@ var tierZeroGates = []tierZeroGate{
 	{"TestCoordinatorHoldAllowlistNamesMethodsTheAdapterServes", "coordinator_hold_allowlist_test.go", "every coordinator-hold allowlist entry names a method the adapter serves"},
 	{"TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered", "deployment_boundary_test.go", "every input the adapter reads is rendered or registered"},
 	{"TestSkipReasonClassifierCertifiesTheTree", "skip_reason_classifier_test.go", "every skipped test names a classified skip reason"},
+	// The check below runs on the second hard-gated channel, inside
+	// runValidate, so it is named by the file that carries that function
+	// rather than by a static-tier test file. Change 0116 added it in place
+	// of the spec-map check that every test file from the component tier on
+	// was mapped.
+	{"validateTierTestsAnnotated", validateFile, "every test from the component tier on carries a spec annotation"},
 	// The meta-gate names itself, because the list is the whole set of gates the
 	// migration registers at the static tier and nothing in the domain split excludes it.
 	// The entry catches a rename or a move of the meta-gate's own registration.

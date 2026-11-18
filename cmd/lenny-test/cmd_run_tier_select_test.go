@@ -219,7 +219,7 @@ func TestTierUnitWithSinceAndAllRunsEveryPackage(t *testing.T) {
 
 // TestTierComposesWithPkgAndGate pins the remaining compositions: --pkg
 // under --tier unit keeps its package scope, and --gate still bounds a
-// --tier --since plan.
+// --tier --changed plan to the tiers both name.
 //
 // spec: the test infrastructure §6 (selection algorithm: selectors compose
 // by intersection)
@@ -238,9 +238,9 @@ func TestTierComposesWithPkgAndGate(t *testing.T) {
 		t.Errorf("--tier unit --pkg scope = %v, want it to name ./cmd/lenny-test and the packages under it", r.tiers[0].pkgs)
 	}
 
-	r = mustResolve(t, selector{tiers: []string{tierDocs}, gate: gateRelease, changed: true})
+	r = mustResolve(t, selector{tiers: []string{tierUnit, tierChaos}, gate: gateRelease, changed: true})
 	if len(r.tiers) != 0 {
-		t.Errorf("--gate release kept %v", planNames(r.tiers))
+		t.Errorf("--gate release kept %v of a selection that reaches no release tier", planNames(r.tiers))
 	}
 }
 

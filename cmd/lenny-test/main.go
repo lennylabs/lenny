@@ -195,10 +195,10 @@ Run flags:
                            Bound the selection at the tiers of that gate.
                            Alone, runs the gate's tiers whole.
   --changed                Run tests affected by uncommitted changes (git diff).
-                           Without --tier or --gate, a discovery selection
-                           (--changed, --since, --spec, --pkg) runs only the
-                           static, unit, component, and contract tiers it
-                           reaches, which start no compose stack or cluster.
+                           Without --tier or --gate, --changed and --since run
+                           only the static, unit, component, and contract
+                           tiers they reach, which start no compose stack or
+                           cluster.
   --spec <s1,s2,...>       Run tests covering the given spec sections.
   --pkg <p1,p2,...>        Run tests covering the given source packages.
   --dry-run                Resolve the selector and print what would run; do not

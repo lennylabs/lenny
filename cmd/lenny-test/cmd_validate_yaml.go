@@ -74,8 +74,15 @@ func validateGroupsYAML(path string) checkResult {
 					problems = append(problems, fmt.Sprintf("%s: unknown %s %q", name, k.Value, v.Value))
 				}
 			case "gate":
-				if _, ok := gateTiers(v.Value); !ok {
+				gated, ok := gateTiers(v.Value)
+				if !ok {
 					problems = append(problems, fmt.Sprintf("%s: unknown gate %q (valid: %s)", name, v.Value, strings.Join(gateNames(), ", ")))
+					break
+				}
+				// A gate beside tiers or includes bounds them; a bound
+				// that keeps none of them runs nothing and passes.
+				if named := groupNamedTiers(g.Selectors); len(named) > 0 && len(intersectTiers(named, gated)) == 0 {
+					problems = append(problems, fmt.Sprintf("%s: gate %q keeps none of the tiers the group names (%s)", name, v.Value, strings.Join(named, ", ")))
 				}
 			case "max_tier":
 				problems = append(problems, fmt.Sprintf("%s: max_tier is removed; bound the group with gate or tiers", name))
@@ -896,4 +903,26 @@ func yamlPaths(root string) (groups, subsets, flakeBudget, parityMatrix string) 
 	flakeBudget = filepath.Join(root, flakeBudgetFile)
 	parityMatrix = filepath.Join(root, parityMatrixFile)
 	return
+}
+
+// groupNamedTiers returns the tiers a group's selectors name through
+// `tiers` and `include`.
+func groupNamedTiers(selectors yaml.Node) []string {
+	var out []string
+	for i := 0; i+1 < len(selectors.Content); i += 2 {
+		k, v := selectors.Content[i], selectors.Content[i+1]
+		switch k.Value {
+		case "tiers":
+			for _, t := range v.Content {
+				out = append(out, t.Value)
+			}
+		case "include":
+			for _, item := range v.Content {
+				if tier := mappingValue(item, "tier"); tier != "" {
+					out = append(out, tier)
+				}
+			}
+		}
+	}
+	return out
 }

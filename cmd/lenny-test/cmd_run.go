@@ -233,8 +233,13 @@ func (s selector) check() error {
 		}
 	}
 	if s.gate != "" {
-		if _, ok := gateTiers(s.gate); !ok {
+		gated, ok := gateTiers(s.gate)
+		if !ok {
 			return fmt.Errorf("unknown --gate %q. Valid gates: %s", s.gate, strings.Join(gateNames(), ", "))
+		}
+		// A bound that keeps no tier would run nothing and pass.
+		if len(s.tiers) > 0 && len(intersectTiers(s.tiers, gated)) == 0 {
+			return fmt.Errorf("--tier %s and --gate %s share no tier, so the selection would run nothing", strings.Join(s.tiers, ","), s.gate)
 		}
 	}
 	if len(s.subsets) > 0 && len(s.tiers) != 1 {
@@ -244,9 +249,11 @@ func (s selector) check() error {
 }
 
 // boundDiscovery bounds a discovery plan. --tier restricts it to the
-// named tiers; --gate is applied by resolve; with neither, the plan keeps
-// the tiers that need no infrastructure. An empty unbounded plan falls
-// back to the static tier, so the developer still gets feedback.
+// named tiers; --gate is applied by resolve; with neither, a --changed or
+// --since selection keeps the tiers that need no infrastructure (change
+// 0116, CS-7), and a --spec or --pkg selection keeps every tier it
+// resolves. An empty unbounded plan falls back to the static tier, so the
+// developer still gets feedback.
 func (s selector) boundDiscovery(plan []tierPlan) ([]tierPlan, []string) {
 	if len(s.tiers) > 0 {
 		return restrictToTiers(plan, s.tiers, s.subsets)
@@ -256,6 +263,9 @@ func (s selector) boundDiscovery(plan []tierPlan) ([]tierPlan, []string) {
 	}
 	if len(plan) == 0 {
 		return []tierPlan{{name: tierStatic, notes: "no tiers resolved from selector; running static only"}}, nil
+	}
+	if !s.changed {
+		return plan, nil
 	}
 	kept, note := boundToInfraFree(plan)
 	if note == "" {

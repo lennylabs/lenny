@@ -108,7 +108,7 @@ jobs:
         run: echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
-      - name: Validate maps
+      - name: Validate selection and register files
         run: ./bin/lenny-test validate
       - name: Validate diagnosis coverage
         run: ./bin/lenny-test validate-diagnosis

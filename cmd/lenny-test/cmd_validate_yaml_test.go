@@ -143,6 +143,29 @@ groups:
       max_tier: component
 `)
 	expectFail(t, validateGroupsYAML(path), "max_tier is removed")
+	path = writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  empty-bound:
+    description: A gate that keeps none of the group's tiers.
+    selectors:
+      gate: merge
+      tiers: [e2e_kind]
+      include:
+        - tier: chaos
+          subset: core
+`)
+	expectFail(t, validateGroupsYAML(path), "keeps none of the tiers", "e2e_kind, chaos")
+	path = writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  shared-bound:
+    description: A gate that keeps one of the group's tiers.
+    selectors:
+      gate: area
+      tiers: [unit, e2e_kind]
+`)
+	expectPass(t, validateGroupsYAML(path))
 }
 
 func TestValidateGroupsYAMLDescriptionRequiredForNonGate(t *testing.T) {

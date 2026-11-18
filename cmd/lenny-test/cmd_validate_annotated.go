@@ -4,6 +4,10 @@ package main
 
 import (
 	"fmt"
+	"go/ast"
+	"go/build/constraint"
+	"go/parser"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -16,6 +20,9 @@ import (
 // may wrap.
 const noRequirementPhrase = "verifies no requirement"
 
+// specMarker opens an annotation line in a doc comment.
+const specMarker = "spec:"
+
 // validateTierTestsAnnotated checks that every test function in the tiers
 // validate-diagnosis covers carries a `// spec:` annotation in its doc
 // comment, or says in its doc comment that it verifies no requirement.
@@ -25,37 +32,39 @@ const noRequirementPhrase = "verifies no requirement"
 // helper in the body does not excuse a missing annotation, because the
 // coverage view and selection read the annotation whatever the test does
 // at run time.
+//
+// The doc comment is the one the Go parser attaches to the declaration,
+// which is what the annotation index reads, so a comment separated from
+// the function by a blank line does not count. Besides the tier
+// directories, the check reads the component-tagged test files of the
+// trees whose tests run in the component tier in-package
+// (tierExtraTrees).
 func validateTierTestsAnnotated(root string) checkResult {
 	const name = "test annotations"
 	var missing []string
 	funcs := 0
-	for _, dir := range componentAndAboveTierDirs() {
-		base := filepath.Join(root, dir)
-		if _, err := os.Stat(base); err != nil {
-			continue
+	check := func(path string) error {
+		rel, _ := filepath.Rel(root, path)
+		n, miss, err := unannotatedTestsIn(path, filepath.ToSlash(rel))
+		if err != nil {
+			return err
 		}
-		err := filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
-			if err != nil {
+		funcs += n
+		missing = append(missing, miss...)
+		return nil
+	}
+	for _, dir := range componentAndAboveTierDirs() {
+		if err := walkTestFiles(filepath.Join(root, dir), check); err != nil {
+			return newResult(name, false, err.Error())
+		}
+	}
+	for _, dir := range tierExtraTrees(tierComponent) {
+		err := walkTestFiles(filepath.Join(root, dir), func(path string) error {
+			tagged, err := carriesBuildTag(path, tierBuildTag(tierComponent))
+			if err != nil || !tagged {
 				return err
 			}
-			if d.IsDir() {
-				if d.Name() == "testdata" {
-					return filepath.SkipDir
-				}
-				return nil
-			}
-			if !strings.HasSuffix(path, "_test.go") {
-				return nil
-			}
-			data, err := os.ReadFile(path)
-			if err != nil {
-				return fmt.Errorf("read %s: %w", path, err)
-			}
-			rel, _ := filepath.Rel(root, path)
-			n, miss := unannotatedTests(rel, splitLines(string(data)))
-			funcs += n
-			missing = append(missing, miss...)
-			return nil
+			return check(path)
 		})
 		if err != nil {
 			return newResult(name, false, err.Error())
@@ -73,47 +82,102 @@ func validateTierTestsAnnotated(root string) checkResult {
 	))
 }
 
-// unannotatedTests returns the number of top-level test functions in a
-// file and the `path:line Name` of each one whose doc comment carries
-// neither a `// spec:` annotation nor the no-requirement phrase.
-func unannotatedTests(rel string, lines []string) (int, []string) {
+// walkTestFiles calls fn for every _test.go file under base, leaving out
+// testdata/ directories. A base that does not exist holds no file.
+func walkTestFiles(base string, fn func(path string) error) error {
+	if _, err := os.Stat(base); err != nil {
+		return nil
+	}
+	return filepath.WalkDir(base, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(path, "_test.go") {
+			return nil
+		}
+		return fn(path)
+	})
+}
+
+// carriesBuildTag reports whether a file's //go:build line holds with the
+// given tag set.
+func carriesBuildTag(path, tag string) (bool, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return false, fmt.Errorf("read %s: %w", path, err)
+	}
+	for _, line := range splitLines(string(data)) {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "package ") {
+			return false, nil
+		}
+		if !constraint.IsGoBuild(trimmed) {
+			continue
+		}
+		expr, err := constraint.Parse(trimmed)
+		if err != nil {
+			return false, fmt.Errorf("parse the build constraint of %s: %w", path, err)
+		}
+		return expr.Eval(func(t string) bool { return t == tag }), nil
+	}
+	return false, nil
+}
+
+// unannotatedTestsIn parses one test file and returns the number of its
+// top-level test functions and the `path:line Name` of each one whose doc
+// comment carries neither a `// spec:` annotation with an item nor the
+// no-requirement phrase. A file that does not parse is an error, so the
+// check fails rather than passing over it.
+func unannotatedTestsIn(path, rel string) (int, []string, error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, path, nil, parser.ParseComments|parser.SkipObjectResolution)
+	if err != nil {
+		return 0, nil, fmt.Errorf("parse %s: %w", rel, err)
+	}
 	funcs := 0
 	var missing []string
-	for i, line := range lines {
-		if !strings.HasPrefix(line, "func Test") || strings.HasPrefix(line, "func TestMain(") {
+	for _, decl := range f.Decls {
+		fn, ok := decl.(*ast.FuncDecl)
+		if !ok || fn.Recv != nil || !strings.HasPrefix(fn.Name.Name, "Test") || fn.Name.Name == "TestMain" {
 			continue
 		}
 		funcs++
-		if hasAnnotationBefore(lines, i, "// spec:") || docMentionsNoRequirement(lines, i) {
+		if docAnnotates(fn.Doc) {
 			continue
 		}
-		name := strings.TrimPrefix(line, "func ")
-		if j := strings.IndexByte(name, '('); j >= 0 {
-			name = name[:j]
-		}
-		missing = append(missing, fmt.Sprintf("%s:%d %s", rel, i+1, name))
+		missing = append(missing, fmt.Sprintf("%s:%d %s", rel, fset.Position(fn.Pos()).Line, fn.Name.Name))
 	}
-	return funcs, missing
+	return funcs, missing, nil
 }
 
-// docMentionsNoRequirement reports whether the doc comment above the
-// declaration at idx says the test verifies no requirement. It reads the
-// same comment block hasAnnotationBefore reads, with its lines joined and
-// case folded.
-func docMentionsNoRequirement(lines []string, idx int) bool {
-	var parts []string
-	for i := idx - 1; i >= 0; i-- {
-		trimmed := strings.TrimSpace(lines[i])
-		if trimmed == "" {
-			if !precedingCommentExists(lines, i) {
-				break
-			}
+// docAnnotates reports whether a doc comment carries a `// spec:` line
+// with at least one item, on the line itself or on the comment line after
+// it, or says that the test verifies no requirement.
+func docAnnotates(doc *ast.CommentGroup) bool {
+	if doc == nil {
+		return false
+	}
+	var lines []string
+	for _, c := range doc.List {
+		lines = append(lines, strings.TrimSpace(strings.TrimPrefix(c.Text, "//")))
+	}
+	for i, line := range lines {
+		rest, ok := strings.CutPrefix(line, specMarker)
+		if !ok {
 			continue
 		}
-		if !strings.HasPrefix(trimmed, "//") {
-			break
+		if strings.TrimSpace(rest) != "" {
+			return true
 		}
-		parts = append([]string{strings.TrimSpace(strings.TrimPrefix(trimmed, "//"))}, parts...)
+		if i+1 < len(lines) && lines[i+1] != "" && !strings.Contains(strings.SplitN(lines[i+1], " ", 2)[0], ":") {
+			return true
+		}
 	}
-	return strings.Contains(strings.ToLower(strings.Join(parts, " ")), noRequirementPhrase)
+	return strings.Contains(strings.ToLower(strings.Join(lines, " ")), noRequirementPhrase)
 }
