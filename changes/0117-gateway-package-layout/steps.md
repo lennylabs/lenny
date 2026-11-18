@@ -33,7 +33,7 @@ The import sites in each title are counted over the packages the step moves, as 
 `llmproxy/llmproxy` and `session/sessionbudget` to `pkg/gateway/meteringproxy`. The removed `llmproxy` packages of 0132 and 0133 stay where they are. 0133.S2 then edits the proxy at its new path.
 
 ### 0117.S4 Seam model, replica-level parts, and the playground (108 import sites)
-- status: Planned
+- status: Building
 - lanes: [specification, code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
