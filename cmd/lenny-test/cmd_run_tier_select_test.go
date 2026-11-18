@@ -71,7 +71,7 @@ func mustResolve(t *testing.T, s selector) resolvedSelector {
 func TestTierWithSinceKeepsTheChangedUnitScope(t *testing.T) {
 	stub := useChangedPlan(t, changedFixturePlan(), []string{"1 changed path(s) have no tests/change-graph.json key: X.md"})
 
-	r := mustResolve(t, selector{tier: tierUnit, changed: true, since: "HEAD~3", rdepsDepth: 1})
+	r := mustResolve(t, selector{tiers: []string{tierUnit}, changed: true, since: "HEAD~3", rdepsDepth: 1})
 	if stub.calls != 1 {
 		t.Fatalf("the change selection ran %d time(s), want 1", stub.calls)
 	}
@@ -90,7 +90,7 @@ func TestTierWithSinceKeepsTheChangedUnitScope(t *testing.T) {
 
 	// --changed without --since resolves the working tree the same way.
 	stub.calls = 0
-	r = mustResolve(t, selector{tier: tierUnit, changed: true})
+	r = mustResolve(t, selector{tiers: []string{tierUnit}, changed: true})
 	if stub.calls != 1 || stub.ref != "" {
 		t.Errorf("--tier unit --changed: calls=%d ref=%q", stub.calls, stub.ref)
 	}
@@ -107,7 +107,7 @@ func TestTierWithSinceKeepsTheChangedUnitScope(t *testing.T) {
 func TestTierAloneStillNamesTheWholeTier(t *testing.T) {
 	stub := useChangedPlan(t, changedFixturePlan(), nil)
 
-	r := mustResolve(t, selector{tier: tierUnit})
+	r := mustResolve(t, selector{tiers: []string{tierUnit}})
 	if stub.calls != 0 {
 		t.Errorf("--tier unit alone read the diff")
 	}
@@ -115,7 +115,7 @@ func TestTierAloneStillNamesTheWholeTier(t *testing.T) {
 		t.Errorf("--tier unit alone = %+v, want one unscoped unit tier", r.tiers)
 	}
 
-	r = mustResolve(t, selector{tier: tierComponent, subsets: []string{"stores"}})
+	r = mustResolve(t, selector{tiers: []string{tierComponent}, subsets: []string{"stores"}})
 	if len(r.tiers) != 1 || !reflect.DeepEqual(r.tiers[0].subsets, []string{"stores"}) {
 		t.Errorf("--tier component --subset stores = %+v", r.tiers)
 	}
@@ -183,7 +183,7 @@ func TestTierWithSinceForOtherTiers(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			useChangedPlan(t, tc.plan, nil)
-			r := mustResolve(t, selector{tier: tc.tier, subsets: tc.subsets, changed: true, since: "main"})
+			r := mustResolve(t, selector{tiers: []string{tc.tier}, subsets: tc.subsets, changed: true, since: "main"})
 			if !reflect.DeepEqual(r.tiers, tc.want) {
 				t.Errorf("tiers = %+v, want %+v", r.tiers, tc.want)
 			}
@@ -208,7 +208,7 @@ func TestTierWithSinceForOtherTiers(t *testing.T) {
 func TestTierUnitWithSinceAndAllRunsEveryPackage(t *testing.T) {
 	stub := useChangedPlan(t, changedFixturePlan(), nil)
 
-	r := mustResolve(t, selector{tier: tierUnit, changed: true, since: "HEAD~3", all: true})
+	r := mustResolve(t, selector{tiers: []string{tierUnit}, changed: true, since: "HEAD~3", all: true})
 	if !stub.opts.all {
 		t.Errorf("--all was not passed to the change selection")
 	}
@@ -217,20 +217,20 @@ func TestTierUnitWithSinceAndAllRunsEveryPackage(t *testing.T) {
 	}
 }
 
-// TestTierComposesWithPkgAndMaxTier pins the remaining compositions: --pkg
-// under --tier unit keeps its package scope, and --max-tier still bounds a
+// TestTierComposesWithPkgAndGate pins the remaining compositions: --pkg
+// under --tier unit keeps its package scope, and --gate still bounds a
 // --tier --since plan.
 //
 // spec: the test infrastructure §6 (selection algorithm: selectors compose
 // by intersection)
-func TestTierComposesWithPkgAndMaxTier(t *testing.T) {
+func TestTierComposesWithPkgAndGate(t *testing.T) {
 	useChangedPlan(t, changedFixturePlan(), nil)
 
 	if _, err := (selector{changed: true, since: "--output=x"}).resolve(); err == nil {
 		t.Errorf("a --since value that git reads as an option must be refused")
 	}
 
-	r := mustResolve(t, selector{tier: tierUnit, pkgs: []string{"./cmd/lenny-test/..."}})
+	r := mustResolve(t, selector{tiers: []string{tierUnit}, pkgs: []string{"./cmd/lenny-test/..."}})
 	if len(r.tiers) != 1 || r.tiers[0].name != tierUnit {
 		t.Fatalf("--tier unit --pkg = %v", planNames(r.tiers))
 	}
@@ -238,27 +238,28 @@ func TestTierComposesWithPkgAndMaxTier(t *testing.T) {
 		t.Errorf("--tier unit --pkg scope = %v, want it to name ./cmd/lenny-test and the packages under it", r.tiers[0].pkgs)
 	}
 
-	r = mustResolve(t, selector{tier: tierDocs, maxTier: tierUnit, changed: true})
+	r = mustResolve(t, selector{tiers: []string{tierDocs}, gate: gateRelease, changed: true})
 	if len(r.tiers) != 0 {
-		t.Errorf("--max-tier unit kept %v", planNames(r.tiers))
+		t.Errorf("--gate release kept %v", planNames(r.tiers))
 	}
 }
 
 // TestGroupStaysExclusiveOfTheChangeSelection pins that --group names a
-// complete plan: a --since beside it reads no diff.
+// complete plan: a --since beside it reads no diff against that ref, and
+// pr-fast reads the working tree's diff within its own tiers.
 //
 // spec: the test infrastructure §6 (command surface: `--group` runs a named
 // group)
 func TestGroupStaysExclusiveOfTheChangeSelection(t *testing.T) {
 	stub := useChangedPlan(t, changedFixturePlan(), nil)
-	r, err := selector{group: "pr-fast", tier: tierUnit, changed: true, since: "main"}.resolve()
+	r, err := selector{group: "pr-fast", tiers: []string{tierUnit}, changed: true, since: "main"}.resolve()
 	if err != nil {
 		t.Fatalf("resolve --group pr-fast: %v", err)
 	}
-	if stub.calls != 0 {
-		t.Errorf("--group read the diff")
+	if stub.calls != 1 || stub.ref != "" {
+		t.Errorf("--group pr-fast read the diff %d time(s) against %q; want once against the working tree", stub.calls, stub.ref)
 	}
-	if len(r.tiers) == 0 {
-		t.Errorf("--group pr-fast resolved no tiers")
+	if names := planNames(r.tiers); !reflect.DeepEqual(names, []string{tierStatic, tierUnit}) {
+		t.Errorf("--group pr-fast = %v; want the static and unit tiers of the fixture, without docs", names)
 	}
 }

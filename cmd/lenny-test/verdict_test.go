@@ -23,8 +23,10 @@ func TestTriggerMode(t *testing.T) {
 		want string
 	}{
 		{"group", selector{group: "phase-0-gate"}, "group:phase-0-gate"},
-		{"tier", selector{tier: "static"}, "tier:static"},
-		{"max_tier", selector{maxTier: "integration"}, "max_tier:integration"},
+		{"tier", selector{tiers: []string{"static"}}, "tier:static"},
+		{"tier list", selector{tiers: []string{"unit", "component"}}, "tier:unit,component"},
+		{"gate", selector{gate: gateMerge}, "gate:merge"},
+		{"changed within a gate", selector{changed: true, gate: gateMerge}, "changed"},
 		{"changed", selector{changed: true}, "changed"},
 		{"specs", selector{specs: []string{"§4.6"}}, "spec"},
 		{"pkgs", selector{pkgs: []string{"./pkg/audit/..."}}, "pkg"},
@@ -46,7 +48,7 @@ func TestTriggerModePrecedence(t *testing.T) {
 	// and --tier.
 	s := selector{
 		group:   "phase-0-gate",
-		tier:    "static",
+		tiers:   []string{"static"},
 		changed: true,
 		specs:   []string{"§4.6"},
 		pkgs:    []string{"./pkg/audit/..."},
@@ -86,7 +88,7 @@ func TestSetToSortedSlice(t *testing.T) {
 }
 
 func TestRecordTierMarksFailVerdict(t *testing.T) {
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("static", "pass", 100*time.Millisecond, "")
 	if v.Verdict != "PASS" {
 		t.Fatalf("after a single pass, verdict = %q; want PASS", v.Verdict)
@@ -130,7 +132,7 @@ func TestClassifyInfraFailure(t *testing.T) {
 }
 
 func TestRecordTierReclassifiesInfraFailure(t *testing.T) {
-	v := newVerdict(selector{tier: "integration"})
+	v := newVerdict(selector{tiers: []string{"integration"}})
 	v.recordTier("integration", "fail", 10*time.Millisecond, "compose up: services did not reach healthy state")
 	if got := v.Tiers["integration"].Status; got != "inconclusive" {
 		t.Fatalf("infra failure should reclassify to inconclusive; got %q", got)
@@ -141,7 +143,7 @@ func TestRecordTierReclassifiesInfraFailure(t *testing.T) {
 }
 
 func TestRecordTierFailOutranksInconclusive(t *testing.T) {
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("static", "fail", 5*time.Millisecond, "go vet found three issues")
 	v.recordTier("integration", "fail", 5*time.Millisecond, "compose up failed: docker daemon down")
 	if v.Verdict != "FAIL" {
@@ -166,7 +168,7 @@ func TestExitCodeFor(t *testing.T) {
 }
 
 func TestRecordTierSkippedKeepsPass(t *testing.T) {
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("integration", "skipped", 0, "no docker on PATH")
 	if v.Verdict != "PASS" {
 		t.Fatalf("skipped flipped the verdict: %q", v.Verdict)
@@ -182,7 +184,7 @@ func TestRecordTierSkippedKeepsPass(t *testing.T) {
 // PASS, so a status that leaves it untouched reports a green run for
 // work that was never verified.
 func TestRecordTierUnverifiedRaisesVerdict(t *testing.T) {
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("static", verdictstatus.Unverified, 5*time.Millisecond, "protoc not on PATH")
 	if v.Verdict != verdictstatus.VerdictUnverified {
 		t.Fatalf("unverified tier left the verdict at %q; want %q", v.Verdict, verdictstatus.VerdictUnverified)
@@ -217,7 +219,7 @@ func TestRecordTierUnverifiedPrecedence(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			v := newVerdict(selector{maxTier: "unit"})
+			v := newVerdict(selector{tiers: []string{"unit"}})
 			for i, status := range tc.statuses {
 				v.recordTier(fmt.Sprintf("tier-%d", i), status, time.Millisecond, "")
 			}
@@ -247,7 +249,7 @@ func TestUnverifiedTierKeepsInfraFailureRetryable(t *testing.T) {
 		{unverified, infraFailure},
 	}
 	for _, order := range orders {
-		v := newVerdict(selector{maxTier: "integration"})
+		v := newVerdict(selector{gate: gateMerge})
 		order[0](v)
 		order[1](v)
 		if v.Verdict != verdictstatus.VerdictInconclusive {
@@ -270,7 +272,7 @@ func TestUnverifiedTierKeepsInfraFailureRetryable(t *testing.T) {
 // document stays inside the tier-status enum every consumer switches
 // on, and the value that was passed in survives in the reason.
 func TestRecordTierUnknownStatusDoesNotKeepPass(t *testing.T) {
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("static", "banana", time.Millisecond, "protoc not on PATH")
 	if v.Verdict == verdictstatus.VerdictPass {
 		t.Fatalf("unrecognized tier status left the verdict at PASS")
@@ -300,7 +302,7 @@ func TestRecordedTierStatusStaysInTheEnum(t *testing.T) {
 	}
 	inputs := append(verdictstatus.TierStatuses(), "banana", "")
 	for _, in := range inputs {
-		v := newVerdict(selector{tier: "static"})
+		v := newVerdict(selector{tiers: []string{"static"}})
 		v.recordTier("static", in, time.Millisecond, "")
 		if got := v.Tiers["static"].Status; !declared[got] {
 			t.Errorf("recordTier(%q) recorded status %q, which is outside the declared tier-status set", in, got)
@@ -477,7 +479,7 @@ func TestComposeStaticChecksStrongestClassifierStatusWins(t *testing.T) {
 }
 
 func TestSynthesizeNextActionFallback(t *testing.T) {
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("static", "fail", 10*time.Millisecond, "go vet failed")
 	got := v.synthesizeNextAction("static", "FALLBACK")
 	if got != "FALLBACK" {
@@ -490,7 +492,7 @@ func TestSynthesizeNextActionFallback(t *testing.T) {
 }
 
 func TestSynthesizeNextActionWithFailures(t *testing.T) {
-	v := newVerdict(selector{tier: "unit"})
+	v := newVerdict(selector{tiers: []string{"unit"}})
 	v.Tiers["unit"] = tierStat{
 		Status: "fail",
 		Failures: []failureEntry{
@@ -588,11 +590,11 @@ func TestIsPhaseGate(t *testing.T) {
 }
 
 func TestNewVerdictContainerCache(t *testing.T) {
-	v := newVerdict(selector{tier: "integration", cached: false})
+	v := newVerdict(selector{tiers: []string{"integration"}, cached: false})
 	if v.Infra.ContainerCache != "cold" {
 		t.Fatalf("cold path: ContainerCache=%q; want cold", v.Infra.ContainerCache)
 	}
-	v = newVerdict(selector{tier: "integration", cached: true})
+	v = newVerdict(selector{tiers: []string{"integration"}, cached: true})
 	if v.Infra.ContainerCache != "warm" {
 		t.Fatalf("warm path: ContainerCache=%q; want warm", v.Infra.ContainerCache)
 	}
@@ -601,7 +603,7 @@ func TestNewVerdictContainerCache(t *testing.T) {
 func TestNewVerdictRunIDUnique(t *testing.T) {
 	seen := map[string]bool{}
 	for i := 0; i < 50; i++ {
-		v := newVerdict(selector{tier: "static"})
+		v := newVerdict(selector{tiers: []string{"static"}})
 		if seen[v.RunID] {
 			t.Fatalf("duplicate run_id: %q", v.RunID)
 		}
@@ -680,7 +682,7 @@ func TestWriteFileAtomicCleansTempOnRenameFailure(t *testing.T) {
 func TestVerdictWriteRoundtrip(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "latest.json")
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("static", "pass", 5*time.Millisecond, "")
 	v.SpecStatus["§13.5"] = "pass"
 	if err := v.write(target); err != nil {
@@ -705,7 +707,7 @@ func TestVerdictWriteRoundtrip(t *testing.T) {
 }
 
 func TestVerdictWriteEmptyPathNoop(t *testing.T) {
-	v := newVerdict(selector{tier: "static"})
+	v := newVerdict(selector{tiers: []string{"static"}})
 	v.recordTier("static", "pass", 1*time.Millisecond, "")
 	if err := v.write(""); err != nil {
 		t.Fatalf("write empty path should be a no-op: %v", err)

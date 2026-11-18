@@ -54,8 +54,8 @@ var (
 // to a byte-exact literal so an edit to either side fails the case. That
 // only stops drift when an edit to those files selects the docs tier,
 // because `--changed` resolves a changed path through the import graph
-// and tests/non-go-inputs.yaml, and `--max-tier` caps the resolved set
-// rather than adding to it.
+// and tests/non-go-inputs.yaml, and a `--gate` or `--tier` bound narrows
+// the resolved set rather than adding to it.
 //
 // The files are derived from the guards themselves rather than listed
 // here, so a guard added over a specification file, a tooling package,

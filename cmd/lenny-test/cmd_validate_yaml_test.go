@@ -79,7 +79,11 @@ groups:
     description: Fast PR feedback.
     selectors:
       changed: true
-      max_tier: component
+      tiers: [static, unit, component]
+  pr:
+    description: The merge gate's tiers.
+    selectors:
+      gate: merge
   phase-0-gate:
     selectors:
       tiers: [static, docs]
@@ -110,9 +114,35 @@ groups:
   bad-tier:
     description: References a tier that does not exist.
     selectors:
-      max_tier: nonexistent
+      tier: nonexistent
 `)
 	expectFail(t, validateGroupsYAML(path), "nonexistent")
+}
+
+// TestValidateGroupsYAMLRefusesAnUnknownGateAndMaxTier pins the group
+// bounds of change 0116 (CS-7): a gate must name the merge, area, or
+// release gate, and max_tier, which the gates replace, is refused rather
+// than ignored. It tests contributor tooling, so it carries no spec
+// annotation.
+func TestValidateGroupsYAMLRefusesAnUnknownGateAndMaxTier(t *testing.T) {
+	path := writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  bad-gate:
+    description: Names a gate that does not exist.
+    selectors:
+      gate: nightly
+`)
+	expectFail(t, validateGroupsYAML(path), "unknown gate", "nightly")
+	path = writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  old-bound:
+    description: Uses the removed bound.
+    selectors:
+      max_tier: component
+`)
+	expectFail(t, validateGroupsYAML(path), "max_tier is removed")
 }
 
 func TestValidateGroupsYAMLDescriptionRequiredForNonGate(t *testing.T) {

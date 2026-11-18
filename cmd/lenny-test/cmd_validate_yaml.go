@@ -71,10 +71,16 @@ func validateGroupsYAML(path string) checkResult {
 			k := g.Selectors.Content[i]
 			v := g.Selectors.Content[i+1]
 			switch k.Value {
-			case "max_tier", "tier":
+			case "tier":
 				if v.Value != "" && !knownTiers[v.Value] {
 					problems = append(problems, fmt.Sprintf("%s: unknown %s %q", name, k.Value, v.Value))
 				}
+			case "gate":
+				if _, ok := gateTiers(v.Value); !ok {
+					problems = append(problems, fmt.Sprintf("%s: unknown gate %q (valid: %s)", name, v.Value, strings.Join(gateNames(), ", ")))
+				}
+			case "max_tier":
+				problems = append(problems, fmt.Sprintf("%s: max_tier is removed; bound the group with gate or tiers", name))
 			case "tiers":
 				for _, t := range v.Content {
 					if !knownTiers[t.Value] {

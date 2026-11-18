@@ -13,7 +13,7 @@ import (
 // resolveChangedPlan resolves the working-tree diff with the default
 // selection options. The pr-fast group resolves through it.
 func resolveChangedPlan() []tierPlan {
-	plan, _ := resolveChangedPlanFor("", selectOpts{rdepsDepth: defaultRdepsDepth})
+	plan, _ := resolveChangedPlanFn("", selectOpts{rdepsDepth: defaultRdepsDepth})
 	return plan
 }
 

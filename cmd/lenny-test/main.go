@@ -136,7 +136,7 @@ Usage:
                                            // diagnosis: comment.
   lenny-test long-funcs [flags]            Report functions whose body exceeds a
                                            line threshold (advisory; never fails).
-  lenny-test gate [--base <ref>]           Run the merge gate in the gate container
+  lenny-test gate [merge] [--base <ref>]   Run the merge gate in the gate container
                                            (tests/gate/Dockerfile) and write
                                            tests/results/gate-<run>.json.
   lenny-test secretscan [--root <dir>]     Run the static tier's secret scan on the
@@ -174,13 +174,13 @@ Usage:
 Run flags:
   --group <name>           A named group from tests/groups.yaml (e.g., pr, pr-fast,
                            nightly, pre-release, phase-3.5-gate).
-  --tier <name>            A single tier by name (static, unit, component,
-                           contract, integration, e2e_kind, e2e_cloud,
-                           load_local, load_kind, chaos, security, conformance,
-                           docs, load_cloud). Tier numbers are not accepted.
-                           With --changed, --since, --spec, or --pkg, runs that
-                           selection restricted to the one tier (unit keeps the
-                           selected packages).
+  --tier <t1,t2,...>       Tiers by name (static, unit, component, contract,
+                           integration, e2e_kind, e2e_cloud, load_local,
+                           load_kind, chaos, security, conformance, docs,
+                           load_cloud). Tier numbers are not accepted. Alone,
+                           runs each named tier whole. With --changed, --since,
+                           --spec, or --pkg, runs that selection restricted to
+                           the named tiers (unit keeps the selected packages).
   --tier journeys          The persona journey tier, which takes its own flags:
                            [--journey <name>] [--trials N] [--pilot <name>]
                            [--run-cap-usd 6] [--pilot-cap-usd 54]
@@ -188,10 +188,15 @@ Run flags:
                            Kind cluster per trial and runs a Claude Code agent
                            in a container on the token in
                            ~/.lenny-tmp/journeys/claude-token, so it costs
-                           money; --max-tier never reaches it.
-  --max-tier <name>        Run all tiers up to and including <name>, in the
-                           order the --tier list gives.
+                           money; no --gate bound or --tier list reaches it.
+  --gate <merge|area|release>
+                           Bound the selection at the tiers of that gate.
+                           Alone, runs the gate's tiers whole.
   --changed                Run tests affected by uncommitted changes (git diff).
+                           Without --tier or --gate, a discovery selection
+                           (--changed, --since, --spec, --pkg) runs only the
+                           static, unit, component, and contract tiers it
+                           reaches, which start no compose stack or cluster.
   --spec <s1,s2,...>       Run tests covering the given spec sections.
   --pkg <p1,p2,...>        Run tests covering the given source packages.
   --dry-run                Resolve the selector and print what would run; do not
