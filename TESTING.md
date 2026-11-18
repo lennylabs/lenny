@@ -1,6 +1,6 @@
 # Lenny Testing Infrastructure
 
-> Status: living specification. Phase 0 scaffolding is in place (the `lenny-test` harness, the `tests/testinfra/` helper packages, the spec-map and change-graph traceability layer, the static gate, and the GitHub Actions workflows). Later tiers and feature suites land per the §13 phase milestones. The document is the architecture reference the platform is built against.
+> Status: living specification. Phase 0 scaffolding is in place (the `lenny-test` harness, the `tests/testinfra/` helper packages, the annotation-based traceability layer, the static gate, and the GitHub Actions workflows). Later tiers and feature suites land per the §13 phase milestones. The document is the architecture reference the platform is built against.
 
 ## Table of Contents
 
@@ -8,7 +8,7 @@
 2. [Outcomes the test infrastructure must deliver](#2-outcomes-the-test-infrastructure-must-deliver)
 3. [Test layer model](#3-test-layer-model)
 4. [Repository and directory layout](#4-repository-and-directory-layout)
-5. [Spec traceability and the change graph](#5-spec-traceability-and-the-change-graph)
+5. [Spec traceability](#5-spec-traceability)
 6. [The `lenny-test` harness](#6-the-lenny-test-harness)
 7. [Verdict format and machine-readable output](#7-verdict-format-and-machine-readable-output)
 8. [Test selection groups](#8-test-selection-groups)
@@ -52,7 +52,7 @@ This document is the build plan for that infrastructure. It defines the layered 
 
 ### How this document is maintained
 
-This file changes when the test taxonomy changes, when a new dependency is introduced, when a new test layer is added, or when the build sequence is revised. Day-to-day test additions do not change this file: they update the spec map, the change graph, and the test packages.
+This file changes when the test taxonomy changes, when a new dependency is introduced, when a new test layer is added, or when the build sequence is revised. Day-to-day test additions do not change this file: they add the test with its `// spec:` annotation, and a row in `tests/non-go-inputs.yaml` when the test reads an input no Go package owns.
 
 ---
 
@@ -66,7 +66,7 @@ The infrastructure is complete when an implementing agent can:
 4. Run `lenny-test --group nightly` and get the nightly suite that includes e2e on Kind and a representative load and chaos pass.
 5. Run `lenny-test --group pre-release` and get the full release gate including the SLO re-validation suite.
 6. Inspect `tests/results/latest.json` and find a machine-readable verdict, per-test diagnoses, and pointers to spec sections.
-7. Add a new test, update the spec map and change graph in the same change, and have CI confirm the maps stay in sync.
+7. Add a new test with the `// spec:` annotation that names what it verifies, and have the coverage view and the selection find it with no map to update.
 
 The infrastructure is also complete only when the operator and the runtime author can:
 
@@ -185,14 +185,10 @@ lenny/
 │       └── echo-embedded/         # Embedded-model runtime (links adapter)
 └── tests/
     ├── README.md                  # Pointer to this file
-    ├── spec-map.json              # Spec section → tests
-    ├── spec-map-exceptions.yaml   # Spec sections explicitly exempt
-    ├── change-graph.json          # Source package → tests (read by validate-maps only)
     ├── non-go-inputs.yaml         # Inputs no Go package owns → tests that read them
     ├── groups.yaml                # Named test selection groups
     ├── groups.subsets.yaml        # Concrete subset definitions
     ├── flake-budget.yaml          # Per-test flake budget
-    ├── change-graph-pending.txt   # Pending change-graph updates
     ├── testdata/                  # Canonical fixtures (translator corpora, uploads, migrations)
     ├── results/                   # Latest verdict, kept under .gitignore
     │   └── latest.json
@@ -299,7 +295,7 @@ lenny/
 
 ---
 
-## 5. Spec traceability and the change graph
+## 5. Spec traceability
 
 ### Annotation index
 
@@ -321,7 +317,7 @@ The index serves `lenny-test coverage --spec`, `lenny-test list --spec`, `lenny-
 
 With no argument the view prints one line per page, identifier, and numbered heading, followed by the unresolved citations and the unannotated tests. Each argument selects rows and prints every test, code site, and issue of each: an identifier selects itself, a page code selects the page and its identifiers, and `§N.M` (or `N.M`) selects the numbered heading and the identifiers its stub lists. `--area` selects the pages whose front matter names the area, given by its folder name or by the code of one of its pages, and leaves the numbered sections out. `--json` prints the same rows as JSON. The rate is the share of identifier and numbered-heading rows with at least one citing test, direct or indirect, and `--threshold <fraction>` fails the command when the rate falls below it.
 
-`lenny-test list --spec` and `lenny-test --spec` resolve their arguments the same way. An identifier resolves to the tests that cite it directly or through a stub, a page code to those of every identifier on the page and the tests that cite the code, and a numbered section to the tests that cite it or a subsection and those of the identifiers its stub lists. Until change 0116 shows the coverage view equivalent to `tests/spec-map.json` and retires the map, each query also adds the tests the map lists under its section number, so no query selects less than the map did; a map key with no numbered heading still resolves. A query that names no identifier, page code, numbered section, or map key fails the command with exit code 2, as it does in `coverage --spec`.
+`lenny-test list --spec` and `lenny-test --spec` resolve their arguments the same way. An identifier resolves to the tests that cite it directly or through a stub, a page code to those of every identifier on the page and the tests that cite the code, and a numbered section to the tests that cite it or a subsection and those of the identifiers its stub lists. `lenny-test --spec` runs each tier that holds a resolved test, scopes the unit tier to the packages of the unit tests it resolved, and runs the whole unit tier when no test resolves. A query that names no identifier, page code, or numbered section fails the command with exit code 2, as it does in `coverage --spec`.
 
 ### Coverage gate
 
@@ -332,76 +328,21 @@ With no argument the view prints one line per page, identifier, and numbered hea
 
 A requirement that moves to another page with its text unchanged, a retired requirement, an operation, a definition block, and a numbered section are outside the gate. The coverage view reports numbered sections, and each area change adds its requirements in its own diff, so the gate checks the area when it lands. The gate skips with a reason when the repository carries neither `main` nor `origin/main`, fails when the branch shares no history with them, and passes with nothing to check while the specification defines no requirement. An issue record under a folder that is no registered page code, a record whose front matter does not parse, and a record that is a symbolic link cover nothing. The gate logs each with the reason, so such a record fails the requirements it names and leaves the other requirements to their own tests and issues.
 
-### Spec map
+### Selection and validation
 
-`tests/spec-map.json` maps every spec section to the tests, packages, migrations, and chart templates that encode it. The coverage view does not read it. `list --spec` and `--spec` add its entries to what the index resolves, as "Coverage view" states, and `lenny-test validate-maps` still checks it, until change 0116 retires it with its exceptions file.
+The annotation index and the Go import graph replace the two hand-kept maps the harness read before change 0116, `tests/spec-map.json` and `tests/change-graph.json`, which that change retired with their exception and pending lists and the register of directories the change graph did not key. `--changed` and `--pkg` select from the import graph, the specification edits, and `tests/non-go-inputs.yaml` (§6, "Selection algorithm"), and `--spec` resolves through the index, as "Coverage view" states.
 
-```json
-{
-  "version": 1,
-  "sections": {
-    "4.6.1": {
-      "title": "Warm Pool Controller — Pod Lifecycle",
-      "tests": [
-        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestPodClaimSkipLocked",
-        "tests/e2e_kind/sandbox_claim_test.go::TestConcurrentClaimNoDoubleAssignment",
-        "tests/chaos/concurrent_claim_test.go::TestPodClaimUnder100Goroutines"
-      ],
-      "packages": ["pkg/controller/warmpool", "pkg/store/podregistry"],
-      "schemas": ["api/crds/sandbox_claim.yaml"],
-      "migrations": ["0007_sandbox_claim_lock.sql"],
-      "chart_templates": ["charts/lenny/templates/admission/podclaim-guard.yaml"],
-      "depends_on_sections": ["4.6", "12.3", "13.2"],
-      "blocked_until_phase": "3.5"
-    }
-  }
-}
-```
+`lenny-test validate` checks the committed selection and register files, and the static tier runs it on every invocation:
 
-Conventions:
-- One entry per leaf spec section. Nested headings collapse to the leaf.
-- `blocked_until_phase` records when the section is testable. Earlier phases skip its tests with a `not-yet-applicable` reason rather than failing.
-- `depends_on_sections` enables the harness to surface adjacent context when a test fails: "Section 4.6.1 failed; cross-reference 4.6, 12.3, 13.2."
+1. `tests/groups.yaml` parses, and every tier and gate a group names exists.
+2. `tests/groups.subsets.yaml` parses, and every subset names a tier and its content.
+3. `tests/flake-budget.yaml` holds its cap, and every quarantine entry names its owner, reason, issue, and ETA.
+4. `tests/e2e_cloud/parity-matrix.yaml` names known providers and states.
+5. Every register under `tests/registers/` that declares the shared entry schema holds to it.
+6. Every row of `tests/non-go-inputs.yaml` matches a tracked file and names a tier or a Go package directory.
+7. Every test function in the component tier and the tiers after it carries a `// spec:` annotation in its doc comment, or a doc comment saying that the test verifies no requirement. A skip in the test's body does not excuse it.
 
-### Change graph
-
-`tests/change-graph.json` maps source packages, schemas, migrations, and chart templates to the tests that exercise them. No selector reads it: `--changed` and `--pkg` select from the import graph, the specification edits, and `tests/non-go-inputs.yaml` (§6, "Selection algorithm"). `validate-maps` checks the file until change 0116 removes it.
-
-```json
-{
-  "version": 1,
-  "pkg/store/session": {
-    "unit": ["pkg/store/session/..."],
-    "component": ["tests/component/stores/session_store_test.go"],
-    "integration": [
-      "tests/integration/session_lifecycle_test.go",
-      "tests/integration/checkpoint_resume_test.go"
-    ],
-    "e2e_kind": ["tests/e2e_kind/pod_lifecycle_test.go"]
-  },
-  "migrations/": {
-    "component": ["tests/component/stores/...", "tests/component/rls/..."],
-    "static": ["tests/static/build/schemas_test.go"]
-  },
-  "charts/lenny/": {
-    "static": ["charts/lenny/tests/...", "tests/static/helm_lint_test.go"],
-    "e2e_kind": [
-      "tests/e2e_kind/admission_policy_test.go",
-      "tests/e2e_kind/network_policy_test.go"
-    ]
-  }
-}
-```
-
-### Validation
-
-The harness ships a `lenny-test validate-maps` subcommand. It runs in CI on every PR.
-
-1. Every test function with a `// spec:` annotation appears in the spec map under each section it lists.
-2. Every package under `pkg/` appears in the change graph (or under an explicit `pkg/**` glob).
-3. Every spec section referenced under `spec/**.md` headings has at least one entry in the spec map. Exceptions are listed in `tests/spec-map-exceptions.yaml` with a justification.
-4. Every test file appears in at least one tier directory and carries the expected build tag.
-5. Every diagnosis comment (`// diagnosis: ...`) is present on the tests of the component tier and the tiers after it that exercise non-trivial behavior.
+`lenny-test validate-diagnosis` checks that every test of the component tier and the tiers after it carries a `// diagnosis:` comment, as "Diagnosis strings" below states.
 
 ### Diagnosis strings
 
@@ -456,7 +397,7 @@ lenny-test secretscan                             # The static tier's secret sca
 # Discovery and validation
 lenny-test --dry-run --changed                    # Show what would run
 lenny-test list --tier component                  # List discoverable tests
-lenny-test validate-maps                          # CI gate: maps in sync
+lenny-test validate                               # CI gate: selection and register files, test annotations
 lenny-test validate-diagnosis                     # CI gate: diagnosis coverage
 
 # Infrastructure lifecycle (see §10)
@@ -517,7 +458,7 @@ lenny-test --verdict-file tests/results/<name>.json
      - **`tests/non-go-inputs.yaml`.** Each row maps path patterns no Go package owns, such as the chart, the compose files, the supervisor's C sources, the documentation, and the specification, to the tiers and packages that read them. A tier name runs the whole tier. A package directory is treated as changed, so a helper package that reads the input, such as the envtest helper that loads the chart's CRDs, selects every test that imports it. `validate-maps` fails a row whose pattern matches no tracked file or whose target is neither a tier name nor a Go package directory. The selection reads the rows of the branch and the rows at the diff's base commit together, so a branch that deletes or narrows a row still runs what the row named.
 
      Each selected package runs in the tier that runs it: the tier whose directory holds it, or the unit tier for a package beside its code. The component tier also runs the tagged tests that `cmd/lenny-ops` and the container helpers under `tests/testinfra/containers` keep in-package, so a selected package there runs in the component tier as well. The unit, component, and contract tiers run the selected packages, and every other tier is one Go package, or a few, and runs whole when the selection reaches it. A test function a specification edit selects runs by name in the unit, component, contract, and integration tiers, and runs its whole tier in any other. A selected test function outside the tier directories whose file carries a tier's build tag runs by name in that tier. The static tier runs whole on every invocation, so `tests/static` is never selected again. A path that no package owns and no row matches selects the static tier only and is reported, except the records under `changes/`, `proposals/`, and `issues/` and the root-level documents that no test reads. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. Rename detection is off, so a moved file selects the package it left as well as the one it joined. When the diff, the package graph, or the specification edits cannot be read, the selection runs the unit, component, contract, and integration tiers whole and notes why, because a narrower selection would pass on tests it never ran. `--dry-run` prints each tier's scope, the functions it runs by name, and these reports without running anything.
-   - `--spec` → resolves each identifier, page code, or numbered section (`§N.M` or `N.M`) through the annotation index, together with the tests the spec map lists under the section number, to its tests (see §5, "Coverage view"). Each tier that holds such a test runs. The unit tier runs whole when the spec map lists a unit test for the query or carries the query as a key that names no tier, and is otherwise scoped to the packages of the unit tests the index found. When no test resolves, the unit tier runs whole. An unknown query exits 2.
+   - `--spec` → resolves each identifier, page code, or numbered section (`§N.M` or `N.M`) through the annotation index to its tests (see §5, "Coverage view"). Each tier that holds such a test runs. The unit tier is scoped to the packages of the unit tests the index found. When no test resolves, the unit tier runs whole. An unknown query exits 2.
    - `--pkg` → resolves through the import graph: the packages at or under each named directory are treated as changed, and the selection is that of a diff changing them, bounded by `--rdeps-depth`. A name that matches no package is reported.
 2. Bound the set. `--tier` beside a discovery selector (`--changed`, `--since`, `--spec`, or `--pkg`) keeps the named tiers, and a named tier the selection does not reach runs nothing and is reported. `--gate` keeps the tiers of the named gate, whatever the other selectors: the merge gate's tiers are static, unit, component, contract, integration, and docs; the area gate's are e2e_kind, chaos, security, conformance, and docs; and the release gate's are e2e_cloud, load_local, load_kind, chaos, and load_cloud, as `.claude/rules/test-coverage.md` ("Gates") lists them. `--tier` and `--gate` together keep the tiers both name. A discovery selector with neither runs only the static, unit, component, and contract tiers it reaches, which start no compose stack and no cluster, and reports the tiers it reached and left out; a gate or `--tier` runs those. `--group` names a complete plan that only `--gate` narrows. `--subset` names subsets of one tier and needs exactly one `--tier`.
 3. Order by tier ascending. Within a tier, group by package to maximize test-binary reuse.
@@ -964,11 +905,11 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
     - `go test ./tests/static/build/...` — build and generated-artifact drift: the license header on every source file, the CRD and JSON Schema inventories, the migration numbering, the supervisor binary, the workflow tool staging, the change records, and the generated-code no-drift checks for `pkg/proto/` and the API code.
     - `go test ./tests/static/chart/...` — the Helm chart render and the deployment boundary: flags the chart renders parse against their binaries, the profiles, RBAC, the adapter inputs, and the chart's agreement with the specification's ops RBAC block and OpenSLO fragment.
     - `go test ./tests/static/lint/...` — code-invariant lints over Go source and test-hygiene lints: the coordinator-hold allowlist, Redis cluster safety, the erasure writers, the production-mode carrier, dead code, retired symbols, proto addressing, ephemeral ports, temp roots, and provider coverage.
-    - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the skip-reason classifier, the gates of the specification tree, the coverage gate (see §5, "Coverage gate"), and the self-tests of the spec map and the change graph.
+    - `go test ./tests/static/structure/...` — the specification's structure and the migration gates: citations, fragment links, headings, identifiers, the naming lint, the residual gate, the skip-reason classifier, the gates of the specification tree, and the coverage gate (see §5, "Coverage gate").
 
     The no-drift test in the build package reproduces the whole `make generate-proto` target (`buf generate` plus the SPDX-header prepend and the `goimports` local-prefix rewrite) into a temporary tree and diffs the result against the committed stubs, because the plugins alone emit neither the header nor the regrouped import block. A static-tier test that runs but cannot reach a conclusion, such as the no-drift test on a host missing `buf`, `protoc-gen-go`, `protoc-gen-go-grpc`, or `goimports`, reports `unverified` rather than passing.
 22. `lenny-test validate-diagnosis` — diagnosis-comment coverage.
-23. `lenny-test validate-maps` — spec-map and change-graph integrity.
+23. `lenny-test validate` — the selection and register files, and the spec annotation of every test from the component tier on (see §5, "Selection and validation").
 
 **Gate.** Every check must pass. A check that reaches no conclusion reports `unverified`, and the tier carries that status rather than `pass`. No retries.
 
@@ -979,7 +920,7 @@ This section defines each tier's scope, dependencies, conventions, gate criteria
 | `tests/static/build` | Build and generated-artifact drift | 30 s |
 | `tests/static/chart` | The chart render, the deployment boundary, and the chart's agreement with the specification | 30 s |
 | `tests/static/lint` | Code invariants and test hygiene | 30 s |
-| `tests/static/structure` | The specification's structure, the migration gates, and the maps | 60 s |
+| `tests/static/structure` | The specification's structure and the migration gates | 60 s |
 
 The structure package carries the gates of the channel-naming and line-citation migration, which read the numbered specification files. Each of them stays until a gate of the specification structure covers what it checks, and the table below names, for each, the gate of change 0115 that covers it or the reason none does. The reference gate (`specshift ref check`, run by `TestSpecReferencesResolve`) checks links into the new specification tree only, and states that links into the numbered files keep the rules of these gates.
 
@@ -989,7 +930,7 @@ The structure package carries the gates of the channel-naming and line-citation 
 | `TestEveryCitationNamesADocumentAReaderCanReach` | A section number names a document that declares it | No. The annotation lint resolves identifiers, not section numbers. Kept. |
 | `TestLineCitationRatchetCertifiesTheTree` | The population of line citations does not grow | No. Kept until the line citations reach zero. |
 | `TestFragmentLinkGateCertifiesTheTree` | A fragment link in `spec/` and `docs/` addresses a heading that exists | In part. The reference gate checks fragments into the new tree; links into the numbered files and within `docs/` are this gate's alone. Kept. |
-| `TestEverySpecificationHeadingCarriesAnIndexEntry` | Every numbered heading has an index entry and a spec-map key | No. The generated indexes cover the new tree's pages, not the numbered headings. Kept. |
+| `TestEverySpecificationHeadingCarriesAnIndexEntry` | Every numbered heading has an index entry | No. The generated indexes cover the new tree's pages, not the numbered headings. Kept. |
 | `TestIdentifierResolutionCertifiesTheTree` | One live spelling per channel identifier | No. Channel identifiers are not page identifiers. Kept. |
 | `TestNamingLintReportsNoBareReservedNounPhraseInTheTree` | The reserved phrases of the naming law | No. Kept. |
 | `TestDegradationMatrixCorrespondsOneToOneWithTheChannelRegister` | The degradation matrix matches the channel register | No. Kept. |
@@ -1725,7 +1666,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 **Test infrastructure to land.**
 - `cmd/lenny-test/` skeleton: command parser, group selection, verdict producer, output formats.
-- `tests/spec-map.json` and `tests/change-graph.json` seeded with the spec's table of contents and an initial change-graph entry per planned package.
+- `tests/spec-map.json` and `tests/change-graph.json` seeded with the spec's table of contents and an initial change-graph entry per planned package. Change 0116 retired both in favor of the annotation index and the import graph (§5).
 - `tests/groups.yaml` with `pr`, `pr-fast`, `nightly`, `pre-release`, and per-phase placeholder groups.
 - `scripts/setup-dev.sh`, `scripts/preflight.sh`, `scripts/setup-cluster.sh`.
 - ADR-007 (PodClaim optimistic locking) authored. ADR-008 (license) committed. LICENSE file at repo root.
@@ -1734,7 +1675,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - The docs tier is partially live: link check, code-block syntax check.
 
 **Test group gating Phase 0 → Phase 1.**
-- `phase-0-gate`: The static tier and the docs tier pass on the empty repo. `lenny-test validate-maps` passes (empty maps).
+- `phase-0-gate`: The static tier and the docs tier pass on the empty repo. `lenny-test validate` passes.
 
 ### 13.1 Phase 1 — Core types and wire contracts
 
@@ -2360,7 +2301,7 @@ Every documented subcommand in §spec/24 (sections §spec/24.0–§spec/24.20) h
 4. Asserts the system returns to healthy.
 5. Confirms the audit trail records the operator action and any required justification.
 
-The mapping between runbook and test lives in `tests/chaos/runbook-map.yaml` and is validated by `lenny-test validate-maps`: every runbook has a matching test, and every test names its runbook.
+The mapping between runbook and test lives in `tests/chaos/runbook-map.yaml` and is validated by `tests/testinfra/chaos/runbook_map_test.go`: every runbook has a matching test, and every test names its runbook.
 
 ### 15.3 Operability event stream
 
@@ -2761,7 +2702,7 @@ Workflow file: `.github/workflows/phase-gate.yml`, parameterized by `inputs.phas
 Required checks for `main`:
 - The static tier through the e2e_cloud tier critical-path on PR.
 - The docs tier.
-- `lenny-test validate-maps`.
+- `lenny-test validate`.
 - `lenny-test validate-diagnosis`.
 
 No force-push to `main`. No merge with failing checks. No merge without an ADR for changes that require one (per `docs/adr/index.md`). Linear history enforced. Signed commits recommended after Phase 14 (image signing GA).
@@ -2883,8 +2824,8 @@ The infrastructure ships with quality metrics that go-live gates enforce.
 
 ### 22.2 Spec coverage
 
-- Every spec section with behavior is mapped to at least one test.
-- The spec-map dashboard (built into the verdict reporter) shows which sections are green, red, or unimplemented.
+- Every spec section with behavior is cited by at least one test's `// spec:` annotation.
+- The coverage view (`lenny-test coverage --spec`, §5) shows which identifiers and sections have citing tests.
 - The "spec implementation percentage" is the fraction of spec sections currently green at the highest tier they reach (the highest tier that runs end-to-end without skips for that section).
 
 ### 22.3 Diagnosis coverage

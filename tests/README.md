@@ -6,12 +6,10 @@ Test infrastructure for Lenny. The architecture and conventions are defined in [
 
 | File | Purpose |
 |:-----|:--------|
-| `spec-map.json` | Maps every spec leaf section to its tests, packages, schemas, migrations, and chart templates. See TESTING.md §5. |
-| `change-graph.json` | Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. `validate-maps` checks it; no selector reads it. |
 | `non-go-inputs.yaml` | Maps the inputs no Go package owns, such as the chart, the compose files, and the supervisor's C sources, to the tests that read them. `lenny-test --changed` reads it beside the import graph and the specification edits. See TESTING.md §6, "Selection algorithm". |
 | `groups.yaml` | Named test selection groups (`pr`, `pr-fast`, `nightly`, `pre-release`, `phase-<N>-gate`). |
 | `groups.subsets.yaml` | Concrete subset definitions referenced by `groups.yaml`. |
-| `spec-map-exceptions.yaml` | Spec sections explicitly exempt from the "every section has at least one test" rule, with justifications. |
+| `flake-budget.yaml` | The quarantined tests, each with its owner and reason, and the cap on how many the quarantine holds. |
 | `results/` | Latest verdict (`latest.json`, `latest.junit.xml`). Gitignored. |
 
 ## Subdirectories
@@ -19,7 +17,7 @@ Test infrastructure for Lenny. The architecture and conventions are defined in [
 Each tier has its own directory and build tag (see TESTING.md §4 for the canonical layout). Phase 0 ships the skeleton; subsequent phases populate each tier.
 
 - `testinfra/` — shared infrastructure (containers, Kind, fixtures, mocks, assertions, verdict producer, time and randomness control)
-- `static/` — the static tier's Go test packages: `build/` (build and generated-artifact drift), `chart/` (the chart render and the deployment boundary), `lint/` (code invariants and test hygiene), and `structure/` (the specification's structure, the migration gates, and the maps)
+- `static/` — the static tier's Go test packages: `build/` (build and generated-artifact drift), `chart/` (the chart render and the deployment boundary), `lint/` (code invariants and test hygiene), and `structure/` (the specification's structure and the migration gates)
 - `component/` — single component plus real backing services
 - `contract/` — wire-format equivalence across surfaces
 - `integration/` — multi-component flows via compose
@@ -44,8 +42,8 @@ lenny-test --group pr-fast
 # The merge gate's tiers, run whole
 lenny-test --group pr
 
-# Validate the spec map and change graph
-lenny-test validate-maps
+# Validate the selection and register files and the test annotations
+lenny-test validate
 
 # Validate that every component-and-up test has a diagnosis comment
 lenny-test validate-diagnosis

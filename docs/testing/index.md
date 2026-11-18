@@ -14,7 +14,7 @@ Lenny's test surface follows a strict tier model. The static tier runs first; ea
 
 | Tier | What runs | Wall clock |
 |:----:|:----------|:-----------|
-| 0 | go vet, gofumpt, goimports, golangci-lint, schema/query/migration linters, ADR catalog, markdown link check, validate-diagnosis, validate-maps, JSON-schema breaking-change check | < 60s |
+| 0 | go vet, gofumpt, goimports, golangci-lint, schema/query/migration linters, ADR catalog, markdown link check, validate-diagnosis, validate, JSON-schema breaking-change check | < 60s |
 | 1 | `go test ./...` with `-race -count=1`; helm-unittest cases when the chart is present | < 60s |
 | 2 | Component tests against real backing stores (Postgres/Redis/MinIO via testcontainers-go); each suite covers one Lenny subsystem | < 5min |
 | 3 | Contract tests: REST/MCP consistency, OpenAI translator fidelity, adapter JSONL, OAuth token exchange, SDK contract harness | < 4min |
