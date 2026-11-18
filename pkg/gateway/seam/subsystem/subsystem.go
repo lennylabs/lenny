@@ -5,6 +5,7 @@ package subsystem
 import (
 	"context"
 	"errors"
+	"sync"
 )
 
 // ErrCircuitOpen is returned by Subsystem.Do when the breaker is
@@ -62,8 +63,31 @@ type Subsystem struct {
 // (*Breaker).RecordSuccess explicitly and bypass Do — or use the
 // breaker / limiter directly.
 func (s *Subsystem) Do(ctx context.Context, fn func(context.Context) error) error {
+	done, err := s.Admit(ctx)
+	if err != nil {
+		return err
+	}
+	err = fn(ctx)
+	done(err)
+	return err
+}
+
+// Admit admits one call through the subsystem's breaker and limiter, as
+// Do does, without taking the call itself. It returns ErrCircuitOpen
+// when the breaker is open and the limiter's error when ctx ends before a
+// slot frees, and on either refusal leaves nothing to release. On
+// admission it returns done, which the caller calls once with the call's
+// error: done releases the limiter slot and records a non-nil error as a
+// breaker failure and a nil error as a success. A second call of done
+// does nothing.
+//
+// A caller uses Admit where the call it gates holds a value that the
+// subsystem's part must not receive, such as a client of a package GW-R2
+// confines, so that the call stays with the caller and only its outcome
+// reaches the breaker.
+func (s *Subsystem) Admit(ctx context.Context) (done func(error), err error) {
 	if s.Breaker != nil && !s.Breaker.Allow() {
-		return ErrCircuitOpen
+		return nil, ErrCircuitOpen
 	}
 	var release func()
 	if s.Limiter != nil {
@@ -75,22 +99,25 @@ func (s *Subsystem) Do(ctx context.Context, fn func(context.Context) error) erro
 			if s.Breaker != nil {
 				s.Breaker.RecordSuccess()
 			}
-			return err
+			return nil, err
 		}
 		release = r
 	}
-	err := fn(ctx)
-	if release != nil {
-		release()
-	}
-	if s.Breaker != nil {
-		if err != nil {
-			s.Breaker.RecordFailure()
-		} else {
-			s.Breaker.RecordSuccess()
-		}
-	}
-	return err
+	var once sync.Once
+	return func(callErr error) {
+		once.Do(func() {
+			if release != nil {
+				release()
+			}
+			if s.Breaker != nil {
+				if callErr != nil {
+					s.Breaker.RecordFailure()
+				} else {
+					s.Breaker.RecordSuccess()
+				}
+			}
+		})
+	}, nil
 }
 
 // State returns the breaker's current state, or StateClosed when no

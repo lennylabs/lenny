@@ -17,6 +17,6 @@ import (
 // spec: 16.1 (Metrics), 16.5 (Alerting Rules and SLOs), 10.2 (Authentication)
 func TestSigningMetricsToleratesNilReceiver(t *testing.T) {
 	var m *gatewaymetrics.Metrics
-	m.RecordJWTSignRequest("ok")
+	m.RecordJWTSignRequest("gateway", "ok")
 	m.SetKMSSignQuotaPerSecond(100)
 }

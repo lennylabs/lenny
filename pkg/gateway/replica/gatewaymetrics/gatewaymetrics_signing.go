@@ -5,7 +5,6 @@ package gatewaymetrics
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
@@ -101,16 +100,19 @@ func newJWTSignRequestsCounter() (*prometheus.CounterVec, error) {
 }
 
 // RecordJWTSignRequest increments
-// `lenny_jwt_sign_requests_total{component="gateway",outcome}` once per
-// gateway sign request. outcome is one of the jwt.SignOutcome* values
-// the breaker reports through OnOutcome.
+// `lenny_jwt_sign_requests_total{component,outcome}` once per sign
+// request. component is the signer component the caller names, which the
+// gateway's breaker observer gives as the gateway's own, and outcome is
+// one of the outcomes the breaker reports through OnOutcome. The caller
+// names the component because the signing package is confined under
+// GW-R2, which the replica's metric registry may not import.
 //
 // spec: §16.1 (JWT sign requests); §10.2.
-func (m *Metrics) RecordJWTSignRequest(outcome string) {
+func (m *Metrics) RecordJWTSignRequest(component, outcome string) {
 	if m == nil {
 		return
 	}
-	m.jwtSignRequests.WithLabelValues(jwt.SignComponentGateway, outcome).Inc()
+	m.jwtSignRequests.WithLabelValues(component, outcome).Inc()
 }
 
 // SetKMSSignQuotaPerSecond emits the configured provider Sign quota on

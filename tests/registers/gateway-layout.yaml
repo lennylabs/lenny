@@ -927,7 +927,3 @@ imports:
     to: pkg/gateway/storage/issuedtokenstore
     rule: confined-imports
     step: 0117.S4
-  - from: pkg/gateway/replica/gatewaymetrics
-    to: pkg/auth/jwt
-    rule: confined-imports
-    step: 0117.S4

@@ -217,7 +217,7 @@ func (o *kmsBreakerObserver) OnRejected() {
 // spec: §16.1 (JWT sign requests).
 func (o *kmsBreakerObserver) OnOutcome(outcome string) {
 	if m := o.metrics(); m != nil {
-		m.RecordJWTSignRequest(outcome)
+		m.RecordJWTSignRequest(jwt.SignComponentGateway, outcome)
 	}
 }
 
