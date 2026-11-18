@@ -372,11 +372,11 @@ build_image() {
   fi
 
   log "building ${image} from ${dockerfile_rel}"
-  docker build -f "${dockerfile}" "${build_args[@]}" -t "${image}" "${context}" </dev/null
+  docker build -f "${dockerfile}" ${build_args[@]+"${build_args[@]}"} -t "${image}" "${context}" </dev/null
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
     log "image ${image} not found after build; retrying with DOCKER_BUILDKIT=0"
-    DOCKER_BUILDKIT=0 docker build -f "${dockerfile}" "${build_args[@]}" -t "${image}" "${context}" </dev/null
+    DOCKER_BUILDKIT=0 docker build -f "${dockerfile}" ${build_args[@]+"${build_args[@]}"} -t "${image}" "${context}" </dev/null
   fi
 
   if ! docker image inspect "${image}" >/dev/null 2>&1; then
