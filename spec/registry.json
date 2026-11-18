@@ -1687,6 +1687,11 @@
       "id": "GW-R1",
       "anchor": "gw-r1",
       "file": "spec/components/gateway/index.md"
+    },
+    {
+      "id": "GW-R2",
+      "anchor": "gw-r2",
+      "file": "spec/components/gateway/index.md"
     }
   ],
   "operations": [
