@@ -27,7 +27,7 @@ The annotation index in `scripts/specshift/annotation` (CS-1), with `survey`'s s
 `TestEveryChangedRequirementHasACitingTest` in `tests/static` (CS-3), with fixtures for each case under "Tests", and the "Gate" section of `.claude/rules/spec-annotations.md`. Decision O1 settles whether an issue satisfies the gate.
 
 ### 0116.S3 Selection from the import graph, specification edits, and non-Go inputs
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0116.S1]
 
