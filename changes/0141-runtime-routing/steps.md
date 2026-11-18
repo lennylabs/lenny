@@ -35,3 +35,5 @@ The steps land in order.
 "RT-1", "RT-3", "RT-4", and "RT-7". It uses the payload and the single chain of 0141.S1. [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) depends on the shared bucketing function of 0141.S2 and lands after it.
 
 Within 0141.S2, the specification edits land first, then routes and routing labels with their tests, then the removal and the migration, then the documentation and records.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-ApplyExperimentRouting` with the `ExperimentRouter`.

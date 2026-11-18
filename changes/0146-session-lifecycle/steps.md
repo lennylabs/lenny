@@ -19,6 +19,8 @@ The states and their rules: "SL-1" to "SL-7" and "SL-9" to "SL-11", with every s
 
 It has no dependency. It lands with MD-A of the message delivery design, in one proposal or in two applied together, because MD-A's delivery paths name the new states and this step's transitions read MD-A's turn accounting.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the held-delivery operations (`GWSEAM-LockDelivery`, `GWSEAM-HoldMessage`, `GWSEAM-HoldUndeliveredForward`, `GWSEAM-DeliverHeld`, `GWSEAM-ResumeSuspended`, and `GWSEAM-AdmitResume`) and `GWSEAM-EnqueueInbox` (SL-5 and SL-10), the delegation budget operations (`GWSEAM-ReturnBudget`, `GWSEAM-RearmBudget`, `GWSEAM-ObserveHighWatermark`, `GWSEAM-NodeUsage`, `GWSEAM-TreeUsage`, and `GWSEAM-SubtreeTokens`, SL-10), `GWSEAM-Orphaned` (SL-9), and `GWSEAM-AuthorizeSession` with the predicate for the root's client.
+
 ### 0146.S2 Child events
 - status: Planned
 - aliases: [SL-B, SL-8, SL-12, SL-3 (part), SL-4 (part), SL-6 (part)]
@@ -26,3 +28,5 @@ It has no dependency. It lands with MD-A of the message delivery design, in one 
 - depends-on: [0146.S1, 0135.S5]
 
 Every child event of the lifecycle, wherever this design states it: "SL-8" and "SL-12", the `suspended` and `resumed` child events of "SL-4", the `end_of_turn` child events with `turn_lost` and `idle_timeout` of "SL-3" and "SL-6", the return to `pending` of the child events a cancelled `await_child_sessions` had taken, and the resend of `ended` and end-of-turn child events, with the parts of the §7.3, §8.8, and §8.10 rows that state them. It needs MD-E of the message delivery design for the child events.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It adds child events into the parent's inbox (SL-8 and SL-12), a crossing that has no operation yet.

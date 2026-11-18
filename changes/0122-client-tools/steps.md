@@ -25,6 +25,8 @@
 
 The runtime contract and the gateway core (CT-1 to CT-5, CT-7 to CT-10), REST, and the Chat Completions and Responses mappings of CT-6. It turns AM-A's refusal of `tools` on the OpenAI translators into the mapping for declaring revisions, and lands alongside the F-15.1.82 fix.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the held-delivery operations (`GWSEAM-LockDelivery`, `GWSEAM-HoldMessage`, `GWSEAM-HoldUndeliveredForward`, `GWSEAM-DeliverHeld`, `GWSEAM-ResumeSuspended`, and `GWSEAM-AdmitResume`) and `GWSEAM-EnqueueInbox` with the hold rule for inbox deliveries while client tool calls are pending (CT-5).
+
 ### 0122.S2 Messages API mapping
 - status: Planned
 - aliases: [CT-B, CT-6 (part)]

@@ -37,3 +37,4 @@ The review of [`0132-llm-response-cache-removal`](../0132-llm-response-cache-rem
 ## Open decision raised by 0116.S5 (2026-11-17)
 
 The security review of 0116.S5 raised open decision 4: whether 0133.S2 depends on a pod SPIFFE identity, and whether removing `credential.proxy_mode_spiffe_binding_disabled` here and the `lenny-direct-mode-isolation` webhook in 0127 drops the multi-tenant refusal of `spiffeBinding: disabled`. A check of the tree and of both changes found that it does. Issues CHEGRESS-I1, CHGWPOD-I9, CHGWPOD-I12, and CHGWPOD-I15 are planned for 0133.S2, which now lists them under `closes`.
+- 2026-11-17. Decision 8 of [0117](../0117-gateway-package-layout/decisions.md), settled by the owner, assigns this change the edits to the gateway seam interface page and `pkg/gateway/seam` for the mechanisms it changes. Added a line naming the operations to 0133.S2 and 0133.S3 in `steps.md`, and the decision to `decisions.md`.

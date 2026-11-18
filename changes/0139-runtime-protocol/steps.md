@@ -31,6 +31,8 @@ Tool calls on frames, tool connections under O3, the platform tools on every pod
 
 It supersedes the intra-pod part of MP-5 (0134.S3). CA-E, CA-H, and CA-I are withdrawn with connectors by [`0124-connector-removal`](../0124-connector-removal/change.md).
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It adds per-session tool availability (RP-4), a crossing from the platform tools seam to the session core that has no operation yet.
+
 ### 0139.S3 SDKs, executor, and reference runtimes
 - status: Planned
 - aliases: [RP-C]

@@ -66,3 +66,4 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Revision 14 (2026-11-16)
 
 The owner accepted three resolutions of conflicts between steps that the conversion of the moved designs into steps found (0113.S4). 0153.S4 and 0153.S8 depend on the generic stores, warm list, and `prestage` of 0127.S5 and on the fill of 0153.S9, in place of 0147.S8, which removes a dependency loop with 0147. Tenant entries and withheld trees arrive with 0147.S8's staging part.
+- 2026-11-17. Decision 8 of [0117](../0117-gateway-package-layout/decisions.md), settled by the owner, assigns this change the edits to the gateway seam interface page and `pkg/gateway/seam` for the mechanisms it changes. Added a line naming the operations to 0153.S3 in `steps.md`, and the decision to `decisions.md`.

@@ -30,6 +30,8 @@ The delivery core: MD-1 to MD-7, MD-9, MD-12, and MD-14, and the message rows of
 
 SL-A of [`0146-session-lifecycle`](../0146-session-lifecycle/steps.md#steps) lands with this step, because the delivery paths name the states `idle`, `dormant`, `suspended`, and `blocked`.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-SendMessages`, which `Deliver` replaces (MD-6), reshapes the held-delivery operations (`GWSEAM-LockDelivery`, `GWSEAM-HoldMessage`, `GWSEAM-HoldUndeliveredForward`, `GWSEAM-DeliverHeld`, `GWSEAM-ResumeSuspended`, and `GWSEAM-AdmitResume`) and `GWSEAM-EnqueueInbox` (MD-3 and MD-5), and reshapes `GWSEAM-AuthorizeSession` with the predicate for the root's client that the delivery paths read.
+
 ### 0135.S2 Provider surfaces and client tools
 - status: Planned
 - aliases: [MD-B, MD-8, MD-10, MD-11 (part)]
@@ -56,6 +58,8 @@ Runtime reports during a turn: MD-15 to MD-21, the reference-adapter translation
 
 It needs the steps of the incremental checkpoint design that land IC-1 to IC-7, because file exports use its capture spool and reflink probe, chunks, packs, stream, catalog, download rendering, reclamation, and spool cap.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the tool approvals (`GWSEAM-RegisterApproval`, `GWSEAM-CancelApproval`, `GWSEAM-ResolveApproval`, and `GWSEAM-AwaitApproval`) for harness approvals (MD-19).
+
 ### 0135.S5 Parents and children and the names
 - status: Planned
 - aliases: [MD-E, MD-22, MD-23, MD-24, MD-25, MD-26, MD-9 (part), MD-19 (part)]
@@ -65,3 +69,5 @@ It needs the steps of the incremental checkpoint design that land IC-1 to IC-7, 
 Parents and children and the names: MD-22 to MD-26, the rules of MD-9 and MD-19 that revisions 9 and 10 add, the removal of `lenny/request_input` and the `siblings` scope, with the specification changes to §4.7, §5.1, §7.2, §8.2, §8.3, §8.5, §8.7, §8.8, §8.9, §9.1, §9.2, §15, §15.1, §15.2, §15.4.1, §15.4.3, §15.4.6, §21, §28.3, §28.4, §28.5.1, and §28.5.3.
 
 It needs 0135.S4 for the frame changes and the output files that MD-26 imports, DA-A of [`0126-delegation-availability`](../0126-delegation-availability/steps.md#steps) for `capabilities.childSessions`, and SL-A of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) for the states. SL-B of that design follows this step.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-PendingInputWaits`, `GWSEAM-ResolveInputWait`, and `GWSEAM-ForgetInputWaits` with `lenny/request_input`, reshapes the tool approvals for the rules of MD-19 this step carries, and adds child events into the parent's inbox (MD-22), `watch_child_session` (MD-25), and `import_child_session_file` (MD-26), crossings that have no operation yet.

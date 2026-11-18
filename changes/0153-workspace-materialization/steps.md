@@ -138,6 +138,8 @@ The step needs SI-B (the broker, [0145.S2](../0145-session-isolation/steps.md#st
 
 Archive extraction in the helper and its removal from the gateway; the §7.4 and §13.4 rewrite. The gateway's extraction stays until 0153.S3 lands, so nothing breaks between steps.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-RecordExtractionAbort` and reshapes `GWSEAM-WriteWorkspace`, as archive extraction leaves the gateway (WM-9).
+
 ### 0153.S4 Git in the helper
 - status: Planned
 - aliases: [WM-D, WM-10]
