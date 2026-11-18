@@ -1378,9 +1378,3 @@ func TestTerminalWaiterGetsNoGrant_spec_8_6(t *testing.T) {
 		t.Errorf("child-B raised by %d, want no RaiseBudget for a terminal session", d)
 	}
 }
-
-// ForgetBudget and TrackedBudgetSessions complete seam.MeteringBudgets; the
-// extension fan-out calls only RaiseBudget and TerminateForBudget.
-func (*fakeReclaimer) ForgetBudget(string) {}
-
-func (*fakeReclaimer) TrackedBudgetSessions() []string { return nil }

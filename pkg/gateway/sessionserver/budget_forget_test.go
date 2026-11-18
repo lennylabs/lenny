@@ -24,7 +24,7 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 	var forgotten []string
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
-		MeteringBudgets: forgetBudgets(func(sessionID string) { forgotten = append(forgotten, sessionID) }),
+		BudgetTracking:  forgetBudgets(func(sessionID string) { forgotten = append(forgotten, sessionID) }),
 	})
 	row := sessionstore.Session{
 		UserID: testOwner,
@@ -63,11 +63,9 @@ func TestTerminalPipelineNilBudgetForgetIsSafe_spec_11_2(t *testing.T) {
 	}
 }
 
-// forgetBudgets is a seam.MeteringBudgets whose ForgetBudget calls the
+// forgetBudgets is a seam.BudgetTracking whose ForgetBudget calls the
 // function; the terminal pipeline calls no other operation.
 type forgetBudgets func(sessionID string)
 
 func (f forgetBudgets) ForgetBudget(sessionID string) { f(sessionID) }
 func (forgetBudgets) TrackedBudgetSessions() []string { return nil }
-func (forgetBudgets) RaiseBudget(string, int64)       {}
-func (forgetBudgets) TerminateForBudget(string)       {}

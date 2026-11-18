@@ -13,5 +13,5 @@
 // proxy's HTTP server on its own listener. It reaches the session core only
 // through pkg/gateway/seam.
 //
-// spec: GWLLM
+// spec: GWLLM, LLMUP
 package llmproxy

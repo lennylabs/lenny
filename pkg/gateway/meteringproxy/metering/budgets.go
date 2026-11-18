@@ -15,7 +15,8 @@ type SessionTracker interface {
 	TrackedSessions() []string
 }
 
-// Budgets is the metering proxy's side of seam.MeteringBudgets: the
+// Budgets is the metering proxy's side of seam.BudgetTracking and
+// seam.BudgetResolutions: the
 // per-session budget state the proxy holds in its budget enforcer, in its
 // usage recorder's granted deltas, and in the direct-mode anomaly detector
 // the recorder feeds. The session core forgets a settled session's state
@@ -36,7 +37,10 @@ type Budgets struct {
 	anomaly  SessionTracker
 }
 
-var _ seam.MeteringBudgets = (*Budgets)(nil)
+var (
+	_ seam.BudgetTracking    = (*Budgets)(nil)
+	_ seam.BudgetResolutions = (*Budgets)(nil)
+)
 
 // NewBudgets returns the budgets over the enforcer. A nil enforcer holds no
 // budget state of its own.

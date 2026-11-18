@@ -97,7 +97,7 @@ type Recorder struct {
 	// grantMu guards grantedDelta.
 	grantMu sync.Mutex
 	// grantedDelta accumulates, per session, the §8.6 granted token deltas the
-	// recorder observes through Budgets.RaiseBudget (RaiseBudget). Enforcer.Record
+	// recorder observes through Budgets.RaiseBudget. Enforcer.Record
 	// overwrites c.budget from the budget argument on every call, so a raise
 	// applied through RaiseBudget alone is clobbered the next time RecordUsage
 	// settles a request unless the budget the recorder passes to Record already
@@ -154,8 +154,8 @@ func NewRecorder(usage usagestore.Store, sessions sessionstore.Store, sessUsage 
 // RaiseBudget records a §8.6 granted token delta for sessionID and raises
 // the enforcer's per-session budget. Budgets.RaiseBudget, the metering
 // proxy's GWSEAM-RaiseBudget that the extension episode fan-out and the
-// in-path Granted applier call, reaches it (proposal 0023 S3/S4). The two responsibilities
-// are inseparable: the enforcer raises c.budget so the pre-flight gate admits
+// in-path Granted applier call, reaches it (proposal 0023 S3/S4). The two
+// responsibilities are inseparable: the enforcer raises c.budget so the pre-flight gate admits
 // the session's next request, but Enforcer.Record overwrites c.budget from the
 // budget argument on the next settlement, so the recorder must also accumulate
 // the delta and add it to the base MaxTokenBudget it passes to Record. Applying

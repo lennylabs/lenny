@@ -185,7 +185,7 @@ func (s *Service) applyInPathResolution(sessionID string, res sessionResult) (Ou
 // after constructing the enforcer (proposal 0023 S4); tests inject a fake.
 // A nil reclaimer leaves the deferred fan-out with nothing to apply.
 // spec: §8.6; proposal 0023 S4.
-func (s *Service) SetReclaimer(r seam.MeteringBudgets) {
+func (s *Service) SetReclaimer(r seam.BudgetResolutions) {
 	if s.episodes != nil {
 		s.episodes.setReclaimer(r)
 	}
@@ -338,7 +338,7 @@ type episodeManager struct {
 
 	mu        sync.Mutex
 	trees     map[string]*episode
-	reclaimer seam.MeteringBudgets
+	reclaimer seam.BudgetResolutions
 }
 
 // newEpisodeManager returns an episode manager for svc. episodeCtx is
@@ -356,7 +356,7 @@ func newEpisodeManager(svc *Service, episodeCtx func() context.Context) *episode
 
 // setReclaimer records the reclaimer the fan-out calls for detached
 // sessions.
-func (m *episodeManager) setReclaimer(r seam.MeteringBudgets) {
+func (m *episodeManager) setReclaimer(r seam.BudgetResolutions) {
 	m.mu.Lock()
 	m.reclaimer = r
 	m.mu.Unlock()
@@ -367,7 +367,7 @@ func (m *episodeManager) setReclaimer(r seam.MeteringBudgets) {
 // through the same reclaimer the deferred fan-out uses. A nil reclaimer is
 // the pre-wiring posture (tests, or the local-development no-leasecontrol
 // path); the caller no-ops the raise.
-func (m *episodeManager) currentReclaimer() seam.MeteringBudgets {
+func (m *episodeManager) currentReclaimer() seam.BudgetResolutions {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.reclaimer
@@ -563,7 +563,7 @@ func (m *episodeManager) dispatchOne(ctx context.Context, tenantID, sessionID st
 // closed). Every joined member is reclaimed, so a session that batched
 // on and detached is never left denied with nothing to clear it. spec:
 // §8.6; proposal 0023 S3.
-func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]sessionResult, reclaimer seam.MeteringBudgets) {
+func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]sessionResult, reclaimer seam.BudgetResolutions) {
 	for id, mem := range members {
 		res := resolved[id]
 		// resolve records the outcome and signals a still-waiting in-path

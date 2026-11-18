@@ -22,9 +22,10 @@ import (
 const budgetTerminateTimeout = 30 * time.Second
 
 // budgetSessionTerminator is the session core's side of GWSEAM-ExpireSession,
-// which the metering proxy's budget enforcer calls. It transitions an over-budget session to the §7.1 `expired` terminal
-// state and runs the terminal-side-effects pipeline (pod release, audit,
-// billing, SSE) so a budget-exhausted session is torn down exactly like
+// which the metering proxy's budget enforcer calls. It transitions an
+// over-budget session to the §7.1 `expired` terminal state and runs the
+// terminal-side-effects pipeline (pod release, audit, billing, SSE) so a
+// budget-exhausted session is torn down exactly like
 // any other terminal. The store update runs on a fresh background
 // context in its own goroutine so the §4.9 proxy response path that
 // triggers the termination is never blocked on the teardown — the
@@ -46,9 +47,10 @@ type budgetSessionTerminator struct {
 }
 
 // ExpireSession is GWSEAM-ExpireSession: it transitions sessionID to
-// `expired` with the given §8.8 FailureReason and releases its pod. Idempotent: a session already
-// terminal is a no-op. The teardown runs asynchronously on a fresh
-// background context so the §4.9 proxy response path is never blocked.
+// `expired` with the given §8.8 FailureReason and releases its pod.
+// Idempotent: a session already terminal is a no-op. The teardown runs
+// asynchronously on a fresh background context so the §4.9 proxy response
+// path is never blocked.
 //
 // The terminal claim opens here, synchronously, before the goroutine starts,
 // so a shutdown that races the goroutine already sees the claim and waits

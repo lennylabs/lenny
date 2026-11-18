@@ -125,9 +125,9 @@ type counter struct {
 }
 
 // New returns an Enforcer that expires over-budget sessions through t,
-// the session core's GWSEAM-ExpireSession. extend, when non-nil, is the §8.6 extension seam consulted at the
-// exhaustion boundary; a nil seam preserves the §11.2
-// terminate-immediately behavior. onExceeded, when non-nil, is called
+// the session core's GWSEAM-ExpireSession. extend, when non-nil, is the
+// §8.6 extension seam consulted at the exhaustion boundary; a nil seam
+// preserves the §11.2 terminate-immediately behavior. onExceeded, when non-nil, is called
 // once per session the first time it exhausts its budget (the metric /
 // audit hook); it runs under the enforcer lock and must not block.
 func New(t seam.SessionExpiry, extend ExtendOnExhaustion, onExceeded func(tenantID, sessionID string, budget, consumed int64)) *Enforcer {

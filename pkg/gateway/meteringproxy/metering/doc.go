@@ -5,10 +5,10 @@
 // deltas the gateway pulls from pods, into the usage store, the per-session
 // token totals, the quota counters, and the mid-session budget enforcer;
 // and the per-session budget state the proxy serves to the session core and
-// the platform tools seam as seam.MeteringBudgets.
+// the platform tools seam as seam.BudgetTracking and seam.BudgetResolutions.
 //
 // It reaches the session core only through pkg/gateway/seam: the recorder
 // stamps session activity through GWSEAM-StampActivity.
 //
-// spec: GWLLM
+// spec: GWLLM, USAGE, QUOTA, BUDGET
 package metering

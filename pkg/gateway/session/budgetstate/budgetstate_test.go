@@ -47,7 +47,7 @@ type noopTerminator struct{}
 func (noopTerminator) ExpireSession(string, string) {}
 
 // funcBudgets adapts a tracked-ids function and a forget function to the
-// seam.MeteringBudgets the sweep reads; the sweep calls no other operation.
+// seam.BudgetTracking the sweep reads.
 type funcBudgets struct {
 	tracked func() []string
 	forget  func(string)
@@ -55,8 +55,6 @@ type funcBudgets struct {
 
 func (f funcBudgets) TrackedBudgetSessions() []string { return f.tracked() }
 func (f funcBudgets) ForgetBudget(id string)          { f.forget(id) }
-func (funcBudgets) RaiseBudget(string, int64)         {}
-func (funcBudgets) TerminateForBudget(string)         {}
 
 // replica is one gateway replica's per-session budget state: an enforcer
 // and the sweep over the shared session store.

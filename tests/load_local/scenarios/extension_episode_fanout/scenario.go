@@ -570,9 +570,3 @@ func (r *countingReclaimer) total() int {
 // reclaimer has no in-flight state (its calls are synchronous), so this
 // is always false and the loop drains on the elicitor alone.
 func (r *countingReclaimer) anyOutstanding() bool { return false }
-
-// ForgetBudget and TrackedBudgetSessions complete seam.MeteringBudgets; the
-// extension fan-out calls only RaiseBudget and TerminateForBudget.
-func (*countingReclaimer) ForgetBudget(string) {}
-
-func (*countingReclaimer) TrackedBudgetSessions() []string { return nil }

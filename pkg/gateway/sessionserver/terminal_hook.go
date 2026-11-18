@@ -182,7 +182,7 @@ func (s *Server) forgetBudgetState(sessionID string) {
 // forgetBudgetOf returns the metering proxy's GWSEAM-ForgetBudget as the
 // terminal pipeline's budget forget, or nil when no metering proxy budgets
 // are wired.
-func forgetBudgetOf(b seam.MeteringBudgets) func(sessionID string) {
+func forgetBudgetOf(b seam.BudgetTracking) func(sessionID string) {
 	if b == nil {
 		return nil
 	}

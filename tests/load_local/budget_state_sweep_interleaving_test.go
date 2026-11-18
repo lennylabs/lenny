@@ -43,7 +43,7 @@ type sweepNoopTerminator struct{}
 func (sweepNoopTerminator) ExpireSession(string, string) {}
 
 // sweepBudgets adapts a tracked-ids function and a forget function to the
-// seam.MeteringBudgets the sweep reads; the sweep calls no other operation.
+// seam.BudgetTracking the sweep reads.
 type sweepBudgets struct {
 	tracked func() []string
 	forget  func(string)
@@ -51,8 +51,6 @@ type sweepBudgets struct {
 
 func (b sweepBudgets) TrackedBudgetSessions() []string { return b.tracked() }
 func (b sweepBudgets) ForgetBudget(id string)          { b.forget(id) }
-func (sweepBudgets) RaiseBudget(string, int64)         {}
-func (sweepBudgets) TerminateForBudget(string)         {}
 
 // sweepClock is a monotonic fake clock every goroutine of a round shares.
 type sweepClock struct{ ns atomic.Int64 }

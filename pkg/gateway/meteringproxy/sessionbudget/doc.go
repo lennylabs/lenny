@@ -18,5 +18,5 @@
 // ends a session through the session core's GWSEAM-ExpireSession, reached
 // through pkg/gateway/seam.
 //
-// spec: GWLLM
+// spec: GWLLM, BUDGET
 package sessionbudget

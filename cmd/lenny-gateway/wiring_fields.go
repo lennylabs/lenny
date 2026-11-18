@@ -256,7 +256,7 @@ type gatewayWiringFields struct {
 	// buildLLMProxy attaches. The session server's terminal pipeline and
 	// the budget state sweep reach it, and the §8.6 leasecontrol episode
 	// fan-out raises or ends a detached session's budget through it, all
-	// through seam.MeteringBudgets.
+	// through seam.BudgetTracking and seam.BudgetResolutions.
 	meteringBudgets *metering.Budgets
 	// proxyUsageRec is the §4.9 usage recorder buildLLMProxy constructs,
 	// which the direct-mode usage loop also feeds. Nil when no usagestore is

@@ -192,7 +192,8 @@ func (w *gatewayWiring) buildSessionDeps() {
 	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator, nil,
 		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
 	// The metering proxy's per-session budget state, which the session core
-	// and the platform tools seam reach through seam.MeteringBudgets.
+	// and the platform tools seam reach through seam.BudgetTracking and
+	// seam.BudgetResolutions.
 	// buildLLMProxy attaches the usage recorder and the anomaly detector.
 	meteringBudgets := metering.NewBudgets(sessionBudgetEnforcer)
 

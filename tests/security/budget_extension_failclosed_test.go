@@ -554,9 +554,3 @@ func TestExhaustionExtensionAtMostOncePerEvent_CeilingTerminates_F866(t *testing
 		t.Fatalf("extension seam invoked %d times for one exhaustion event, want exactly 1 (§8.6 no-loop bound): a single exhaustion looped the extension", got)
 	}
 }
-
-// ForgetBudget and TrackedBudgetSessions complete seam.MeteringBudgets; the
-// extension fan-out calls only RaiseBudget and TerminateForBudget.
-func (*tier9Reclaimer) ForgetBudget(string) {}
-
-func (*tier9Reclaimer) TrackedBudgetSessions() []string { return nil }

@@ -215,7 +215,7 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 		TreeBudgetReturner:             returns,
 		TaskUsage:                      resultrollup.New(st.sessions, sessionusage.NewMemory(), archive, nil),
 		UsageQuiescenceTimeout:         dlgLossQuiescence,
-		MeteringBudgets:                metering.NewBudgets(enforcer),
+		BudgetTracking:                 metering.NewBudgets(enforcer),
 	})
 	t.Cleanup(srv.Close)
 	svc := delegation.NewService(st.sessions, delegation.Options{

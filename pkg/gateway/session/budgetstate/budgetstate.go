@@ -51,7 +51,7 @@ type Config struct {
 	// is the composed per-session forget the terminal pipeline also calls.
 	// Both are called on each pass, so a tracker built after the sweep is
 	// still read. Required.
-	Budgets seam.MeteringBudgets
+	Budgets seam.BudgetTracking
 	// Interval is the wait between passes. Required to be positive for Run.
 	Interval time.Duration
 	// BatchSize is the ids per store read pair. Zero selects
