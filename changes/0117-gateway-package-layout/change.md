@@ -1,6 +1,6 @@
 # Gateway package layout
 
-Status: `Decided`, revision 2, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M2.
+Status: `In progress`, revision 2, 2026-11-18. Programs: [v1](../programs/v1.md), milestone M2.
 
 ## Problem
 

@@ -13,13 +13,13 @@
 The import sites in each title are counted over the packages the step moves, as [evidence/packages.tsv](evidence/packages.tsv) gives them on 2026-11-16. Every step after 0117.S2 removes its rows from the layout gate's register. The code registry and placeholder pages of 0115 must have merged before 0117.S1 starts and before any `doc.go` names a page code; 0115's steps are framed on its branch, so the edge is stated here rather than listed.
 
 ### 0117.S1 The seam interface page and the import rule
-- status: Planned
+- status: Landed
 - lanes: [specification]
 
 `spec/interfaces/gateway-seams.md` written with the operations of "SP-2", each with its identifier, caller, callee, and result, and GW-R1 on `spec/components/gateway/index.md` with the page marked `status: partial`. §4.1 "Gateway Internal Subsystems" gains a link to the seam interface page. It lands after the validation owed on the operations list.
 
 ### 0117.S2 The seam interface package, the layout gate, and the move driver
-- status: Planned
+- status: Landed
 - lanes: [specification, code, documentation]
 - depends-on: [0117.S1, 0155.S1]
 
