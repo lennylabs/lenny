@@ -34,7 +34,7 @@ The annotation index in `scripts/specshift/annotation` (CS-1), with `survey`'s s
 The selector of CS-4 and CS-5 in `cmd/lenny-test` (`changed_select.go`, `cmd_run_resolve.go`), with every tier's build tags in the `go list` call and the full closure of dependents by default. `tests/non-go-inputs.yaml` and its `validate` check (CS-6), with the rows the build finds by reading which tier packages open the chart, the compose files, the supervisor sources, and the Kind install scripts. `--pkg` resolves through the import graph. After this step no selector reads the change graph, and 0116.S6 deletes it. `TESTING.md`'s selection algorithm and `docs/testing/index.md` describe the sources. Whole packages run under every option of decision O3 except (b), which narrows the single-package tiers here.
 
 ### 0116.S4 Tier bounds by gate
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0116.S3, 0154.S2]
 
@@ -48,7 +48,7 @@ The selector of CS-4 and CS-5 in `cmd/lenny-test` (`changed_select.go`, `cmd_run
 The edits of CS-8 to the §28 lead, N4 of §28.1, §28.4, the §28.5 lead, §29.1, and `spec/README.md`, with the anchor move of §28.4; `.claude/rules/channel-naming.md`; the open claim rows filed as issues under the page codes 0115.S1 registers, each triaged against the v1 member changes; and the removal of `tests/claim-map.json`, `scripts/seed-claim-register.py`, the three claim-register test files, their entries in `gate_integrity_test.go`, and the claim-register reads of the tier-11 tests. Decision O2 settles whether the step files the rows now, freezes the file, or waits for the channel area.
 
 ### 0116.S6 Retire the maps, their registers, and their self-tests
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0116.S2, 0116.S3]
 
