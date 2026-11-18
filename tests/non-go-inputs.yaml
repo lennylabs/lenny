@@ -160,9 +160,81 @@ inputs:
     runs:
       - tests/contract/sdks
     reason: The SDK contract tests run the Python and TypeScript SDK helpers as subprocesses.
-  - paths: ["tests/gate/**", "tests/non-go-inputs.yaml"]
+  - paths:
+      - "tests/gate/**"
+      - "tests/non-go-inputs.yaml"
+      - "tests/groups.yaml"
+      - "tests/groups.subsets.yaml"
+      - "tests/flake-budget.yaml"
+      - "tests/change-graph.json"
+      - "tests/change-graph-pending.txt"
+      - "tests/spec-map.json"
+      - "tests/spec-map-exceptions.yaml"
+      - "tests/spec-map-pending.txt"
     runs:
       - cmd/lenny-test
     reason: >-
-      The harness's secret-scan coverage test reads the gate image's Dockerfile,
-      and its selector tests read this list.
+      The harness's tests read the committed selection files, maps, and flake
+      budget, and its secret-scan coverage test reads the gate image's Dockerfile.
+  - paths: ["tests/change-graph.json", "tests/spec-map.json"]
+    runs:
+      - scripts/refactor
+      - scripts/specshift/scope
+    reason: The package-move tooling rewrites the maps, and the shared read domain lists them.
+  - paths: ["tests/spec-map.json"]
+    runs:
+      - docs
+      - tests/contract/ocsf_audit
+    reason: A documentation-tier test and the OCSF audit contract read the spec map.
+  - paths: ["tests/flake-budget.yaml"]
+    runs:
+      - integration
+    reason: An integration test reads the quarantine list.
+  - paths: ["tests/spec-anchor-moves.json"]
+    runs:
+      - scripts/specshift/anchor
+      - scripts/specshift/scope
+    reason: The anchor tooling reads and writes the anchor-redirect map.
+  - paths: ["tests/registers/**"]
+    runs:
+      - cmd/lenny-test
+      - scripts/specshift
+      - scripts/specshift/anchor
+      - scripts/specshift/annotation
+      - scripts/specshift/gate
+      - scripts/specshift/identifier
+      - scripts/specshift/name
+      - scripts/specshift/pagegate
+      - scripts/specshift/register
+      - scripts/specshift/scope
+      - docs
+    reason: The harness, the specification tooling, and documentation-tier tests read the registers.
+  - paths: ["cmd/lenny-test/**"]
+    runs:
+      - scripts/specshift
+      - docs
+    reason: >-
+      The tooling's package reachability test reads the harness's non-test
+      sources, and a documentation-tier test reads the static tier's check list.
+  - paths: ["tests/journeys/**"]
+    runs:
+      - cmd/lenny-test/journeys
+    reason: The journey runner reads the scenarios and builds the agent image from this directory.
+  - paths: ["tests/testdata/mcp/**"]
+    runs:
+      - e2e_kind
+      - tests/contract/rest_mcp_consistency
+      - tests/testinfra/mcpschema
+    reason: The MCP contract tests, the MCP schema helper, and an e2e_kind test read the MCP fixtures.
+  - paths: ["tests/testdata/migrations/**"]
+    runs:
+      - tests/component/migrations
+      - tests/testinfra/fixtures/seed
+    reason: The migration component test and the seed fixture helper read the migration fixtures.
+  - paths: ["tests/testdata/openai_chat/**", "tests/testdata/openai_responses/**"]
+    runs:
+      - e2e_kind
+      - tests/component/translators
+      - tests/contract/rest_openai_chat
+      - tests/contract/rest_openai_responses
+    reason: The translator component tests, the OpenAI contract tests, and an e2e_kind test read the translator corpora.
