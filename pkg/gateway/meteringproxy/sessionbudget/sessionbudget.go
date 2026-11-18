@@ -1,32 +1,12 @@
 // SPDX-License-Identifier: MIT
 
-// Package sessionbudget implements the §11.2 mid-session token-budget
-// enforcement fast path. The §4.9 LLM proxy records the authoritative
-// per-request token counts; this package tracks each proxy-mode
-// session's cumulative consumption against the session's token budget,
-// and gates further proxied requests for an over-budget session.
-//
-// A proxy-mode session that reaches its budget does not terminate
-// unconditionally. At the exhaustion boundary the enforcer consults an
-// injected §8.6 extension seam (extendOnExhaustion): a granted extension
-// raises the session's budget and the session continues; a terminal
-// outcome (ceiling reached, user-rejected, error, or a genuine request
-// cancellation) terminates it; and an elicitation still pending at the
-// caller's in-path deadline leaves the session alive but denying every
-// subsequent request until the extension resolves out-of-band. §11.2's
-// "terminate immediately" is preserved for the non-extendable and
-// nil-seam paths (proposal 0023).
-//
-// spec: §11.2 ("The gateway enforces budget limits against
-// Redis counters (fast path); if a session exceeds its token budget,
-// the gateway terminates it immediately rather than waiting for session
-// completion ... the gateway tracks usage in-memory per session and
-// enforces the per-session budget locally"), §8.6, and §8.10.
 package sessionbudget
 
 import (
 	"context"
 	"sync"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // ReasonBudgetExhausted is the §8.8 FailureReason the enforcer
@@ -75,18 +55,6 @@ func (o Outcome) String() string {
 	}
 }
 
-// Terminator forces an over-budget session to its §7.1 `expired`
-// terminal state. The gateway wires it to the same force-terminate path
-// the §24.11 operator force-terminate and the §4.9 fallback-exhausted
-// terminator use, so the pod is released and the terminal audit / billing
-// / SSE signals fire exactly once.
-type Terminator interface {
-	// TerminateSession transitions sessionID to a terminal state with
-	// the given §8.8 FailureReason. It is idempotent: a session already
-	// terminal is a no-op.
-	TerminateSession(sessionID, reason string)
-}
-
 // ExtendOnExhaustion is the §8.6 extension seam the enforcer consults at
 // the consumed-over-budget boundary. It carries BOTH the caller's own
 // request context (reqCtx, r.Context()) and the derived in-path wait
@@ -112,9 +80,13 @@ type ExtendOnExhaustion func(reqCtx, waitCtx context.Context, tenantID, sessionI
 // The zero value is not usable; construct with New. Every method is
 // safe for concurrent use.
 type Enforcer struct {
-	mu        sync.Mutex
-	sessions  map[string]*counter
-	terminate Terminator
+	mu       sync.Mutex
+	sessions map[string]*counter
+	// terminate expires an over-budget session through the session core's
+	// GWSEAM-ExpireSession, which writes the expired state and runs the
+	// terminal pipeline, so the pod is released and the terminal audit,
+	// billing, and stream signals fire once.
+	terminate seam.SessionExpiry
 	// extendOnExhaustion is the §8.6 extension seam consulted once per
 	// session the first time it exhausts its budget. Nil disables the
 	// extension attempt (the non-extendable path): the enforcer denies and
@@ -152,13 +124,13 @@ type counter struct {
 	terminating bool
 }
 
-// New returns an Enforcer that terminates over-budget sessions through
-// t. extend, when non-nil, is the §8.6 extension seam consulted at the
+// New returns an Enforcer that expires over-budget sessions through t,
+// the session core's GWSEAM-ExpireSession. extend, when non-nil, is the §8.6 extension seam consulted at the
 // exhaustion boundary; a nil seam preserves the §11.2
 // terminate-immediately behavior. onExceeded, when non-nil, is called
 // once per session the first time it exhausts its budget (the metric /
 // audit hook); it runs under the enforcer lock and must not block.
-func New(t Terminator, extend ExtendOnExhaustion, onExceeded func(tenantID, sessionID string, budget, consumed int64)) *Enforcer {
+func New(t seam.SessionExpiry, extend ExtendOnExhaustion, onExceeded func(tenantID, sessionID string, budget, consumed int64)) *Enforcer {
 	return &Enforcer{
 		sessions:           make(map[string]*counter),
 		terminate:          t,
@@ -188,8 +160,9 @@ func (e *Enforcer) SetExtendOnExhaustion(extend ExtendOnExhaustion) {
 // reaches or exceeds a positive budget, Record attempts the §8.6 lease
 // extension through the injected seam before deciding the session's fate:
 // on Granted the session continues, on Pending it is left alive but
-// denying per request, and on Terminal (or a nil seam) it denies and is
-// terminated through the Terminator — the §11.2 for the non-extendable path. A budget <= 0 disables
+// denying per request, and on Terminal (or a nil seam, the non-extendable
+// path) it denies and the session core expires it through
+// GWSEAM-ExpireSession. A budget <= 0 disables
 // enforcement for the session (the running total is still tracked so a
 // later positive budget resolution sees it); tokens <= 0 only refreshes
 // the budget. tenantID is carried for the seam and the onExceeded hook.
@@ -284,7 +257,7 @@ func (e *Enforcer) Record(reqCtx, waitCtx context.Context, tenantID, sessionID s
 			// store and runs the terminal pipeline, which must not block the
 			// enforcer's per-request fast path or deadlock against a
 			// concurrent Forget driven by that pipeline.
-			e.terminate.TerminateSession(sessionID, ReasonBudgetExhausted)
+			e.terminate.ExpireSession(sessionID, ReasonBudgetExhausted)
 		}
 	}
 	// Recording this usage exhausted the session (the record boundary). The
@@ -351,12 +324,12 @@ func (e *Enforcer) RaiseBudget(sessionID string, delta int64) {
 // TerminateSession terminates sessionID for budget exhaustion (fail
 // closed), the path the per-tree episode's completion fan-out takes for a
 // joined session whose deferred extension outcome is terminal. It sets the
-// deny flag and delegates to the wired Terminator with
-// ReasonBudgetExhausted, so the Enforcer structurally satisfies
-// leasecontrol.SessionReclaimer and can be passed directly to
-// Service.SetReclaimer (proposal 0023 S6). It also sets the terminating
+// deny flag and expires the session through the session core with
+// ReasonBudgetExhausted. The metering proxy's GWSEAM-TerminateForBudget
+// reaches it when no usage recorder is wired (proposal 0023 S6). It also
+// sets the terminating
 // flag, so a RaiseBudget racing the terminate leaves deny set. A nil
-// Terminator or an empty sessionID is a no-op on the terminator.
+// SessionExpiry or an empty sessionID expires nothing.
 // spec: §8.6, §11.2
 func (e *Enforcer) TerminateSession(sessionID string) {
 	if sessionID == "" {
@@ -364,7 +337,7 @@ func (e *Enforcer) TerminateSession(sessionID string) {
 	}
 	e.setTerminating(sessionID)
 	if e.terminate != nil {
-		e.terminate.TerminateSession(sessionID, ReasonBudgetExhausted)
+		e.terminate.ExpireSession(sessionID, ReasonBudgetExhausted)
 	}
 }
 

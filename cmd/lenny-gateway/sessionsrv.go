@@ -151,7 +151,7 @@ func (w *gatewayWiring) buildSessionServer(
 		// unbounded. The composed forget also clears the §8.6 recorder's
 		// accumulated grant delta and the anomaly detector's accumulator; the
 		// per-replica budget state sweep calls the same forget.
-		BudgetForget: w.forgetBudgetState,
+		MeteringBudgets: w.meteringBudgets,
 		// spec: §8.10 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
 		// is unset; an override surfaces both on the sessionserver

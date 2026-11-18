@@ -103,7 +103,7 @@ func TestBudgetTerminatorUnknownSession_spec_11_2(t *testing.T) {
 }
 
 // gatedLookupStore blocks GetByID until gate is closed, so a test observes
-// TerminateSession's state before its goroutine reaches the lookup.
+// ExpireSession's state before its goroutine reaches the lookup.
 type gatedLookupStore struct {
 	sessionstore.Store
 	gate chan struct{}
@@ -167,7 +167,7 @@ func (d *deadlineSealer) Seal(ctx context.Context, _, _ string) error {
 
 // TestBudgetTerminatorOpensTheClaimBeforeItsGoroutine_spec_11_2 asserts
 // that the §11.2 budget termination opens its terminal claim synchronously:
-// the claim is open when TerminateSession returns, before its goroutine
+// the claim is open when ExpireSession returns, before its goroutine
 // reaches the session lookup, so a shutdown that races the goroutine sees
 // it. The claim stays open through the terminal pipeline and closes after
 // it. Against a terminator that opens the claim inside its goroutine, the
@@ -191,9 +191,9 @@ func TestBudgetTerminatorOpensTheClaimBeforeItsGoroutine_spec_11_2(t *testing.T)
 			ev.add("hook")
 		},
 	}
-	term.TerminateSession("s_1", sessionbudget.ReasonBudgetExhausted)
+	term.ExpireSession("s_1", sessionbudget.ReasonBudgetExhausted)
 	if got := ev.list(); len(got) != 1 || got[0] != "open" {
-		t.Fatalf("events when TerminateSession returned = %v, want [open]: the claim must open before the goroutine runs", got)
+		t.Fatalf("events when ExpireSession returned = %v, want [open]: the claim must open before the goroutine runs", got)
 	}
 	close(store.gate)
 	select {
@@ -207,7 +207,7 @@ func TestBudgetTerminatorOpensTheClaimBeforeItsGoroutine_spec_11_2(t *testing.T)
 }
 
 // TestBudgetTerminatorClosesTheClaimOnEveryExit_spec_11_2 asserts that the
-// claim TerminateSession opens closes when the goroutine ends without a
+// claim ExpireSession opens closes when the goroutine ends without a
 // terminal write: an unknown session and an already-terminal session.
 //
 // spec: 11.2 (Budgets and Quotas), 7.2 (Interactive Session Model)
@@ -235,7 +235,7 @@ func TestBudgetTerminatorClosesTheClaimOnEveryExit_spec_11_2(t *testing.T) {
 					ev.add("hook")
 				},
 			}
-			term.TerminateSession("s_1", sessionbudget.ReasonBudgetExhausted)
+			term.ExpireSession("s_1", sessionbudget.ReasonBudgetExhausted)
 			select {
 			case <-ended:
 			case <-time.After(5 * time.Second):
@@ -275,7 +275,7 @@ func TestBudgetTerminatorHookOutlastsTheTerminateTimeout_spec_7_1(t *testing.T) 
 	begin, ended := recordingClaim(ev)
 	term := &budgetSessionTerminator{store: store, beginTerminal: begin, onTerminal: srv.OnSessionTerminal}
 	entered := time.Now()
-	term.TerminateSession("s_1", sessionbudget.ReasonBudgetExhausted)
+	term.ExpireSession("s_1", sessionbudget.ReasonBudgetExhausted)
 	select {
 	case <-ended:
 	case <-time.After(10 * time.Second):

@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1599
+      count: 1544
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -441,8 +441,6 @@ packages:
       count: 9
     - package: pkg/gateway/llmproxy/credrouter
       count: 19
-    - package: pkg/gateway/meteringproxy/llmproxy
-      count: 64
     - package: pkg/gateway/llmproxy/proxycache
       count: 1
     - package: pkg/gateway/llmproxy/semanticcache
@@ -499,6 +497,12 @@ packages:
       count: 1
     - package: pkg/gateway/mcpfabric/playground
       count: 93
+    - package: pkg/gateway/meteringproxy/llmproxy
+      count: 63
+    - package: pkg/gateway/meteringproxy/metering
+      count: 53
+    - package: pkg/gateway/meteringproxy/sessionbudget
+      count: 27
     - package: pkg/gateway/metrics/capacityplanning
       count: 1
     - package: pkg/gateway/metrics/extractionthreshold
@@ -639,8 +643,6 @@ packages:
       count: 14
     - package: pkg/gateway/session/sessionage
       count: 10
-    - package: pkg/gateway/meteringproxy/sessionbudget
-      count: 29
     - package: pkg/gateway/session/sessioncallback
       count: 14
     - package: pkg/gateway/session/sessioncheckpointmeta
@@ -857,6 +859,8 @@ packages:
       count: 3
     - package: pkg/platform/store
       count: 8
+    - package: pkg/podclaim/state
+      count: 10
     - package: pkg/podlifecycle
       count: 27
     - package: pkg/podregistry
@@ -897,8 +901,6 @@ packages:
       count: 7
     - package: pkg/sandbox/state
       count: 5
-    - package: pkg/podclaim/state
-      count: 10
     - package: pkg/schemamigrate
       count: 7
     - package: pkg/session/state

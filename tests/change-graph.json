@@ -838,6 +838,20 @@
       "unit": ["pkg/gateway/session/budgetstate/...", "cmd/lenny-gateway/..."],
       "load_local": ["tests/load_local/budget_state_sweep_interleaving_test.go"]
     },
+    "pkg/gateway/meteringproxy/llmproxy": {
+      "unit": ["pkg/gateway/meteringproxy/llmproxy/...", "cmd/lenny-gateway/..."],
+      "integration": [
+        "tests/integration/llm_proxy_roundtrip_test.go",
+        "tests/integration/credential_fallback_test.go"
+      ]
+    },
+    "pkg/gateway/meteringproxy/metering": {
+      "unit": ["pkg/gateway/meteringproxy/metering/...", "cmd/lenny-gateway/..."],
+      "load_local": ["tests/load_local/budget_state_sweep_interleaving_test.go"]
+    },
+    "pkg/common/envdefault": {
+      "unit": ["pkg/common/envdefault/..."]
+    },
     "pkg/gateway/meteringproxy/sessionbudget": {
       "unit": ["pkg/gateway/meteringproxy/sessionbudget/..."],
       "load_local": ["tests/load_local/enforcer_terminate_deny_race_test.go", "tests/load_local/scenarios/raisebudget_enforcer_race/...", "tests/load_local/scenarios/budget_gate_deny_flag_race/..."]

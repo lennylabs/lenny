@@ -21,8 +21,8 @@ import (
 // context).
 const budgetTerminateTimeout = 30 * time.Second
 
-// budgetSessionTerminator implements sessionbudget.Terminator. It
-// transitions an over-budget session to the §7.1 `expired` terminal
+// budgetSessionTerminator is the session core's side of GWSEAM-ExpireSession,
+// which the metering proxy's budget enforcer calls. It transitions an over-budget session to the §7.1 `expired` terminal
 // state and runs the terminal-side-effects pipeline (pod release, audit,
 // billing, SSE) so a budget-exhausted session is torn down exactly like
 // any other terminal. The store update runs on a fresh background
@@ -45,8 +45,8 @@ type budgetSessionTerminator struct {
 	beginTerminal func(sessionID string) (end func())
 }
 
-// TerminateSession transitions sessionID to `expired` with the given
-// §8.8 FailureReason and releases its pod. Idempotent: a session already
+// ExpireSession is GWSEAM-ExpireSession: it transitions sessionID to
+// `expired` with the given §8.8 FailureReason and releases its pod. Idempotent: a session already
 // terminal is a no-op. The teardown runs asynchronously on a fresh
 // background context so the §4.9 proxy response path is never blocked.
 //
@@ -58,8 +58,8 @@ type budgetSessionTerminator struct {
 // a claim of its own, so the pipeline outlives this claim and the shutdown
 // wait still sees it.
 // spec: §11.2; §7.1 (Terminal pipeline context); §7.2 (Interactive Session
-// Model).
-func (t *budgetSessionTerminator) TerminateSession(sessionID, reason string) {
+// Model); GWSEAM-ExpireSession
+func (t *budgetSessionTerminator) ExpireSession(sessionID, reason string) {
 	if t == nil || t.store == nil || sessionID == "" {
 		return
 	}
@@ -75,7 +75,7 @@ func (t *budgetSessionTerminator) TerminateSession(sessionID, reason string) {
 	}()
 }
 
-// terminate is the synchronous core of TerminateSession: it resolves the
+// terminate is the synchronous core of ExpireSession: it resolves the
 // session globally, force-transitions a non-terminal row to `expired`
 // under the tenant row lock, and runs the terminal-side-effects pipeline.
 // The caller holds the session's terminal claim across the call.

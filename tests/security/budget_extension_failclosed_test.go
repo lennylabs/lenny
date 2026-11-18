@@ -179,7 +179,7 @@ func (r *tier9Reclaimer) RaiseBudget(string, int64) {
 	r.mu.Unlock()
 }
 
-func (r *tier9Reclaimer) TerminateSession(string) {}
+func (r *tier9Reclaimer) TerminateForBudget(string) {}
 
 func (r *tier9Reclaimer) count() int {
 	r.mu.Lock()
@@ -472,7 +472,7 @@ type terminatorSpy struct {
 	calls []string
 }
 
-func (s *terminatorSpy) TerminateSession(sessionID, _ /*reason*/ string) {
+func (s *terminatorSpy) ExpireSession(sessionID, _ /*reason*/ string) {
 	s.mu.Lock()
 	s.calls = append(s.calls, sessionID)
 	s.mu.Unlock()
@@ -554,3 +554,9 @@ func TestExhaustionExtensionAtMostOncePerEvent_CeilingTerminates_F866(t *testing
 		t.Fatalf("extension seam invoked %d times for one exhaustion event, want exactly 1 (§8.6 no-loop bound): a single exhaustion looped the extension", got)
 	}
 }
+
+// ForgetBudget and TrackedBudgetSessions complete seam.MeteringBudgets; the
+// extension fan-out calls only RaiseBudget and TerminateForBudget.
+func (*tier9Reclaimer) ForgetBudget(string) {}
+
+func (*tier9Reclaimer) TrackedBudgetSessions() []string { return nil }

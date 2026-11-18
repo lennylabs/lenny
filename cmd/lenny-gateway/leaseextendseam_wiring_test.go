@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -22,7 +23,7 @@ import (
 // proposal reconciles. leaseExtendSeam(svc) adapts Service.ExtendForBudget into
 // the enforcer's ExtendOnExhaustion, mapping the leasecontrol tri-state onto
 // the enforcer's own, and buildControlServer wires it via
-// SetExtendOnExhaustion plus SetReclaimer(enforcer).
+// SetExtendOnExhaustion plus SetReclaimer(metering.NewBudgets(enforcer)).
 //
 // A regression that reverts the wiring (nil seam, no reclaimer) fails
 // TestLeaseExtendSeamGrantedContinuesSession: with no seam the enforcer's
@@ -37,7 +38,7 @@ type recordingTerminator struct {
 	terminated []string
 }
 
-func (r *recordingTerminator) TerminateSession(sessionID, _ /*reason*/ string) {
+func (r *recordingTerminator) ExpireSession(sessionID, _ /*reason*/ string) {
 	r.terminated = append(r.terminated, sessionID)
 }
 
@@ -96,7 +97,7 @@ func TestLeaseExtendSeamGrantedContinuesSession_spec_8_6_line_629(t *testing.T) 
 	enforcer := sessionbudget.New(term, nil, nil)
 	// Wire exactly as buildControlServer does.
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 
 	ctx := context.Background()
 	// Budget 200; record 250 tokens so the session exhausts on this call and
@@ -145,7 +146,7 @@ func TestLeaseExtendSeamTerminalFailsClosed_spec_8_6_line_712(t *testing.T) {
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 
 	ctx := context.Background()
 	exhausted, outcome := enforcer.Record(ctx, ctx, "acme", "s_deny", 200, 250)
@@ -197,7 +198,7 @@ func TestLeaseExtendSeamPendingDeniesWithoutTerminating_spec_8_6_line_629(t *tes
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 
 	// Both contexts are the same short-lived context, so the in-path wait
 	// elapses while the elicitation is still blocked: ExtendForBudget returns
@@ -251,7 +252,7 @@ func TestLeaseExtendSeamThreadsTenant_spec_8_6(t *testing.T) {
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 	ctx := context.Background()
 
 	if _, outcome := enforcer.Record(ctx, ctx, "globex", "s_tenant", 200, 250); outcome != sessionbudget.Terminal {
@@ -264,7 +265,7 @@ func TestLeaseExtendSeamThreadsTenant_spec_8_6(t *testing.T) {
 	svc2 := storeBackedExtendService(t, "s_tenant2", leasecontrol.ApprovalModeAuto, nil)
 	enforcer2 := sessionbudget.New(&recordingTerminator{}, nil, nil)
 	enforcer2.SetExtendOnExhaustion(leaseExtendSeam(svc2))
-	svc2.SetReclaimer(enforcer2)
+	svc2.SetReclaimer(metering.NewBudgets(enforcer2))
 	if _, outcome := enforcer2.Record(ctx, ctx, "acme", "s_tenant2", 200, 250); outcome != sessionbudget.Granted {
 		t.Fatalf("the session recorded under its own tenant must be granted, got %v", outcome)
 	}

@@ -317,7 +317,7 @@ func newRTFixture(t *testing.T, o rtOpts) *rtFixture {
 		UsageQuiescenceTimeout:         quiescence,
 		UsageQuiescenceTimer:           f.timer.after,
 		Executor:                       f.exec,
-		BudgetForget:                   func(id string) { f.forgets.add("forget:" + id) },
+		MeteringBudgets:                internalForgetBudgets(func(id string) { f.forgets.add("forget:" + id) }),
 		IncDelegationBudgetKeysExpired: f.metric.inc,
 		WorkspaceSealMaxDuration:       o.sealWindow,
 		StreamFailureReportTimeout:     o.allowance,
@@ -979,3 +979,12 @@ func TestUsageQuiescenceTimeoutFor_spec_11_3(t *testing.T) {
 		}
 	}
 }
+
+// internalForgetBudgets is a seam.MeteringBudgets whose ForgetBudget calls the
+// function; the terminal pipeline calls no other operation.
+type internalForgetBudgets func(sessionID string)
+
+func (f internalForgetBudgets) ForgetBudget(sessionID string) { f(sessionID) }
+func (internalForgetBudgets) TrackedBudgetSessions() []string { return nil }
+func (internalForgetBudgets) RaiseBudget(string, int64)       {}
+func (internalForgetBudgets) TerminateForBudget(string)       {}

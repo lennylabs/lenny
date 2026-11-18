@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -81,7 +82,7 @@ func bothWiredStack(t *testing.T, seamOutcome sessionbudget.Outcome, budget int6
 	enforcer := sessionbudget.New(nopBudgetTerminator{}, seam.fn, nil)
 	seam.e = enforcer
 
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := metering.NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	leases := credleasestore.New()
 	if err := leases.Put(credential.Lease{
@@ -197,4 +198,4 @@ func (bothWiredKey) UpstreamCredential(credential.Lease) (string, bool) {
 // rather than the terminal pipeline.
 type nopBudgetTerminator struct{}
 
-func (nopBudgetTerminator) TerminateSession(_ /*sessionID*/, _ /*reason*/ string) {}
+func (nopBudgetTerminator) ExpireSession(_ /*sessionID*/, _ /*reason*/ string) {}

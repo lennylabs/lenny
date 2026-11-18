@@ -6360,7 +6360,7 @@
         "pkg/observability/metrics/metrics_test.go::TestValidateRejectsForbiddenLabels",
         "pkg/observability/metrics/metrics_test.go::TestForbiddenLabelsCatalog",
         "pkg/gateway/sessionserver/expiry_metric_internal_test.go",
-        "cmd/lenny-gateway/llmproxy_usage_test.go",
+        "pkg/gateway/meteringproxy/metering/recorder_test.go",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubCordonDrainEmitsNoRetirementCounter_spec_16_1",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubFailPolicyEmitsNoRetirementCounter_spec_16_1",
         "pkg/gateway/mcpfabric/delegationtree/leasecontrol/scrubreport_server_test.go::TestReporterPodScrubVMRestartRetireEmitsNoRetirementCounter_spec_16_1"

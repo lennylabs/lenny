@@ -415,7 +415,7 @@ func (r *fakeReclaimer) RaiseBudget(sessionID string, delta int64) {
 	r.mu.Unlock()
 }
 
-func (r *fakeReclaimer) TerminateSession(sessionID string) {
+func (r *fakeReclaimer) TerminateForBudget(sessionID string) {
 	r.mu.Lock()
 	r.terminated[sessionID]++
 	r.mu.Unlock()
@@ -1378,3 +1378,9 @@ func TestTerminalWaiterGetsNoGrant_spec_8_6(t *testing.T) {
 		t.Errorf("child-B raised by %d, want no RaiseBudget for a terminal session", d)
 	}
 }
+
+// ForgetBudget and TrackedBudgetSessions complete seam.MeteringBudgets; the
+// extension fan-out calls only RaiseBudget and TerminateForBudget.
+func (*fakeReclaimer) ForgetBudget(string) {}
+
+func (*fakeReclaimer) TrackedBudgetSessions() []string { return nil }

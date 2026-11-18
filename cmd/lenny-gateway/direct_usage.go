@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 )
@@ -80,7 +81,7 @@ type directUsageLeaseLookup interface {
 }
 
 // directUsageRecorder is the consumer-side seam the loop fans each pulled
-// direct-mode delta into. proxyUsageRecorder.RecordDirectUsage satisfies it;
+// direct-mode delta into. metering.Recorder.RecordDirectUsage satisfies it;
 // it reaches the §15.1 usage store, the §8.8 per-session accumulator, the
 // §11.2 quota counter, the §12.4 fail-open accumulator, and the §11.2
 // under-reporting anomaly detector, gates the §6.2 idle stamp on a non-zero
@@ -141,16 +142,16 @@ func adapterPuller(b *podsession.BindResult) directUsagePuller {
 	return b.Adapter
 }
 
-// directUsageRecorderOrNil normalizes a *proxyUsageRecorder to the
+// directUsageRecorderOrNil normalizes a *metering.Recorder to the
 // directUsageRecorder interface, returning a genuinely nil interface when rec
-// is a nil pointer. newProxyUsageRecorder returns a nil *proxyUsageRecorder on
+// is a nil pointer. metering.NewRecorder returns a nil *metering.Recorder on
 // a usagestore-less gateway; assigning that concrete typed nil straight into
 // the interface would yield a non-nil interface value (Go wraps the type into
 // the interface even when the pointer is nil), so newDirectUsageLoop's
 // recorder==nil short-circuit would not trip and the loop would run an empty
 // ticker instead of being a no-op. Passing the result of this helper trips the
 // guard so the loop is not constructed on a minimal gateway.
-func directUsageRecorderOrNil(rec *proxyUsageRecorder) directUsageRecorder {
+func directUsageRecorderOrNil(rec *metering.Recorder) directUsageRecorder {
 	if rec == nil {
 		return nil
 	}
@@ -162,7 +163,7 @@ func directUsageRecorderOrNil(rec *proxyUsageRecorder) directUsageRecorder {
 // lease store, or no recorder — the recorder is nil when the gateway has no
 // usagestore), so the caller can start it unconditionally and the loop is a
 // no-op on a minimal gateway that records no usage. Callers pass the recorder
-// through directUsageRecorderOrNil so a nil *proxyUsageRecorder arrives as a
+// through directUsageRecorderOrNil so a nil *metering.Recorder arrives as a
 // genuinely nil interface and trips the guard. intervalSeconds is clamped to
 // the §11.2 bounds (default 30s, minimum 10s).
 func newDirectUsageLoop(registry *podsession.Registry, leases directUsageLeaseLookup, recorder directUsageRecorder, intervalSeconds int, log *slog.Logger) *directUsageLoop {

@@ -61,7 +61,7 @@ func (r *outageReclaimer) RaiseBudget(string, int64) {
 	r.mu.Unlock()
 }
 
-func (r *outageReclaimer) TerminateSession(string) {}
+func (r *outageReclaimer) TerminateForBudget(string) {}
 
 func (r *outageReclaimer) count() int {
 	r.mu.Lock()
@@ -252,3 +252,9 @@ func TestLeaseExtensionPostgresOutageFailsClosed_spec_8_6(t *testing.T) {
 type approveOnly struct{}
 
 func (approveOnly) Elicit(context.Context, string, string) (bool, error) { return true, nil }
+
+// ForgetBudget and TrackedBudgetSessions complete seam.MeteringBudgets; the
+// extension fan-out calls only RaiseBudget and TerminateForBudget.
+func (*outageReclaimer) ForgetBudget(string) {}
+
+func (*outageReclaimer) TrackedBudgetSessions() []string { return nil }

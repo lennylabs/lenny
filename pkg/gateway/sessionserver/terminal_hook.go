@@ -7,6 +7,7 @@ import (
 	"log/slog"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -176,6 +177,16 @@ func (s *Server) forgetBudgetState(sessionID string) {
 	if s.budgetForget != nil {
 		s.budgetForget(sessionID)
 	}
+}
+
+// forgetBudgetOf returns the metering proxy's GWSEAM-ForgetBudget as the
+// terminal pipeline's budget forget, or nil when no metering proxy budgets
+// are wired.
+func forgetBudgetOf(b seam.MeteringBudgets) func(sessionID string) {
+	if b == nil {
+		return nil
+	}
+	return b.ForgetBudget
 }
 
 // releaseDisposition is the executor disposition the post-terminal hook

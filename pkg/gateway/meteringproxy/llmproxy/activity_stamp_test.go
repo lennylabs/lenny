@@ -20,7 +20,7 @@ type recordingStamper struct {
 	calls []string
 }
 
-func (r *recordingStamper) Stamp(tenantID, sessionID string) {
+func (r *recordingStamper) StampActivity(tenantID, sessionID string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	r.calls = append(r.calls, tenantID+"/"+sessionID)

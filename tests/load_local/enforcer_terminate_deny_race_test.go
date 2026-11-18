@@ -28,7 +28,7 @@ import (
 // test reads the deny flag through Allow rather than the terminal pipeline.
 type nopBudgetTerminator struct{}
 
-func (nopBudgetTerminator) TerminateSession(_ /*sessionID*/, _ /*reason*/ string) {}
+func (nopBudgetTerminator) ExpireSession(_ /*sessionID*/, _ /*reason*/ string) {}
 
 // yieldJitter yields the scheduler a random number of times so the goroutines of
 // one round interleave differently from round to round.

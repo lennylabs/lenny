@@ -297,4 +297,4 @@ func (fixedKey) UpstreamCredential(credential.Lease) (string, bool) {
 // deny flag directly through the gate, not the terminal pipeline.
 type nopTerminator struct{}
 
-func (nopTerminator) TerminateSession(_ /*sessionID*/, _ /*reason*/ string) {}
+func (nopTerminator) ExpireSession(_ /*sessionID*/, _ /*reason*/ string) {}

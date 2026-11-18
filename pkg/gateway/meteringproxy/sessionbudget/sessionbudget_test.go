@@ -19,7 +19,7 @@ type termCall struct {
 	reason    string
 }
 
-func (t *recordingTerminator) TerminateSession(sessionID, reason string) {
+func (t *recordingTerminator) ExpireSession(sessionID, reason string) {
 	t.mu.Lock()
 	t.calls = append(t.calls, termCall{sessionID, reason})
 	t.mu.Unlock()

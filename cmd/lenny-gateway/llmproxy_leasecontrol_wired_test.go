@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -65,9 +66,9 @@ func TestLeaseControlWiredGrantDeliversHeldResponse_spec_8_6_line_629(t *testing
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := metering.NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	leases := credleasestore.New()
 	if err := leases.Put(proxyLease("cl_lc", "s_lc", "lt-lc")); err != nil {
@@ -131,9 +132,9 @@ func TestLeaseControlWiredNoTreeFailsClosed_spec_8_6_line_629(t *testing.T) {
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := metering.NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 	leases := credleasestore.New()
 	if err := leases.Put(proxyLease("cl_nt", "s_notree", "lt-nt")); err != nil {
 		t.Fatalf("seed lease: %v", err)

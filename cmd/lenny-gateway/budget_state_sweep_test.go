@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -21,7 +22,7 @@ import (
 
 type sweepNoopTerminator struct{}
 
-func (sweepNoopTerminator) TerminateSession(string, string) {}
+func (sweepNoopTerminator) ExpireSession(string, string) {}
 
 // spec: §11.2
 //
@@ -58,9 +59,10 @@ func TestBudgetStateSweepWiringForgetsAcrossTrackers_spec_11_2(t *testing.T) {
 	w := &gatewayWiring{}
 	w.sessions = store
 	w.sessionBudgetEnforcer = enf
+	w.meteringBudgets = metering.NewBudgets(enf)
 
 	enf.Record(ctx, ctx, "acme", ended, 1000, 1)
-	if got := w.trackedBudgetSessions(); len(got) != 1 || got[0] != ended {
+	if got := w.meteringBudgets.TrackedBudgetSessions(); len(got) != 1 || got[0] != ended {
 		t.Fatalf("tracked before the recorder is built = %v, want [%s]", got, ended)
 	}
 
@@ -68,9 +70,11 @@ func TestBudgetStateSweepWiringForgetsAcrossTrackers_spec_11_2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), store, nil, nil, nil, enf)
-	rec.setAnomalyObserver(det)
-	w.proxyUsageRec, w.tokenAnomaly = rec, det
+	rec := metering.NewRecorder(usagestore.NewMemory(), store, nil, nil, nil, enf)
+	rec.SetAnomalyObserver(det)
+	w.proxyUsageRec = rec
+	w.meteringBudgets.SetRecorder(rec)
+	w.meteringBudgets.SetAnomalyTracker(det)
 	rec.RaiseBudget(ended, 10)
 	det.Observe("acme", ended, 1, 1)
 	enf.Record(ctx, ctx, "acme", live, 1000, 1)
@@ -79,7 +83,9 @@ func TestBudgetStateSweepWiringForgetsAcrossTrackers_spec_11_2(t *testing.T) {
 
 	want := []string{ended, live}
 	sort.Strings(want)
-	if got := w.trackedBudgetSessions(); len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
+	got := w.meteringBudgets.TrackedBudgetSessions()
+	sort.Strings(got)
+	if len(got) != 2 || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("tracked = %v, want %v", got, want)
 	}
 
@@ -110,7 +116,7 @@ func TestBudgetStateSweepWiringForgetsAcrossTrackers_spec_11_2(t *testing.T) {
 		t.Fatalf("the live session lost state: enforcer=%v recorder=%v detector=%v",
 			enf.TrackedSessions(), rec.TrackedSessions(), det.TrackedSessions())
 	}
-	var nilRec *proxyUsageRecorder
+	var nilRec *metering.Recorder
 	if got := nilRec.TrackedSessions(); got != nil {
 		t.Fatalf("nil recorder TrackedSessions = %v, want nil", got)
 	}

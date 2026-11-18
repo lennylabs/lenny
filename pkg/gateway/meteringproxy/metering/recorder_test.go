@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package main
+package metering
 
 import (
 	"context"
@@ -28,7 +28,7 @@ import (
 // recordAnomalyObserver captures the direct-mode ReportUsage deltas the
 // recorder fans into the §11.2 integrity detector so a test can assert the
 // direct-mode path reaches the S5 observer. It stands in for the detector the
-// later build step registers through setAnomalyObserver.
+// later build step registers through SetAnomalyObserver.
 type recordAnomalyObserver struct {
 	calls     []anomalyCall
 	forgotten []string
@@ -78,9 +78,9 @@ func TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468(t *testing.T) {
 		t.Fatalf("sessions.Create: %v", err)
 	}
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, sessions, nil, nil, nil, nil)
+	rec := NewRecorder(usage, sessions, nil, nil, nil, nil)
 	if rec == nil {
-		t.Fatal("newProxyUsageRecorder returned nil with a usage store set")
+		t.Fatal("NewRecorder returned nil with a usage store set")
 	}
 
 	rec.RecordUsage(context.Background(), credential.Lease{
@@ -107,7 +107,7 @@ func TestProxyUsageRecorderRecordsProxyMode_Spec4_9_1468(t *testing.T) {
 // spec: §4.9.
 func TestProxyUsageRecorderIgnoresDirectMode_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
+	rec := NewRecorder(usage, memstore.New(), nil, nil, nil, nil)
 	rec.RecordUsage(context.Background(), credential.Lease{
 		LeaseID: "cl-2", SessionID: "s_2", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryDirect,
@@ -124,7 +124,7 @@ func TestProxyUsageRecorderIgnoresDirectMode_Spec4_9_1468(t *testing.T) {
 // spec: §4.9.
 func TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
+	rec := NewRecorder(usage, memstore.New(), nil, nil, nil, nil)
 	rec.RecordUsage(context.Background(), credential.Lease{
 		LeaseID: "cl-3", SessionID: "s_3", TenantID: "",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
@@ -141,7 +141,7 @@ func TestProxyUsageRecorderDropsTenantlessLease_Spec4_9_1468(t *testing.T) {
 // spec: §4.9.
 func TestProxyUsageRecorderSessionMissOmitsRuntime_Spec4_9_1468(t *testing.T) {
 	usage := usagestore.NewMemory()
-	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
+	rec := NewRecorder(usage, memstore.New(), nil, nil, nil, nil)
 	rec.RecordUsage(context.Background(), credential.Lease{
 		LeaseID: "cl-4", SessionID: "missing", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
@@ -158,15 +158,15 @@ func TestProxyUsageRecorderSessionMissOmitsRuntime_Spec4_9_1468(t *testing.T) {
 // TestProxyUsageRecorderNilUsageReturnsNil confirms the recorder skips
 // wiring when no usagestore is configured.
 func TestProxyUsageRecorderNilUsageReturnsNil(t *testing.T) {
-	if rec := newProxyUsageRecorder(nil, memstore.New(), nil, nil, nil, nil); rec != nil {
-		t.Errorf("newProxyUsageRecorder(nil, _) = %v, want nil", rec)
+	if rec := NewRecorder(nil, memstore.New(), nil, nil, nil, nil); rec != nil {
+		t.Errorf("NewRecorder(nil, _) = %v, want nil", rec)
 	}
 }
 
 // recordTerminator captures sessionbudget.Terminator calls.
 type recordTerminator struct{ calls []string }
 
-func (r *recordTerminator) TerminateSession(sessionID, _ string) {
+func (r *recordTerminator) ExpireSession(sessionID, _ string) {
 	r.calls = append(r.calls, sessionID)
 }
 
@@ -186,7 +186,7 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 	}
 	term := &recordTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	lease := credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
@@ -231,7 +231,7 @@ func TestProxyUsageRecorderEnforcesSessionBudget_Spec11_2(t *testing.T) {
 // many times the enforcer consulted it so a test can assert a request under
 // the raised budget does not re-dispatch a second extension.
 type grantingReclaimSeam struct {
-	rec   *proxyUsageRecorder
+	rec   *Recorder
 	delta int64
 	calls int
 }
@@ -272,7 +272,7 @@ func TestProxyUsageRecorderRaiseSurvivesNextRecord_spec_8_6(t *testing.T) {
 	}
 	term := &recordTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 	// Wire the granting seam that raises by 1000 through the recorder (the
 	// reclaimer) on exhaustion, mirroring the production in-path Granted path.
 	seam := &grantingReclaimSeam{rec: rec, delta: 1000}
@@ -336,7 +336,7 @@ func TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6(t *testing.T) {
 	sessions := memstore.New()
 	term := &recordTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	rec.RaiseBudget("s_term", 1000)
 	if got := rec.grantedDeltaFor("s_term"); got != 1000 {
@@ -353,7 +353,7 @@ func TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6(t *testing.T) {
 	// The SessionReclaimer methods are nil-safe on the recorder and on an
 	// empty session id: the leasecontrol fan-out or the in-path applier must
 	// never panic against a recorder that is not wired.
-	var nilRec *proxyUsageRecorder
+	var nilRec *Recorder
 	nilRec.RaiseBudget("s", 1)
 	nilRec.TerminateSession("s")
 	rec.RaiseBudget("", 1)
@@ -370,21 +370,21 @@ func TestProxyUsageRecorderReclaimerForgetsGrant_spec_8_6(t *testing.T) {
 // spec: 8.6 (grant-delta accounting cleanup), 11.2 (mid-session budget accounting)
 // diagnosis: the recorder's grant-delta map is never cleared on session settlement, leaking a raised-budget entry per settled session (proposal 0023 S3/S4 accounting cleanup broken).
 func TestProxyUsageRecorderForgetDropsGrant_spec_8_6(t *testing.T) {
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec := NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
 	rec.RaiseBudget("s_forget", 500)
 	if got := rec.grantedDeltaFor("s_forget"); got != 500 {
 		t.Fatalf("RaiseBudget must accumulate the delta, got %d", got)
 	}
-	rec.forget("s_forget")
+	rec.Forget("s_forget")
 	if got := rec.grantedDeltaFor("s_forget"); got != 0 {
 		t.Fatalf("forget must drop the accumulated delta, got %d", got)
 	}
 	// Nil-safe on a nil recorder and empty session id (the BudgetForget
 	// closure may fire before the recorder is wired or for an anonymous
 	// session).
-	var nilRec *proxyUsageRecorder
-	nilRec.forget("s_forget")
-	rec.forget("")
+	var nilRec *Recorder
+	nilRec.Forget("s_forget")
+	rec.Forget("")
 }
 
 // TestProxyUsageRecorderForgetDropsAnomalyState_spec_11_2 proves the recorder's
@@ -400,19 +400,19 @@ func TestProxyUsageRecorderForgetDropsGrant_spec_8_6(t *testing.T) {
 // diagnosis: the direct-mode anomaly detector's per-session map is never cleared on session settlement, leaking a *sessionState entry per direct-mode session for the life of the gateway process (proposal 0024 S8 Forget wiring unhooked).
 func TestProxyUsageRecorderForgetDropsAnomalyState_spec_11_2(t *testing.T) {
 	obs := &recordAnomalyObserver{}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
-	rec.setAnomalyObserver(obs)
+	rec := NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	rec.SetAnomalyObserver(obs)
 
-	rec.forget("s_direct")
+	rec.Forget("s_direct")
 	if len(obs.forgotten) != 1 || obs.forgotten[0] != "s_direct" {
 		t.Fatalf("forget must forward to the anomaly detector's Forget, got %v", obs.forgotten)
 	}
 
 	// An empty session id and a recorder with no observer wired are both
 	// no-ops so the terminal pipeline never panics.
-	rec.forget("")
-	noObs := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
-	noObs.forget("s_direct")
+	rec.Forget("")
+	noObs := NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	noObs.Forget("s_direct")
 }
 
 // TestProxyUsageRecorderNoBudgetNoEnforcement_Spec11_2 confirms a session
@@ -428,7 +428,7 @@ func TestProxyUsageRecorderNoBudgetNoEnforcement_Spec11_2(t *testing.T) {
 	}
 	term := &recordTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 	rec.RecordUsage(context.Background(), credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
 		Source: credential.SourcePool, DeliveryMode: credential.DeliveryProxy,
@@ -463,7 +463,7 @@ func TestProxyUsageRecorderAdvancesQuotaCounter_Spec11_2(t *testing.T) {
 	}
 	quotaCounter := newTestQuotaCounter(t)
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
 	rec.now = func() time.Time { return now }
 
 	rec.RecordUsage(context.Background(), credential.Lease{
@@ -514,10 +514,10 @@ func TestProxyUsageRecorderFeedsFailOpenAccumulator_Spec12_4(t *testing.T) {
 	}
 	quotaCounter := newTestQuotaCounter(t)
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
 	rec.now = func() time.Time { return now }
 	acc := quotafailopen.New()
-	rec.setFailOpenAccumulator(acc)
+	rec.SetFailOpenAccumulator(acc)
 
 	rec.RecordUsage(context.Background(), credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
@@ -545,11 +545,11 @@ func TestProxyUsageRecorderRollingSkipsFailOpenAccumulator_Spec12_4(t *testing.T
 	}
 	quotaCounter := newTestQuotaCounter(t)
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter,
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter,
 		fakeQuotaLimits{period: quota.ResetRolling, rollingWindow: time.Hour}, nil)
 	rec.now = func() time.Time { return now }
 	acc := quotafailopen.New()
-	rec.setFailOpenAccumulator(acc)
+	rec.SetFailOpenAccumulator(acc)
 
 	rec.RecordUsage(context.Background(), credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
@@ -575,7 +575,7 @@ func TestProxyUsageRecorderRollingWritesSlidingWindow_Spec11_2(t *testing.T) {
 	}
 	quotaCounter := newTestQuotaCounter(t)
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter,
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, quotaCounter,
 		fakeQuotaLimits{period: quota.ResetRolling, rollingWindow: time.Hour}, nil)
 	rec.now = func() time.Time { return now }
 
@@ -616,7 +616,7 @@ func TestProxyUsageRecorderRecordsPerSession_spec_8_8_897(t *testing.T) {
 		t.Fatalf("sessions.Create: %v", err)
 	}
 	sessUsage := sessionusage.NewMemory()
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, sessUsage, nil, nil, nil)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, sessUsage, nil, nil, nil)
 
 	lease := credential.Lease{
 		LeaseID: "cl-1", SessionID: "s_1", TenantID: "acme",
@@ -650,30 +650,30 @@ func TestProxyUsageRecorderRecordsPerSession_spec_8_8_897(t *testing.T) {
 // every elicitation-mode extension into an immediate BUDGET_EXHAUSTED).
 // spec: §8.6; proposal 0023 S5.
 func TestProxyUsageRecorderProxyExtensionWaitTimeoutOverride(t *testing.T) {
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
-	if rec.proxyExtensionWaitTimeout != defaultProxyExtensionWaitTimeout {
-		t.Fatalf("initial timeout = %v, want default %v", rec.proxyExtensionWaitTimeout, defaultProxyExtensionWaitTimeout)
+	rec := NewRecorder(usagestore.NewMemory(), memstore.New(), nil, nil, nil, nil)
+	if rec.proxyExtensionWaitTimeout != DefaultExtensionWaitTimeout {
+		t.Fatalf("initial timeout = %v, want default %v", rec.proxyExtensionWaitTimeout, DefaultExtensionWaitTimeout)
 	}
 
-	rec.setProxyExtensionWaitTimeout(12 * time.Second)
+	rec.SetExtensionWaitTimeout(12 * time.Second)
 	if rec.proxyExtensionWaitTimeout != 12*time.Second {
 		t.Errorf("after override timeout = %v, want 12s", rec.proxyExtensionWaitTimeout)
 	}
 
 	// A non-positive flag value (a zeroed --proxy-extension-wait-timeout)
 	// must not overwrite the resolved deadline with zero.
-	rec.setProxyExtensionWaitTimeout(0)
+	rec.SetExtensionWaitTimeout(0)
 	if rec.proxyExtensionWaitTimeout != 12*time.Second {
 		t.Errorf("zero override clobbered timeout = %v, want 12s preserved", rec.proxyExtensionWaitTimeout)
 	}
-	rec.setProxyExtensionWaitTimeout(-3 * time.Second)
+	rec.SetExtensionWaitTimeout(-3 * time.Second)
 	if rec.proxyExtensionWaitTimeout != 12*time.Second {
 		t.Errorf("negative override clobbered timeout = %v, want 12s preserved", rec.proxyExtensionWaitTimeout)
 	}
 
 	// The setter is nil-safe on the recorder.
-	var nilRec *proxyUsageRecorder
-	nilRec.setProxyExtensionWaitTimeout(5 * time.Second)
+	var nilRec *Recorder
+	nilRec.SetExtensionWaitTimeout(5 * time.Second)
 }
 
 // TestRecordDirectUsageReachesAccountingSinks_spec_11_2 proves the direct-mode
@@ -697,12 +697,12 @@ func TestRecordDirectUsageReachesAccountingSinks_spec_11_2(t *testing.T) {
 	sessUsage := sessionusage.NewMemory()
 	quotaCounter := newTestQuotaCounter(t)
 	now := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	rec := newProxyUsageRecorder(usage, sessions, sessUsage, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
+	rec := NewRecorder(usage, sessions, sessUsage, quotaCounter, fakeQuotaLimits{period: quota.ResetHourly}, nil)
 	rec.now = func() time.Time { return now }
 	acc := quotafailopen.New()
-	rec.setFailOpenAccumulator(acc)
+	rec.SetFailOpenAccumulator(acc)
 	obs := &recordAnomalyObserver{}
-	rec.setAnomalyObserver(obs)
+	rec.SetAnomalyObserver(obs)
 
 	rec.RecordDirectUsage(ctx, directUsage("s_d", "acme"), llmproxy.Usage{InputTokens: 100, OutputTokens: 30})
 
@@ -767,7 +767,7 @@ func TestRecordDirectUsageExcludesEnforcer_spec_11_2_44(t *testing.T) {
 		extended = true
 		return sessionbudget.Terminal
 	})
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	// A delta of 500 tokens is 5× the 100-token lease budget. On the proxy
 	// path this would terminate the session; on the direct-mode path it must
@@ -793,8 +793,8 @@ func TestRecordDirectUsageDropsProxyLease_spec_4_9_1468(t *testing.T) {
 	ctx := context.Background()
 	usage := usagestore.NewMemory()
 	obs := &recordAnomalyObserver{}
-	rec := newProxyUsageRecorder(usage, memstore.New(), nil, nil, nil, nil)
-	rec.setAnomalyObserver(obs)
+	rec := NewRecorder(usage, memstore.New(), nil, nil, nil, nil)
+	rec.SetAnomalyObserver(obs)
 
 	// A proxy lease routed to the direct-mode path is dropped.
 	rec.RecordDirectUsage(ctx, credential.Lease{
@@ -813,9 +813,9 @@ func TestRecordDirectUsageDropsProxyLease_spec_4_9_1468(t *testing.T) {
 	}
 
 	// Nil-safe on the recorder and setter.
-	var nilRec *proxyUsageRecorder
+	var nilRec *Recorder
 	nilRec.RecordDirectUsage(ctx, directUsage("s", "acme"), llmproxy.Usage{})
-	nilRec.setAnomalyObserver(obs)
+	nilRec.SetAnomalyObserver(obs)
 }
 
 // TestRecordDirectUsageIdleClockGate_spec_6_2_253 proves the §6.2
@@ -837,9 +837,9 @@ func TestRecordDirectUsageIdleClockGate_spec_6_2_253(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("sessions.Create: %v", err)
 	}
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), store, nil, nil, nil, nil)
+	rec := NewRecorder(usagestore.NewMemory(), store, nil, nil, nil, nil)
 	stamper := sessionidle.NewStamper(store, func() time.Time { return t0 })
-	rec.setActivityStamper(stamper)
+	rec.SetActivity(stamper)
 
 	// A zero-delta poll must not stamp: the anchor stays zero after a bounded
 	// wait for any background persist that must not happen.

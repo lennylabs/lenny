@@ -17,6 +17,7 @@ package integration_test
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -30,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )
 
@@ -71,15 +73,14 @@ type mintingRotator struct {
 }
 
 type rotateRecord struct {
-	faultedPool string
-	nextPool    string
-	trigger     credential.RotationTrigger
-	newToken    string
+	nextPool string
+	trigger  credential.RotationTrigger
+	newToken string
 }
 
-func (r *mintingRotator) Rotate(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) {
-	lease, err := r.assign.Assign(nextPool, faulted.SessionID, "", faulted.TenantID, 0)
-	rec := rotateRecord{faultedPool: faulted.PoolID, nextPool: nextPool, trigger: trigger}
+func (r *mintingRotator) RotateCredential(_ context.Context, rot seam.CredentialRotation) {
+	lease, err := r.assign.Assign(rot.NextPool, rot.SessionID, "", rot.TenantID, 0)
+	rec := rotateRecord{nextPool: rot.NextPool, trigger: credential.RotationTrigger(rot.Trigger)}
 	if err == nil && lease.Proxy != nil {
 		rec.newToken = lease.Proxy.LeaseToken
 	}

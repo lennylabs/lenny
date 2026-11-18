@@ -240,7 +240,7 @@ type countingTerminator struct {
 	calls atomic.Int64
 }
 
-func (t *countingTerminator) TerminateSession(_ /*sessionID*/, _ /*reason*/ string) {
+func (t *countingTerminator) ExpireSession(_ /*sessionID*/, _ /*reason*/ string) {
 	t.calls.Add(1)
 }
 

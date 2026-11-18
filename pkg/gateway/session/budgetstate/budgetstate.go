@@ -24,6 +24,8 @@ import (
 	"log/slog"
 	"sort"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // DefaultBatchSize is the number of session ids one pair of store reads
@@ -43,13 +45,13 @@ type Sessions interface {
 type Config struct {
 	// Sessions resolves tracked ids. Required.
 	Sessions Sessions
-	// Tracked returns the session ids every per-session tracker holds. It is
-	// called on each pass, so a tracker built after the sweep is still read.
-	// Required.
-	Tracked func() []string
-	// Forget is the composed per-session forget the terminal pipeline also
-	// calls. Required.
-	Forget func(sessionID string)
+	// Budgets is the metering proxy's per-session budget state, reached
+	// through the seam interface: GWSEAM-TrackedBudgetSessions returns the
+	// session ids every per-session tracker holds, and GWSEAM-ForgetBudget
+	// is the composed per-session forget the terminal pipeline also calls.
+	// Both are called on each pass, so a tracker built after the sweep is
+	// still read. Required.
+	Budgets seam.MeteringBudgets
 	// Interval is the wait between passes. Required to be positive for Run.
 	Interval time.Duration
 	// BatchSize is the ids per store read pair. Zero selects
@@ -104,7 +106,7 @@ func (s *Sweep) Run(ctx context.Context) {
 // and is logged at warn.
 // spec: §11.2, §10.1.1.
 func (s *Sweep) Pass(ctx context.Context) int {
-	ids := Union(s.cfg.Tracked())
+	ids := Union(s.cfg.Budgets.TrackedBudgetSessions())
 	if len(ids) == 0 {
 		return 0
 	}
@@ -122,7 +124,7 @@ func (s *Sweep) Pass(ctx context.Context) int {
 			continue
 		}
 		for _, id := range ended {
-			s.cfg.Forget(id)
+			s.cfg.Budgets.ForgetBudget(id)
 		}
 		forgotten += len(ended)
 	}
