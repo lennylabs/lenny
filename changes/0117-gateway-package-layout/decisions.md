@@ -2,7 +2,11 @@
 
 ## Open decisions
 
-None.
+20. **How the metering proxy's budget expiry reaches the session core.** When a session exhausts its token budget, the budget enforcer of the metering proxy calls a terminator that `cmd/lenny-gateway` declares. The terminator writes the session's expired state through the session store and then runs the session core's terminal pipeline (`Server.BeginTerminal` and `Server.OnSessionTerminal`). The wiring register carried this as four crossings at 0117.S3. The seam interface page of 0117.S1 listed the metering proxy among the callers of `GWSEAM-BeginTerminal` and `GWSEAM-OnSessionTerminal`, which pass the session as the seam's session record, a subset of the stored row that the terminal pipeline reads.
+    - (a) Add an operation served by the session core to the metering proxy, `GWSEAM-ExpireSession`, which writes the expired state with the caller's failure reason and runs the terminal pipeline. The terminator stays on the core's side of the seam, and the enforcer reaches it only through the operation.
+    - (b) Move the terminator into the metering proxy. It writes the expired state through the session store, a domain package any part may import, and calls `GWSEAM-BeginTerminal` and `GWSEAM-OnSessionTerminal`. The session core implements both and re-reads the stored row from the session record the seam passes.
+
+    Recommendation: (a). It changes no behavior: the terminal pipeline runs on the row the write returned, as today, with no second read and no new failure path. It also keeps the session's state writes in the session core, so an extracted metering proxy holds no write access to the session store. The branch of 0117.S3 builds (a): the specification edit adds `GWSEAM-ExpireSession` and removes the metering proxy from the callers of the terminal pipeline operations. Choosing (b) reverts that edit, moves the terminator into `pkg/gateway/meteringproxy/sessionbudget`, and adds the core's implementation of `seam.Terminals`. Raised by the build of 0117.S3 on 2026-11-18.
 
 ## Decisions
 
