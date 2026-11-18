@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package uploadhandler_test
 
 import (
 	"context"
@@ -13,7 +13,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // outageBlobStore is a blobstore.Store whose Put always fails with a
@@ -76,8 +78,8 @@ func newOutageReplica(t *testing.T, blobs blobstore.Store, threshold int) replic
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: verifier,
 		Blobs:               blobs,
-		UploadSubsystem:     sub,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs, Subsystem: sub})
 
 	const tenant, session = "acme", "sess_convergence"
 	tok := seedAndMintUploadSubsystem(t, store, issuer, session, tenant)

@@ -212,16 +212,15 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 			log.Printf("sessionserver: consume upload token for finalized session %s: %v", id, cerr)
 		}
 	}
-	// §7.4: close the upload channel — abort any in-flight
-	// /upload stream for this session so it surfaces
-	// UPLOAD_CHANNEL_CLOSED and its staged blob is rolled back. A
-	// late /upload register that races finalize gets an
-	// already-closed abort signal on the next Read. F-7.4.16.
-	s.uploadAborts.closeSession(updated.ID)
-	// §11.1: the upload window has closed, so drop the
-	// per-session cumulative upload-byte total. In-flight concurrency
-	// slots self-release; only the byte total is freed here. F-11.1.6.
-	s.uploadLimits.closeSession(updated.ID)
+	// §7.4, §11.1: close the upload channel through GWSEAM-CloseUploads.
+	// The upload handler aborts any in-flight /upload stream for this
+	// session, so it surfaces UPLOAD_CHANNEL_CLOSED and its staged blob is
+	// rolled back, hands a late /upload that races finalize an
+	// already-closed abort signal, and drops the session's cumulative
+	// upload-byte total. F-7.4.16, F-11.1.6.
+	if s.uploads != nil {
+		s.uploads.CloseUploads(updated.ID)
+	}
 	// spec: §7.2 — surface the finalizing → ready transition that
 	// closed the §7.1 steps 11-13 prepare phase.
 	s.emitStatusChange(updated.TenantID, updated.ID, updated.State)

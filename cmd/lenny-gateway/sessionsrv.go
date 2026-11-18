@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -73,7 +74,8 @@ func (w *gatewayWiring) buildSessionServer(
 	auditAppender policy.AuditAppender,
 	inputWaits *inputwait.Registry,
 	uploadSubsystem *subsystem.Subsystem,
-	uploadMetrics *sessionserver.PromUploadMetrics,
+	uploadMetrics *uploadhandler.PromUploadMetrics,
+	uploadFlags *uploadhandler.Flags,
 	slotHealth *slothealth.Tracker,
 	callbackValidator *sessioncallback.Validator,
 	callbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error),
@@ -99,10 +101,6 @@ func (w *gatewayWiring) buildSessionServer(
 	persistDeriveFailureRows := f.persistDeriveFailureRows
 	sessionArtifactRetentionSeconds := f.sessionArtifactRetentionSeconds
 	workspaceSealMaxDurationSeconds := f.workspaceSealMaxDurationSeconds
-	uploadMaxConcurrentPerSession := f.uploadMaxConcurrentPerSession
-	uploadMaxConcurrentGlobal := f.uploadMaxConcurrentGlobal
-	uploadMaxBytesPerSession := f.uploadMaxBytesPerSession
-	midSessionUploadEnabled := f.midSessionUploadEnabled
 	retryMaxRetries := f.retryMaxRetries
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	envVarBlocklistCSV := f.envVarBlocklistCSV
@@ -142,7 +140,7 @@ func (w *gatewayWiring) buildSessionServer(
 	// erased; startBackgroundWorkers runs it under the watchdog context.
 	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
 
-	return sessionserver.New(w.sessions, sessionserver.Options{
+	srv := sessionserver.New(w.sessions, sessionserver.Options{
 		// spec: §6.2 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
 		ActivityStamper: activityStamper,
@@ -384,15 +382,6 @@ func (w *gatewayWiring) buildSessionServer(
 		// circuit-breaker open/closed gauge.
 		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
 		Clock:                             clockinject.Now,
-		UploadSubsystem:                   uploadSubsystem,
-		UploadMetrics:                     uploadMetrics,
-		// spec: §11.1 — concurrent-upload + per-session
-		// upload-size admission caps. F-11.1.5, F-11.1.6.
-		MaxConcurrentUploadsPerSession: *uploadMaxConcurrentPerSession,
-		MaxConcurrentUploadsGlobal:     *uploadMaxConcurrentGlobal,
-		MaxUploadBytesPerSession:       *uploadMaxBytesPerSession,
-		// spec: §7.4 — mid-session upload deployer policy. F-7.4.6.
-		MidSessionUploadEnabled: *midSessionUploadEnabled,
 		// §4.9 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §5.2 — the shared fail/leak tracker so the slot-bind-failure path and
@@ -466,6 +455,8 @@ func (w *gatewayWiring) buildSessionServer(
 		CallbackSeal:       callbackSeal,
 		CallbackDispatcher: callbackDispatcher,
 	})
+	attachUploadHandler(srv, w.podBinder, w.blobs, w.runtimes, uploadSubsystem, uploadMetrics, uploadFlags)
+	return srv
 }
 
 // sessionAgeCap resolves a row's effective maxSessionAge cap through the

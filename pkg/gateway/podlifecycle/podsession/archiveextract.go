@@ -183,12 +183,12 @@ func (b *Binder) gatedExtract(ctx context.Context, fn func() (*archive.Result, e
 	return res, nil
 }
 
-// recordExtractionAbort increments lenny_upload_extraction_aborted_total
-// for a §13.4 extraction failure, labeling by the typed sub-code when the
+// recordExtractionAbort counts a §13.4 extraction failure in
+// lenny_upload_extraction_aborted_total through GWSEAM-RecordExtractionAbort, labeling by the typed sub-code when the
 // error is a *upload.ValidationError and "format_error" otherwise. spec:
 // §7.4; §16.1 — F-7.4.11.
 func (b *Binder) recordExtractionAbort(err error) {
-	if b.ExtractionAbort == nil {
+	if b.UploadWindows == nil {
 		return
 	}
 	errorType := string(upload.ReasonFormatError)
@@ -196,7 +196,7 @@ func (b *Binder) recordExtractionAbort(err error) {
 	if errors.As(err, &vErr) {
 		errorType = string(vErr.Reason)
 	}
-	b.ExtractionAbort(errorType)
+	b.UploadWindows.RecordExtractionAbort(errorType)
 }
 
 // syntheticArchiveRef is the PrepareWorkspace upload ref for one archive-

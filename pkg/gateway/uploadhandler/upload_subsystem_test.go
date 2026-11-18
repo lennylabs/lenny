@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package uploadhandler_test
 
 import (
 	"context"
@@ -17,7 +17,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // newUploadServerWithSubsystem builds a sessionserver wired with the
@@ -40,8 +42,8 @@ func newUploadServerWithSubsystem(t *testing.T, sub *subsystem.Subsystem) (*sess
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: verifier,
 		Blobs:               blobs,
-		UploadSubsystem:     sub,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs, Subsystem: sub})
 	return srv, issuer, blobs, store, t0
 }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package uploadhandler
 
 import (
 	"errors"
@@ -18,7 +18,7 @@ import (
 //
 // spec: §7.4 — "Upload channel closes after workspace
 // finalization." F-7.4.16.
-var errUploadAborted = errors.New("sessionserver: upload aborted by finalize")
+var errUploadAborted = errors.New("uploadhandler: upload aborted by finalize")
 
 // uploadAbortRegistry tracks per-session in-flight /upload handlers
 // so the §7.4 finalize transition can sever them. Each
@@ -49,7 +49,7 @@ type uploadAbortSet struct {
 }
 
 // newUploadAbortRegistry returns a fresh registry. Production wires
-// exactly one per Server.
+// exactly one per Handler.
 func newUploadAbortRegistry() *uploadAbortRegistry {
 	return &uploadAbortRegistry{state: map[string]*uploadAbortSet{}}
 }

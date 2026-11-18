@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
 
@@ -83,21 +84,21 @@ func newSiteRig(t *testing.T, m *gatewaypki.Material, coordinatorAddr string, ro
 		t.Fatalf("seed: %v", err)
 	}
 	r.srv = New(r.store, Options{
-		DevTenantHeader:         true,
-		CoordinationLeaseStore:  leasesHeldBy("gw-b.00@" + coordinatorAddr),
-		ReplicaID:               "gw-a.00@127.0.0.1:1",
-		HolderForwardClient:     testForwardClient(t, m, 2*time.Second),
-		Executor:                r.exec,
-		InputWaits:              r.waits,
-		Runtimes:                runtimes,
-		MidSessionUploadEnabled: true,
-		Clock:                   func() time.Time { return r.now },
+		DevTenantHeader:        true,
+		CoordinationLeaseStore: leasesHeldBy("gw-b.00@" + coordinatorAddr),
+		ReplicaID:              "gw-a.00@127.0.0.1:1",
+		HolderForwardClient:    testForwardClient(t, m, 2*time.Second),
+		Executor:               r.exec,
+		InputWaits:             r.waits,
+		Runtimes:               runtimes,
+		Clock:                  func() time.Time { return r.now },
 		Messaging: sessioninbox.NewCoordinator(sessioninbox.Config{
 			Inbox: sessioninbox.NewMemoryInbox(10),
 			DLQ:   sessioninbox.NewDLQ(rc, 10),
 		}),
 	})
 	r.srv.podBinder = &podsession.Binder{}
+	attachUploads(t, r.srv, uploadhandler.Options{Runtimes: runtimes, MidSessionUploadEnabled: true})
 	return r
 }
 

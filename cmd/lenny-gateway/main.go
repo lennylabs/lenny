@@ -55,11 +55,12 @@ func main() {
 	// spec: §4.1 gateway subsystem seams — parse the composition-root
 	// inputs once, finalize the §4 / §17.5 KMS provider selection, then
 	// hand off to runGateway, which wires and starts every subsystem.
+	parts := registerPartFlags()
 	f := parseFlags()
 	if err := f.kmsFinalize(); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
-	runGateway(f)
+	runGateway(f, parts)
 }
 
 // runGateway wires and starts every gateway subsystem from the parsed
@@ -83,7 +84,7 @@ func main() {
 // spec: §4.1 — the gateway is one component internally partitioned into
 // subsystem boundaries (Go interfaces within a single binary); this
 // function constructs each in dependency order.
-func runGateway(f *gatewayFlags) {
+func runGateway(f *gatewayFlags, parts *partFlags) {
 	w := &gatewayWiring{f: f}
 
 	// Each step below constructs one subsystem, records its outputs on the
@@ -178,7 +179,7 @@ func runGateway(f *gatewayFlags) {
 		environments, tenantAccess, opsEmitter, credentialPools, vcsCreds,
 		customRoles, resolvedNoEnvPolicy, auditSink, w.sessionStickyCache,
 		w.experimentProviders, usage, taskUsageBuilder, quotaCheckpointSvc, policyChain, policyAuditSink,
-		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, slotHealth,
+		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, parts.uploads, slotHealth,
 		w.callbackValidator, w.callbackSeal, w.callbackDispatcher,
 	)
 	// spec: §11.2 — the budget terminator runs the same terminal

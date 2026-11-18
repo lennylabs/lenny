@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package uploadhandler_test
 
 import (
 	"bytes"
@@ -15,6 +15,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -37,39 +39,55 @@ func (m *fakeUploadMetrics) AddExtractionAbort(errorType string) {
 	m.abortCounts[errorType]++
 }
 
-func uploadTestServer(t *testing.T, opts Options) (*Server, *uploadtoken.Issuer, func() time.Time) {
+// auditStack is a session server and an upload handler wired together over
+// one session store, with a fixed clock and a token issuer.
+type auditStack struct {
+	store   sessionstore.Store
+	issuer  *uploadtoken.Issuer
+	clock   func() time.Time
+	handler http.Handler
+}
+
+// newAuditStack builds an auditStack: the session server takes the fixed
+// clock, the upload token issuer and verifier, and core's other options,
+// and the upload handler takes up with a memory blob store when up names
+// none.
+func newAuditStack(t *testing.T, core sessionserver.Options, up uploadhandler.Options) auditStack {
 	t.Helper()
 	clock := func() time.Time { return time.Date(2026, 5, 26, 9, 0, 0, 0, time.UTC) }
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
 	issuer := uploadtoken.NewIssuer(ring, clock)
-	tracker := uploadtoken.NewMemoryTracker()
-	verifier := uploadtoken.NewVerifier(ring, tracker, clock)
-	opts.Clock = clock
-	opts.UploadTokenIssuer = issuer
-	opts.UploadTokenVerifier = verifier
-	if opts.Blobs == nil {
-		opts.Blobs = blobstore.NewMemoryStore(nil)
+	core.DevTenantHeader = true
+	core.Clock = clock
+	core.UploadTokenIssuer = issuer
+	core.UploadTokenVerifier = uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
+	if up.Blobs == nil {
+		up.Blobs = blobstore.NewMemoryStore(nil)
 	}
-	srv := New(memstore.New(), opts)
-	return srv, issuer, clock
+	store := memstore.New()
+	_, h := serveUploads(t, store, core, up)
+	return auditStack{store: store, issuer: issuer, clock: clock, handler: asOwner(h)}
 }
 
-func seedCreatedSession(t *testing.T, srv *Server, id string, clock func() time.Time) sessionstore.Session {
+// seed stores a session in the created state under the default tenant.
+func (a auditStack) seed(t *testing.T, id string) sessionstore.Session {
 	t.Helper()
 	row := sessionstore.Session{
 		ID: id, TenantID: "default", UserID: testOwner,
 		RuntimeRef: "claude-code", State: session.StateCreated,
-		CreatedAt: clock(), UpdatedAt: clock(),
+		CreatedAt: a.clock(), UpdatedAt: a.clock(),
 	}
-	if err := srv.store.Create(context.Background(), row); err != nil {
+	if err := a.store.Create(context.Background(), row); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	return row
 }
 
-func uploadRequest(t *testing.T, issuer *uploadtoken.Issuer, srv *Server, id, body string, hdrs map[string]string) *httptest.ResponseRecorder {
+// upload posts body to the session's upload route with a freshly minted
+// token and the given headers.
+func (a auditStack) upload(t *testing.T, id, body string, hdrs map[string]string) *httptest.ResponseRecorder {
 	t.Helper()
-	tok, err := issuer.Issue(id, uploadtoken.DefaultTTL)
+	tok, err := a.issuer.Issue(id, uploadtoken.DefaultTTL)
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
@@ -81,30 +99,72 @@ func uploadRequest(t *testing.T, issuer *uploadtoken.Issuer, srv *Server, id, bo
 		req.Header.Set(k, v)
 	}
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	a.handler.ServeHTTP(rr, req)
 	return rr
+}
+
+// TestAnAcceptedUploadIsAuditedWithItsBlobReference checks that a successful
+// upload writes a session.upload audit row with the resulting UploadRef in
+// Detail, under the session's tenant and stamped with the session core's
+// clock. F-7.4.17.
+//
+// spec: §16.6 (Operational Events Catalog), GWSEAM-AuditUpload
+func TestAnAcceptedUploadIsAuditedWithItsBlobReference(t *testing.T) {
+	sink := &lifecycleSink{}
+	a := newAuditStack(t, sessionserver.Options{LifecycleAuditSink: sink}, uploadhandler.Options{})
+	row := a.seed(t, "sess_audit")
+
+	if rr := a.upload(t, row.ID, "hello", nil); rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
+	}
+	ev := mustSingleUploadEvent(t, sink)
+	if ev.SessionID != row.ID {
+		t.Errorf("sessionID = %q, want %q", ev.SessionID, row.ID)
+	}
+	if ev.TenantID != row.TenantID {
+		t.Errorf("tenantID = %q, want %q", ev.TenantID, row.TenantID)
+	}
+	if ev.Detail == "" {
+		t.Errorf("Detail empty, want the lenny-blob:// uploadRef")
+	}
+	if !ev.At.Equal(a.clock()) {
+		t.Errorf("At = %v, want the session core's clock %v", ev.At, a.clock())
+	}
+}
+
+// TestAnUploadWithNoAuditSinkSucceeds checks that an upload succeeds when
+// the session core has no lifecycle audit sink, the minimal-gateway
+// posture. F-7.4.17.
+//
+// spec: GWSEAM-AuditUpload
+func TestAnUploadWithNoAuditSinkSucceeds(t *testing.T) {
+	a := newAuditStack(t, sessionserver.Options{}, uploadhandler.Options{})
+	row := a.seed(t, "sess_nil")
+	if rr := a.upload(t, row.ID, "x", nil); rr.Code != http.StatusCreated {
+		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
+	}
 }
 
 // spec: §13.4; §11.7 — a hash-mismatch rejection writes a session.upload
 // audit row with a rejected outcome so the SIEM stream sees the
 // upload-rejection class. F-13.4.8.
 func TestRunUploadEmitsRejectedAudit_HashMismatch(t *testing.T) {
-	sink := &captureLifecycleAudit{}
-	srv, issuer, clock := uploadTestServer(t, Options{DevTenantHeader: true, LifecycleAuditSink: sink})
-	row := seedCreatedSession(t, srv, "sess_hash", clock)
+	sink := &lifecycleSink{}
+	a := newAuditStack(t, sessionserver.Options{LifecycleAuditSink: sink}, uploadhandler.Options{})
+	row := a.seed(t, "sess_hash")
 
-	rr := uploadRequest(t, issuer, srv, row.ID, "hello", map[string]string{
-		UploadContentHashHeader: "deadbeef", // wrong hash
+	rr := a.upload(t, row.ID, "hello", map[string]string{
+		uploadhandler.UploadContentHashHeader: "deadbeef", // wrong hash
 	})
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
 	ev := mustSingleUploadEvent(t, sink)
-	if ev.Outcome != uploadOutcomeRejected {
-		t.Errorf("outcome = %q, want %q", ev.Outcome, uploadOutcomeRejected)
+	if ev.Outcome != "rejected" {
+		t.Errorf("outcome = %q, want rejected", ev.Outcome)
 	}
-	if ev.Reason != uploadRejectHashMismatch {
-		t.Errorf("reason = %q, want %q", ev.Reason, uploadRejectHashMismatch)
+	if ev.Reason != "hash_mismatch" {
+		t.Errorf("reason = %q, want hash_mismatch", ev.Reason)
 	}
 	if ev.SessionID != row.ID || ev.TenantID != row.TenantID {
 		t.Errorf("scope = (%q,%q), want (%q,%q)", ev.SessionID, ev.TenantID, row.ID, row.TenantID)
@@ -114,39 +174,33 @@ func TestRunUploadEmitsRejectedAudit_HashMismatch(t *testing.T) {
 // spec: §13.4; §11.7 — a session cumulative-size rejection (early
 // Content-Length gate) writes a rejected audit row. F-13.4.8.
 func TestRunUploadEmitsRejectedAudit_SessionBytes(t *testing.T) {
-	sink := &captureLifecycleAudit{}
-	srv, issuer, clock := uploadTestServer(t, Options{
-		DevTenantHeader:          true,
-		LifecycleAuditSink:       sink,
-		MaxUploadBytesPerSession: 3,
-	})
-	row := seedCreatedSession(t, srv, "sess_bytes", clock)
+	sink := &lifecycleSink{}
+	a := newAuditStack(t, sessionserver.Options{LifecycleAuditSink: sink}, uploadhandler.Options{MaxUploadBytesPerSession: 3})
+	row := a.seed(t, "sess_bytes")
 
-	rr := uploadRequest(t, issuer, srv, row.ID, "hello", nil) // 5 bytes > 3
+	rr := a.upload(t, row.ID, "hello", nil) // 5 bytes > 3
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
 	ev := mustSingleUploadEvent(t, sink)
-	if ev.Outcome != uploadOutcomeRejected || ev.Reason != uploadRejectSessionBytes {
-		t.Errorf("outcome/reason = %q/%q, want %q/%q",
-			ev.Outcome, ev.Reason, uploadOutcomeRejected, uploadRejectSessionBytes)
+	if ev.Outcome != "rejected" || ev.Reason != "session_upload_bytes" {
+		t.Errorf("outcome/reason = %q/%q, want rejected/session_upload_bytes", ev.Outcome, ev.Reason)
 	}
 }
 
 // spec: §16.6; §11.7 — an admitted upload still records an accepted
 // audit row (the F-7.4.17 row now carries the explicit outcome). F-13.4.8.
 func TestRunUploadEmitsAcceptedOutcome(t *testing.T) {
-	sink := &captureLifecycleAudit{}
-	srv, issuer, clock := uploadTestServer(t, Options{DevTenantHeader: true, LifecycleAuditSink: sink})
-	row := seedCreatedSession(t, srv, "sess_ok", clock)
+	sink := &lifecycleSink{}
+	a := newAuditStack(t, sessionserver.Options{LifecycleAuditSink: sink}, uploadhandler.Options{})
+	row := a.seed(t, "sess_ok")
 
-	rr := uploadRequest(t, issuer, srv, row.ID, "hello", nil)
-	if rr.Code != http.StatusCreated {
+	if rr := a.upload(t, row.ID, "hello", nil); rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
 	ev := mustSingleUploadEvent(t, sink)
-	if ev.Outcome != uploadOutcomeAccepted {
-		t.Errorf("outcome = %q, want %q", ev.Outcome, uploadOutcomeAccepted)
+	if ev.Outcome != "accepted" {
+		t.Errorf("outcome = %q, want accepted", ev.Outcome)
 	}
 	if ev.Reason != "" {
 		t.Errorf("reason = %q, want empty on accepted outcome", ev.Reason)
@@ -157,11 +211,10 @@ func TestRunUploadEmitsAcceptedOutcome(t *testing.T) {
 // lenny_upload_bytes_total. F-13.4.12.
 func TestRunUploadCountsBytes(t *testing.T) {
 	fm := &fakeUploadMetrics{}
-	srv, issuer, clock := uploadTestServer(t, Options{DevTenantHeader: true, UploadMetrics: fm})
-	row := seedCreatedSession(t, srv, "sess_bytes_count", clock)
+	a := newAuditStack(t, sessionserver.Options{}, uploadhandler.Options{Metrics: fm})
+	row := a.seed(t, "sess_bytes_count")
 
-	rr := uploadRequest(t, issuer, srv, row.ID, "hello", nil)
-	if rr.Code != http.StatusCreated {
+	if rr := a.upload(t, row.ID, "hello", nil); rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
 	if fm.bytes != 5 {
@@ -173,18 +226,16 @@ func TestRunUploadCountsBytes(t *testing.T) {
 // handler samples its depth on entry and exit. F-13.4.12.
 func TestRunUploadSamplesQueueDepth(t *testing.T) {
 	fm := &fakeUploadMetrics{}
-	srv, issuer, clock := uploadTestServer(t, Options{
-		DevTenantHeader: true,
-		UploadMetrics:   fm,
-		UploadSubsystem: &subsystem.Subsystem{
+	a := newAuditStack(t, sessionserver.Options{}, uploadhandler.Options{
+		Metrics: fm,
+		Subsystem: &subsystem.Subsystem{
 			Name:    "upload_handler",
 			Limiter: &subsystem.Limiter{MaxConcurrent: 4},
 		},
 	})
-	row := seedCreatedSession(t, srv, "sess_depth", clock)
+	row := a.seed(t, "sess_depth")
 
-	rr := uploadRequest(t, issuer, srv, row.ID, "hello", nil)
-	if rr.Code != http.StatusCreated {
+	if rr := a.upload(t, row.ID, "hello", nil); rr.Code != http.StatusCreated {
 		t.Fatalf("status = %d, body=%s", rr.Code, rr.Body.String())
 	}
 	// Entry + exit samples.
@@ -197,14 +248,11 @@ func TestRunUploadSamplesQueueDepth(t *testing.T) {
 	}
 }
 
-func mustSingleUploadEvent(t *testing.T, sink *captureLifecycleAudit) SessionLifecycleEvent {
+func mustSingleUploadEvent(t *testing.T, sink *lifecycleSink) sessionserver.SessionLifecycleEvent {
 	t.Helper()
-	if len(sink.events) != 1 {
-		t.Fatalf("audit events: got %d, want 1", len(sink.events))
+	evs := sink.eventsOf("session.upload")
+	if len(evs) != 1 || len(sink.events) != 1 {
+		t.Fatalf("audit events: got %d, %d of them session.upload; want exactly one session.upload", len(sink.events), len(evs))
 	}
-	ev := sink.events[0]
-	if ev.EventType != auditSessionUpload {
-		t.Fatalf("eventType = %q, want %q", ev.EventType, auditSessionUpload)
-	}
-	return ev
+	return evs[0]
 }

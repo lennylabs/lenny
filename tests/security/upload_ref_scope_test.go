@@ -39,9 +39,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 const uploadScopeNS = "lenny-agents"
@@ -162,6 +164,7 @@ func newUploadScopeGateway(t *testing.T, pods int) *uploadScopeGateway {
 		AgentNamespace:          uploadScopeNS,
 		Blobs:                   blobs,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 	return &uploadScopeGateway{h: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), blobs: blobs}
 }
 
@@ -249,7 +252,7 @@ func TestPlanCannotFetchAnotherSessionsUpload(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload to A: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var up sessionserver.UploadResponse
+	var up uploadhandler.UploadResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &up); err != nil || up.UploadRef == "" {
 		t.Fatalf("decode upload response: %v (body=%s)", err, rr.Body.String())
 	}

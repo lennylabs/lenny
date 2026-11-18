@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package uploadhandler_test
 
 import (
 	"bytes"
@@ -19,7 +19,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // blobURL builds a /v1/blobs/{ref} URL by URL-encoding the
@@ -50,6 +52,7 @@ func newUploadServer(t *testing.T) (*sessionserver.Server, *uploadtoken.Issuer, 
 		UploadTokenVerifier: verifier,
 		Blobs:               blobs,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 	return srv, issuer, verifier, blobs, store, t0
 }
 
@@ -94,7 +97,7 @@ func TestUploadHappyPath(t *testing.T) {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
 
-	var resp sessionserver.UploadResponse
+	var resp uploadhandler.UploadResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -220,7 +223,7 @@ func TestUploadDefaultsMimeTypeWhenAbsent(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201", rr.Code)
 	}
-	var resp sessionserver.UploadResponse
+	var resp uploadhandler.UploadResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if resp.MimeType != "application/octet-stream" {
 		t.Errorf("default mimeType: got %q", resp.MimeType)
@@ -234,6 +237,7 @@ func TestUploadDisabledWhenBlobsUnavailable(t *testing.T) {
 		DevTenantHeader: true,
 		IDFunc:          func() string { return "sess_upload" },
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{})
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", "ignored", []byte("data"), "text/plain")
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("status: got %d, want 503 (BLOBSTORE_UNAVAILABLE)", rr.Code)
@@ -309,7 +313,7 @@ func TestUploadRejectsOversizedBody(t *testing.T) {
 	tok, _ := issuer.Issue("sess_upload", 0)
 
 	// One byte past the platform cap.
-	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes)+1)
+	body := bytes.Repeat([]byte("x"), int(uploadhandler.UploadMaxBodyBytes)+1)
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, body, "application/octet-stream")
 	if rr.Code != http.StatusRequestEntityTooLarge {
 		t.Fatalf("status: got %d, want 413; body=%s", rr.Code, rr.Body.String())
@@ -330,7 +334,7 @@ func TestUploadAdmitsBodyAtCap(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	body := bytes.Repeat([]byte("x"), int(sessionserver.UploadMaxBodyBytes))
+	body := bytes.Repeat([]byte("x"), int(uploadhandler.UploadMaxBodyBytes))
 	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, body, "application/octet-stream")
 	if rr.Code != http.StatusCreated {
 		t.Errorf("at-cap upload should be admitted: status=%d", rr.Code)
@@ -347,7 +351,7 @@ func TestUploadRoundTripsThroughBlobGet(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload: status %d", rr.Code)
 	}
-	var up sessionserver.UploadResponse
+	var up uploadhandler.UploadResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &up)
 
 	req := httptest.NewRequest(http.MethodGet, blobURL(up.UploadRef), nil)

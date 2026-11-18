@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package uploadhandler_test
 
 import (
 	"context"
@@ -14,7 +14,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // spec: §12.9 / §15.1 — an upload for a T4 tenant
@@ -41,6 +43,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 		UploadTokenVerifier: verifier,
 		Blobs:               blobs,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 
 	row := sessionstore.Session{
 		UserID:    testOwner,

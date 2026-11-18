@@ -28,8 +28,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // openAPIMetaSchemaFile is the vendored OpenAPI 3.1 meta-schema.
@@ -242,7 +244,11 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 	// than newTestServer's, which sits behind the test owner-principal
 	// layer. The session server wraps its mux in the §10.2 tenant gate,
 	// which exposes the mux through Mux().
-	sess := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true}).Handler()
+	// The upload handler registers the upload and blob routes on the same
+	// mux, attached as the gateway attaches it.
+	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
+	uploadwire.Attach(t, srv, uploadhandler.Options{})
+	sess := srv.Handler()
 	h := sess
 	if u, ok := h.(interface{ Mux() *http.ServeMux }); ok {
 		h = u.Mux()

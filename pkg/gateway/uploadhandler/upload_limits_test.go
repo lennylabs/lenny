@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package uploadhandler_test
 
 import (
 	"bytes"
@@ -16,7 +16,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // spec: §11.1 — concurrent-upload and per-session
@@ -34,11 +36,13 @@ func newUploadLimitServer(t *testing.T, perSession, global int, maxBytes int64) 
 	issuer := uploadtoken.NewIssuer(ring, clock)
 	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
 	srv := sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader:                true,
-		Clock:                          clock,
-		IDFunc:                         func() string { return "sess_upload" },
-		UploadTokenIssuer:              issuer,
-		UploadTokenVerifier:            verifier,
+		DevTenantHeader:     true,
+		Clock:               clock,
+		IDFunc:              func() string { return "sess_upload" },
+		UploadTokenIssuer:   issuer,
+		UploadTokenVerifier: verifier,
+	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{
 		Blobs:                          blobstore.NewMemoryStore(nil),
 		MaxConcurrentUploadsPerSession: perSession,
 		MaxConcurrentUploadsGlobal:     global,

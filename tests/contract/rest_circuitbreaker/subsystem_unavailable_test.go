@@ -31,7 +31,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // openUploadBreaker returns a §4.1 per-subsystem breaker already in the
@@ -73,8 +75,10 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
 		Events:          bus,
-		Blobs:           blobstore.NewMemoryStore(time.Now),
-		UploadSubsystem: &subsystem.Subsystem{
+	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{
+		Blobs: blobstore.NewMemoryStore(time.Now),
+		Subsystem: &subsystem.Subsystem{
 			Name:    "upload_handler",
 			Breaker: openUploadBreaker(t),
 		},

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package uploadhandler
 
 import (
 	"github.com/prometheus/client_golang/prometheus"

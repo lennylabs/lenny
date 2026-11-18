@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1599
+      count: 1596
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -668,7 +668,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3098
+      count: 3017
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
@@ -725,6 +725,8 @@ packages:
       count: 2
     - package: pkg/gateway/upgrade/runtimeupgradestore/pgstore
       count: 1
+    - package: pkg/gateway/uploadhandler
+      count: 82
     - package: pkg/idempotency
       count: 7
     - package: pkg/kms
@@ -857,6 +859,8 @@ packages:
       count: 3
     - package: pkg/platform/store
       count: 8
+    - package: pkg/podclaim/state
+      count: 10
     - package: pkg/podlifecycle
       count: 27
     - package: pkg/podregistry
@@ -897,8 +901,6 @@ packages:
       count: 7
     - package: pkg/sandbox/state
       count: 5
-    - package: pkg/podclaim/state
-      count: 10
     - package: pkg/schemamigrate
       count: 7
     - package: pkg/session/state

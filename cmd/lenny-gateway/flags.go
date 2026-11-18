@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
@@ -127,10 +128,6 @@ type gatewayFlags struct {
 	evalRLPerSessionPerMin                        *int
 	evalRLPerTenantPerMin                         *int
 	evalAggregationRefreshSeconds                 *int
-	uploadMaxConcurrentPerSession                 *int
-	uploadMaxConcurrentGlobal                     *int
-	uploadMaxBytesPerSession                      *int64
-	midSessionUploadEnabled                       *bool
 	rlFailOpenMaxSeconds                          *int
 	quotaUserFailOpenFraction                     *float64
 	quotaPerReplicaHardCap                        *int64
@@ -379,6 +376,23 @@ type gatewayFlags struct {
 	// to resolve the selected provider options.
 	kmsOpts     *providerflags.Options
 	kmsFinalize func() error
+}
+
+// partFlags holds the flags the gateway's parts register in their own
+// packages: the flags only that part reads (decision 7 of change 0117). It
+// stays apart from gatewayFlags, the composition root's own flag set, which
+// many build steps and the closures they hand to parts read, so that none
+// of them holds a part's flag values.
+type partFlags struct {
+	uploads *uploadhandler.Flags
+}
+
+// registerPartFlags registers the parts' flags on the process-wide flag set.
+// It runs before parseFlags parses the set.
+func registerPartFlags() *partFlags {
+	return &partFlags{
+		uploads: uploadhandler.RegisterFlags(flag.CommandLine),
+	}
 }
 
 // parseFlags defines every gateway flag on flag.CommandLine, parses the
@@ -664,22 +678,6 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.evalAggregationRefreshSeconds = flag.Int("eval-aggregation-refresh-seconds",
 		envInt("LENNY_EVAL_AGGREGATION_REFRESH_SECONDS", 0),
 		"§10.7 evalAggregationRefreshSeconds: when 0 (default), the lenny_eval_aggregates materialized view exists but is unused and the §10.7 results API aggregates on read from eval_results. When positive, the gateway routes unfiltered results queries to the matview and schedules REFRESH MATERIALIZED VIEW CONCURRENTLY at this interval. Requires Postgres. Override via LENNY_EVAL_AGGREGATION_REFRESH_SECONDS. F-10.7.12.")
-	// spec: §11.1 — concurrent-upload and per-session
-	// upload-size admission caps, distinct from the §4.1 upload-handler
-	// back-pressure semaphore. Zero leaves each scope unlimited; operators
-	// opt in. F-11.1.5, F-11.1.6.
-	f.uploadMaxConcurrentPerSession = flag.Int("upload-max-concurrent-per-session",
-		envInt("LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION", 0),
-		"§11.1 per-session concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.")
-	f.uploadMaxConcurrentGlobal = flag.Int("upload-max-concurrent-global",
-		envInt("LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL", 0),
-		"§11.1 global (per-replica) concurrent-upload admission cap. Excess in-flight uploads across all sessions are rejected with 429 RATE_LIMITED. Zero disables the global concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL. F-11.1.5.")
-	f.uploadMaxBytesPerSession = flag.Int64("upload-max-bytes-per-session",
-		envInt64("LENNY_UPLOAD_MAX_BYTES_PER_SESSION", 0),
-		"§11.1 per-session cumulative upload-size cap (bytes). The sum of all uploads in a session is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
-	f.midSessionUploadEnabled = flag.Bool("mid-session-upload",
-		envFlag("LENNY_MID_SESSION_UPLOAD"),
-		"§7.4 deployer policy: admit uploads into an already-running session (POST /v1/sessions/{id}/upload-to-session) when the bound runtime also declares capabilities.midSessionUpload. Off by default; override via LENNY_MID_SESSION_UPLOAD. F-7.4.6.")
 	// spec: §11.3 — rateLimitFailOpenMaxSeconds, operator-tunable.
 	// Once a fail-open episode (counter-error window) has run past this
 	// cap, the middleware switches to fail-closed and rejects requests

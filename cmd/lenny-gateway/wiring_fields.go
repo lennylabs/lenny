@@ -41,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 
@@ -242,7 +243,7 @@ type gatewayWiringFields struct {
 	// registrars, the §6.2 activity stamper, and the §5.2/§6.2 slot-health
 	// tracker; buildSessionServer, the MCP fabric, the admin router, and the
 	// background workers read them back.
-	uploadMetrics         *sessionserver.PromUploadMetrics
+	uploadMetrics         *uploadhandler.PromUploadMetrics
 	sessionStickyCache    sessionserver.StickyCache
 	adminStickyFlusher    admin.StickyFlusher
 	erasureSticky         *experimentsticky.RedisCache

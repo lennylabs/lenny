@@ -3,11 +3,8 @@
 package sessionserver
 
 import (
-	"encoding/json"
-	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 )
 
@@ -38,34 +35,15 @@ func (s *Server) writeError(w http.ResponseWriter, status int, code, message str
 }
 
 // writeErrorEnvelope is writeError for a handler that runs outside a
-// Server, such as the inter-replica forward listener's chain.
+// Server, such as the inter-replica forward listener's chain. The envelope
+// writer is errorclassify.WriteError, which every gateway part's REST
+// surface shares.
 func writeErrorEnvelope(w http.ResponseWriter, status int, code, message string, details map[string]any) {
-	cat, retryable := errorclassify.ClassifyStatus(code, status)
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(errorEnvelope{Error: errorBody{
-		Code:      code,
-		Category:  string(cat),
-		Message:   message,
-		Retryable: retryable,
-		Details:   details,
-	}})
+	errorclassify.WriteError(w, status, code, message, details)
 }
 
 // writePreconditionError maps a session.PreconditionError to the
 // §15.1 INVALID_STATE_TRANSITION envelope.
 func (s *Server) writePreconditionError(w http.ResponseWriter, err error) {
-	var pe *session.PreconditionError
-	if !errors.As(err, &pe) {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return
-	}
-	allowed := make([]string, 0, len(pe.AllowedStates))
-	for _, st := range pe.AllowedStates {
-		allowed = append(allowed, string(st))
-	}
-	s.writeError(w, pe.Code(), pe.ErrorCode(), pe.Error(), map[string]any{
-		"currentState":  string(pe.CurrentState),
-		"allowedStates": allowed,
-	})
+	errorclassify.WritePreconditionError(w, err)
 }

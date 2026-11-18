@@ -203,7 +203,7 @@ func TestBindUploadArchiveAbortRecordsMetric(t *testing.T) {
 	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	binder.Blobs = blobs
-	binder.ExtractionAbort = func(errorType string) { gotType = errorType }
+	binder.UploadWindows = extractionAbortFunc(func(errorType string) { gotType = errorType })
 	binder.UploadGate = &subsystem.Subsystem{Name: "upload_handler", Limiter: &subsystem.Limiter{MaxConcurrent: 4}}
 
 	_, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -219,7 +219,7 @@ func TestBindUploadArchiveAbortRecordsMetric(t *testing.T) {
 		t.Fatal("Bind succeeded on a hardlink archive, want abort")
 	}
 	if gotType != "non_regular_entry" {
-		t.Errorf("ExtractionAbort error_type = %q, want non_regular_entry", gotType)
+		t.Errorf("RecordExtractionAbort error_type = %q, want non_regular_entry", gotType)
 	}
 }
 
@@ -286,7 +286,7 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 			c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 			binder := newBinder(ns, c, adapterDialer(t, srv))
 			binder.Blobs = blobs
-			binder.ExtractionAbort = func(errorType string) { gotType = errorType }
+			binder.UploadWindows = extractionAbortFunc(func(errorType string) { gotType = errorType })
 			binder.UploadGate = &subsystem.Subsystem{Name: "upload_handler", Limiter: &subsystem.Limiter{MaxConcurrent: 4}}
 
 			_, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -309,7 +309,7 @@ func TestBindUploadArchiveAbortRecordsMetric_MaliciousArchives(t *testing.T) {
 				t.Errorf("ValidationError.Reason = %q, want %q", vErr.Reason, tc.wantReason)
 			}
 			if gotType != string(tc.wantReason) {
-				t.Errorf("ExtractionAbort error_type = %q, want %q (lenny_upload_extraction_aborted_total label)", gotType, tc.wantReason)
+				t.Errorf("RecordExtractionAbort error_type = %q, want %q (lenny_upload_extraction_aborted_total label)", gotType, tc.wantReason)
 			}
 		})
 	}
@@ -332,3 +332,11 @@ func manyEntryTarForTest(t *testing.T, count int) []byte {
 	}
 	return buf.Bytes()
 }
+
+// extractionAbortFunc is a seam.UploadWindows whose RecordExtractionAbort
+// calls the function. The binder never calls CloseUploads.
+type extractionAbortFunc func(errorType string)
+
+func (f extractionAbortFunc) CloseUploads(string) {}
+
+func (f extractionAbortFunc) RecordExtractionAbort(errorType string) { f(errorType) }

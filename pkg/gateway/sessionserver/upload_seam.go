@@ -1,0 +1,366 @@
+// SPDX-License-Identifier: MIT
+
+package sessionserver
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net/http"
+	"strconv"
+
+	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/state"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
+)
+
+// UploadSeam is the session core's side of the seam operations the upload
+// handler calls: the session lookup and authorization, the request
+// forwarding, the workspace write, the upload token verification, the
+// storage quota, and the upload audit event. It also serves the request
+// identity operation, which the session server's request plumbing holds
+// until the API front holds it. The composition root hands it to the
+// upload handler through the seam interfaces.
+type UploadSeam struct {
+	s *Server
+}
+
+// UploadSeam returns the session core's side of the upload handler's seam
+// operations.
+func (s *Server) UploadSeam() *UploadSeam {
+	return &UploadSeam{s: s}
+}
+
+// SetUploadWindows attaches the upload handler's side of
+// GWSEAM-CloseUploads, which the finalize handler calls once a session's
+// upload window closes. It is called before the server serves.
+func (s *Server) SetUploadWindows(u seam.UploadWindows) {
+	s.uploads = u
+}
+
+// seamSession returns the session record that crosses the seam interface
+// for a stored session.
+func seamSession(row sessionstore.Session) seam.Session {
+	var lastSeq uint64
+	if row.LastSeq > 0 {
+		lastSeq = uint64(row.LastSeq)
+	}
+	return seam.Session{
+		ID:              row.ID,
+		TenantID:        row.TenantID,
+		UserID:          row.UserID,
+		ParentSessionID: row.ParentSessionID,
+		RootSessionID:   row.RootSessionID,
+		RuntimeRef:      row.RuntimeRef,
+		Pool:            row.PoolRef,
+		State:           state.State(row.State),
+		LastSeq:         lastSeq,
+	}
+}
+
+// LookupSession returns the session record of a session in a tenant, or an
+// error that matches seam.ErrSessionNotFound for a session the store does
+// not hold. Any other store error is returned as it came.
+//
+// spec: GWSEAM-LookupSession
+func (u *UploadSeam) LookupSession(ctx context.Context, tenantID, sessionID string) (seam.Session, error) {
+	row, err := u.s.store.Get(ctx, tenantID, sessionID)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
+	}
+	if err != nil {
+		return seam.Session{}, err
+	}
+	return seamSession(row), nil
+}
+
+// AuthorizeSession applies the checks a session route's wrappers apply, in
+// their order: the §10.2 permission gate for the action, which refuses with
+// seam.ErrForbidden; the principal subject, whose absence is
+// seam.ErrUnauthenticated; and the ownership rule, under which a session
+// the caller may not read or act on answers seam.ErrSessionNotFound, as a
+// missing session does.
+//
+// spec: GWSEAM-AuthorizeSession; §10.2 (Session ownership) rules 3, 5, 6,
+// and 7.
+func (u *UploadSeam) AuthorizeSession(ctx context.Context, tenantID, sessionID string, action seam.SessionAction) (seam.Session, error) {
+	perm, act := auth.PermReadOwnSessions, false
+	switch action {
+	case seam.SessionRead:
+	case seam.SessionManage:
+		perm, act = auth.PermManageOwnSessions, true
+	default:
+		return seam.Session{}, fmt.Errorf("session action %d: %w", action, seam.ErrForbidden)
+	}
+	if !u.s.permissionGranted(ctx, perm) {
+		return seam.Session{}, fmt.Errorf("permission %s: %w", perm, seam.ErrForbidden)
+	}
+	if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
+		return seam.Session{}, seam.ErrUnauthenticated
+	}
+	row, err := u.s.accessRow(ctx, tenantID, sessionID)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
+	}
+	if err != nil {
+		return seam.Session{}, err
+	}
+	if !u.s.SessionAccessible(ctx, row, act) {
+		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
+	}
+	return seamSession(row), nil
+}
+
+// forwardKinds maps the seam's forward kinds to the core's forwarding rows.
+var forwardKinds = map[seam.ForwardKind]ForwardKind{
+	seam.ForwardUpload: ForwardKindUpload,
+}
+
+// ForwardRequest forwards a request for a session to its coordinating
+// replica under the forwarding row of kind, through the same path as the
+// session routes, and returns the forward outcome. A kind the core has no
+// row for is a wiring defect: it answers INTERNAL_ERROR and returns
+// seam.ForwardNotDelivered without forwarding.
+//
+// spec: GWSEAM-ForwardRequest
+func (u *UploadSeam) ForwardRequest(w http.ResponseWriter, r *http.Request, s seam.Session, kind seam.ForwardKind, body io.Reader) seam.ForwardOutcome {
+	k, ok := forwardKinds[kind]
+	if !ok {
+		u.s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", "unknown forward kind "+strconv.Quote(string(kind)), nil)
+		return seam.ForwardNotDelivered
+	}
+	row := sessionstore.Session{
+		ID:              s.ID,
+		TenantID:        s.TenantID,
+		UserID:          s.UserID,
+		ParentSessionID: s.ParentSessionID,
+		RootSessionID:   s.RootSessionID,
+		RuntimeRef:      s.RuntimeRef,
+		PoolRef:         s.Pool,
+		State:           sessionStateOf(s.State),
+	}
+	return seamForwardOutcome(u.s.forwardToHolder(w, r, row, k, body))
+}
+
+// seamForwardOutcome maps the core's forward outcome to the seam's.
+func seamForwardOutcome(o ForwardOutcome) seam.ForwardOutcome {
+	switch o {
+	case ForwardLocal:
+		return seam.ForwardLocal
+	case ForwardDelivered:
+		return seam.ForwardDelivered
+	case ForwardNotDelivered:
+		return seam.ForwardNotDelivered
+	default:
+		return seam.ForwardUnknown
+	}
+}
+
+// WriteWorkspace writes a mid-session upload through the adapter binding
+// this replica holds for the session. PrepareWorkspace streams the
+// files into the session's staging tree, and FinalizeWorkspace overlays
+// them onto the session's current tree and signals the runtime once
+// promotion completes. A failure of either leaves the live workspace
+// untouched and returns a *seam.WorkspaceWriteError naming the phase.
+//
+// spec: GWSEAM-WriteWorkspace; §4.7.1 (role and gateway RPC contract); §7.4
+// — the pair is the marked mid-session form: mid_session true on both
+// requests and no bind attempt token, because the binding it writes into
+// predates the request and may have been made by another replica. The live
+// binding checked here is the admission that keeps this identity-free
+// request away from an entry this replica does not own.
+func (u *UploadSeam) WriteWorkspace(ctx context.Context, sessionID string, files []seam.WorkspaceFile) (int, error) {
+	if u.s.podRegistry == nil {
+		return 0, seam.ErrNoLiveBinding
+	}
+	bind, ok := u.s.podRegistry.Get(sessionID)
+	if !ok || bind == nil || bind.Adapter == nil {
+		return 0, seam.ErrNoLiveBinding
+	}
+	plan, uploads := midSessionPlan(files)
+	if _, err := bind.Adapter.PrepareWorkspace(ctx, sessionID, uploads, "", true); err != nil {
+		return 0, &seam.WorkspaceWriteError{Phase: seam.WorkspaceStaging, Err: err}
+	}
+	if _, err := bind.Adapter.FinalizeWorkspace(ctx, sessionID, plan, nil, nil, "", true); err != nil {
+		return 0, &seam.WorkspaceWriteError{Phase: seam.WorkspacePromotion, Err: err}
+	}
+	return len(plan.GetSources()), nil
+}
+
+// midSessionPlan builds the adapter WorkspacePlan of uploadFile sources for
+// a mid-session upload and the staged-content map keyed by each file's
+// upload ref.
+func midSessionPlan(files []seam.WorkspaceFile) (*adapterv1.WorkspacePlan, map[string][]byte) {
+	plan := &adapterv1.WorkspacePlan{SchemaVersion: 1}
+	uploads := make(map[string][]byte, len(files))
+	for i, f := range files {
+		ref := "midupload-" + strconv.Itoa(i)
+		uploads[ref] = f.Content
+		plan.Sources = append(plan.Sources, &adapterv1.WorkspaceSource{
+			Type:      "uploadFile",
+			Path:      f.Path,
+			UploadRef: ref,
+			Mode:      f.Mode,
+		})
+	}
+	return plan, uploads
+}
+
+// VerifyUploadToken verifies a client's upload token against the session id
+// with the server's verifier. A refusal matches the seam's upload token
+// error for its kind and keeps the verifier's message. With no verifier
+// wired, as in a test or the minimal gateway, every token passes.
+//
+// spec: GWSEAM-VerifyUploadToken; §7.1 (uploadToken format and security
+// properties).
+func (u *UploadSeam) VerifyUploadToken(_ context.Context, sessionID, token string) error {
+	err := u.s.verifyUploadTokenValue(token, sessionID)
+	if err == nil {
+		return nil
+	}
+	kind := seam.ErrUploadTokenInvalid
+	switch {
+	case errors.Is(err, uploadtoken.ErrExpired):
+		kind = seam.ErrUploadTokenExpired
+	case errors.Is(err, uploadtoken.ErrSessionMismatch):
+		kind = seam.ErrUploadTokenMismatch
+	case errors.Is(err, uploadtoken.ErrConsumed):
+		kind = seam.ErrUploadTokenConsumed
+	}
+	return &uploadTokenError{kind: kind, err: err}
+}
+
+// uploadTokenError carries a verifier refusal under the seam's error for
+// its kind. Its message is the verifier's, which the client envelope of an
+// invalid token carries.
+type uploadTokenError struct {
+	kind error
+	err  error
+}
+
+func (e *uploadTokenError) Error() string { return e.err.Error() }
+
+// Unwrap returns the seam's error and the verifier's.
+func (e *uploadTokenError) Unwrap() []error { return []error{e.kind, e.err} }
+
+// ReserveStorage reserves an upload's declared size against its tenant's
+// §11.2 storage quota. A tenant the store does not hold, a tenant with no
+// storage limit, and a server with no quota counter or tenant store hold no
+// reservation. A tenant with a limit needs a declared size. A quota the
+// dual-store outage leaves unreadable fails closed with
+// seam.ErrStorageQuotaUnavailable.
+//
+// spec: GWSEAM-ReserveStorage; §11.2; §12.4.
+func (u *UploadSeam) ReserveStorage(ctx context.Context, tenantID string, incoming int64) (seam.StorageReservation, error) {
+	if u.s.storageQuota == nil || u.s.tenants == nil {
+		return seam.StorageReservation{}, nil
+	}
+	tenant, err := u.s.tenants.Get(ctx, tenantID)
+	if errors.Is(err, tenantstore.ErrNotFound) {
+		return seam.StorageReservation{}, nil
+	}
+	if err != nil {
+		return seam.StorageReservation{}, fmt.Errorf("storage-quota check failed: %w", err)
+	}
+	if tenant.StorageQuotaBytes <= 0 {
+		return seam.StorageReservation{}, nil
+	}
+	if incoming < 0 {
+		return seam.StorageReservation{}, seam.ErrContentLengthRequired
+	}
+	priorUsed, err := u.s.storageQuota.Reserve(ctx, tenantID, incoming, tenant.StorageQuotaBytes)
+	switch {
+	case errors.Is(err, storagequota.ErrQuotaExceeded):
+		return seam.StorageReservation{}, &seam.StorageQuotaError{CurrentBytes: priorUsed, LimitBytes: tenant.StorageQuotaBytes}
+	case errors.Is(err, storagequota.ErrUnavailable):
+		return seam.StorageReservation{}, fmt.Errorf("%w: %w", seam.ErrStorageQuotaUnavailable, err)
+	case err != nil:
+		return seam.StorageReservation{}, fmt.Errorf("storage-quota reservation failed: %w", err)
+	}
+	return seam.StorageReservation{Held: true, Reserved: incoming, Headroom: tenant.StorageQuotaBytes - priorUsed}, nil
+}
+
+// AdjustStorage adds delta to a tenant's storage usage. With no quota
+// counter wired it does nothing.
+//
+// spec: GWSEAM-AdjustStorage
+func (u *UploadSeam) AdjustStorage(ctx context.Context, tenantID string, delta int64) error {
+	if u.s.storageQuota == nil {
+		return nil
+	}
+	return u.s.storageQuota.Adjust(ctx, tenantID, delta)
+}
+
+// AuditUpload writes the §16.6 session.upload audit event for an upload,
+// under the session's own tenant and stamped with the server's clock. With
+// no lifecycle audit sink wired it records nothing.
+//
+// spec: GWSEAM-AuditUpload; §16.6; §11.7 — F-7.4.17, F-13.4.8.
+func (u *UploadSeam) AuditUpload(ctx context.Context, ev seam.UploadAuditEvent) {
+	if u.s.lifecycleAudit == nil {
+		return
+	}
+	u.s.lifecycleAudit.EmitSessionLifecycle(ctx, SessionLifecycleEvent{
+		EventType:  auditSessionUpload,
+		TenantID:   ev.Session.TenantID,
+		SessionID:  ev.Session.ID,
+		UserID:     ev.Session.UserID,
+		RuntimeRef: ev.Session.RuntimeRef,
+		State:      string(ev.Session.State),
+		Outcome:    ev.Outcome,
+		Reason:     ev.Reason,
+		Detail:     ev.Detail,
+		At:         u.s.clock(),
+	})
+}
+
+// RequestTenant returns the tenant the request runs as, as the session
+// routes resolve it.
+//
+// spec: GWSEAM-RequestTenant
+func (u *UploadSeam) RequestTenant(r *http.Request) string {
+	return u.s.resolveTenant(r)
+}
+
+// verifyUploadToken verifies the `X-Lenny-Upload-Token` header of a request
+// against the session id. It returns nil on success or one of
+// uploadtoken.{ErrInvalid, ErrExpired, ErrSessionMismatch, ErrConsumed}.
+func (s *Server) verifyUploadToken(r *http.Request, sessionID string) error {
+	return s.verifyUploadTokenValue(r.Header.Get("X-Lenny-Upload-Token"), sessionID)
+}
+
+// verifyUploadTokenValue verifies an upload token against the session id. A
+// server with no verifier, as in a test or the minimal gateway, admits
+// every token; production always wires one. An empty token is
+// uploadtoken.ErrInvalid.
+func (s *Server) verifyUploadTokenValue(tok, sessionID string) error {
+	if s.uploadVerifier == nil {
+		return nil
+	}
+	if tok == "" {
+		return uploadtoken.ErrInvalid
+	}
+	_, err := s.uploadVerifier.Verify(tok, sessionID)
+	return err
+}
+
+// writeUploadTokenError writes the envelope of an upload token refusal.
+func (s *Server) writeUploadTokenError(w http.ResponseWriter, err error) {
+	switch {
+	case errors.Is(err, uploadtoken.ErrExpired):
+		s.writeError(w, http.StatusUnauthorized, "UPLOAD_TOKEN_EXPIRED", "upload token has expired", nil)
+	case errors.Is(err, uploadtoken.ErrSessionMismatch):
+		s.writeError(w, http.StatusForbidden, "UPLOAD_TOKEN_MISMATCH", "upload token does not match session id", nil)
+	case errors.Is(err, uploadtoken.ErrConsumed):
+		s.writeError(w, http.StatusGone, "UPLOAD_TOKEN_CONSUMED", "upload token already consumed", nil)
+	default:
+		s.writeError(w, http.StatusUnauthorized, "UPLOAD_TOKEN_INVALID", err.Error(), nil)
+	}
+}

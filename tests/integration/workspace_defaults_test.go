@@ -27,8 +27,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // spec: 14.1 (WorkspacePlan Schema Versioning), 5.1 (Runtime)
@@ -82,6 +84,7 @@ func TestRuntimeDefaultsMaterializeAtFinalize_spec_14_1(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   blobs,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 	post := func(path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		t.Helper()
@@ -103,7 +106,7 @@ func TestRuntimeDefaultsMaterializeAtFinalize_spec_14_1(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var up sessionserver.UploadResponse
+	var up uploadhandler.UploadResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &up); err != nil {
 		t.Fatalf("decode upload response: %v", err)
 	}
