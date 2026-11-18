@@ -12,7 +12,7 @@ import (
 )
 
 // This file loads the two registers the deployment-boundary gate reads. The
-// exception register carries the shared entry schema, which validate-maps
+// exception register carries the shared entry schema, which validate
 // holds to the expiry and blocker rules on every static-tier run, so the loader
 // here reads its subjects alone. The defaults register carries a schema the
 // gate owns, so the loader here holds it to that schema.

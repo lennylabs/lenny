@@ -575,7 +575,7 @@ func (r *Rewriter) moveOf(target string) (string, *pass.Abort) {
 }
 
 // recordSymbols records the symbol references one Go carrier's
-// substitutions retire, keyed by the reference the spec map writes,
+// substitutions retire, keyed by the reference form a register writes,
 // which is `<declaring file>::<symbol>`.
 //
 // The reference is keyed by symbol rather than by path, and a static tier

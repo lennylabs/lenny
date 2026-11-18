@@ -4,7 +4,6 @@ package structure
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
@@ -16,7 +15,6 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/cmd/lenny-test/changegraph"
 	"github.com/lennylabs/lenny/cmd/lenny-test/skipreason"
 	"github.com/lennylabs/lenny/scripts/specshift/anchor"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
@@ -169,9 +167,8 @@ type residualClass struct {
 	Name scope.Class
 	// Removable reports whether a member can stop matching the class's
 	// broad predicate. Every class here but the generated-artifact class
-	// has a route out: a citation is rewritten by the line pass, a
-	// tracked path gains a glob key in the change graph, and a skip
-	// reason is rewritten to open with a category. A generated file keeps
+	// has a route out: a citation is rewritten by the line pass, and a
+	// skip reason is rewritten to open with a category. A generated file keeps
 	// matching for as long as it exists, so its in-class entry is
 	// permanent for the same reason an exclusion is.
 	Removable bool
@@ -190,7 +187,6 @@ func residualClasses() []residualClass {
 		{Name: scope.ClassLineCitations, Removable: true, Members: residualCitationMembers},
 		{Name: scope.ClassLineCitationResolution, Removable: true, Members: residualCitationMembers},
 		{Name: scope.ClassGeneratedArtifact, Removable: false, Members: residualGeneratedMembers},
-		{Name: scope.ClassChangeGraphCoverage, Removable: true, Members: residualChangeGraphMembers},
 		{Name: scope.ClassSkipReason, Removable: true, Members: residualSkipMembers},
 		{Name: scope.ClassReservedPhrase, Removable: true, Members: residualReservedPhraseMembers},
 		{Name: scope.ClassIdentifier, Removable: true, Members: residualIdentifierMembers},
@@ -454,91 +450,6 @@ func residualGeneratedMembers(ctx context.Context, g *residualGate, domain []str
 		seen[target] = residualMember{Member: target, Site: target}
 	}
 	return sortedResidualMembers(seen), nil
-}
-
-// residualDataExts is the documented denylist the change-graph coverage
-// class's broad predicate subtracts: the extensions whose content is
-// data, configuration, or documentation rather than a language this tree
-// builds, renders, or executes from. A path with no extension carries no
-// language either, and in this tree names a dotfile, a license, a
-// container or make recipe, or a fuzz corpus entry.
-//
-// The predicate is stated as a denylist because an allowlist of source
-// extensions is another enumeration wearing a regular expression: a
-// language added to the tree later drops out of the class silently,
-// which is the tail the residual exists to catch. A file in a language
-// this list does not name is a member and is triaged in the register,
-// and widening this list is the predicate narrowing the gate does not
-// accept as a route to green.
-var residualDataExts = []string{
-	"", ".md", ".txt", ".yaml", ".yml", ".json", ".toml", ".cfg", ".xml", ".mod", ".sum",
-}
-
-// residualChangeGraphMembers selects the members of the change-graph
-// coverage class. The predicate is any tracked file that no glob key in
-// the change graph covers, over every tree and every language, less the
-// documented data and documentation extensions. A test file is outside
-// the predicate for the reason the completeness check states: a test is
-// a target of the graph rather than a source of it.
-//
-// The enumeration it subtracts is the completeness check's own domain,
-// which the check holds to a glob key or to its coverage baseline on
-// every run of validate-maps. That domain is read from
-// cmd/lenny-test/changegraph, which the check reads as well, so a tree
-// or an extension that moves moves for both at once and no path is left
-// governed by neither. What remains is the source file the check's
-// narrowing never reaches, whose route out is the same glob key.
-func residualChangeGraphMembers(ctx context.Context, g *residualGate, domain []string) ([]residualMember, error) {
-	globs, err := readResidualChangeGraphGlobs(g.Read)
-	if err != nil {
-		return nil, err
-	}
-	seen := map[string]residualMember{}
-	for _, target := range domain {
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if !residualSourceFile(target) || changegraph.InCheckDomain(target) {
-			continue
-		}
-		if changegraph.CoveredByGlob(target, globs) {
-			continue
-		}
-		seen[target] = residualMember{Member: target, Site: target}
-	}
-	return sortedResidualMembers(seen), nil
-}
-
-// residualSourceFile reports whether a tracked path is one the broad
-// predicate ranges over: anything but a test file and anything but the
-// data and documentation extensions residualDataExts names.
-func residualSourceFile(target string) bool {
-	if strings.HasSuffix(target, "_test.go") {
-		return false
-	}
-	ext := strings.ToLower(filepath.Ext(target))
-	for _, denied := range residualDataExts {
-		if ext == denied {
-			return false
-		}
-	}
-	return true
-}
-
-// readResidualChangeGraphGlobs returns the change graph's glob keys,
-// read through the reading in cmd/lenny-test/changegraph that the
-// completeness check and the `--changed` selector read, so a key means
-// the same thing to all three.
-//
-// A missing or malformed graph is an error rather than an empty key set:
-// a load that degraded to carrying nothing would report every source
-// file in the tree as a residual.
-func readResidualChangeGraphGlobs(read scope.FileReader) (map[string]bool, error) {
-	data, err := read(changegraph.RelPath)
-	if err != nil {
-		return nil, fmt.Errorf("read the change graph %s: %w", changegraph.RelPath, err)
-	}
-	return changegraph.ParseGlobKeys(changegraph.RelPath, data)
 }
 
 // residualSkipMembers selects the members of the skip-reason class. The
@@ -1083,7 +994,7 @@ type residualTree struct {
 }
 
 // newResidualTree returns a fixture tree carrying an empty register for
-// every class, a change graph holding one key, the naming table the
+// every class, the naming table the
 // identifier class reads its retired spellings out of, and an
 // anchor-move map that retires nothing, so a case writes only the files
 // it exercises.
@@ -1099,7 +1010,6 @@ func newResidualTree(t *testing.T) *residualTree {
 	for _, c := range residualClasses() {
 		tr.register(c.Name)
 	}
-	tr.changeGraph("pkg")
 	tr.file(residualNamingTable, residualFixtureText(t, "naming-table.md.txt"))
 	tr.file(residualAnchorMoveMap, "{\n  \"kind\": \"spec-anchor-moves\",\n  \"version\": 1,\n  \"moves\": []\n}\n")
 	return tr
@@ -1151,20 +1061,6 @@ func (tr *residualTree) registerText(c scope.Class) string {
 		tr.t.Fatalf("read the fixture register for %s: %v", c, err)
 	}
 	return string(body)
-}
-
-// changeGraph writes a change graph holding the given glob keys.
-func (tr *residualTree) changeGraph(keys ...string) {
-	tr.t.Helper()
-	globs := map[string]any{}
-	for _, key := range keys {
-		globs[key] = []string{"./..."}
-	}
-	body, err := json.MarshalIndent(map[string]any{"version": 1, "globs": globs}, "", "  ")
-	if err != nil {
-		tr.t.Fatalf("encode the fixture change graph: %v", err)
-	}
-	tr.file(changegraph.RelPath, string(body))
 }
 
 // run drives one class over the fixture tree.
@@ -1388,14 +1284,6 @@ const (
 	residualGeneratedMarked = "# Code generated by controller-gen. DO NOT EDIT.\n" + residualGeneratedSource
 )
 
-// The source file a case writes outside the completeness check's trees
-// and extensions, and the glob key that covers it.
-const (
-	residualChangeGraphMember = "dist/tool.rb"
-	residualChangeGraphSource = "# a packaging formula\nclass Tool\nend\n"
-	residualChangeGraphKey    = "dist"
-)
-
 // residualNamingTable is where a case places the specification file the
 // identifier class reads its retired spellings out of. The path carries
 // the prefix the naming table is read under, because the retired set is
@@ -1482,12 +1370,6 @@ func residualFixtures(t *testing.T) []residualFixture {
 			Class:  scope.ClassGeneratedArtifact,
 			Member: residualGeneratedMember,
 			Write:  func(tr *residualTree) { tr.file(residualGeneratedMember, residualGeneratedSource) },
-		},
-		{
-			Class:  scope.ClassChangeGraphCoverage,
-			Member: residualChangeGraphMember,
-			Write:  func(tr *residualTree) { tr.file(residualChangeGraphMember, residualChangeGraphSource) },
-			Retire: func(tr *residualTree) { tr.changeGraph("pkg", residualChangeGraphKey) },
 		},
 		{
 			Class:  scope.ClassSkipReason,
@@ -2070,52 +1952,6 @@ func TestResidualGateFailsOnAnUnreadableAnchorMoveMap(t *testing.T) {
 				t.Fatalf("%s certified the class", name)
 			}
 		})
-	}
-}
-
-func TestResidualGateSelectsEverySourceLanguageOutsideTheCompletenessCheck(t *testing.T) {
-	t.Parallel()
-	tr := newResidualTree(t)
-	// Each of these is a tracked source file in a language the
-	// completeness check does not read, under a tree it does not walk,
-	// covered by no glob key. A predicate written as a list of source
-	// extensions carries the languages the tree happened to hold when it
-	// was written and drops every one added later.
-	members := []string{
-		"deploy/terraform/cloud/aws/main.tf",
-		"dist/scaffold/go.Makefile.tmpl",
-		"dist/tool.rb",
-		"dist/web/app.css",
-		"dist/web/index.html",
-		"schemas/service.proto",
-	}
-	for _, target := range members {
-		tr.file(target, "a source file\n")
-	}
-	// Data, configuration, and documentation carry no language a tier is
-	// selected from, and the denylist subtracts them.
-	for _, target := range []string{
-		"docs/guide.md", "deploy/values.yaml", "deploy/values.yml", "compose/config.json",
-		"hack/boilerplate.txt", "dist/config.toml", "dist/policy.xml", "dist/plugin.cfg",
-		"dist/go.mod", "dist/go.sum", "dist/Dockerfile",
-	} {
-		tr.file(target, "data\n")
-	}
-	// The completeness check governs a source file under its own trees,
-	// so the residual subtracts it whether or not a glob key covers it.
-	tr.file("cmd/tool/main.go", "package main\n")
-	tr.file("scripts/build.sh", "echo build\n")
-	// A test file is a target of the graph rather than a source of it.
-	tr.file("dist/tool_test.go", "package dist\n")
-	// A glob key covers the fixture tree's own package.
-	tr.file("pkg/carrier/carrier.go", "package carrier\n")
-	c := residualClassByName(t, scope.ClassChangeGraphCoverage)
-
-	rep := tr.runOK(c)
-	named := residualNames(rep)
-	sort.Strings(named)
-	if strings.Join(named, "\n") != strings.Join(members, "\n") {
-		t.Errorf("the scan reported\n  %s\nwant\n  %s", strings.Join(named, "\n  "), strings.Join(members, "\n  "))
 	}
 }
 

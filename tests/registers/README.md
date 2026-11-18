@@ -15,7 +15,7 @@ passes over it and imposes no key on it.
 
 | File | Schema | Validated by |
 |:--|:--|:--|
-| An exception register | The shared entry schema below, declared with `kind: exception-register`. | The shared validator, on every run of `validate-maps`. |
+| An exception register | The shared entry schema below, declared with `kind: exception-register`. | The shared validator, on every run of `validate`. |
 | A residual register | A member, a class, an `in-class` or `excluded` disposition, and a reason. | The residual gate for that class. |
 | A baseline | Keyed for the rewrite it drives, and rewritten downward as that rewrite proceeds. | The gate that reads it. |
 | A sense map | Keyed by file and occurrence, recording the identifier a pass writes at each site. | The pass that reads it, and the gate over its output. |
@@ -72,7 +72,7 @@ is closing.
 
 ## Ratchet rules
 
-The shared validator applies three rules, and `validate-maps` runs it
+The shared validator applies three rules, and `validate` runs it
 inside the static check:
 
 1. A violation with no entry fails, so an exemption is written down
@@ -137,13 +137,12 @@ gate consumes is excluded from that gate's own class alone.
 ## Baselines and sense maps
 
 A baseline is keyed for the rewrite it drives. The per-file
-line-citation counts, the per-citation resolution baseline, the
-change-graph coverage baseline keyed by path prefix, and the skip-reason
-baseline keyed by file and call site are all baselines, and each is
-rewritten downward as its rewrite proceeds. A path with no change-graph
-glob key, and a skip that fires because a host capability is absent,
-name no pending item and carry no date on which they become wrong, so
-the shared entry schema does not fit them. A sense map records which
+line-citation counts, the per-citation resolution baseline, and the
+skip-reason baseline keyed by file and call site are all baselines, and
+each is rewritten downward as its rewrite proceeds. A skip that fires
+because a host capability is absent names no pending item and carries no
+date on which it becomes wrong, so the shared entry schema does not fit
+it. A sense map records which
 identifier a pass writes at a given file and occurrence, which is a
 decision rather than an exemption.
 

@@ -20,8 +20,8 @@ import (
 )
 
 // tierJourneys names the persona journey tier. It is not in allTiers: it
-// is not a go test tier, it spends money on every run, and --max-tier and
-// the merge gate never reach it. It runs at the area and release gates
+// is not a go test tier, it spends money on every run, and no --gate bound,
+// --tier list, or merge gate reaches it. It runs at the area and release gates
 // (TESTING.md, "Persona journeys").
 const tierJourneys = "journeys"
 

@@ -44,7 +44,7 @@ func TestRunSpecRefusesAnUnknownQuery(t *testing.T) {
 		return nil, nil, unknownSpecQueries(specs)
 	}
 	t.Cleanup(func() { resolveSpecsPlanFn = prev })
-	for _, s := range []selector{{specs: []string{"nope"}}, {tier: tierUnit, specs: []string{"nope"}}} {
+	for _, s := range []selector{{specs: []string{"nope"}}, {tiers: []string{tierUnit}, specs: []string{"nope"}}} {
 		if _, err := s.resolve(); err == nil {
 			t.Errorf("resolve(%s) accepts an unknown --spec query", describe(s))
 		}

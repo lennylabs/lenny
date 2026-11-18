@@ -172,10 +172,10 @@ func triggerMode(s selector) string {
 	switch {
 	case s.group != "":
 		return "group:" + s.group
-	case s.tier != "":
-		return "tier:" + s.tier
-	case s.maxTier != "":
-		return "max_tier:" + s.maxTier
+	case len(s.tiers) > 0:
+		return "tier:" + strings.Join(s.tiers, ",")
+	case s.gate != "" && !s.hasDiscovery():
+		return "gate:" + s.gate
 	case s.changed:
 		return "changed"
 	case len(s.specs) > 0:
