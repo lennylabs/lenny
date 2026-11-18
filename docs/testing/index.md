@@ -45,7 +45,7 @@ Lenny's test surface follows a strict tier model. The static tier runs first; ea
 
 ### Run the fast PR feedback loop
 
-`pr-fast` resolves through `--changed` capped at the component tier. The harness inspects `git diff`, maps each changed path through `tests/change-graph.json`, and emits the smallest tier plan that covers the diff.
+`pr-fast` resolves through `--changed` capped at the component tier. The harness reads the paths of the working-tree diff and selects tests from the Go import graph, which names every test package that builds a changed package, directly or through other packages. A specification edit adds the tests whose `// spec:` annotations cite a changed section or identifier, and `tests/non-go-inputs.yaml` adds the tests that read an input outside every Go package, such as the Helm chart or the compose files. The unit, component, and contract tiers run the packages and test functions the selection names, and the static tier runs in full. `--dry-run` prints the selection without running it.
 
 ```bash
 ./bin/lenny-test --group pr-fast

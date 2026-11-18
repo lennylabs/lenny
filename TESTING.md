@@ -187,7 +187,8 @@ lenny/
     ├── README.md                  # Pointer to this file
     ├── spec-map.json              # Spec section → tests
     ├── spec-map-exceptions.yaml   # Spec sections explicitly exempt
-    ├── change-graph.json          # Source package → tests
+    ├── change-graph.json          # Source package → tests (read by validate-maps only)
+    ├── non-go-inputs.yaml         # Inputs no Go package owns → tests that read them
     ├── groups.yaml                # Named test selection groups
     ├── groups.subsets.yaml        # Concrete subset definitions
     ├── flake-budget.yaml          # Per-test flake budget
@@ -355,7 +356,7 @@ Conventions:
 
 ### Change graph
 
-`tests/change-graph.json` maps source packages, schemas, migrations, and chart templates to the tests that exercise them.
+`tests/change-graph.json` maps source packages, schemas, migrations, and chart templates to the tests that exercise them. No selector reads it: `--changed` and `--pkg` select from the import graph, the specification edits, and `tests/non-go-inputs.yaml` (§6, "Selection algorithm"). `validate-maps` checks the file until change 0116 removes it.
 
 ```json
 {
@@ -425,10 +426,10 @@ lenny-test --group <pr|nightly|pre-release|...>   # Named selection (see §8)
 lenny-test --changed                              # Inspects git diff
 lenny-test --changed --max-tier component         # Layered escalation
 lenny-test --since main                           # Diff from the merge base with main
-lenny-test --changed --rdeps-depth -1             # Unit scope takes every transitive importer
+lenny-test --changed --rdeps-depth 1              # Changed packages and their direct dependents only
 lenny-test --changed --all                        # Unit tier runs every package
 lenny-test --spec POOL-R5,§4.2                    # Identifiers, page codes, or numbered sections
-lenny-test --pkg pkg/store/session                # Explicit package
+lenny-test --pkg pkg/store/session                # A package, the packages under it, and their dependents
 
 # Persona journeys (see §12.13); outside --max-tier and the merge gate
 lenny-test --tier journeys --probe                # Check the agent container under a $0.05 cap
@@ -499,9 +500,14 @@ lenny-test --verdict-file tests/results/<name>.json
    - `--tier` → all tests with that build tag.
    - `--max-tier` → all tests with tags up to and including that tier.
    - `--group` → the set named in `tests/groups.yaml`.
-   - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph. `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The change graph selects the tiers. The unit tier runs a package scope rather than `./...`: the unit targets the change graph lists for each changed path, the Go package that owns each changed path, and the in-module packages that import an owning package (test imports included) to the depth `--rdeps-depth` sets. The default depth is 1; 0 runs the owning packages alone, and -1 walks the full transitive closure. The static tier type-checks every package with `go vet ./...`, so a signature change that breaks a distant importer still fails the run. A changed path that no change-graph key covers is reported, and its owning package joins the unit scope, so an unmapped change still runs the nearest tests. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints the scope and these reports without running anything.
+   - `--changed` → reads the paths of the working-tree diff (unstaged, staged, and untracked). `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The selection reads these sources for those paths:
+     - **The import graph.** One `go list -e -json ./...` call with every tier's build tag loads the in-module packages with their imports, test imports, and embedded files, so a tagged tier package is in the graph. The owning package of a changed path is the package whose directory, or nearest ancestor directory, holds it, and every package that embeds it. A `testdata/` fixture and a file that does not compile therefore select their package. The owning packages and every package whose build or test build depends on them are selected. A build import carries the dependency on to that package's own importers; a test import ends the walk, because nothing imports a package's tests. `--rdeps-depth` bounds the walk: the default -1 walks the full closure, 1 adds the direct dependents, and 0 runs the owning packages alone.
+     - **The specification edits.** A changed numbered file selects, for each hunk, the tests whose annotation cites the numbered heading that encloses the hunk or a subsection of it, and, when the heading is a successor stub, the tests of the identifiers it lists. A changed page of the new tree selects, for each requirement, operation, or definition block whose text the diff changes, the tests that cite it directly or through a stub, and treats the packages whose code cites it as changed. An edit outside every identifier of a page runs the unit tests of the packages whose `doc.go` names the page's code. These tests run by name.
+     - **`tests/non-go-inputs.yaml`.** Each row maps path patterns no Go package owns, such as the chart, the compose files, the supervisor's C sources, the documentation, and the specification, to the tiers and packages that read them. A tier name runs the whole tier. A package directory is treated as changed, so a helper package that reads the input, such as the envtest helper that loads the chart's CRDs, selects every test that imports it. `validate-maps` fails a row whose pattern matches no tracked file or whose target is neither a tier name nor a Go package directory.
+
+     Each selected package runs in the tier that runs it: the tier whose directory holds it, or the unit tier for a package beside its code. A package that also carries a tier's tagged tests in-package, such as `cmd/lenny-ops`, runs in that tier too. The unit, component, and contract tiers run the selected packages and the selected test functions; every other tier is one Go package, or a few, and runs whole when the selection reaches it. The static tier runs whole on every invocation, so `tests/static` is never selected again. A path that no package owns and no row matches selects the static tier only and is reported, except the records under `changes/`, `proposals/`, and `issues/` and the root-level documents that no test reads. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints each tier's scope, the functions it runs by name, and these reports without running anything.
    - `--spec` → resolves each identifier, page code, or numbered section (`§N.M` or `N.M`) through the annotation index, together with the tests the spec map lists under the section number, to its tests (see §5, "Coverage view"). Each tier that holds such a test runs. The unit tier runs whole when the spec map lists a unit test for the query or carries the query as a key that names no tier, and is otherwise scoped to the packages of the unit tests the index found. When no test resolves, the unit tier runs whole. An unknown query exits 2.
-   - `--pkg` → resolves through the change graph. The unit tier runs the named package recursively plus the unit targets of the change-graph keys it matches.
+   - `--pkg` → resolves through the import graph: the packages at or under each named directory are treated as changed, and the selection is that of a diff changing them, bounded by `--rdeps-depth`. A name that matches no package is reported.
 2. Intersect with `--max-tier` if both selectors are present.
 3. Order by tier ascending. Within a tier, group by package to maximize test-binary reuse.
 4. For each tier, ensure required infrastructure is up. If `lenny-test infra status` reports the dependency stack as not running, start it (subject to `--no-infra`).
@@ -525,8 +531,8 @@ The daemon is opt-in via `--cached`. CI defaults to fresh containers per run for
 The merge gate is the set of tiers a branch passes before it merges into `main`. `lenny-test gate` runs it and writes a verdict for the commit it ran on. The gate runs these tiers:
 
 - The static tier, in full.
-- The unit tier on the packages the branch changes and their in-module importers, to the depth `--rdeps-depth` sets (default 1).
-- The component, contract, and integration tiers when the `--changed` selection against the merge base of `--base` (default `main`) and `HEAD` selects them. The selection reads committed changes only, so commit the work before running the gate.
+- The unit tier on the packages the branch changes and their in-module dependents, to the depth `--rdeps-depth` sets (default -1, the full closure).
+- The component and contract packages, and the integration tier, that the `--changed` selection against the merge base of `--base` (default `main`) and `HEAD` selects (see "Selection algorithm"). The integration tier is one Go package and runs whole when the selection reaches it. The selection reads committed changes only, so commit the work before running the gate.
 - The general documentation gates of the docs tier, which check the published documentation as a whole: links, code blocks, runbooks, alert-to-runbook resolution, the ADR catalog, the quickstart, the embedded manifests, and the harness inventories. The list is `gateDocsFiles` in `cmd/lenny-test/cmd_gate.go`. The rest of the docs tier runs at the area gate.
 
 Every tier runs whatever an earlier tier reports, so one run reports every failure.

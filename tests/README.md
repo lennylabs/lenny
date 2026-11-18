@@ -7,7 +7,8 @@ Test infrastructure for Lenny. The architecture and conventions are defined in [
 | File | Purpose |
 |:-----|:--------|
 | `spec-map.json` | Maps every spec leaf section to its tests, packages, schemas, migrations, and chart templates. See TESTING.md §5. |
-| `change-graph.json` | Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. Drives `lenny-test --changed`. |
+| `change-graph.json` | Maps source packages, schemas, migrations, and chart templates to the tests that exercise them. `validate-maps` checks it; no selector reads it. |
+| `non-go-inputs.yaml` | Maps the inputs no Go package owns, such as the chart, the compose files, and the supervisor's C sources, to the tests that read them. `lenny-test --changed` reads it beside the import graph and the specification edits. See TESTING.md §6, "Selection algorithm". |
 | `groups.yaml` | Named test selection groups (`pr`, `pr-fast`, `nightly`, `pre-release`, `phase-<N>-gate`). |
 | `groups.subsets.yaml` | Concrete subset definitions referenced by `groups.yaml`. |
 | `spec-map-exceptions.yaml` | Spec sections explicitly exempt from the "every section has at least one test" rule, with justifications. |
