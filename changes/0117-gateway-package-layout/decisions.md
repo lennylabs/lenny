@@ -2,25 +2,7 @@
 
 ## Open decisions
 
-The branch of 0117.S1 and 0117.S2 implements the recommendation of each decision below. The owner confirms it or changes it; the branch does not wait on the answer.
-
-17. **Interfaces declared outside the gateway parts as crossing targets.** The wiring check reads values given to interfaces and function types. Some of those types are declared in domain packages of the module, and some in the standard library or a dependency, such as the `net/http.Handler` of the middleware chains.
-    - (a) Count interfaces declared in the module, domain packages included, and leave standard-library and third-party types out, because they are in-process composition that an extraction replaces with the extracted service's own middleware.
-    - (b) Count all of them, which adds 12 handler-chain rows today.
-
-    Recommendation: (a), which GW-R1 and `tests/static/lint/gatewaywiring/doc.go` state and the branch builds. Raised by the fourth review round on 2026-11-18.
-
-18. **The API front's allowance under `pkg/credential`.** Decision 16 lets the API front import `pkg/credential` itself while the packages under it stay confined, and the decision-11 default lets it import the credential pool store and impersonation, which its admin handlers read.
-    - (a) GW-R2 and decision 16 say the API front may import `pkg/credential` itself and, of the packages under it, only the credential pool store and impersonation, matching `confined.go`.
-    - (b) Withdraw the credential pool store and impersonation from the API front and route the admin handlers' reads through seam operations.
-
-    Recommendation: (a), which GW-R2 states and the branch builds. Raised by the fourth review round on 2026-11-18.
-
-19. **More token and key packages to confine.** `pkg/uploadtoken`, `pkg/webhooksig`, `pkg/connectoroauth`, `pkg/tokenexchange`, `pkg/tokenservice`, `pkg/proto/tokenservice/v1`, `pkg/gateway/serviceidentity`, `pkg/gateway/pki/carotation` with its store, and `pkg/mtls/denylist` hold token, signature, or key material and are not on the confined list.
-    - (a) Extend the list with them, allowing the API front those its admin handlers read under decision 11 (the connector OAuth package, the Token Service protocol, service identity, and the CA rotation packages). Only the session core or the API front imports them today, so the layout register needs no row; the wiring register gains three rows for the Token Service protocol values the composition root hands to the seam model's subsystem.
-    - (b) Leave them unconfined, as domain packages any component may import.
-
-    Recommendation: (a), which GW-R2 states and the branch builds. 0117.S13 keeps a leftover it moves under a confined path confined. Raised by the fourth review round on 2026-11-18.
+None.
 
 ## Decisions
 
@@ -41,4 +23,7 @@ Settled by the owner on 2026-11-17 ("go with all your recommendations, except ..
 13. **The confined list, extended.** GW-R2 and the layout gate confine, besides the packages of decision 10, the credential packages (`credassign`, `credcache`, `credentialpoolstore`, `credentialserver`, `usercreds`, `impersonation`, `revocation`, `denylist`, `connectorcredstore`, `connectorsecret`, `vcscred`, `credrouter`, and `pkg/credential`), the token and key packages (`pkg/auth/jwt`, `issuedtokenstore`, `pkg/kms`, and `pkg/tenantkms`), and the authorization predicates (`callercheck`, `envaccess`, `tenantaccessstore`, `customrolestore`, and `delegationpolicystore`), each at its directory today and at its manifest destination. `storage/pgtenant` stays out. The rule governs direct imports, and indirect reach stays with review. Settled by the owner on 2026-11-18, choosing the recommendation.
 14. **The review path of the move manifest.** `scripts/refactor/manifest` joins the paths of "Review changes to the merge gate" in `.claude/rules/git-workflow.md`, because the layout and wiring ratchets map renamed rows back through it. This amends that rule alongside decision 6 of change 0158. Settled by the owner on 2026-11-18, choosing the recommendation.
 15. **Move steps add no register rows.** A move step adds no row to the layout or wiring register: a row whose paths a move rewrote still maps back to its old paths, and a step routes any crossing it would create through the seam interface. The ratchets have no step exemption and no check of landed steps. Settled by the owner on 2026-11-18, choosing the recommendation.
-16. **The credentials subtree.** GW-R2 confines `pkg/gateway/credentials` as a whole subtree, together with the named credential and token packages outside it (`connectors/connectorauthz`, `externalapi/admintoken` with `k8ssecret`, `pkg/auth/introspection`, and `pkg/tokensvcproxy`). Today's importers are registered, or allowed under decisions 10 and 11. The API front may import `pkg/credential` itself while the packages under it stay confined. Settled by the owner on 2026-11-18, choosing the recommendation.
+16. **The credentials subtree.** GW-R2 confines `pkg/gateway/credentials` as a whole subtree, together with the named credential and token packages outside it (`connectors/connectorauthz`, `externalapi/admintoken` with `k8ssecret`, `pkg/auth/introspection`, and `pkg/tokensvcproxy`). Today's importers are registered, or allowed under decisions 10 and 11. The API front may import `pkg/credential` itself while the packages under it stay confined. Settled by the owner on 2026-11-18, choosing the recommendation. The owner then confirmed, on 2026-11-18, confining the whole `externalapi/admintoken` subtree, so the admin-token reclaimer it holds is a confined value, registered where the composition root hands it to the replica's leader gate at step 0117.S8.
+17. **Interfaces declared outside the gateway parts as crossing targets.** Interfaces and function types declared in the module, domain packages included, are crossing targets; standard-library and third-party types, such as the `net/http.Handler` of the middleware chains, are not, because they are in-process composition that an extraction replaces with the extracted service's own. GW-R1 and the wiring check state it. Settled by the owner on 2026-11-18, confirming the recommendation the branch built.
+18. **The API front's allowance under `pkg/credential`.** The API front may import `pkg/credential` itself and, of the packages under it, only the credential pool store and impersonation, as GW-R2 and `confined.go` state. Settled by the owner on 2026-11-18, confirming the recommendation the branch built.
+19. **More token and key packages confined.** GW-R2 confines `pkg/uploadtoken`, `pkg/webhooksig`, `pkg/connectoroauth`, `pkg/tokenexchange`, `pkg/tokenservice`, `pkg/proto/tokenservice/v1`, `pkg/gateway/serviceidentity`, `pkg/gateway/pki/carotation` with its store, and `pkg/mtls/denylist`, with the API front allowed those its admin handlers or pipeline read, and 0117.S13 keeps a leftover it moves under a confined path confined. Settled by the owner on 2026-11-18, confirming the recommendation the branch built.
