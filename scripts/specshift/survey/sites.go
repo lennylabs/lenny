@@ -5,10 +5,11 @@ package survey
 import (
 	"bytes"
 	"context"
+	"fmt"
+	"os"
 	"strings"
 
 	"github.com/lennylabs/lenny/scripts/specshift/annotation"
-	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // Site kinds, as the annotation index records them.
@@ -51,9 +52,12 @@ func findSites(ctx context.Context, r repo, wanted []string) (map[string][]Site,
 		return nil, err
 	}
 	keep := func(_ string, src []byte) bool { return containsAny(bytes.ToLower(src), needles) }
-	idx, err := annotation.IndexFiles(files, scope.DirReader(r.root), keep)
-	if err != nil {
-		return nil, err
+	idx := annotation.IndexFiles(files, annotation.CheckedReader(r.root), keep)
+	// A file the checked reader refuses, such as a symbolic link, is
+	// reported and left out, so one planted link cannot stop the report
+	// or redirect it to a file outside the repository.
+	for _, u := range idx.Unread {
+		fmt.Fprintf(os.Stderr, "specshift: annotation index: left out %s\n", u)
 	}
 	for _, w := range wanted {
 		if sites := idx.Sites(w); len(sites) > 0 {

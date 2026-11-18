@@ -248,7 +248,8 @@ var exportedSymbolsWithTestCallersOnly = map[string]bool{
 //
 // The test harness under cmd/lenny-test reads the annotation index and
 // the successor stubs for its coverage view, so a symbol its non-test
-// sources call has a caller on every harness run and counts as entered.
+// sources name as `pkg.Sym`, through an import of the tooling, has a
+// caller on every harness run and counts as entered.
 //
 // An exported symbol whose only references are test files is a surface
 // of the tooling that no run of the migration reaches. The walk it
@@ -470,54 +471,69 @@ func gateBatteryIdentReferences(dir string) (map[string]int, error) {
 	return identReferences(files)
 }
 
-// harnessIdentReferences counts the identifier occurrences in the
-// harness's non-test sources that import a package of the tooling. Its
-// tests are left out, because a symbol that only a harness test calls
-// has no caller on a harness run, and so are the sources that import no
-// package of the tooling, because a name they declare for themselves is
-// not a reference to the tooling's symbol of the same name.
+// harnessIdentReferences counts, in the harness's non-test sources, the
+// selector expressions `pkg.Sym` whose `pkg` names an import of a
+// package of the tooling, by `Sym`. Its tests are left out, because a
+// symbol that only a harness test calls has no caller on a harness run.
+// A bare identifier is not counted, because a name the harness declares
+// for itself is not a reference to the tooling's symbol of the same name.
 func harnessIdentReferences(dir string) (map[string]int, error) {
 	all, err := gateBatteryFiles(dir)
 	if err != nil {
 		return nil, err
 	}
-	var files []string
+	counts := map[string]int{}
 	for _, f := range all {
 		if strings.HasSuffix(f, "_test.go") {
 			continue
 		}
-		imports, err := importsTooling(f)
-		if err != nil {
+		if err := countToolingSelectors(f, counts); err != nil {
 			return nil, err
 		}
-		if imports {
-			files = append(files, f)
-		}
 	}
-	return identReferences(files)
+	return counts, nil
 }
 
-// importsTooling reports whether a Go file imports a package of the
-// tooling.
-func importsTooling(file string) (bool, error) {
+// countToolingSelectors adds to counts the selector expressions of one Go
+// file whose qualifier is the name of an import of the tooling.
+func countToolingSelectors(file string, counts map[string]int) error {
 	source, err := os.ReadFile(file)
 	if err != nil {
-		return false, err
+		return err
 	}
-	parsed, err := parser.ParseFile(token.NewFileSet(), file, source, parser.ImportsOnly)
+	parsed, err := parser.ParseFile(token.NewFileSet(), file, source, 0)
 	if err != nil {
-		return false, err
+		return err
 	}
+	qualifiers := map[string]bool{}
 	for _, spec := range parsed.Imports {
 		imported, err := strconv.Unquote(spec.Path.Value)
 		if err != nil {
-			return false, err
+			return err
 		}
-		if imported == migrationToolingPath || strings.HasPrefix(imported, migrationToolingPath+"/") {
-			return true, nil
+		if imported != migrationToolingPath && !strings.HasPrefix(imported, migrationToolingPath+"/") {
+			continue
 		}
+		name := path.Base(imported)
+		if spec.Name != nil {
+			name = spec.Name.Name
+		}
+		qualifiers[name] = true
 	}
-	return false, nil
+	if len(qualifiers) == 0 {
+		return nil
+	}
+	ast.Inspect(parsed, func(node ast.Node) bool {
+		sel, ok := node.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		if x, ok := sel.X.(*ast.Ident); ok && qualifiers[x.Name] {
+			counts[sel.Sel.Name]++
+		}
+		return true
+	})
+	return nil
 }
 
 // identReferences counts the identifier occurrences in the named Go

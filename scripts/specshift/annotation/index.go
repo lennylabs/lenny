@@ -80,10 +80,6 @@ type TestFunc struct {
 	Sections    []string
 }
 
-// Annotated reports whether the test's doc comment carries an annotation
-// that cites anything.
-func (t TestFunc) Annotated() bool { return len(t.Identifiers) > 0 || len(t.Sections) > 0 }
-
 // String renders the test as `path::Name`, the form the harness prints.
 func (t TestFunc) String() string { return t.Path + "::" + t.Name }
 
@@ -96,10 +92,46 @@ type Index struct {
 	// Tests holds the top-level test functions in file and line order,
 	// annotated or not.
 	Tests []TestFunc
+	// Unread names each file the index could not read, with the reason:
+	// a file listed but absent, a symbolic link, or a file whose folder
+	// resolves outside the repository. The index reads every other file.
+	Unread []string
 }
 
-// generatedExpr is the Go convention for a generated file's header.
-var generatedExpr = regexp.MustCompile(`(?m)^// Code generated .* DO NOT EDIT\.$`)
+// generatedLine is the Go convention for a generated file's header line.
+var generatedLine = regexp.MustCompile(`^// Code generated .* DO NOT EDIT\.$`)
+
+// IsGenerated reports whether a Go source carries the generated-file
+// header. The Go convention places the header before the first
+// non-comment, non-blank text of the file, so a header line is read only
+// before the package clause: a generator's own source, which quotes the
+// header in a string or a comment below its package clause, is not
+// generated.
+func IsGenerated(src []byte) bool {
+	inBlock := false
+	for _, raw := range strings.Split(string(src), "\n") {
+		line := strings.TrimSpace(raw)
+		switch {
+		case inBlock:
+			inBlock = !strings.Contains(line, "*/")
+		case generatedLine.MatchString(line):
+			return true
+		case line == "" || strings.HasPrefix(line, "//"):
+		case strings.HasPrefix(line, "/*"):
+			inBlock = !strings.Contains(line[2:], "*/")
+		default:
+			return false
+		}
+	}
+	return false
+}
+
+// CheckedReader returns a reader rooted at root that refuses what
+// scope.ReadChecked refuses: a symbolic link, and a file whose folder
+// resolves outside the repository.
+func CheckedReader(root string) scope.FileReader {
+	return func(target string) ([]byte, error) { return scope.ReadChecked(root, target) }
+}
 
 // GoFiles returns the Go files a lister reports inside the shared read
 // domain of scripts/specshift/scope, which leaves out every testdata
@@ -125,7 +157,7 @@ func BuildIndex(ctx context.Context, list scope.Lister, read scope.FileReader) (
 	if err != nil {
 		return nil, err
 	}
-	return IndexFiles(files, read, nil)
+	return IndexFiles(files, read, nil), nil
 }
 
 // IndexFiles indexes the named Go files. A generated file is left out,
@@ -133,10 +165,11 @@ func BuildIndex(ctx context.Context, list scope.Lister, read scope.FileReader) (
 // for which it returns false is left out as well, which lets a caller
 // that wants one identifier skip the files that cannot cite it.
 //
-// A file that does not parse still contributes its annotations, read by
-// the scanner, with no declaration and no test function: the compiler
-// rather than the index reports the fault.
-func IndexFiles(files []string, read scope.FileReader, keep func(path string, src []byte) bool) (*Index, error) {
+// A file the reader refuses or cannot find is recorded under Unread, and
+// the index reads the rest. A file that does not parse still contributes
+// its annotations, read by the scanner, with no declaration and no test
+// function: the compiler rather than the index reports the fault.
+func IndexFiles(files []string, read scope.FileReader, keep func(path string, src []byte) bool) *Index {
 	x := &Index{}
 	for _, p := range files {
 		if !strings.HasSuffix(p, ".go") {
@@ -145,18 +178,19 @@ func IndexFiles(files []string, read scope.FileReader, keep func(path string, sr
 		test := strings.HasSuffix(p, "_test.go")
 		src, err := read(p)
 		if err != nil {
-			return nil, fmt.Errorf("read %s: %w", p, err)
+			x.Unread = append(x.Unread, fmt.Sprintf("%s: %v", p, err))
+			continue
 		}
 		annotated := bytes.Contains(src, []byte(annotationLabel))
 		if !annotated && !test {
 			continue
 		}
-		if generatedExpr.Match(src) || (keep != nil && !keep(p, src)) {
+		if IsGenerated(src) || (keep != nil && !keep(p, src)) {
 			continue
 		}
 		x.addFile(p, src, annotated)
 	}
-	return x, nil
+	return x
 }
 
 // addFile indexes one file's annotations and test functions.
