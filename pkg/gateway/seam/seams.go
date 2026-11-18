@@ -5,6 +5,7 @@ package seam
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
@@ -67,6 +68,15 @@ type DelegationAdmin interface {
 
 	// ElicitationFloor is GWSEAM-ElicitationFloor.
 	ElicitationFloor() string
+}
+
+// RequestIdentity is served by the API front to every seam that serves
+// client requests.
+type RequestIdentity interface {
+	// RequestTenant is GWSEAM-RequestTenant. It returns the empty string
+	// for a request whose tenant did not resolve, which a route behind the
+	// API front's tenant check never receives.
+	RequestTenant(r *http.Request) string
 }
 
 // BearerRevocations is served by the API front to the platform tools seam.

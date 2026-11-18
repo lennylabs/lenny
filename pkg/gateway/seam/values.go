@@ -41,6 +41,9 @@ const (
 // answer HoldsUndelivered.
 type ForwardKind string
 
+// ForwardUpload is the forward kind of a mid-session upload.
+const ForwardUpload ForwardKind = "upload"
+
 // ForwardOutcome is the result of a forward to the holder replica.
 type ForwardOutcome int
 
@@ -91,6 +94,28 @@ var (
 	ErrChildCredentialAssignment = errors.New("seam: child credential assignment failed")
 	// ErrPoolWarming reports a child whose pool had no warm pod yet.
 	ErrPoolWarming = errors.New("seam: pool warming")
+	// ErrWorkspaceWrite reports a workspace write the pod's adapter failed.
+	ErrWorkspaceWrite = errors.New("seam: workspace write failed")
+	// ErrUploadTokenInvalid reports an upload token that is absent,
+	// malformed, or not signed by a current key.
+	ErrUploadTokenInvalid = errors.New("seam: upload token invalid")
+	// ErrUploadTokenExpired reports an upload token past its expiry.
+	ErrUploadTokenExpired = errors.New("seam: upload token expired")
+	// ErrUploadTokenMismatch reports an upload token issued for another
+	// session.
+	ErrUploadTokenMismatch = errors.New("seam: upload token issued for another session")
+	// ErrUploadTokenConsumed reports an upload token that a finalize
+	// already consumed.
+	ErrUploadTokenConsumed = errors.New("seam: upload token consumed")
+	// ErrStorageQuotaExceeded reports an upload its tenant's storage quota
+	// refuses.
+	ErrStorageQuotaExceeded = errors.New("seam: storage quota exceeded")
+	// ErrStorageQuotaUnavailable reports a storage quota that cannot be
+	// read, so the upload is refused rather than admitted unchecked.
+	ErrStorageQuotaUnavailable = errors.New("seam: storage quota unavailable")
+	// ErrContentLengthRequired reports an upload that declares no size for
+	// a tenant with a storage quota.
+	ErrContentLengthRequired = errors.New("seam: upload declares no content length")
 )
 
 // SealedError reports how many messages a session accepted before it was

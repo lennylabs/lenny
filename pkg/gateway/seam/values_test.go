@@ -53,13 +53,16 @@ func TestCapRefusalCarriesItsMessageAndDetails(t *testing.T) {
 
 // TestSentinelErrorsAreDistinct checks that no two sentinels match each
 // other, so a caller's branch on one never catches another.
-// spec: GWSEAM-AuthorizeSession, GWSEAM-ExportPaths, GWSEAM-MaterializeChild, GWSEAM-CheckChildCredentials
+// spec: GWSEAM-AuthorizeSession, GWSEAM-ExportPaths, GWSEAM-MaterializeChild, GWSEAM-CheckChildCredentials, GWSEAM-WriteWorkspace, GWSEAM-VerifyUploadToken, GWSEAM-ReserveStorage
 func TestSentinelErrorsAreDistinct(t *testing.T) {
 	all := []error{
 		ErrSessionNotFound, ErrUnauthenticated, ErrForbidden, ErrNoLiveBinding,
 		ErrSessionSealed, ErrNotBound, ErrHeldDeliveryPreempted,
 		ErrChildCredentialUnavailable, ErrChildUserCredentialNotFound,
-		ErrChildCredentialAssignment, ErrPoolWarming,
+		ErrChildCredentialAssignment, ErrPoolWarming, ErrWorkspaceWrite,
+		ErrUploadTokenInvalid, ErrUploadTokenExpired, ErrUploadTokenMismatch,
+		ErrUploadTokenConsumed, ErrStorageQuotaExceeded,
+		ErrStorageQuotaUnavailable, ErrContentLengthRequired,
 	}
 	for i, a := range all {
 		for j, b := range all {
@@ -67,5 +70,39 @@ func TestSentinelErrorsAreDistinct(t *testing.T) {
 				t.Errorf("%v matches %v", a, b)
 			}
 		}
+	}
+}
+
+// TestWorkspaceWriteErrorMatchesItsSentinelAndTheAdapterError checks that a
+// workspace write failure matches ErrWorkspaceWrite and the adapter's own
+// error, and names the phase that failed.
+// spec: GWSEAM-WriteWorkspace
+func TestWorkspaceWriteErrorMatchesItsSentinelAndTheAdapterError(t *testing.T) {
+	cause := errors.New("adapter down")
+	var err error = &WorkspaceWriteError{Phase: WorkspacePromotion, Err: cause}
+	if !errors.Is(err, ErrWorkspaceWrite) || !errors.Is(err, cause) {
+		t.Fatalf("errors.Is: sentinel %v, cause %v; want both", errors.Is(err, ErrWorkspaceWrite), errors.Is(err, cause))
+	}
+	var wwe *WorkspaceWriteError
+	if !errors.As(err, &wwe) || wwe.Phase != WorkspacePromotion {
+		t.Fatalf("errors.As: %v, phase %q", errors.As(err, &wwe), wwe.Phase)
+	}
+	if got := err.Error(); !strings.Contains(got, "promotion") || !strings.Contains(got, "adapter down") {
+		t.Errorf("message %q does not name the phase and the cause", got)
+	}
+}
+
+// TestStorageQuotaErrorCarriesUsageAndMatchesItsSentinel checks that a quota
+// refusal matches ErrStorageQuotaExceeded and keeps the usage and the limit
+// the caller reports.
+// spec: GWSEAM-ReserveStorage
+func TestStorageQuotaErrorCarriesUsageAndMatchesItsSentinel(t *testing.T) {
+	var err error = fmt.Errorf("wrapped: %w", &StorageQuotaError{CurrentBytes: 90, LimitBytes: 100})
+	if !errors.Is(err, ErrStorageQuotaExceeded) {
+		t.Fatal("a quota refusal does not match ErrStorageQuotaExceeded")
+	}
+	var qe *StorageQuotaError
+	if !errors.As(err, &qe) || qe.CurrentBytes != 90 || qe.LimitBytes != 100 {
+		t.Fatalf("errors.As: %+v", qe)
 	}
 }
