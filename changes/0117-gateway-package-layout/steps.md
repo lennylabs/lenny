@@ -97,6 +97,7 @@ The rest of `sessionserver` and the core packages of "SP-1" to `pkg/gateway/core
 
 ### Notes on the steps
 
+- A move step deletes the rows of the violations it removes and adds no row to the layout or the wiring register (decision 15). A row whose paths the step's move rewrites maps back to its old paths; a crossing or an import the step would create goes through the seam interface instead.
 - Steps 0117.S3 to 0117.S12 are refactors under the escape hatch of `spec-driven-development.md` for a change that alters no behavior: each passes the same tests before and after, less the wiring tests "SP-4" deletes.
 - The domain steps 0117.S9, 0117.S10, and 0117.S12 depend on nothing but the gate and may run in any order relative to the splits; they are numbered by import sites. Steps that share no package may share a branch, as `changes/README.md` allows.
 - Member changes whose code steps edit a package this change moves land after the step that moves it, which milestone M2's place before the areas gives. 0153.S3 removes the archive extraction from the core after 0117.S11, and 0133.S2, 0138.S6, and 0124's removal delete packages the register lists.
