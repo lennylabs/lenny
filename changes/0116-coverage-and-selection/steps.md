@@ -13,7 +13,7 @@
 ## Steps
 
 ### 0116.S1 Annotation index and coverage view
-- status: Planned
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0115.S5, 0115.S7, 0115.S8]
 
