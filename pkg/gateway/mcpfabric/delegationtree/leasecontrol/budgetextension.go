@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"log/slog"
 	"sync"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // Outcome is the tri-state result of a §8.6 budget-exhaustion extension
@@ -50,25 +52,6 @@ func (o Outcome) String() string {
 	}
 }
 
-// SessionReclaimer applies an extension episode's per-session resolution
-// out-of-band, after the caller's in-path wait has already returned
-// Pending. The gateway wires the §11.2 sessionbudget.Enforcer to it
-// (S4): RaiseBudget raises the session's budget and clears its
-// deny-next-request state on a grant, and TerminateSession terminates it
-// (fail closed) on a terminal outcome. A nil reclaimer leaves the
-// episode fan-out with nothing to reclaim, which is the pre-wiring
-// posture; tests inject a fake to assert the fan-out.
-// spec: §8.6; proposal 0023 S4.
-type SessionReclaimer interface {
-	// RaiseBudget raises sessionID's budget by delta and clears its
-	// deny-next-request state so the pre-flight budget gate admits its
-	// next request. delta is the granted token amount for that session.
-	RaiseBudget(sessionID string, delta int64)
-	// TerminateSession terminates sessionID for budget exhaustion, the
-	// fail-closed path when that session's extension outcome is terminal.
-	TerminateSession(sessionID string)
-}
-
 // ExtendForBudget is the §8.6 budget-exhaustion extension entry the
 // gateway LLM Proxy calls at the exhaustion boundary of a proxy-mode
 // session. It requests a token-budget extension for sessionID and
@@ -102,7 +85,7 @@ type SessionReclaimer interface {
 // than the derived waitCtx's error). When the episode resolves within
 // waitCtx it returns OutcomeGranted or OutcomeTerminal. On a deferred
 // resolution after a Pending return, the episode's per-session fan-out
-// raises or terminates the session through the SessionReclaimer.
+// raises or terminates the session through the metering proxy's budgets.
 // spec: §8.6; proposal 0023 S3.
 func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, tenantID, sessionID string) (Outcome, error) {
 	if sessionID == "" {
@@ -166,7 +149,7 @@ func (s *Service) ExtendForBudget(reqCtx, waitCtx context.Context, tenantID, ses
 // applyInPathResolution maps a session's episode resolution that the
 // in-path caller owns onto the tri-state Outcome, applying the §8.6 budget
 // raise on a grant. On a GRANTED/PARTIALLY_GRANTED resolution it raises the
-// session's enforcer budget through the SessionReclaimer with the granted
+// session's enforcer budget through the metering proxy's budgets with the granted
 // token delta and clears the session's deny/exhausted state, so the session
 // continues under a genuinely raised budget rather than one the enforcer
 // still treats as exhausted; the deferred fan-out applies the identical
@@ -193,12 +176,16 @@ func (s *Service) applyInPathResolution(sessionID string, res sessionResult) (Ou
 	return OutcomeGranted, nil
 }
 
-// SetReclaimer wires the SessionReclaimer the episode fan-out calls for
-// a session that detached at the in-path deadline and is later resolved
-// out-of-band. The gateway sets it after constructing the enforcer (S4);
-// tests inject a fake. A nil reclaimer leaves the deferred fan-out with
-// nothing to apply.
-func (s *Service) SetReclaimer(r SessionReclaimer) {
+// SetReclaimer wires the reclaimer the episode fan-out calls for a session
+// that detached at the in-path deadline and is later resolved out-of-band:
+// the metering proxy's per-session budget state, reached through the seam
+// interface. GWSEAM-RaiseBudget raises the session's budget and clears its
+// deny-next-request state on a grant, and GWSEAM-TerminateForBudget ends
+// the session (fail closed) on a terminal outcome. The gateway sets it
+// after constructing the enforcer (proposal 0023 S4); tests inject a fake.
+// A nil reclaimer leaves the deferred fan-out with nothing to apply.
+// spec: §8.6; proposal 0023 S4.
+func (s *Service) SetReclaimer(r seam.BudgetResolutions) {
 	if s.episodes != nil {
 		s.episodes.setReclaimer(r)
 	}
@@ -300,7 +287,7 @@ type member struct {
 	res      sessionResult
 	// detached reports that the in-path caller stopped waiting before the
 	// fan-out resolved, so the fan-out reclaims this session through the
-	// SessionReclaimer rather than the caller applying it.
+	// metering proxy's budgets rather than the caller applying it.
 	detached bool
 }
 
@@ -351,7 +338,7 @@ type episodeManager struct {
 
 	mu        sync.Mutex
 	trees     map[string]*episode
-	reclaimer SessionReclaimer
+	reclaimer seam.BudgetResolutions
 }
 
 // newEpisodeManager returns an episode manager for svc. episodeCtx is
@@ -369,18 +356,18 @@ func newEpisodeManager(svc *Service, episodeCtx func() context.Context) *episode
 
 // setReclaimer records the reclaimer the fan-out calls for detached
 // sessions.
-func (m *episodeManager) setReclaimer(r SessionReclaimer) {
+func (m *episodeManager) setReclaimer(r seam.BudgetResolutions) {
 	m.mu.Lock()
 	m.reclaimer = r
 	m.mu.Unlock()
 }
 
-// currentReclaimer returns the wired SessionReclaimer under the manager
+// currentReclaimer returns the wired metering proxy budgets under the manager
 // lock so the in-path Granted path (applyInPathResolution) applies a raise
 // through the same reclaimer the deferred fan-out uses. A nil reclaimer is
 // the pre-wiring posture (tests, or the local-development no-leasecontrol
 // path); the caller no-ops the raise.
-func (m *episodeManager) currentReclaimer() SessionReclaimer {
+func (m *episodeManager) currentReclaimer() seam.BudgetResolutions {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.reclaimer
@@ -571,12 +558,12 @@ func (m *episodeManager) dispatchOne(ctx context.Context, tenantID, sessionID st
 // fanOut delivers each member's resolution: it signals the member's
 // channel (for a still-waiting in-path caller) and, for a member that
 // detached at the in-path deadline, applies the resolution out-of-band
-// through the SessionReclaimer — RaiseBudget on a grant (clearing that
-// session's deny state) or TerminateSession on a terminal outcome (fail
+// through the metering proxy's budgets — RaiseBudget on a grant (clearing that
+// session's deny state) or TerminateForBudget on a terminal outcome (fail
 // closed). Every joined member is reclaimed, so a session that batched
 // on and detached is never left denied with nothing to clear it. spec:
 // §8.6; proposal 0023 S3.
-func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]sessionResult, reclaimer SessionReclaimer) {
+func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]sessionResult, reclaimer seam.BudgetResolutions) {
 	for id, mem := range members {
 		res := resolved[id]
 		// resolve records the outcome and signals a still-waiting in-path
@@ -594,7 +581,7 @@ func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]
 		}
 		switch {
 		case res.err != nil:
-			reclaimer.TerminateSession(id)
+			reclaimer.TerminateForBudget(id)
 		case res.granted:
 			// Raise by this session's own granted token delta. The episode
 			// applied the grant to the leasecontrol view; reflect the same
@@ -602,7 +589,7 @@ func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]
 			// gate admits the session's next request.
 			reclaimer.RaiseBudget(id, res.grantedTokens)
 		default:
-			reclaimer.TerminateSession(id)
+			reclaimer.TerminateForBudget(id)
 		}
 	}
 }

@@ -10,6 +10,7 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
@@ -17,20 +18,6 @@ import (
 // pod when the credentialPolicy fallback chain is exhausted (category
 // POLICY). spec: §4.9.
 const CodeFallbackExhausted = "CREDENTIAL_FALLBACK_EXHAUSTED"
-
-// FallbackRotator mints a replacement §4.9 credential lease from the
-// fallback chain's next pool and pushes it to the session's pod via the
-// §4.7 RotateCredentials RPC (Fallback Flow steps 5-7). Implementations
-// are nil-safe at the call site; a nil rotator skips the replacement
-// push.
-type FallbackRotator interface {
-	// Rotate issues a replacement lease for the faulted lease's provider
-	// from nextPool and pushes it to the session's pod. trigger is the
-	// fault rotation trigger recorded in the rotation context. The
-	// faulted lease carries the session id, tenant, and provider the
-	// replacement is minted and attributed under.
-	Rotate(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger)
-}
 
 // FallbackExhaustedEvent carries the §4.9.2 credential.fallback_exhausted
 // audit fields. spec: §4.9.
@@ -105,7 +92,7 @@ func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, t
 	// request context, so the span roots at Background and projects the
 	// faulted lease's tenant/session/provider/pool as attributes. No
 	// credential material is attached (§16.4).
-	_, span := tracing.NewTracer(nil).Start(context.Background(), tracing.SpanCredentialFallbackChain)
+	spanCtx, span := tracing.NewTracer(nil).Start(context.Background(), tracing.SpanCredentialFallbackChain)
 	span.SetAttributes(
 		attribute.String("tenant_id", lease.TenantID),
 		attribute.String("session_id", lease.SessionID),
@@ -154,7 +141,7 @@ func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, t
 		h.FallbackMetrics.IncCredentialRotation(errorType)
 	}
 	if h.FallbackRotator != nil {
-		h.FallbackRotator.Rotate(lease, dec.NextPool, trigger)
+		h.FallbackRotator.RotateCredential(spanCtx, rotationOf(lease, dec.NextPool, trigger))
 	}
 	return false
 }
@@ -163,3 +150,18 @@ func (h *Handler) driveFallback(w http.ResponseWriter, lease credential.Lease, t
 // span when the §4.9 chain is exhausted; the wire error written to the pod is
 // CodeFallbackExhausted.
 var errChainExhausted = errors.New(CodeFallbackExhausted)
+
+// rotationOf is the GWSEAM-RotateCredential request for a faulted lease:
+// the session, tenant, provider, and coordination generation the
+// replacement is minted and attributed under, the pool the fallback chain
+// selected, and the fault trigger the pod's in-flight gate reads.
+func rotationOf(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) seam.CredentialRotation {
+	return seam.CredentialRotation{
+		TenantID:               faulted.TenantID,
+		SessionID:              faulted.SessionID,
+		Provider:               string(faulted.Provider),
+		CoordinationGeneration: faulted.CoordinationGeneration,
+		NextPool:               nextPool,
+		Trigger:                string(trigger),
+	}
+}

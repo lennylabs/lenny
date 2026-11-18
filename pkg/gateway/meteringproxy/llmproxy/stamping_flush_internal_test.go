@@ -10,7 +10,7 @@ import (
 
 type countingStamper struct{ n int }
 
-func (c *countingStamper) Stamp(string, string) { c.n++ }
+func (c *countingStamper) StampActivity(string, string) { c.n++ }
 
 // TestStampingFlushGuards_spec_6_2 pins that only a proxy-mode lease naming
 // a session stamps, and that the wrapped flush runs first in every case.

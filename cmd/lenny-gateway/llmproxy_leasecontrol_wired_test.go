@@ -14,16 +14,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
 // This test wires the full production §8.6 budget-exhaustion path end to end
 // with the REAL leasecontrol.Service (no seam fake): llmproxy.Handler ->
-// proxyUsageRecorder -> sessionbudget.Enforcer whose seam is
+// metering.Recorder -> sessionbudget.Enforcer whose seam is
 // leaseExtendSeam(leasecontrol.Service), exactly the S6 composition-root
 // wiring. It closes the proposal 0023 chicken-and-egg gap: a proxied LLM call
 // whose settlement exhausts the session budget triggers an in-process lease
@@ -65,9 +66,9 @@ func TestLeaseControlWiredGrantDeliversHeldResponse_spec_8_6_line_629(t *testing
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := metering.NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	leases := credleasestore.New()
 	if err := leases.Put(proxyLease("cl_lc", "s_lc", "lt-lc")); err != nil {
@@ -131,9 +132,9 @@ func TestLeaseControlWiredNoTreeFailsClosed_spec_8_6_line_629(t *testing.T) {
 	term := &recordingTerminator{}
 	enforcer := sessionbudget.New(term, nil, nil)
 	enforcer.SetExtendOnExhaustion(leaseExtendSeam(svc))
-	svc.SetReclaimer(enforcer)
+	svc.SetReclaimer(metering.NewBudgets(enforcer))
 
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := metering.NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 	leases := credleasestore.New()
 	if err := leases.Put(proxyLease("cl_nt", "s_notree", "lt-nt")); err != nil {
 		t.Fatalf("seed lease: %v", err)

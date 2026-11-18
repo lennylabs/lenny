@@ -23,6 +23,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
@@ -237,7 +239,6 @@ type gatewayFlags struct {
 	leaseDefaultApproval                          *string
 	leaseCoolOffSec                               *int
 	leaseRejectionCoolOffSec                      *int
-	proxyExtensionWaitTimeout                     *time.Duration
 	tokenAnomalyZeroWindow                        *int
 	tokenAnomalyImplausibleRatio                  *float64
 	directUsagePollIntervalSeconds                *int
@@ -246,19 +247,8 @@ type gatewayFlags struct {
 	saTokenAudience                               *string
 	adminSATokenAudience                          *string
 	platformAdminServiceAccounts                  *string
-	llmProxyAddr                                  *string
 	llmProxyPublicURL                             *string
 	llmSemanticCache                              *bool
-	credentialFallbackMaxRotations                *int
-	credentialFallbackCooldownSeconds             *int
-	anthropicVersion                              *string
-	openaiBaseURL                                 *string
-	openaiOrg                                     *string
-	bedrockRegion                                 *string
-	vertexRegion                                  *string
-	vertexProject                                 *string
-	azureEndpoint                                 *string
-	azureAPIVersion                               *string
 	objectStorageProvider                         *string
 	objectStorageBucket                           *string
 	objectStorageRegion                           *string
@@ -381,17 +371,32 @@ type gatewayFlags struct {
 	kmsFinalize func() error
 }
 
-// parseFlags defines every gateway flag on flag.CommandLine, parses the
-// command line, and returns the populated gatewayFlags. It performs no
-// wiring; the caller invokes kmsFinalize and then the build helpers.
-//
-// spec: §4.1 gateway subsystem seams — the composition root parses its
-// inputs once and threads them to each subsystem builder.
-// parseFlags defines every gateway flag on flag.CommandLine, parses the
-// command line, and returns the populated gatewayFlags. It performs no
-// wiring; the caller invokes kmsFinalize and then the build helpers. The
-// flag definitions are grouped into per-domain register helpers so each
-// stays a navigable block rather than one flat list.
+// partFlags holds the flags the gateway's parts register in their own
+// packages: the flags only that part reads (decision 7 of change 0117). It
+// stays apart from gatewayFlags, the composition root's own flag set, which
+// many build steps and the closures they hand to parts read, so that none
+// of them holds a part's flag values.
+type partFlags struct {
+	llmProxy *llmproxy.Flags
+	metering *metering.Flags
+}
+
+// registerPartFlags registers the parts' flags on the process-wide flag set.
+// It runs before parseFlags parses the set.
+func registerPartFlags() *partFlags {
+	return &partFlags{
+		llmProxy: llmproxy.RegisterFlags(flag.CommandLine),
+		metering: metering.RegisterFlags(flag.CommandLine),
+	}
+}
+
+// parseFlags defines the composition root's own flags on flag.CommandLine,
+// parses the command line, and returns the populated gatewayFlags. The
+// parts' flags, which registerPartFlags registers first, are parsed in the
+// same pass. It performs no wiring; the caller invokes kmsFinalize and then
+// the build helpers. The flag definitions are grouped into per-domain
+// register helpers so each stays a navigable block rather than one flat
+// list.
 //
 // spec: §4.1 gateway subsystem seams — the composition root parses its
 // inputs once and threads them to each subsystem builder.
@@ -979,8 +984,6 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§8.6 deployment-default coolOffSeconds: the post-approval window during which further extensions auto-grant without re-elicitation. Zero applies the spec default (5s). F-15.3.5.")
 	f.leaseRejectionCoolOffSec = flag.Int("lease-extension-rejection-cooloff-seconds", 0,
 		"§8.6 deployment-default rejectionCoolOffSeconds: after a denial, the requesting subtree's extensions auto-reject for this long. Zero applies the spec default (300s). F-15.3.5.")
-	f.proxyExtensionWaitTimeout = flag.Duration("proxy-extension-wait-timeout", envDuration("LENNY_PROXY_EXTENSION_WAIT_TIMEOUT", defaultProxyExtensionWaitTimeout),
-		"§8.6 proxyExtensionWaitTimeout: how long the gateway LLM Proxy waits in-path for a budget-exhaustion lease extension to resolve before falling through to a recover-on-next-request BUDGET_EXHAUSTED. A fast auto or quick-approval extension resolves within this window and is transparent; a slower elicitation continues out-of-band. §8.6 does not fix this value; it is operator-tunable. Default 5s. Override via LENNY_PROXY_EXTENSION_WAIT_TIMEOUT.")
 	f.tokenAnomalyZeroWindow = flag.Int("token-anomaly-zero-window", envInt("LENNY_TOKEN_ANOMALY_ZERO_WINDOW", tokenanomaly.DefaultZeroTokenWindow),
 		"§11.2 direct-mode token-usage integrity: the count of consecutive zero-token direct-mode ReportUsage pulls a session must exceed before the gateway raises lenny_gateway_token_usage_anomaly_total{reason=\"zero_delta\"}. A non-zero pull resets the run. §11.2 fixes the default at greater than 3; a non-positive value falls back to the default so the primary under-reporting signal is never disabled. Override via LENNY_TOKEN_ANOMALY_ZERO_WINDOW.")
 	f.tokenAnomalyImplausibleRatio = flag.Float64("token-anomaly-implausible-ratio", envFloat("LENNY_TOKEN_ANOMALY_IMPLAUSIBLE_RATIO", tokenanomaly.DefaultImplausiblySmallRatio),
@@ -997,39 +1000,10 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§25.4 comma-separated fully-qualified ServiceAccount usernames (system:serviceaccount:<namespace>:<name>) granted the §10.2 platform-admin role on the admin API. The chart lists lenny-ops-sa here so the §25.5 Redis-down gateway-buffer fan-out reaches the buffer endpoint. An account absent from this list is not admitted, whatever token it presents; empty grants no service account anything.")
 	f.saTokenAudience = flag.String("sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
 		"§10.3 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
-	f.llmProxyAddr = flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
-		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	f.llmProxyPublicURL = flag.String("llm-proxy-public-url", os.Getenv("LENNY_LLM_PROXY_PUBLIC_URL"),
 		"§4.9 public HTTPS URL agent pods dial to reach the LLM reverse proxy (e.g. https://lenny-proxy.svc:8443). Required for the §4.9 Pre-Authorized Credential Flow's user-source delivery: a user-registered credential is fronted through the proxy in proxy mode, so the gateway writes this URL into the pod's proxy-mode lease. Empty disables user-source credential resolution (sessions fall through to pool per the credentialPolicy fallback).")
 	f.llmSemanticCache = flag.Bool("llm-semantic-cache", os.Getenv("LENNY_LLM_SEMANTIC_CACHE") == "1",
 		"§4.9 enable the in-process semantic cache on the LLM proxy path. Caching stays disabled by default and is opt-in per pool via the pool's cachePolicy; this flag provisions the in-memory backend the per-pool policy draws on. The Redis-backed backend is wired separately.")
-	f.credentialFallbackMaxRotations = flag.Int("credential-fallback-max-rotations", envInt("LENNY_CREDENTIAL_FALLBACK_MAX_ROTATIONS", 3),
-		"§4.9 credentialPolicy fallback.maxRotationsPerSession: the rotation budget shared across all providers in a session before the fallback chain is exhausted and the session terminates with CREDENTIAL_FALLBACK_EXHAUSTED. The spec default is 3; operator-tunable. Override via LENNY_CREDENTIAL_FALLBACK_MAX_ROTATIONS.")
-	f.credentialFallbackCooldownSeconds = flag.Int("credential-fallback-cooldown-seconds", envInt("LENNY_CREDENTIAL_FALLBACK_COOLDOWN_SECONDS", 60),
-		"§4.9 credentialPolicy fallback.cooldownOnRateLimit: seconds a faulted credential pool is held on cooldown before the fallback chain selects it again. The spec default is 60s; operator-tunable. Override via LENNY_CREDENTIAL_FALLBACK_COOLDOWN_SECONDS.")
-	f.anthropicVersion = flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
-		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
-	// §4.9: the proxy dispatches each lease to the
-	// translator for its resolved provider. anthropic_direct and
-	// openai_direct carry safe global defaults and are always
-	// registered. aws_bedrock, vertex_ai, and azure_openai need
-	// per-deployment region/project/endpoint config, so each registers
-	// only when its config flag is set; a lease for an unconfigured
-	// provider is rejected with UPSTREAM_PROVIDER_UNSUPPORTED.
-	f.openaiBaseURL = flag.String("llm-openai-base-url", os.Getenv("LENNY_LLM_OPENAI_BASE_URL"),
-		"§4.9 openai_direct upstream base URL the LLM proxy targets. Empty selects https://api.openai.com.")
-	f.openaiOrg = flag.String("llm-openai-organization", os.Getenv("LENNY_LLM_OPENAI_ORGANIZATION"),
-		"§4.9 optional OpenAI-Organization header the LLM proxy adds to openai_direct requests.")
-	f.bedrockRegion = flag.String("llm-bedrock-region", os.Getenv("LENNY_LLM_BEDROCK_REGION"),
-		"§4.9 AWS region for the aws_bedrock translator (e.g. us-east-1). Empty leaves aws_bedrock out of the proxy translator registry.")
-	f.vertexRegion = flag.String("llm-vertex-region", os.Getenv("LENNY_LLM_VERTEX_REGION"),
-		"§4.9 Vertex AI region for the vertex_ai translator (e.g. us-east5). Required with --llm-vertex-project to register vertex_ai.")
-	f.vertexProject = flag.String("llm-vertex-project", os.Getenv("LENNY_LLM_VERTEX_PROJECT"),
-		"§4.9 GCP project id for the vertex_ai translator. Required with --llm-vertex-region to register vertex_ai.")
-	f.azureEndpoint = flag.String("llm-azure-endpoint", os.Getenv("LENNY_LLM_AZURE_ENDPOINT"),
-		"§4.9 Azure OpenAI resource base URL for the azure_openai translator. Required with --llm-azure-api-version to register azure_openai.")
-	f.azureAPIVersion = flag.String("llm-azure-api-version", os.Getenv("LENNY_LLM_AZURE_API_VERSION"),
-		"§4.9 Azure OpenAI api-version query value. Required with --llm-azure-endpoint to register azure_openai.")
 	// spec: §17.9.3 — the canonical objectStorage.provider selector
 	// picks the §12.5 ArtifactStore backend (minio | s3 | gcs | azure,
 	// plus the dev-only in-memory store). Empty defaults to minio: the

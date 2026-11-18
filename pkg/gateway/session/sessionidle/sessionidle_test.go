@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -204,6 +205,33 @@ func TestNilStamperIsNoOp(t *testing.T) {
 	var st *sessionidle.Stamper
 	st.Stamp("acme", "sess") // must not panic
 	st.Forget("sess")
+}
+
+// TestStampActivityServesTheSeamWithTheStamp checks that the session core's
+// GWSEAM-StampActivity records the activity as Stamp does, coalescing a
+// second call within the window, and that it is nil-safe.
+// spec: GWSEAM-StampActivity
+func TestStampActivityServesTheSeamWithTheStamp(t *testing.T) {
+	store := memstore.New()
+	t0 := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	now := t0
+	var activity seam.Activity = sessionidle.NewStamper(store, func() time.Time { return now })
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "sess", TenantID: "acme", State: session.StateRunning,
+		CreatedAt: t0, UpdatedAt: t0,
+	}); err != nil {
+		t.Fatalf("create: %v", err)
+	}
+	activity.StampActivity("acme", "sess")
+	waitForActivity(t, store, "acme", "sess", t0)
+	now = t0.Add(500 * time.Millisecond)
+	activity.StampActivity("acme", "sess")
+	if row, _ := store.Get(context.Background(), "acme", "sess"); !row.LastAgentActivityAt.Equal(t0) {
+		t.Errorf("a stamp within the window advanced the anchor to %v, want %v", row.LastAgentActivityAt, t0)
+	}
+
+	var nilStamper *sessionidle.Stamper
+	nilStamper.StampActivity("acme", "sess") // must not panic
 }
 
 // waitForActivity polls until the session's LastAgentActivityAt reaches at

@@ -48,12 +48,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
@@ -137,7 +138,7 @@ func (l *dlgLossReturns) snapshot() []dlgLossReturn {
 // sessions themselves, so it records nothing.
 type dlgLossTerminator struct{}
 
-func (dlgLossTerminator) TerminateSession(string, string) {}
+func (dlgLossTerminator) ExpireSession(string, string) {}
 
 // dlgLossReplica is one gateway replica: its own Redis client, reserver,
 // session server, delegation service, MCP surface, enforcer, and metric
@@ -214,7 +215,7 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 		TreeBudgetReturner:             returns,
 		TaskUsage:                      resultrollup.New(st.sessions, sessionusage.NewMemory(), archive, nil),
 		UsageQuiescenceTimeout:         dlgLossQuiescence,
-		BudgetForget:                   enforcer.Forget,
+		BudgetTracking:                 metering.NewBudgets(enforcer),
 	})
 	t.Cleanup(srv.Close)
 	svc := delegation.NewService(st.sessions, delegation.Options{

@@ -6,23 +6,25 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
-	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/proxycache"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 )
 
 func (w *gatewayWiring) buildLLMProxy(
+	proxyFlags *llmproxy.Flags,
+	meteringFlags *metering.Flags,
 	policyChain *interceptor.Chain,
 	sessionBudgetEnforcer *sessionbudget.Enforcer,
 	activityStamper *sessionidle.Stamper,
@@ -33,18 +35,7 @@ func (w *gatewayWiring) buildLLMProxy(
 	tenantLimits *policy.TenantStoreLimits,
 ) *http.Server {
 	f := w.f
-	llmProxyAddr := f.llmProxyAddr
 	llmSemanticCache := f.llmSemanticCache
-	anthropicVersion := f.anthropicVersion
-	openaiBaseURL := f.openaiBaseURL
-	openaiOrg := f.openaiOrg
-	bedrockRegion := f.bedrockRegion
-	vertexRegion := f.vertexRegion
-	vertexProject := f.vertexProject
-	azureEndpoint := f.azureEndpoint
-	azureAPIVersion := f.azureAPIVersion
-	credentialFallbackMaxRotations := f.credentialFallbackMaxRotations
-	credentialFallbackCooldownSeconds := f.credentialFallbackCooldownSeconds
 
 	// ----- §4.9 LLM reverse proxy -----
 	// With --llm-proxy-addr the gateway serves the §4.9 LLM proxy for
@@ -56,16 +47,7 @@ func (w *gatewayWiring) buildLLMProxy(
 	// propagator, so the admin router's §11.4 full_revoke fan-out and
 	// the emergency-revocation path revoke a user's leases onto the same
 	// list the proxy reads here.
-	llmTranslators := buildLLMTranslatorRegistry(llmTranslatorConfig{
-		anthropicVersion: *anthropicVersion,
-		openaiBaseURL:    *openaiBaseURL,
-		openaiOrg:        *openaiOrg,
-		bedrockRegion:    *bedrockRegion,
-		vertexRegion:     *vertexRegion,
-		vertexProject:    *vertexProject,
-		azureEndpoint:    *azureEndpoint,
-		azureAPIVersion:  *azureAPIVersion,
-	})
+	llmTranslators := proxyFlags.Translators()
 	// §4.9: the semantic cache is opt-in per pool. When
 	// --llm-semantic-cache is set the gateway provisions the in-process
 	// backend and the proxy consults it for any pool whose cachePolicy is
@@ -83,31 +65,33 @@ func (w *gatewayWiring) buildLLMProxy(
 	// proxy-extracted (authoritative) counts are persisted as the
 	// quota-accounting record. Pod-reported counts are filtered at the
 	// adapterclient ReportUsage boundary (see §11.2 usage path).
-	llmProxyUsage := newProxyUsageRecorder(usage, w.sessions, w.sessionUsage, quotaCounter, tenantLimits, sessionBudgetEnforcer)
-	// spec: §8.6 / proposal 0023 S3/S4 — record the recorder so
-	// buildControlServer can wire it as the leasecontrol SessionReclaimer.
-	// The recorder, not the enforcer directly, is the reclaimer: it
-	// accumulates each granted token delta as it raises the enforcer budget,
-	// so RecordUsage adds that delta to the base MaxTokenBudget and the raise
-	// survives the next Enforcer.Record.
+	llmProxyUsage := metering.NewRecorder(usage, w.sessions, w.sessionUsage, quotaCounter, tenantLimits, sessionBudgetEnforcer)
+	// §8.6 / proposal 0023 S3/S4: record the recorder for the
+	// direct-mode usage loop, and attach it to the metering proxy's budgets
+	// so the leasecontrol episode fan-out reaches it: it accumulates each
+	// granted token delta as it raises the enforcer budget, so RecordUsage
+	// adds that delta to the base MaxTokenBudget and the raise survives the
+	// next Enforcer.Record.
 	w.proxyUsageRec = llmProxyUsage
+	budgets := w.meteringBudgets
+	budgets.SetRecorder(llmProxyUsage)
 	// spec: §8.6 — apply the operator-tunable in-path extension
 	// deadline (--proxy-extension-wait-timeout). §8.6 does not fix this
 	// value; a zeroed flag leaves the recorder's 5s default in place. 0023.
-	llmProxyUsage.setProxyExtensionWaitTimeout(*f.proxyExtensionWaitTimeout)
+	llmProxyUsage.SetExtensionWaitTimeout(*meteringFlags.ExtensionWaitTimeout)
 	// spec: §12.4 — in the in_memory_reconciled mode the
 	// authoritative per-tenant token accounting feeds the per-replica
 	// budget slice rather than the Redis counter; route the recorder's
 	// quota write to the tracker.
-	llmProxyUsage.setBudgetTracker(w.quotaBudgetTracker)
+	llmProxyUsage.SetBudgetTracker(w.quotaBudgetTracker)
 	// spec: §12.4 source (2) — fold each proxy-extracted token delta into the
 	// in-memory fail-open accumulator so the Redis-recovery reconcile can
 	// restore usage a Redis write dropped during an outage. F-12.4.20.
-	llmProxyUsage.setFailOpenAccumulator(w.quotaFailOpenAccum)
+	llmProxyUsage.SetFailOpenAccumulator(w.quotaFailOpenAccum)
 	// spec: §6.2 — each proxied LLM response is direct evidence of
 	// active agent work; reset the session's idle clock so a long-running
 	// streaming generation is not reaped by the §11.3 idle watchdog. F-11.3.7.
-	llmProxyUsage.setActivityStamper(activityStamper)
+	llmProxyUsage.SetActivity(proxyActivityStamper(activityStamper))
 	// spec: §11.2 (direct-mode usage integrity) — wire the direct-mode
 	// under-reporting anomaly detector. It observes every direct-mode
 	// ReportUsage delta the recorder fans in and raises
@@ -124,22 +108,20 @@ func (w *gatewayWiring) buildLLMProxy(
 	if err != nil {
 		panic(fmt.Sprintf("wire token-usage anomaly detector: %v", err))
 	}
-	llmProxyUsage.setAnomalyObserver(tokenAnomaly)
-	w.tokenAnomaly = tokenAnomaly
+	llmProxyUsage.SetAnomalyObserver(tokenAnomaly)
+	budgets.SetAnomalyTracker(tokenAnomaly)
 	// spec: §4.9 — the credentialPolicy Fallback Flow.
 	// The Controller holds each session's rotation budget and per-provider
 	// fallback chain; the rotator mints a replacement from the chain's
 	// next pool and pushes it via the §4.7 RotateCredentials RPC, and the
 	// audit sink emits credential.fallback_exhausted on exhaustion.
-	llmFallback := credfallback.NewController(*credentialFallbackMaxRotations,
-		time.Duration(*credentialFallbackCooldownSeconds)*time.Second)
 	llmFallbackDeps := llmFallbackWiring{
-		controller: llmFallback,
+		controller: proxyFlags.FallbackController(),
 		rotator:    proxyFallbackRotator{assign: w.credAssign, registry: w.podRegistry},
 		audit:      proxyFallbackAudit{sink: auditSink},
 		metrics:    w.gwMetrics,
 	}
-	return newLLMProxyServer(*llmProxyAddr, llmTranslators, w.llmLeases, w.credCache, w.credDeny, policyChain, llmCache, w.gwMetrics, llmProxyUsage, sessionBudgetEnforcer, llmFallbackDeps, proxyActivityStamper(activityStamper))
+	return newLLMProxyServer(*proxyFlags.Addr, llmTranslators, w.llmLeases, w.credCache, w.credDeny, policyChain, llmCache, w.gwMetrics, llmProxyUsage, sessionBudgetEnforcer, llmFallbackDeps, proxyActivityStamper(activityStamper))
 }
 
 // buildStores constructs the §4.2/§4.4/§4.5 persistence layer and the
@@ -168,10 +150,11 @@ func (w *gatewayWiring) buildLLMProxy(
 //
 // spec: §4.1 gateway subsystem seams; §15.1 admin API.
 
-// proxyActivityStamper returns the stamper as the LLM proxy's
-// ActivityStamper, or an untyped nil for a nil stamper.
+// proxyActivityStamper returns the stamper as the session core's
+// GWSEAM-StampActivity for the LLM proxy, or an untyped nil for a nil
+// stamper.
 // spec: §6.2 (maxClientIdleSeconds clock behavior across states)
-func proxyActivityStamper(s *sessionidle.Stamper) llmproxy.ActivityStamper {
+func proxyActivityStamper(s *sessionidle.Stamper) seam.Activity {
 	if s == nil {
 		return nil
 	}

@@ -3,6 +3,7 @@
 package llmproxy_test
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -11,7 +12,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // recordingRotator captures the §4.9 Fallback Flow replacement rotations
@@ -26,8 +28,8 @@ type rotateCall struct {
 	trigger   credential.RotationTrigger
 }
 
-func (r *recordingRotator) Rotate(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger) {
-	r.calls = append(r.calls, rotateCall{faulted.SessionID, nextPool, trigger})
+func (r *recordingRotator) RotateCredential(_ context.Context, rot seam.CredentialRotation) {
+	r.calls = append(r.calls, rotateCall{rot.SessionID, rot.NextPool, credential.RotationTrigger(rot.Trigger)})
 }
 
 // recordingFallbackAudit captures the credential.fallback_exhausted
@@ -88,7 +90,7 @@ func fallbackLease(token string) credential.Lease {
 
 const fbBody = `{"model":"claude-3-5-sonnet","max_tokens":16,"messages":[{"role":"user","content":"hi"}]}`
 
-func newFallbackHandler(t *testing.T, ctl *credfallback.Controller, rot llmproxy.FallbackRotator, aud llmproxy.FallbackAuditSink, met llmproxy.FallbackMetrics) (*llmproxy.Handler, *credleasestore.Store) {
+func newFallbackHandler(t *testing.T, ctl *credfallback.Controller, rot seam.CredentialRotations, aud llmproxy.FallbackAuditSink, met llmproxy.FallbackMetrics) (*llmproxy.Handler, *credleasestore.Store) {
 	t.Helper()
 	upstream := newRateLimitUpstream(t)
 	leases := credleasestore.New()

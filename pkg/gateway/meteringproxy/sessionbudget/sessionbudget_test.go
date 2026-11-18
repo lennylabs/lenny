@@ -19,7 +19,7 @@ type termCall struct {
 	reason    string
 }
 
-func (t *recordingTerminator) TerminateSession(sessionID, reason string) {
+func (t *recordingTerminator) ExpireSession(sessionID, reason string) {
 	t.mu.Lock()
 	t.calls = append(t.calls, termCall{sessionID, reason})
 	t.mu.Unlock()
@@ -320,10 +320,10 @@ func TestRaiseBudgetClearsDenyAndSurvivesNextRecord_spec_8_6(t *testing.T) {
 	}
 }
 
-// spec: §8.6 — TerminateSession is the SessionReclaimer terminal
-// path the episode fan-out takes for a joined session whose deferred
-// outcome is terminal. It denies the session and delegates to the wired
-// Terminator with ReasonBudgetExhausted.
+// spec: §8.6 — TerminateSession is the terminal path the episode fan-out
+// takes, through the metering proxy's budgets, for a joined session whose deferred
+// outcome is terminal. It denies the session and expires it through the
+// session core with ReasonBudgetExhausted.
 func TestTerminateSessionReclaimerPath_spec_8_6(t *testing.T) {
 	term := &recordingTerminator{}
 	e := New(term, nil, nil)
@@ -372,11 +372,11 @@ func TestRecordThreadsBothContextsToSeam_spec_8_6(t *testing.T) {
 	}
 }
 
-// The enforcer structurally satisfies leasecontrol.SessionReclaimer:
-// RaiseBudget(string, int64) and TerminateSession(string) are both
-// present with the reclaimer signatures. This compiles the assignment to
-// a local interface identical to leasecontrol.SessionReclaimer so a
-// signature drift breaks the build here rather than in cmd/lenny-gateway.
+// The enforcer has RaiseBudget(string, int64) and TerminateSession(string),
+// which the metering proxy's budgets call for GWSEAM-RaiseBudget and
+// GWSEAM-TerminateForBudget when no usage recorder is attached. This
+// compiles the assignment to a local interface with those methods so a
+// signature drift breaks the build here rather than in the metering package.
 // spec: §8.6; proposal 0023 S6.
 func TestEnforcerSatisfiesSessionReclaimer_spec_8_6(t *testing.T) {
 	type sessionReclaimer interface {

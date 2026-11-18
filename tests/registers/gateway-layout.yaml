@@ -323,9 +323,6 @@ packages:
   - package: pkg/gateway/llmproxy/credrouter
     part: removed
     removed-by: '0133'
-  - package: pkg/gateway/llmproxy/llmproxy
-    part: metering-proxy
-    step: 0117.S3
   - package: pkg/gateway/llmproxy/proxycache
     part: removed
     removed-by: '0132'
@@ -644,9 +641,6 @@ packages:
   - package: pkg/gateway/session/sessionage
     part: core
     step: 0117.S11
-  - package: pkg/gateway/session/sessionbudget
-    part: metering-proxy
-    step: 0117.S3
   - package: pkg/gateway/session/sessioncallback
     part: core
     step: 0117.S11

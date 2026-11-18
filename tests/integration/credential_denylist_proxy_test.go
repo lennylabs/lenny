@@ -46,7 +46,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"

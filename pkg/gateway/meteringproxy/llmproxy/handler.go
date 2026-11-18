@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 )
 
@@ -189,8 +190,8 @@ type Handler struct {
 	// Activity records §6.2 qualifying activity for a proxy-mode lease that
 	// names a session: each stream line the proxy relays stamps the
 	// session's idle clock. A nil Activity stamps nothing.
-	// spec: §6.2 (maxClientIdleSeconds clock behavior across states)
-	Activity ActivityStamper
+	// The session core serves it as GWSEAM-StampActivity.
+	Activity seam.Activity
 	// Leases resolves a bearer lease token to its §4.9 lease. The
 	// interface admits both the in-memory store and the Postgres
 	// backend.
@@ -253,11 +254,12 @@ type Handler struct {
 	//
 	// spec: §4.9.
 	Fallback *credfallback.Controller
-	// FallbackRotator mints a replacement lease from the chain's next
-	// pool and pushes it to the session's pod via RotateCredentials
-	// (Fallback Flow steps 5-7). A nil rotator records the cooldown and
-	// budget but performs no replacement push.
-	FallbackRotator FallbackRotator
+	// FallbackRotator is the session core's GWSEAM-RotateCredential: it
+	// mints a replacement lease from the chain's next pool and pushes it to
+	// the session's pod via RotateCredentials (Fallback Flow steps 5-7). A
+	// nil rotator records the cooldown and budget but performs no
+	// replacement push.
+	FallbackRotator seam.CredentialRotations
 	// FallbackAudit emits the §4.9.2 credential.fallback_exhausted audit
 	// event when the chain is exhausted. A nil sink skips emission.
 	FallbackAudit FallbackAuditSink
@@ -762,12 +764,6 @@ func (h *Handler) writeTranslationError(w http.ResponseWriter, lease credential.
 	}
 }
 
-// ActivityStamper records §6.2 qualifying activity for a session. The
-// gateway's sessionidle.Stamper satisfies it.
-type ActivityStamper interface {
-	Stamp(tenantID, sessionID string)
-}
-
 // stampingFlush wraps flush so each relayed stream line of a proxy-mode lease
 // that names a session also stamps the session's activity, after the line is
 // flushed. Any other lease, or a nil Activity, keeps flush unchanged.
@@ -778,6 +774,6 @@ func (h *Handler) stampingFlush(lease credential.Lease, flush func()) func() {
 	}
 	return func() {
 		flush()
-		h.Activity.Stamp(lease.TenantID, lease.SessionID)
+		h.Activity.StampActivity(lease.TenantID, lease.SessionID)
 	}
 }
