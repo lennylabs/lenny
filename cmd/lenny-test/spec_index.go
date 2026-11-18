@@ -71,6 +71,10 @@ type specModel struct {
 	headings []ref.NumberedHeading
 	heading  map[string]*ref.NumberedHeading
 	issues   []issueRecord
+	// specMap holds the test entries of each key of tests/spec-map.json.
+	// Selection by specification reads it beside the index until change
+	// 0116 retires the map (see testsFor).
+	specMap map[string][]string
 	// resolver answers whether a cited identifier is live; nil when the
 	// tree carries no registry.
 	resolver *annotation.Registry
@@ -78,7 +82,7 @@ type specModel struct {
 
 // loadSpecModel builds the model of the tracked tree at root.
 func loadSpecModel(ctx context.Context, root string) (*specModel, error) {
-	return buildSpecModel(ctx, scope.GitLister(root), scope.DirReader(root))
+	return buildSpecModel(ctx, scope.GitLister(root), annotation.CheckedReader(root))
 }
 
 // buildSpecModel builds the model of the tree a lister and a reader
@@ -98,6 +102,9 @@ func buildSpecModel(ctx context.Context, list scope.Lister, read scope.FileReade
 	}
 	if m.resolver != nil {
 		m.resolver.AddIssuePaths(all)
+	}
+	if err := m.loadSpecMap(read); err != nil {
+		return nil, err
 	}
 	sort.Strings(all)
 	for _, p := range all {
@@ -166,6 +173,35 @@ func (m *specModel) loadRegistry(read scope.FileReader) error {
 		it := &m.items[i]
 		m.itemOf[strings.ToLower(it.ID)] = it
 		m.itemOf[strings.ToLower(it.Anchor)] = it
+	}
+	return nil
+}
+
+// specMapPath is the hand-kept map from section numbers to tests that
+// change 0116 retires once the coverage view is shown equivalent.
+const specMapPath = "tests/spec-map.json"
+
+// loadSpecMap reads the test entries of each key of the spec map. A tree
+// without the map has none.
+func (m *specModel) loadSpecMap(read scope.FileReader) error {
+	data, err := read(specMapPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read %s: %w", specMapPath, err)
+	}
+	var doc struct {
+		Sections map[string]struct {
+			Tests []string `json:"tests"`
+		} `json:"sections"`
+	}
+	if err := json.Unmarshal(data, &doc); err != nil {
+		return fmt.Errorf("parse %s: %w", specMapPath, err)
+	}
+	m.specMap = map[string][]string{}
+	for key, sec := range doc.Sections {
+		m.specMap[key] = sec.Tests
 	}
 	return nil
 }
@@ -283,6 +319,21 @@ func (m *specModel) testsCitingID(id string) []annotation.TestFunc {
 	return out
 }
 
+// testsCitingSectionExactly returns the tests whose annotation cites a
+// section itself, leaving out those that cite only a subsection.
+func (m *specModel) testsCitingSectionExactly(section string) []annotation.TestFunc {
+	var out []annotation.TestFunc
+	for _, t := range m.idx.Tests {
+		for _, s := range t.Sections {
+			if s == section {
+				out = append(out, t)
+				break
+			}
+		}
+	}
+	return out
+}
+
 // testsCitingSection returns the tests whose annotation cites a section
 // or one of its subsections.
 func (m *specModel) testsCitingSection(section string) []annotation.TestFunc {
@@ -362,13 +413,16 @@ type indirectTest struct {
 }
 
 // indirectTests returns the tests that reach an item through a stub, with
-// the section each one cites. A test that also cites the item directly
-// is listed once, as direct.
+// the section each one cites. A test reaches the item when it cites the
+// stub's own section: a stub lists the successors of its own heading's
+// body, and a subsection carries its own stub, so a test that cites only
+// a subsection reaches that subsection's successors and not these. A
+// test that also cites the item directly is listed once, as direct.
 func (m *specModel) indirectTests(it *specItem) []indirectTest {
 	var out []indirectTest
 	seen := map[string]bool{}
 	for _, h := range m.stubsListing(it) {
-		for _, t := range m.testsCitingSection(h.Number) {
+		for _, t := range m.testsCitingSectionExactly(h.Number) {
 			if citesID(t.Identifiers, it.ID) || seen[t.String()] {
 				continue
 			}
@@ -392,6 +446,32 @@ func sectionQuery(q string) (string, bool) {
 		}
 	}
 	return n, true
+}
+
+// specSelection is what one query of `list --spec` or `run --spec`
+// selects: the tests the annotation index resolves, and the entries the
+// spec map lists under the query's section number.
+type specSelection struct {
+	tests  []annotation.TestFunc
+	mapped []string
+	// inMap reports whether the spec map carries the query as a key.
+	inMap bool
+}
+
+// selectFor resolves one query to the union of the index and the spec
+// map, so that no query selects less than the spec map did before the
+// index (change 0116, step S1). The union ends when step S6 shows the
+// coverage view equivalent and deletes the map. It reports false for a
+// query that neither names.
+func (m *specModel) selectFor(q string) (specSelection, bool) {
+	tests, indexed := m.testsFor(q)
+	sel := specSelection{tests: tests}
+	mapped, inMap := m.specMap[strings.TrimSpace(q)]
+	if n, ok := sectionQuery(q); ok {
+		mapped, inMap = m.specMap[n]
+	}
+	sel.mapped, sel.inMap = mapped, inMap
+	return sel, indexed || inMap
 }
 
 // testsFor resolves one query of `list --spec` or `run --spec` to the
@@ -464,6 +544,12 @@ func dedupeTests(tests []annotation.TestFunc) []annotation.TestFunc {
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].String() < out[j].String() })
 	return out
+}
+
+// annotated reports whether a test's doc comment carries an annotation
+// that cites anything.
+func annotated(t annotation.TestFunc) bool {
+	return len(t.Identifiers) > 0 || len(t.Sections) > 0
 }
 
 // testTier returns the tier of a test: the tier whose directory holds its

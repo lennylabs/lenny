@@ -37,3 +37,22 @@ func TestRunCoverageRefusesQueriesWithoutSpec(t *testing.T) {
 		t.Fatalf("a query without --spec exits 2, got %d", code)
 	}
 }
+
+func TestRunSpecRefusesAnUnknownQuery(t *testing.T) {
+	prev := resolveSpecsPlanFn
+	resolveSpecsPlanFn = func(specs []string) ([]tierPlan, []string, error) {
+		return nil, nil, unknownSpecQueries(specs)
+	}
+	t.Cleanup(func() { resolveSpecsPlanFn = prev })
+	for _, s := range []selector{{specs: []string{"nope"}}, {tier: tierUnit, specs: []string{"nope"}}} {
+		if _, err := s.resolve(); err == nil {
+			t.Errorf("resolve(%s) accepts an unknown --spec query", describe(s))
+		}
+	}
+}
+
+func TestListSpecExitsTwoOnAnUnknownQuery(t *testing.T) {
+	if code := listDiscovered("", "NOPE-R999", "", false, false); code != 2 {
+		t.Fatalf("an unknown --spec query exits 2, got %d", code)
+	}
+}

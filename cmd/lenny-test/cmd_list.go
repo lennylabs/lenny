@@ -119,7 +119,12 @@ func listDiscovered(tier, spec, pkg string, changed, jsonOut bool) int {
 		tests = append(tests, enumerateTier(tier)...)
 	}
 	if spec != "" {
-		tests = append(tests, testsForSpec(spec)...)
+		specTests, err := testsForSpec(spec)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "list: %v\n", err)
+			return 2
+		}
+		tests = append(tests, specTests...)
 	}
 	if pkg != "" {
 		tests = append(tests, testsForPkg(pkg)...)

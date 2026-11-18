@@ -438,7 +438,10 @@ func TestQueryNamesListsCodesIdentifiersAndSections(t *testing.T) {
 func TestSpecsPlanRunsTheTiersOfTheResolvedTests(t *testing.T) {
 	t.Parallel()
 	m := fixtureModel(t, specFixture())
-	plan, notes := specsPlanIn(m, []string{"POOL", "POOL-R99"})
+	plan, err := specsPlanIn(m, []string{"POOL"})
+	if err != nil {
+		t.Fatal(err)
+	}
 	var tiers []string
 	for _, p := range plan {
 		tiers = append(tiers, p.name)
@@ -452,25 +455,147 @@ func TestSpecsPlanRunsTheTiersOfTheResolvedTests(t *testing.T) {
 	if !reflect.DeepEqual(plan[2].tests, []string{"tests/contract/pool/pool_test.go::TestPoolContract"}) {
 		t.Errorf("contract tests: %v", plan[2].tests)
 	}
-	if len(notes) != 1 || !strings.Contains(notes[0], "POOL-R99") {
-		t.Errorf("notes: %v", notes)
-	}
-	plan, _ = specsPlanIn(m, []string{"5.3"})
-	if len(plan) != 1 || plan[0].name != tierUnit || plan[0].pkgs != nil {
-		t.Errorf("a query with no test runs the whole unit tier: %+v", plan)
+	plan, err = specsPlanIn(m, []string{"5.3"})
+	if err != nil || len(plan) != 1 || plan[0].name != tierUnit || plan[0].pkgs != nil {
+		t.Errorf("a query with no test runs the whole unit tier: %+v, %v", plan, err)
 	}
 }
 
-func TestTestsForSpecInReportsUnknownQueries(t *testing.T) {
+func TestSpecsPlanRefusesAnUnknownQuery(t *testing.T) {
 	t.Parallel()
 	m := fixtureModel(t, specFixture())
-	var errOut bytes.Buffer
-	got := testsForSpecIn(m, []string{"5.2", "nope"}, &errOut)
-	if !reflect.DeepEqual(got, []string{"pkg/pool/claim_test.go::TestFloor"}) {
-		t.Errorf("tests: %v", got)
+	if _, err := specsPlanIn(m, []string{"POOL", "POOL-R99", "nope"}); err == nil || !strings.Contains(err.Error(), "POOL-R99, nope") {
+		t.Fatalf("unknown queries fail the selection: %v", err)
 	}
-	if !strings.Contains(errOut.String(), "nope is not a registered identifier") {
-		t.Errorf("stderr: %q", errOut.String())
+}
+
+// specMapFixture adds a spec map to the fixture: section 5.2 lists a
+// security test and a unit test the annotations do not name, and key
+// 6.5, which names no numbered heading, lists a component test.
+func specMapFixture() specTree {
+	tree := specFixture()
+	tree["tests/spec-map.json"] = `{"version": 1, "sections": {
+  "5.2": {"tests": ["tests/security/pool_test.go::TestFloorIsolation", "pkg/pool/floor_test.go::TestFloorMath"]},
+  "6.5": {"tests": ["tests/component/other/other_test.go::TestOther"]},
+  "5.3": {"tests": []}
+}}`
+	return tree
+}
+
+func TestSpecSelectionIsTheUnionOfTheIndexAndTheSpecMap(t *testing.T) {
+	t.Parallel()
+	m := fixtureModel(t, specMapFixture())
+	plan, err := specsPlanIn(m, []string{sec + "5.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string][]string{}
+	var tiers []string
+	for _, p := range plan {
+		tiers = append(tiers, p.name)
+		got[p.name] = p.tests
+		if p.name == tierUnit && p.pkgs != nil {
+			t.Errorf("the spec map lists a unit test, so the unit tier runs whole as before the index: %v", p.pkgs)
+		}
+	}
+	if want := []string{"unit", "security"}; !reflect.DeepEqual(tiers, want) {
+		t.Fatalf("tiers: got %v, want %v", tiers, want)
+	}
+	if want := []string{"pkg/pool/claim_test.go::TestFloor", "pkg/pool/floor_test.go::TestFloorMath"}; !reflect.DeepEqual(got[tierUnit], want) {
+		t.Errorf("unit tests: got %v, want %v", got[tierUnit], want)
+	}
+	plan, err = specsPlanIn(m, []string{"6.5"})
+	if err != nil || len(plan) != 1 || plan[0].name != "component" {
+		t.Errorf("a spec-map key with no numbered heading still resolves: %+v, %v", plan, err)
+	}
+	plan, err = specsPlanIn(m, []string{"POOL", "5.3"})
+	if err != nil || plan[0].name != tierUnit || plan[0].pkgs != nil {
+		t.Errorf("a spec-map key whose entries name no tier runs the whole unit tier: %+v, %v", plan, err)
+	}
+	listed, err := testsForSpecIn(m, []string{"5.2", "6.5"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"pkg/pool/claim_test.go::TestFloor",
+		"tests/security/pool_test.go::TestFloorIsolation",
+		"pkg/pool/floor_test.go::TestFloorMath",
+		"tests/component/other/other_test.go::TestOther",
+	}
+	if !reflect.DeepEqual(listed, want) {
+		t.Errorf("list --spec: got %v, want %v", listed, want)
+	}
+}
+
+func TestSpecSelectionKeepsTheIndexScopeWhenTheMapListsNoUnitTest(t *testing.T) {
+	t.Parallel()
+	tree := specMapFixture()
+	tree["tests/spec-map.json"] = `{"version": 1, "sections": {"5.2": {"tests": ["tests/security/pool_test.go::TestFloorIsolation"]}}}`
+	m := fixtureModel(t, tree)
+	plan, err := specsPlanIn(m, []string{"5.2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if plan[0].name != tierUnit || !reflect.DeepEqual(plan[0].pkgs, []string{"./pkg/pool"}) {
+		t.Errorf("unit scope: %+v", plan[0])
+	}
+}
+
+func TestModelRefusesASpecMapThatDoesNotParse(t *testing.T) {
+	t.Parallel()
+	tree := specFixture()
+	tree["tests/spec-map.json"] = "{"
+	if _, err := buildSpecModel(context.Background(), tree.list, tree.read); err == nil {
+		t.Fatal("a spec map that does not parse is an error")
+	}
+}
+
+func TestTestsForSpecInRefusesUnknownQueries(t *testing.T) {
+	t.Parallel()
+	m := fixtureModel(t, specFixture())
+	got, err := testsForSpecIn(m, []string{"5.2"})
+	if err != nil || !reflect.DeepEqual(got, []string{"pkg/pool/claim_test.go::TestFloor"}) {
+		t.Errorf("tests: %v, %v", got, err)
+	}
+	if _, err := testsForSpecIn(m, []string{"5.2", "nope"}); err == nil || !strings.Contains(err.Error(), "nope") {
+		t.Errorf("an unknown query is an error: %v", err)
+	}
+}
+
+func TestIndirectCoverageNeedsTheStubsOwnSection(t *testing.T) {
+	t.Parallel()
+	tree := specFixture()
+	tree["tests/component/sub/sub_test.go"] = "package sub\n\nimport \"testing\"\n\n// spec: " + sec + "5.1.4 (A subsection)\nfunc TestSubsection(t *testing.T) {}\n"
+	m := fixtureModel(t, tree)
+	rep, err := m.coverage(specCoverageOptions{queries: []string{"POOL-R5"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := []string{"unit pkg/pool/claim_test.go::TestWarmPool " + sec + "5.1"}; !reflect.DeepEqual(testNames(rep.Items[0].Indirect), want) {
+		t.Errorf("a test citing only a subsection of the stub does not reach its identifiers: %v", testNames(rep.Items[0].Indirect))
+	}
+}
+
+func TestCoverageNotesAFileTheIndexCouldNotRead(t *testing.T) {
+	t.Parallel()
+	tree := specFixture()
+	m, err := buildSpecModel(context.Background(), func(ctx context.Context) ([]string, error) {
+		all, err := tree.list(ctx)
+		return append(all, "pkg/pool/gone.go"), err
+	}, tree.read)
+	if err != nil {
+		t.Fatal(err)
+	}
+	rep, err := m.coverage(specCoverageOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, n := range rep.Notes {
+		found = found || strings.Contains(n, "left out pkg/pool/gone.go")
+	}
+	if !found {
+		t.Errorf("notes: %v", rep.Notes)
 	}
 }
 

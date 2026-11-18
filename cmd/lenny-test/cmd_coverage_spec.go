@@ -149,6 +149,9 @@ func (m *specModel) coverage(opts specCoverageOptions) (*coverageReport, error) 
 	if m.resolver == nil {
 		rep.Notes = append(rep.Notes, "the tree carries no "+annotation.RegistryPath+", so no identifier is registered and no cited identifier is checked")
 	}
+	for _, u := range m.idx.Unread {
+		rep.Notes = append(rep.Notes, "the annotation index left out "+u)
+	}
 	switch {
 	case len(opts.queries) > 0:
 		if err := m.addQueries(rep, opts.queries); err != nil {
@@ -330,7 +333,7 @@ func citationRows(sites map[string][]string) []unresolvedCitation {
 func (m *specModel) unannotated() *unannotatedCount {
 	u := &unannotatedCount{Tests: len(m.idx.Tests), ByTier: map[string]int{}, ByPackage: map[string]int{}}
 	for _, t := range m.idx.Tests {
-		if t.Annotated() {
+		if annotated(t) {
 			continue
 		}
 		u.Total++

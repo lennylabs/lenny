@@ -171,13 +171,10 @@ func specCitationsIn(root, dir, test string) []string {
 			files = append(files, p)
 		}
 	}
-	idx, err := annotation.IndexFiles(files, scope.DirReader(root), nil)
-	if err != nil {
-		return nil
-	}
+	idx := annotation.IndexFiles(files, annotation.CheckedReader(root), nil)
 	name, _, _ := strings.Cut(test, "/")
 	t, ok := idx.Test(dir, name)
-	if !ok || !t.Annotated() {
+	if !ok || !annotated(t) {
 		return nil
 	}
 	out := append([]string{}, t.Identifiers...)

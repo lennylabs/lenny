@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -122,33 +121,36 @@ func testsForTier(tier string) []string {
 }
 
 // testsForSpec resolves identifiers, page codes, and numbered sections
-// to the tests that verify them, through the annotation index (see
-// specModel.testsFor). A query the tree does not know resolves to
-// nothing, and the model's load error is reported on stderr.
-func testsForSpec(specs string) []string {
+// to the tests the annotation index and the spec map name for them (see
+// specModel.selectFor). A query that neither knows is an error.
+func testsForSpec(specs string) ([]string, error) {
 	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "list --spec: %v\n", err)
-		return nil
+		return nil, err
 	}
-	return testsForSpecIn(m, splitNonEmpty(specs), os.Stderr)
+	return testsForSpecIn(m, splitNonEmpty(specs))
 }
 
-// testsForSpecIn is testsForSpec over a loaded model. Each query the
-// model does not know is reported on w.
-func testsForSpecIn(m *specModel, queries []string, w io.Writer) []string {
+// testsForSpecIn is testsForSpec over a loaded model: the index's tests
+// as `path::Name`, then the spec map's entries as the map writes them.
+func testsForSpecIn(m *specModel, queries []string) ([]string, error) {
 	out := []string{}
+	var unknown []string
 	for _, q := range queries {
-		tests, ok := m.testsFor(q)
+		sel, ok := m.selectFor(q)
 		if !ok {
-			fmt.Fprintf(w, "list --spec: %s is not a registered identifier, page code, or numbered section\n", q)
+			unknown = append(unknown, q)
 			continue
 		}
-		for _, t := range tests {
+		for _, t := range sel.tests {
 			out = append(out, t.String())
 		}
+		out = append(out, sel.mapped...)
 	}
-	return out
+	if len(unknown) > 0 {
+		return nil, unknownSpecQueries(unknown)
+	}
+	return out, nil
 }
 
 // testsForPkg resolves package globs to test paths via change-graph.json.
