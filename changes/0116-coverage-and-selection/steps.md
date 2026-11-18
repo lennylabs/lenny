@@ -20,14 +20,14 @@
 The annotation index in `scripts/specshift/annotation` (CS-1), with `survey`'s site finder reading it. `lenny-test coverage --spec` over the index, the registry, the successor stubs, and the issues (CS-2). `list --spec` and `run --spec` resolving identifiers, page codes, and `§N.M` through the index, and the verdict's annotation lookup in `gotest_json.go` replaced. `TESTING.md` §5 and `cmd/lenny-test/README.md` describe the view. It needs the annotation parser of 0115.S5, the stub lookup of 0115.S7 for indirect coverage, and the site finder of 0115.S8.
 
 ### 0116.S2 Coverage gate
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0116.S1]
 
 `TestEveryChangedRequirementHasACitingTest` in `tests/static` (CS-3), with fixtures for each case under "Tests", and the "Gate" section of `.claude/rules/spec-annotations.md`. Decision O1 settles whether an issue satisfies the gate.
 
 ### 0116.S3 Selection from the import graph, specification edits, and non-Go inputs
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0116.S1]
 
@@ -55,7 +55,7 @@ The edits of CS-8 to the §28 lead, N4 of §28.1, §28.4, the §28.5 lead, §29.
 The retirements of CS-9: `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`, `tests/spec-map-pending.txt`, `tests/change-graph.json`, `tests/change-graph-pending.txt`, the two change-graph registers and their residual class, `cmd/lenny-test/changegraph`, `cmd_validate_testdirs.go`, the map checks of `validate-maps` (renamed `validate`) with the annotation check that replaces `validateTestFilesMapped`, the nine category F files of tier 0, the spec-map conjunct of the heading walker, the spec-map read of `compliance_check_channel_naming_test.go`, `delegation_tree_spec_map_currency_test.go`, and the map steps of `scripts/refactor` and `scope.go`. The documentation pages under "Documentation" in `change.md` drop the maps. The second and third validation items land before the deletion.
 
 ### 0116.S7 Identifiers in test names
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0115.S5]
 
