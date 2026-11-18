@@ -4,14 +4,6 @@
 
 Raised on 2026-11-18 by the pilot of 0157.S1, under decision 3. The measurements are in `steps.md`, "Validation owed".
 
-1. **Budget for later journey runs.** The pilot's nine trials cost $9.7946 in agent spend and nothing in infrastructure. The costliest trial was an `operator-install` trial at $3.2799, which is 55% of the $6 per-trial cap. Per trial, `operator-install` cost $1.81 to $3.28, `tenant-admin-onboarding` $0.42 to $0.49, and `end-user-first-session` $0.11 to $0.14. A run of the three journeys at three trials each takes about 2 hours 50 minutes of wall time on this host, of which `operator-install` takes about 85%. One `operator-install` trial ran for 53 minutes of its 60-minute time limit. The `end-user-first-session` trials stopped early on CLIINST-I1, so the cost of a passing trial of that journey is not yet measured.
-
-   - (a) Keep the $6 per-trial cap (`--run-cap-usd`). Give each later run its own ledger with a cap of $25 (`--pilot <run> --pilot-cap-usd 25`) for the three pilot journeys at three trials each, which is about 2.5 times the pilot's measured nine-trial cost and leaves room for the ledger's pending charge of $6 before the last trial. A journey added later adds $18 (three trials at the $6 cap) to the run's cap until its own three trials are measured, and then twice its measured three-trial cost. Raise `operator-install`'s `timeLimit` from `60m` to `90m`, so a slow trial is decided rather than stopped at the time limit. At the measured cost, a weekly run costs about $42 a month; the cadence is set with the schedule.
-   - (b) As (a), with the per-trial cap lowered to $4, about 1.2 times the costliest trial. A slower `operator-install` trial is then more likely to stop at the cap and be recorded as inconclusive.
-   - (c) Keep the pilot's figures for every later run: $6 per trial and $54 per run, with no per-journey accounting and the time limits unchanged.
-
-   **Recommendation: (a).** It keeps the per-trial cap that no pilot trial approached, bounds a run at about 2.5 times its measured cost, sizes a new journey's share from its own trials, and removes the one time limit the pilot came close to.
-
 ## Decisions
 
 Settled by the owner on 2026-11-16, answering "ok" to each recommendation; the questions as framed in revision 1 are in `review-history.md`.
@@ -40,3 +32,18 @@ Settled by the owner on 2026-11-18, on the order of the pilot's trials; the owne
 
 Owner constraint recorded on 2026-11-17: later journeys will deploy to AWS, GCP, and Azure. The harness keeps cluster provisioning behind an interface with Kind as the only target, records infrastructure cost on its own ledger line, verifies teardown on every exit path, and passes credentials per scenario.
 
+Settled by the owner on 2026-11-18 in the words "go with your recommendations", after the pilot's measurements and the coordinator's recommendations; the questions as framed are their text below.
+
+13. **Budget for later journey runs.** The pilot's nine trials cost $9.7946 in agent spend and nothing in infrastructure. The costliest trial was an `operator-install` trial at $3.2799, which is 55% of the $6 per-trial cap. Per trial, `operator-install` cost $1.81 to $3.28, `tenant-admin-onboarding` $0.42 to $0.49, and `end-user-first-session` $0.11 to $0.14. A run of the three journeys at three trials each takes about 2 hours 50 minutes of wall time on this host, of which `operator-install` takes about 85%. One `operator-install` trial ran for 53 minutes of its 60-minute time limit. The `end-user-first-session` trials stopped early on CLIINST-I1, so the cost of a passing trial of that journey is not yet measured.
+
+   - (a) Keep the $6 per-trial cap (`--run-cap-usd`). Give each later run its own ledger with a cap of $25 (`--pilot <run> --pilot-cap-usd 25`) for the three pilot journeys at three trials each, which is about 2.5 times the pilot's measured nine-trial cost and leaves room for the ledger's pending charge of $6 before the last trial. A journey added later adds $18 (three trials at the $6 cap) to the run's cap until its own three trials are measured, and then twice its measured three-trial cost. Raise `operator-install`'s `timeLimit` from `60m` to `90m`, so a slow trial is decided rather than stopped at the time limit. At the measured cost, a weekly run costs about $42 a month; the cadence is set with the schedule.
+   - (b) As (a), with the per-trial cap lowered to $4, about 1.2 times the costliest trial. A slower `operator-install` trial is then more likely to stop at the cap and be recorded as inconclusive.
+   - (c) Keep the pilot's figures for every later run: $6 per trial and $54 per run, with no per-journey accounting and the time limits unchanged.
+
+   **Recommendation: (a).** It keeps the per-trial cap that no pilot trial approached, bounds a run at about 2.5 times its measured cost, sizes a new journey's share from its own trials, and removes the one time limit the pilot came close to.
+
+   Settled on option (a), the recommendation.
+
+14. **The next step for a journey whose trials disagree.** Decision 2 lets a failing journey block its area's milestone only once three trials of it agree, and `tenant-admin-onboarding` passed one pilot trial and failed two, on gaps filed as ADMIN-I1, CLIADM-I1, and ADMIAM-I1. The journey stays non-blocking, and its three trials run again once ADMIN-I1 and ADMIAM-I1 are fixed; the rerun's agreement decides whether decision 2's condition holds. The same applies to any later journey whose trials disagree: it stays non-blocking until a rerun after the fixes its failures name.
+
+15. **Journey records stay uncommitted.** Decision 9 stands: `tests/results/journeys/` is not committed, and each run's summary goes into the step's digest. The pilot's records are not force-added.
