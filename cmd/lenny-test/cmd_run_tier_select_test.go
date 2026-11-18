@@ -230,8 +230,8 @@ func TestTierComposesWithPkgAndMaxTier(t *testing.T) {
 	if len(r.tiers) != 1 || r.tiers[0].name != tierUnit {
 		t.Fatalf("--tier unit --pkg = %v", planNames(r.tiers))
 	}
-	if r.tiers[0].pkgs == nil || !containsString(r.tiers[0].pkgs, "./cmd/lenny-test/...") {
-		t.Errorf("--tier unit --pkg scope = %v, want it to name ./cmd/lenny-test/...", r.tiers[0].pkgs)
+	if r.tiers[0].pkgs == nil || !containsString(r.tiers[0].pkgs, "./cmd/lenny-test") || !containsString(r.tiers[0].pkgs, "./cmd/lenny-test/skipreason") {
+		t.Errorf("--tier unit --pkg scope = %v, want it to name ./cmd/lenny-test and the packages under it", r.tiers[0].pkgs)
 	}
 
 	r = mustResolve(t, selector{tier: tierDocs, maxTier: tierUnit, changed: true})

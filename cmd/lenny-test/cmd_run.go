@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -36,9 +37,9 @@ func runRun(args []string) int {
 	changedFlag := fs.Bool("changed", false, "run tests affected by uncommitted changes (working tree diff)")
 	sinceFlag := fs.String("since", "", "diff from the merge base of the given git ref and HEAD (e.g. main, HEAD~5), or an explicit range (A..B, A...B), instead of the working tree")
 	allFlag := fs.Bool("all", false, "with --changed or --pkg, run the unit tier over every package (./...) instead of the packages the selection reaches")
-	rdepsFlag := fs.Int("rdeps-depth", defaultRdepsDepth, "with --changed, how many hops of in-module importers of a touched package join the unit scope (0: touched packages only; -1: full transitive closure)")
+	rdepsFlag := fs.Int("rdeps-depth", defaultRdepsDepth, "with --changed or --pkg, how many hops of in-module dependents of a changed package the selection adds (0: changed packages only; -1, the default: the full closure)")
 	specFlag := fs.String("spec", "", "comma-separated identifiers, page codes, or numbered sections (§N.M); runs the tests whose // spec: annotations cite them")
-	pkgFlag := fs.String("pkg", "", "comma-separated source packages")
+	pkgFlag := fs.String("pkg", "", "comma-separated package directories; runs the tests of the packages at or under them and of their dependents, through the import graph")
 	subsetFlag := fs.String("subset", "", "comma-separated subset names (requires --tier)")
 	dryRunFlag := fs.Bool("dry-run", false, "resolve the selector and print what would run; do not execute")
 	continueFlag := fs.Bool("continue-on-failure", false, "do not stop at the first failing tier")
@@ -139,10 +140,15 @@ type tierPlan struct {
 	subsets []string
 	tests   []string
 	notes   string
-	// pkgs scopes the unit tier to these `go test` package patterns.
-	// Nil runs the tier's full target set (`./...`); a non-nil value,
-	// even an empty one, is a scope.
+	// pkgs scopes a package-scoped tier (unit, component, or contract)
+	// to these `go test` package patterns, which run whole. Nil runs the
+	// tier's full target set; a non-nil value, even an empty one, is a
+	// scope.
 	pkgs []string
+	// funcs maps a `./dir` package pattern to the test functions a
+	// specification edit selects there, which a scoped plan runs by name
+	// (`go test -run`). It is read only when pkgs is non-nil.
+	funcs map[string][]string
 }
 
 // resolve expands the selector into a concrete plan.
@@ -268,7 +274,9 @@ func (s selector) discoveryPlan() ([]tierPlan, []string, error) {
 		notes = append(notes, specNotes...)
 	}
 	if len(s.pkgs) > 0 {
-		plans = append(plans, resolvePkgsPlan(s.pkgs))
+		pkgPlan, pkgNotes := resolvePkgsPlanFn(s.pkgs, selectOpts{rdepsDepth: s.rdepsDepth, all: s.all})
+		plans = append(plans, pkgPlan)
+		notes = append(notes, pkgNotes...)
 	}
 	return mergeDiscoveryPlans(plans, s.all), notes, nil
 }
@@ -276,6 +284,10 @@ func (s selector) discoveryPlan() ([]tierPlan, []string, error) {
 // resolveChangedPlanFn resolves the --changed and --since plan. Tests
 // replace it to resolve a fixed diff without git.
 var resolveChangedPlanFn = resolveChangedPlanFor
+
+// resolvePkgsPlanFn resolves the --pkg plan. Tests replace it to resolve
+// over a fixture graph rather than the module.
+var resolvePkgsPlanFn = resolvePkgsPlan
 
 // resolveSpecsPlanFn resolves the --spec plan. Tests replace it to
 // resolve over a fixture model rather than the repository's tree.
@@ -334,8 +346,8 @@ func writeDryRun(w io.Writer, s selector, r resolvedSelector) {
 		for _, test := range t.tests {
 			fmt.Fprintf(w, "        test:   %s\n", test)
 		}
-		if t.name == tierUnit {
-			writeUnitScope(w, t.pkgs)
+		if t.name == tierUnit || t.pkgs != nil {
+			writeTierScope(w, t)
 		}
 	}
 	for _, n := range r.notes {
@@ -343,16 +355,31 @@ func writeDryRun(w io.Writer, s selector, r resolvedSelector) {
 	}
 }
 
-// writeUnitScope prints the unit tier's package patterns.
-func writeUnitScope(w io.Writer, pkgs []string) {
-	if pkgs == nil {
+// writeTierScope prints a tier's package patterns and the test functions
+// it runs by name.
+func writeTierScope(w io.Writer, t tierPlan) {
+	if t.pkgs == nil {
 		fmt.Fprintf(w, "        pkg:    ./... (every package)\n")
 		return
 	}
-	fmt.Fprintf(w, "        packages: %d pattern(s)\n", len(pkgs))
-	for _, p := range pkgs {
+	fmt.Fprintf(w, "        packages: %d pattern(s)\n", len(t.pkgs))
+	for _, p := range t.pkgs {
 		fmt.Fprintf(w, "        pkg:    %s\n", p)
 	}
+	for _, dir := range sortedFuncDirs(t.funcs) {
+		fmt.Fprintf(w, "        run:    %s: %s\n", dir, strings.Join(t.funcs[dir], ", "))
+	}
+}
+
+// sortedFuncDirs returns the package patterns of a by-name selection in
+// order.
+func sortedFuncDirs(funcs map[string][]string) []string {
+	out := make([]string, 0, len(funcs))
+	for dir := range funcs {
+		out = append(out, dir)
+	}
+	sort.Strings(out)
+	return out
 }
 
 func describe(s selector) string {
@@ -428,15 +455,15 @@ func tierSteps() map[string]tierStep {
 			nextActionHint: "Fix static-tier failures before moving to higher tiers.",
 		},
 		tierUnit: {
-			name: tierUnit, exec: func(p tierPlan) (string, string, *tierResult) { return runUnitTier(p.pkgs) }, useSynthesize: true,
+			name: tierUnit, exec: runUnitTier, useSynthesize: true,
 			nextActionHint: "Fix unit-tier failures before moving to higher tiers.",
 		},
 		tierComponent: {
-			name: tierComponent, exec: withSubsets(runComponentTier), useSynthesize: true,
+			name: tierComponent, exec: runComponentTier, useSynthesize: true,
 			nextActionHint: "Fix component-tier failures before moving to higher tiers.",
 		},
 		tierContract: {
-			name: tierContract, exec: withSubsets(runContractTier), useSynthesize: true,
+			name: tierContract, exec: runContractTier, useSynthesize: true,
 			nextActionHint: "Fix contract-tier failures before moving to higher tiers.",
 		},
 		tierConformance: {
@@ -444,7 +471,7 @@ func tierSteps() map[string]tierStep {
 			nextActionHint: "Fix conformance-tier failures before moving to higher tiers.",
 		},
 		tierIntegration: {
-			name: tierIntegration, exec: withSubsets(runIntegrationTier), useSynthesize: true,
+			name: tierIntegration, exec: runIntegrationTier, useSynthesize: true,
 			nextActionHint: "Fix integration-tier failures before moving to higher tiers.",
 			infraSetup: func(v *verdict) {
 				// §7 infra fields: Phase 0 uses the default profile;
@@ -525,8 +552,8 @@ func execute(s selector, r resolvedSelector) int {
 		fmt.Fprintf(os.Stderr, "lenny-test: note: %s\n", n)
 	}
 	for _, t := range r.tiers {
-		if t.name == tierUnit && t.pkgs != nil {
-			fmt.Fprintf(os.Stderr, "lenny-test: unit tier scoped to %d package pattern(s); --dry-run lists them, --all runs every package\n", len(t.pkgs))
+		if t.pkgs != nil {
+			fmt.Fprintf(os.Stderr, "lenny-test: %s tier scoped to %d package pattern(s) and %d package(s) run by name; --dry-run lists them\n", t.name, len(t.pkgs), len(t.funcs))
 		}
 	}
 
@@ -1138,11 +1165,12 @@ func tierStatusRank(status string) int {
 	return 0
 }
 
-// runUnitTier runs `go test` over pkgs, or over the whole module
-// (`./...`) when pkgs is nil. --changed and --pkg pass the scope they
-// resolved, also when --tier unit restricts them; --tier unit alone,
+// runUnitTier runs `go test` over the plan's scope: its package patterns
+// whole and its by-name functions (see scopedRuns), or the whole module
+// (`./...`) when the plan is unscoped. --changed and --pkg pass the scope
+// they resolved, also when --tier unit restricts them; --tier unit alone,
 // --max-tier alone, and --all leave it nil.
-func runUnitTier(pkgs []string) (string, string, *tierResult) {
+func runUnitTier(p tierPlan) (string, string, *tierResult) {
 	// Race detection is on by default per §17.4. When
 	// LENNY_COVER_PROFILE is set, coverage is emitted to that path so
 	// `lenny-test coverage --go` can later roll it up.
@@ -1152,21 +1180,26 @@ func runUnitTier(pkgs []string) (string, string, *tierResult) {
 	if !hasGoCode() {
 		return "pass", "no Go packages under pkg/ yet", &tierResult{}
 	}
-	if pkgs != nil && len(pkgs) == 0 {
+	profile := coverProfilePath()
+	if p.pkgs == nil {
+		result, runErr := runGoTestJSONFn(unitTierArgs(nil, profile)...)
+		return tierOutcome("unit", result, runErr)
+	}
+	tails := scopedRuns(p.pkgs, p.funcs)
+	if len(tails) == 0 {
 		// A scoped plan with nothing in scope. Running `go test` with no
 		// package argument would test the working directory instead.
 		return "pass", "no packages in the selected scope", &tierResult{}
 	}
-	result, runErr := runGoTestJSON(unitTierArgs(pkgs, coverProfilePath())...)
-	if runErr != nil && result.Failed == 0 {
-		// go test exited non-zero but no per-test failure was recorded
-		// (build error, vet error, etc.). Surface the raw tail.
-		return "fail", fmt.Sprintf("go test failed: %v\n%s", runErr, result.RawOut), result
-	}
-	if result.Failed > 0 {
-		return "fail", summarizeFailures(result), result
-	}
-	return "pass", "", result
+	result, runErr := runGoTestTails(tails, func(i int, tail []string) []string {
+		// Only the invocation that runs whole packages writes the
+		// coverage profile; a second invocation would overwrite it.
+		if i == 0 && tail[0] != "-run" {
+			return unitTierFlags(profile)
+		}
+		return unitTierFlags("")
+	})
+	return tierOutcome("unit", result, runErr)
 }
 
 // unitTierArgs returns the `go test` arguments for the unit tier: race
@@ -1174,16 +1207,23 @@ func runUnitTier(pkgs []string) (string, string, *tierResult) {
 // package patterns, or `./...` when pkgs is nil. Coverage applies to
 // whatever packages run, so a scoped run writes a scoped profile.
 func unitTierArgs(pkgs []string, profile string) []string {
+	args := unitTierFlags(profile)
+	if pkgs == nil {
+		return append(args, "./...")
+	}
+	return append(args, pkgs...)
+}
+
+// unitTierFlags returns the unit tier's `go test` flags: race on, and
+// coverage to profile when profile is non-empty.
+func unitTierFlags(profile string) []string {
 	args := []string{"-race", "-count=1", fmt.Sprintf("-timeout=%s", tierUnitTimeout)}
 	if profile != "" {
 		if err := os.MkdirAll(filepath.Dir(profile), 0o755); err == nil {
 			args = append(args, "-coverprofile="+profile, "-covermode=atomic")
 		}
 	}
-	if pkgs == nil {
-		return append(args, "./...")
-	}
-	return append(args, pkgs...)
+	return args
 }
 
 // summarizeFailures produces a one-line summary of a tier's failed
@@ -1252,19 +1292,29 @@ func resolveGoBin(name string) string {
 	return ""
 }
 
-func runComponentTier(subsets []string) (string, string, *tierResult) {
+func runComponentTier(p tierPlan) (string, string, *tierResult) {
 	// Component tests are guarded by the `component` build tag. Each
 	// subdirectory under tests/component/ targets a distinct subsystem;
 	// some need Docker (testcontainers-go), others run in-process. When
 	// subsets is non-empty the runner scopes to those subdirectories so a
-	// phase gate can run only the work in scope for that phase. When subsets
-	// is empty the runner executes every component directory.
+	// phase gate can run only the work in scope for that phase. A scoped
+	// plan (--changed, --pkg, or a specification edit) runs the packages
+	// and functions it selected, and is assumed to need Docker. Otherwise
+	// the runner executes every component directory.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	targets, needsDocker, err := componentTargets(subsets)
+	flags := []string{"-count=1", fmt.Sprintf("-timeout=%s", tierComponentTimeout), "-tags=component"}
+	scoped := len(p.subsets) == 0 && p.pkgs != nil
+	targets, needsDocker, err := componentTargets(p.subsets)
 	if err != nil {
 		return "fail", err.Error(), nil
+	}
+	if scoped {
+		if len(scopedRuns(p.pkgs, p.funcs)) == 0 {
+			return "pass", "no packages in the selected scope", &tierResult{}
+		}
+		needsDocker = true
 	}
 	if needsDocker {
 		if _, err := exec.LookPath("docker"); err != nil {
@@ -1274,15 +1324,11 @@ func runComponentTier(subsets []string) (string, string, *tierResult) {
 			return "skipped", "docker daemon not running; start Docker and retry", nil
 		}
 	}
-	extra := append([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierComponentTimeout), "-tags=component"}, targets...)
-	result, runErr := runGoTestJSON(extra...)
-	if runErr != nil && result.Failed == 0 {
-		return "fail", fmt.Sprintf("component suite failed: %v\n%s", runErr, result.RawOut), result
+	if scoped {
+		return runScopedTier("component", flags, p)
 	}
-	if result.Failed > 0 {
-		return "fail", summarizeFailures(result), result
-	}
-	return "pass", "", result
+	result, runErr := runGoTestJSONFn(append(flags, targets...)...)
+	return tierOutcome("component", result, runErr)
 }
 
 // componentTargets maps component subset names to (test package globs,
@@ -1297,7 +1343,11 @@ func runComponentTier(subsets []string) (string, string, *tierResult) {
 // reaches cmd/lenny-ops.
 func componentTargets(subsets []string) ([]string, bool, error) {
 	if len(subsets) == 0 {
-		return []string{"./tests/component/...", "./tests/testinfra/containers/...", "./cmd/lenny-ops/..."}, true, nil
+		targets := []string{"./tests/component/..."}
+		for _, tree := range tierExtraTrees(tierComponent) {
+			targets = append(targets, "./"+tree+"/...")
+		}
+		return targets, true, nil
 	}
 	type entry struct {
 		path        string
@@ -1625,9 +1675,18 @@ func e2eKindSubsetPattern(subsets []string) (string, error) {
 // subprocess (via tests/testinfra/gateway) and drives the real HTTP
 // surface end-to-end. When subsets is non-empty the runner uses
 // -run with the canonical regex for that subset.
-func runIntegrationTier(subsets []string) (string, string, *tierResult) {
+//
+// A plan with a scope runs the test functions a specification edit
+// selected, by name. The tier is one Go package, so a selection that
+// reaches it through an import runs it whole (change 0116, decision 3).
+func runIntegrationTier(p tierPlan) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
+	}
+	subsets := p.subsets
+	flags := []string{"-count=1", fmt.Sprintf("-timeout=%s", tierIntegrationTimeout), "-tags=integration"}
+	if len(subsets) == 0 && p.pkgs != nil {
+		return runScopedTier("integration", flags, p)
 	}
 	runArgs := []string{}
 	if len(subsets) > 0 {
@@ -1645,41 +1704,34 @@ func runIntegrationTier(subsets []string) (string, string, *tierResult) {
 		}
 		runArgs = []string{"-run", strings.Join(parts, "|")}
 	}
-	extra := append([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierIntegrationTimeout), "-tags=integration"}, runArgs...)
+	extra := append(flags, runArgs...)
 	extra = append(extra, "./tests/integration/...")
-	result, runErr := runGoTestJSON(extra...)
-	if runErr != nil && result.Failed == 0 {
-		return "fail", fmt.Sprintf("integration suite failed: %v\n%s", runErr, result.RawOut), result
-	}
-	if result.Failed > 0 {
-		return "fail", summarizeFailures(result), result
-	}
-	return "pass", "", result
+	result, runErr := runGoTestJSONFn(extra...)
+	return tierOutcome("integration", result, runErr)
 }
 
-func runContractTier(subsets []string) (string, string, *tierResult) {
+func runContractTier(p tierPlan) (string, string, *tierResult) {
 	// Contract tests are guarded by the `contract` build tag. Each
 	// subdirectory under tests/contract/ targets a distinct contract
 	// surface (adapter_jsonl, workspaceplan, ...). When subsets is non-empty
 	// the runner scopes to those subdirectories so a phase gate can verify
 	// only the contracts in scope for that phase. When subsets is empty the
-	// runner exercises every contract directory.
+	// runner exercises every contract directory, and a scoped plan
+	// (--changed, --pkg, or a specification edit) runs the packages and
+	// functions it selected.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	targets, err := contractTargets(subsets)
+	flags := []string{"-count=1", "-tags=contract"}
+	if len(p.subsets) == 0 && p.pkgs != nil {
+		return runScopedTier("contract", flags, p)
+	}
+	targets, err := contractTargets(p.subsets)
 	if err != nil {
 		return "fail", err.Error(), nil
 	}
-	extra := append([]string{"-count=1", "-tags=contract"}, targets...)
-	result, runErr := runGoTestJSON(extra...)
-	if runErr != nil && result.Failed == 0 {
-		return "fail", fmt.Sprintf("contract suite failed: %v\n%s", runErr, result.RawOut), result
-	}
-	if result.Failed > 0 {
-		return "fail", summarizeFailures(result), result
-	}
-	return "pass", "", result
+	result, runErr := runGoTestJSONFn(append(flags, targets...)...)
+	return tierOutcome("contract", result, runErr)
 }
 
 // contractTargets maps contract subset names to the package globs the runner

@@ -54,7 +54,7 @@ packages:
     - package: cmd/lenny-preflight
       count: 25
     - package: cmd/lenny-test
-      count: 15
+      count: 10
     - package: cmd/lenny-tier-promote
       count: 1
     - package: cmd/lenny-token-service

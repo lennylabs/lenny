@@ -72,6 +72,7 @@ func runValidateMaps(args []string) int {
 		validateFlakeBudgetYAML(flakeBudgetPath),
 		validateParityMatrixYAML(parityMatrixPath),
 		validateRegistersDir(filepath.Join(root, registersDir), regRules),
+		validateNonGoInputsFile(root),
 	}
 
 	failed := 0
@@ -490,16 +491,11 @@ func validateChangeGraphCompleteness(changeGraphPath, baselinePath, root string)
 
 // readChangeGraphGlobKeys returns the glob keys of the change graph,
 // read through the shared statement of that reading in
-// cmd/lenny-test/changegraph, so the completeness check, the
-// `--changed` selector, and the static-tier residual scan resolve a key the
-// same way.
+// cmd/lenny-test/changegraph, so the completeness check and the
+// static-tier residual scan resolve a key the same way.
 func readChangeGraphGlobKeys(path string) (map[string]bool, error) {
 	return changegraph.ReadGlobKeys(path)
 }
-
-// changeGraphGlobPrefix normalizes a change-graph glob key to the path
-// prefix it names, read from the same shared statement.
-func changeGraphGlobPrefix(key string) string { return changegraph.GlobPrefix(key) }
 
 // coveredByChangeGraphGlob reports whether a glob key names the path or
 // one of its ancestor directories.
