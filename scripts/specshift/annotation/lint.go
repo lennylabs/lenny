@@ -260,10 +260,18 @@ func newNameIdentifiers(r *Registry) nameIdentifiers {
 	})
 	alts := make([]string, 0, 2*len(codes))
 	for _, c := range codes {
+		// A code outside the page-code form, which the reference tool
+		// refuses, would only add a spelling no name can carry.
+		if !pageCode.MatchString(c) {
+			continue
+		}
 		alts = append(alts, regexp.QuoteMeta(c))
 		if title := c[:1] + strings.ToLower(c[1:]); title != c {
 			alts = append(alts, regexp.QuoteMeta(title))
 		}
+	}
+	if len(alts) == 0 {
+		return nameIdentifiers{}
 	}
 	return nameIdentifiers{registered: regexp.MustCompile(`^(?:` + strings.Join(alts, "|") + `)[-_]?[RI][0-9]+`)}
 }
@@ -272,11 +280,12 @@ func newNameIdentifiers(r *Registry) nameIdentifiers {
 // form `CODE-Rn` or `CODE-In`.
 //
 // A spelling starts at an upper-case letter that does not continue a
-// run of upper-case letters. It ends where the number meets the end of
-// the name or a character that is neither a digit nor a lower-case
-// letter. These bounds keep a code from matching inside a longer
-// acronym and keep `R5` from matching the start of a word such as
-// `R5ms`.
+// run of upper-case letters, which keeps a code from matching inside a
+// longer acronym. A spelling that drops the hyphen also has to end
+// where the number meets the end of the name or a character that is not
+// a lower-case letter, which keeps `ClaimR5ms` from reading as `R5`
+// followed by a word. A spelling with a hyphen or an underscore is an
+// identifier whatever follows it.
 func (m nameIdentifiers) find(name string) (string, bool) {
 	for i := 0; i < len(name); i++ {
 		if !isUpper(name[i]) || (i > 0 && isUpper(name[i-1])) {
@@ -291,7 +300,8 @@ func (m nameIdentifiers) find(name string) (string, bool) {
 				continue
 			}
 			end := i + loc[1]
-			if end < len(name) && (isLower(name[end]) || isDigit(name[end])) {
+			dropped := !strings.ContainsAny(name[i:end], "-_")
+			if dropped && end < len(name) && isLower(name[end]) {
 				continue
 			}
 			return canonicalIdentifier(name[i:end]), true

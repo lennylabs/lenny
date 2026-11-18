@@ -92,3 +92,38 @@ func TestRegistryPageCodesHoldEveryLiveCodeAndAliasInUpperCase(t *testing.T) {
 		t.Errorf("findings %v, want one identifier-name finding for HOLD-R2", found)
 	}
 }
+
+func TestTestNameCheckIgnoresCodesOutsideThePageCodeForm(t *testing.T) {
+	t.Parallel()
+	load := func(codes ...string) *Registry {
+		var pages []string
+		for _, c := range codes {
+			pages = append(pages, `{"code": "`+c+`", "path": "spec/a.md", "type": "capability", "status": ""}`)
+		}
+		doc := `{"version": 1, "pages": [` + strings.Join(pages, ",") +
+			`], "requirements": [], "operations": [], "terms": [], "blocks": [], "retired": [], "moves": []}`
+		reg, err := LoadRegistry(func(string) ([]byte, error) { return []byte(doc), nil }, RegistryPath)
+		if err != nil {
+			t.Fatalf("load: %v", err)
+		}
+		return reg
+	}
+	src := []byte("package claim\n\nimport \"testing\"\n\nfunc TestClaimR4Holds(t *testing.T) {}\n\nfunc TestRetriesR5Times(t *testing.T) {}\n")
+	lint := func(reg *Registry) []Finding {
+		t.Helper()
+		found, err := Lint{Registry: reg}.Check(ChangedFile{Path: "pkg/claim/claim_test.go", Src: src, Lines: allLines(src)})
+		if err != nil {
+			t.Fatalf("lint: %v", err)
+		}
+		return found
+	}
+	// A multi-byte or lower-case code is left out rather than breaking
+	// the matcher, and the valid code beside it still matches.
+	if found := lint(load("ÉCLAIR", "x", "CLAIM")); len(found) != 1 || !strings.Contains(found[0].Detail, "CLAIM-R4") {
+		t.Errorf("findings %v, want one for CLAIM-R4", found)
+	}
+	// With no code left, a bare `R5` is not read as an identifier.
+	if found := lint(load("ÉCLAIR")); len(found) != 0 {
+		t.Errorf("findings %v, want none when no registered code has the page-code form", found)
+	}
+}

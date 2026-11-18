@@ -146,6 +146,8 @@ func TestLintRefusesIdentifiersInTestAndSubtestNames(t *testing.T) {
 		27: "POOL-R5",    // an unregistered code with an underscore
 		31: "GWCLAIM-R2", // the longer code rather than the CLAIM inside it
 		43: "CLAIM-R4",   // a benchmark
+		47: "CLAIM-R4",   // an underscore spelling followed by a lower-case word
+		49: "CLAIM-R4",   // a title-case underscore spelling followed by a lower-case word
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("identifier-name findings %v, want %v", got, want)
@@ -180,10 +182,11 @@ func TestLintReadsIdentifiersInTestNamesOnlyOnChangedLines(t *testing.T) {
 func TestLintWithoutARegistryRefusesOnlyIdentifiersWithASeparator(t *testing.T) {
 	t.Parallel()
 	// Without a registry, a code is recognized only in upper case and
-	// followed by a hyphen or an underscore, so line 19's title-case code
-	// and the dropped hyphens of lines 12, 21, 23, 25, 31, and 43 pass.
+	// followed by a hyphen or an underscore, so the title-case codes of
+	// lines 19 and 49 and the dropped hyphens of lines 12, 21, 23, 25,
+	// 31, and 43 pass.
 	got := identifierNameFindings(t, Lint{}, "pkg/claim/claim_test.go", nil)
-	want := map[int]string{10: "CLAIM-R4", 11: "CLAIM-I4", 17: "CLAIM-R4", 27: "POOL-R5"}
+	want := map[int]string{10: "CLAIM-R4", 11: "CLAIM-I4", 17: "CLAIM-R4", 27: "POOL-R5", 47: "CLAIM-R4"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("findings without a registry %v, want %v", got, want)
 	}

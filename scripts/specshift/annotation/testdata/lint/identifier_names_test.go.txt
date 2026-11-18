@@ -43,3 +43,7 @@ func TestKPCLAIMCreateHolds(t *testing.T) {}
 func BenchmarkClaimR4(b *testing.B) {}
 
 func helperCLAIM_R4() {}
+
+func TestCLAIM_R4holds(t *testing.T) {}
+
+func TestClaim_R4ms(t *testing.T) {}
