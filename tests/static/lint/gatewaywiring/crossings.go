@@ -63,10 +63,10 @@ type origin struct {
 // a target whose package belongs to another part that the import rules
 // refuse importing the value's package, unless the target's package is the
 // seam interface; or a value whose named type a confined package declares,
-// handed to a part GW-R2 does not allow that package. A value of an adapter
-// type the composition root declares is attributed to the parts whose
-// values its fields hold, and a function literal to the parts whose
-// functions or methods it calls or whose values it captures.
+// handed to a part GW-R2 does not allow that package. An adapter type of
+// cmd/lenny-gateway counts as what its fields are given, and a function
+// literal, method value, or function of cmd/lenny-gateway as what its body
+// calls and captures (GW-R1).
 //
 // The check reads call arguments, keyed and positional struct literal
 // fields, map, slice, and array literal elements, assignments to fields,
