@@ -26,15 +26,19 @@ const minSecretLen = 8
 // token, client key, and client certificate, the token key of a Secret's
 // data, the token variables the agent receives, a private key, from its
 // BEGIN line to its END line or, when output was cut short, to the end
-// of its base64 body, and an Anthropic credential (an OAuth token,
-// sk-ant-oat01-..., or an API key, sk-ant-api03-...). The Anthropic form
-// needs letters and then digits before the second hyphen, so a
-// scenario's placeholder key, sk-ant-journey-<nonce>, does not match it.
+// of its base64 body, an Anthropic credential (an OAuth token,
+// sk-ant-oat01-..., or an API key, sk-ant-api03-...), and the
+// credentials of an Authorization: Basic header. The Anthropic form needs
+// letters and then digits before the second hyphen, so a scenario's
+// placeholder key, sk-ant-journey-<nonce>, does not match it. The values
+// under credential keys such as password are removed by redactKeyed
+// (redact_keys.go).
 var secretPatterns = []struct {
 	re   *regexp.Regexp
 	with string
 }{
 	{regexp.MustCompile(`(?i)(bearer[\s=]+)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
+	{regexp.MustCompile(`(?i)(authorization(?:\\?["'])?\s*:\s*(?:\\?["'])?basic\s+)[A-Za-z0-9+/=]{4,}`), "${1}" + Redacted},
 	{regexp.MustCompile(`(--token[= ](?:\\?["'])?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
 	{regexp.MustCompile(`((?:client-key-data|client-certificate-data|token)(?:\\"|")?\s*:\s*(?:\\"|")?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
 	{regexp.MustCompile(`((?:LENNY_API_TOKEN|CLAUDE_CODE_OAUTH_TOKEN)=)\S+`), "${1}" + Redacted},
@@ -50,6 +54,9 @@ var secretPatterns = []struct {
 // the written records again at the end of a run.
 type Redactor struct {
 	values []string
+	// public holds the values a scenario publishes, and their base64
+	// encodings, which stay under a credential key (redact_keys.go).
+	public map[string]bool
 }
 
 // NewRedactor returns a redactor for the given secret values. Values
@@ -72,17 +79,34 @@ func (r *Redactor) Add(values ...string) {
 	sort.Slice(r.values, func(i, j int) bool { return len(r.values[i]) > len(r.values[j]) })
 }
 
+// Keep registers values a scenario publishes, which stay in the records
+// when they appear, exactly, as the value of a credential key. Keep does
+// not exempt a value from the known values or from the other forms.
+func (r *Redactor) Keep(values ...string) {
+	if r.public == nil {
+		r.public = map[string]bool{}
+	}
+	for _, v := range values {
+		if v != "" {
+			r.public[v] = true
+			r.public[base64.StdEncoding.EncodeToString([]byte(v))] = true
+		}
+	}
+}
+
 // Redact returns b with every known value replaced, then every
 // credential recognised by its form. A nil redactor knows no values and
 // still redacts by form, so a record written without one is not left in
 // clear.
 func (r *Redactor) Redact(b []byte) []byte {
+	var public map[string]bool
 	if r != nil {
 		for _, v := range r.values {
 			b = bytes.ReplaceAll(b, []byte(v), []byte(Redacted))
 		}
+		public = r.public
 	}
-	return redactByForm(b, formDepth)
+	return redactByForm(b, formDepth, public)
 }
 
 // String redacts a string.

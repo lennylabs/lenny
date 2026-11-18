@@ -325,18 +325,28 @@ func TestRunnerRecordsHoldNoCredentialTheHarnessNeverSaw(t *testing.T) {
 	tok := testJWT(t, testJWTHeader)
 	b64 := base64.StdEncoding.EncodeToString([]byte(tok))
 	oauth := "sk-ant-" + "oat01-" + strings.Repeat("AbCd-_09", 12)
-	leak := `{"type":"user","content":"` + tok[:60] + `\n` + tok[60:] + `\n` + b64 + ` ` + oauth + `"}`
+	leak := `{"type":"user","content":"` + tok[:60] + `\n` + tok[60:] + `\n` + b64 + ` ` + oauth + `"}` + "\n" +
+		`{"type":"user","content":"{\"password\": \"pw-ab12cd34\", \"apiKey\": \"hunter2-unpublished\"}"}`
 	fx := newRunnerFixture(t, func(ft *fakeTarget) { ft.leak = "minted " + tok + "\n" })
 	fx.r.Trials = 1
 	fx.agent.leak = leak
 	fx.agent.result.FinalText = "The admin token is " + tok
 	fx.agent.result.StopDetail = "success " + b64
 	fx.access.kubectl["get pods"] = []string{"Running " + tok}
-	if _, err := fx.r.Run(context.Background(), []*Scenario{fixtureScenario(SetupPrerequisites)}); err != nil {
+	s := fixtureScenario(SetupPrerequisites)
+	s.Environment, s.PublicValues = "The database password is pw-{{nonce}}.", []string{"pw-{{nonce}}"}
+	if _, err := fx.r.Run(context.Background(), []*Scenario{s}); err != nil {
 		t.Fatal(err)
 	}
+	transcript, err := os.ReadFile(filepath.Join(fx.results, "run1", "demo", "trial-1", "transcript.jsonl"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(transcript), `\"password\": \"pw-ab12cd34\"`) || strings.Contains(string(transcript), "hunter2-unpublished") {
+		t.Errorf("the transcript does not keep the published value and remove the other one:\n%s", transcript)
+	}
 	var checked []string
-	err := filepath.WalkDir(filepath.Join(fx.results, "run1"), func(p string, d os.DirEntry, err error) error {
+	err = filepath.WalkDir(filepath.Join(fx.results, "run1"), func(p string, d os.DirEntry, err error) error {
 		if err != nil || d.IsDir() {
 			return err
 		}

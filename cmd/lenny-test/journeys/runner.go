@@ -77,6 +77,10 @@ type Runner struct {
 	// defaults.
 	Interval time.Duration
 	Sleep    func(context.Context, time.Duration) error
+
+	// published collects every trial's expanded public values, which the
+	// run-level redactor keeps (runRedactor).
+	published []string
 }
 
 // TrialRecord is the record of one trial, written as result.json.
@@ -156,7 +160,7 @@ func (r *Runner) Run(ctx context.Context, scenarios []*Scenario) (*RunSummary, e
 // holds a credential form. Such a record was written outside the record
 // writers, so the run reports it as an error.
 func (r *Runner) sweepRecords() error {
-	rewritten, err := SweepRecords(NewRedactor(r.Secrets...), filepath.Join(r.ResultsDir, r.RunID))
+	rewritten, err := SweepRecords(r.runRedactor(), filepath.Join(r.ResultsDir, r.RunID))
 	if err != nil {
 		return fmt.Errorf("check the records: %w", err)
 	}
@@ -226,6 +230,9 @@ func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, s
 		Dir: filepath.Join(r.ResultsDir, r.RunID, s.Name, fmt.Sprintf("trial-%d", n)),
 	}
 	red := NewRedactor(r.Secrets...)
+	public := r.publicValues(s, target, rec.Nonce)
+	red.Keep(public...)
+	r.published = append(r.published, public...)
 	tornDown := false
 	defer func() {
 		if !tornDown {
@@ -253,6 +260,27 @@ func (r *Runner) trial(ctx context.Context, s *Scenario, n int, target Target, s
 		r.logf("    cannot write the trial record: %v", err)
 	}
 	return rec
+}
+
+// publicValues returns the scenario's published placeholder credentials
+// expanded for this trial, which the trial's records keep under a
+// credential key.
+func (r *Runner) publicValues(s *Scenario, target Target, nonce string) []string {
+	vars := r.trialVars(s, target, nonce)
+	out := make([]string, 0, len(s.PublicValues))
+	for _, v := range s.PublicValues {
+		out = append(out, Expand(v, vars))
+	}
+	return out
+}
+
+// runRedactor redacts the run-level records, the summary and the
+// read-back of every record: it knows the values every trial shares and
+// keeps every trial's published values.
+func (r *Runner) runRedactor() *Redactor {
+	red := NewRedactor(r.Secrets...)
+	red.Keep(r.published...)
+	return red
 }
 
 // redactRecord removes secrets from every free-text field of a record.
@@ -528,7 +556,7 @@ func (r *Runner) writeSummary(sum *RunSummary) error {
 	// Each trial record in the summary was redacted with its trial's
 	// values; the run's redactor covers the values every trial shares and
 	// the credential forms.
-	red := NewRedactor(r.Secrets...)
+	red := r.runRedactor()
 	if err := red.WriteJSON(filepath.Join(dir, "summary.json"), sum); err != nil {
 		return err
 	}

@@ -50,6 +50,12 @@ environment: |
   image pull policy that does not pull. Lenny admits a runtime image only
   by a digest-pinned reference, and the echo runtime's is {{echoImage}}.
   Every node holds that reference.
+# The data-store credentials above are placeholders the scenario
+# publishes; the records keep them under a password or key field.
+publicValues:
+  - lenny
+  - lennyminio
+  - lennyminio123
 credentials:
   - kubeconfig
 tools:

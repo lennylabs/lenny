@@ -168,8 +168,7 @@ func TestRedactorKeepsPlaceholderKeysSignaturesAndOrdinaryText(t *testing.T) {
 		`The key is sk-ant-journey-ab12cd34. It is a placeholder.`,
 		`{"command":"kubectl -n acme create secret generic anthropic --from-literal=apiKey=sk-ant-journey-ab12cd34"}`,
 		`{"secretData": {"apiKey": "sk-ant-journey-ab12cd34"}}`,
-		`the docs show --from-literal=apiKey="sk-ant-..." as an example`,
-		`{\"secret\": \"sk-ant-api03-new-key-...\"} is a documentation example`,
+		`the docs show an Anthropic key as "sk-ant-api03-new-key-..." in their examples`,
 		`a truncated header eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9 is not a token`,
 		`customresourcedefinition.apiextensions.k8s.io/agentpods.lenny.dev\ncustomresourcedefinition.apiextensions.k8s.io/podsets.lenny.dev`,
 		`dsn: \"postgres://lenny:lenny@lenny-postgres.lenny-system.svc:5432/lenny?sslmode=disable\"`,
@@ -177,7 +176,10 @@ func TestRedactorKeepsPlaceholderKeysSignaturesAndOrdinaryText(t *testing.T) {
 		`helm upgrade --set runtimeClasses.profiles.standard.enabled=true --set acceptFeatureFlagDowngrade.compliance=true`,
 		`{"sub":"lenny-admin","roles":["platform-admin"]}`,
 	)
+	// The scenario publishes the placeholder key (Scenario.PublicValues),
+	// so it stays under the apiKey key.
 	r := NewRedactor()
+	r.Keep("sk-ant-journey-ab12cd34")
 	for _, in := range kept {
 		if got := r.String(in); got != in {
 			t.Errorf("text without a credential changed:\n  in %.200q\n got %.200q", in, got)
@@ -191,7 +193,7 @@ func TestRedactByFormLeavesShortAndMalformedCandidates(t *testing.T) {
 		"eyJub3QiOiJhIGhlYWRlciJ9.cGF5bG9hZA.c2ln", // a JSON header without "alg"
 		"ZXlK", "\\", "\\\\n", strings.Repeat("A", minWrapLen) + "\\n", strings.Repeat("A", minWrapLen) + "\r\n",
 	} {
-		if got := string(redactByForm([]byte(in), formDepth)); got != in {
+		if got := string(redactByForm([]byte(in), formDepth, nil)); got != in {
 			t.Errorf("redactByForm(%q) = %q", in, got)
 		}
 	}

@@ -83,6 +83,16 @@ type Scenario struct {
 	// the persona would know without the documentation, such as where
 	// the images and the data stores are.
 	Environment string `yaml:"environment"`
+	// PublicValues are placeholder credentials the scenario publishes in
+	// its goal, steps, or environment, such as the data-store passwords
+	// of the environment or the placeholder key of the goal, written as
+	// they appear there ({{nonce}} included). The records keep each
+	// expanded value, compared exactly, where it is the value of a
+	// credential key such as password, which the redactor otherwise
+	// removes (redact_keys.go). A value the scenario's text does not
+	// contain is an error, so the list cannot exempt a credential the
+	// scenario does not publish.
+	PublicValues []string `yaml:"publicValues"`
 	// Tools are the shell commands the agent may run, a subset of
 	// AllowedCommands.
 	Tools []string `yaml:"tools"`
@@ -192,6 +202,12 @@ func (s *Scenario) Validate() error {
 	}
 	if strings.TrimSpace(s.Goal) == "" {
 		add("goal is empty")
+	}
+	published := strings.Join(append([]string{s.Goal, s.Environment}, s.Steps...), "\n")
+	for _, v := range s.PublicValues {
+		if strings.TrimSpace(v) == "" || !strings.Contains(published, v) {
+			add("public value %q does not appear in the goal, the steps, or the environment", v)
+		}
 	}
 	errs = append(errs, validateDocs(s.Docs)...)
 	errs = append(errs, validateTools(s.Tools)...)

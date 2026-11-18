@@ -38,7 +38,8 @@ docs: [docs/api/admin.md, docs/tutorials/first-session.md]
 goal: |
   Create a tenant.
 steps: [one, two]
-environment: Facts.
+environment: Facts. The password is pw-{{nonce}}.
+publicValues: ["pw-{{nonce}}"]
 tools: [kubectl, lenny-ctl]
 timeLimit: 20m
 postconditions:
@@ -61,7 +62,7 @@ postconditions:
 	if s.Persona != "tenant-admin" || s.TargetName() != TargetKind || s.Setup != SetupLenny {
 		t.Errorf("persona, target, setup = %q, %q, %q", s.Persona, s.TargetName(), s.Setup)
 	}
-	if len(s.Credentials) != 3 || len(s.Prepare) != 1 || len(s.Docs) != 2 || len(s.Steps) != 2 || len(s.Tools) != 2 {
+	if len(s.Credentials) != 3 || len(s.Prepare) != 1 || len(s.Docs) != 2 || len(s.Steps) != 2 || len(s.Tools) != 2 || len(s.PublicValues) != 1 {
 		t.Errorf("lists not read: %+v", s)
 	}
 	if s.Limit() != 20*time.Minute {
@@ -106,6 +107,8 @@ func TestParseScenarioRefusesInvalidScenarios(t *testing.T) {
 		{"prepare without gateway", "setup: lenny", "setup: prerequisites\nprepare: [\"sessions-allowed:default\"]", "needs setup"},
 		{"unknown preparation", "setup: lenny", "setup: lenny\nprepare: [\"wipe:all\"]", "is not sessions-allowed"},
 		{"no goal", "goal: Install it.", "goal: \"\"", "goal is empty"},
+		{"unpublished public value", "goal: Install it.", "goal: Install it.\npublicValues: [hunter2]", "public value \"hunter2\" does not appear"},
+		{"empty public value", "goal: Install it.", "goal: Install it.\npublicValues: [\"\"]", "public value \"\" does not appear"},
 		{"negative limit", "goal: Install it.", "goal: Install it.\ntimeLimit: -5m", "negative"},
 		{"bad limit", "goal: Install it.", "goal: Install it.\ntimeLimit: soon", "invalid duration"},
 		{"no postconditions", "postconditions:\n  - name: ready\n    kubectl: [get, pods]\n    expect: {contains: Running}\n", "postconditions: []\n", "no postconditions"},

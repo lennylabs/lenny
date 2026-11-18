@@ -22,13 +22,15 @@ import (
 //     token, a kubeconfig, or a private key;
 //   - the secretPatterns in redact.go: a bearer token, the value of a
 //     --token flag, a kubeconfig or Secret key, a token variable, a
-//     private key (a truncated one included), and an Anthropic credential
-//     such as the Claude OAuth token.
+//     private key (a truncated one included), an Anthropic credential
+//     such as the Claude OAuth token, and an Authorization: Basic header;
+//   - the value under a credential key such as password (redact_keys.go).
 //
-// The scenarios' placeholder keys (sk-ant-journey-<nonce>) match none of
-// these forms and stay in the records, so the reviewer can follow how the
-// agent handled the key; one under a token key or after "Bearer" is still
-// removed by that pattern. Long base64 strings that decode to no
+// The scenarios' placeholder keys (sk-ant-journey-<nonce>) match no form
+// and stay in the records, so the reviewer can follow how the agent
+// handled the key. Under a credential key they stay only as a scenario's
+// published value; under a token key or after "Bearer" they are removed
+// by that pattern. Long base64 strings that decode to no
 // credential, such as the signatures of the agent's thinking blocks, stay
 // as well.
 //
@@ -57,25 +59,26 @@ const minWrapLen = 40
 var encodedRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{20,}={0,2}`)
 
 // redactByForm replaces every credential recognised by its form, looking
-// through depth layers of base64.
-func redactByForm(b []byte, depth int) []byte {
-	b = replaceSpans(b, credentialSpans(b, depth))
+// through depth layers of base64. A value public lists stays under a
+// credential key.
+func redactByForm(b []byte, depth int, public map[string]bool) []byte {
+	b = replaceSpans(b, credentialSpans(b, depth, public))
 	for _, p := range secretPatterns {
 		b = p.re.ReplaceAll(b, []byte(p.with))
 	}
-	return b
+	return redactKeyed(b, public)
 }
 
 // credentialSpans returns the byte ranges of b that hold a JWT or a
 // base64 string encoding a credential. It searches a view of b with the
 // wrapping line breaks removed (unwrap), so a token split across lines,
 // in plain text or inside a JSON-escaped string, is found whole.
-func credentialSpans(b []byte, depth int) [][2]int {
+func credentialSpans(b []byte, depth int, public map[string]bool) [][2]int {
 	text, at := unwrap(b)
 	spans := jwtSpans(text)
 	if depth > 0 {
 		for _, m := range encodedRun.FindAllIndex(text, -1) {
-			if encodesCredential(text[m[0]:m[1]], depth) {
+			if encodesCredential(text[m[0]:m[1]], depth, public) {
 				spans = append(spans, [2]int{m[0], m[1]})
 			}
 		}
@@ -187,14 +190,14 @@ func isJWTHeader(seg []byte) bool {
 // may start with characters that are not part of the encoding, such as
 // the n of a JSON escape or a word run into it, so the decoding is tried
 // at each of the four alignments.
-func encodesCredential(s []byte, depth int) bool {
+func encodesCredential(s []byte, depth int, public map[string]bool) bool {
 	s = bytes.TrimRight(s, "=")
 	for off := 0; off < 4 && len(s)-off >= minEncodedLen; off++ {
 		raw, ok := decodeLenient(s[off:])
 		if !ok {
 			continue
 		}
-		if !bytes.Equal(redactByForm(raw, depth-1), raw) {
+		if !bytes.Equal(redactByForm(raw, depth-1, public), raw) {
 			return true
 		}
 	}
