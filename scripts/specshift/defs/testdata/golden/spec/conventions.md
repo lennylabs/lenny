@@ -286,9 +286,9 @@ A page carries a generated section between the marker comments `<!-- generated:<
 
 | Field | Type | Required | Meaning |
 | :-- | :-- | :-- | :-- |
-| `name` | string | yes | The operation's own name in its interface: the OpenAPI `operationId`, the gRPC method, the Kubernetes verb, or the CLI command words, such as `createPool`. |
-| `method` | string | no | The HTTP method, the RPC kind, or the Kubernetes verb. |
-| `path` | string | no | The HTTP path or the resource the operation acts on. |
+| `name` | string | yes | The operation's own name in its interface: the OpenAPI `operationId`, the gRPC method, the Kubernetes verb, the CLI command words, or, on an in-process interface page such as the gateway seams, the Go method, such as `createPool` or `LookupSession`. |
+| `method` | string | no | The HTTP method, the RPC kind, the Kubernetes verb, or `Go method` for an operation of an in-process interface page. |
+| `path` | string | no | The HTTP path, the resource the operation acts on, or, for an operation of an in-process interface page, the Go interface that declares it, such as `seam.Sessions`. |
 | `returns` | list | no | The error codes and refusals the operation returns, by name. |
 | `requirements` | list | no | The identifiers of the requirements behind the operation's outcomes. |
 | `summary` | string | yes | One sentence that says what the defined thing is, used in the catalog row. |

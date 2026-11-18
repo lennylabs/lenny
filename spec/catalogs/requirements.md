@@ -8,4 +8,7 @@ summary: Lists every requirement identifier with its title and page.
 
 # Requirements
 
-This catalog is generated from the requirement anchors of each page, and it is empty because the specification holds none yet.
+| Requirement | Title | Page |
+| :-- | :-- | :-- |
+| [GW-R1](../components/gateway/index.md#gw-r1) | Seams and the session core reach each other only through the seam interface | [Gateway](../components/gateway/index.md) |
+| [GW-R2](../components/gateway/index.md#gw-r2) | Credential and admission code stays with the parts that act on it | [Gateway](../components/gateway/index.md) |

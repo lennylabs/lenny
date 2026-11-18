@@ -451,4 +451,18 @@ A structured schema defining how a session's workspace should be materialized. I
 <!-- The rows of the region below are generated from the specification's catalogs by `go run ./scripts/specshift defs generate`. Edit the definition blocks in the specification to change them. -->
 <!-- generated:reference-glossary -->
 
+## H
+
+### Holder replica
+{: #holder-replica }
+
+The gateway replica that holds a session's coordination lease and therefore coordinates the session.
+
+## S
+
+### Seam interface
+{: #seam-interface }
+
+The set of operations through which a gateway seam and the session core reach each other.
+
 <!-- /generated:reference-glossary -->

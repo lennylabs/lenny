@@ -38,6 +38,8 @@ The decision file of 2026-11-12 records decisions D1 to D4 in the coordinator's 
 
 Decisions C and G of the materialization study, accepted by the owner on 2026-11-12, decide what `/lenny/bin` holds: decision C stages a pinned static git there read-only, and decision G stages `lenny-materialize` with mode `0111` and has it call `prctl(PR_SET_DUMPABLE, 0)`. The WM design owns both, and "PL-3" applies them.
 
+**Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0118.S2, whose entries in `steps.md` name the operations.
+
 ## Open decisions
 
 The owner settled O1 to O7 on 2026-11-12 by accepting each recommendation, with refinements to O4 and O7 (D5), and O8 on 2026-11-13 in a revised form (D12). Egress decision 61 superseded O5 on 2026-11-13 (D11). The owner settled O9 on 2026-11-13 as (a) (D20), and the spike it asked for led to D25 on 2026-11-14. O10, which that spike raised, was settled on 2026-11-14 as (a) (D26). Each settled decision keeps its options and reasoning as the record of the choice.

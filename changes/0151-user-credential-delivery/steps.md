@@ -36,6 +36,8 @@ The design is in [UC-2](change.md#uc-2-the-oauth2link-source-and-account-linking
 
 The design is in [UC-3](change.md#uc-3-the-usercredential-binding), which covers the `userCredential` binding and `inject`. It needs 0127.S2 (EG-2) with the requests under ["Changes requested of other designs"](change.md#changes-requested-of-other-designs), and 0149.S4 (TS-4) for the invalidation level. The dependencies cover bindings, the pod credential API, and `pkg/binding`. It addresses the session input half of F-13.3.26. It also builds the session input check and `retireOnRelease`, which 0152.S2 (UG-2) uses. 0124.S2 (CR-B) of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps) extends the check to the `identityAssertion` binding.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-AuthorizeSession` with the session input check (UCP-3).
+
 ### 0151.S4 Request rules and presets
 - status: Planned
 - aliases: [UC-4]

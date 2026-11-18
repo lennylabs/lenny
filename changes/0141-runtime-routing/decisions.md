@@ -44,3 +44,5 @@ Open:
 | ID | Question | Recommendation |
 | :-- | :-- | :-- |
 | D16 | The plaintext interceptor dial in "Current state" is filed as its own `BUILD-GAPS.md` finding, F-10.3.27, because it contradicts NET-063 today, independent of this design. | **Settled**, in the owner's words "render the chart and file it" (2026-11-09). A render with an interceptor namespace confirmed that the chart passes none of the three TLS flags. |
+
+**Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0141.S2, whose entries in `steps.md` name the operations.

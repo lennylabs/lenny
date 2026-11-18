@@ -8,4 +8,7 @@ summary: Lists every owned term with a one-sentence gloss and a link to its owne
 
 # Glossary
 
-This catalog is generated from the owned terms of each page's Terms section, and it is empty because the specification holds none yet.
+| Term | Gloss | Owner |
+| :-- | :-- | :-- |
+| [Holder replica](../interfaces/gateway-seams.md#holder-replica) | The gateway replica that holds a session's coordination lease and therefore coordinates the session. | [Gateway seams](../interfaces/gateway-seams.md) |
+| [Seam interface](../interfaces/gateway-seams.md#seam-interface) | The set of operations through which a gateway seam and the session core reach each other. | [Gateway seams](../interfaces/gateway-seams.md) |

@@ -105,3 +105,4 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Revision 60 (2026-11-16)
 
 The owner accepted three resolutions of conflicts between steps that the conversion of the moved designs into steps found (0113.S4). 0142.S2 no longer carries the `placement` section, the posture's placement fields, or `placementConfigured`, and 0142.S4 no longer carries the offering grant mirror. 0136.S6 and 0136.S5 add them after these steps land, which removes a dependency loop with 0136 and 0150.
+- 2026-11-17. Decision 8 of [0117](../0117-gateway-package-layout/decisions.md), settled by the owner, assigns this change the edits to the gateway seam interface page and `pkg/gateway/seam` for the mechanisms it changes. Added a line naming the operations to 0142.S6 in `steps.md`, and the decision to `decisions.md`.
