@@ -6,3 +6,4 @@
   - Low: no test pinned that abort reconciliation uses the size of every confirmed chunk rather than the run's sum. Fixed in 2cff6b5f1 with a test in which chunk 0's `StatObject` fails and chunk 1 confirms.
   - Low: step 3 of the intent-row flow in §10.1.7 states a final update that flushes the counters, and no terminal arm issued one, so a lost per-confirmation write left the finalised row short. Fixed in 2cff6b5f1: each terminal arm re-issues the run's update before `Finalise`, with a test for the completion arm and an abort arm.
   - The semantics question the fix raised, what the row holds while a gap is open, went to the owner and was settled as decision 1.
+- 2026-11-18, build. 0159.S1 landed; gate run `80d73bb01cc5ce0aa600197c`. [`digests/0159.S1.md`](digests/0159.S1.md) records the result.

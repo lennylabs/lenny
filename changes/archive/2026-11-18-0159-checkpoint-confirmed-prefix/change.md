@@ -1,10 +1,10 @@
 # Checkpoint manifest records the contiguous confirmed prefix
 
-Status: `Decided`, revision 1, 2026-11-17.
+Status: `Implemented`, revision 1, 2026-11-18.
 
 ## Problem
 
-The checkpoint manifest row (`checkpoint_manifest`) carries two counters that the gateway advances as it confirms each uploaded chunk. [§10.1.7](../../spec/10_gateway-internals.md#1017-prestop-hook-drain) (preStop Hook Drain) defines `chunk_count` as the number of chunks committed, "equal to the highest `{n}` + 1", and `workspace_bytes_uploaded` as the sum of the sizes of the committed chunks. Step 2 of the intent-row flow in the same section writes both with one conditional `UPDATE` guarded by `chunk_count < $n + 1`.
+The checkpoint manifest row (`checkpoint_manifest`) carries two counters that the gateway advances as it confirms each uploaded chunk. [§10.1.7](../../../spec/10_gateway-internals.md#1017-prestop-hook-drain) (preStop Hook Drain) defines `chunk_count` as the number of chunks committed, "equal to the highest `{n}` + 1", and `workspace_bytes_uploaded` as the sum of the sizes of the committed chunks. Step 2 of the intent-row flow in the same section writes both with one conditional `UPDATE` guarded by `chunk_count < $n + 1`.
 
 The gateway confirms chunks concurrently, one goroutine per acknowledged chunk, so confirmations finish in any order. Under the guarded `UPDATE`, the two definitions cannot both hold when they do. If chunk 1's confirmation runs first, it writes `chunk_count = 2` with chunk 1's bytes. Chunk 0's later write, `chunk_count = 1` with both chunks' bytes, then fails the guard, and the row keeps a count of two chunks paired with the bytes of one.
 
@@ -18,7 +18,7 @@ The change redefines `chunk_count` and `workspace_bytes_uploaded` as the length 
 
 It does not change the store's guarded `UPDATE`, the in-process quota reconciliation (which already uses every confirmed chunk's size), or the §12.5 backstop.
 
-Change [0131](../0131-incremental-checkpoint/change.md) (incremental checkpoint) retires partial-manifest reassembly in its decision D4, which removes the resume consumer of these counters. This change fixes the counters for the code as it stands until 0131 lands.
+Change [0131](../../0131-incremental-checkpoint/change.md) (incremental checkpoint) retires partial-manifest reassembly in its decision D4, which removes the resume consumer of these counters. This change fixes the counters for the code as it stands until 0131 lands.
 
 ## Terms
 
@@ -36,7 +36,7 @@ Each terminal arm re-issues the run's update before `Finalise`, so a lost per-co
 
 ## Specification and non-specification changes
 
-- [§10.1.7](../../spec/10_gateway-internals.md#1017-prestop-hook-drain): the `chunk_count` and `workspace_bytes_uploaded` definitions, step 2's conditional `UPDATE`, step 3's flush, the completion condition, the deadline-fire sweep, and the residue sentence of **Reassembly on resume**.
+- [§10.1.7](../../../spec/10_gateway-internals.md#1017-prestop-hook-drain): the `chunk_count` and `workspace_bytes_uploaded` definitions, step 2's conditional `UPDATE`, step 3's flush, the completion condition, the deadline-fire sweep, and the residue sentence of **Reassembly on resume**.
 - `pkg/gateway/checkpoint/checkpointer/uploaddriver.go`: the run bookkeeping, the flush, the deadline-fire sweep, and the completion check.
 - `tests/registers/spec-section-citations.yaml`: the package's section-citation count.
 
