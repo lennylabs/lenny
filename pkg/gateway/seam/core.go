@@ -35,7 +35,9 @@ type Forwarding interface {
 	ForwardRequest(w http.ResponseWriter, r *http.Request, s Session, kind ForwardKind, body io.Reader) ForwardOutcome
 
 	// ForwardToolCall delivers a platform tool call that addresses a
-	// session to its holder replica and returns the tool result.
+	// session to its holder replica and returns the tool result. The
+	// holder's refusal envelope arrives as a *Refusal, which the caller
+	// does not retry.
 	ForwardToolCall(ctx context.Context, s Session, kind ForwardKind, tool string, arguments json.RawMessage) (ToolResult, ForwardOutcome, error)
 
 	// Forwarded reports whether the request the context carries arrived
@@ -59,7 +61,9 @@ type ToolResult struct {
 // ChildSessions is served by the session core to the platform tools seam.
 type ChildSessions interface {
 	// CreateSession is GWSEAM-CreateSession. body is the JSON of a client
-	// API create request.
+	// API create request. A refusal (authorization, quota, policy, or
+	// environment access) comes back as a *Refusal with the client API
+	// error code, which the caller does not retry.
 	CreateSession(ctx context.Context, tenantID string, body json.RawMessage) (CreatedSession, error)
 
 	// MaterializeChild is GWSEAM-MaterializeChild. It returns
@@ -72,8 +76,60 @@ type ChildSessions interface {
 	// ErrChildCredentialUnavailable or ErrChildUserCredentialNotFound.
 	CheckChildCredentials(ctx context.Context, q ChildCredentialQuery) error
 
+	// ApplyExperimentRouting is GWSEAM-ApplyExperimentRouting. It may
+	// rewrite the runtime and pool of the child record it is given.
+	ApplyExperimentRouting(ctx context.Context, child *Session) error
+
 	// EffectiveMaxRetries returns the retry budget of a session.
 	EffectiveMaxRetries(s Session) int
+}
+
+// Terminals is the terminal pipeline of the session core, which a seam or
+// the API front runs after its own terminal write.
+type Terminals interface {
+	// BeginTerminal is GWSEAM-BeginTerminal. The caller calls the returned
+	// function when its terminal work ends, so shutdown waits for it.
+	BeginTerminal(sessionID string) (end func())
+
+	// OnSessionTerminal is GWSEAM-OnSessionTerminal. from is the state the
+	// caller's write left.
+	OnSessionTerminal(ctx context.Context, from state.State, s Session)
+
+	// AfterTerminalWrite is GWSEAM-AfterTerminalWrite. signals runs the
+	// caller's own terminal signals inside the pipeline; the result is the
+	// session record after the pipeline.
+	AfterTerminalWrite(ctx context.Context, from state.State, s Session, signals func(context.Context, Session)) Session
+
+	// ForceTerminate is GWSEAM-ForceTerminate. It reports the session
+	// after the write, the state it left, and whether this call moved it.
+	ForceTerminate(ctx context.Context, tenantID, sessionID string) (s Session, previous state.State, transitioned bool, err error)
+}
+
+// Revocations is served by the session core to the API front: the session
+// side of a credential or user revocation.
+type Revocations interface {
+	// AfterRevokeWrite is GWSEAM-AfterRevokeWrite.
+	AfterRevokeWrite(ctx context.Context, s Session)
+
+	// ReclaimRevokedPreRunning is GWSEAM-ReclaimRevokedPreRunning.
+	ReclaimRevokedPreRunning(ctx context.Context, from state.State, s Session)
+
+	// TerminateUserSessions is GWSEAM-TerminateUserSessions.
+	TerminateUserSessions(ctx context.Context, tenantID, userID string, sessionIDs []string) UserTermination
+}
+
+// UserTermination reports TerminateUserSessions: the pods released and the
+// sessions whose release failed.
+type UserTermination struct {
+	PodsTerminated int
+	FailedSessions []string
+}
+
+// Activity is served by the session core to the platform tools seam and the
+// metering proxy.
+type Activity interface {
+	// StampActivity is GWSEAM-StampActivity.
+	StampActivity(tenantID, sessionID string)
 }
 
 // CreatedSession is what CreateSession returns.
@@ -109,9 +165,12 @@ type ClientAPICall struct {
 	Headers     map[string]string
 }
 
-// ClientAPIResult is the response to a ClientAPICall: its body and content
-// type, or the error code, message, and details of a refusal.
+// ClientAPIResult is the response to a ClientAPICall: its status, body,
+// and content type, and for a status outside 2xx the error code, message,
+// and details of the refusal. A result whose status is outside 2xx always
+// carries a non-empty ErrorCode.
 type ClientAPIResult struct {
+	Status       int
 	Body         []byte
 	ContentType  string
 	ErrorCode    string

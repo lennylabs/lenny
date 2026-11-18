@@ -108,6 +108,27 @@ func (e *SealedError) Error() string {
 // Unwrap returns ErrSessionSealed.
 func (e *SealedError) Unwrap() error { return ErrSessionSealed }
 
+// Refusal is a refusal an operation reports with a client API error code,
+// such as UNAUTHORIZED, a quota code, a policy code, or an environment
+// access code, with its message and details. A refusal is not transient:
+// the caller reports it and does not retry the operation.
+type Refusal struct {
+	Code    string
+	Message string
+	Details map[string]any
+}
+
+func (e *Refusal) Error() string { return "seam: refused: " + e.Code + ": " + e.Message }
+
+// IsRefusal reports whether err is or wraps a *Refusal, and returns it.
+func IsRefusal(err error) (*Refusal, bool) {
+	var r *Refusal
+	if errors.As(err, &r) {
+		return r, true
+	}
+	return nil, false
+}
+
 // CapRefusal reports a resume that a tenant limit refuses, with the message
 // and the details the client error carries.
 type CapRefusal struct {

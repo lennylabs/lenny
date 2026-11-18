@@ -4,6 +4,7 @@ package seam
 
 import (
 	"context"
+	"encoding/json"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
@@ -14,6 +15,64 @@ type UploadWindows interface {
 	// CloseUploads ends a session's upload window: it aborts the session's
 	// uploads in progress and releases its upload limits.
 	CloseUploads(sessionID string)
+
+	// RecordExtractionAbort is GWSEAM-RecordExtractionAbort, called by the
+	// archive extraction that still runs in the session core.
+	RecordExtractionAbort(errorType string)
+}
+
+// MeteringBudgets is served by the metering proxy to the session core and
+// the platform tools seam: the per-session budget state the proxy enforces.
+type MeteringBudgets interface {
+	// ForgetBudget is GWSEAM-ForgetBudget.
+	ForgetBudget(sessionID string)
+
+	// TrackedBudgetSessions is GWSEAM-TrackedBudgetSessions.
+	TrackedBudgetSessions() []string
+
+	// RaiseBudget is GWSEAM-RaiseBudget.
+	RaiseBudget(sessionID string, delta int64)
+
+	// TerminateForBudget is GWSEAM-TerminateForBudget.
+	TerminateForBudget(sessionID string)
+}
+
+// BudgetExtensions is served by the platform tools seam to the metering
+// proxy.
+type BudgetExtensions interface {
+	// ExtendForBudget is GWSEAM-ExtendForBudget. reqCtx is the proxied
+	// request's context and waitCtx bounds the in-path wait.
+	ExtendForBudget(reqCtx, waitCtx context.Context, tenantID, sessionID string) (BudgetExtension, error)
+}
+
+// BudgetExtension is the outcome of ExtendForBudget.
+type BudgetExtension int
+
+// The budget extension outcomes.
+const (
+	// BudgetGranted means the session's budget was raised within the wait.
+	BudgetGranted BudgetExtension = iota + 1
+	// BudgetPending means the wait ended while the extension is still
+	// open; the session denies per request until it resolves.
+	BudgetPending
+	// BudgetTerminal means the extension was refused or failed, so the
+	// proxy ends the session.
+	BudgetTerminal
+)
+
+// DelegationAdmin is served by the platform tools seam to the API front.
+type DelegationAdmin interface {
+	// ClearSubtreeDenial is GWSEAM-ClearSubtreeDenial.
+	ClearSubtreeDenial(ctx context.Context, tenantID, rootSessionID, sessionID string) error
+
+	// ElicitationFloor is GWSEAM-ElicitationFloor.
+	ElicitationFloor() string
+}
+
+// BearerRevocations is served by the API front to the platform tools seam.
+type BearerRevocations interface {
+	// IsBearerRevoked is GWSEAM-IsBearerRevoked.
+	IsBearerRevoked(ctx context.Context, tenantID, jti string) (bool, error)
 }
 
 // DelegationTree is served by the platform tools seam to the session core.
@@ -123,6 +182,17 @@ type ToolApprovals interface {
 
 	// ResolveApproval delivers a decision on an approval wait.
 	ResolveApproval(sessionID, toolCallID string, d ApprovalDecision) error
+
+	// AwaitApproval is GWSEAM-AwaitApproval. It blocks until the decision
+	// arrives or ctx ends.
+	AwaitApproval(ctx context.Context, tenantID, sessionID string, call PendingToolCall) (ApprovalDecision, error)
+}
+
+// PendingToolCall is a runtime's tool call that waits for approval.
+type PendingToolCall struct {
+	ID        string
+	Name      string
+	Arguments json.RawMessage
 }
 
 // ApprovalDecision is the decision on a tool call's approval.
@@ -154,6 +224,20 @@ type Events interface {
 	// OldestRetainedSeq returns the sequence number of the oldest event
 	// retained for a session, or false.
 	OldestRetainedSeq(sessionID string) (uint64, bool)
+
+	// Broadcast is GWSEAM-Broadcast. It returns the count of streams the
+	// event reached.
+	Broadcast(eventType, data string, at time.Time) int
+
+	// StreamStats is GWSEAM-StreamStats.
+	StreamStats() StreamStats
+}
+
+// StreamStats is the result of Events.StreamStats. Utilization is a
+// fraction of the replay buffer, for the fullest session.
+type StreamStats struct {
+	ActiveSubscribers          int
+	MaxReplayBufferUtilization float64
 }
 
 // Event is one event on a session's stream.
