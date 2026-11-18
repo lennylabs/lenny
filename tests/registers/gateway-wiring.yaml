@@ -603,46 +603,6 @@ crossings:
     from: pkg/gateway/provisioning/vcscred
     type: Resolver
     step: 0117.S7
-  - to: pkg/gateway/playground
-    interface: IDTokenValidatorFromVerifier(0)
-    from: pkg/auth/jwt
-    type: Verifier
-    step: 0117.S4
-  - to: pkg/gateway/playground
-    interface: Options.IssuedTokens
-    from: pkg/gateway/storage/issuedtokenstore
-    type: Store
-    step: 0117.S4
-  - to: pkg/gateway/playground
-    interface: Options.Signer
-    from: pkg/auth/jwt
-    type: BreakerSigner
-    step: 0117.S4
-  - to: pkg/gateway/playground
-    interface: Options.Tenants
-    from: pkg/gateway/environment/tenantstore
-    type: Memory
-    step: 0117.S4
-  - to: pkg/gateway/playground
-    interface: Options.Tenants
-    from: pkg/gateway/environment/tenantstore/pgstore
-    type: Store
-    step: 0117.S4
-  - to: pkg/gateway/playground
-    interface: Options.Verifier
-    from: pkg/auth/jwt
-    type: ClaimChecker
-    step: 0117.S4
-  - to: pkg/gateway/playground
-    interface: Options.Verifier
-    from: pkg/auth/jwt
-    type: KeySet
-    step: 0117.S4
-  - to: pkg/gateway/playground
-    interface: Options.Verifier
-    from: pkg/auth/jwt
-    type: MultiVerifier
-    step: 0117.S4
   - to: pkg/gateway/runtime/watchdog
     interface: Watchdog.WithTreeArchive(0)
     from: pkg/gateway/mcpfabric/delegationtree/treearchive

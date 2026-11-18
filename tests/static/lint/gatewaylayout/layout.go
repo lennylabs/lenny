@@ -44,6 +44,10 @@ const (
 	PartRemoved = "removed"
 )
 
+// PartPlayground is the part of the web playground, which GW-R2 allows the
+// packages its token mint reads.
+const PartPlayground = "playground"
+
 // Dir is one row of the directory table: a directory under the module root
 // and the part every package in its subtree belongs to.
 type Dir struct {
@@ -84,7 +88,7 @@ var Layout = []Dir{
 	{Path: "pkg/gateway/scaling", Part: "scaling", Kind: KindReplica},
 	{Path: "pkg/gateway/opsendpoints", Part: "ops-endpoints", Kind: KindReplica},
 	{Path: "pkg/gateway/replica", Part: "replica", Kind: KindReplica},
-	{Path: "pkg/gateway/playground", Part: "playground", Kind: KindReplica},
+	{Path: "pkg/gateway/playground", Part: PartPlayground, Kind: KindReplica},
 }
 
 // within reports whether a repository-relative path is dir or a path

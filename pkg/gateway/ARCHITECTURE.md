@@ -14,12 +14,13 @@ This file maps each directory of `pkg/gateway` to the part of the gateway it hol
 | `core/coordination` | Session coordination: the coordination lease, fencing, and their stores. | `spec/components/gateway/session-coordination.md` (GWCOORD) |
 | `core/podclaim` | The pod claimer. | `spec/components/gateway/pod-claimer.md` (GWCLAIM) |
 | `core/checkpoint` | The checkpoint barrier, the checkpointer, and the eviction fallback. | `spec/components/gateway/checkpoint-barrier.md` (GWBARRIER) |
+| `core/leaderjobs` | The gateway-singleton jobs of the session core that act on a confined package, such as the T4 KMS probe, which the replica's leader gate runs as one job. | `spec/components/gateway/index.md` (GW) |
 | `core/session` | The session operations of the session core: create, start, bind, resume, suspend, terminate, and message delivery, with the pod session registry, the executor, and the adapter client. | The capability pages of the sessions and messaging areas |
-| `api` | The API front: the request pipeline, middleware, route registration, service identity, and the admin handlers. | `spec/components/gateway/api-front.md` (GWAPI) |
-| `drain` | The preStop drain of a replica. | `spec/components/gateway/drain.md` (GWDRAIN) |
-| `scaling` | Scaling and capacity signals. | `spec/components/gateway/scaling-and-capacity.md` (GWSCALE) |
-| `opsendpoints` | The health service and the other ops endpoints. | `spec/components/gateway/ops-endpoints.md` (GWOPS) |
-| `replica` | The replica as a unit: gateway metrics, leader election, the disruption budget watcher, development mode, and the TLS probe. | `spec/components/gateway/index.md` (GW) |
+| `api` | The API front: the request pipeline, middleware, route registration, service identity, and the admin handlers. `api/requestmetrics` is the pipeline's request-metrics stage. | `spec/components/gateway/api-front.md` (GWAPI) |
+| `drain` | The drain of a replica: `prestop`, the preStop hook that checkpoints the replica's sessions, and `drainreadiness`, the drain-readiness and forced-drain audit endpoints the drain admission webhook calls. | `spec/components/gateway/drain.md` (GWDRAIN) |
+| `scaling` | Scaling and capacity signals: `gcpause`, the GC pause gauge, and `capacityplanning`, the capacity-tier startup checks. | `spec/components/gateway/scaling-and-capacity.md` (GWSCALE) |
+| `opsendpoints` | The ops endpoints: `health`, the platform health service, and `health/backends`, its backend checkers. | `spec/components/gateway/ops-endpoints.md` (GWOPS) |
+| `replica` | The replica as a unit: `gatewaymetrics`, the gateway's metric set and registry; `gatewayleader`, leader election and the leader gate; `pdbwatcher`, the disruption budget watcher; `devmode`, the development-mode TLS guard rails; and `tlsprobe`, the startup TLS probe. | `spec/components/gateway/index.md` (GW) |
 | `playground` | The web playground. | `spec/components/web-playground.md` (PLAY) |
 
 Domain logic and stores do not belong to a gateway part. They live in concern directories under `pkg/`, such as `pkg/quota`, `pkg/audit`, `pkg/session`, and `pkg/tenancy`, where any component can import them.
@@ -32,7 +33,7 @@ Domain logic and stores do not belong to a gateway part. They live in concern di
 - `pkg/gateway/seam` imports no other package of `pkg/gateway`.
 - No package outside `pkg/gateway` and `cmd/lenny-gateway` imports a package of `pkg/gateway`, except test packages under `tests/`.
 - A package of another replica-level part, or of the web playground, imports no seam package.
-- Only the session core, the metering proxy, and `cmd/lenny-gateway` import the confined packages: the credential packages, the token and key packages, the admission packages (the authentication middleware, quota, policy, and the tenant store), and the authorization predicates. The API front imports those its request pipeline and admin handlers read. `tests/static/lint/gatewaylayout/confined.go` lists them and marks the API front's. The rule governs direct imports.
+- Only the session core, the metering proxy, and `cmd/lenny-gateway` import the confined packages: the credential packages, the token and key packages, the admission packages (the authentication middleware, quota, policy, and the tenant store), and the authorization predicates. The API front imports those its request pipeline and admin handlers read, and the web playground the JWT package, the issued-token store, and the tenant store, which its token mint reads. `tests/static/lint/gatewaylayout/confined.go` lists them and marks those of the API front and the playground. The rule governs direct imports.
 - Every package of `pkg/gateway` sits in a directory of the table above.
 
 The replica-level parts other than the API front may import the session core and the seam interface. `cmd/lenny-gateway` imports every part and wires each concrete type into the interfaces of `pkg/gateway/seam`.
