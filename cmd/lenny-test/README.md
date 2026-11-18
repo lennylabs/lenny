@@ -40,8 +40,9 @@ lenny-test infra status
 lenny-test --group pr --dry-run
 lenny-test --tier component --dry-run
 lenny-test --changed --dry-run
-lenny-test --since main --max-tier unit --dry-run   # branch diff from its merge base
+lenny-test --since main --dry-run                   # branch diff from its merge base; static, unit, component, and contract
 lenny-test --since main --tier unit --dry-run       # the same diff, unit tier only
+lenny-test --since main --gate merge --dry-run      # the same diff within the merge gate's tiers
 lenny-test --since A...B --dry-run                   # any explicit range
 lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotations cite them
 

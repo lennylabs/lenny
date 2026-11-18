@@ -97,7 +97,7 @@ Lenny's tests run in tiers, and each tier has a name that says what its tests ne
 | `docs` | Documentation | Doc samples, links, code blocks, ADR catalog | Local doc build | Yes | Yes | Yes |
 | `load_cloud` | Load and SLO (cloud) | Cloud-scale load envelope; load generated off-cluster from dedicated VMs against a real managed cluster | EKS / GKE / AKS, managed Postgres + cache, `lenny-loadctl` control plane, `lenny-loadrunner` pool, Prometheus snapshot, S3-resident HTML report | No | No | On-demand and pre-release |
 
-The persona journey tier, `journeys`, is not in this order. A Claude Code agent in an isolated container plays a persona and follows the documentation on a fresh Kind cluster, and deterministic postconditions decide the verdict. Every run costs money, with a cap of $6 a run and $54 for the pilot, so the tier runs only at the release gate and the area gate, outside the merge gate, and `--max-tier` never reaches it. §12.13 describes it.
+The persona journey tier, `journeys`, is not in this order. A Claude Code agent in an isolated container plays a persona and follows the documentation on a fresh Kind cluster, and deterministic postconditions decide the verdict. Every run costs money, with a cap of $6 a run and $54 for the pilot, so the tier runs only at the release gate and the area gate, outside the merge gate, and no `--gate` bound or `--tier` list reaches it. §12.13 describes it.
 
 ### Former tier numbers
 
@@ -124,7 +124,7 @@ The tiers carried numbers before change 0155 named them. The historical records 
 
 ### Gate hierarchy
 
-A failure in a lower tier short-circuits higher tiers within the same invocation. `lenny-test --changed --max-tier e2e_kind` runs the selected tiers from `static` to `e2e_kind`, in the order of the table above, and stops at the first failing tier. `--max-tier` reads that order until change 0116 replaces it with the merge, area, and release gates. The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
+A failure in a lower tier short-circuits higher tiers within the same invocation: a plan runs its tiers in the order of the table above and stops at the first failing tier. The order does not decide which tiers run. The merge, area, and release gates (`.claude/rules/test-coverage.md`, "Gates") state which tiers run, `--gate <merge|area|release>` bounds a selection at a gate's tiers, and `--tier` names tiers directly (§6, "Selection algorithm"). The CI orchestrator records the skipped tiers as `status: skipped, reason: <lower-tier-failure>` rather than as absent.
 
 The load tests run as two sequential stages: `load_local` gates `load_kind`. The `load_cloud` tier sits after the `docs` tier because a `load_cloud` run is the most expensive part of the pipeline and should never fire while a lower-tier signal is missing.
 
@@ -427,25 +427,27 @@ Diagnosis strings are not stack traces. They explain the most common cause of th
 
 ```bash
 # Tier and group selection
-lenny-test --tier <unit|component|...>            # Run a single tier
-lenny-test --max-tier <tier>                      # Run the tiers up to <tier>, in the order of §3
+lenny-test --tier <unit|component|...>            # Run tiers whole; a comma-separated list names several
+lenny-test --gate <merge|area|release>            # Run the tiers of a gate whole
 lenny-test --group <pr|nightly|pre-release|...>   # Named selection (see §8)
 
 # Change-aware selection
-lenny-test --changed                              # Inspects git diff
-lenny-test --changed --max-tier component         # Layered escalation
+lenny-test --changed                              # Inspects git diff; runs the static, unit, component, and contract tiers it reaches
+lenny-test --changed --tier unit,integration      # The selection restricted to the named tiers
+lenny-test --changed --gate merge                 # The selection within the merge gate's tiers
 lenny-test --since main                           # Diff from the merge base with main
 lenny-test --changed --rdeps-depth 1              # Changed packages and their direct dependents only
 lenny-test --changed --all                        # Unit tier runs every package
 lenny-test --spec POOL-R5,§4.2                    # Identifiers, page codes, or numbered sections
 lenny-test --pkg pkg/store/session                # A package, the packages under it, and their dependents
 
-# Persona journeys (see §12.13); outside --max-tier and the merge gate
+# Persona journeys (see §12.13); outside every --gate bound, --tier list, and the merge gate
 lenny-test --tier journeys --probe                # Check the agent container under a $0.05 cap
 lenny-test --tier journeys [--journey <name>] [--trials N]   # Run journeys on fresh Kind clusters
 
 # Merge gate (see "Merge gate" below)
 lenny-test gate                                   # Run the merge gate in the gate container
+lenny-test gate merge                             # The same; the area and release gates have no gate command yet
 lenny-test gate --base <ref>                      # Select the changed tiers against <ref> (default: main)
 lenny-test gate --here                            # Run the gate's tiers here (UNVERIFIED outside the gate image)
 lenny-test gate --all                             # Select tiers 1 to 4 in full rather than by the diff
@@ -506,8 +508,8 @@ lenny-test --verdict-file tests/results/<name>.json
 ### Selection algorithm
 
 1. Resolve selectors into a candidate test set:
-   - `--tier` → all tests with that build tag.
-   - `--max-tier` → all tests with tags up to and including that tier.
+   - `--tier` → all tests with the build tag of each named tier. The value is a comma-separated list of tier names.
+   - `--gate` → all tests of the tiers of the named gate.
    - `--group` → the set named in `tests/groups.yaml`.
    - `--changed` → reads the paths of the working-tree diff (unstaged, staged, and untracked). `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The selection reads these sources for those paths:
      - **The import graph.** One `go list -e -json ./...` call with every tier's build tag loads the in-module packages with their imports, test imports, and embedded files, so a tagged tier package is in the graph. The owning package of a changed path is the package whose directory, or nearest ancestor directory, holds it, and every package that embeds it. A `testdata/` fixture and a file that does not compile therefore select their package. The owning packages and every package whose build or test build depends on them are selected. A build import carries the dependency on to that package's own importers; a test import ends the walk, because nothing imports a package's tests. `--rdeps-depth` bounds the walk: the default -1 walks the full closure, 1 adds the direct dependents, and 0 runs the owning packages alone.
@@ -517,7 +519,7 @@ lenny-test --verdict-file tests/results/<name>.json
      Each selected package runs in the tier that runs it: the tier whose directory holds it, or the unit tier for a package beside its code. The component tier also runs the tagged tests that `cmd/lenny-ops` and the container helpers under `tests/testinfra/containers` keep in-package, so a selected package there runs in the component tier as well. The unit, component, and contract tiers run the selected packages, and every other tier is one Go package, or a few, and runs whole when the selection reaches it. A test function a specification edit selects runs by name in the unit, component, contract, and integration tiers, and runs its whole tier in any other. A selected test function outside the tier directories whose file carries a tier's build tag runs by name in that tier. The static tier runs whole on every invocation, so `tests/static` is never selected again. A path that no package owns and no row matches selects the static tier only and is reported, except the records under `changes/`, `proposals/`, and `issues/` and the root-level documents that no test reads. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. Rename detection is off, so a moved file selects the package it left as well as the one it joined. When the diff, the package graph, or the specification edits cannot be read, the selection runs the unit, component, contract, and integration tiers whole and notes why, because a narrower selection would pass on tests it never ran. `--dry-run` prints each tier's scope, the functions it runs by name, and these reports without running anything.
    - `--spec` → resolves each identifier, page code, or numbered section (`§N.M` or `N.M`) through the annotation index, together with the tests the spec map lists under the section number, to its tests (see §5, "Coverage view"). Each tier that holds such a test runs. The unit tier runs whole when the spec map lists a unit test for the query or carries the query as a key that names no tier, and is otherwise scoped to the packages of the unit tests the index found. When no test resolves, the unit tier runs whole. An unknown query exits 2.
    - `--pkg` → resolves through the import graph: the packages at or under each named directory are treated as changed, and the selection is that of a diff changing them, bounded by `--rdeps-depth`. A name that matches no package is reported.
-2. Intersect with `--max-tier` if both selectors are present.
+2. Bound the set. `--tier` beside a discovery selector (`--changed`, `--since`, `--spec`, or `--pkg`) keeps the named tiers, and a named tier the selection does not reach runs nothing and is reported. `--gate` keeps the tiers of the named gate, whatever the other selectors: the merge gate's tiers are static, unit, component, contract, integration, and docs; the area gate's are e2e_kind, chaos, security, conformance, and docs; and the release gate's are e2e_cloud, load_local, load_kind, chaos, and load_cloud, as `.claude/rules/test-coverage.md` ("Gates") lists them. `--tier` and `--gate` together keep the tiers both name. A discovery selector with neither runs only the static, unit, component, and contract tiers it reaches, which start no compose stack and no cluster, and reports the tiers it reached and left out; a gate or `--tier` runs those. `--group` names a complete plan that only `--gate` narrows. `--subset` names subsets of one tier and needs exactly one `--tier`.
 3. Order by tier ascending. Within a tier, group by package to maximize test-binary reuse.
 4. For each tier, ensure required infrastructure is up. If `lenny-test infra status` reports the dependency stack as not running, start it (subject to `--no-infra`).
 5. Execute. Stop after the first failing tier unless `--continue-on-failure` is set.
@@ -560,7 +562,7 @@ Every tier runs whatever an earlier tier reports, so one run reports every failu
 8. It runs the gate as the user that owns the worktree rather than as root. The container starts as root, creates a user with the worktree owner's user and group IDs and the Docker socket's group as a supplementary group, gives it the fixture root and the cache volumes, and drops to it with `setpriv`. Tests then run unprivileged, as they do on a developer host: `initdb` refuses to run as root, and the runtime supervisor tests derive the adapter's user ID from their own. Files the gate writes into the worktree, the verdict among them, belong to the worktree's owner. A worktree that root owns runs the gate as root.
 9. It builds `lenny-test` from the mounted tree inside the container and runs `lenny-test gate --here`, which runs the tiers in the current environment.
 
-`lenny-test gate` takes flags only and refuses a positional argument with a usage error.
+`lenny-test gate merge` is `lenny-test gate`: the command runs the merge gate, which is the `--changed` selection against the merge base of `--base` within the merge gate's tiers (`run --changed --gate merge`), and writes the gate's verdict file. The area and release gates have no gate command yet, so `lenny-test gate area` and `lenny-test gate release` exit with a usage error that names `lenny-test --gate area` and `--gate release`, which run those gates' tiers. Any other positional argument is refused with a usage error.
 
 **Runs that cannot stand for the commit.** The verdict is `UNVERIFIED` at best, with a non-zero exit code, in two cases, and the `gate.unverified` list records the reason for each:
 
@@ -600,7 +602,7 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
   "started_at": "2026-05-13T11:00:00Z",
   "finished_at": "2026-05-13T11:02:13Z",
   "duration_ms": 133012,
-  "command": "lenny-test --changed --max-tier integration",
+  "command": "lenny-test --changed --gate merge",
   "trigger": {
     "mode": "changed",
     "git_revision": "abc1234",
@@ -680,28 +682,15 @@ Every run writes a row to `tests/results/history.jsonl` (gitignored). The harnes
 version: 1
 groups:
   pr:
-    description: PR gate. Target wall-clock under 15 minutes on a laptop.
+    description: The merge gate's tiers, run whole.
     selectors:
-      max_tier: integration
-      include:
-        - tier: e2e_kind
-          subset: critical-path     # warm-pool, sandbox-claim, pod-lifecycle, mtls
-        - tier: load_local          # full load_local catalogue under -race
-        - tier: load_kind
-          subset: smoke             # 20 VUs, ~25s per scenario
-        - tier: security
-          subset: tenant-isolation,tls,admission
-        - tier: chaos
-          subset: core              # pod-kill, pod-claim-race, redis-down
-        - tier: conformance
-          subset: bundled-runtimes
-        - tier: docs
+      gate: merge               # static, unit, component, contract, integration, docs
 
   pr-fast:
     description: Developer inner loop. Target wall-clock under 90 seconds.
     selectors:
       changed: true
-      max_tier: component
+      tiers: [static, unit, component]
 
   nightly:
     description: Nightly gate. Includes full e2e on Kind plus path-specific load_kind. The load_cloud tier is intentionally excluded.
@@ -724,13 +713,13 @@ groups:
     description: Phase 3.5 sign-off (admission policies, mTLS, lenny-ops first deploy).
     selectors:
       spec_sections: [4.6.1, 4.6.3, 13.1, 13.2, 17.2, 25.4]
-      max_tier: e2e_kind
+      tiers: [static, unit, component, e2e_kind]
 
   phase-8-gate:
     description: Phase 8 sign-off (checkpoint, drain-readiness webhook, MinIO outage handling).
     selectors:
       spec_sections: [4.4, 4.5, 7.3, 12.5, 17.7]
-      max_tier: chaos
+      tiers: [static, unit, component, integration, chaos]
 
 groups_post_v1:
   - a2a-adapter
@@ -1608,7 +1597,7 @@ The detailed component layout, terraform module shapes, and operator runbooks fo
 
 **Scope.** The journey tier checks that a person of a given persona can reach a goal with the documentation alone, and that the system behaves as the documentation says. A journey is a written scenario for one persona: an operator installing Lenny, a tenant administrator onboarding a tenant, or an end user running a session. A Claude Code agent with a restricted toolset plays the persona and follows the documentation. After the agent stops, the harness checks the scenario's postconditions against the cluster and the gateway's API, and the postconditions decide the verdict. The agent's own report never decides it. Change 0157 introduced the tier, and the design evidence is `changes/archive/2026-11-17-0154-merge-gate/evidence/test-infrastructure-review.md`, "Question 3".
 
-**Gates.** The tier runs at the release gate, with every journey, and at the area gate, with the area's journeys (`.claude/rules/test-coverage.md`, "Gates"). It is outside the merge gate, because every run costs money and an agent's path through the documentation is nondeterministic. It is also outside `allTiers`, so `--max-tier` and `--group` never reach it. During the pilot a failing journey opens an issue and blocks nothing. Once the trials of each journey agree consistently, a failing journey blocks its area's milestone exit.
+**Gates.** The tier runs at the release gate, with every journey, and at the area gate, with the area's journeys (`.claude/rules/test-coverage.md`, "Gates"). It is outside the merge gate, because every run costs money and an agent's path through the documentation is nondeterministic. It is also outside `allTiers`, so no `--gate` bound, `--tier` list, or `--group` reaches it. During the pilot a failing journey opens an issue and blocks nothing. Once the trials of each journey agree consistently, a failing journey blocks its area's milestone exit.
 
 **Running it.**
 
@@ -1789,7 +1778,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `make run` end-to-end gateway smoke and the SQLite dev-mode schema are deferred to the gateway implementation phase. The harness for both requires a gateway binary that does not yet exist.
 - `tests/component/translators/image_resolver_test.go` is deferred to the same phase. The component-tier shape requires a translator stack to drive the resolver in context; the Phase 2 deliverable validates the resolver in isolation via the unit tests above.
 - The checkpoint-duration baseline is deferred to Phase 8 (checkpoint/resume).
-- `pr-fast` `lenny-test --changed --max-tier component` end-to-end timing is deferred until Phase 1's component tier is wired into the default selectors.
+- `pr-fast` (`lenny-test --group pr-fast`) end-to-end timing is deferred until Phase 1's component tier is wired into the default selectors.
 
 **Test group gating Phase 2 → Phase 2.5.**
 - `phase-2-gate`: static, unit, and contract tiers pass. `lenny-compliance --level basic` passes against `cmd/runtimes/echo`. Startup-latency baseline is captured and committed.
@@ -2720,7 +2709,7 @@ Cross-cutting patterns live under `.github/workflows/reusable/` and `.github/act
 
 Workflow file: `.github/workflows/pr.yml`. Its only trigger is `workflow_dispatch`, so it runs only when started by hand, and `if: false` on its first job disables it as well. Target wall-clock: under 15 minutes. The merge gate of §6 ("Merge gate") decides merges until pull requests replace direct merges. The change that brings pull requests back restores the `pull_request` and `push` triggers and repairs the workflow to run `lenny-test gate --here` in the gate container. The steps below are the workflow as written before it was disabled.
 
-1. `lenny-test --group pr-fast` (changed-only, max-tier component). Fails fast on common bugs.
+1. `lenny-test --group pr-fast` (changed-only, within the static, unit, and component tiers). Fails fast on common bugs.
 2. `lenny-test --tier static`.
 3. `lenny-test --tier unit`.
 4. `lenny-test --tier component`.

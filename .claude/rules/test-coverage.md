@@ -20,7 +20,7 @@ Every code change ships with tests across all relevant tiers, not unit tests alo
 
 ## The tier model
 
-The suite runs in tiers, each named for what its tests need (`lenny-test --tier <name>`; `--changed` selects by git diff). `--max-tier <name>` runs every tier up to and including `<name>` in the order of the table below, until change 0116 replaces that order with the gates. Each tier's tests sit in `tests/<name>/`, except the unit tests, which sit beside the code they test. TESTING.md ("Former tier numbers") maps the numbers the tiers carried before change 0155 to their names; the historical records keep the numbers.
+The suite runs in tiers, each named for what its tests need (`lenny-test --tier <name>`, or a comma-separated list of names; `--changed` selects by git diff). The gates under "Gates" state which tiers run, and `--gate <merge|area|release>` bounds a selection at a gate's tiers. Each tier's tests sit in `tests/<name>/`, except the unit tests, which sit beside the code they test. TESTING.md ("Former tier numbers") maps the numbers the tiers carried before change 0155 to their names; the historical records keep the numbers.
 
 | Tier | Covers |
 |:--|:--|
@@ -104,9 +104,9 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 
 ## How to run
 
-- `lenny-test --changed --max-tier <tier>` runs every tier up to `<tier>` for the packages your diff touches; start here.
-- `lenny-test gate` runs the merge gate on the committed head in the gate container and writes its verdict. Run it before reporting a step done and before a merge.
-- `lenny-test --tier <name>` runs one tier; `--pkg <path>` scopes to a package.
+- `lenny-test run --changed` runs the static, unit, component, and contract tiers that your diff reaches, which start no compose stack and no cluster; start here. Add `--tier <name>[,<name>...]` to run other tiers the diff reaches, such as `--tier integration` after `lenny-test infra up --profile compose`, or `--gate merge` for every merge-gate tier.
+- `lenny-test gate merge` (or `lenny-test gate`) runs the merge gate on the committed head in the gate container and writes its verdict. Run it before reporting a step done and before a merge.
+- `lenny-test --tier <name>` runs one tier whole, and a comma-separated list runs several; `--gate <name>` runs a gate's tiers whole; `--pkg <path>` scopes to a package.
 - Bring infrastructure up with `lenny-test infra up --profile compose|kind|all` before integration and higher tiers; see the AVAILABLE INFRASTRUCTURE the build loops document for standing clusters and stacks.
 - Check the environment before running any tier after the unit tier, and read a failure there as an environment failure until you have ruled that out. The checks are in "Environment preflight" below.
 - `lenny-test stress --test <Name> --runs <N>` exercises a flake budget for concurrency-sensitive tests.
@@ -115,7 +115,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 
 1. Identify every tier the change reaches from the table above before writing code.
 2. Write the tests for those tiers alongside the code, covering the non-happy paths.
-3. Iterate with `lenny-test --changed --max-tier <tier>` for each reached tier, then commit and run `lenny-test gate`; fix the code until the verdict for the head commit is `PASS`.
+3. Iterate with `lenny-test run --changed`, adding `--tier <name>` for each reached tier that needs infrastructure, then commit and run `lenny-test gate merge`; fix the code until the verdict for the head commit is `PASS`.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
 5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to the tests of the component tier and the tiers after it.
 

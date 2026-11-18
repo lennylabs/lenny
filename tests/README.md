@@ -38,10 +38,10 @@ Unit tests are co-located with the code they cover under `pkg/`. This directory 
 ## Quick commands
 
 ```bash
-# Developer inner loop (changed-only, max-tier component)
+# Developer inner loop (changed-only, static, unit, and component tiers)
 lenny-test --group pr-fast
 
-# Full PR gate
+# The merge gate's tiers, run whole
 lenny-test --group pr
 
 # Validate the spec map and change graph
