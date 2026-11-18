@@ -164,6 +164,9 @@ type gateRecord struct {
 	// unit tier and every test of tiers 2 to 4 rather than the --changed
 	// selection.
 	All bool `json:"all,omitempty"`
+	// RdepsDepth is the dependent depth the selection walked; -1 is the
+	// full closure the merge gate runs.
+	RdepsDepth int `json:"rdeps_depth"`
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
@@ -180,7 +183,7 @@ func runGate(args []string) int {
 	here := fs.Bool("here", false, "run the gate in this environment instead of the gate container (the container itself runs the gate this way); outside the gate image the verdict is at best UNVERIFIED")
 	rebuild := fs.Bool("rebuild", false, "rebuild the gate image even when it exists")
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
-	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module importers of a changed package join the unit tier (-1: the full transitive closure)")
+	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -711,6 +714,10 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 
 	g.record(v, tierDocs, g.docs)
+	v.Gate.RdepsDepth = o.rdepsDepth
+	if o.rdepsDepth >= 0 && !o.all {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
+	}
 	withholdGatePass(v, dirty, o.environmentErr)
 	return v
 }

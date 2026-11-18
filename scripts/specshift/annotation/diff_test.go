@@ -136,6 +136,58 @@ func TestLintBranchReportsNoBaseWithoutAnIntegrationBranch(t *testing.T) {
 	}
 }
 
+// gitIn runs one git command in root and fails the test when it fails.
+func gitIn(t *testing.T, root string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", append([]string{
+		"-C", root, "-c", "user.name=alice", "-c", "user.email=alice@acme.com",
+		"-c", "commit.gpgsign=false",
+	}, args...)...)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git %v: %v\n%s", args, err, out)
+	}
+}
+
+func TestMergeBaseUsesOriginMainWhenMainIsAbsent(t *testing.T) {
+	t.Parallel()
+	root := gitRepo(t, "topic", map[string]string{"pkg/a.go": "package a\n"})
+	gitIn(t, root, "update-ref", "refs/remotes/origin/main", "HEAD")
+	base, ref, err := MergeBase(context.Background(), root)
+	if err != nil {
+		t.Fatalf("merge base: %v", err)
+	}
+	if ref != "origin/main" || base == "" {
+		t.Errorf("merge base %q with %q, want a commit with origin/main", base, ref)
+	}
+}
+
+func TestMergeBaseReturnsAGitFailureAsAnError(t *testing.T) {
+	t.Parallel()
+	root := gitRepo(t, "main", map[string]string{"pkg/a.go": "package a\n"})
+	// A HEAD git cannot read makes every command fail, as a repository
+	// git refuses for dubious ownership does. The failure must not read as
+	// a missing integration branch, which the gates skip on.
+	writeFile(t, root, ".git/HEAD", "not a ref\n")
+	_, _, err := MergeBase(context.Background(), root)
+	if err == nil || errors.Is(err, ErrNoBase) {
+		t.Errorf("returned %v, want a git error other than ErrNoBase", err)
+	}
+	if _, err := LintBranch(context.Background(), root); err == nil || errors.Is(err, ErrNoBase) {
+		t.Errorf("LintBranch returned %v, want a git error other than ErrNoBase", err)
+	}
+}
+
+func TestMergeBaseReturnsAnErrorWhenMainSharesNoHistoryWithHead(t *testing.T) {
+	t.Parallel()
+	root := gitRepo(t, "main", map[string]string{"pkg/a.go": "package a\n"})
+	gitIn(t, root, "checkout", "-q", "--orphan", "topic")
+	gitIn(t, root, "commit", "-q", "-m", "unrelated")
+	_, _, err := MergeBase(context.Background(), root)
+	if err == nil || errors.Is(err, ErrNoBase) {
+		t.Errorf("returned %v, want an error naming the missing merge base rather than ErrNoBase", err)
+	}
+}
+
 // replaceLine returns the text with its 1-based line n replaced.
 func replaceLine(t *testing.T, text string, n int, with string) string {
 	t.Helper()

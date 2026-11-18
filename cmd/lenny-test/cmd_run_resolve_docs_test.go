@@ -3,7 +3,7 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -28,8 +28,9 @@ const modulePath = "github.com/lennylabs/lenny/"
 // written whole, a specification file named by its numbered stem and
 // joined to the spec directory at the call site, an import of a package
 // of the migration tooling, a proposal document, and a root-level
-// markdown record. Every one of those classes sits under a change-graph
-// key, so every one's routing is assertable.
+// markdown record. A tooling package is a Go package the import graph
+// reaches, and every other class is a non-Go input with a row in
+// tests/non-go-inputs.yaml, so every one's routing is assertable.
 //
 // The root-level form reads a binding rather than any quoted file name,
 // because a guard also writes such a name as an argument to a predicate
@@ -44,25 +45,33 @@ var (
 )
 
 // TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier pins the
-// change-graph routing that the docs-tier guards over the communication
-// channel section depend on. Those guards read the section text, the
+// selection that the docs-tier guards over the communication channel
+// section depend on. Those guards read the section text, the
 // spec index, the sections that name a register writer, the shared
 // predicates of the migration tooling, the proposal that records who
 // creates the section, and the root-level record of what an apply run
 // left open, and they hold each derived cell
 // to a byte-exact literal so an edit to either side fails the case. That
 // only stops drift when an edit to those files selects the docs tier,
-// because `--changed` resolves a changed path against the change-graph
-// keys and `--max-tier` caps the resolved set rather than adding to it.
+// because `--changed` resolves a changed path through the import graph
+// and tests/non-go-inputs.yaml, and `--max-tier` caps the resolved set
+// rather than adding to it.
 //
 // The files are derived from the guards themselves rather than listed
 // here, so a guard added over a specification file, a tooling package,
-// or a document whose change-graph key names no docs target fails this
-// case instead of landing unhooked.
+// or a document that no selection source routes to the docs tier fails
+// this case instead of landing unhooked.
 //
 // spec: 28.1 (channel naming law), 28.3 (channel registers)
 func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
-	globs := mustReadChangeGraphGlobs(t)
+	g, err := loadPkgGraph(context.Background(), repoRoot())
+	if err != nil {
+		t.Fatalf("load the package graph: %v", err)
+	}
+	inputs, err := readNonGoInputs(repoRoot())
+	if err != nil {
+		t.Fatalf("read the non-Go input list: %v", err)
+	}
 
 	paths, err := channelGuardSources(filepath.Join(repoRoot(), channelGuardDir))
 	if err != nil {
@@ -94,18 +103,30 @@ func TestChangedSourcesOfTheChannelGuardsSelectTheDocsTier(t *testing.T) {
 		t.Fatalf("the guards under %s resolve to %v, which names no root-level document", channelGuardDir, paths)
 	}
 	for _, path := range paths {
-		tiers := tiersForChangedPathIn(globs, path)
+		tiers := selectedTiers(g, inputs, path)
 		if !containsString(tiers, "docs") {
 			t.Errorf("a change to %s selects %v, which omits the docs tier that guards it", path, tiers)
 		}
 	}
 }
 
+// selectedTiers returns the tiers a change to one source selects. A
+// tooling package is named by its directory, so it stands for a change to
+// a file in that directory.
+func selectedTiers(g *pkgGraph, inputs *nonGoInputs, source string) []string {
+	if _, ok := g.dirToPkg[source]; ok {
+		source += "/doc.go"
+	}
+	sel := selectChanged([]string{source}, g, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth})
+	return planNames(sel.plan())
+}
+
 // TestAGuardSourceOutsideTheDocsTargetsIsReported pins the two halves
 // the routing assertion rests on, over a synthetic guard rather than
 // over the landed tree: the derivation reads the file a guard names in
-// whichever tree it sits, and a path whose change-graph key carries no
-// docs target resolves to a tier set without the docs tier.
+// whichever tree it sits, and a path that no package owns and no row of
+// the non-Go input list routes to the docs tier resolves to a tier set
+// without the docs tier.
 //
 // Without this case the derivation can shrink back to one form and the
 // assertion over the landed guards keeps passing, because a path it
@@ -128,9 +149,9 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read the sources of the synthetic guard: %v", err)
 	}
-	globs := map[string]map[string][]string{
-		"tests/": {"docs": []string{"tests/docs/..."}},
-	}
+	g := newPkgGraph()
+	g.addPackage(moduleImportPath+"/tests/docs", "tests/docs", nil, nil, nil)
+	inputs := &nonGoInputs{Inputs: []nonGoInput{{Paths: []string{"tests/**"}, Runs: []string{"docs"}, Reason: "a row that covers none of the sources"}}}
 	// Each form a guard names a routed file in has to be derived, and
 	// each has to read as unrouted under a graph with no key covering it.
 	for _, held := range []string{
@@ -144,65 +165,10 @@ func TestAGuardSourceOutsideTheDocsTargetsIsReported(t *testing.T) {
 			t.Errorf("the synthetic guard resolves to %v, which omits %s, a source it reads", paths, held)
 			continue
 		}
-		if tiers := tiersForChangedPathIn(globs, held); containsString(tiers, "docs") {
-			t.Errorf("a change to %s selects %v under a graph with no key covering it, so an uncovered guard source reads as routed", held, tiers)
+		if tiers := selectedTiers(g, inputs, held); containsString(tiers, "docs") {
+			t.Errorf("a change to %s selects %v with no source routing it, so an uncovered guard source reads as routed", held, tiers)
 		}
 	}
-}
-
-// TestTheDocumentRootsTheChannelGuardsReadAreCanonicalChangeGraphKeys
-// pins the half of the routing the change graph cannot state on its own.
-// The proposal tree and the root-level ownership record carry no code,
-// so they were once outside the canonical roots the change-graph path
-// validator accepts, and a key on either one failed the static tier.
-// Keying them is what lets an edit to a document a guard reads select
-// the docs tier at all.
-//
-// A narrowing of the validator's canonical roots that drops either entry
-// fails here, ahead of the silent outcome it would otherwise produce:
-// the keys are removed to keep the static tier green, and the guards
-// that read those documents stop firing under `--changed`.
-//
-// spec: 28.1 (channel naming law), 28.3 (channel registers); the test infrastructure
-// §5 (tests/change-graph.json maps source packages, schemas,
-// migrations, and chart templates to the tests that exercise them)
-func TestTheDocumentRootsTheChannelGuardsReadAreCanonicalChangeGraphKeys(t *testing.T) {
-	for _, key := range []string{"proposals/", "PROPOSAL-QUEUE.md"} {
-		if res := validateChangeGraphPathsOverKey(t, key); !res.ok {
-			t.Errorf("a change graph keyed on %s fails the path validator (%s), so an edit to a document the guards read routes to no tier", key, res.detail)
-		}
-	}
-}
-
-// validateChangeGraphPathsOverKey runs the change-graph path validator
-// over a graph carrying key alone, so a caller can assert whether that
-// key is one the validator accepts.
-func validateChangeGraphPathsOverKey(t *testing.T, key string) checkResult {
-	t.Helper()
-	graph := map[string]any{
-		"globs": map[string]any{
-			key: map[string]any{"docs": []string{"tests/docs/..."}},
-		},
-	}
-	body, err := json.Marshal(graph)
-	if err != nil {
-		t.Fatalf("encode the probe change graph: %v", err)
-	}
-	path := filepath.Join(t.TempDir(), "change-graph.json")
-	if err := os.WriteFile(path, body, 0o600); err != nil {
-		t.Fatalf("write the probe change graph: %v", err)
-	}
-	return validateChangeGraphPaths(path, repoRoot())
-}
-
-// mustReadChangeGraphGlobs returns the committed change graph's glob table.
-func mustReadChangeGraphGlobs(t *testing.T) map[string]map[string][]string {
-	t.Helper()
-	globs, err := readChangeGraphGlobs()
-	if err != nil {
-		t.Fatalf("%s: %v", changeGraphFile, err)
-	}
-	return globs
 }
 
 // containsRootLevelDocument reports whether list carries a root-level

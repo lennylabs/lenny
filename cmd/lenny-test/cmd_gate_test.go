@@ -45,7 +45,7 @@ func stubGateRunner() gateRunner {
 }
 
 func runStubGate(g gateRunner) *verdict {
-	return g.run(gateOptions{root: ".", base: "main", rdepsDepth: 1, environment: "lenny-gate:test"})
+	return g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
 }
 
 func TestGatePassesWhenEveryTierPasses(t *testing.T) {
@@ -437,7 +437,7 @@ func TestGateAllSelectsEveryTierUpToIntegrationInFull(t *testing.T) {
 		gotAll = all
 		return resolvedSelector{}, nil
 	}
-	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: 1, all: true, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, all: true, environment: "lenny-gate:test"})
 	if !gotAll || v.Gate == nil || !v.Gate.All || !strings.HasSuffix(v.Command, " --all") {
 		t.Errorf("--all did not reach the plan or the verdict: plan all %v, gate %+v, command %q", gotAll, v.Gate, v.Command)
 	}
@@ -535,7 +535,7 @@ func TestGateEnvironmentRecognizesOnlyTheGateImage(t *testing.T) {
 }
 
 func TestGateOutsideTheGateImageIsUnverifiedWithTheReason(t *testing.T) {
-	v := stubGateRunner().run(gateOptions{root: ".", base: "main", rdepsDepth: 1, environment: "host linux/amd64", environmentErr: errors.New("LENNY_GATE_IMAGE is not set")})
+	v := stubGateRunner().run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environment: "host linux/amd64", environmentErr: errors.New("LENNY_GATE_IMAGE is not set")})
 	if v.Verdict != verdictstatus.VerdictUnverified {
 		t.Fatalf("verdict %q; want %q outside the gate image", v.Verdict, verdictstatus.VerdictUnverified)
 	}
@@ -544,6 +544,22 @@ func TestGateOutsideTheGateImageIsUnverifiedWithTheReason(t *testing.T) {
 	}
 	if len(v.Gate.Unverified) != 1 || !strings.Contains(v.Gate.Unverified[0], "LENNY_GATE_IMAGE is not set") {
 		t.Errorf("unverified reasons %q", v.Gate.Unverified)
+	}
+}
+
+// TestGateWithANarrowedDependentWalkIsUnverified pins that a gate run with
+// --rdeps-depth at or above zero cannot pass: the merge gate runs the
+// changed packages and every dependent, and the verdict records the depth.
+func TestGateWithANarrowedDependentWalkIsUnverified(t *testing.T) {
+	v := stubGateRunner().run(gateOptions{root: ".", base: "main", rdepsDepth: 1, environment: "lenny-gate:test"})
+	if v.Verdict != verdictstatus.VerdictUnverified || v.Gate.RdepsDepth != 1 {
+		t.Fatalf("verdict %q, depth %d; want %q and 1", v.Verdict, v.Gate.RdepsDepth, verdictstatus.VerdictUnverified)
+	}
+	if len(v.Gate.Unverified) != 1 || !strings.Contains(v.Gate.Unverified[0], "--rdeps-depth 1") {
+		t.Errorf("unverified reasons %q", v.Gate.Unverified)
+	}
+	if all := stubGateRunner().run(gateOptions{root: ".", base: "main", rdepsDepth: 0, all: true, environment: "lenny-gate:test"}); all.Verdict != verdictstatus.VerdictPass {
+		t.Errorf("--all selects every package whatever the depth; verdict %q (%v)", all.Verdict, all.Gate.Unverified)
 	}
 }
 
@@ -571,7 +587,7 @@ func TestGateFailureStaysFailOnADirtyTreeOutsideTheImage(t *testing.T) {
 	g.static = func() (string, string, *tierResult) {
 		return verdictstatus.Fail, "vet", &tierResult{Total: 1, Failed: 1}
 	}
-	v := g.run(gateOptions{root: ".", base: "main", environmentErr: errors.New("outside")})
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environmentErr: errors.New("outside")})
 	if v.Verdict != verdictstatus.VerdictFail {
 		t.Fatalf("verdict %q; want FAIL to outrank the unverified reasons", v.Verdict)
 	}

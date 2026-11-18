@@ -4,7 +4,6 @@ package survey
 
 import (
 	"context"
-	"os"
 )
 
 // SpecChanges is what the working tree changes in the specification
@@ -24,25 +23,7 @@ type SpecChanges struct {
 // documentation-impact gate reads it to find the specification pages a
 // branch touches.
 func CompareSpec(ctx context.Context, root, base string) (*SpecChanges, error) {
-	r := repo{root: root}
-	scratch, err := os.MkdirTemp("", "specshift-compare-")
-	if err != nil {
-		return nil, err
-	}
-	defer os.RemoveAll(scratch)
-	before, err := revSnapshot(ctx, r, base, scratch)
-	if err != nil {
-		return nil, err
-	}
-	after, err := worktreeSnapshot(ctx, r)
-	if err != nil {
-		return nil, err
-	}
-	sc := &SpecChanges{Before: before, After: after}
-	for _, kind := range []string{KindRequirement, KindOperation, KindBlock} {
-		sc.Changes = append(sc.Changes, compare(before, after, kind)...)
-	}
-	return sc, nil
+	return CompareSpecRevisions(ctx, root, base, "")
 }
 
 // ChangedFiles lists the files the working tree at root adds, modifies, or

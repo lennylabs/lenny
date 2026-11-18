@@ -1,0 +1,62 @@
+// SPDX-License-Identifier: MIT
+
+package claim
+
+import "testing"
+
+// spec: CLAIM-R4
+func TestClaimRefusesPastTheLimit(t *testing.T) {
+	t.Run("refuses the next claim", func(t *testing.T) {})
+	t.Run("CLAIM-R4 refuses the next claim", func(t *testing.T) {})
+	t.Run("holds under CLAIM_I4", func(t *testing.T) {})
+	t.Run("ClaimR9", func(t *testing.T) {})
+	t.Run("accepts version 1.2 of API v2", func(t *testing.T) {})
+	t.Run("retries R5 times", func(t *testing.T) {})
+}
+
+func TestCLAIM_R4Holds(t *testing.T) {}
+
+func TestClaim_R4Holds(t *testing.T) {}
+
+func TestCLAIMR4Holds(t *testing.T) {}
+
+func TestClaimR4Holds(t *testing.T) {}
+
+func TestHoldExpiresUnderClaimI4(t *testing.T) {}
+
+func TestPOOL_R5Holds(t *testing.T) {}
+
+func TestPoolR5Holds(t *testing.T) {}
+
+func TestGWCLAIMR2Holds(t *testing.T) {}
+
+func TestServesOpenAPI31(t *testing.T) {}
+
+func TestUpgradesToHTTP2(t *testing.T) {}
+
+func TestClaimR5msBackoff(t *testing.T) {}
+
+func TestReclaimR4Holds(t *testing.T) {}
+
+func TestKPCLAIMCreateHolds(t *testing.T) {}
+
+func BenchmarkClaimR4(b *testing.B) {}
+
+func helperCLAIM_R4() {}
+
+func TestCLAIM_R4holds(t *testing.T) {}
+
+func TestClaim_R4ms(t *testing.T) {}
+
+func TestClaimSubtestSpellings(t *testing.T) {
+	t.Run("CLAIM R4 holds", func(t *testing.T) {})
+	t.Run("holds (CLAIM-R4).", func(t *testing.T) {})
+	name := "CLAIM-R4"
+	t.Run(name, func(t *testing.T) {})
+}
+
+func TestAPIClaimR4Holds(t *testing.T) {}
+
+func TestV1_R2Holds(t *testing.T) {}
+
+func TestIPV4_R1Holds(t *testing.T) {}

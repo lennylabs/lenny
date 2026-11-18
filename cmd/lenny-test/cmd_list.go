@@ -33,7 +33,7 @@ func runList(args []string) int {
 	specsOnly := fs.Bool("specs", false, "list the page codes, identifiers, and numbered sections of the specification")
 	tierFilter := fs.String("tier", "", "list tests in the named tier")
 	specFilter := fs.String("spec", "", "comma-separated identifiers, page codes, or numbered sections (§N.M); resolves through the // spec: annotations")
-	pkgFilter := fs.String("pkg", "", "comma-separated package globs; resolves through change-graph")
+	pkgFilter := fs.String("pkg", "", "comma-separated package directories; resolves through the import graph")
 	changed := fs.Bool("changed", false, "list tests affected by uncommitted git changes")
 	jsonOut := fs.Bool("json", false, "machine-readable output")
 	if err := fs.Parse(args); err != nil {

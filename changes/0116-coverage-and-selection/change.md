@@ -1,6 +1,6 @@
 # Coverage and test selection from annotations
 
-Status: `In progress`, revision 3, 2026-11-17. Programs: [v1](../programs/v1.md), milestone M1.
+Status: `In progress`, revision 4, 2026-11-18. Programs: [v1](../programs/v1.md), milestone M1.
 
 ## Problem
 
@@ -258,7 +258,7 @@ The lines this deletes from `cmd/lenny-test`, `tests/static`, `tests/docs`, `scr
 
 0115.S5's lint refuses a section number in the name of a new or changed test function. This change adds an identifier in the name, such as `TestPOOL_R5Holds` or `TestPoolR5`: a requirement or issue identifier, with its hyphen written as an underscore or dropped, inside a test function or subtest name on a changed line. The rule already says that a test name carries no identifier, so the edit to `spec-annotations.md` is to its "Gate" list.
 
-The 8,234 existing names that carry a section number are renamed by the area that owns each package, as part of re-annotating it, and `tests/registers/skip-reasons.yaml` follows each rename. This change adds that to the area exit of the v1 program, beside the area's count of old `§` citations reaching zero.
+The 8,234 existing names that carry a section number are renamed by the area that owns each package, as part of re-annotating it, and the entries that key a renamed test by name in `tests/registers/skip-reasons.yaml`, `tests/registers/residual-skip-reasons.yaml`, and `tests/flake-budget.yaml` follow each rename. This change adds that to the area exit of the v1 program, beside the area's count of old `§` citations reaching zero.
 
 ## Worked example
 

@@ -1335,42 +1335,36 @@ func TestChangeGraphChannelGuardDocumentKeysSelectOnlyTheDocsTier(t *testing.T) 
 	}
 }
 
-// TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness pins
-// the change-graph keys of the runtime supervisor's C sources and image:
-// the path validator accepts both, and the committed graph routes an edit
-// under supervisor/ to the static-tier binary check and the unit-tier C harness
-// driver, and an edit to Dockerfile.supervisor to the binary check. A
-// validator that rejected the keys would force their removal, and a C
-// change would then select no test under --changed.
+// TestRuntimeSupervisorSourcesSelectTheHarnessAndTheImageTiers pins the
+// selection of the runtime supervisor's C sources and image, which no Go
+// package owns, so tests/non-go-inputs.yaml routes them: an edit under
+// supervisor/ selects the unit-tier C harness driver, the supervise
+// contract, and the tiers that deploy the image, and an edit to
+// Dockerfile.supervisor selects the tiers that deploy the image. The
+// static-tier binary check runs on every invocation. Without the rows a C
+// change would select the static tier alone under --changed.
 //
 // spec: 4.7.11 (Adapter-Agent Security Boundary), 4.7.10 (Deployment Model)
-func TestRuntimeSupervisorChangeGraphKeysSelectTheBinaryCheckAndHarness(t *testing.T) {
-	for _, key := range []string{"supervisor/", "Dockerfile.supervisor"} {
-		if res := validateChangeGraphPathsOverKey(t, key); !res.ok {
-			t.Errorf("a change graph keyed on %s fails the path validator: %s", key, res.detail)
-		}
+func TestRuntimeSupervisorSourcesSelectTheHarnessAndTheImageTiers(t *testing.T) {
+	g, err := loadPkgGraph(context.Background(), repoRoot())
+	if err != nil {
+		t.Fatalf("load the package graph: %v", err)
 	}
-	globs := mustReadChangeGraphGlobs(t)
-	want := map[string]map[string]string{
-		"supervisor/": {
-			"static": "tests/static/build/supervisor_binary_test.go",
-			"unit":   "tests/testinfra/supervisorbuild/...",
-		},
-		"Dockerfile.supervisor": {
-			"static": "tests/static/build/supervisor_binary_test.go",
-		},
+	inputs, err := readNonGoInputs(repoRoot())
+	if err != nil {
+		t.Fatalf("read the non-Go input list: %v", err)
 	}
-	for key, tiers := range want {
-		for tier, target := range tiers {
-			found := false
-			for _, got := range globs[key][tier] {
-				if got == target {
-					found = true
-				}
-			}
-			if !found {
-				t.Errorf("the change graph's %s key does not select %s at tier %s: %v", key, target, tier, globs[key])
-			}
+	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	c := planOf(selectChanged([]string{"supervisor/supervisor.c"}, g, inputs, specEdits{}, opts))
+	if !contains(c[tierUnit].pkgs, "./tests/testinfra/supervisorbuild") {
+		t.Errorf("an edit under supervisor/ selects unit %v, without the C harness driver", c[tierUnit].pkgs)
+	}
+	if !contains(c[tierContract].pkgs, "./tests/contract/adapter_supervise") {
+		t.Errorf("an edit under supervisor/ selects contract %v, without the supervise contract", c[tierContract].pkgs)
+	}
+	for _, path := range []string{"supervisor/supervisor.c", "Dockerfile.supervisor"} {
+		if _, ok := planOf(selectChanged([]string{path}, g, inputs, specEdits{}, opts))[tierE2EKind]; !ok {
+			t.Errorf("an edit to %s does not select the e2e_kind tier, which deploys the supervisor image", path)
 		}
 	}
 }
