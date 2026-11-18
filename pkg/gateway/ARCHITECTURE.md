@@ -32,6 +32,7 @@ Domain logic and stores do not belong to a gateway part. They live in concern di
 - `pkg/gateway/seam` imports no other package of `pkg/gateway`.
 - No package outside `pkg/gateway` and `cmd/lenny-gateway` imports a package of `pkg/gateway`, except test packages under `tests/`.
 - A package of another replica-level part, or of the web playground, imports no seam package.
+- Only the session core, the metering proxy, and `cmd/lenny-gateway` import the credential and admission packages (the credential store, the credential lease store, the authentication middleware, quota, policy, and the tenant store), and the API front imports the authentication middleware alone among them. `tests/static/lint/gatewaylayout/confined.go` lists them.
 - Every package of `pkg/gateway` sits in a directory of the table above.
 
 The replica-level parts other than the API front may import the session core and the seam interface. `cmd/lenny-gateway` imports every part and wires each concrete type into the interfaces of `pkg/gateway/seam`.

@@ -20,6 +20,7 @@ const (
 	RuleCoreImports          = "core-imports"
 	RuleAPIFrontImports      = "api-front-imports"
 	RuleReplicaImports       = "replica-imports"
+	RuleConfinedImports      = "confined-imports"
 	RuleSeamInterfaceImports = "seam-interface-imports"
 	RuleOutsideImports       = "outside-imports"
 	RulePlacement            = "placement"
@@ -28,7 +29,8 @@ const (
 func knownRule(rule string) bool {
 	switch rule {
 	case RuleSeamImports, RuleCoreImports, RuleAPIFrontImports,
-		RuleReplicaImports, RuleSeamInterfaceImports, RuleOutsideImports:
+		RuleReplicaImports, RuleSeamInterfaceImports, RuleOutsideImports,
+		RuleConfinedImports:
 		return true
 	}
 	return false
@@ -75,15 +77,16 @@ func (r Result) Failed() bool {
 
 // checker classifies packages against the table and the register.
 type checker struct {
-	module string
-	table  []Dir
-	rows   map[string]PackageRow
+	module   string
+	table    []Dir
+	confined []Confinement
+	rows     map[string]PackageRow
 }
 
 // Check applies the rules to the packages of a module. module is the
 // module path, which every repository-relative path is taken against.
 func Check(module string, table []Dir, pkgs []Package, reg Register) Result {
-	c := &checker{module: module, table: table, rows: map[string]PackageRow{}}
+	c := &checker{module: module, table: table, confined: Confined, rows: map[string]PackageRow{}}
 	for _, row := range reg.Packages {
 		c.rows[row.Package] = row
 	}
@@ -165,12 +168,20 @@ func (c *checker) violations(rel string, imports []string) []Violation {
 	if within(rel, GatewayRoot) && c.misplaced(rel) {
 		out = append(out, Violation{Rule: RulePlacement, Package: rel})
 	}
+	part := c.part(rel)
 	for _, imp := range imports {
 		to, ok := c.rel(imp)
-		if !ok || !within(to, GatewayRoot) {
+		if !ok {
 			continue
 		}
-		if rule := c.importRule(rel, kind, to); rule != "" {
+		rule := ""
+		if within(to, GatewayRoot) {
+			rule = c.importRule(rel, kind, to)
+		}
+		if rule == "" && confinedImport(kind, part, to, c.confined) {
+			rule = RuleConfinedImports
+		}
+		if rule != "" {
 			out = append(out, Violation{Rule: rule, Package: rel, Import: to})
 		}
 	}

@@ -24,6 +24,10 @@
 //   - outside-imports: no package outside pkg/gateway and cmd/lenny-gateway
 //     imports a package under pkg/gateway, test packages under tests/
 //     excepted;
+//   - confined-imports: only the session core, the metering proxy, and the
+//     composition root import the credential and admission packages that
+//     confined.go lists, and the API front imports only the authentication
+//     middleware among them (GW-R2);
 //   - placement: every package under pkg/gateway sits in a directory of the
 //     table.
 //

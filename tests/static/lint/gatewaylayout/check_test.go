@@ -217,14 +217,14 @@ func TestRegisteredViolationsPassAndStaleRowsFail(t *testing.T) {
 func TestPackagesInTransitAreImportableAndDomainPackagesStayOutside(t *testing.T) {
 	pkgs := append(
 		base(),
-		pkg("pkg/gateway/quota/quotastore", "pkg/gateway/connectors/conn"),
+		pkg("pkg/gateway/billing/billingstore", "pkg/gateway/connectors/conn"),
 		pkg("pkg/gateway/connectors/conn", "pkg/gateway/core/podclaim", "pkg/gateway/streamproxy/bus"),
-		pkg("pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore", "pkg/gateway/connectors/conn"),
-		pkg("pkg/ops", "pkg/gateway/quota/quotastore", "pkg/gateway/connectors/conn"),
+		pkg("pkg/gateway/platformtools/tools", "pkg/gateway/billing/billingstore", "pkg/gateway/connectors/conn"),
+		pkg("pkg/ops", "pkg/gateway/billing/billingstore", "pkg/gateway/connectors/conn"),
 		pkg("pkg/gateway/quota/quotacheckpoint", "pkg/gateway/api/pipeline"),
 	)
 	reg := Register{Packages: []PackageRow{
-		{Package: "pkg/gateway/quota/quotastore", Part: PartDomain, Step: "0117.S9"},
+		{Package: "pkg/gateway/billing/billingstore", Part: PartDomain, Step: "0117.S9"},
 		{Package: "pkg/gateway/quota/quotacheckpoint", Part: PartDomain, Step: "0117.S9"},
 		{Package: "pkg/gateway/connectors/conn", Part: PartRemoved, RemovedBy: "0124"},
 	}}
@@ -467,5 +467,81 @@ func TestParseRegisterRefusesMalformedYAML(t *testing.T) {
 	r, err := ParseRegister([]byte("version: 1\n"))
 	if err != nil || r.Version != 1 {
 		t.Errorf("ParseRegister = %+v, %v", r, err)
+	}
+}
+
+// TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy checks GW-R2 over
+// fixed modules: with no confined import the check is clean; the session
+// core, the metering proxy, the composition root, packages outside the
+// gateway, and packages in transit import every confined package; the API
+// front imports the authentication middleware and nothing else confined;
+// and every other part imports none, before and after the confined package
+// moves to its concern directory.
+// spec: GW-R2
+func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
+	assertClean(t, check(t, base(), Register{}))
+
+	allowed := append(
+		base(),
+		pkg("pkg/gateway/core/admission", "pkg/gateway/quota/quotastore", "pkg/policy/policy", "pkg/gateway/credentials/credentialstore"),
+		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
+		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
+		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
+		pkg("pkg/ops", "pkg/credential/credentialstore"),
+		pkg("pkg/gateway/billing/usage", "pkg/gateway/quota/quotastore"),
+	)
+	transit := Register{Packages: []PackageRow{{Package: "pkg/gateway/billing/usage", Part: PartDomain, Step: "0117.S9"}}}
+	res := check(t, allowed, transit)
+	if res.Failed() {
+		t.Fatalf("allowed importers were refused: unregistered %v, stale %v, malformed %v", res.Unregistered, res.Stale, res.Malformed)
+	}
+
+	cases := []struct {
+		name string
+		add  Package
+		want Violation
+	}{
+		{
+			"a seam imports quota", pkg("pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore"),
+			Violation{RuleConfinedImports, "pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore"},
+		},
+		{
+			"a seam imports the moved credential store", pkg("pkg/gateway/streamproxy/x", "pkg/credential/credentialstore/pgstore"),
+			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/x", "pkg/credential/credentialstore/pgstore"},
+		},
+		{
+			"a seam imports the authentication middleware", pkg("pkg/gateway/uploadhandler/up", "pkg/gateway/middleware/auth"),
+			Violation{RuleConfinedImports, "pkg/gateway/uploadhandler/up", "pkg/gateway/middleware/auth"},
+		},
+		{
+			"the API front imports policy", pkg("pkg/gateway/api/admin", "pkg/gateway/policy/policy"),
+			Violation{RuleConfinedImports, "pkg/gateway/api/admin", "pkg/gateway/policy/policy"},
+		},
+		{
+			"a replica-level part imports the tenant store", pkg("pkg/gateway/replica/x", "pkg/gateway/environment/tenantstore"),
+			Violation{RuleConfinedImports, "pkg/gateway/replica/x", "pkg/gateway/environment/tenantstore"},
+		},
+		{
+			"the seam interface imports quota", pkg("pkg/gateway/seam/q", "pkg/quota"),
+			Violation{RuleConfinedImports, "pkg/gateway/seam/q", "pkg/quota"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assertOnly(t, check(t, append(append([]Package{}, allowed...), tc.add), transit), tc.want)
+		})
+	}
+
+	// A registered importer passes, and its row goes stale when the import
+	// goes.
+	withRow := transit
+	withRow.Imports = []ImportRow{{From: "pkg/gateway/platformtools/tools", To: "pkg/gateway/quota/quotastore", Rule: RuleConfinedImports, Step: "0117.S7"}}
+	res = check(t, append(append([]Package{}, allowed...), pkg("pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore")), withRow)
+	if res.Failed() {
+		t.Fatalf("a registered confined import failed: unregistered %v, stale %v", res.Unregistered, res.Stale)
+	}
+	res = check(t, append(append([]Package{}, allowed...), pkg("pkg/gateway/platformtools/tools")), withRow)
+	if len(res.Stale) != 1 || !strings.Contains(res.Stale[0], "no longer breaks a rule") {
+		t.Fatalf("a registered confined import that went is not stale: %v", res.Stale)
 	}
 }
