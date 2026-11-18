@@ -64,7 +64,9 @@ var encodedRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{20,}={0,2}`)
 func redactByForm(b []byte, depth int, public map[string]bool) []byte {
 	b = replaceSpans(b, credentialSpans(b, depth, public))
 	for _, p := range secretPatterns {
-		b = p.re.ReplaceAll(b, []byte(p.with))
+		if containsFold(b, p.hints) {
+			b = p.re.ReplaceAll(b, []byte(p.with))
+		}
 	}
 	return redactKeyed(b, public)
 }

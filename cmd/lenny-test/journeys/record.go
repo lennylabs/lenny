@@ -51,8 +51,10 @@ func (r *Redactor) WriteJSON(path string, v any) error {
 // the writer is closed, so a token split across two writes is still
 // redacted whole. It also holds a complete line that ends in a token
 // character, because a raw line break there can wrap a token onto the
-// next line (redact_forms.go, wraps). The caller closes it to write the
-// held bytes.
+// next line (redact_forms.go, wraps), and one that ends in a colon, a
+// pipe, or a greater-than sign, because the value of a credential key
+// can follow on indented lines (redact_keys.go). The caller closes it to
+// write the held bytes.
 func (r *Redactor) Create(path string) (io.WriteCloser, error) {
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
@@ -87,8 +89,8 @@ func (s *recordStream) Write(p []byte) (int, error) {
 }
 
 // flushPoint returns the index of the last newline in b that ends a line
-// whose last character, before any carriage return, is not a token
-// character, or -1.
+// whose last character, before any carriage return, is neither a token
+// character nor a colon, a pipe, or a greater-than sign, or -1.
 func flushPoint(b []byte) int {
 	i := bytes.LastIndexByte(b, '\n')
 	for i >= 0 {
@@ -96,7 +98,7 @@ func flushPoint(b []byte) int {
 		if j >= 0 && b[j] == '\r' {
 			j--
 		}
-		if j < 0 || !isTokenByte(b[j]) {
+		if j < 0 || !isTokenByte(b[j]) && b[j] != ':' && b[j] != '|' && b[j] != '>' {
 			return i
 		}
 		i = bytes.LastIndexByte(b[:i], '\n')

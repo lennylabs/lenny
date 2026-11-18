@@ -27,24 +27,33 @@ const minSecretLen = 8
 // data, the token variables the agent receives, a private key, from its
 // BEGIN line to its END line or, when output was cut short, to the end
 // of its base64 body, an Anthropic credential (an OAuth token,
-// sk-ant-oat01-..., or an API key, sk-ant-api03-...), and the
-// credentials of an Authorization: Basic header. The Anthropic form needs
+// sk-ant-oat01-..., or an API key, sk-ant-api03-...), the credentials of
+// an Authorization: Basic header (written with a colon or an equals sign,
+// or as the first element of a header map's list), and the password of
+// curl -u or --user user:password, unless it is all digits, as a uid:gid
+// pair is. Each quote these patterns allow can carry any number of the
+// backslashes of nested JSON escaping. The Anthropic form needs
 // letters and then digits before the second hyphen, so a scenario's
 // placeholder key, sk-ant-journey-<nonce>, does not match it. The values
 // under credential keys such as password are removed by redactKeyed
 // (redact_keys.go).
+//
+// Each pattern runs only when the text contains one of its hints, in any
+// case, which keeps a long line without them to a cheap scan.
 var secretPatterns = []struct {
-	re   *regexp.Regexp
-	with string
+	hints []string
+	re    *regexp.Regexp
+	with  string
 }{
-	{regexp.MustCompile(`(?i)(bearer[\s=]+)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
-	{regexp.MustCompile(`(?i)(authorization(?:\\?["'])?\s*:\s*(?:\\?["'])?basic\s+)[A-Za-z0-9+/=]{4,}`), "${1}" + Redacted},
-	{regexp.MustCompile(`(--token[= ](?:\\?["'])?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
-	{regexp.MustCompile(`((?:client-key-data|client-certificate-data|token)(?:\\"|")?\s*:\s*(?:\\"|")?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
-	{regexp.MustCompile(`((?:LENNY_API_TOKEN|CLAUDE_CODE_OAUTH_TOKEN)=)\S+`), "${1}" + Redacted},
-	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`), Redacted},
-	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[A-Za-z0-9+/=\s]|\\+[rnt])*`), Redacted},
-	{regexp.MustCompile(`sk-ant-[a-z]+[0-9]+-[A-Za-z0-9_-]{20,}`), Redacted},
+	{[]string{"bearer"}, regexp.MustCompile(`(?i)(bearer[\s=]+)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
+	{[]string{"basic"}, regexp.MustCompile(`(?i)(authorization(?:\\*["'])?[ \t]*[:=][ \t]*(?:\[[ \t]*)?(?:\\*["'])?[ \t]*basic[ \t]+)[A-Za-z0-9+/=._~-]{4,}`), "${1}" + Redacted},
+	{[]string{"-u"}, regexp.MustCompile(`((?:^|[\s"'])(?:-u|--user)[ =]+(?:\\*["'])?[^\s:"'\\]+:)[^\s"'\\]*[^\s"'\\0-9][^\s"'\\]*`), "${1}" + Redacted},
+	{[]string{"--token"}, regexp.MustCompile(`(--token[= ](?:\\*["'])?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
+	{[]string{"token", "-data"}, regexp.MustCompile(`((?:client-key-data|client-certificate-data|token)(?:\\*["'])?[ \t]*:[ \t]*(?:\\*["'])?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
+	{[]string{"_token="}, regexp.MustCompile(`((?:LENNY_API_TOKEN|CLAUDE_CODE_OAUTH_TOKEN)=)\S+`), "${1}" + Redacted},
+	{[]string{"private key"}, regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`), Redacted},
+	{[]string{"private key"}, regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[A-Za-z0-9+/=\s]|\\+[rnt])*`), Redacted},
+	{[]string{"sk-ant-"}, regexp.MustCompile(`sk-ant-[a-z]+[0-9]+-[A-Za-z0-9_-]{20,}`), Redacted},
 }
 
 // Redactor removes secrets from what the harness writes to a record:
