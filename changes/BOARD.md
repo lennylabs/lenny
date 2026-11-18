@@ -231,7 +231,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `In progress` | 4 of 13 | 4 |
+| [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `In progress` | 4 of 13 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 0 |

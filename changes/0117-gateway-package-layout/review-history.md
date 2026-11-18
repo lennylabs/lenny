@@ -98,3 +98,4 @@
 - 2026-11-18, build. The branch of 0117.S4 merged `main` after 0117.S3 landed, keeping one `partFlags` with both steps' fields, placing the metering proxy's metric set in `pkg/gateway/meteringproxy/llmproxy`, repointing 0117.S3's files at the packages 0117.S4 moved, and rebuilding the registers from `main`'s with the rows of 0117.S4 removed.
 - 2026-11-18, owner decision. The owner settled decision 22, the web playground's token packages, in the words "0117 decision 22: allow it". The decision moved to "Decisions" with its number on option (a), the allowance the branch of 0117.S4 built. Decisions 21, 23, 24, and 25 stay open.
 - 2026-11-18, build. 0117.S4 landed; the gate run is named in the merge commit. [`digests/0117.S4.md`](digests/0117.S4.md) records the result.
+- 2026-11-18, owner decision. Open decisions 21, 23, 24, 25 settled on (a) in the owner's words "all ok", after an elaboration; each keeps its number under "Decisions".
