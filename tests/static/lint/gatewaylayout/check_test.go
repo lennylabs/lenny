@@ -488,7 +488,7 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		pkg("pkg/gateway/core/admission", "pkg/gateway/quota/quotastore", "pkg/policy/policy", "pkg/gateway/credentials/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
-		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/externalapi/admintoken"),
+		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/externalapi/admintoken", "pkg/gateway/pki/carotation", "pkg/connectoroauth", "pkg/gateway/serviceidentity"),
 		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),
 		pkg("pkg/gateway/billing/usage", "pkg/gateway/quota/quotastore"),
@@ -559,6 +559,18 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		{
 			"the API front imports token introspection", pkg("pkg/gateway/api/i", "pkg/auth/introspection"),
 			Violation{RuleConfinedImports, "pkg/gateway/api/i", "pkg/auth/introspection"},
+		},
+		{
+			"a seam imports upload tokens", pkg("pkg/gateway/uploadhandler/u", "pkg/uploadtoken"),
+			Violation{RuleConfinedImports, "pkg/gateway/uploadhandler/u", "pkg/uploadtoken"},
+		},
+		{
+			"the API front imports token exchange", pkg("pkg/gateway/api/x", "pkg/tokenexchange"),
+			Violation{RuleConfinedImports, "pkg/gateway/api/x", "pkg/tokenexchange"},
+		},
+		{
+			"a replica-level part imports the mTLS deny list", pkg("pkg/gateway/replica/m", "pkg/mtls/denylist"),
+			Violation{RuleConfinedImports, "pkg/gateway/replica/m", "pkg/mtls/denylist"},
 		},
 		{
 			"a seam imports an authorization predicate", pkg("pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"),

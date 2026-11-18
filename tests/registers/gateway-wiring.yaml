@@ -48,6 +48,21 @@ crossings:
     from: pkg/tenantkms
     type: Prober.Start
     step: 0117.S4
+  - to: pkg/gateway/core/subsystem
+    interface: Subsystem.Do(1)
+    from: pkg/proto/tokenservice/v1
+    type: ProbeSecretAccessResponse
+    step: 0117.S4
+  - to: pkg/gateway/core/subsystem
+    interface: Subsystem.Do(1)
+    from: pkg/proto/tokenservice/v1
+    type: TokenServiceClient
+    step: 0117.S4
+  - to: pkg/gateway/core/subsystem
+    interface: Subsystem.Do(1)
+    from: pkg/proto/tokenservice/v1
+    type: TokenServiceClient.ProbeSecretAccess
+    step: 0117.S4
   - to: pkg/gateway/externalapi/admin
     interface: ConnectorOAuth.ClientSecrets
     from: pkg/gateway/connectors/connectorsecret
