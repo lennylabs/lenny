@@ -50,14 +50,14 @@ func (a *reclaimRecordingAssigner) ReleaseThrough(sessionID string, _ int64) err
 func (*reclaimRecordingAssigner) Release(string) error { return nil }
 
 // reclaimTestServer builds a white-box Server wired with a fake-client binder
-// (holding a seeded per-pod SandboxClaim for podName), a live registry, and a
+// (holding a seeded per-pod PodClaim for podName), a live registry, and a
 // recording credential assigner, so a test can exercise the terminal reclaim
 // dispatch without an envtest apiserver. It returns the server, the fake kube
 // client, and the assigner.
 func reclaimTestServer(t *testing.T, podName string) (*Server, client.Client, *reclaimRecordingAssigner) {
 	t.Helper()
 	const ns = "lenny-agents"
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(podName), Namespace: ns},
 	}
 	c := fake.NewClientBuilder().WithScheme(claimAtCreateScheme(t)).WithObjects(claim).Build()
@@ -78,7 +78,7 @@ func reclaimTestServer(t *testing.T, podName string) (*Server, client.Client, *r
 func claimExists(t *testing.T, c client.Client, podName string) bool {
 	t.Helper()
 	const ns = "lenny-agents"
-	var sc lennyv1.SandboxClaim
+	var sc lennyv1.PodClaim
 	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(podName)}, &sc)
 	if err == nil {
 		return true
@@ -126,7 +126,7 @@ func TestTerminalReclaimPreRunningReleasesPodAndLease(t *testing.T) {
 func TestTerminalReclaimPreRunningSkipsLocallyBoundSession(t *testing.T) {
 	s, c, assigner := reclaimTestServer(t, "sbx-bound")
 	// A live BindResult marks the session as attached on this replica.
-	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-bound", TenantID: "acme", SandboxName: "sbx-bound"})
+	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-bound", TenantID: "acme", AgentPodName: "sbx-bound"})
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateReady, sessionstore.Session{
 		UserID: testOwner,
@@ -229,7 +229,7 @@ func TestTerminalReclaimPreRunningReclaimsUnboundStartingSession_spec_7_2(t *tes
 // binding)
 func TestTerminalReclaimPreRunningLeavesBoundStartingSessionToExecutor_spec_7_2(t *testing.T) {
 	s, c, _ := reclaimTestServer(t, "sbx-start-bound")
-	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-start-bound", TenantID: "acme", SandboxName: "sbx-start-bound"})
+	s.podRegistry.Put(&podsession.BindResult{SessionID: "sess-start-bound", TenantID: "acme", AgentPodName: "sbx-start-bound"})
 
 	ran := s.terminalReclaimPreRunning(context.Background(), session.StateStarting, sessionstore.Session{
 		UserID: testOwner,

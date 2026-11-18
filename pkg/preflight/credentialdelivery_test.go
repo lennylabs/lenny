@@ -19,12 +19,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/preflight"
 )
 
-// deliveryTemplate builds a SandboxTemplate carrying the four
+// deliveryTemplate builds a PodSet carrying the four
 // credential-delivery fields the §4.9 preflight scan inspects.
-func deliveryTemplate(name, delivery, isolation, spiffe, egress string) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
+func deliveryTemplate(name, delivery, isolation, spiffe, egress string) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: "lenny-agents"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "echo",
 			DeliveryMode:     delivery,
 			IsolationProfile: isolation,
@@ -38,7 +38,7 @@ func deliveryTemplate(name, delivery, isolation, spiffe, egress string) *lennyv1
 // credential-delivery scan as a pure decision: the scan enforces only in
 // multi-tenant mode, and in multi-tenant mode it rejects each of the
 // three combinations the canonical Decide denies, stamping the guard's
-// error code and naming the offending SandboxTemplate.
+// error code and naming the offending PodSet.
 func TestCheckCredentialDelivery_spec_4_9(t *testing.T) {
 	cases := []struct {
 		name     string
@@ -78,21 +78,21 @@ func TestCheckCredentialDelivery_spec_4_9(t *testing.T) {
 			tenancy:  "multi",
 			pools:    []preflight.CredentialDeliveryPool{{Name: "leaky", DeliveryMode: "proxy", SpiffeBinding: "disabled"}},
 			wantPass: false,
-			wantSubs: []string{"ProxyModeSpiffeBindingDisabledMultiTenantRejected", "SandboxTemplate leaky"},
+			wantSubs: []string{"ProxyModeSpiffeBindingDisabledMultiTenantRejected", "PodSet leaky"},
 		},
 		{
 			name:     "multi-tenant direct standard fails",
 			tenancy:  "multi",
 			pools:    []preflight.CredentialDeliveryPool{{Name: "runc", DeliveryMode: "direct", IsolationProfile: "standard"}},
 			wantPass: false,
-			wantSubs: []string{"DirectModeStandardIsolationMultiTenantRejected", "SandboxTemplate runc"},
+			wantSubs: []string{"DirectModeStandardIsolationMultiTenantRejected", "PodSet runc"},
 		},
 		{
 			name:     "multi-tenant proxy provider-direct fails",
 			tenancy:  "multi",
 			pools:    []preflight.CredentialDeliveryPool{{Name: "bypass", DeliveryMode: "proxy", SpiffeBinding: "enabled", EgressProfile: "provider-direct"}},
 			wantPass: false,
-			wantSubs: []string{"InvalidPoolEgressDeliveryCombo", "SandboxTemplate bypass"},
+			wantSubs: []string{"InvalidPoolEgressDeliveryCombo", "PodSet bypass"},
 		},
 		{
 			name:    "first forbidden pool reported",
@@ -102,7 +102,7 @@ func TestCheckCredentialDelivery_spec_4_9(t *testing.T) {
 				{Name: "bad", DeliveryMode: "proxy", SpiffeBinding: "disabled"},
 			},
 			wantPass: false,
-			wantSubs: []string{"SandboxTemplate bad"},
+			wantSubs: []string{"PodSet bad"},
 		},
 	}
 	for _, tc := range cases {
@@ -150,7 +150,7 @@ func TestRun_CredentialDeliveryScan_spec_4_9(t *testing.T) {
 
 // TestRun_CredentialDeliveryScanListErrorFailsClosed_spec_4_9 pins the
 // fail-closed posture that inverts the advisory node-drain-timeout
-// sibling: a SandboxTemplateList error other than a missing CRD fails the
+// sibling: a PodSetList error other than a missing CRD fails the
 // install rather than passing advisory-only. A pre-fix scan that treated
 // a list error as a pass would let this test's api-server-unavailable
 // install proceed.
@@ -162,7 +162,7 @@ func TestRun_CredentialDeliveryScanListErrorFailsClosed_spec_4_9(t *testing.T) {
 		WithObjects(baseline...).
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-				if _, ok := list.(*lennyv1.SandboxTemplateList); ok {
+				if _, ok := list.(*lennyv1.PodSetList); ok {
 					return errors.New("api server unavailable")
 				}
 				return cl.List(ctx, list, opts...)
@@ -174,7 +174,7 @@ func TestRun_CredentialDeliveryScanListErrorFailsClosed_spec_4_9(t *testing.T) {
 		preflight.Config{Namespace: preflightNS, TenancyMode: "multi"})
 	d := findCheck(t, report, "credential-delivery-multitenant")
 	if d.Passed {
-		t.Fatalf("a SandboxTemplateList read error must fail the scan closed; got Passed=true")
+		t.Fatalf("a PodSetList read error must fail the scan closed; got Passed=true")
 	}
 	if !strings.Contains(d.Reason, "api server unavailable") {
 		t.Fatalf("reason %q missing the list error", d.Reason)
@@ -182,7 +182,7 @@ func TestRun_CredentialDeliveryScanListErrorFailsClosed_spec_4_9(t *testing.T) {
 }
 
 // TestRun_CredentialDeliveryScanMissingCRDPasses_spec_4_9 verifies a
-// fresh install where the SandboxTemplate CRD is not yet applied treats
+// fresh install where the PodSet CRD is not yet applied treats
 // the scan as "no pools" and passes cleanly, matching the
 // node-drain-timeout gather's missing-CRD tolerance. The NotFound error
 // stands in for the API server's response when the CRD is absent.
@@ -194,9 +194,9 @@ func TestRun_CredentialDeliveryScanMissingCRDPasses_spec_4_9(t *testing.T) {
 		WithObjects(baseline...).
 		WithInterceptorFuncs(interceptor.Funcs{
 			List: func(ctx context.Context, cl client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-				if _, ok := list.(*lennyv1.SandboxTemplateList); ok {
+				if _, ok := list.(*lennyv1.PodSetList); ok {
 					return apierrors.NewNotFound(
-						schema.GroupResource{Group: "lenny.dev", Resource: "sandboxtemplates"}, "",
+						schema.GroupResource{Group: "lenny.dev", Resource: "podsets"}, "",
 					)
 				}
 				return cl.List(ctx, list, opts...)
@@ -208,6 +208,6 @@ func TestRun_CredentialDeliveryScanMissingCRDPasses_spec_4_9(t *testing.T) {
 		preflight.Config{Namespace: preflightNS, TenancyMode: "multi"})
 	d := findCheck(t, report, "credential-delivery-multitenant")
 	if !d.Passed {
-		t.Fatalf("a missing SandboxTemplate CRD must be tolerated; got Passed=false reason=%q", d.Reason)
+		t.Fatalf("a missing PodSet CRD must be tolerated; got Passed=false reason=%q", d.Reason)
 	}
 }

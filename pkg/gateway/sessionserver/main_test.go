@@ -16,7 +16,7 @@ import (
 // failed the unit tier (TEST-GAPS T-17.4.27).
 //
 // Tests sharing it see each other's objects, so each test keeps its namespaced
-// objects (SandboxWarmPool, SandboxTemplate, Sandbox, SandboxClaim, and Pod)
+// objects (PodSet, AgentPod, PodClaim, and Pod)
 // in its own namespace (testNS), and the server and binder under test take
 // that namespace as their agent namespace.
 var sharedEnv envtest.Shared

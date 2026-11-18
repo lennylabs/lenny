@@ -54,7 +54,7 @@ func (g *ClaimGarbageCollector) SweepForTest(ctx context.Context) error {
 // reclaim against the supplied claim view, so the package's external tests can
 // exercise the rebind-vs-reclaim precondition race with a stale claim
 // resourceVersion.
-func (g *ClaimGarbageCollector) ReclaimReservedForTest(ctx context.Context, claim *lennyv1.SandboxClaim) error {
+func (g *ClaimGarbageCollector) ReclaimReservedForTest(ctx context.Context, claim *lennyv1.PodClaim) error {
 	return g.reclaimReserved(ctx, claim)
 }
 

@@ -20,7 +20,7 @@ import (
 )
 
 // scheme is the shared scheme every test wires into the fake client
-// so Sandbox CRUD round-trips through the controller-runtime API.
+// so AgentPod CRUD round-trips through the controller-runtime API.
 func newScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -41,25 +41,25 @@ func newRegistry(t *testing.T, namespace string, seed ...client.Object) *podregi
 }
 
 // newFakeClient builds the fake controller-runtime client every test uses.
-// Both Sandbox and the per-pod SandboxClaim carry a status subresource so
-// the §4.6.1 claim writes (SandboxClaim CREATE + `bound` status) and the
-// WarmPoolController-projected Sandbox.status round-trip through the API.
+// Both AgentPod and the per-pod PodClaim carry a status subresource so
+// the §4.6.1 claim writes (PodClaim CREATE + `bound` status) and the
+// WarmPoolController-projected AgentPod.status round-trip through the API.
 func newFakeClient(t *testing.T, seed ...client.Object) client.Client {
 	t.Helper()
 	scheme := newScheme(t)
 	return fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithObjects(seed...).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
+		WithStatusSubresource(&lennyv1.AgentPod{}, &lennyv1.PodClaim{}).
 		Build()
 }
 
-func seedSandbox(name, pool, phase string) *lennyv1.Sandbox {
-	sb := &lennyv1.Sandbox{}
+func seedAgentPod(name, pool, phase string) *lennyv1.AgentPod {
+	sb := &lennyv1.AgentPod{}
 	sb.Namespace = "lenny-agents"
 	sb.Name = name
 	sb.Labels = map[string]string{podregistry.PoolLabel: pool}
-	sb.Spec.PoolRef = pool
+	sb.Spec.PodSetRef = pool
 	sb.Spec.RuntimeRef = "echo"
 	sb.Spec.IsolationProfile = "sandboxed"
 	sb.Status.Phase = phase
@@ -69,7 +69,7 @@ func seedSandbox(name, pool, phase string) *lennyv1.Sandbox {
 // spec: §12.6 (GetPod returns the §6.2 phase via the CRD status)
 func TestGetPodReturnsCRDStatus(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "idle"))
+		seedAgentPod("alpha", "echo-pool", "idle"))
 	rec, err := r.GetPod(context.Background(), "alpha")
 	if err != nil {
 		t.Fatalf("GetPod: %v", err)
@@ -97,7 +97,7 @@ func TestGetPodMissingReturnsErrNotFound(t *testing.T) {
 // spec: §6.2 (UpdatePodState writes the new phase under CAS)
 func TestUpdatePodStateWritesPhase(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "warming"))
+		seedAgentPod("alpha", "echo-pool", "warming"))
 	if err := r.UpdatePodState(context.Background(), "alpha",
 		podregistry.StateTransition{From: "warming", To: "idle"}); err != nil {
 		t.Fatalf("UpdatePodState: %v", err)
@@ -111,7 +111,7 @@ func TestUpdatePodStateWritesPhase(t *testing.T) {
 // spec: §6.2 (mismatched From rejects the transition)
 func TestUpdatePodStateRejectsMismatchedFrom(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "idle"))
+		seedAgentPod("alpha", "echo-pool", "idle"))
 	err := r.UpdatePodState(context.Background(), "alpha",
 		podregistry.StateTransition{From: "warming", To: "claimed"})
 	if !errors.Is(err, podregistry.ErrInvalidTransition) {
@@ -121,9 +121,9 @@ func TestUpdatePodStateRejectsMismatchedFrom(t *testing.T) {
 
 // The happy-path ClaimPod assertions (the per-pod claim CREATE plus the
 // `bound` binding-state status patch, the projected claimed record, and the
-// untouched Sandbox.status) write the binding state through the canonical
+// untouched AgentPod.status) write the binding state through the canonical
 // pkg/gateway/podclaim Server-Side Apply PATCH (§4.6.3: the gateway holds
-// `get`/`patch` and no `update` on sandboxclaims/status), which the
+// `get`/`patch` and no `update` on podclaims/status), which the
 // controller-runtime fake client cannot round-trip. They run against a real
 // API server in the component suite
 // (tests/component/stores/crdpodregistry_claim_test.go:
@@ -135,7 +135,7 @@ func TestUpdatePodStateRejectsMismatchedFrom(t *testing.T) {
 // spec: §4.6.1 (ClaimPod returns ErrPoolExhausted when nothing idle)
 func TestClaimPodExhaustedWhenNoneIdle(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "claimed"))
+		seedAgentPod("alpha", "echo-pool", "claimed"))
 	_, err := r.ClaimPod(context.Background(),
 		podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme", SessionID: "s1"})
 	if !errors.Is(err, podregistry.ErrPoolExhausted) {
@@ -150,7 +150,7 @@ func TestClaimPodExhaustedWhenNoneIdle(t *testing.T) {
 // claiming a pod it cannot attribute.
 func TestClaimPodRejectsMissingRequiredOpts(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "idle"))
+		seedAgentPod("alpha", "echo-pool", "idle"))
 	cases := []struct {
 		name string
 		opts podregistry.ClaimOpts
@@ -167,7 +167,7 @@ func TestClaimPodRejectsMissingRequiredOpts(t *testing.T) {
 			}
 			// A rejected claim returns before any idle-pod scan, so the seeded
 			// idle pod is untouched and stays claimable (the gateway never
-			// wrote its Sandbox.status.phase).
+			// wrote its AgentPod.status.phase).
 			rec, gerr := r.GetPod(context.Background(), "alpha")
 			if gerr != nil {
 				t.Fatalf("GetPod after rejected claim: %v", gerr)
@@ -180,7 +180,7 @@ func TestClaimPodRejectsMissingRequiredOpts(t *testing.T) {
 }
 
 // spec: §6.2 (UpdatePodState on an unknown pod returns ErrNotFound). The
-// CAS write reads the Sandbox first; a missing Sandbox maps the API
+// CAS write reads the AgentPod first; a missing AgentPod maps the API
 // NotFound to the package sentinel so callers branch on it with errors.Is.
 func TestUpdatePodStateMissingReturnsErrNotFound(t *testing.T) {
 	r := newRegistry(t, "lenny-agents")
@@ -198,8 +198,8 @@ func TestUpdatePodStateMissingReturnsErrNotFound(t *testing.T) {
 func TestReleasePodPropagatesDeleteError(t *testing.T) {
 	base := fake.NewClientBuilder().
 		WithScheme(newScheme(t)).
-		WithObjects(seedSandbox("alpha", "echo-pool", "claimed")).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
+		WithObjects(seedAgentPod("alpha", "echo-pool", "claimed")).
+		WithStatusSubresource(&lennyv1.AgentPod{}, &lennyv1.PodClaim{}).
 		Build()
 	cli := interceptor.NewClient(base, interceptor.Funcs{
 		Delete: func(context.Context, client.WithWatch, client.Object, ...client.DeleteOption) error {
@@ -217,16 +217,16 @@ func TestReleasePodPropagatesDeleteError(t *testing.T) {
 }
 
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
-// a Sandbox.status writer). ReleasePod deletes the deterministic per-pod
-// SandboxClaim and leaves Sandbox.status untouched. The release reason
-// no longer maps to a Sandbox phase.
+// an AgentPod.status writer). ReleasePod deletes the deterministic per-pod
+// PodClaim and leaves AgentPod.status untouched. The release reason
+// no longer maps to an AgentPod phase.
 func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
-	cli := newFakeClient(t, seedSandbox("alpha", "echo-pool", "claimed"))
+	cli := newFakeClient(t, seedAgentPod("alpha", "echo-pool", "claimed"))
 	// Seed the per-pod claim the release deletes.
-	claim := &lennyv1.SandboxClaim{}
+	claim := &lennyv1.PodClaim{}
 	claim.Namespace = "lenny-agents"
 	claim.Name = "claim-alpha"
-	claim.Spec.SandboxRef = "alpha"
+	claim.Spec.AgentPodRef = "alpha"
 	claim.Spec.TenantID = "acme"
 	if err := cli.Create(context.Background(), claim); err != nil {
 		t.Fatalf("seed claim: %v", err)
@@ -239,21 +239,21 @@ func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 		t.Fatalf("ReleasePod: %v", err)
 	}
 	// The per-pod claim is gone.
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	if err := cli.Get(context.Background(),
 		client.ObjectKey{Namespace: "lenny-agents", Name: "claim-alpha"}, &got); !apierrors.IsNotFound(err) {
 		t.Errorf("claim still present after release: err = %v, want NotFound", err)
 	}
-	// Sandbox.status is untouched: the gateway is not a Sandbox.status writer,
+	// AgentPod.status is untouched: the gateway is not an AgentPod.status writer,
 	// so the stored phase stays as the WarmPoolController last projected it and
-	// no session/tenant is cleared on Sandbox.status here.
-	var sb lennyv1.Sandbox
+	// no session/tenant is cleared on AgentPod.status here.
+	var sb lennyv1.AgentPod
 	if err := cli.Get(context.Background(),
 		client.ObjectKey{Namespace: "lenny-agents", Name: "alpha"}, &sb); err != nil {
 		t.Fatalf("get released sandbox: %v", err)
 	}
 	if sb.Status.Phase != "claimed" {
-		t.Errorf("Sandbox.status.phase = %q, want claimed (unwritten by the gateway)", sb.Status.Phase)
+		t.Errorf("AgentPod.status.phase = %q, want claimed (unwritten by the gateway)", sb.Status.Phase)
 	}
 }
 
@@ -261,7 +261,7 @@ func TestReleasePodDeletesPerPodClaim_spec_4_6_3(t *testing.T) {
 // is already gone (a double release, or a claim the orphan GC reclaimed) is a
 // no-op rather than an error.
 func TestReleasePodIdempotentForMissingClaim_spec_4_6_1(t *testing.T) {
-	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+	r := newRegistry(t, "lenny-agents", seedAgentPod("alpha", "echo-pool", "idle"))
 	if err := r.ReleasePod(context.Background(), "alpha", podregistry.ReleaseCompleted); err != nil {
 		t.Errorf("ReleasePod with no claim = %v, want nil (idempotent)", err)
 	}
@@ -270,9 +270,9 @@ func TestReleasePodIdempotentForMissingClaim_spec_4_6_1(t *testing.T) {
 // spec: §12.6 (ListPodsByPool sorts deterministically)
 func TestListPodsByPoolSortsByName(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("z-pod", "echo-pool", "idle"),
-		seedSandbox("a-pod", "echo-pool", "idle"),
-		seedSandbox("other-pod", "other-pool", "idle"))
+		seedAgentPod("z-pod", "echo-pool", "idle"),
+		seedAgentPod("a-pod", "echo-pool", "idle"),
+		seedAgentPod("other-pod", "other-pool", "idle"))
 	out, err := r.ListPodsByPool(context.Background(), "echo-pool", podregistry.PodFilter{})
 	if err != nil {
 		t.Fatalf("ListPodsByPool: %v", err)
@@ -288,8 +288,8 @@ func TestListPodsByPoolSortsByName(t *testing.T) {
 // spec: §12.6 (filter by state narrows results)
 func TestListPodsByPoolFiltersByState(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("a-pod", "echo-pool", "idle"),
-		seedSandbox("b-pod", "echo-pool", "claimed"))
+		seedAgentPod("a-pod", "echo-pool", "idle"),
+		seedAgentPod("b-pod", "echo-pool", "claimed"))
 	out, _ := r.ListPodsByPool(context.Background(), "echo-pool",
 		podregistry.PodFilter{State: "idle"})
 	if len(out) != 1 || out[0].PodID != "a-pod" {
@@ -300,9 +300,9 @@ func TestListPodsByPoolFiltersByState(t *testing.T) {
 // spec: §12.6 (CountByState returns the §6.2 phase histogram)
 func TestCountByStateReturnsHistogram(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("a", "echo-pool", "idle"),
-		seedSandbox("b", "echo-pool", "idle"),
-		seedSandbox("c", "echo-pool", "claimed"))
+		seedAgentPod("a", "echo-pool", "idle"),
+		seedAgentPod("b", "echo-pool", "idle"),
+		seedAgentPod("c", "echo-pool", "claimed"))
 	counts, err := r.CountByState(context.Background(), "echo-pool")
 	if err != nil {
 		t.Fatalf("CountByState: %v", err)
@@ -312,8 +312,8 @@ func TestCountByStateReturnsHistogram(t *testing.T) {
 	}
 }
 
-// spec: §12.6 (CreatePod writes a new Sandbox with the PoolLabel)
-func TestCreatePodWritesNewSandbox(t *testing.T) {
+// spec: §12.6 (CreatePod writes a new AgentPod with the PoolLabel)
+func TestCreatePodWritesNewAgentPod(t *testing.T) {
 	r := newRegistry(t, "lenny-agents")
 	spec := podregistry.PodSpec{PoolID: "echo-pool", IsolationProfile: "sandboxed"}
 	rec, err := r.CreatePod(context.Background(), "echo-pool", spec)
@@ -340,9 +340,9 @@ func TestCreatePodWritesNewSandbox(t *testing.T) {
 	}
 }
 
-// spec: §12.6 (DeletePod removes the Sandbox)
-func TestDeletePodRemovesSandbox(t *testing.T) {
-	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+// spec: §12.6 (DeletePod removes the AgentPod)
+func TestDeletePodRemovesAgentPod(t *testing.T) {
+	r := newRegistry(t, "lenny-agents", seedAgentPod("alpha", "echo-pool", "idle"))
 	if err := r.DeletePod(context.Background(), "alpha"); err != nil {
 		t.Fatalf("DeletePod: %v", err)
 	}
@@ -356,7 +356,7 @@ func TestDeletePodRemovesSandbox(t *testing.T) {
 
 // spec: §12.6.
 func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
-	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"))
+	r := newRegistry(t, "lenny-agents", seedAgentPod("alpha", "echo-pool", "idle"))
 	r.SetWatchTuningForTest(10*time.Millisecond, 32)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -395,8 +395,8 @@ func TestWatchPodsDoesNotEmitInitialSnapshot_spec_12_6_482(t *testing.T) {
 // spec: §12.6.
 func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
 	r := newRegistry(t, "lenny-agents",
-		seedSandbox("alpha", "echo-pool", "idle"),
-		seedSandbox("bravo", "echo-pool", "idle"))
+		seedAgentPod("alpha", "echo-pool", "idle"),
+		seedAgentPod("bravo", "echo-pool", "idle"))
 	// A single-slot buffer plus a fast poll makes a non-draining consumer
 	// fall behind within one reconcile: two simultaneous deltas cannot
 	// both fit, so the loop coalesces and signals resync.
@@ -443,7 +443,7 @@ func TestWatchPodsEmitsResyncUnderBackpressure_spec_12_6_482(t *testing.T) {
 
 // spec: §12.6.
 func TestToPodRecordProjectsExecutionModeAndSessionID_spec_12_6_421(t *testing.T) {
-	sb := seedSandbox("alpha", "echo-pool", "claimed")
+	sb := seedAgentPod("alpha", "echo-pool", "claimed")
 	sb.Spec.ExecutionMode = "task"
 	sb.Status.SessionID = "sess-9"
 	r := newRegistry(t, "lenny-agents", sb)
@@ -481,17 +481,17 @@ func TestCreatePodStampsExecutionModeAndIsolation_spec_12_6_422(t *testing.T) {
 
 // spec: §12.6 Interface Design (the `PodSpec` row: `RuntimeDefinitionRef`,
 // `IsolationProfile`, `ExecutionMode`, resource limits) — CreatePod
-// stamps the PodSpec fields onto the Sandbox spec so a gateway-created
+// stamps the PodSpec fields onto the AgentPod spec so a gateway-created
 // pod expresses the runtime and resource class it was created for rather
 // than silently inheriting the pool template's defaults. RuntimeRef is a
 // required CRD field, so a CreatePod that does not stamp it produces an
-// invalid Sandbox. The PodSpec carries no workspace plan: a session binds
+// invalid AgentPod. The PodSpec carries no workspace plan: a session binds
 // its plan at creation or finalize (§14.1 Plan binding).
 func TestCreatePodStampsRuntimeAndResourceClass_spec_12_6_422(t *testing.T) {
 	scheme := newScheme(t)
 	cli := fake.NewClientBuilder().
 		WithScheme(scheme).
-		WithStatusSubresource(&lennyv1.Sandbox{}).
+		WithStatusSubresource(&lennyv1.AgentPod{}).
 		Build()
 	r, err := podregistry.New(cli, "lenny-agents")
 	if err != nil {
@@ -508,7 +508,7 @@ func TestCreatePodStampsRuntimeAndResourceClass_spec_12_6_422(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreatePod: %v", err)
 	}
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := cli.Get(context.Background(), client.ObjectKey{Namespace: "lenny-agents", Name: string(rec.PodID)}, &sb); err != nil {
 		t.Fatalf("get created sandbox: %v", err)
 	}

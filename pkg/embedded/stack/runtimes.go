@@ -153,8 +153,8 @@ func grantDefaultTenantAccess(ctx context.Context, client *ctl.Client, out io.Wr
 // The seed carries no Pools entry. Under the §17.4 no-Postgres development
 // profile the PoolScalingController (the lenny-pool-scaling-controller
 // Deployment, rendered only with a Postgres DSN) never runs, so a seeded
-// poolstore pool row would never materialize into a SandboxWarmPool CRD. The
-// embedded bring-up instead applies the echo SandboxTemplate/SandboxWarmPool
+// poolstore pool row would never materialize into a PodSet CRD. The
+// embedded bring-up instead applies the echo PodSet
 // pair directly through the dynamic-apply path (ApplyEchoPoolFromConfig), so
 // the unconditionally-registered WarmPoolController pre-warms the pod. spec:
 // §4.6.2 (the PoolScalingController is the Postgres→CRD channel), §17.4
@@ -211,7 +211,7 @@ type seedUser struct {
 // An empty echoImageRef leaves the echo seed on its sentinel placeholder.
 //
 // The seed carries no pool. The echo warm pool is materialized directly as a
-// SandboxTemplate/SandboxWarmPool pair (ApplyEchoPoolFromConfig) because the
+// PodSet (ApplyEchoPoolFromConfig) because the
 // no-Postgres development profile registers no PoolScalingController to project
 // a poolstore row into the CRD. spec: §4.6.2, §17.4.
 func buildBootstrapSeed(echoImageRef string) bootstrapSeed {

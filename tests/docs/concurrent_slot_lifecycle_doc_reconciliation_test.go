@@ -523,7 +523,7 @@ func TestPodReleasePointersLinkTheClaimRule_spec_4_6_3(t *testing.T) {
 	}
 }
 
-// spec: 4.6.1 (Orphaned SandboxClaim detection), 11.3 (orphan timeout row),
+// spec: 4.6.1 (Orphaned PodClaim detection), 11.3 (orphan timeout row),
 // 4.7.1 (role and gateway RPC contract), 7.1 (Pod-side reclaim on a failed
 // bind)
 // diagnosis: the claimOrphanTimeout default or the adapter's absent answer
@@ -537,7 +537,7 @@ func TestOrphanTimeoutAndAbsentAnswerAgree_spec_4_7_1(t *testing.T) {
 	c04 := collapsedSpec(t, root, "04_system-components.md")
 	requireAllContain(t, "§4.6.1 predicate 1", c04, []string{"(default: 15 minutes"})
 	requireAllContain(t, "§11.3 orphan-timeout row", requireLine(t, readDocPage(t, filepath.Join(root, "spec", "11_policy-and-controls.md")),
-		"| SandboxClaim orphan timeout"), []string{"900s"})
+		"| PodClaim orphan timeout"), []string{"900s"})
 	rule11 := requireLine(t, readDocPage(t, filepath.Join(root, "spec", "04_system-components.md")), "11. **The no-entry rule.**")
 	requireAllContain(t, "§4.7.1 rule 11", rule11, []string{
 		"reports an unclean exit while another `Shutdown` that removed the session's entry is still performing its teardown",

@@ -14,62 +14,62 @@ import (
 )
 
 // spec: §5.2 — the WarmPoolController (which owns
-// Sandbox.spec) copies the pool's SandboxTemplate topology spread
-// constraints onto every Sandbox it creates, so the Sandbox-to-Pod
+// AgentPod.spec) copies the pool's PodSet topology spread
+// constraints onto every AgentPod it creates, so the AgentPod-to-Pod
 // reconciler can stamp them onto the agent pod.
-func TestCreateSandboxCopiesTopologyConstraints_spec_5_2_631(t *testing.T) {
+func TestCreateAgentPodCopiesTopologyConstraints(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 
-	tmpl := template(ns)
+	tmpl := pool(ns, 1, 10)
 	tmpl.Spec.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
 		MaxSkew:           1,
 		TopologyKey:       "topology.kubernetes.io/zone",
 		WhenUnsatisfiable: corev1.ScheduleAnyway,
 		LabelSelector:     &metav1.LabelSelector{MatchLabels: map[string]string{"lenny.dev/pool": testPool}},
 	}}
-	c := newClient(t, s, tmpl, pool(ns, 1, 10))
+	c := newClient(t, s, tmpl)
 
 	reconcile(t, c, s)
 
-	var sandboxes lennyv1.SandboxList
-	if err := c.List(context.Background(), &sandboxes, client.InNamespace(ns)); err != nil {
+	var agentPods lennyv1.AgentPodList
+	if err := c.List(context.Background(), &agentPods, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list sandboxes: %v", err)
 	}
-	if len(sandboxes.Items) == 0 {
-		t.Fatalf("expected the controller to create at least one Sandbox")
+	if len(agentPods.Items) == 0 {
+		t.Fatalf("expected the controller to create at least one AgentPod")
 	}
-	for _, sb := range sandboxes.Items {
+	for _, sb := range agentPods.Items {
 		got := sb.Spec.TopologySpreadConstraints
 		if len(got) != 1 {
-			t.Fatalf("Sandbox %s topology constraints = %d, want 1", sb.Name, len(got))
+			t.Fatalf("AgentPod %s topology constraints = %d, want 1", sb.Name, len(got))
 		}
 		if got[0].TopologyKey != "topology.kubernetes.io/zone" || got[0].MaxSkew != 1 {
-			t.Errorf("Sandbox %s constraint = %+v, want zone/maxSkew 1", sb.Name, got[0])
+			t.Errorf("AgentPod %s constraint = %+v, want zone/maxSkew 1", sb.Name, got[0])
 		}
 	}
 }
 
-// A template with no topology constraints produces Sandboxes with none;
-// the controller copies what the template carries without inventing
+// A PodSet with no topology constraints produces AgentPods with none;
+// the controller copies what the PodSet carries without inventing
 // defaults (defaulting is the PoolScalingController's job per §5.2).
-func TestCreateSandboxWithoutTopologyConstraints_spec_5_2_631(t *testing.T) {
+func TestCreateAgentPodWithoutTopologyConstraints(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 1, 10))
+	c := newClient(t, s, pool(ns, 1, 10))
 
 	reconcile(t, c, s)
 
-	var sandboxes lennyv1.SandboxList
-	if err := c.List(context.Background(), &sandboxes, client.InNamespace(ns)); err != nil {
+	var agentPods lennyv1.AgentPodList
+	if err := c.List(context.Background(), &agentPods, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list sandboxes: %v", err)
 	}
-	if len(sandboxes.Items) == 0 {
-		t.Fatalf("expected the controller to create at least one Sandbox")
+	if len(agentPods.Items) == 0 {
+		t.Fatalf("expected the controller to create at least one AgentPod")
 	}
-	for _, sb := range sandboxes.Items {
+	for _, sb := range agentPods.Items {
 		if len(sb.Spec.TopologySpreadConstraints) != 0 {
-			t.Errorf("Sandbox %s carried unexpected constraints: %+v", sb.Name, sb.Spec.TopologySpreadConstraints)
+			t.Errorf("AgentPod %s carried unexpected constraints: %+v", sb.Name, sb.Spec.TopologySpreadConstraints)
 		}
 	}
 }

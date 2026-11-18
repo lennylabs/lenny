@@ -1266,7 +1266,7 @@ const (
 	// and concurrency. It is the §5.2 default.
 	ExecutionModeSession ExecutionMode = "session"
 	// ExecutionModeService is the §5.2 replicated-service mode: no
-	// SandboxClaim, no workspace, tenant-affinity routing to ready
+	// PodClaim, no workspace, tenant-affinity routing to ready
 	// replicas.
 	ExecutionModeService ExecutionMode = "service"
 )

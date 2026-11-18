@@ -58,7 +58,7 @@ func TestSlotRetryBudgetFollowsPoolSlotRetries_spec_5_2(t *testing.T) {
 					binder.results = append(binder.results, nil)
 				}
 				binder.errs = append(binder.errs, nil)
-				binder.results = append(binder.results, &podsession.BindResult{SessionID: "sess-1", SandboxName: "pod-a", SlotID: "sess-1"})
+				binder.results = append(binder.results, &podsession.BindResult{SessionID: "sess-1", AgentPodName: "pod-a", SlotID: "sess-1"})
 			}
 			// A large pod keeps every failure below the whole-pod threshold,
 			// so no drain interleaves with the retries.
@@ -78,7 +78,7 @@ func TestSlotRetryBudgetFollowsPoolSlotRetries_spec_5_2(t *testing.T) {
 				}
 				return
 			}
-			if err != nil || res == nil || res.SandboxName != "pod-a" {
+			if err != nil || res == nil || res.AgentPodName != "pod-a" {
 				t.Fatalf("result %+v err %v, want the bound slot", res, err)
 			}
 		})

@@ -233,7 +233,7 @@ func (s *Server) resolveCredentialPools(ctx context.Context, row sessionstore.Se
 	// effective deliveryMode alongside the assignment map, keyed by pool
 	// name, so the session-start credential-delivery gate evaluates the
 	// delivery mode leasing actually uses against the bound pod's
-	// isolationProfile/spiffeBinding. The warm-pool/SandboxTemplate
+	// isolationProfile/spiffeBinding. The warm-pool/PodSet
 	// deliveryMode the registration and admission layers inspect is a
 	// denormalized copy that can diverge from this authoritative value.
 	poolDeliveryModes := make(map[string]string, len(res.PoolAssignments))
@@ -393,7 +393,7 @@ func (e *PoolProxyDialectError) Error() string {
 // direct_mode_isolation.Decide rejects in multi-tenant mode
 // (deliveryMode: direct + isolationProfile: standard, or deliveryMode:
 // proxy + spiffeBinding: disabled). Unlike the pool-registration and
-// admission-webhook layers, which inspect the warm-pool/SandboxTemplate
+// admission-webhook layers, which inspect the warm-pool/PodSet
 // deliveryMode copy, this gate reads the CredentialPool deliveryMode
 // leasing actually uses, closing the case where the two diverge.
 // writePodClaimError maps it to 422 carrying the guard's rejection Code
@@ -424,7 +424,7 @@ func (e *CredentialDeliveryIsolationError) Error() string { return e.Reason }
 // admission layers already reject, and the bound pod's egressProfile is not
 // in scope at the lease-mint seam. This gate closes the delivery-mode
 // divergence §4.9 identifies between the CredentialPool deliveryMode leasing
-// uses and the warm-pool/SandboxTemplate copy the earlier layers inspect.
+// uses and the warm-pool/PodSet copy the earlier layers inspect.
 //
 // spec: §4.9.
 func (s *Server) checkCredentialDeliveryIsolation(match podsession.PoolMatch, poolDeliveryModes map[string]string) error {

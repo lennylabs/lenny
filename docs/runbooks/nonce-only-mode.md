@@ -10,8 +10,8 @@ components:
   - runtimes
 symptoms:
   - "lenny_pool_security_degraded == 1 for one or more pools"
-  - "SandboxTemplate carries SecurityDegradedMode=True"
-  - "member Sandboxes carry SOPeercredDisabled=True"
+  - "PodSet carries SecurityDegradedMode=True"
+  - "member AgentPods carry SOPeercredDisabled=True"
 tags:
   - security
   - so-peercred
@@ -28,7 +28,7 @@ related:
 
 A pool is running in nonce-only mode for the adapter-agent authentication boundary. In nonce-only mode the adapter does not require a functional `SO_PEERCRED` UID check and relies on the manifest nonce handshake alone, a deliberate fallback for confirmed gVisor `SO_PEERCRED` divergence. On a sidecar `type: agent` pod the adapter's connection from the runtime supervisor (`CH-SUPERVISE`) carries no nonce, and in nonce-only mode ordering alone identifies both ends: the supervisor is the runtime container's first process and launches no runtime code before the adapter accepts its connection. The mode is an audited security-degradation state under a human-review SLA.
 
-A pool enters nonce-only mode when its `deploymentModel: sidecar` runtime sets `Runtime.spec.requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`. The pool remains degraded after an operator reverts the runtime field for as long as a pre-revert nonce-only pod is still serving. The WarmPoolController publishes `lenny_pool_security_degraded` and writes `SecurityDegradedMode=True` on the `SandboxTemplate` in the same reconcile, and writes `SOPeercredDisabled=True` on each rendered `Sandbox`.
+A pool enters nonce-only mode when its `deploymentModel: sidecar` runtime sets `Runtime.spec.requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`. The pool remains degraded after an operator reverts the runtime field for as long as a pre-revert nonce-only pod is still serving. The WarmPoolController publishes `lenny_pool_security_degraded` and writes `SecurityDegradedMode=True` on the `PodSet` in the same reconcile, and writes `SOPeercredDisabled=True` on each rendered `AgentPod`.
 
 This alert is expected when an operator has deliberately enabled nonce-only mode after confirmed gVisor divergence. It is a defect when no operator activated the mode, which indicates an unauthorized `Runtime` CR edit. Alert thresholds are deployer-configurable — see [Metrics Reference](../reference/metrics.html#alert-rules).
 
@@ -40,18 +40,18 @@ This alert is expected when an operator has deliberately enabled nonce-only mode
 
 ### Step 1 — Identify the degraded pool and its runtime
 
-Read the pool's `SandboxTemplate` condition and the member Sandboxes carrying the per-pod condition:
+Read the pool's `PodSet` condition and the member AgentPods carrying the per-pod condition:
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandboxtemplate -n lenny-system \
+kubectl get podset -n lenny-system \
   -o jsonpath='{range .items[?(@.status.conditions[?(@.type=="SecurityDegradedMode")].status=="True")]}{.metadata.name}{"\n"}{end}'
-kubectl get sandbox -n lenny-system \
+kubectl get agentpod -n lenny-system \
   -l lenny.dev/pool=<pool> \
   -o jsonpath='{range .items[*]}{.metadata.name}{"\t"}{.spec.requireSoPeercred}{"\n"}{end}'
 ```
 
-Note the pool's `runtimeRef`. A member `Sandbox` with `spec.requireSoPeercred: false` or a `SOPeercredDisabled=True` condition is running nonce-only.
+Note the pool's `runtimeRef`. A member `AgentPod` with `spec.requireSoPeercred: false` or a `SOPeercredDisabled=True` condition is running nonce-only.
 
 ### Step 2 — Confirm the activating runtime field
 
@@ -90,30 +90,30 @@ When the divergence is resolved, set the runtime back to the default to restore 
 kubectl patch runtime <runtime> --type=merge -p '{"spec":{"requireSoPeercred":true}}'
 ```
 
-Newly created Sandboxes render no `--require-so-peercred=false` flag and carry neither `spec.requireSoPeercred: false` nor `SOPeercredDisabled=True`. Pre-revert pods continue in nonce-only mode until normal pool reconciliation replaces them.
+Newly created AgentPods render no `--require-so-peercred=false` flag and carry neither `spec.requireSoPeercred: false` nor `SOPeercredDisabled=True`. Pre-revert pods continue in nonce-only mode until normal pool reconciliation replaces them.
 
 ### Step 3 — Replace pre-revert nonce-only pods
 
-The pool condition stays `True` while any member `Sandbox` still carries the nonce-only carrier or condition. To clear the degraded state promptly, recycle the pool's warm pods:
+The pool condition stays `True` while any member `AgentPod` still carries the nonce-only carrier or condition. To clear the degraded state promptly, recycle the pool's warm pods:
 
 <!-- access: api method=PUT path=/v1/admin/pools/{name}/recycle -->
 ```
 PUT /v1/admin/pools/<pool>/recycle
 ```
 
-The condition transitions to `False` only when no member `Sandbox` carries `spec.requireSoPeercred: false` and none still carries `SOPeercredDisabled=True`.
+The condition transitions to `False` only when no member `AgentPod` carries `spec.requireSoPeercred: false` and none still carries `SOPeercredDisabled=True`.
 
 ### Step 4 — Verify
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandboxtemplate <pool> -n lenny-system \
+kubectl get podset <pool> -n lenny-system \
   -o jsonpath='{.status.conditions[?(@.type=="SecurityDegradedMode")].status}{"\n"}'
 ```
 
 - `lenny_pool_security_degraded` returns to `0` for the pool.
-- `SecurityDegradedMode` is `False` on the `SandboxTemplate`.
-- No member `Sandbox` carries `SOPeercredDisabled=True`.
+- `SecurityDegradedMode` is `False` on the `PodSet`.
+- No member `AgentPod` carries `SOPeercredDisabled=True`.
 
 ## Escalation
 

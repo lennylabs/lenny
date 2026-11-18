@@ -313,7 +313,7 @@ func TestTenantPathEntriesNeverTouchAnotherTenant_spec_12_8(t *testing.T) {
 	_, err := pg.Pool.Exec(ctx, `INSERT INTO runtime_definitions (name, type, image, execution_mode, isolation_profile, integration_level)
 		VALUES ('runtime-shared', 'agent', 'example/img:latest', 'session', 'standard', 'standard')`)
 	isoMust(t, "seed runtime", err)
-	_, err = pg.Pool.Exec(ctx, `INSERT INTO sandbox_warm_pools (name) VALUES ('pool-shared')`)
+	_, err = pg.Pool.Exec(ctx, `INSERT INTO pools (name) VALUES ('pool-shared')`)
 	isoMust(t, "seed pool", err)
 
 	s := newTenantPathStores(t, pg)

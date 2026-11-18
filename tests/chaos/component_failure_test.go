@@ -12,7 +12,7 @@
 // registers the restore as a t.Cleanup so the shared cluster is left
 // healthy on a mid-test failure.
 //
-// Gateway-replica, controller leader-election, and sandboxclaim-guard
+// Gateway-replica, controller leader-election, and podclaim-guard
 // pod-disruption are covered in pod_disruption_test.go and
 // leader_election_test.go.
 

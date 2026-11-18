@@ -24,20 +24,20 @@ var errReplicaCrashed = errors.New("lifecycleharness: the replica crashed")
 // binder detached before the crash (such as deleting the claim a failed
 // resume attempt made) would still land, and a scenario could not leave
 // the orphaned claim the controller's claim-orphan GC exists to reclaim
-// (§4.6.1 Orphaned SandboxClaim detection, §7.3 Resume driver). Reads pass
+// (§4.6.1 Orphaned PodClaim detection, §7.3 Resume driver). Reads pass
 // through, because a read changes nothing a scenario asserts.
 //
-// It also records each SandboxClaim create the kube-apiserver accepts in
+// It also records each PodClaim create the kube-apiserver accepts in
 // claims, when set, so a scenario can count the pods a race claimed.
 type crashableClient struct {
 	client.Client
 	crashed *atomic.Bool
 	claims  *ClaimLog
-	// retire moves a pod's Sandbox to draining, as the occupancy
+	// retire moves a pod's AgentPod to draining, as the occupancy
 	// projection does when the pod's claim is deleted. Nil projects
 	// nothing.
 	retire func(ctx context.Context, pod string)
-	// fault, when it holds a ClaimFault, runs before each SandboxClaim
+	// fault, when it holds a ClaimFault, runs before each PodClaim
 	// create, status write, and delete; nil injects nothing.
 	fault *atomic.Pointer[ClaimFault]
 }
@@ -61,8 +61,8 @@ func (c crashableClient) Create(ctx context.Context, obj client.Object, opts ...
 	if err := c.Client.Create(ctx, obj, opts...); err != nil {
 		return err
 	}
-	if claim, ok := obj.(*lennyv1.SandboxClaim); ok {
-		c.claims.record(claim.Spec.SandboxRef)
+	if claim, ok := obj.(*lennyv1.PodClaim); ok {
+		c.claims.record(claim.Spec.AgentPodRef)
 	}
 	return nil
 }
@@ -94,7 +94,7 @@ func (c crashableClient) Delete(ctx context.Context, obj client.Object, opts ...
 	if err := c.Client.Delete(ctx, obj, opts...); err != nil {
 		return err
 	}
-	if claim, ok := obj.(*lennyv1.SandboxClaim); ok && c.retire != nil {
+	if claim, ok := obj.(*lennyv1.PodClaim); ok && c.retire != nil {
 		c.projectRetirement(ctx, claim)
 	}
 	return nil
@@ -102,14 +102,14 @@ func (c crashableClient) Delete(ctx context.Context, obj client.Object, opts ...
 
 // projectRetirement stands in for the WarmPoolController's occupancy
 // projection, which the harness does not run: a claim the gateway deletes
-// retires its pod, so the pod's Sandbox moves to draining and no later claim
-// takes it. The claim names its pod in spec.sandboxRef, or, for a delete by
-// name, through the deterministic claim-<pod> name. A Sandbox already gone is
+// retires its pod, so the pod's AgentPod moves to draining and no later claim
+// takes it. The claim names its pod in spec.agentPodRef, or, for a delete by
+// name, through the deterministic claim-<pod> name. An AgentPod already gone is
 // left alone.
 // spec: §4.6.1 (occupancy projection on claim DELETE), §6.2 (claimed →
 // draining)
-func (c crashableClient) projectRetirement(ctx context.Context, claim *lennyv1.SandboxClaim) {
-	pod := claim.Spec.SandboxRef
+func (c crashableClient) projectRetirement(ctx context.Context, claim *lennyv1.PodClaim) {
+	pod := claim.Spec.AgentPodRef
 	if pod == "" {
 		pod = strings.TrimPrefix(claim.Name, "claim-")
 	}
@@ -195,7 +195,7 @@ func (s crashableSubResourceClient) Patch(ctx context.Context, obj client.Object
 	return s.w.Patch(ctx, obj, patch, opts...)
 }
 
-// ClaimOp names the SandboxClaim write a ClaimFault intercepts.
+// ClaimOp names the PodClaim write a ClaimFault intercepts.
 type ClaimOp uint8
 
 const (
@@ -207,18 +207,18 @@ const (
 	ClaimDelete
 )
 
-// ClaimFault runs before one SandboxClaim write of a replica's binder. It
+// ClaimFault runs before one PodClaim write of a replica's binder. It
 // may block, to order the write against another actor, and a non-nil
 // return fails the write without sending it, as a write the kube-apiserver
 // refused does.
 type ClaimFault func(ctx context.Context, op ClaimOp, claimName string) error
 
-// injected runs the armed ClaimFault for a SandboxClaim write.
+// injected runs the armed ClaimFault for a PodClaim write.
 func (c crashableClient) injected(ctx context.Context, op ClaimOp, obj client.Object) error {
 	if c.fault == nil {
 		return nil
 	}
-	if _, ok := obj.(*lennyv1.SandboxClaim); !ok {
+	if _, ok := obj.(*lennyv1.PodClaim); !ok {
 		return nil
 	}
 	if f := c.fault.Load(); f != nil {

@@ -15,7 +15,8 @@ import (
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 
-// warmPoolMigrations is the ordered sandbox_warm_pools schema chain plus its
+// warmPoolMigrations is the ordered pool-record schema chain, ending with
+// the 0198 rename of the table to pools, plus its
 // prerequisites (the initial schema and the RLS roles the 0033 GRANT
 // references). Applying the subset rather than the full FS keeps the test off
 // the pgvector-dependent migrations the embedded bundle lacks.
@@ -40,10 +41,11 @@ var warmPoolMigrations = []string{
 	"0170_sandbox_warm_pools_acknowledge_nonce_only_auth.up.sql",
 	"0171_sandbox_warm_pools_dns_policy.up.sql",
 	"0177_sandbox_warm_pools_delivery_mode.up.sql",
+	"0198_pools_rename.up.sql",
 }
 
 // TestDeliveryModeFieldsPgRoundTrip_spec_4_9 brings up an embedded Postgres,
-// applies the sandbox_warm_pools migration chain through 0177, and proves the
+// applies the pool-record migration chain through 0198, and proves the
 // §4.9 credential-delivery combination fields (delivery_mode, spiffe_binding,
 // and the two deployer opt-in acknowledgments) round-trip through the
 // Postgres-backed store's INSERT, SELECT, and UPDATE paths, including the

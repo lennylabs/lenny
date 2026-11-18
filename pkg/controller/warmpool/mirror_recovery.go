@@ -16,24 +16,24 @@ import (
 
 // MirrorReconciler is the §4.6.1 "WarmPoolController mirror reconciliation
 // on recovery" runnable. On startup and on every leader-election
-// acquisition it re-lists all Sandbox resources in the agent namespaces,
+// acquisition it re-lists all AgentPod resources in the agent namespaces,
 // re-derives the full agent_pod_state row set, and converges the Postgres
 // mirror in a single bulk UPSERT, deleting rows whose pod_id no longer
-// corresponds to any live Sandbox. This re-establishes the steady-state
+// corresponds to any live AgentPod. This re-establishes the steady-state
 // invariant that the mirror matches the authoritative etcd state before
 // the per-pool reconciler resumes incremental state-transition writes.
 //
 // The per-pool Reconciler.syncMirror handles incremental convergence once
 // the controller is running; this runnable handles the bulk catch-up a
 // crash or failover leaves behind, where the mirror would otherwise stay
-// stale until each pool's next SandboxWarmPool event.
+// stale until each pool's next PodSet event.
 type MirrorReconciler struct {
 	// Client is the controller-runtime client.
 	Client client.Client
 	// Mirror is the §4.6.1 agent_pod_state store. When nil the runnable is
 	// disabled (no Postgres configured, so no mirror to reconcile).
 	Mirror agentpodstate.Store
-	// Namespaces is the set of agent namespaces whose Sandbox resources
+	// Namespaces is the set of agent namespaces whose AgentPod resources
 	// back the mirror. An empty slice disables the runnable.
 	Namespaces []string
 }
@@ -70,40 +70,40 @@ func (m *MirrorReconciler) Start(ctx context.Context) error {
 }
 
 // reconcile re-derives the full agent_pod_state row set from the live
-// Sandbox resources across the agent namespaces and bulk-converges the
+// AgentPod resources across the agent namespaces and bulk-converges the
 // mirror. Rows are derived per pool (reusing derivePodStates) so the
 // projection matches the per-pool incremental sync exactly; execution
-// mode and isolation profile come from each pool's SandboxTemplate.
+// mode and isolation profile come from each pool's PodSet.
 func (m *MirrorReconciler) reconcile(ctx context.Context) error {
 	var observed []agentpodstate.PodState
-	tmplCache := map[string]*lennyv1.SandboxTemplate{}
+	tmplCache := map[string]*lennyv1.PodSet{}
 
 	for _, ns := range m.Namespaces {
-		var sandboxes lennyv1.SandboxList
-		// The pass reads every Sandbox in the namespace, terminal ones
+		var agentPods lennyv1.AgentPodList
+		// The pass reads every AgentPod in the namespace, terminal ones
 		// included, so the list can hold tens of thousands of objects. A
 		// cached List deep-copies each one by default, which doubles the
 		// informer's footprint in one burst and OOM-killed the controller at
 		// the chart's default memory limit once the chart started running this
 		// pass (F-4.6.30). The pass only reads the items, so it takes the
 		// cache's objects without the copy and must not mutate them.
-		if err := m.Client.List(ctx, &sandboxes, client.InNamespace(ns), client.UnsafeDisableDeepCopy); err != nil {
+		if err := m.Client.List(ctx, &agentPods, client.InNamespace(ns), client.UnsafeDisableDeepCopy); err != nil {
 			return fmt.Errorf("list sandboxes in %s: %w", ns, err)
 		}
-		byPool := map[string][]lennyv1.Sandbox{}
-		for i := range sandboxes.Items {
-			sb := sandboxes.Items[i]
+		byPool := map[string][]lennyv1.AgentPod{}
+		for i := range agentPods.Items {
+			sb := agentPods.Items[i]
 			pool := sb.Labels[LabelPool]
 			if pool == "" {
-				pool = sb.Spec.PoolRef
+				pool = sb.Spec.PodSetRef
 			}
 			byPool[pool] = append(byPool[pool], sb)
 		}
 		for poolName, items := range byPool {
-			pool := &lennyv1.SandboxWarmPool{}
+			pool := &lennyv1.PodSet{}
 			pool.Name = poolName
 			pool.Namespace = ns
-			tmpl := m.templateFor(ctx, ns, poolName, tmplCache)
+			tmpl := m.podSetFor(ctx, ns, poolName, tmplCache)
 			observed = append(observed, derivePodStates(pool, tmpl, items)...)
 		}
 	}
@@ -111,26 +111,21 @@ func (m *MirrorReconciler) reconcile(ctx context.Context) error {
 	return m.Mirror.ReconcileAll(ctx, observed)
 }
 
-// templateFor resolves the SandboxTemplate backing a pool, caching the
-// lookup across namespaces. A pool whose template cannot be read derives
-// rows with an empty execution mode rather than failing the whole
-// reconciliation; the recovery pass favors converging the mirror over
-// strict per-field fidelity.
-func (m *MirrorReconciler) templateFor(ctx context.Context, namespace, poolName string, cache map[string]*lennyv1.SandboxTemplate) *lennyv1.SandboxTemplate {
+// podSetFor resolves the PodSet of a pool, caching the lookup across
+// namespaces. A pool whose PodSet cannot be read derives rows with an
+// empty execution mode rather than failing the whole reconciliation; the
+// recovery pass favors converging the mirror over strict per-field
+// fidelity.
+func (m *MirrorReconciler) podSetFor(ctx context.Context, namespace, poolName string, cache map[string]*lennyv1.PodSet) *lennyv1.PodSet {
 	key := namespace + "/" + poolName
 	if t, ok := cache[key]; ok {
 		return t
 	}
-	var pool lennyv1.SandboxWarmPool
-	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: poolName}, &pool); err != nil {
+	var ps lennyv1.PodSet
+	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: poolName}, &ps); err != nil {
 		cache[key] = nil
 		return nil
 	}
-	var tmpl lennyv1.SandboxTemplate
-	if err := m.Client.Get(ctx, client.ObjectKey{Namespace: namespace, Name: pool.Spec.TemplateRef}, &tmpl); err != nil {
-		cache[key] = nil
-		return nil
-	}
-	cache[key] = &tmpl
-	return &tmpl
+	cache[key] = &ps
+	return &ps
 }

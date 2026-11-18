@@ -208,7 +208,7 @@ func TestCertIssued_spec_10_3(t *testing.T) {
 // TestReconcileCertIssuance_NonDrainPaths_spec_10_3 covers every §10.3 issuance-grace branch that does not reach the drain (which
 // needs a client): disabled by default, a non-pre-idle pod, a pod with a
 // valid cert, and a pod still inside the grace window. A nil client is
-// safe on all of these because none patches the Sandbox.
+// safe on all of these because none patches the AgentPod.
 func TestReconcileCertIssuance_NonDrainPaths_spec_10_3(t *testing.T) {
 	created := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
 	preIdle := func(ann map[string]string) *corev1.Pod {

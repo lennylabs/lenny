@@ -17,8 +17,8 @@ import (
 //
 // Usage:
 //
-//	lenny-test stress --test TestSandboxClaimSkipLocked --runs 50
-//	lenny-test stress --test TestSandboxClaim --runs 50 --pkg ./pkg/...
+//	lenny-test stress --test TestPodClaimSkipLocked --runs 50
+//	lenny-test stress --test TestPodClaim --runs 50 --pkg ./pkg/...
 //	lenny-test stress --test TestX --runs 25 --tag integration
 //
 // The command shells out to `go test -run <name> -count=1` once per

@@ -29,3 +29,7 @@ The owner ruled that 0137.S5, the kind renames and the `PodSet` merge, may be bu
 ## Review of 0137.S5's gate paths (2026-11-17)
 
 The general and security reviewers read the parts of 0137.S5 under `cmd/lenny-test/`, `tests/static/`, and `tests/registers/`, and the security reviewer read the whole diff. No check was removed and no control weakened. Fixes that needed no decision: the webhook service account's unused read of `podsets`, the migrations exemption of the retired-table test, the `.claude/` exemption and the prose matching of the retired-name check, and a chart test comment. Two questions went to the owner and were settled as D14 and D15.
+
+## Build of 0137.S5 (2026-11-17)
+
+0137.S5 landed: the kinds are renamed to `AgentPod`, `PodSet`, and `PodClaim`, the template and warm pool merge into one `PodSet` per pool, and the CRDs, chart, RBAC, webhooks, metrics, alerts, runbooks, migration `0198_pools_rename`, and specification text follow. Gate run `f1e44dea45bbf69c10a5911b`. The change stays `Draft`: its other steps wait for the owner's cross-review. [`digests/0137.S5.md`](digests/0137.S5.md) records the result.

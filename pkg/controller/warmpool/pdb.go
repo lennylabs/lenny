@@ -18,7 +18,7 @@ import (
 )
 
 // pdbName is the name of the §4.6.1 per-pool PodDisruptionBudget. One
-// PDB per SandboxWarmPool protects that pool's warm pods.
+// PDB per PodSet protects that pool's warm pods.
 func pdbName(pool string) string { return pool + "-warm" }
 
 // reconcilePDB maintains the §4.6.1 per-pool PodDisruptionBudget for
@@ -26,7 +26,7 @@ func pdbName(pool string) string { return pool + "-warm" }
 // integer minAvailable of minWarm-1 selecting that pool's idle pods. An
 // integer minAvailable is evaluated directly from the count of selected
 // healthy pods, so it needs no /scale subresource; the selected warm
-// pods are owned by a status-only Sandbox CR that has none, and a
+// pods are owned by a status-only AgentPod CR that has none, and a
 // maxUnavailable budget would deadlock at disruptionsAllowed: 0. At the
 // steady state of exactly minWarm idle pods, minWarm-1 admits one
 // eviction and blocks a concurrent second, giving one-at-a-time
@@ -34,7 +34,7 @@ func pdbName(pool string) string { return pool + "-warm" }
 // a single warm pod cannot be given one-at-a-time protection without
 // deadlocking, so the PDB is torn down in that case. spec: §4.6.1
 // "Disruption protection for agent pods".
-func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.SandboxWarmPool) error {
+func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.PodSet) error {
 	key := client.ObjectKey{Namespace: pool.Namespace, Name: pdbName(pool.Name)}
 
 	if pool.Spec.MinWarm < 2 {
@@ -61,7 +61,7 @@ func (r *Reconciler) reconcilePDB(ctx context.Context, pool *lennyv1.SandboxWarm
 		Spec: policyv1.PodDisruptionBudgetSpec{
 			// spec: §4.6.1 — an integer minAvailable of minWarm-1. A
 			// maxUnavailable budget cannot resolve expectedPods because the
-			// selected warm pods are owned by a status-only Sandbox CR with no
+			// selected warm pods are owned by a status-only AgentPod CR with no
 			// /scale subresource; an integer minAvailable is evaluated from the
 			// selected healthy-pod count. minWarm-1 admits exactly one eviction
 			// at steady state (minWarm idle pods) and avoids the minAvailable:

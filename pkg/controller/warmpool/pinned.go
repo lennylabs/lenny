@@ -25,11 +25,11 @@ const executionModeService = "service"
 // markPinnedIdle sets plan.Pod.Pinned on each idle pod of a session-mode pool
 // that is a §5.2 pinned idle pod: its Pod carries a non-empty
 // lenny.dev/tenant-id label (including `unassigned`, which no acquisition
-// admits) and no claim-<name> SandboxClaim exists.
+// admits) and no claim-<name> PodClaim exists.
 //
 // The claim condition keeps an acquisition in flight counted as unpinned:
 // the gateway creates the claim, writes its `bound` status, and only then
-// stamps the pin. The cached client's Pod and SandboxClaim informers are not
+// stamps the pin. The cached client's Pod and PodClaim informers are not
 // ordered, so the cache can show the pin before the claim it follows; a
 // cached NotFound is therefore confirmed through the uncached APIReader, and
 // only that read sets Pinned. A nil APIReader leaves every pod unpinned. Any
@@ -37,7 +37,7 @@ const executionModeService = "service"
 // returned, so the reconcile fails before the plan and is retried.
 //
 // spec: §5.2 (Pinned idle inventory), §4.6.1 (Warm Pool Controller).
-func (r *Reconciler) markPinnedIdle(ctx context.Context, pool *lennyv1.SandboxWarmPool, tmpl *lennyv1.SandboxTemplate, pods []plan.Pod) error {
+func (r *Reconciler) markPinnedIdle(ctx context.Context, pool *lennyv1.PodSet, tmpl *lennyv1.PodSet, pods []plan.Pod) error {
 	if tmpl.Spec.ExecutionMode == executionModeService || r.APIReader == nil {
 		return nil
 	}
@@ -62,7 +62,7 @@ func (r *Reconciler) markPinnedIdle(ctx context.Context, pool *lennyv1.SandboxWa
 // tenantLabelledPods lists the pool's Pods by the pool label (the selector
 // the pool's PodDisruptionBudget uses) and returns the names of those whose
 // tenant pin is set.
-func (r *Reconciler) tenantLabelledPods(ctx context.Context, pool *lennyv1.SandboxWarmPool) (map[string]bool, error) {
+func (r *Reconciler) tenantLabelledPods(ctx context.Context, pool *lennyv1.PodSet) (map[string]bool, error) {
 	var pods corev1.PodList
 	if err := r.Client.List(ctx, &pods,
 		client.InNamespace(pool.Namespace),
@@ -83,7 +83,7 @@ func (r *Reconciler) tenantLabelledPods(ctx context.Context, pool *lennyv1.Sandb
 // claim the cache has not yet observed still counts.
 func (r *Reconciler) podHasClaim(ctx context.Context, namespace, podName string) (bool, error) {
 	key := client.ObjectKey{Namespace: namespace, Name: occupancyClaimName(podName)}
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := r.Client.Get(ctx, key, &claim)
 	if err == nil {
 		return true, nil

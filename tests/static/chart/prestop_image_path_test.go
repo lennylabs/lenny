@@ -12,7 +12,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/adapter/prestop"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 

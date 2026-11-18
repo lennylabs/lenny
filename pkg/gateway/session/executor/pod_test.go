@@ -73,7 +73,7 @@ func dialPodAdapter(t *testing.T, rt adapter.RuntimeProcess) *adapterclient.Clie
 func TestPodExecutorSendStreamsResponse(t *testing.T) {
 	cl := dialPodAdapter(t, &respondingRuntime{out: make(chan []byte, 8)})
 	reg := podsession.NewRegistry()
-	reg.Put(&podsession.BindResult{SessionID: "sess-pod", SandboxName: "sbx-1", Adapter: cl})
+	reg.Put(&podsession.BindResult{SessionID: "sess-pod", AgentPodName: "sbx-1", Adapter: cl})
 
 	pe := executor.NewPodExecutor(reg, nil)
 	out, err := pe.Send(context.Background(), "sess-pod", []executor.Message{

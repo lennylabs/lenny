@@ -65,12 +65,12 @@ func evaluator(f *fakeCluster, vars map[string]string) *Evaluator {
 
 func TestPostconditionsHoldAgainstAMatchingClusterState(t *testing.T) {
 	f := newFakeCluster()
-	f.kubectl["-n lenny-agents get sandboxwarmpools -o json"] = []string{`{"items":[{"status":{"readyCount":0}},{"status":{"readyCount":2}}]}`}
+	f.kubectl["-n lenny-agents get podsets -o json"] = []string{`{"items":[{"status":{"readyCount":0}},{"status":{"readyCount":2}}]}`}
 	f.kubectl["get deploy gw -o jsonpath={.status.readyReplicas}"] = []string{"1\n"}
 	f.api["GET /v1/admin/tenants/globex-ab12 platform-admin"] = []fakeAnswer{{200, `{"id":"globex-ab12","state":"active"}`, nil}}
 	f.api["GET /v1/admin/tenants/globex-ab12/users platform-admin"] = []fakeAnswer{{200, `{"items":[{"user_id":"bob@globex.com","role":"user"},{"user_id":"carol@globex.com","role":"tenant-admin"}]}`, nil}}
 	ps := []Postcondition{
-		{Name: "pool", Kubectl: []string{"-n", "lenny-agents", "get", "sandboxwarmpools", "-o", "json"}, Expect: Expect{Path: "items.*.status.readyCount", AtLeast: ptr(1.0)}},
+		{Name: "pool", Kubectl: []string{"-n", "lenny-agents", "get", "podsets", "-o", "json"}, Expect: Expect{Path: "items.*.status.readyCount", AtLeast: ptr(1.0)}},
 		{Name: "gateway", Kubectl: []string{"get", "deploy", "gw", "-o", "jsonpath={.status.readyReplicas}"}, Expect: Expect{AtLeast: ptr(1.0)}},
 		{Name: "tenant", API: &APIRequest{Method: "GET", Path: "/v1/admin/tenants/globex-{{nonce}}", As: "platform-admin"}, Expect: Expect{Path: "id", Equals: ptr("globex-{{nonce}}")}},
 		{Name: "role", API: &APIRequest{Method: "GET", Path: "/v1/admin/tenants/globex-{{nonce}}/users", As: "platform-admin"}, Expect: Expect{Path: "items[user_id=carol@globex.com].role", Equals: ptr("tenant-admin")}},

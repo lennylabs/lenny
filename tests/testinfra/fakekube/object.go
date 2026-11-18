@@ -13,7 +13,7 @@ import (
 // Object is one entry in the typed object store. ResourceVersion is a
 // monotonically increasing string so SSA conflict checks observe the
 // versioning the upstream API server enforces. Annotations carry
-// arbitrary scenario state (e.g. the §5.2 Sandbox phase mirror).
+// arbitrary scenario state (e.g. the §5.2 AgentPod phase mirror).
 type Object struct {
 	Kind            string
 	Namespace       string

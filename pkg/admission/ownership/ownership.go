@@ -11,18 +11,13 @@
 // The §4.6.3 table assigns disjoint field subsets per CRD to the
 // WarmPoolController, the PoolScalingController, and the gateway:
 //
-//	SandboxTemplate.spec.*                        : PoolScalingController
-//	SandboxTemplate.status.*                      : WarmPoolController
-//	SandboxWarmPool.spec.minWarm                  : PoolScalingController
-//	SandboxWarmPool.spec.maxWarm                  : PoolScalingController
-//	SandboxWarmPool.spec.scalePolicy.*            : PoolScalingController
-//	SandboxWarmPool.spec.sdkWarmDisabled          : PoolScalingController
-//	SandboxWarmPool.status.sdkWarmCircuitBreaker.*: PoolScalingController (carve-out)
-//	SandboxWarmPool.status.*                      : WarmPoolController (default)
-//	Sandbox.spec.*                                : WarmPoolController
-//	Sandbox.status.*                              : WarmPoolController
-//	SandboxClaim.spec.*                           : Gateway
-//	SandboxClaim.status.*                         : Gateway
+//	PodSet.spec.*                                 : PoolScalingController
+//	PodSet.status.sdkWarmCircuitBreaker.*         : PoolScalingController (carve-out)
+//	PodSet.status.*                               : WarmPoolController (default)
+//	AgentPod.spec.*                               : WarmPoolController
+//	AgentPod.status.*                             : WarmPoolController
+//	PodClaim.spec.*                               : Gateway
+//	PodClaim.status.*                             : Gateway
 //
 // The matrix is deliberately limited to v1 surface; future fields are
 // added explicitly rather than wildcarded.
@@ -47,10 +42,9 @@ const (
 type CRD string
 
 const (
-	SandboxTemplate CRD = "SandboxTemplate"
-	SandboxWarmPool CRD = "SandboxWarmPool"
-	Sandbox         CRD = "Sandbox"
-	SandboxClaim    CRD = "SandboxClaim"
+	PodSet   CRD = "PodSet"
+	AgentPod CRD = "AgentPod"
+	PodClaim CRD = "PodClaim"
 )
 
 // Validate reports whether controller may write fieldPath on crd.
@@ -87,35 +81,25 @@ func Owner(crd CRD, fieldPath string) (Controller, bool) {
 }
 
 // lookup is the matrix lookup function. It applies the most-specific
-// rule first (the SandboxWarmPool status carve-out beats the
-// SandboxWarmPool status default).
+// rule first (the PodSet status carve-out beats the PodSet status
+// default).
 func lookup(crd CRD, fieldPath string) (Controller, bool) {
 	switch crd {
-	case SandboxTemplate:
+	case PodSet:
 		switch {
 		case isPrefix(fieldPath, "spec"):
-			return PoolScalingController, true
-		case isPrefix(fieldPath, "status"):
-			return WarmPoolController, true
-		}
-	case SandboxWarmPool:
-		switch {
-		case fieldPath == "spec.minWarm",
-			fieldPath == "spec.maxWarm",
-			fieldPath == "spec.sdkWarmDisabled",
-			isPrefix(fieldPath, "spec.scalePolicy"):
 			return PoolScalingController, true
 		case isPrefix(fieldPath, "status.sdkWarmCircuitBreaker"):
 			return PoolScalingController, true
 		case isPrefix(fieldPath, "status"):
 			return WarmPoolController, true
 		}
-	case Sandbox:
+	case AgentPod:
 		switch {
 		case isPrefix(fieldPath, "spec"), isPrefix(fieldPath, "status"):
 			return WarmPoolController, true
 		}
-	case SandboxClaim:
+	case PodClaim:
 		switch {
 		case isPrefix(fieldPath, "spec"), isPrefix(fieldPath, "status"):
 			return Gateway, true
@@ -153,21 +137,15 @@ func (e *OwnershipError) Error() string {
 // every call so callers may sort or filter it.
 func AllRules() []Rule {
 	return []Rule{
-		{SandboxTemplate, "spec", PoolScalingController},
-		{SandboxTemplate, "status", WarmPoolController},
+		{PodSet, "spec", PoolScalingController},
+		{PodSet, "status.sdkWarmCircuitBreaker", PoolScalingController},
+		{PodSet, "status", WarmPoolController},
 
-		{SandboxWarmPool, "spec.minWarm", PoolScalingController},
-		{SandboxWarmPool, "spec.maxWarm", PoolScalingController},
-		{SandboxWarmPool, "spec.scalePolicy", PoolScalingController},
-		{SandboxWarmPool, "spec.sdkWarmDisabled", PoolScalingController},
-		{SandboxWarmPool, "status.sdkWarmCircuitBreaker", PoolScalingController},
-		{SandboxWarmPool, "status", WarmPoolController},
+		{AgentPod, "spec", WarmPoolController},
+		{AgentPod, "status", WarmPoolController},
 
-		{Sandbox, "spec", WarmPoolController},
-		{Sandbox, "status", WarmPoolController},
-
-		{SandboxClaim, "spec", Gateway},
-		{SandboxClaim, "status", Gateway},
+		{PodClaim, "spec", Gateway},
+		{PodClaim, "status", Gateway},
 	}
 }
 

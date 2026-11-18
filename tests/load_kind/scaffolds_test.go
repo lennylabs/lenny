@@ -285,7 +285,7 @@ func TestCheckpointDuration(t *testing.T) {
 // baseline budget. Inspect the k6 output for the failing check.
 func TestPodClaimLatency(t *testing.T) {
 	requireCloudLoad(t, "pod_claim_latency",
-		"100 concurrent pod claims with P99 < 100ms cache-warm + SandboxClaim CAS under 50ms")
+		"100 concurrent pod claims with P99 < 100ms cache-warm + PodClaim CAS under 50ms")
 	_, baseURL := prepareGateway(t)
 	res := load.RunScenario(t, "pod_claim_latency", smokeOptions(baseURL, nil))
 	assertScenarioRan(t, "pod_claim_latency", res)

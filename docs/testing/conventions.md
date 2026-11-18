@@ -46,7 +46,7 @@ Above every test function from the component tier onward:
 // diagnosis: ClaimSandbox returned a row already claimed by another goroutine.
 //            Likely missing transaction isolation in pkg/controller/warmpool/claim.go,
 //            or SELECT ... FOR UPDATE SKIP LOCKED applied to the wrong query.
-func TestSandboxClaimSkipLocked(t *testing.T) { ... }
+func TestPodClaimSkipLocked(t *testing.T) { ... }
 ```
 
 - `spec:` is mandatory on every test from the component tier onward. It lists every spec section the test encodes.

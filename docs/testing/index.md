@@ -79,7 +79,7 @@ Re-run a selector on every file change under `pkg/`, `cmd/`, `tests/`, `schemas/
 Per TESTING.md §17.10 every test must pass 50 consecutive runs. Investigate via:
 
 ```bash
-./bin/lenny-test stress --test TestSandboxClaimSkipLocked --runs 50
+./bin/lenny-test stress --test TestPodClaimSkipLocked --runs 50
 ./bin/lenny-test stress --pattern 'TestSession.*' --runs 25
 ```
 

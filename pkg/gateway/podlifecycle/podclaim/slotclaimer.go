@@ -19,8 +19,8 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // LabelTenant is the §5.2 tenant-pinning label. The gateway stamps it
@@ -41,7 +41,7 @@ import (
 const LabelTenant = "lenny.dev/tenant-id"
 
 // StampPodTenant lands the §5.2 tenant pin on the agent *pod*
-// (not only the Sandbox CR) at first assignment, so the pod-scoped
+// (not only the AgentPod CR) at first assignment, so the pod-scoped
 // lenny-tenant-label-immutability ValidatingAdmissionWebhook (§17.2 item
 // 5) actually sees the `unset → {tenant_id}` transition it is meant to
 // guard. The webhook authorizes that transition only for the gateway
@@ -49,15 +49,15 @@ const LabelTenant = "lenny.dev/tenant-id"
 // so the Kubernetes-layer half of the two-layer tenant pin binds where
 // the spec places it: on the pod whose labels the §13.2 NET-003
 // NetworkPolicies select. A pod that is absent at claim time
-// (terminating, or not yet materialized by the Sandbox reconciler) is
+// (terminating, or not yet materialized by the AgentPod reconciler) is
 // tolerated — the label is moot without a pod and the pin still stands
-// on Sandbox.status; the next assignment re-stamps it. A conflict is the
+// on AgentPod.status; the next assignment re-stamps it. A conflict is the
 // spec-intended idempotency (a competing writer set the same value).
 //
 // A JSON-merge patch is used rather than an SSA Apply so a missing pod
 // returns NotFound instead of being created label-only (which would fail
-// pod validation). The patch is keyed by the Sandbox name because the
-// §4.6.1 reconciler names the backing pod identically to its Sandbox.
+// pod validation). The patch is keyed by the AgentPod name because the
+// §4.6.1 reconciler names the backing pod identically to its AgentPod.
 //
 // spec: §5.2 / §17.2
 // (immutable labels enforced on agent pods) / §13.2 NET-003. F-17.2.3.
@@ -77,10 +77,10 @@ func StampPodTenant(ctx context.Context, cl client.Client, namespace, name, tena
 
 // StampDrainRequest stamps the §4.6.3 lenny.dev/drain-request annotation on
 // the agent Pod named podName (the §4.6.1 reconciler names the pod
-// identically to its Sandbox). The gateway stamps this annotation when a
+// identically to its AgentPod). The gateway stamps this annotation when a
 // pod crosses the §5.2 unhealthy-slot threshold; the WarmPoolController
-// consumes it and writes the draining transition on Sandbox.status. The
-// gateway never writes Sandbox.status itself (§4.6.3 ownership
+// consumes it and writes the draining transition on AgentPod.status. The
+// gateway never writes AgentPod.status itself (§4.6.3 ownership
 // decomposition), so the unhealthy-threshold drain is routed through this
 // annotation rather than a gateway phase write. The annotation value is the
 // RFC3339Nano request instant so a re-stamp is idempotent in effect and the
@@ -121,11 +121,11 @@ func StampDrainRequest(ctx context.Context, cl client.Client, namespace, podName
 // returns NotFound rather than being created annotation-only; an absent or
 // terminating pod is tolerated because a pod that is already gone needs no
 // marker. The gateway's `get`/`patch` on agent Pods grant covers this write;
-// the gateway never writes Sandbox.status itself (§4.6.3).
+// the gateway never writes AgentPod.status itself (§4.6.3).
 //
 // spec: §5.2 (warn policy returns the pod with a scrub_warning annotation);
 // §6.2 (preConnect re-warm on scrub_warning persists the annotation); §4.6.3
-// (gateway patches agent Pod annotations, never Sandbox.status).
+// (gateway patches agent Pod annotations, never AgentPod.status).
 func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName string, stampedAt time.Time) error {
 	body := fmt.Sprintf(`{"metadata":{"annotations":{%q:%q}}}`,
 		lennyv1.AnnotationScrubWarning, stampedAt.UTC().Format(time.RFC3339Nano))
@@ -143,7 +143,7 @@ func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName
 
 // StampMaxPodUptime stamps the §4.6.1 lenny.dev/max-pod-uptime-seconds
 // annotation on the agent Pod named podName (the §4.6.1 reconciler names the
-// pod identically to its Sandbox). The gateway holds the pool's
+// pod identically to its AgentPod). The gateway holds the pool's
 // sessionPolicy.recycle.maxPodUptimeSeconds cap in its poolstore, but that cap
 // is absent from every CRD the WarmPoolController reconciles, so the gateway
 // delivers it on the pod as this annotation and the controller's
@@ -159,7 +159,7 @@ func StampScrubWarning(ctx context.Context, cl client.Client, namespace, podName
 // absent or terminating pod is tolerated because a pod that is already gone
 // needs no cap. The gateway's `get`/`patch` on agent Pods grant covers this
 // write alongside the lenny.dev/drain-request stamp and the lenny.dev/tenant-id
-// pin; the gateway never writes Sandbox.status itself (§4.6.3 ownership
+// pin; the gateway never writes AgentPod.status itself (§4.6.3 ownership
 // decomposition).
 //
 // spec: §4.6.1 (uptime drains derive from the pod CreationTimestamp against
@@ -218,11 +218,11 @@ const defaultRollbackTimeout = 5 * time.Second
 // for, the pool to claim from, and the concurrent-session parameters of
 // that pool.
 type SlotRequest struct {
-	// Pool is the SandboxWarmPool to claim a slot from.
+	// Pool is the PodSet to claim a slot from.
 	Pool string
 	// SessionID is the §15.1 session the slot serves. It is also used as
 	// the slot's SlotID: one session occupies exactly one slot, the
-	// SandboxClaim name is deterministic per session, and the §6.4
+	// PodClaim name is deterministic per session, and the §6.4
 	// per-slot workspace path /workspace/slots/{sessionId}/ is therefore
 	// stable and collision-free for the slot's lifetime.
 	SessionID string
@@ -238,9 +238,9 @@ type SlotRequest struct {
 	// MaxPodUptimeSeconds is the §6.2 concurrent-session
 	// pod-uptime retirement cap. Before a slot is placed on a candidate
 	// pod, ClaimSlot compares the pod's wall-clock uptime (now minus the
-	// Sandbox's creation timestamp) against this value and skips a pod over
+	// AgentPod's creation timestamp) against this value and skips a pod over
 	// the cap so no new slot lands on it. The skip is a read-only placement
-	// filter: the gateway does not write Sandbox.status. The
+	// filter: the gateway does not write AgentPod.status. The
 	// WarmPoolController owns the actual draining transition, which it
 	// derives from the pod CreationTimestamp against
 	// recycle.maxPodUptimeSeconds (§4.6.1). Zero leaves uptime retirement
@@ -250,12 +250,12 @@ type SlotRequest struct {
 
 // SlotResult reports the slot a concurrent-session session was placed on.
 type SlotResult struct {
-	// SandboxName is the pod the slot was opened on.
-	SandboxName string
+	// AgentPodName is the pod the slot was opened on.
+	AgentPodName string
 	// SlotID identifies the slot within that pod.
 	SlotID string
-	// Claim is the SandboxClaim binding the slot.
-	Claim *lennyv1.SandboxClaim
+	// Claim is the PodClaim binding the slot.
+	Claim *lennyv1.PodClaim
 	// FreshPod is true when the slot opened a previously-idle pod (its
 	// first slot), false when the slot landed on a pod that was already
 	// hosting other slots.
@@ -267,7 +267,7 @@ type SlotResult struct {
 
 // SlotClaimer places concurrent-session (§5.2) sessions onto warm pods.
 // When sessionPolicy.maxConcurrentSessions > 1 a pod hosts up to that many
-// simultaneous slots multiplexed onto a single per-pod SandboxClaim. The
+// simultaneous slots multiplexed onto a single per-pod PodClaim. The
 // claim is the pod-acquisition guard; the atomic Redis slot counter is the
 // intra-pod capacity gate, with a §12.4 Postgres fallback during a Redis
 // outage. SlotClaimer first lands a slot on a pod already hosting slots for
@@ -277,12 +277,12 @@ type SlotResult struct {
 type SlotClaimer struct {
 	// Client is the controller-runtime client addressing the cluster.
 	Client client.Client
-	// Namespace is the agent namespace the pool's Sandboxes live in.
+	// Namespace is the agent namespace the pool's AgentPods live in.
 	Namespace string
 	// Counter is the §5.2 atomic slot counter and §12.4 Redis-outage
 	// Postgres-fallback gate. Required: the intra-pod capacity gate has no
 	// in-cluster substitute now that the gateway no longer mirrors the slot
-	// count onto Sandbox.status. A nil Counter is a configuration error and
+	// count onto AgentPod.status. A nil Counter is a configuration error and
 	// makes ClaimSlot return an error rather than silently overrunning the
 	// per-pod bound.
 	Counter *slotcounter.Counter
@@ -368,7 +368,7 @@ func (c *SlotClaimer) recordRehydration(podID, pool string) {
 // expiredByUptime reports whether sb has exceeded the pool's
 // maxConcurrentSessions pool maxPodUptimeSeconds and is therefore not a
 // valid slot-placement candidate (§6.2). The pod's
-// wall-clock uptime is measured from the Sandbox's creation timestamp,
+// wall-clock uptime is measured from the AgentPod's creation timestamp,
 // which the WarmPoolController stamps when it provisions the warm pod; a
 // zero cap disables the check. It is a read-only predicate: ClaimSlot uses
 // it to skip the pod, and the WarmPoolController owns the resulting
@@ -376,7 +376,7 @@ func (c *SlotClaimer) recordRehydration(podID, pool string) {
 //
 // spec: §6.2; §4.6.1
 // (uptime drains are WarmPoolController-written).
-func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool {
+func (c *SlotClaimer) expiredByUptime(sb *lennyv1.AgentPod, req SlotRequest) bool {
 	if req.MaxPodUptimeSeconds <= 0 {
 		return false
 	}
@@ -397,7 +397,7 @@ func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool
 // Placement (§5.2 concurrent-session slot assignment):
 //
 //  1. A pod already hosting slots for the request's tenant (its per-pod
-//     SandboxClaim exists, is non-terminal, and is pinned to the tenant)
+//     PodClaim exists, is non-terminal, and is pinned to the tenant)
 //     with free Redis-counter capacity is preferred — the slot joins that
 //     pod, sharing its process namespace and /workspace/shared/ tree. No
 //     new claim is created; the slot multiplexes onto the existing per-pod
@@ -413,7 +413,7 @@ func (c *SlotClaimer) expiredByUptime(sb *lennyv1.Sandbox, req SlotRequest) bool
 // §5.2 Redis Lua slot set (with the §12.4 Postgres-fallback
 // gate during a Redis outage); pod acquisition is atomic through the
 // deterministic per-pod claim CREATE. The gateway does not write
-// Sandbox.status; the WarmPoolController projects the pod's occupancy phase
+// AgentPod.status; the WarmPoolController projects the pod's occupancy phase
 // from the claim binding state (§4.6.1).
 //
 // Tenant pinning (§5.2) is enforced at the application layer here: a slot is
@@ -428,12 +428,12 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 	if c.Counter == nil {
 		// The Redis counter (with its §12.4 Postgres fallback) is the only
 		// intra-pod capacity gate now that the gateway does not mirror the
-		// slot count onto Sandbox.status; without it a fresh slot could
+		// slot count onto AgentPod.status; without it a fresh slot could
 		// overrun the per-pod bound. Fail closed.
 		return nil, errors.New("podclaim: slot counter is required for concurrent-session slot assignment")
 	}
 
-	var list lennyv1.SandboxList
+	var list lennyv1.AgentPodList
 	if err := c.Client.List(ctx, &list,
 		client.InNamespace(c.Namespace),
 		client.MatchingLabels{warmpool.LabelPool: req.Pool}); err != nil {
@@ -466,7 +466,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 			// §6.2 / §4.6.1: maxPodUptimeSeconds exceeded — the pod
 			// accepts no new slots and its existing slots drain. This is a
 			// read-only placement filter; the gateway skips the pod without
-			// writing Sandbox.status. The WarmPoolController owns the
+			// writing AgentPod.status. The WarmPoolController owns the
 			// claimed → draining uptime transition, derived from the pod
 			// CreationTimestamp.
 			continue
@@ -523,7 +523,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 		if c.expiredByUptime(sb, req) {
 			// §6.2 / §4.6.1: maxPodUptimeSeconds exceeded while idle,
 			// checked before next assignment. Read-only placement filter: the
-			// gateway skips the pod without writing Sandbox.status. The
+			// gateway skips the pod without writing AgentPod.status. The
 			// WarmPoolController owns the idle → draining uptime transition,
 			// derived from the pod CreationTimestamp.
 			continue
@@ -580,7 +580,7 @@ func (c *SlotClaimer) ClaimSlot(ctx context.Context, req SlotRequest) (*SlotResu
 // rebound first). The rebind changes the resourceVersion, so the holder's
 // precondition-guarded expiry DELETE aborts. spec: §4.6.1 (reserved hold,
 // holdExpiresAt), §4.6.3 (reserved → bound).
-func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.SandboxClaim) (*lennyv1.SandboxClaim, bool, error) {
+func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.PodClaim) (*lennyv1.PodClaim, bool, error) {
 	if claim.Status.HoldExpiresAt == nil || !claim.Status.HoldExpiresAt.Time.After(c.now()) {
 		// The hold has expired (or carries no deadline); leave the claim to the
 		// holder's expiry DELETE or the orphan GC rather than racing it.
@@ -595,8 +595,8 @@ func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.San
 	}
 	// re-read the claim after the rebind patch so the slot reservation
 	// lands on the post-rebind `bound` object. The claim name is the
-	// authoritative key; req.SandboxRef on the claim spec names its pod.
-	rebound, found, err := c.podClaim(ctx, claim.Spec.SandboxRef)
+	// authoritative key; req.AgentPodRef on the claim spec names its pod.
+	rebound, found, err := c.podClaim(ctx, claim.Spec.AgentPodRef)
 	if err != nil {
 		return nil, false, err
 	}
@@ -608,16 +608,16 @@ func (c *SlotClaimer) rebindReservedSlot(ctx context.Context, claim *lennyv1.San
 	return rebound, true, nil
 }
 
-// podClaim reads the per-pod occupancy SandboxClaim (claim-<podName>) for
-// sandboxName. found is false when no claim exists (a fresh idle pod). The
+// podClaim reads the per-pod occupancy PodClaim (claim-<podName>) for
+// agentPodName. found is false when no claim exists (a fresh idle pod). The
 // claim's binding state and tenant pin drive ClaimSlot's placement.
-func (c *SlotClaimer) podClaim(ctx context.Context, sandboxName string) (*lennyv1.SandboxClaim, bool, error) {
-	var claim lennyv1.SandboxClaim
-	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: claimName(sandboxName)}, &claim); err != nil {
+func (c *SlotClaimer) podClaim(ctx context.Context, agentPodName string) (*lennyv1.PodClaim, bool, error) {
+	var claim lennyv1.PodClaim
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: claimName(agentPodName)}, &claim); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, false, nil
 		}
-		return nil, false, fmt.Errorf("podclaim: get per-pod claim for sandbox %s: %w", sandboxName, err)
+		return nil, false, fmt.Errorf("podclaim: get per-pod claim for sandbox %s: %w", agentPodName, err)
 	}
 	return &claim, true, nil
 }
@@ -643,7 +643,7 @@ func (c *SlotClaimer) podClaim(ctx context.Context, sandboxName string) (*lennyv
 //
 // spec: §5.2 (atomic slot reservation, tenant pinning), §7.1 (resume onto
 // a replacement pod).
-func (c *SlotClaimer) ReserveSlotOnPod(ctx context.Context, sandboxName string, req SlotRequest) (*SlotResult, error) {
+func (c *SlotClaimer) ReserveSlotOnPod(ctx context.Context, agentPodName string, req SlotRequest) (*SlotResult, error) {
 	// The refusals ClaimSlot states in its own body, restated here because
 	// reserveSlot opens with c.Counter.Reserve and no nil test: a nil
 	// counter would panic the gateway where every other counter-touching
@@ -655,22 +655,22 @@ func (c *SlotClaimer) ReserveSlotOnPod(ctx context.Context, sandboxName string, 
 		return nil, errors.New("podclaim: slot counter is required for concurrent-session slot assignment")
 	}
 
-	sb, err := c.sandbox(ctx, sandboxName)
+	sb, err := c.agentPod(ctx, agentPodName)
 	if err != nil {
 		return nil, err
 	}
-	claim, found, err := c.podClaim(ctx, sandboxName)
+	claim, found, err := c.podClaim(ctx, agentPodName)
 	if err != nil {
 		return nil, err
 	}
 	if !found {
-		return nil, fmt.Errorf("podclaim: pod %s holds no per-pod claim to reserve a slot against", sandboxName)
+		return nil, fmt.Errorf("podclaim: pod %s holds no per-pod claim to reserve a slot against", agentPodName)
 	}
 	// podClaim filters no phase, so the terminal test is this function's
 	// own condition rather than a consequence of the read.
 	if claimstate.IsTerminal(claimstate.State(claim.Status.Phase)) {
 		return nil, fmt.Errorf("podclaim: per-pod claim for %s is terminal (phase %s)",
-			sandboxName, claim.Status.Phase)
+			agentPodName, claim.Status.Phase)
 	}
 
 	res, conflict, err := c.reserveSlot(ctx, sb, claim, req, false)
@@ -683,11 +683,11 @@ func (c *SlotClaimer) ReserveSlotOnPod(ctx context.Context, sandboxName string, 
 	return res, nil
 }
 
-// sandbox reads the named Sandbox in the claimer's agent namespace.
-func (c *SlotClaimer) sandbox(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, error) {
-	var sb lennyv1.Sandbox
-	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: sandboxName}, &sb); err != nil {
-		return nil, fmt.Errorf("podclaim: get sandbox %s: %w", sandboxName, err)
+// sandbox reads the named AgentPod in the claimer's agent namespace.
+func (c *SlotClaimer) agentPod(ctx context.Context, agentPodName string) (*lennyv1.AgentPod, error) {
+	var sb lennyv1.AgentPod
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: agentPodName}, &sb); err != nil {
+		return nil, fmt.Errorf("podclaim: get sandbox %s: %w", agentPodName, err)
 	}
 	return &sb, nil
 }
@@ -709,11 +709,11 @@ func (c *SlotClaimer) sandbox(ctx context.Context, sandboxName string) (*lennyv1
 //   - A failure after the reservation rolls it back on a detached context
 //     (rollbackReservation), so a cancelled attempt still returns its slot.
 //
-// The gateway does not write Sandbox.status; the WarmPoolController projects
+// The gateway does not write AgentPod.status; the WarmPoolController projects
 // the pod's occupancy phase from the claim binding state (§4.6.1). On a
 // successful reservation reserveSlot stamps the lenny.dev/tenant-id label on
 // the pod (best-effort) for the §13.2 NET-003 NetworkPolicy selector.
-func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, existing *lennyv1.SandboxClaim, req SlotRequest, freshPod bool) (res *SlotResult, conflict bool, err error) {
+func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.AgentPod, existing *lennyv1.PodClaim, req SlotRequest, freshPod bool) (res *SlotResult, conflict bool, err error) {
 	// §5.2 atomic slot reservation. The Redis Lua script adds the session's
 	// member under the maxConcurrentSessions cap atomically across gateway
 	// replicas; during a Redis outage the §12.4 Postgres-fallback gate
@@ -773,11 +773,11 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 	}
 
 	return &SlotResult{
-		SandboxName: sb.Name,
-		SlotID:      req.SessionID,
-		Claim:       claim,
-		FreshPod:    freshPod,
-		ActiveSlots: newCount,
+		AgentPodName: sb.Name,
+		SlotID:       req.SessionID,
+		Claim:        claim,
+		FreshPod:     freshPod,
+		ActiveSlots:  newCount,
 	}, false, nil
 }
 
@@ -795,9 +795,9 @@ func (c *SlotClaimer) reserveSlot(ctx context.Context, sb *lennyv1.Sandbox, exis
 // which deletes the fresh claim only when the release empties the set, so a
 // sibling that reserved onto the fresh claim keeps it.
 //
-// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// spec: §4.6.3 (PodClaim: a release that ends the occupancy without
 // reuse), §5.2 (Slot assignment atomicity).
-func (c *SlotClaimer) acquireFreshClaim(ctx context.Context, sb *lennyv1.Sandbox, req SlotRequest) (*lennyv1.SandboxClaim, bool, error) {
+func (c *SlotClaimer) acquireFreshClaim(ctx context.Context, sb *lennyv1.AgentPod, req SlotRequest) (*lennyv1.PodClaim, bool, error) {
 	created, err := CreateClaim(ctx, c.Client, c.Namespace, sb.Name, ClaimRequest{
 		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
 	})
@@ -825,17 +825,17 @@ func (c *SlotClaimer) acquireFreshClaim(ctx context.Context, sb *lennyv1.Sandbox
 // dropped and the reservation's own error is returned: a failed counter call
 // leaves the member counted, which fails closed.
 //
-// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// spec: §4.6.3 (PodClaim: a release that ends the occupancy without
 // reuse), §5.2 (Slot assignment atomicity).
-func (c *SlotClaimer) rollbackReservation(ctx context.Context, sandboxName, sessionID string) {
+func (c *SlotClaimer) rollbackReservation(ctx context.Context, agentPodName, sessionID string) {
 	rctx, cancel := c.rollbackContext(ctx)
 	defer cancel()
-	_, _ = c.ReleaseSlot(rctx, sandboxName, sessionID, false, false)
+	_, _ = c.ReleaseSlot(rctx, agentPodName, sessionID, false, false)
 }
 
-// ReleaseSlot releases sessionID's concurrent-session slot on sandboxName
+// ReleaseSlot releases sessionID's concurrent-session slot on agentPodName
 // when the session ends or fails, and runs the occupancy-zero disposition of
-// the per-pod SandboxClaim when this release ends the occupancy.
+// the per-pod PodClaim when this release ends the occupancy.
 //
 // It first runs the §5.2 keyed slot release, which removes the session's
 // member and reports whether it removed one and the remaining cardinality.
@@ -860,9 +860,9 @@ func (c *SlotClaimer) rollbackReservation(ctx context.Context, sandboxName, sess
 // is returned without it. ReleaseSlot makes a single attempt.
 //
 // spec: §5.2 (Slot assignment atomicity, occupancy-zero recycle
-// disposition); §6.2 (leaked slot semantics); §4.6.3 (SandboxClaim: a
+// disposition); §6.2 (leaked slot semantics); §4.6.3 (PodClaim: a
 // release that ends the occupancy without reuse).
-func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (recycled bool, err error) {
+func (c *SlotClaimer) ReleaseSlot(ctx context.Context, agentPodName, sessionID string, recycle, leaked bool) (recycled bool, err error) {
 	if c.Counter == nil {
 		// The Redis set (with its §12.4 Postgres fallback) is the only
 		// intra-pod occupancy record. Without it, release cannot tell
@@ -871,26 +871,26 @@ func (c *SlotClaimer) ReleaseSlot(ctx context.Context, sandboxName, sessionID st
 		// same posture ClaimSlot takes on a nil counter.
 		return false, errors.New("podclaim: slot counter is required for concurrent-session slot release")
 	}
-	removed, remaining, rehydrated, err := c.Counter.Release(ctx, sandboxName, sessionID, leaked)
+	removed, remaining, rehydrated, err := c.Counter.Release(ctx, agentPodName, sessionID, leaked)
 	if rehydrated {
-		c.recordRehydration(sandboxName, c.sandboxPool(ctx, sandboxName))
+		c.recordRehydration(agentPodName, c.agentPodPool(ctx, agentPodName))
 	}
 	if err != nil {
-		return false, fmt.Errorf("%w: sandbox %s session %s: %w", ErrSlotCounterRelease, sandboxName, sessionID, err)
+		return false, fmt.Errorf("%w: sandbox %s session %s: %w", ErrSlotCounterRelease, agentPodName, sessionID, err)
 	}
 	if leaked || !removed || remaining > 0 {
 		// A leak keeps its slot counted, a duplicate release removed
 		// nothing, or a sibling remains: the per-pod claim stays.
 		return false, nil
 	}
-	return c.disposeAtZero(ctx, sandboxName, recycle)
+	return c.disposeAtZero(ctx, agentPodName, recycle)
 }
 
-// sandboxPool returns the warm-pool label of sandboxName, the pool label
+// agentPodPool returns the warm-pool label of agentPodName, the pool label
 // reserveSlot records for the same pod, for the rehydration metric. A read
 // failure yields the empty label rather than dropping the event.
-func (c *SlotClaimer) sandboxPool(ctx context.Context, sandboxName string) string {
-	sb, err := c.sandbox(ctx, sandboxName)
+func (c *SlotClaimer) agentPodPool(ctx context.Context, agentPodName string) string {
+	sb, err := c.agentPod(ctx, agentPodName)
 	if err != nil {
 		return ""
 	}
@@ -899,7 +899,7 @@ func (c *SlotClaimer) sandboxPool(ctx context.Context, sandboxName string) strin
 
 // disposeAtZero runs the occupancy-zero disposition of the per-pod claim
 // after a clean release that removed the last member.
-func (c *SlotClaimer) disposeAtZero(ctx context.Context, sandboxName string, recycle bool) (bool, error) {
+func (c *SlotClaimer) disposeAtZero(ctx context.Context, agentPodName string, recycle bool) (bool, error) {
 	if recycle {
 		// §5.2 recycle disposition on the occupancy-zero edge of a recycling
 		// concurrent pool: patch the per-pod claim bound → recycling so the
@@ -910,7 +910,7 @@ func (c *SlotClaimer) disposeAtZero(ctx context.Context, sandboxName string, rec
 		// retire off the `recycling` binding state. A claim that vanished (a
 		// concurrent retirement, the §4.6.1 orphan GC reclaimed it) is a no-op:
 		// there is nothing left to recycle. spec: §6.2.
-		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(sandboxName), c.now); err != nil {
+		if err := WriteRecyclingStatus(ctx, c.Client, c.Namespace, ClaimName(agentPodName), c.now); err != nil {
 			if apierrors.IsNotFound(err) {
 				return false, nil
 			}
@@ -922,7 +922,7 @@ func (c *SlotClaimer) disposeAtZero(ctx context.Context, sandboxName string, rec
 		// retires the pod rather than leaving it stuck in `recycling` until the
 		// much longer §4.6.1 orphan-GC window.
 		if c.RecycleBoundary != nil {
-			c.RecycleBoundary.OnRecycling(sandboxName)
+			c.RecycleBoundary.OnRecycling(agentPodName)
 		}
 		// §5.2: the claim is now `recycling` on a true occupancy-zero edge (every
 		// slot released cleanly, so no leaked slot holds occupancy). Signal the
@@ -935,5 +935,5 @@ func (c *SlotClaimer) disposeAtZero(ctx context.Context, sandboxName string, rec
 	// delete the per-pod occupancy claim so the pod retires. The §4.6.1
 	// occupancy projection moves the pod from claimed to draining on the
 	// claim DELETE.
-	return false, DeleteClaim(ctx, c.Client, c.Namespace, sandboxName)
+	return false, DeleteClaim(ctx, c.Client, c.Namespace, agentPodName)
 }

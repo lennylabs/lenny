@@ -20,7 +20,7 @@ import (
 // diagnosis: the Postgres session_policy JSONB column (migration 0167
 // renames task_policy → session_policy) did not round-trip the §5.2
 // recycle.maxPodUptimeSeconds retirement cap an operator sets on the admin
-// API, so it never reaches the SandboxTemplate and the claim path can never
+// API, so it never reaches the PodSet and the claim path can never
 // drain an over-uptime pod. The test runs against a real Postgres container
 // with the full migration set applied, so it also proves the migration
 // rename and the dropped concurrent-mode columns.

@@ -272,7 +272,7 @@ func (h *Harness) Concurrent() bool { return h.maxConcurrent > 1 }
 // removed twice in one reservation episode (single removal).
 //
 // spec: §5.2 (Slot assignment atomicity, Slot-holder predicate), §6.2
-// (leaked slot semantics), §4.6.3 (SandboxClaim: a release that ends the
+// (leaked slot semantics), §4.6.3 (PodClaim: a release that ends the
 // occupancy without reuse), §7.1 (Post-terminal window)
 func (h *Harness) slotInvariants(ctx context.Context, rows map[string]sessionRow, held map[string]bool) []Invariant {
 	if !h.Concurrent() {

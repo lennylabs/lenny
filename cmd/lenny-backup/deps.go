@@ -197,7 +197,7 @@ func buildExporters(ctx context.Context, in depsInput) (
 		return nil, crdExport, closeExport
 	}
 	// The config export reads runtimes and pools from the lenny.dev Runtime
-	// and SandboxWarmPool custom resources through the K8s API (§25.11 C4:
+	// and PodSet custom resources through the K8s API (§25.11 C4:
 	// the K8s API for the runtime and pool CRDs), using the lenny-backup-sa
 	// get/list-on-CRDs grant. A failed CRD-reader build disables the config
 	// export rather than silently omitting runtimes/pools.

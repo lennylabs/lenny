@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/podregistry"
 )
 
-// The claim happy path (the SSA `bound` status write in claimViaSandboxClaim)
+// The claim happy path (the SSA `bound` status write in claimViaPodClaim)
 // is exercised against a real API server in the tier-2-component
 // crdpodregistry_claim_test.go, because the fake client cannot serve
 // Server-Side-Apply patches. The unit-tier tests below cover the two error
@@ -35,13 +35,13 @@ import (
 // spec: §4.6.1 (CREATE-collision is the single-claim guard; advance to the
 // next idle pod).
 func TestClaimPodSkipsPodWhoseClaimAlreadyExists_spec_4_6_1(t *testing.T) {
-	// Seed the idle Sandbox and its already-existing per-pod claim, so the
-	// CREATE in claimViaSandboxClaim returns AlreadyExists.
-	existing := &lennyv1.SandboxClaim{
+	// Seed the idle AgentPod and its already-existing per-pod claim, so the
+	// CREATE in claimViaPodClaim returns AlreadyExists.
+	existing := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("alpha"), Namespace: "lenny-agents"},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: "alpha", TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "alpha", TenantID: "acme"},
 	}
-	r := newRegistry(t, "lenny-agents", seedSandbox("alpha", "echo-pool", "idle"), existing)
+	r := newRegistry(t, "lenny-agents", seedAgentPod("alpha", "echo-pool", "idle"), existing)
 
 	_, err := r.ClaimPod(context.Background(),
 		podregistry.ClaimOpts{PoolID: "echo-pool", TenantID: "acme", SessionID: "s1"})
@@ -61,12 +61,12 @@ func TestClaimPodPropagatesNonRaceClaimError_spec_4_6_1(t *testing.T) {
 	boom := errors.New("apiserver unavailable")
 	base := fake.NewClientBuilder().
 		WithScheme(newScheme(t)).
-		WithObjects(seedSandbox("alpha", "echo-pool", "idle")).
-		WithStatusSubresource(&lennyv1.Sandbox{}, &lennyv1.SandboxClaim{}).
+		WithObjects(seedAgentPod("alpha", "echo-pool", "idle")).
+		WithStatusSubresource(&lennyv1.AgentPod{}, &lennyv1.PodClaim{}).
 		Build()
 	cli := interceptor.NewClient(base, interceptor.Funcs{
 		Create: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+			if _, ok := obj.(*lennyv1.PodClaim); ok {
 				return boom
 			}
 			return c.Create(ctx, obj, opts...)

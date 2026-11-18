@@ -8,7 +8,7 @@ triggers:
 components:
   - platform
 symptoms:
-  - "two non-terminal per-pod SandboxClaims existed for the same Sandbox"
+  - "two non-terminal per-pod PodClaims existed for the same AgentPod"
 tags:
   - chaos
 related: []
@@ -16,7 +16,7 @@ related: []
 
 # double-claim-verification
 
-Two non-terminal per-pod `SandboxClaim` resources (deterministic name `claim-<podName>`) existed for the same Sandbox. The `lenny-sandboxclaim-guard` webhook rejects a second non-terminal claim at `CREATE`, so a double-claim indicates a fencing defect.
+Two non-terminal per-pod `PodClaim` resources (deterministic name `claim-<podName>`) existed for the same AgentPod. The `lenny-podclaim-guard` webhook rejects a second non-terminal claim at `CREATE`, so a double-claim indicates a fencing defect.
 
 ## Trigger
 

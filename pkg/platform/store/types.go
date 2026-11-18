@@ -21,7 +21,7 @@ package store
 // a pool, session, pod, or cluster id at a call site. spec: §12.6.
 type (
 	// PodID identifies an agent pod. The CRD-backed registry maps it to
-	// the Sandbox metadata.name; the Postgres-backed registry maps it to
+	// the AgentPod metadata.name; the Postgres-backed registry maps it to
 	// agent_pod_state.pod_id.
 	PodID string
 

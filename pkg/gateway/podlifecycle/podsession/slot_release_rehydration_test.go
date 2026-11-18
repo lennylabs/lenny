@@ -34,7 +34,7 @@ func (emptySlotSource) ListPodsWithActiveSlots(context.Context) ([]string, error
 // record the event once with the pod and its warm-pool label.
 func TestSlotReleaseRecordsRehydrationOnce_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"), idleSandbox(ns, "sbx-2", "10.244.1.8"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"), idleAgentPod(ns, "sbx-2", "10.244.1.8"))
 	mr := miniredis.RunT(t)
 	rc := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = rc.Close() })
@@ -51,7 +51,7 @@ func TestSlotReleaseRecordsRehydrationOnce_spec_5_2(t *testing.T) {
 	if err := b.ReleaseSlotReservation(ctx, "sbx-1", "s1", false); err != nil {
 		t.Fatalf("ReleaseSlotReservation: %v", err)
 	}
-	if err := b.ReleaseSlot(ctx, &podsession.BindResult{SandboxName: "sbx-2", SessionID: "s2", SlotID: "s2"}); err != nil {
+	if err := b.ReleaseSlot(ctx, &podsession.BindResult{AgentPodName: "sbx-2", SessionID: "s2", SlotID: "s2"}); err != nil {
 		t.Fatalf("ReleaseSlot: %v", err)
 	}
 	// A second release on a rehydrated pod records nothing.

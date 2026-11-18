@@ -215,7 +215,7 @@ func (f *funnelRaceFixture) seedBound(t *testing.T, id, pod string, retries int6
 		t.Fatalf("seed %s: row generation is 0, so every binding would read as stale", id)
 	}
 	bind := &podsession.BindResult{
-		SessionID: id, TenantID: "acme", SandboxName: pod,
+		SessionID: id, TenantID: "acme", AgentPodName: pod,
 		CoordinationGeneration: row.CoordinationGeneration,
 	}
 	if slot {

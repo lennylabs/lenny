@@ -8,13 +8,13 @@ replica count and the §13.1 Restricted-PSS posture (non-root, all
 capabilities dropped, read-only root filesystem, RuntimeDefault
 seccomp) shared with the controller.
 
-The gateway claims §5 warm pods: it reads Sandbox and SandboxWarmPool
-CRDs, creates the per-pod binding SandboxClaim CRD the §17.2
-lenny-sandboxclaim-guard webhook checks on CREATE, and writes the
-SandboxClaim binding state on the sandboxclaims/status subresource. It
-does not write Sandbox.status: under the §4.6.3 pod-status ownership
+The gateway claims §5 warm pods: it reads AgentPod and PodSet
+CRDs, creates the per-pod binding PodClaim CRD the §17.2
+lenny-podclaim-guard webhook checks on CREATE, and writes the
+PodClaim binding state on the podclaims/status subresource. It
+does not write AgentPod.status: under the §4.6.3 pod-status ownership
 decomposition the WarmPoolController is the sole writer of
-Sandbox.status. The ClusterRole below grants exactly those verbs.
+AgentPod.status. The ClusterRole below grants exactly those verbs.
 
 Two Services are rendered. lenny-gateway is the ClusterIP Service the
 internal control plane reaches (the §17.2 lenny-drain-readiness webhook
@@ -178,45 +178,45 @@ metadata:
   labels:
     {{- include "lenny.labels" . | nindent 4 }}
 rules:
-  # The gateway reads warm pools and Sandboxes to select a §5 warm pod
+  # The gateway reads warm pools and AgentPods to select a §5 warm pod
   # for a claim and reads pods to resolve the claimed pod's IP for the
-  # adapter dial. It does not write Sandbox.status: under the §4.6.3
+  # adapter dial. It does not write AgentPod.status: under the §4.6.3
   # pod-status ownership decomposition the WarmPoolController is the
-  # sole writer of Sandbox.status and projects occupancy from claim
-  # existence, so the gateway holds only read access on Sandbox.
+  # sole writer of AgentPod.status and projects occupancy from claim
+  # existence, so the gateway holds only read access on AgentPod.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxwarmpools", "sandboxtemplates", "runtimes"]
+    resources: ["podsets", "runtimes"]
     verbs: ["get", "list", "watch"]
-  # Sandboxes: read-only for pod selection during claim (§4.6.3). The
+  # AgentPods: read-only for pod selection during claim (§4.6.3). The
   # gateway holds no `patch` or `watch` verb on the main resource and
-  # no `sandboxes/status` grant — the tenant pin lives on the agent
+  # no `agentpods/status` grant — the tenant pin lives on the agent
   # Pod's lenny.dev/tenant-id label (granted via the Pods rule below),
   # and the lenny.dev/state label is a WarmPoolController projection of
   # the coarse occupancy phase rather than a gateway write.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxes"]
+    resources: ["agentpods"]
     verbs: ["get", "list"]
-  # SandboxClaim: the gateway creates the per-pod binding claim CRD that
-  # the §17.2 lenny-sandboxclaim-guard webhook validates on CREATE, gets
+  # PodClaim: the gateway creates the per-pod binding claim CRD that
+  # the §17.2 lenny-podclaim-guard webhook validates on CREATE, gets
   # it to read the binding state and the resourceVersion guarding a
   # hold-expiry DELETE precondition, and deletes it on the claim-lifecycle
   # edges (hold expiry, session-mode Release, and §5.2
-  # SlotClaimer.ReleaseSlot all do Client.Delete on the SandboxClaim).
+  # SlotClaimer.ReleaseSlot all do Client.Delete on the PodClaim).
   # Intra-pod capacity is gated by the §5.2 Redis slot set with
   # a §12.4 Postgres SessionStore.GetActiveSlotsByPod fallback under a
   # per-pod advisory lock during a Redis outage, so the gateway does not
   # list or watch claims to gate capacity. The §4.6.3 grant is
   # create/get/delete.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxclaims"]
+    resources: ["podclaims"]
     verbs: ["get", "create", "delete"]
-  # SandboxClaim status: the gateway is the sole writer of the §4.6.3
+  # PodClaim status: the gateway is the sole writer of the §4.6.3
   # claim binding state. It patches the binding-state phase, the
   # transition time, rewarmStartedAt (preConnect re-warm anchor), and
-  # holdExpiresAt (reserved-hold window) on the sandboxclaims/status
+  # holdExpiresAt (reserved-hold window) on the podclaims/status
   # subresource.
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxclaims/status"]
+    resources: ["podclaims/status"]
     verbs: ["get", "patch"]
   # Pods: read to resolve the claimed pod's IP for the adapter dial and
   # the WarmPoolController-projected lenny.dev/host-schedulable label,
@@ -684,9 +684,9 @@ spec:
             {{- end }}
             {{- end }}
             {{- /* §4.6 pod placement: pin the gateway at the first
-                  agent namespace so SandboxClaims land against live
+                  agent namespace so PodClaims land against live
                   warm pods. Without --agent-namespace the gateway
-                  runs in-memory and no Sandbox is claimed. */ -}}
+                  runs in-memory and no AgentPod is claimed. */ -}}
             {{- with (first .Values.agentNamespaces) }}
             - --agent-namespace={{ .name }}
             {{- end }}
@@ -898,7 +898,7 @@ spec:
             # §4.6.1 reserved hold — gateway.claimHoldTTLSeconds is the
             # deployment-level TTL of the `reserved` claim window. When a
             # recycling pod's occupancy reaches zero the gateway patches
-            # the per-pod SandboxClaim to `reserved` and holds it for this
+            # the per-pod PodClaim to `reserved` and holds it for this
             # many seconds so a back-to-back same-tenant session rebinds
             # (reserved → bound) with no acquisition round trip; on expiry
             # the holder deletes the claim and the pod returns to idle. A

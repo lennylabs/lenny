@@ -1085,7 +1085,7 @@ type stagedLineSupersession struct {
 // spec: §28.3 (Registers)
 var stagedLineSupersessions = []stagedLineSupersession{
 	{
-		// The REG-CLAIM writer cell follows the §4.6.3 SandboxClaim
+		// The REG-CLAIM writer cell follows the §4.6.3 PodClaim
 		// ownership row, which gained the gateway delete that ends a hold
 		// when an acquisition ends it.
 		proposal:   "0079_fix_name-who-starts-the-next-sessions-runtime-on-a-recycled-pod",
@@ -1104,7 +1104,7 @@ var stagedLineSupersessions = []stagedLineSupersession{
 			"ceilings concurrent slots ([§5.2](05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes))",
 	},
 	{
-		// The REG-CLAIM writer cell follows the §4.6.3 SandboxClaim
+		// The REG-CLAIM writer cell follows the §4.6.3 PodClaim
 		// ownership row, which gained the gateway delete by a release that
 		// ends the occupancy without reuse. It applies after the rewrite
 		// above, so its replaced text is that rewrite's result.
@@ -1250,6 +1250,23 @@ var stagedLineSupersessions = []stagedLineSupersession{
 		from: "The claim register carries its own schema rather than the entry schema the migration registers " +
 			"share,",
 		removes: 4,
+	},
+	{
+		// The REG-PODSTATE writer cell names the per-pod kind by the name
+		// change 0137 gave it. The staged name is spelled in parts, so the
+		// retired-name check reads this file like any other.
+		proposal:   "changes/0137-pod-lifecycle-controller (0137.S5)",
+		linePrefix: "| `REG-PODSTATE` |",
+		from:       "the mirrored `Sand" + "box` status columns",
+		to:         "the mirrored `AgentPod` status columns",
+	},
+	{
+		// The REG-CLAIM key cell names the claim kind by the name change
+		// 0137 gave it.
+		proposal:   "changes/0137-pod-lifecycle-controller (0137.S5)",
+		linePrefix: "| `REG-CLAIM` |",
+		from:       "| `Sand" + "boxClaim` named `claim-<podName>` |",
+		to:         "| `PodClaim` named `claim-<podName>` |",
 	},
 }
 

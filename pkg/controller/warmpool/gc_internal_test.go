@@ -10,7 +10,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 )
 
 // TestClassifyReclaimDisposition exercises the §4.6.1 binding-state-aware
@@ -21,7 +21,7 @@ import (
 // the terminal-disposition skip, and the not-yet-aged skip for each, so the
 // reclaim routing is verified without a cluster.
 //
-// spec: 4.6.1 (orphaned SandboxClaim detection, three binding-state predicates
+// spec: 4.6.1 (orphaned PodClaim detection, three binding-state predicates
 // plus the creation-timestamp fallback), 3.3 (drain for live states), 6.10
 // (recycling with no holdExpiresAt reclaimed by draining).
 func TestClassifyReclaimDisposition(t *testing.T) {
@@ -124,9 +124,9 @@ func TestClassifyReclaimDisposition(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			g := &ClaimGarbageCollector{OrphanTimeout: orphanTimeout, ReservedHoldGrace: grace}
-			cl := &lennyv1.SandboxClaim{
+			cl := &lennyv1.PodClaim{
 				ObjectMeta: metav1.ObjectMeta{CreationTimestamp: tt.created},
-				Status: lennyv1.SandboxClaimStatus{
+				Status: lennyv1.PodClaimStatus{
 					Phase:                      tt.phase,
 					BindingStateTransitionTime: tt.transition,
 					HoldExpiresAt:              tt.hold,
@@ -150,12 +150,12 @@ func TestClassifyZeroKeyNeverReclaims(t *testing.T) {
 	g := &ClaimGarbageCollector{}
 
 	// Empty status with a zero creationTimestamp: nothing to age against.
-	cl := &lennyv1.SandboxClaim{}
+	cl := &lennyv1.PodClaim{}
 	if got := g.classify(cl, now); got != reclaimSkip {
 		t.Errorf("empty-status zero-creation claim = %v, want reclaimSkip", got)
 	}
 	// Bound with neither a transition stamp nor a creation time.
-	cl = &lennyv1.SandboxClaim{Status: lennyv1.SandboxClaimStatus{Phase: string(claimstate.Bound)}}
+	cl = &lennyv1.PodClaim{Status: lennyv1.PodClaimStatus{Phase: string(claimstate.Bound)}}
 	if got := g.classify(cl, now); got != reclaimSkip {
 		t.Errorf("bound zero-key claim = %v, want reclaimSkip", got)
 	}

@@ -135,12 +135,12 @@ func requireSandboxIsolationProfile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("list RuntimeClasses: %v", err)
 	}
-	sandboxMarkers := []string{"gvisor", "runsc", "kata", "confidential", "sandbox"}
+	agentPodMarkers := []string{"gvisor", "runsc", "kata", "confidential", "sandbox"}
 	var found string
 	for _, rc := range rcList.Items {
 		name := strings.ToLower(rc.Name)
 		handler := strings.ToLower(rc.Handler)
-		for _, m := range sandboxMarkers {
+		for _, m := range agentPodMarkers {
 			if strings.Contains(name, m) || strings.Contains(handler, m) {
 				found = rc.Name
 				break

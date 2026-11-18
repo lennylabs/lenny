@@ -72,7 +72,7 @@ func TestTreeRecoverySelectsExactlyResumePendingNodes_spec_8_10(t *testing.T) {
 						}
 					}
 					if inRegistry {
-						reg.Put(&podsession.BindResult{SessionID: "node", TenantID: "acme", SandboxName: "sbx-node"})
+						reg.Put(&podsession.BindResult{SessionID: "node", TenantID: "acme", AgentPodName: "sbx-node"})
 					}
 					from, _ := store.Get(ctx, "acme", trigger)
 					root := srv.treeRoot(ctx, from)

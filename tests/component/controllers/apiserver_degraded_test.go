@@ -67,7 +67,7 @@ func unreachableConfig(t *testing.T, base *rest.Config) *rest.Config {
 // and the self-heal. The "existing sessions continue unaffected" clause is
 // architectural (running pods talk to the gateway over gRPC and persist to
 // Postgres, neither of which depends on etcd); at the CRD layer the closest
-// faithful assertion is that the Sandbox objects representing existing warm
+// faithful assertion is that the AgentPod objects representing existing warm
 // capacity persist across the outage, which this test checks. The full
 // gateway↔pod live-serving leg of that clause is covered end to end only by
 // the Kind chaos variant.
@@ -108,19 +108,13 @@ func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
 	const poolName = "claude-worker-small"
 
 	ns := testNamespaces.Create(t, live)
-	mustCreate(t, ctx, live, &lennyv1.SandboxTemplate{
+	mustCreate(t, ctx, live, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
-		},
-	})
-	mustCreate(t, ctx, live, &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: poolName, Namespace: ns},
-		Spec: lennyv1.SandboxWarmPoolSpec{
-			TemplateRef: poolName,
-			MinWarm:     3,
-			MaxWarm:     10,
+			MinWarm:          3,
+			MaxWarm:          10,
 		},
 	})
 
@@ -130,7 +124,7 @@ func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
 
 	countWarm := func() int {
 		t.Helper()
-		var l lennyv1.SandboxList
+		var l lennyv1.AgentPodList
 		if err := live.List(ctx, &l, client.InNamespace(ns),
 			client.MatchingLabels{warmpool.LabelPool: poolName}); err != nil {
 			t.Fatalf("list sandboxes: %v", err)
@@ -139,7 +133,7 @@ func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
 	}
 
 	// Baseline: with the API server reachable the pool warms to minWarm.
-	// These three Sandboxes are the existing warm capacity that must
+	// These three AgentPods are the existing warm capacity that must
 	// survive the outage below.
 	if _, err := liveReconciler.Reconcile(ctx, req); err != nil {
 		t.Fatalf("baseline reconcile: %v", err)
@@ -151,7 +145,7 @@ func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
 	// A new replenishment need arises: raise minWarm from 3 to 5. This
 	// write lands while the API server is still reachable, so the pool now
 	// carries an unmet deficit of two pods that a reconcile must fill.
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if err := live.Get(ctx, req.NamespacedName, &pool); err != nil {
 		t.Fatalf("get pool: %v", err)
 	}
@@ -195,7 +189,7 @@ func TestEtcdUnavailableDegradedMode_spec_4_6(t *testing.T) {
 	}
 
 	// Existing warm capacity is unaffected by the outage and the frozen
-	// deficit did not fill: the three Sandboxes created before the outage
+	// deficit did not fill: the three AgentPods created before the outage
 	// still exist and no new pods were created toward the raised target.
 	if got := countWarm(); got != 3 {
 		t.Fatalf("warm count during outage = %d, want 3 (existing pods survive, deficit stays frozen)", got)

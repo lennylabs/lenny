@@ -180,8 +180,8 @@ func (e *wsdOutageEnv) delegateServer(t *testing.T, runtimes runtimestore.Store)
 	return ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 }
 
-// wsdOutageCluster is a fake cluster holding a warm pool, a template, and
-// one idle sandbox with its pod for the runtime, recording every create,
+// wsdOutageCluster is a fake cluster holding the pool's PodSet and one
+// idle sandbox with its pod for the runtime, recording every create,
 // update, and patch in writes.
 func wsdOutageCluster(t *testing.T, writes *wsdClusterWrites) client.Client {
 	t.Helper()
@@ -192,21 +192,22 @@ func wsdOutageCluster(t *testing.T, writes *wsdClusterWrites) client.Client {
 	if err := corev1.AddToScheme(scheme); err != nil {
 		t.Fatalf("add core scheme: %v", err)
 	}
-	pool, tmpl, sbx := wsdOutageRuntime+"-pool", wsdOutageRuntime+"-tmpl", wsdOutageRuntime+"-sbx"
+	pool, apod := wsdOutageRuntime+"-pool", wsdOutageRuntime+"-sbx"
 	objs := []client.Object{
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: wsdOutageNS},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef:       wsdOutageRuntime,
+				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
+			},
 		},
-		&lennyv1.SandboxTemplate{
-			ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: wsdOutageNS},
-			Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: wsdOutageRuntime, IsolationProfile: string(isolation.ProfileSandboxed)},
+		&lennyv1.AgentPod{
+			ObjectMeta: metav1.ObjectMeta{Name: apod, Namespace: wsdOutageNS, Labels: map[string]string{warmpool.LabelPool: pool}},
+			Status:     lennyv1.AgentPodStatus{Phase: "idle", PodIP: "10.244.0.9"},
 		},
-		&lennyv1.Sandbox{
-			ObjectMeta: metav1.ObjectMeta{Name: sbx, Namespace: wsdOutageNS, Labels: map[string]string{warmpool.LabelPool: pool}},
-			Status:     lennyv1.SandboxStatus{Phase: "idle", PodIP: "10.244.0.9"},
-		},
-		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: sbx, Namespace: wsdOutageNS}},
+		&corev1.Pod{ObjectMeta: metav1.ObjectMeta{Name: apod, Namespace: wsdOutageNS}},
 	}
 	return fake.NewClientBuilder().WithScheme(scheme).WithObjects(objs...).
 		WithInterceptorFuncs(ctrlinterceptor.Funcs{
@@ -250,12 +251,12 @@ func (w *wsdClusterWrites) total() int {
 	return n
 }
 
-// claimCount returns the number of SandboxClaims in the fake cluster.
+// claimCount returns the number of PodClaims in the fake cluster.
 func (e *wsdOutageEnv) claimCount(t *testing.T) int {
 	t.Helper()
-	var claims lennyv1.SandboxClaimList
+	var claims lennyv1.PodClaimList
 	if err := e.cluster.List(context.Background(), &claims, client.InNamespace(wsdOutageNS)); err != nil {
-		t.Fatalf("list sandbox claims: %v", err)
+		t.Fatalf("list pod claims: %v", err)
 	}
 	return len(claims.Items)
 }
@@ -459,11 +460,11 @@ func assertDefaultsFirst(t *testing.T, step string, raw json.RawMessage, clientS
 }
 
 // assertNoClaim checks that a rejected create-and-start reached no §7.1
-// pod claim: the fake cluster holds no SandboxClaim and took no write.
+// pod claim: the fake cluster holds no PodClaim and took no write.
 func (e *wsdOutageEnv) assertNoClaim(t *testing.T, step string) {
 	t.Helper()
 	if n := e.claimCount(t); n != 0 {
-		t.Fatalf("%s during the outage left %d SandboxClaims, want 0", step, n)
+		t.Fatalf("%s during the outage left %d PodClaims, want 0", step, n)
 	}
 	if n := e.writes.total(); n != 0 {
 		t.Fatalf("%s during the outage wrote to the cluster: %v", step, e.writes.counts)
@@ -479,7 +480,7 @@ func (e *wsdOutageEnv) assertNoClaim(t *testing.T, step string) {
 // a POST /v1/sessions/start carrying a plan bound the plan without the
 // runtime's workspaceDefaults (201 or a finalizing row), returned a status
 // other than 503 SERVICE_UNAVAILABLE with Retry-After, wrote session state
-// before rejecting, or (create-and-start) took a SandboxClaim or wrote to the
+// before rejecting, or (create-and-start) took a PodClaim or wrote to the
 // cluster; a lenny/delegate_task to the defaults-declaring runtime did not
 // return the retryable SERVICE_UNAVAILABLE tool error, created a child row,
 // or left the child's file export in place; or, after recovery, the create,

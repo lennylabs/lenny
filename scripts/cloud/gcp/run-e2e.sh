@@ -97,7 +97,7 @@ log "step 4: in-cluster Postgres + Redis fixtures (or Cloud SQL / Memorystore)"
 kubectl apply -f "${REPO_ROOT}/tests/testinfra/k8s/datastores.yaml"
 
 log "step 4b: RuntimeClasses (runc + gvisor + kata-containers)"
-# The Sandbox controller maps §5.3 isolationProfile to a Kubernetes
+# The AgentPod controller maps §5.3 isolationProfile to a Kubernetes
 # RuntimeClass on the pod spec: standard → runc, sandboxed → gvisor,
 # microvm → kata-containers. Kubernetes admission rejects a pod
 # whose runtimeClassName references a missing RuntimeClass, so all

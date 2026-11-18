@@ -36,7 +36,7 @@ func TestSyncDisabledOverrideForcesSDKWarmOff_spec_6_1(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if !pool.Spec.SDKWarmDisabled {
 		t.Fatal("spec.sdkWarmDisabled should be true under the disabled override")
 	}
@@ -73,7 +73,7 @@ func TestSyncDisabledOverridePreservesOpenedAt_spec_6_1(t *testing.T) {
 	if err := r2.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	cb := getWarmPool(t, c).Status.SDKWarmCircuitBreaker
+	cb := getPodSet(t, c).Status.SDKWarmCircuitBreaker
 	if cb == nil || cb.OpenedAt == nil || !cb.OpenedAt.Time.Equal(first) {
 		t.Errorf("openedAt should be preserved as %v across reconciles, got %+v", first, cb)
 	}
@@ -101,7 +101,7 @@ func TestSyncEnabledOverrideClearsTrippedBreakerAheadOfGraceWindow_spec_6_1(t *t
 	if err := r1.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 1: %v", err)
 	}
-	if !getWarmPool(t, c).Spec.SDKWarmDisabled {
+	if !getPodSet(t, c).Spec.SDKWarmDisabled {
 		t.Fatal("precondition: breaker should be tripped after pass 1")
 	}
 
@@ -115,7 +115,7 @@ func TestSyncEnabledOverrideClearsTrippedBreakerAheadOfGraceWindow_spec_6_1(t *t
 	if err := r2.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Spec.SDKWarmDisabled {
 		t.Error("spec.sdkWarmDisabled should be cleared by the enabled override")
 	}
@@ -144,7 +144,7 @@ func TestSyncEnabledOverrideReTripsWhenRateStillHigh_spec_6_1(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if !pool.Spec.SDKWarmDisabled {
 		t.Error("enabled override must still re-trip the breaker at a >=90% live rate")
 	}

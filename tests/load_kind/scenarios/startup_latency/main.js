@@ -86,7 +86,7 @@ export default function () {
     'status is 201': (r) => r.status === 201,
     'session running': (r) => r.body && r.body.includes('"running"'),
   });
-  // Terminate so the §4.6 SandboxClaim releases its pod back to the warm
+  // Terminate so the §4.6 PodClaim releases its pod back to the warm
   // pool. Without this each iteration leaks a claimed pod and the
   // smoke-sized pool exhausts within a handful of iterations.
   if (res.status === 201 && res.body) {

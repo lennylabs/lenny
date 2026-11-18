@@ -96,7 +96,7 @@ func TestPoolPolicyMirror_PoolPolicy(t *testing.T) {
 	}
 	// §5.2 sequential pod-reuse ("task mode") on the standard (non-microvm)
 	// scrub profile: no scrubProfile and no cross-tenant reuse, the common
-	// recycling-pool configuration. The CRD pair carries no signal at all
+	// recycling-pool configuration. The PodSet carries no signal at all
 	// for this case (sessionPolicyToCRD returns nil without a scrubProfile
 	// or the in-place acknowledgment), so the mirror is the only source
 	// foldPoolPolicy has for it.

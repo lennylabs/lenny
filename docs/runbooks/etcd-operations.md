@@ -27,7 +27,7 @@ related:
 
 # etcd-operations
 
-Operational procedures for etcd maintenance. Lenny writes heavily to etcd via CRDs (Sandbox, SandboxClaim, Runtime, and related resources). Under sustained write pressure, defragmentation and compaction become ongoing operational concerns.
+Operational procedures for etcd maintenance. Lenny writes heavily to etcd via CRDs (AgentPod, PodClaim, Runtime, and related resources). Under sustained write pressure, defragmentation and compaction become ongoing operational concerns.
 
 This runbook covers: (1) live-cluster defragmentation, (2) compaction setting changes, (3) quota-exhaustion recovery, and (4) escalation.
 
@@ -137,7 +137,7 @@ If `alarm list` shows `NOSPACE`:
 
 If `etcd_debugging_mvcc_db_total_size_in_bytes` grows faster than compaction can reclaim:
 
-1. Audit Sandbox retention — Lenny should garbage-collect terminated Sandboxes promptly. Check `lenny_warmpool_terminated_age_seconds` distribution.
+1. Audit AgentPod retention — Lenny should garbage-collect terminated AgentPods promptly. Check `lenny_warmpool_terminated_age_seconds` distribution.
 2. Reduce CRD verbosity — review custom controller status fields for unnecessary updates.
 3. Increase `--quota-backend-bytes` only as a last resort; it is a hard cap, not a solution to sustained growth.
 

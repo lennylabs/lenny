@@ -75,7 +75,7 @@ func refusesUsedPodLifetime(pod *corev1.Pod, req ClaimRequest) bool {
 // Any other read error, including the expiry of ctx, is returned wrapped. It
 // wraps no exhaustion sentinel, so the acquisition ends with the endpoint's
 // retryable claim-failure error rather than as pool exhaustion. The function
-// writes nothing and reads no SandboxClaim.
+// writes nothing and reads no PodClaim.
 //
 // spec: §5.2 (Tenant pinning: the gateway reads the pin on every idle-pod
 // acquisition), §5.2 (Runtime-process lifetime), §5.2 (Deployer
@@ -110,7 +110,7 @@ func AdmitTenantPin(ctx context.Context, cl client.Client, namespace, podName st
 // acknowledgment (AdmitTenantPin's drain report): the resolved pool reuses no
 // pod, or the pod is a `keep` pod and the resolved pool does not require the
 // acknowledgment. A pod refused only for its tenant does not drain. The stamp is written only when no
-// SandboxClaim holds the pod: the gateway stamps the pin after it creates
+// PodClaim holds the pod: the gateway stamps the pin after it creates
 // the claim, so a pinned idle pod with a claim is an acquisition in progress
 // on another replica, and its session keeps the pod.
 //
@@ -123,7 +123,7 @@ func AdmitTenantPin(ctx context.Context, cl client.Client, namespace, podName st
 //
 // spec: §5.2 (Deployer acknowledgment (runtime process kept across
 // sessions): an acquisition that refuses a pinned idle pod stamps its drain
-// request when no SandboxClaim holds it; a failed stamp or claim read does
+// request when no PodClaim holds it; a failed stamp or claim read does
 // not fail the acquisition).
 func DrainRefusedPod(ctx context.Context, cl client.Client, namespace, pool, podName string, now time.Time) {
 	attrs := []any{
@@ -131,7 +131,7 @@ func DrainRefusedPod(ctx context.Context, cl client.Client, namespace, pool, pod
 		slog.String("pod_id", podName),
 		slog.String("reason", drainReasonKeptRuntimeOutsideRule),
 	}
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: ClaimName(podName)}, &claim)
 	switch {
 	case err == nil:

@@ -89,7 +89,7 @@ func (c *Client) ReportSessionScrub(ctx context.Context, podID, sessionID string
 
 // ReportPodScrub reports the binary §5.2 whole-pod scrub outcome to the
 // gateway when occupancy reaches zero on a recycling pod and the gateway
-// has patched the pod's SandboxClaim to recycling. podID is the
+// has patched the pod's PodClaim to recycling. podID is the
 // agent_pod_state row key the gateway resolves the claim from; there is
 // no session because occupancy is zero at the recycle boundary.
 // runtimeLive states whether the adapter's runtime process can serve the

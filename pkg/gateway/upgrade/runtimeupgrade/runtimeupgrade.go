@@ -16,7 +16,7 @@
 // (BUILD-GAPS F-10.5.1). This package delivers the operator surface
 // (durable store, admin endpoints, CLI, metric emission). The Kubernetes
 // reconcile side (RuntimeUpgrade CRD, controller, WarmPoolController
-// SandboxTemplate-deletion guard) drives the cluster effects of each
+// PodSet-deletion guard) drives the cluster effects of each
 // phase and remains a follow-on.
 package runtimeupgrade
 

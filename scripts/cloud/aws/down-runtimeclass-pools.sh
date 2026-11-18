@@ -39,8 +39,7 @@ delete_node_group() {
 
 if has_class gvisor; then
   log "removing gVisor SDK-warm pool + RuntimeClass + node group"
-  kubectl delete sandboxwarmpool load-preconnect-pool-gvisor -n lenny-agents --ignore-not-found
-  kubectl delete sandboxtemplate load-preconnect-template-gvisor -n lenny-agents --ignore-not-found
+  kubectl delete podset load-preconnect-pool-gvisor -n lenny-agents --ignore-not-found
   kubectl delete runtime load-preconnect-runtime-gvisor --ignore-not-found
   kubectl delete runtimeclass gvisor --ignore-not-found
   delete_node_group lenny-gvisor
@@ -48,8 +47,7 @@ fi
 
 if has_class kata; then
   log "removing Kata SDK-warm pool + RuntimeClass + node group"
-  kubectl delete sandboxwarmpool load-preconnect-pool-kata -n lenny-agents --ignore-not-found
-  kubectl delete sandboxtemplate load-preconnect-template-kata -n lenny-agents --ignore-not-found
+  kubectl delete podset load-preconnect-pool-kata -n lenny-agents --ignore-not-found
   kubectl delete runtime load-preconnect-runtime-kata --ignore-not-found
   kubectl delete runtimeclass kata --ignore-not-found
   delete_node_group lenny-kata

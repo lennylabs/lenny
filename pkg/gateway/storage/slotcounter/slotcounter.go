@@ -296,7 +296,7 @@ return 0
 `)
 
 // podKey returns the per-pod key with the given suffix. The pod identifier
-// (the §4.6.1 Sandbox name) is wrapped in braces, so Redis Cluster hashes
+// (the §4.6.1 AgentPod name) is wrapped in braces, so Redis Cluster hashes
 // only the pod identifier and every key of one pod lands in one hash slot.
 // spec: §12.4 (lenny:pod:{pod_id}:* keys).
 func podKey(podID, suffix string) string {

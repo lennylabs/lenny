@@ -59,7 +59,7 @@ func (a readopter) ReadoptAndFence(ctx context.Context, tenantID, sessionID stri
 		return nil, a.release(ctx, tenantID, sessionID, cause)
 	}
 	bind := &podsession.BindResult{
-		SessionID: row.ID, TenantID: row.TenantID, SandboxName: row.PodAssignment,
+		SessionID: row.ID, TenantID: row.TenantID, AgentPodName: row.PodAssignment,
 		PodIP: sb.Status.PodIP, Adapter: adapter, Recycle: a.h.recycling,
 		CoordinationGeneration: generation,
 	}

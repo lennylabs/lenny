@@ -158,8 +158,8 @@ func certDynClient(objs ...runtime.Object) *dynamicfake.FakeDynamicClient {
 	// stages only Certificate objects.
 	return dynamicfake.NewSimpleDynamicClientWithCustomListKinds(certScheme(),
 		map[schema.GroupVersionResource]string{
-			certManagerGVR:     "CertificateList",
-			sandboxWarmPoolGVR: "SandboxWarmPoolList",
+			certManagerGVR: "CertificateList",
+			podSetGVR:      "PodSetList",
 		}, objs...)
 }
 

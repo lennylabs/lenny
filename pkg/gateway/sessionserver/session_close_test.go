@@ -59,7 +59,7 @@ func (e *releaseRecordingExecutor) Release(_ context.Context, _ string, d execut
 }
 
 // TestTerminalTransitionReleasesWithDisposition_spec_6_2 asserts that when the
-// executor is a §6.2 Sandbox-backed pod executor (SessionReleaser), the
+// executor is a §6.2 AgentPod-backed pod executor (SessionReleaser), the
 // gateway records the session's terminal disposition at teardown. A DELETE
 // transitions running → cancelled, so the disposition is `cancelled`.
 func TestTerminalTransitionReleasesWithDisposition_spec_6_2(t *testing.T) {

@@ -15,8 +15,8 @@ import (
 const runtimeUsage = `usage: lenny runtime <subcommand> [flags]
 
 Subcommands:
-  lenny runtime apply --file <path>   Apply a runtime's Runtime, SandboxTemplate,
-                                      and SandboxWarmPool CRD set to the embedded
+  lenny runtime apply --file <path>   Apply a runtime's Runtime, PodSet,
+                                      and PodSet CRD set to the embedded
                                       cluster so the gateway resolves the runtime
                                       by name and the WarmPoolController warms a pod`
 
@@ -28,9 +28,9 @@ var applyRuntimeSetFn = stack.RunRuntimeApply
 
 // cmdRuntime implements `lenny runtime ...`. The §17.4 custom-runtime
 // walkthrough invokes `lenny runtime apply --file runtime-crds.yaml` to
-// materialize a registered runtime's Runtime, SandboxTemplate, and
-// SandboxWarmPool CRD set. Under the no-Postgres development profile no
-// PoolScalingController projects a poolstore row into a SandboxWarmPool CRD,
+// materialize a registered runtime's Runtime, PodSet, and
+// PodSet CRD set. Under the no-Postgres development profile no
+// PoolScalingController projects a poolstore row into a PodSet CRD,
 // and `lenny-ctl runtime register` writes only the registry record, so this
 // verb is the documented mechanism a custom runtime materializes its pool
 // through, the same direct dynamic-apply path the echo seed uses.

@@ -134,15 +134,15 @@ func TestGatewayReplicaFailure(t *testing.T) {
 
 // spec: 13.7
 // diagnosis: TESTING.md §13.7 / §17.2 admission-webhook HA did not survive a pod
-// loss. The lenny-sandboxclaim-guard webhook runs as a 2-replica
+// loss. The lenny-podclaim-guard webhook runs as a 2-replica
 // Deployment behind its Service; the test deletes one pod and asserts
 // the Deployment reschedules a replacement to Ready and the Service
 // keeps a non-empty endpoint set throughout. The webhook is
-// failurePolicy: Fail, so an endpoint gap would block every SandboxClaim
+// failurePolicy: Fail, so an endpoint gap would block every PodClaim
 // write — a failure means the ReplicaSet did not replace the killed pod
 // or the Service lost all endpoints.
 func TestAdmissionWebhookOutage(t *testing.T) {
 	c := kind.InstallLenny(t)
 	killOnePodAndAssertRecovery(t, c,
-		"lenny-sandboxclaim-guard", "lenny.dev/webhook=lenny-sandboxclaim-guard", "lenny-sandboxclaim-guard")
+		"lenny-podclaim-guard", "lenny.dev/webhook=lenny-podclaim-guard", "lenny-podclaim-guard")
 }

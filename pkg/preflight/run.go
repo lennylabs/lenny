@@ -16,7 +16,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 )
 
 // lennyManagedLabel selects the workloads the chart labels as
@@ -466,7 +466,7 @@ func runPhaseStampChecks(ctx context.Context, reader client.Reader, cfg Config) 
 // credential-fsGroup, and pod-security-baseline audits. The host-sharing
 // scan covers all Lenny-managed Deployments, DaemonSets, and Jobs in the
 // release namespace and the §17.2 agent namespaces, plus the bare agent
-// Pods the controller spawns from Sandbox CRs. The same agent-Pod scan
+// Pods the controller spawns from AgentPod CRs. The same agent-Pod scan
 // feeds the §13.1 credential-fsGroup audit, so it is read once and
 // its error is reused across both audits. A failed read surfaces as a
 // failed check (fail-closed).
@@ -715,7 +715,7 @@ func runPoolGracePeriodChecks(ctx context.Context, reader client.Reader, _ Confi
 	if err != nil {
 		return []CheckResult{{
 			Name:     "pool-termination-grace-period",
-			Decision: Decision{Passed: true, Reason: "WARNING: list SandboxTemplates: " + err.Error()},
+			Decision: Decision{Passed: true, Reason: "WARNING: list PodSets: " + err.Error()},
 		}}
 	}
 	return []CheckResult{{
@@ -725,11 +725,11 @@ func runPoolGracePeriodChecks(ctx context.Context, reader client.Reader, _ Confi
 }
 
 // runCredentialDeliveryChecks runs the §4.9 install-time
-// credential-delivery scan. It lists every SandboxTemplate pool
+// credential-delivery scan. It lists every PodSet pool
 // definition and fails the multi-tenant install fail-closed when any pool
 // carries a forbidden deliveryMode combination, reusing the canonical
 // direct_mode_isolation.Decide the registration validation and admission
-// webhook already share. A SandboxTemplateList error other than a missing
+// webhook already share. A PodSetList error other than a missing
 // CRD or NotFound fails the check fail-closed, inverting the advisory
 // node-drain-timeout sibling that treats a read failure as a pass.
 //
@@ -738,7 +738,7 @@ func runCredentialDeliveryChecks(ctx context.Context, reader client.Reader, cfg 
 	// The scan enforces only in multi-tenant mode; a single-tenant or
 	// development install permits the combinations, so it neither lists
 	// pools nor fails on a read error. Gating the gather here keeps a
-	// single-tenant install from failing closed on a SandboxTemplate read.
+	// single-tenant install from failing closed on a PodSet read.
 	if cfg.TenancyMode != direct_mode_isolation.TenancyMulti {
 		return []CheckResult{{
 			Name:     "credential-delivery-multitenant",
@@ -749,7 +749,7 @@ func runCredentialDeliveryChecks(ctx context.Context, reader client.Reader, cfg 
 	if err != nil {
 		return []CheckResult{{
 			Name:     "credential-delivery-multitenant",
-			Decision: Decision{Reason: "list SandboxTemplates: " + err.Error()},
+			Decision: Decision{Reason: "list PodSets: " + err.Error()},
 		}}
 	}
 	return []CheckResult{{

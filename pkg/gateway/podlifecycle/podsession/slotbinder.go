@@ -24,7 +24,7 @@ import (
 // pod exclusively, BindSlot reserves one of the pod's up-to-
 // maxConcurrentSessions slots, each in its own per-slot workspace.
 type SlotBindRequest struct {
-	// Pool is the SandboxWarmPool to claim a slot from.
+	// Pool is the PodSet to claim a slot from.
 	Pool string
 	// IsolationProfile is the §5.3 profile the pool's pods run under. The
 	// binder maps it to the RuntimeClass that labels a setup-command
@@ -50,7 +50,7 @@ type SlotBindRequest struct {
 	// pod-uptime retirement cap. The slot-claim path skips a candidate pod
 	// whose uptime exceeds it before assigning a slot; the skip is a
 	// read-only placement filter and the gateway does not write
-	// Sandbox.status. The WarmPoolController owns the resulting draining
+	// AgentPod.status. The WarmPoolController owns the resulting draining
 	// transition, derived from the pod CreationTimestamp (§4.6.1). Zero
 	// leaves uptime retirement off.
 	MaxPodUptimeSeconds int64
@@ -109,7 +109,7 @@ type SlotBindRequest struct {
 	// so the occupancy-zero recycle Shutdown delivers them to the adapter
 	// without re-resolving the pool at the release boundary. materializeSlot
 	// copies them onto the BindResult so ReleaseSlot builds them into the §4.7
-	// RecycleScrub sub-message (with PodId == SandboxName) on the last-slot-drain
+	// RecycleScrub sub-message (with PodId == AgentPodName) on the last-slot-drain
 	// recycle edge. Empty/zero on a non-recycling concurrent pool. The scrub
 	// profile is not carried on the wire; the gateway routes the §5.2 step-7
 	// vm-restart retire on the recycle policy in its own runtime store (C4).
@@ -155,16 +155,16 @@ type SlotBindRequest struct {
 // the BindResult carries the slot's SlotID. Any failure after the slot
 // reservation is returned so the caller can retry on another slot.
 func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult, error) {
-	sandboxName, slotID, podIP, workspaceBase, cl, err := b.connectSlot(ctx, req)
+	agentPodName, slotID, podIP, workspaceBase, cl, err := b.connectSlot(ctx, req)
 	if err != nil {
 		return nil, err
 	}
-	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, workspaceBase, cl)
+	return b.materializeSlot(ctx, req, agentPodName, slotID, podIP, workspaceBase, cl)
 }
 
 // ClaimSlot performs the §7.1 step-4 claim at session create for a §5.2
 // concurrent-workspace pool (sessionPolicy.maxConcurrentSessions > 1). It
-// reserves one of a pod's slots (the SandboxClaim plus the session's member
+// reserves one of a pod's slots (the PodClaim plus the session's member
 // of the pod's active_slots set) and runs the §15.5 version handshake to confirm
 // the slot's pod is usable, then closes the handshake connection. It does
 // not materialize the workspace, run setup, assign credentials, or start
@@ -177,7 +177,7 @@ func (b *Binder) BindSlot(ctx context.Context, req SlotBindRequest) (*BindResult
 // reclaim (a watchdog CREATED_TIMEOUT write, a DELETE, or a /terminate) a
 // durable binding to release the slot from (§4.6).
 // SlotID equals SessionID, so the binding is reconstructable from
-// SandboxName + Pool + the session id, exactly like the exclusive path. A
+// AgentPodName + Pool + the session id, exactly like the exclusive path. A
 // reservation-exhaustion sentinel (ErrNoConcurrentSlot, ErrTenantMismatch,
 // ErrNoIdlePod) is returned unwrapped so the create handler maps it to the
 // §7.1 atomicity envelope before the client uploads.
@@ -189,10 +189,10 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 	// The reported workspace base is discarded here: the create-time claim
 	// persists no workspace column, and BindReservedSlot re-reports the
 	// base on its own handshake when the bind reconnects. spec: §6.4.
-	sandboxName, slotID, podIP, _, cl, err := b.connectSlot(ctx, req)
+	agentPodName, slotID, podIP, _, cl, err := b.connectSlot(ctx, req)
 	if err != nil {
 		// connectSlot returns a SlotBindError once the slot has been reserved
-		// (a resolveSandbox/dial/handshake failure after the session's
+		// (a resolveAgentPod/dial/handshake failure after the session's
 		// active_slots member was added); release the reservation so a failed
 		// create-time claim does not leave the member counted. An exhaustion sentinel
 		// (ErrNoConcurrentSlot/ErrTenantMismatch/ErrNoIdlePod) reserved no slot
@@ -213,11 +213,11 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 	// the upload window.
 	cl.Close()
 	return &ClaimResult{
-		SandboxName: sandboxName,
-		Pool:        req.Pool,
-		PodIP:       podIP,
-		SlotID:      slotID,
-		PodClaim:    time.Since(phaseStart),
+		AgentPodName: agentPodName,
+		Pool:         req.Pool,
+		PodIP:        podIP,
+		SlotID:       slotID,
+		PodClaim:     time.Since(phaseStart),
 	}, nil
 }
 
@@ -238,8 +238,8 @@ func (b *Binder) ClaimSlot(ctx context.Context, req SlotBindRequest) (*ClaimResu
 //
 // On success the caller owns the returned live adapter connection. spec:
 // §4.3, §4.4 (proposal), §5.2; §6.2 (pre-attached reclaim); §6.4.
-func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID string) (*BindResult, error) {
-	res, err := b.bindReservedSlot(ctx, req, sandboxName, slotID)
+func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, agentPodName, slotID string) (*BindResult, error) {
+	res, err := b.bindReservedSlot(ctx, req, agentPodName, slotID)
 	if err != nil {
 		// Release the reserved slot so a failed start does not leave the
 		// session's active_slots member counted. The pod-side reclaim already ran at the failure
@@ -249,9 +249,9 @@ func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 		// spec: §7.1 (normal flow); §6.2 (pod state machine).
 		var sbe *SlotBindError
 		leaked := errors.As(err, &sbe) && sbe.Leaked
-		if relErr := b.ReleaseSlotReservation(ctx, sandboxName, slotID, leaked); relErr != nil {
+		if relErr := b.ReleaseSlotReservation(ctx, agentPodName, slotID, leaked); relErr != nil {
 			log.Printf("podsession: release reserved slot %s on pod %s after start failure for session %s: %v",
-				slotID, sandboxName, req.SessionID, relErr)
+				slotID, agentPodName, req.SessionID, relErr)
 			// A reservation that could not be released stays counted, so the
 			// failure is booked as a leak by the caller's accounting.
 			if sbe != nil {
@@ -267,31 +267,31 @@ func (b *Binder) BindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 // post-reservation materialize-and-launch sequence. BindReservedSlot wraps
 // it and owns the reservation release on failure, so the slot-count rollback
 // runs exactly once per failed start.
-func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID string) (*BindResult, error) {
-	sb, err := b.resolveSandbox(ctx, sandboxName)
+func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, agentPodName, slotID string) (*BindResult, error) {
+	sb, err := b.resolveAgentPod(ctx, agentPodName)
 	if err != nil {
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, err)
+		return nil, b.slotBindError(agentPodName, slotID, slotFailureConnect, err)
 	}
 	podIP := sb.Status.PodIP
 	addr := net.JoinHostPort(podIP, strconv.Itoa(b.AdapterPort))
 	cl, err := b.DialAdapter(addr)
 	if err != nil {
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
+		return nil, b.slotBindError(agentPodName, slotID, slotFailureConnect,
 			fmt.Errorf("podsession: dial reserved slot adapter at %s: %w", addr, err))
 	}
 	resp, err := cl.NegotiateVersion(ctx, b.AcceptedVersions)
 	if err != nil {
 		cl.Close()
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect,
-			fmt.Errorf("podsession: negotiate version with %s: %w", sandboxName, err))
+		return nil, b.slotBindError(agentPodName, slotID, slotFailureConnect,
+			fmt.Errorf("podsession: negotiate version with %s: %w", agentPodName, err))
 	}
 	if resp.GetIncompatible() {
 		cl.Close()
-		return nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, fmt.Errorf(
-			"podsession: pod %s adapter speaks no protocol version the gateway accepts", sandboxName,
+		return nil, b.slotBindError(agentPodName, slotID, slotFailureConnect, fmt.Errorf(
+			"podsession: pod %s adapter speaks no protocol version the gateway accepts", agentPodName,
 		))
 	}
-	return b.materializeSlot(ctx, req, sandboxName, slotID, podIP, resp.GetWorkspaceBase(), cl)
+	return b.materializeSlot(ctx, req, agentPodName, slotID, podIP, resp.GetWorkspaceBase(), cl)
 }
 
 // materializeSlot runs the post-reservation §4.7 workspace-and-start
@@ -316,11 +316,11 @@ func (b *Binder) bindReservedSlot(ctx context.Context, req SlotBindRequest, sand
 //
 // spec: §7.1 (normal flow); §4.7.1 (role and gateway RPC contract); §5.2
 // (pool configuration and execution modes); §6.2 (pod state machine).
-func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client) (*BindResult, error) {
+func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, agentPodName, slotID, podIP, workspaceBase string, cl *adapterclient.Client) (*BindResult, error) {
 	// spec: §4.7.1 (role and gateway RPC contract) — one token per attempt,
 	// minted before the attempt's first pod-side RPC.
 	bindAttempt := newBindAttempt()
-	res, minted, err := b.materializeSlotStages(ctx, req, sandboxName, slotID, podIP, workspaceBase, cl, bindAttempt)
+	res, minted, err := b.materializeSlotStages(ctx, req, agentPodName, slotID, podIP, workspaceBase, cl, bindAttempt)
 	if err == nil {
 		// spec: §7.3 (Resume driver) — an uncommitted restore reclaims the
 		// entry under this attempt's token and returns exactly its leases.
@@ -336,7 +336,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 	var sbe *SlotBindError
 	if errors.As(err, &sbe) {
 		_, cleanly, cerr := b.compensateAndNote(ctx, cl, req.SessionID, bindAttempt,
-			req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, req.Pool, sandboxName, slotID, err)
+			req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, req.Pool, agentPodName, slotID, err)
 		// spec: §6.2 (pod state machine); §7.1 (normal flow). Leaked is exactly
 		// "not acknowledged clean": the RPC error and the clean-exit flag decide
 		// it for every outcome, and the outcome itself never enters it.
@@ -359,7 +359,7 @@ func (b *Binder) materializeSlot(ctx context.Context, req SlotBindRequest, sandb
 // retry. It returns the identifiers of the §4.9 leases it minted, on success
 // and on failure alike, so the wrapper can release exactly those. It never
 // closes cl; the wrapper owns the connection on every path.
-func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest, sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client, bindAttempt string) (*BindResult, []string, error) {
+func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest, agentPodName, slotID, podIP, workspaceBase string, cl *adapterclient.Client, bindAttempt string) (*BindResult, []string, error) {
 	// spec: §5.2 — a concurrent-session slot has its own per-slot workspace
 	// (§6.4). Run the full §4.7 workspace-and-start sequence. Archive
 	// extraction runs gateway-side (§7.4) exactly as in
@@ -380,41 +380,41 @@ func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest,
 	// the session identifier the request already names.
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow, bindAttempt)
 	if err != nil {
-		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, sandboxName)
-		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
-			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", sandboxName, err))
+		b.recordSlotFailure(slotFailureWorkspacePrep, req.Pool, agentPodName)
+		return nil, nil, b.slotBindError(agentPodName, slotID, slotFailureWorkspacePrep,
+			fmt.Errorf("podsession: stage slot workspace on pod %s: %w", agentPodName, err))
 	}
 	// spec: §7.1 (Derive restore semantics) — the restore capabilities are
 	// minted at the moment of use, so they are still valid when the adapter
 	// fetches them, and a failure to mint them fails the bind with no fallback.
 	restore, err := mintRestoreChunks(ctx, req.RestoreChunks)
 	if err != nil {
-		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
-		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
-			fmt.Errorf("podsession: resolve slot workspace restore on pod %s: %w", sandboxName, err))
+		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, agentPodName)
+		return nil, nil, b.slotBindError(agentPodName, slotID, slotFailureWorkspacePrep,
+			fmt.Errorf("podsession: resolve slot workspace restore on pod %s: %w", agentPodName, err))
 	}
 	warnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, restore, bindAttempt, false)
 	if err != nil {
-		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, sandboxName)
-		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureWorkspacePrep,
-			fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", sandboxName, err))
+		b.recordSlotFailure(slotFailureWorkspaceFinalize, req.Pool, agentPodName)
+		return nil, nil, b.slotBindError(agentPodName, slotID, slotFailureWorkspacePrep,
+			fmt.Errorf("podsession: finalize slot workspace on pod %s: %w", agentPodName, err))
 	}
 	finalizeWarnings := append(stageWarnings, warnings...)
 	setupOutputs, err := cl.RunSetup(ctx, req.SessionID, stagedPlan.GetSetupCommands(), req.SetupPolicy, bindAttempt)
 	if err != nil {
-		b.recordSlotFailure(slotFailureSetup, req.Pool, sandboxName)
-		return nil, nil, b.slotBindError(sandboxName, slotID, slotFailureSetup,
+		b.recordSlotFailure(slotFailureSetup, req.Pool, agentPodName)
+		return nil, nil, b.slotBindError(agentPodName, slotID, slotFailureSetup,
 			&SetupCommandFailure{
-				Pod: sandboxName, Pool: req.Pool, RuntimeClass: b.runtimeClassLabel(req.IsolationProfile),
+				Pod: agentPodName, Pool: req.Pool, RuntimeClass: b.runtimeClassLabel(req.IsolationProfile),
 				Cause: err, Outputs: setupOutputs,
 			})
 	}
 
 	minted, err := b.assignSlotCredentials(ctx, cl, req, bindAttempt)
 	if err != nil {
-		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, sandboxName)
-		return nil, minted, b.slotBindError(sandboxName, slotID, slotFailureCredentialAssignment,
-			fmt.Errorf("podsession: assign slot credentials on pod %s: %w", sandboxName, err))
+		b.recordSlotFailure(slotFailureCredentialAssignment, req.Pool, agentPodName)
+		return nil, minted, b.slotBindError(agentPodName, slotID, slotFailureCredentialAssignment,
+			fmt.Errorf("podsession: assign slot credentials on pod %s: %w", agentPodName, err))
 	}
 	if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
 		SessionID:          req.SessionID,
@@ -424,17 +424,17 @@ func (b *Binder) materializeSlotStages(ctx context.Context, req SlotBindRequest,
 		AgentInterface:     req.AgentInterface,
 		MinPlatformVersion: req.MinPlatformVersion,
 	}); err != nil {
-		b.recordSlotFailure(slotFailureSessionStart, req.Pool, sandboxName)
-		return nil, minted, b.slotBindError(sandboxName, slotID, slotFailureSessionStart,
-			fmt.Errorf("podsession: start slot session on pod %s: %w", sandboxName, err))
+		b.recordSlotFailure(slotFailureSessionStart, req.Pool, agentPodName)
+		return nil, minted, b.slotBindError(agentPodName, slotID, slotFailureSessionStart,
+			fmt.Errorf("podsession: start slot session on pod %s: %w", agentPodName, err))
 	}
 	return &BindResult{
-		SessionID:   req.SessionID,
-		TenantID:    req.TenantID,
-		SandboxName: sandboxName,
-		PodIP:       podIP,
-		SlotID:      slotID,
-		Adapter:     cl,
+		SessionID:    req.SessionID,
+		TenantID:     req.TenantID,
+		AgentPodName: agentPodName,
+		PodIP:        podIP,
+		SlotID:       slotID,
+		Adapter:      cl,
 		// spec: §6.4; §7.3 — the slot bind reports the same workspace base
 		// the base-mode bind reports, verbatim, so the one persist site
 		// derives `<base>/slots/{sessionId}/current` once for both paths.
@@ -535,7 +535,7 @@ func (b *Binder) compensateFailedSlotBind(
 	ctx context.Context, cl *adapterclient.Client,
 	sessionID, bindAttempt string,
 	cleanupTimeoutSeconds int, maxConcurrentSessions int32,
-	sandboxName, slotID string,
+	agentPodName, slotID string,
 ) (outcome adapterv1.SlotReclaimOutcome, exitedCleanly bool, err error) {
 	budget := slotCleanupBudget(cleanupTimeoutSeconds, maxConcurrentSessions)
 	rctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), budget)
@@ -543,7 +543,7 @@ func (b *Binder) compensateFailedSlotBind(
 	outcome, exitedCleanly, err = cl.ShutdownReclaim(rctx, sessionID, "slot_bind_failed", budget/2, bindAttempt)
 	if err != nil {
 		log.Printf("podsession: compensating Shutdown for slot %s on pod %s (session %s) failed: %v",
-			slotID, sandboxName, sessionID, err)
+			slotID, agentPodName, sessionID, err)
 	}
 	return outcome, exitedCleanly, err
 }
@@ -559,11 +559,11 @@ func (b *Binder) compensateAndNote(
 	ctx context.Context, cl *adapterclient.Client,
 	sessionID, bindAttempt string,
 	cleanupTimeoutSeconds int, maxConcurrentSessions int32,
-	pool, sandboxName, slotID string, cause error,
+	pool, agentPodName, slotID string, cause error,
 ) (adapterv1.SlotReclaimOutcome, bool, error) {
 	outcome, cleanly, err := b.compensateFailedSlotBind(ctx, cl, sessionID, bindAttempt,
-		cleanupTimeoutSeconds, maxConcurrentSessions, sandboxName, slotID)
-	b.noteCompensationOutcome(outcome, compensationCause(cause), pool, sandboxName)
+		cleanupTimeoutSeconds, maxConcurrentSessions, agentPodName, slotID)
+	b.noteCompensationOutcome(outcome, compensationCause(cause), pool, agentPodName)
 	return outcome, cleanly, err
 }
 
@@ -682,7 +682,7 @@ func (b *Binder) assignSlotCredentials(ctx context.Context, cl *adapterclient.Cl
 // SlotClaimer is returned unwrapped so the gateway's session-creation
 // handler can map it to WARM_POOL_EXHAUSTED with the §5.2
 // "concurrent_slots_exhausted" reason.
-func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxName, slotID, podIP, workspaceBase string, cl *adapterclient.Client, err error) {
+func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (agentPodName, slotID, podIP, workspaceBase string, cl *adapterclient.Client, err error) {
 	res, err := b.slotClaimer().ClaimSlot(ctx, podclaim.SlotRequest{
 		Pool:                  req.Pool,
 		SessionID:             req.SessionID,
@@ -703,7 +703,7 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 		}
 		return "", "", "", "", nil, fmt.Errorf("podsession: claim concurrent slot: %w", err)
 	}
-	sandboxName = res.SandboxName
+	agentPodName = res.AgentPodName
 	slotID = res.SlotID
 
 	// spec: §7.3 (Retry and Resume) — the post-claim hook runs after the
@@ -713,34 +713,34 @@ func (b *Binder) connectSlot(ctx context.Context, req SlotBindRequest) (sandboxN
 	// *SlotBindError, so the §5.2 retry policy neither releases it a second
 	// time nor retries it.
 	if herr := runOnClaimed(ctx, req.OnClaimed); herr != nil {
-		if relErr := b.ReleaseSlotReservation(ctx, sandboxName, slotID, false); relErr != nil {
+		if relErr := b.ReleaseSlotReservation(ctx, agentPodName, slotID, false); relErr != nil {
 			log.Printf("podsession: release reserved slot %s on pod %s after a post-claim hook error for session %s: %v",
-				slotID, sandboxName, req.SessionID, relErr)
+				slotID, agentPodName, req.SessionID, relErr)
 		}
 		return "", "", "", "", nil, herr
 	}
 
-	// Past this point a slot is reserved on sandboxName. Any failure is
+	// Past this point a slot is reserved on agentPodName. Any failure is
 	// wrapped in a SlotBindError so the caller can release the reservation,
 	// count it toward the pod's §5.2 fail/leak window, and retry on a fresh
 	// slot. The reservation-bearing failures use the slotFailureConnect
 	// stage (no lenny_slot_failure_total emission — that counter labels the
 	// four post-connection bind stages).
-	// The Sandbox resolve, the dial, and the version handshake are the
+	// The AgentPod resolve, the dial, and the version handshake are the
 	// connection step every pod dial shares, the stale-slot reaper's
 	// included (ReapStaleSlots).
-	sb, cl, neg, err := b.dialAndNegotiate(ctx, sandboxName)
+	sb, cl, neg, err := b.dialAndNegotiate(ctx, agentPodName)
 	if err != nil {
-		return "", "", "", "", nil, b.slotBindError(sandboxName, slotID, slotFailureConnect, err)
+		return "", "", "", "", nil, b.slotBindError(agentPodName, slotID, slotFailureConnect, err)
 	}
-	return sandboxName, slotID, sb.Status.PodIP, neg.WorkspaceBase, cl, nil
+	return agentPodName, slotID, sb.Status.PodIP, neg.WorkspaceBase, cl, nil
 }
 
 // slotBindError wraps a post-reservation slot failure with the pod and
 // slot it belongs to so the §5.2 retry policy can release and account for
 // it. spec: §5.2 "Concurrent-workspace slot retry policy".
-func (b *Binder) slotBindError(sandboxName, slotID, stage string, err error) *SlotBindError {
-	return &SlotBindError{Pod: sandboxName, SlotID: slotID, Stage: stage, Err: err}
+func (b *Binder) slotBindError(agentPodName, slotID, stage string, err error) *SlotBindError {
+	return &SlotBindError{Pod: agentPodName, SlotID: slotID, Stage: stage, Err: err}
 }
 
 // slotClaimer returns the SlotClaimer every slot reservation and release of
@@ -767,7 +767,7 @@ func (b *Binder) slotClaimer() *podclaim.SlotClaimer {
 // slotReleaser is the slot release releaseSlotRetrying repeats.
 // *podclaim.SlotClaimer satisfies it.
 type slotReleaser interface {
-	ReleaseSlot(ctx context.Context, sandboxName, sessionID string, recycle, leaked bool) (bool, error)
+	ReleaseSlot(ctx context.Context, agentPodName, sessionID string, recycle, leaked bool) (bool, error)
 }
 
 // slotReleaseFirstPause and slotReleaseMaxPause bound the pause between
@@ -788,7 +788,7 @@ const (
 // member and skip the disposition.
 //
 // spec: §5.2 (Slot assignment atomicity); §6.2 (leaked slot semantics).
-func (b *Binder) releaseSlotRetrying(ctx context.Context, claimer slotReleaser, sandboxName, sessionID string, recycle, leaked bool) (bool, error) {
+func (b *Binder) releaseSlotRetrying(ctx context.Context, claimer slotReleaser, agentPodName, sessionID string, recycle, leaked bool) (bool, error) {
 	rctx, cancel := detachedReleaseContext(ctx)
 	defer cancel()
 	pause := b.slotReleasePause
@@ -796,7 +796,7 @@ func (b *Binder) releaseSlotRetrying(ctx context.Context, claimer slotReleaser, 
 		pause = sleepContext
 	}
 	for attempt := 0; ; attempt++ {
-		recycled, err := claimer.ReleaseSlot(rctx, sandboxName, sessionID, recycle, leaked)
+		recycled, err := claimer.ReleaseSlot(rctx, agentPodName, sessionID, recycle, leaked)
 		if err == nil || !errors.Is(err, podclaim.ErrSlotCounterRelease) {
 			return recycled, err
 		}
@@ -829,7 +829,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 }
 
 // ReleaseSlotReservation releases a §5.2 slot reservation (the session's
-// member of the pod's slot set, and the per-pod SandboxClaim when this
+// member of the pod's slot set, and the per-pod PodClaim when this
 // release ends the occupancy) without an adapter Shutdown. The §5.2 retry
 // policy calls it after a failed bind so the retry lands on a fresh slot and
 // the failed attempt's member is not left counted. It is the slot-set half
@@ -851,18 +851,18 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 //
 // spec: §7.1 (normal flow); §5.2 (slot retry releases the reservation);
 // §4.7 (recycle disposition); §6.2 (leaked slot remains counted).
-func (b *Binder) ReleaseSlotReservation(ctx context.Context, sandboxName, slotID string, leaked bool) error {
+func (b *Binder) ReleaseSlotReservation(ctx context.Context, agentPodName, slotID string, leaked bool) error {
 	// recycle=false: a released reservation after a failed bind is a
 	// slot-set rollback, not the occupancy-zero recycle edge, so it never
 	// patches the claim to `recycling` or arms the missing-report timeout.
-	_, err := b.releaseSlotRetrying(ctx, b.slotClaimer(), sandboxName, slotID, false, leaked)
+	_, err := b.releaseSlotRetrying(ctx, b.slotClaimer(), agentPodName, slotID, false, leaked)
 	return err
 }
 
 // ReleaseSlot tears down a concurrent-session slot when its session ends.
 // It shuts the slot's runtime down through the adapter and runs the §5.2
 // keyed slot release; when this release removes the session's member and
-// leaves the set empty on a recycling pool the per-pod SandboxClaim is patched
+// leaves the set empty on a recycling pool the per-pod PodClaim is patched
 // bound → recycling and the adapter runs the §5.2 whole-pod scrub, and on a
 // non-recycling pool the claim is deleted so the pod returns to the pool.
 //
@@ -907,7 +907,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	// spec: §5.2 (Slot assignment atomicity) — the keyed release is
 	// repeated on a detached context while the slot-set call fails; the
 	// adapter Shutdown above keeps the caller's context.
-	recycled, err := b.releaseSlotRetrying(ctx, b.slotClaimer(), result.SandboxName, result.SessionID, result.Recycle, leaked)
+	recycled, err := b.releaseSlotRetrying(ctx, b.slotClaimer(), result.AgentPodName, result.SessionID, result.Recycle, leaked)
 	if err != nil {
 		return err
 	}
@@ -923,7 +923,7 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 		// armed missing-report timeout to retire the pod. The response's
 		// ExitedCleanly is ignored — the scrub outcome arrives asynchronously.
 		_, _ = result.Adapter.ShutdownRecycle(ctx, result.SessionID, adapterclient.RecycleScrub{
-			PodID:                 result.SandboxName,
+			PodID:                 result.AgentPodName,
 			CleanupCommands:       result.CleanupCommands,
 			CleanupTimeoutSeconds: int32(result.CleanupTimeoutSeconds),
 		})
@@ -931,13 +931,13 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 	return nil
 }
 
-// DrainSandbox requests the whole-pod retirement of a concurrent-session
+// DrainAgentPod requests the whole-pod retirement of a concurrent-session
 // pod that crossed the §5.2 unhealthy-slot threshold (ceil(maxConcurrent/2)
 // slots failed or leaked within the rolling window) rather than releasing a
 // single slot. The gateway stamps the §4.6.3 lenny.dev/drain-request
 // annotation on the agent Pod; the WarmPoolController consumes it and writes
-// the draining transition on Sandbox.status. The gateway never writes
-// Sandbox.status itself (§4.6.3 ownership decomposition: the
+// the draining transition on AgentPod.status. The gateway never writes
+// AgentPod.status itself (§4.6.3 ownership decomposition: the
 // WarmPoolController is the sole writer), so the unhealthy-threshold drain
 // is routed through the annotation rather than a gateway phase write.
 //
@@ -949,6 +949,6 @@ func (b *Binder) ReleaseSlot(ctx context.Context, result *BindResult) error {
 // drain); §5.2 "whole-pod replacement trigger". The WarmPoolController-side
 // projection that consumes the annotation lands in the WPC
 // occupancy-projection step.
-func (b *Binder) DrainSandbox(ctx context.Context, sandboxName string) error {
-	return podclaim.StampDrainRequest(ctx, b.Client, b.Namespace, sandboxName, time.Now())
+func (b *Binder) DrainAgentPod(ctx context.Context, agentPodName string) error {
+	return podclaim.StampDrainRequest(ctx, b.Client, b.Namespace, agentPodName, time.Now())
 }

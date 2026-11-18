@@ -18,7 +18,7 @@ import (
 
 	corev1 "k8s.io/api/core/v1"
 
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -1150,7 +1150,7 @@ func TestDeploymentBoundaryGateReportsAnUnproducedInputsField(t *testing.T) {
 		Name: "pkg/boundaryprobe/producer.go",
 		Src: []byte(`package boundaryprobe
 
-import "github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+import "github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 
 var _ = podspec.Inputs{Name: "x"}
 `),

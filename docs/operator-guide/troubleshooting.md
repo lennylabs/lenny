@@ -24,7 +24,7 @@ This page covers common operational issues with diagnosis and resolution steps, 
 
 ```bash
 # Check warm pool status
-kubectl get sandboxwarmpools -A
+kubectl get podsets -A
 
 # Check for warmup failures
 kubectl logs -n lenny-system -l app=lenny-controller --tail=100 | grep warmup
@@ -74,7 +74,7 @@ Check the four latency breakpoints:
 # Query: histogram_quantile(0.99, lenny_pod_claim_queue_wait_seconds)
 
 # Check if warm pool is the bottleneck
-kubectl get sandboxwarmpools -A -o wide
+kubectl get podsets -A -o wide
 ```
 
 **Resolution:**
@@ -336,7 +336,7 @@ The gateway runs a periodic orphan reconciler every 60 seconds that:
 1. Detects sessions with no responsive pod
 2. Detects pods with no corresponding session
 3. Transitions orphaned sessions to `failed` state
-4. Cleans up orphaned `SandboxClaim` resources
+4. Cleans up orphaned `PodClaim` resources
 
 Monitor via:
 - `lenny_orphan_session_reconciliations_total` -- orphaned sessions cleaned up
@@ -357,7 +357,7 @@ lenny-ctl admin sessions force-terminate <session-id>
 
 | Alert | Condition | Action |
 |---|---|---|
-| `SandboxClaimOrphanRateHigh` | > 10 orphans in 15 min | Check gateway stability and the gateway log for pod releases that failed or did not run. The controller drains the pod of an orphaned claim once the claim's last binding change is older than the claim orphan timeout (`controller.claimOrphanTimeoutSeconds`, default 15 minutes) and no session uses the pod, where a session that has ended counts until the gateway releases its pod, for at most the claim orphan timeout. |
+| `PodClaimOrphanRateHigh` | > 10 orphans in 15 min | Check gateway stability and the gateway log for pod releases that failed or did not run. The controller drains the pod of an orphaned claim once the claim's last binding change is older than the claim orphan timeout (`controller.claimOrphanTimeoutSeconds`, default 15 minutes) and no session uses the pod, where a session that has ended counts until the gateway releases its pod, for at most the claim orphan timeout. |
 | `OrphanTasksPerTenantHigh` | > 80% of `maxOrphanTasksPerTenant` | Check for misbehaving orchestrator |
 
 ---
@@ -434,8 +434,8 @@ lenny-ctl audit drop-partition <partition-name> --force --acknowledge-data-loss
 |---|---|
 | Check system pods | `kubectl get pods -n lenny-system` |
 | Check agent pods | `kubectl get pods -n lenny-agents` |
-| Check warm pools | `kubectl get sandboxwarmpools -A` |
-| Check sandbox status | `kubectl get sandboxes -A` |
+| Check warm pools | `kubectl get podsets -A` |
+| Check sandbox status | `kubectl get agentpods -A` |
 | Gateway health | `kubectl exec deploy/lenny-gateway -- wget -qO- http://localhost:8080/healthz` |
 | Pool status | `lenny-ctl admin pools get <name>` |
 | Pool sync status | `lenny-ctl admin pools sync-status <name>` |

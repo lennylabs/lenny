@@ -155,12 +155,12 @@ func TestEmbeddedQuickstartUsesEchoRuntime(t *testing.T) {
 // diagnosis: the §17.4 custom-runtime walkthrough regressed. The
 // walkthrough must materialize a Runtime CRD instance and a warm pool for
 // the custom runtime before the closing curl, because `lenny-ctl runtime
-// register` creates only a gateway registry record: the Sandbox controller
+// register` creates only a gateway registry record: the AgentPod controller
 // resolves the runtime from a Runtime CRD by name and registration creates
-// no SandboxWarmPool. Proposal 0017 S5 replaces 0016's two non-existent
+// no PodSet. Proposal 0017 S5 replaces 0016's two non-existent
 // commands (`lenny kubectl apply -f runtime-crd.yaml` and `lenny-ctl pool
 // create --runtime my-agent`) with the single `lenny runtime apply` verb
-// (C2/S16) that applies the Runtime/SandboxTemplate/SandboxWarmPool CRD set
+// (C2/S16) that applies the Runtime/PodSet CRD set
 // to the embedded kubeconfig, so the no-Postgres dev profile materializes
 // the pool without a PoolScalingController. The verb must precede the
 // closing session curl so the curl can start a session. A walkthrough that
@@ -191,15 +191,15 @@ func TestCustomRuntimeWalkthroughAppliesCRDAndPoolBeforeCurl(t *testing.T) {
 	walkthrough := content[si:ei]
 
 	// The `lenny runtime apply` verb (proposal 0017 C2/S16) applies the
-	// runtime's Runtime/SandboxTemplate/SandboxWarmPool CRD set to the
+	// runtime's Runtime/PodSet CRD set to the
 	// embedded kubeconfig. It must precede the closing session curl so the
-	// Sandbox controller can resolve the runtime by name and the
+	// AgentPod controller can resolve the runtime by name and the
 	// WarmPoolController can warm a pod before the session starts.
 	applyIdx := strings.Index(walkthrough, "lenny runtime apply")
 	curlIdx := strings.Index(walkthrough, "POST https://localhost:8443/v1/sessions")
 
 	if applyIdx < 0 {
-		t.Error("§17.4 walkthrough does not invoke `lenny runtime apply`; proposal 0017 S5/C2 adds the verb that applies the Runtime/SandboxTemplate/SandboxWarmPool CRD set so the Sandbox controller resolves the runtime by name and a pool materializes without a PoolScalingController")
+		t.Error("§17.4 walkthrough does not invoke `lenny runtime apply`; proposal 0017 S5/C2 adds the verb that applies the Runtime/PodSet CRD set so the AgentPod controller resolves the runtime by name and a pool materializes without a PoolScalingController")
 	}
 	if curlIdx < 0 {
 		t.Fatal("§17.4 walkthrough has no closing session curl to order the materialization step against")

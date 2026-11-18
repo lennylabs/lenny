@@ -127,7 +127,7 @@ func TestArtifactStoreContract(t *testing.T) {
 // rejection, ClaimPod with ErrPoolExhausted, ReleasePod by reason,
 // ListPodsByPool with state filtering, CountByState, CreatePod,
 // DeletePod, WatchPods) is covered. The §12.6 optimistic-locking
-// CAS uses Sandbox.metadata.resourceVersion; the watch loop polls
+// CAS uses AgentPod.metadata.resourceVersion; the watch loop polls
 // at the §12.6 P99 event-latency budget.
 
 // TestStoreRouterContract is implemented in storerouter_test.go,

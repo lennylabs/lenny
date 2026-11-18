@@ -101,7 +101,7 @@ spec:
                    gateway platform tool surface. The gateway always serves
                    GatewayControl on gateway.grpcPort. F-9.1.1. */}}
             - --gateway-grpc-addr=lenny-gateway.{{ .Release.Namespace }}.svc:{{ .Values.gateway.grpcPort }}
-            {{- /* spec: §4.6.1 — the leader-elected orphaned-SandboxClaim
+            {{- /* spec: §4.6.1 — the leader-elected orphaned-PodClaim
                    GarbageCollect loop and the agent_pod_state mirror
                    reconciler list the agent namespaces, and the binary
                    registers both only when --agent-namespaces names at least

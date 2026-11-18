@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
 )
 
-// TestAgentSandboxIsTheDefaultPoolManager_spec_17_1 pins the §17.1 row 9
+// TestCRDPoolManagerIsTheDefault pins the §17.1 row 9
 // contract: the Warm Pool Controller manages pod lifecycle via the
 // PoolManager interface, whose named default implementation is the
 // kubernetes-sigs/agent-sandbox CRD backend. The three AgentSandbox*
@@ -18,11 +18,11 @@ import (
 // untouched. The assignments fail to compile if a default type drifts
 // from its interface. spec: §4.6.1;
 // §17.1 row 9. F-17.1.11.
-func TestAgentSandboxIsTheDefaultPoolManager_spec_17_1(t *testing.T) {
+func TestCRDPoolManagerIsTheDefault(t *testing.T) {
 	var (
-		reader  podlifecycle.PoolReader          = &podlifecycle.AgentSandboxPoolReader{}
-		lifeMgr podlifecycle.PodLifecycleManager = &podlifecycle.AgentSandboxPodLifecycleManager{}
-		poolMgr podlifecycle.PoolManager         = &podlifecycle.AgentSandboxPoolManager{}
+		reader  podlifecycle.PoolReader          = &podlifecycle.CRDPoolReader{}
+		lifeMgr podlifecycle.PodLifecycleManager = &podlifecycle.CRDPodLifecycleManager{}
+		poolMgr podlifecycle.PoolManager         = &podlifecycle.CRDPoolManager{}
 	)
 	if reader == nil || lifeMgr == nil || poolMgr == nil {
 		t.Fatal("agent-sandbox default implementations must be non-nil")
@@ -32,10 +32,10 @@ func TestAgentSandboxIsTheDefaultPoolManager_spec_17_1(t *testing.T) {
 	// per §4.6.1, so the default also satisfies PoolReader transitively —
 	// the controller never needs a second handle for pool reads.
 	if _, ok := poolMgr.(podlifecycle.PoolReader); !ok {
-		t.Fatal("AgentSandboxPoolManager must also satisfy PoolReader (the §4.6.1 embedding)")
+		t.Fatal("CRDPoolManager must also satisfy PoolReader (the §4.6.1 embedding)")
 	}
 	// Likewise the gateway-facing PodLifecycleManager embeds PoolReader.
 	if _, ok := lifeMgr.(podlifecycle.PoolReader); !ok {
-		t.Fatal("AgentSandboxPodLifecycleManager must also satisfy PoolReader (the §4.6.1 embedding)")
+		t.Fatal("CRDPodLifecycleManager must also satisfy PoolReader (the §4.6.1 embedding)")
 	}
 }

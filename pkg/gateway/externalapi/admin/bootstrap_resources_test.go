@@ -268,7 +268,7 @@ func TestBootstrapPoolForceUpdateCarriesCredentialDelivery_spec_4_9(t *testing.T
 // deliveryMode and spiffeBinding (every other field identical) must
 // register a conflict so resolveExisting returns doUpdate under
 // force-update, otherwise the stored row keeps its stale combination and
-// the reconciled SandboxTemplate diverges from the declared seed.
+// the reconciled PodSet diverges from the declared seed.
 //
 // diagnosis: poolConflicts compared only the pre-existing scalars and
 // omitted deliveryMode/spiffeBinding, so a seed changing only one of them

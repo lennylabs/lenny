@@ -54,7 +54,8 @@ var prodTables = []struct{ migration, name string }{
 	{"0030", "experiment_definitions"},
 	{"0031", "interactions"},
 	{"0032", "agent_memory"},
-	{"0033", "sandbox_warm_pools"},
+	// 0033 creates the pool-record table, which 0198 renames to pools.
+	{"0033", "pools"},
 	{"0034", "usage_events"},
 	{"0035", "runtime_tenant_access"},
 	{"0035", "pool_tenant_access"},

@@ -3,7 +3,7 @@
 # Concrete subset definitions referenced by groups.yaml.
 # Each entry is a named subset that resolves to a set of test patterns.
 # Patterns can be:
-#   - exact test names (e.g., TestSandboxClaimSkipLocked)
+#   - exact test names (e.g., TestPodClaimSkipLocked)
 #   - file globs (e.g., tests/e2e_kind/sandbox_claim_*_test.go)
 #   - tier-relative suite names (e.g., admission/inventory)
 #

@@ -251,7 +251,7 @@ func TestReserveSlotUnderLock(t *testing.T) {
 	})
 }
 
-// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
+// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned PodClaim
 // detection).
 // diagnosis: ReclaimSlotReservations deleted a record that still counts a
 // reservation in progress (an under-count that reopens the F-12.4.38

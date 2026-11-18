@@ -23,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 )
 
-// claimWrites counts the SandboxClaim writes and deletes an interceptor saw
+// claimWrites counts the PodClaim writes and deletes an interceptor saw
 // while armed.
 type claimWrites struct {
 	armed  atomic.Bool
@@ -31,7 +31,7 @@ type claimWrites struct {
 }
 
 func (w *claimWrites) note(obj client.Object) {
-	if _, ok := obj.(*lennyv1.SandboxClaim); ok && w.armed.Load() {
+	if _, ok := obj.(*lennyv1.PodClaim); ok && w.armed.Load() {
 		w.writes.Add(1)
 	}
 }
@@ -65,7 +65,7 @@ func setClaimPhase(t *testing.T, c client.Client, name, phase string) {
 	t.Helper()
 	ns := testNamespace(t)
 	ctx := context.Background()
-	var stored lennyv1.SandboxClaim
+	var stored lennyv1.PodClaim
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: name}, &stored); err != nil {
 		t.Fatalf("get claim %s: %v", name, err)
 	}
@@ -84,14 +84,14 @@ func counterOn(t *testing.T) (*slotcounter.Counter, *miniredis.Miniredis, *redis
 	return slotcounter.New(rc), mr, rc
 }
 
-// spec: 5.2 (Slot assignment atomicity), 4.6.3 (SandboxClaim: a release that ends the occupancy without reuse)
+// spec: 5.2 (Slot assignment atomicity), 4.6.3 (PodClaim: a release that ends the occupancy without reuse)
 // diagnosis: a duplicate release of a session whose member an earlier
 // release already removed ran the occupancy-zero disposition and deleted the
 // claim a later occupancy of the pod holds. The disposition runs only on the
 // release that removed the member.
 func TestReleaseSlotDuplicateLeavesLaterClaim_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
-	claimer, c, counter := slotClaimerFor(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	claimer, c, counter := slotClaimerFor(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 	seedOccupiedPod(t, c, counter, "sbx-1", "acme", 1)
 	ctx := context.Background()
 	if _, err := claimer.ReleaseSlot(ctx, "sbx-1", "occ-0", false, false); err != nil {
@@ -119,7 +119,7 @@ func TestReleaseSlotDuplicateLeavesLaterClaim_spec_5_2(t *testing.T) {
 func TestReleaseSlotErrorClassification_spec_5_2(t *testing.T) {
 	t.Run("counter failure carries the sentinel", func(t *testing.T) {
 		ns := testNamespace(t)
-		c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+		c := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 		counter, mr, _ := counterOn(t)
 		mr.Close()
 		claimer := &podclaim.SlotClaimer{Client: c, Namespace: ns, Counter: counter}
@@ -130,7 +130,7 @@ func TestReleaseSlotErrorClassification_spec_5_2(t *testing.T) {
 	})
 	t.Run("disposition failure carries no sentinel", func(t *testing.T) {
 		ns := testNamespace(t)
-		base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+		base := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 		counter, mr, _ := counterOn(t)
 		seedOccupiedPod(t, base, counter, "sbx-1", "acme", 1)
 		c := interceptor.NewClient(base, interceptor.Funcs{
@@ -151,11 +151,11 @@ func TestReleaseSlotErrorClassification_spec_5_2(t *testing.T) {
 
 // spec: 5.2 (Post-recovery rehydration atomicity)
 // diagnosis: a release that rehydrated the pod's set did not record the
-// rehydration event, or recorded it under a pool other than the Sandbox's
+// rehydration event, or recorded it under a pool other than the AgentPod's
 // warm-pool label, which is the label a reservation records for the pod.
 func TestReleaseSlotRecordsRehydrationWithPoolLabel_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
-	c := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	c := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 	counter, _, _ := counterOn(t)
 	var got []string
 	claimer := &podclaim.SlotClaimer{
@@ -189,7 +189,7 @@ func (staticSource) GetActiveSlotsByPod(context.Context, string) ([]string, erro
 
 func (staticSource) ListPodsWithActiveSlots(context.Context) ([]string, error) { return nil, nil }
 
-// spec: 4.6.3 (SandboxClaim: a release that ends the occupancy without reuse), 5.2 (Slot assignment atomicity)
+// spec: 4.6.3 (PodClaim: a release that ends the occupancy without reuse), 5.2 (Slot assignment atomicity)
 // diagnosis: the rollback after a fresh claim's `bound` write failed
 // deleted the fresh claim unconditionally, ending the occupancy of a sibling
 // that reserved onto the claim in the window, or ran on the cancelled
@@ -204,13 +204,13 @@ func TestFreshClaimBoundWriteRollback_spec_4_6_3(t *testing.T) {
 		}
 		t.Run(name, func(t *testing.T) {
 			ns := testNamespace(t)
-			base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+			base := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "idle", ""))
 			counter, mr, _ := counterOn(t)
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
 			c := interceptor.NewClient(base, interceptor.Funcs{
 				SubResourcePatch: func(pctx context.Context, cl client.Client, sub string, obj client.Object, p client.Patch, opts ...client.SubResourcePatchOption) error {
-					if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+					if _, ok := obj.(*lennyv1.PodClaim); ok {
 						if sibling {
 							if _, _, err := counter.Reserve(context.Background(), "sbx-1", "sib", 4); err != nil {
 								t.Errorf("sibling reserve: %v", err)
@@ -240,7 +240,7 @@ func TestFreshClaimBoundWriteRollback_spec_4_6_3(t *testing.T) {
 	}
 }
 
-// spec: 4.6.3 (SandboxClaim: a release that ends the occupancy without reuse), 5.2 (Slot assignment atomicity)
+// spec: 4.6.3 (PodClaim: a release that ends the occupancy without reuse), 5.2 (Slot assignment atomicity)
 // diagnosis: the withdrawal after a failed claim CREATE ran the
 // occupancy-zero disposition and wrote or deleted the winner's claim. The
 // withdrawal holds no occupancy of the pod, so it removes the session's
@@ -249,10 +249,10 @@ func TestFreshClaimBoundWriteRollback_spec_4_6_3(t *testing.T) {
 func TestCreateLoserWithdrawalLeavesWinnerClaim_spec_4_6_3(t *testing.T) {
 	createErrs := map[string]func() error{
 		"AlreadyExists": func() error {
-			return apierrors.NewAlreadyExists(schema.GroupResource{Group: "lenny.dev", Resource: "sandboxclaims"}, "claim-sbx-1")
+			return apierrors.NewAlreadyExists(schema.GroupResource{Group: "lenny.dev", Resource: "podclaims"}, "claim-sbx-1")
 		},
 		"Forbidden": func() error {
-			return apierrors.NewForbidden(schema.GroupResource{Group: "lenny.dev", Resource: "sandboxclaims"}, "claim-sbx-1", errors.New("guard"))
+			return apierrors.NewForbidden(schema.GroupResource{Group: "lenny.dev", Resource: "podclaims"}, "claim-sbx-1", errors.New("guard"))
 		},
 		"other": func() error { return errors.New("apiserver unreachable") },
 	}
@@ -260,12 +260,12 @@ func TestCreateLoserWithdrawalLeavesWinnerClaim_spec_4_6_3(t *testing.T) {
 		for _, phase := range []string{"bound", "recycling", "reserved"} {
 			t.Run(errName+"/"+phase, func(t *testing.T) {
 				ns := testNamespace(t)
-				base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "idle", ""))
+				base := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "idle", ""))
 				counter, mr, _ := counterOn(t)
 				w := &claimWrites{}
 				var once sync.Once
 				c := interceptor.NewClient(base, countingFuncs(w, func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-					claim, ok := obj.(*lennyv1.SandboxClaim)
+					claim, ok := obj.(*lennyv1.PodClaim)
 					if !ok {
 						return cl.Create(ctx, obj, opts...)
 					}
@@ -307,7 +307,7 @@ func TestCreateLoserWithdrawalLeavesWinnerClaim_spec_4_6_3(t *testing.T) {
 // stamp failure.
 func TestRollbackCounterFailureKeepsMember_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
-	base := newEnvtestClient(t, concurrentSandbox(ns, "sbx-1", "claimed", "acme"))
+	base := newEnvtestClient(t, concurrentAgentPod(ns, "sbx-1", "claimed", "acme"))
 	mustCreate(t, base, agentPod(ns, "sbx-1", ""))
 	seedPerPodClaim(t, base, "sbx-1", "acme")
 	mr := miniredis.RunT(t)

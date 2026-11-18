@@ -36,7 +36,7 @@ var mtlsPKICertificates = []string{
 // without a serving identity and the API server cannot call it.
 var webhookServingCertificates = []string{
 	"lenny-label-immutability",
-	"lenny-sandboxclaim-guard",
+	"lenny-podclaim-guard",
 	"lenny-pool-config-validator",
 	"lenny-ephemeral-container-cred-guard",
 	"lenny-pod-security",

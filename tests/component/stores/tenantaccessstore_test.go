@@ -40,14 +40,14 @@ func tenantaccessRuntime(t *testing.T, ctx context.Context, pg *containers.Postg
 	return name
 }
 
-// tenantaccessPool seeds a sandbox_warm_pools row and returns its name.
+// tenantaccessPool seeds a pools row and returns its name.
 // The join table's pool_name column is a foreign key into
-// sandbox_warm_pools, which is platform-global like runtime_definitions.
+// pools, which is platform-global like runtime_definitions.
 func tenantaccessPool(t *testing.T, ctx context.Context, pg *containers.Postgres) string {
 	t.Helper()
 	name := "pool-" + newUUID(t)[:8]
 	if _, err := pg.Pool.Exec(ctx,
-		`INSERT INTO sandbox_warm_pools (name) VALUES ($1)`, name); err != nil {
+		`INSERT INTO pools (name) VALUES ($1)`, name); err != nil {
 		t.Fatalf("seed pool %q: %v", name, err)
 	}
 	return name
@@ -164,7 +164,7 @@ func TestTenantAccessStoreContract(t *testing.T) {
 			t.Fatalf("seed runtime %q: %v", shared, err)
 		}
 		if _, err := pg.Pool.Exec(ctx,
-			`INSERT INTO sandbox_warm_pools (name) VALUES ($1)`, shared); err != nil {
+			`INSERT INTO pools (name) VALUES ($1)`, shared); err != nil {
 			t.Fatalf("seed pool %q: %v", shared, err)
 		}
 		if _, err := store.Grant(ctx, tenantaccessstore.KindRuntime, shared, runtimeTenant, "a", time.Time{}); err != nil {

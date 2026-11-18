@@ -1561,14 +1561,14 @@ func e2eKindSubsetPattern(subsets []string) (string, error) {
 	}
 	mapping := map[string][]string{
 		"critical-path": {
-			"TestWarmPool", "TestSandboxClaim", "TestPodLifecycle",
+			"TestWarmPool", "TestPodClaim", "TestPodLifecycle",
 			"TestMTLSEnforcement", "TestAdmissionPolicy",
 			"TestAdmissionInventory", "TestLennyOpsFirstDeploy",
 			"TestBootstrapFirstInstall",
 		},
 		"admission-critical-path": {
 			"TestAdmissionPolicy", "TestAdmissionInventory",
-			"TestLabelImmutability", "TestSandboxClaim",
+			"TestLabelImmutability", "TestPodClaim",
 		},
 		"pool-upgrade":                 {"TestPoolUpgrade"},
 		"mtls":                         {"TestMTLSEnforcement"},

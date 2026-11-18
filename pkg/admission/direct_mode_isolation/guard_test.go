@@ -40,7 +40,7 @@ func TestRejectsDirectModeStandardIsolationInMultiTenant(t *testing.T) {
 func TestRejectsProxyModeSpiffeBindingDisabledInMultiTenant(t *testing.T) {
 	d := dmi.Decide(dmi.Request{
 		TenancyMode:   dmi.TenancyMulti,
-		Kind:          "SandboxTemplate",
+		Kind:          "PodSet",
 		DeliveryMode:  "proxy",
 		SpiffeBinding: "disabled",
 	})
@@ -50,7 +50,7 @@ func TestRejectsProxyModeSpiffeBindingDisabledInMultiTenant(t *testing.T) {
 	if !strings.Contains(d.Reason, dmi.RejectProxyModeSpiffeBindingDisabled) {
 		t.Errorf("reason %q does not carry the rejection code", d.Reason)
 	}
-	if !strings.Contains(d.Reason, "SandboxTemplate") {
+	if !strings.Contains(d.Reason, "PodSet") {
 		t.Errorf("reason %q does not name the resource kind", d.Reason)
 	}
 }
@@ -131,19 +131,19 @@ func TestRejectsProxyProviderDirectComboInEveryTenancyMode_spec_13_2_NET006(t *t
 		req  dmi.Request
 	}{
 		{"multi-tenant", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, Kind: "SandboxTemplate",
+			TenancyMode: dmi.TenancyMulti, Kind: "PodSet",
 			DeliveryMode: "proxy", EgressProfile: "provider-direct",
 		}},
 		{"single-tenant", dmi.Request{
-			TenancyMode: "single", Kind: "SandboxTemplate",
+			TenancyMode: "single", Kind: "PodSet",
 			DeliveryMode: "proxy", EgressProfile: "provider-direct",
 		}},
 		{"dev-mode multi-tenant", dmi.Request{
-			TenancyMode: dmi.TenancyMulti, DevMode: true, Kind: "SandboxTemplate",
+			TenancyMode: dmi.TenancyMulti, DevMode: true, Kind: "PodSet",
 			DeliveryMode: "proxy", EgressProfile: "provider-direct",
 		}},
 		{"empty tenancy mode", dmi.Request{
-			Kind:         "SandboxTemplate",
+			Kind:         "PodSet",
 			DeliveryMode: "proxy", EgressProfile: "provider-direct",
 		}},
 	} {

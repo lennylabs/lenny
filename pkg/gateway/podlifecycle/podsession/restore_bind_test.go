@@ -123,7 +123,7 @@ func TestBindRestoresStartingSnapshotUnderPlanSources_spec_7_1(t *testing.T) {
 	srv.Runtime = rt
 	srv.CheckpointTransport = transport
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	restore, calls := restoreClosure([]adapterclient.ChunkGrant{
 		{Index: 0, URL: "https://objstore.example/chunk-0"},
@@ -182,7 +182,7 @@ func TestBindFailsClosedWhenRestoreCannotBeMinted_spec_7_1(t *testing.T) {
 	srv.WorkspaceBase = root
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	mintErr := errors.New("derived manifest has no chunk")
 	restore, calls := restoreClosure(nil, mintErr)
@@ -228,7 +228,7 @@ func TestBindSDKWarmDemotesARestoredSession_spec_6_1(t *testing.T) {
 	srv.Runtime = rt
 	srv.CheckpointTransport = transport
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 	restore, _ := restoreClosure([]adapterclient.ChunkGrant{{Index: 0, URL: "https://objstore.example/chunk-0"}}, nil)
 	req := podsession.BindRequest{
@@ -311,7 +311,7 @@ func TestRequiresDemotionForRestoredSnapshot_spec_6_1(t *testing.T) {
 func TestBindSlotCarriesRestoreGrantsOnFinalize_spec_7_1(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	restore, calls := restoreClosure([]adapterclient.ChunkGrant{
 		{Index: 0, URL: "https://objstore.example/chunk-0"},
@@ -350,7 +350,7 @@ func TestBindSlotCarriesRestoreGrantsOnFinalize_spec_7_1(t *testing.T) {
 func TestBindSlotFailsClosedWhenRestoreCannotBeMinted_spec_7_1(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	var failures []slotFailureCall
 	binder.SlotFailure = func(errorType, pool, podName string) {
@@ -535,7 +535,7 @@ func uploadPlan(t *testing.T) (*blobstore.MemoryStore, *adapterv1.WorkspacePlan)
 
 func exclusiveRestoreAttempt(t *testing.T, a *restoreRecordingAdapter, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) func() error {
 	ns := testNamespace(t)
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"), idleSandbox(ns, "sbx-2", "10.244.1.8"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"), idleAgentPod(ns, "sbx-2", "10.244.1.8"))
 	binder := newBinder(ns, c, restoreRecordingDialer(t, a))
 	blobs, plan := uploadPlan(t)
 	binder.Blobs = blobs
@@ -553,7 +553,7 @@ func exclusiveRestoreAttempt(t *testing.T, a *restoreRecordingAdapter, restore f
 
 func slotRestoreAttempt(t *testing.T, a *restoreRecordingAdapter, restore func(context.Context) ([]adapterclient.ChunkGrant, error)) func() error {
 	ns := testNamespace(t)
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, restoreRecordingDialer(t, a))
 	blobs, plan := uploadPlan(t)
 	binder.Blobs = blobs
@@ -654,7 +654,7 @@ func TestRestoreClosureIsNotInvokedOnClaimOrLaunch_spec_7_1(t *testing.T) {
 		srv.WorkspaceBase = t.TempDir()
 		srv.Runtime = &fakeRuntime{}
 		srv.CheckpointTransport = transport
-		binder := newBinder(ns, k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), adapterDialer(t, srv))
+		binder := newBinder(ns, k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7")), adapterDialer(t, srv))
 		restore, calls := restoreClosure([]adapterclient.ChunkGrant{{Index: 0, URL: "https://objstore.example/chunk-0"}}, nil)
 		req := podsession.BindRequest{
 			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -668,7 +668,7 @@ func TestRestoreClosureIsNotInvokedOnClaimOrLaunch_spec_7_1(t *testing.T) {
 		if *calls != 0 {
 			t.Errorf("Claim invoked the restore closure %d times, want 0", *calls)
 		}
-		req.SandboxName = claim.SandboxName
+		req.AgentPodName = claim.AgentPodName
 		prep, err := binder.Prepare(context.Background(), req)
 		if err != nil {
 			t.Fatalf("Prepare: %v", err)
@@ -689,7 +689,7 @@ func TestRestoreClosureIsNotInvokedOnClaimOrLaunch_spec_7_1(t *testing.T) {
 	t.Run("slot ClaimSlot then BindReservedSlot", func(t *testing.T) {
 		ns := testNamespace(t)
 		a := newConcurrentAdapter()
-		binder := newSlotBinder(t, k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7")), concurrentAdapterDialer(t, a))
+		binder := newSlotBinder(t, k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7")), concurrentAdapterDialer(t, a))
 		restore, calls := restoreClosure([]adapterclient.ChunkGrant{{Index: 0, URL: "https://objstore.example/chunk-0"}}, nil)
 		req := podsession.SlotBindRequest{
 			Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -702,7 +702,7 @@ func TestRestoreClosureIsNotInvokedOnClaimOrLaunch_spec_7_1(t *testing.T) {
 		if *calls != 0 {
 			t.Errorf("ClaimSlot invoked the restore closure %d times, want 0", *calls)
 		}
-		res, err := binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+		res, err := binder.BindReservedSlot(context.Background(), req, claim.AgentPodName, claim.SlotID)
 		if err != nil {
 			t.Fatalf("BindReservedSlot: %v", err)
 		}
@@ -743,7 +743,7 @@ func TestPrepareAndLaunchRecomputationAgreeOnRestoreDemotion_spec_6_1(t *testing
 			srv.WorkspaceBase = t.TempDir()
 			srv.Runtime = rt
 			srv.CheckpointTransport = transport
-			binder := newBinder(ns, k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7")), adapterDialer(t, srv))
+			binder := newBinder(ns, k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7")), adapterDialer(t, srv))
 			restore, _ := restoreClosure([]adapterclient.ChunkGrant{{Index: 0, URL: "https://objstore.example/chunk-0"}}, nil)
 			req := podsession.BindRequest{
 				Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -754,7 +754,7 @@ func TestPrepareAndLaunchRecomputationAgreeOnRestoreDemotion_spec_6_1(t *testing
 			if err != nil {
 				t.Fatalf("Claim: %v", err)
 			}
-			req.SandboxName = claim.SandboxName
+			req.AgentPodName = claim.AgentPodName
 			prep, err := binder.Prepare(context.Background(), req)
 			if err != nil {
 				t.Fatalf("Prepare: %v", err)

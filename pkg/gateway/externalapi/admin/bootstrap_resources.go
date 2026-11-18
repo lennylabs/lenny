@@ -92,7 +92,7 @@ func (r *Router) upsertPools(req *http.Request, in []PoolPayload, opts bootstrap
 		// handler: a direct + standard, proxy + spiffeBinding disabled, or
 		// (in every tenancy mode) proxy + provider-direct combination is
 		// recorded as a per-entry seed validation error rather than stored,
-		// so it never reconciles into a SandboxTemplate the failurePolicy: Fail
+		// so it never reconciles into a PodSet the failurePolicy: Fail
 		// layer-2 webhook would reject, wedging the PoolScalingController.
 		if dec := r.validateCredentialDeliveryCombo(pl); !dec.Allowed {
 			out.add(i, p.Name, actionError, seedValidationCode, dec.Reason, nil)
@@ -183,7 +183,7 @@ func poolConflicts(existing poolstore.Pool, p PoolPayload) (conflicts, securityC
 		conflicts = append(conflicts, "executionMode")
 	}
 	// spec: §4.9 — deliveryMode and spiffeBinding reconcile onto the
-	// SandboxTemplate, so a seed changing only one of them must register a
+	// PodSet, so a seed changing only one of them must register a
 	// conflict to be applied under force-update. They are ordinary (non
 	// security-critical) conflicts: the fail-closed multi-tenant Decide gate
 	// runs earlier in upsertPools, and marking them security-critical would

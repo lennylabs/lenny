@@ -22,7 +22,7 @@ const stepBody = "### Step 1: Check pool status\n" +
 	"\n" +
 	"<!-- access: kubectl requires=cluster-access -->\n" +
 	"```bash\n" +
-	"kubectl get sandboxes -n lenny-agents -l pool=<pool-name>\n" +
+	"kubectl get agentpods -n lenny-agents -l pool=<pool-name>\n" +
 	"kubectl describe sandbox <pod-name> -n lenny-agents\n" +
 	"```\n" +
 	"\n" +

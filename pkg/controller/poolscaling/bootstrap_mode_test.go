@@ -31,7 +31,7 @@ func ip(v int) *int { return &v }
 // bootstrap), and spec.minWarm equals the override.
 func TestSyncBootstrapOverridePinsMinWarm_spec_17_8_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.BootstrapMinWarm = ip(2096)
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -39,7 +39,7 @@ func TestSyncBootstrapOverridePinsMinWarm_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Spec.MinWarm != 2096 {
 		t.Errorf("spec.minWarm = %d, want 2096 (override)", pool.Spec.MinWarm)
 	}
@@ -52,7 +52,7 @@ func TestSyncBootstrapOverridePinsMinWarm_spec_17_8_2(t *testing.T) {
 // carries no bootstrap-mode signal (status.scalingMode: formula).
 func TestSyncNoOverrideReportsFormulaMode_spec_17_8_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 	r := &poolscaling.Reconciler{
 		Client: c, Source: src,
@@ -61,7 +61,7 @@ func TestSyncNoOverrideReportsFormulaMode_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "formula" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "formula" {
 		t.Errorf("status.scalingMode = %q, want formula", got)
 	}
 }
@@ -71,7 +71,7 @@ func TestSyncNoOverrideReportsFormulaMode_spec_17_8_2(t *testing.T) {
 // to the formula target and reports status.scalingMode: formula.
 func TestSyncBootstrapConvergesToFormula_spec_17_8_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.BootstrapMinWarm = ip(10) // formula target 6 is <= 3*10, so not underprovisioned
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -88,7 +88,7 @@ func TestSyncBootstrapConvergesToFormula_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 1: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "bootstrap" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "bootstrap" {
 		t.Fatalf("after 1 reconcile scalingMode = %q, want bootstrap (window not yet elapsed)", got)
 	}
 	// Advance past the stability window with the same steady target.
@@ -96,7 +96,7 @@ func TestSyncBootstrapConvergesToFormula_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	pool := getWarmPool(t, c)
+	pool := getPodSet(t, c)
 	if pool.Status.ScalingMode != "formula" {
 		t.Fatalf("after window elapsed scalingMode = %q, want formula", pool.Status.ScalingMode)
 	}
@@ -110,7 +110,7 @@ func TestSyncBootstrapConvergesToFormula_spec_17_8_2(t *testing.T) {
 // in bootstrap mode even when the data and stability criteria are met.
 func TestSyncBootstrapHeldByWarmPoolLow_spec_17_8_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.BootstrapMinWarm = ip(10)
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -129,7 +129,7 @@ func TestSyncBootstrapHeldByWarmPoolLow_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "bootstrap" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "bootstrap" {
 		t.Errorf("scalingMode = %q, want bootstrap (recent WarmPoolLow blocks convergence)", got)
 	}
 }
@@ -138,7 +138,7 @@ func TestSyncBootstrapHeldByWarmPoolLow_spec_17_8_2(t *testing.T) {
 // pool in bootstrap mode regardless of stability.
 func TestSyncBootstrapHeldByInsufficientData_spec_17_8_2(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	cfg := config()
 	cfg.BootstrapMinWarm = ip(10)
 	src := &fakeSource{configs: []poolscaling.PoolConfig{cfg}}
@@ -156,7 +156,7 @@ func TestSyncBootstrapHeldByInsufficientData_spec_17_8_2(t *testing.T) {
 	if err := r.Sync(context.Background()); err != nil {
 		t.Fatalf("Sync 2: %v", err)
 	}
-	if got := getWarmPool(t, c).Status.ScalingMode; got != "bootstrap" {
+	if got := getPodSet(t, c).Status.ScalingMode; got != "bootstrap" {
 		t.Errorf("scalingMode = %q, want bootstrap (only 12h of data)", got)
 	}
 }

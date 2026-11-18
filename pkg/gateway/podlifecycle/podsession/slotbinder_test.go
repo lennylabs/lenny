@@ -52,20 +52,20 @@ func newSlotBinder(t *testing.T, c client.Client, dial func(string) (*adaptercli
 	return b
 }
 
-// podClaimExists reports whether the per-pod SandboxClaim (claim-<podName>)
-// exists for sandboxName. The per-pod claim is the occupancy authority; the
-// slot count lives in the Redis counter, not on Sandbox.status.
-func podClaimExists(t *testing.T, c client.Client, sandboxName string) bool {
+// podClaimExists reports whether the per-pod PodClaim (claim-<podName>)
+// exists for agentPodName. The per-pod claim is the occupancy authority; the
+// slot count lives in the Redis counter, not on AgentPod.status.
+func podClaimExists(t *testing.T, c client.Client, agentPodName string) bool {
 	t.Helper()
 	ns := testNamespace(t)
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + sandboxName}, &lennyv1.SandboxClaim{})
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: "claim-" + agentPodName}, &lennyv1.PodClaim{})
 	if err == nil {
 		return true
 	}
 	if apierrors.IsNotFound(err) {
 		return false
 	}
-	t.Fatalf("get per-pod claim for %s: %v", sandboxName, err)
+	t.Fatalf("get per-pod claim for %s: %v", agentPodName, err)
 	return false
 }
 
@@ -278,16 +278,16 @@ func concurrentAdapterDialer(t *testing.T, a *concurrentAdapter) func(string) (*
 	}
 }
 
-// concurrentIdleSandbox is an idle Sandbox in the test pool ready to
+// concurrentIdleAgentPod is an idle AgentPod in the test pool ready to
 // host concurrent-session slots.
-func concurrentIdleSandbox(ns, name, podIP string) *lennyv1.Sandbox {
-	return &lennyv1.Sandbox{
+func concurrentIdleAgentPod(ns, name, podIP string) *lennyv1.AgentPod {
+	return &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: testPool},
 		},
-		Status: lennyv1.SandboxStatus{Phase: "idle", PodIP: podIP},
+		Status: lennyv1.AgentPodStatus{Phase: "idle", PodIP: podIP},
 	}
 }
 
@@ -299,7 +299,7 @@ func concurrentIdleSandbox(ns, name, podIP string) *lennyv1.Sandbox {
 func TestBindSlotWorkspaceConcurrentStartsTheSlot(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
@@ -312,7 +312,7 @@ func TestBindSlotWorkspaceConcurrentStartsTheSlot(t *testing.T) {
 	}
 	defer res.Adapter.Close()
 
-	if res.SandboxName != "sbx-1" || res.PodIP != "10.244.1.7" {
+	if res.AgentPodName != "sbx-1" || res.PodIP != "10.244.1.7" {
 		t.Errorf("result = %+v, want sbx-1 / 10.244.1.7", res)
 	}
 	if res.SlotID != "sess-1" {
@@ -327,7 +327,7 @@ func TestBindSlotWorkspaceConcurrentStartsTheSlot(t *testing.T) {
 	}
 
 	// The pod is acquired: its per-pod occupancy claim exists. The gateway
-	// no longer writes Sandbox.status; the WPC projects the phase.
+	// no longer writes AgentPod.status; the WPC projects the phase.
 	if !podClaimExists(t, c, "sbx-1") {
 		t.Error("BindSlot did not create the per-pod occupancy claim for sbx-1")
 	}
@@ -344,8 +344,8 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 	// One idle pod and one spare; both sessions should fit on the first.
 	c := k8sClient(
 		t,
-		concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"),
-		concurrentIdleSandbox(ns, "sbx-2", "10.244.1.8"),
+		concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"),
+		concurrentIdleAgentPod(ns, "sbx-2", "10.244.1.8"),
 	)
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
@@ -367,18 +367,18 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 	}
 	defer r2.Adapter.Close()
 
-	if r1.SandboxName != r2.SandboxName {
+	if r1.AgentPodName != r2.AgentPodName {
 		t.Errorf("the two slots landed on different pods (%s, %s); §5.2 packs them onto one pod",
-			r1.SandboxName, r2.SandboxName)
+			r1.AgentPodName, r2.AgentPodName)
 	}
 
 	// The shared pod carries a single per-pod occupancy claim; both slots
 	// multiplex onto it. The spare pod is never acquired.
-	if !podClaimExists(t, c, r1.SandboxName) {
-		t.Errorf("shared pod %s has no per-pod claim", r1.SandboxName)
+	if !podClaimExists(t, c, r1.AgentPodName) {
+		t.Errorf("shared pod %s has no per-pod claim", r1.AgentPodName)
 	}
 	spare := "sbx-1"
-	if r1.SandboxName == "sbx-1" {
+	if r1.AgentPodName == "sbx-1" {
 		spare = "sbx-2"
 	}
 	if podClaimExists(t, c, spare) {
@@ -396,12 +396,12 @@ func TestBindSlotSecondSessionSharesThePod(t *testing.T) {
 // concurrent-workspace pool, so the §15.1 created-state pod-claim invariant
 // holds uniformly; a failure means the create path admitted a `created`
 // session with no claimed pod. ClaimSlot reserves the slot (the per-pod
-// SandboxClaim plus the session's active_slots member) and runs the handshake, but
+// PodClaim plus the session's active_slots member) and runs the handshake, but
 // does not materialize the workspace or start the runtime.
 func TestClaimSlotReservesSlotWithoutStarting_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	claim, err := binder.ClaimSlot(context.Background(), podsession.SlotBindRequest{
@@ -411,7 +411,7 @@ func TestClaimSlotReservesSlotWithoutStarting_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	if claim.SandboxName != "sbx-1" || claim.Pool != testPool {
+	if claim.AgentPodName != "sbx-1" || claim.Pool != testPool {
 		t.Errorf("claim = %+v, want sbx-1 / %s", claim, testPool)
 	}
 	// SlotID == SessionID so the binding is reconstructable from the persisted
@@ -457,7 +457,7 @@ func TestClaimSlotEmptyPoolReturnsExhaustion_spec_5_2(t *testing.T) {
 func TestBindReservedSlotReconnectsAndStarts_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	req := podsession.SlotBindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -468,13 +468,13 @@ func TestBindReservedSlotReconnectsAndStarts_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	res, err := binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+	res, err := binder.BindReservedSlot(context.Background(), req, claim.AgentPodName, claim.SlotID)
 	if err != nil {
 		t.Fatalf("BindReservedSlot: %v", err)
 	}
 	defer res.Adapter.Close()
 
-	if res.SandboxName != "sbx-1" || res.SlotID != "sess-1" {
+	if res.AgentPodName != "sbx-1" || res.SlotID != "sess-1" {
 		t.Errorf("result = %+v, want sbx-1 / sess-1", res)
 	}
 	if !a.startedSet()["sess-1"] {
@@ -500,7 +500,7 @@ func TestBindReservedSlotReleasesReservationOnFailure_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
 	a.startErr = errors.New("runtime refused to start")
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	req := podsession.SlotBindRequest{
 		Pool: testPool, SessionID: "sess-1", TenantID: "acme", Runtime: "claude-code",
@@ -514,7 +514,7 @@ func TestBindReservedSlotReleasesReservationOnFailure_spec_5_2(t *testing.T) {
 	if !podClaimExists(t, c, "sbx-1") {
 		t.Fatal("ClaimSlot did not reserve the slot")
 	}
-	_, err = binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+	_, err = binder.BindReservedSlot(context.Background(), req, claim.AgentPodName, claim.SlotID)
 	if err == nil {
 		t.Fatal("BindReservedSlot succeeded, want a StartSession failure")
 	}
@@ -556,7 +556,7 @@ func TestBindSlotReturnsErrNoIdlePodWhenPoolEmpty(t *testing.T) {
 func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	r1, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
@@ -605,7 +605,7 @@ func TestReleaseSlotLeavesSiblingSlotsRunning(t *testing.T) {
 func TestReleaseSlotLeakedKeepsPodCounted(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	r1, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
@@ -655,7 +655,7 @@ func TestReleaseSlotLeakedKeepsPodCounted(t *testing.T) {
 func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	r1, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
@@ -685,7 +685,7 @@ func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
 // whole-pod scrub at occupancy zero. On the last clean slot drain
 // Binder.ReleaseSlot must send the adapter a whole-pod recycle Shutdown (a
 // RecycleScrub sub-message) carrying the last-released slot's session id, the
-// folded pod_id (SandboxName) plus the pool's cleanup parameters, so the
+// folded pod_id (AgentPodName) plus the pool's cleanup parameters, so the
 // adapter runs the scrub beside the named session's teardown.
 // Pre-fix code closed the adapter connection right after that session's
 // Shutdown and had no recycled signal from SlotClaimer.ReleaseSlot, so the
@@ -695,7 +695,7 @@ func TestReleaseSlotShutdownErrorKeepsSlotCounted(t *testing.T) {
 func TestReleaseSlotRecyclingSendsWholePodRecycleShutdown_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	binder.RecycleBoundary = &fakeRecycleBoundary{}
 
@@ -753,7 +753,7 @@ func TestReleaseSlotRecyclingSendsWholePodRecycleShutdown_spec_5_2(t *testing.T)
 	}
 	rc := recycleReq.GetRecycle()
 	if rc.GetPodId() != "sbx-1" {
-		t.Errorf("RecycleScrub.pod_id = %q, want sbx-1 (the folded SandboxName)", rc.GetPodId())
+		t.Errorf("RecycleScrub.pod_id = %q, want sbx-1 (the folded AgentPodName)", rc.GetPodId())
 	}
 	if rc.GetCleanupTimeoutSeconds() != 25 {
 		t.Errorf("RecycleScrub.cleanup_timeout_seconds = %d, want 25", rc.GetCleanupTimeoutSeconds())
@@ -775,7 +775,7 @@ func TestReleaseSlotRecyclingSendsWholePodRecycleShutdown_spec_5_2(t *testing.T)
 func TestReleaseSlotLeakedLastSlotSendsNoRecycleShutdown_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	binder.RecycleBoundary = &fakeRecycleBoundary{}
 
@@ -818,7 +818,7 @@ func TestReleaseSlotLeakedLastSlotSendsNoRecycleShutdown_spec_5_2(t *testing.T) 
 func TestReleaseSlotReturnsCredentialLeasesToPool_spec_7_1(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	assigner := &fakeAssigner{}
 	binder.Credentials = assigner
@@ -859,7 +859,7 @@ func TestBindSlotEmitsSlotFailureOnStartError_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
 	a.startErr = errors.New("runtime refused to start")
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	var failures []slotFailureCall
 	binder.SlotFailure = func(errorType, pool, podName string) {
@@ -917,7 +917,7 @@ func TestBindSlotSeparatesWorkspaceStagesAtTheSlotFailureMetric_spec_16_1(t *tes
 			ns := testNamespace(t)
 			a := newConcurrentAdapter()
 			a.finalizeErr = tc.finalizeErr
-			c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+			c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 			binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 			var failures []slotFailureCall
 			binder.SlotFailure = func(errorType, pool, podName string) {
@@ -961,7 +961,7 @@ func TestBindSlotSeparatesWorkspaceStagesAtTheSlotFailureMetric_spec_16_1(t *tes
 func TestBindSlotEmitsNoSlotFailureOnSuccess_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	failed := false
 	binder.SlotFailure = func(string, string, string) { failed = true }
@@ -988,7 +988,7 @@ func TestBindSlotReturnsSlotBindError_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
 	a.startErr = status.Error(codes.ResourceExhausted, "pod OOM-killed")
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	_, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
@@ -1009,19 +1009,19 @@ func TestBindSlotReturnsSlotBindError_spec_5_2(t *testing.T) {
 	}
 }
 
-// spec: §4.6.3 — DrainSandbox retires a concurrent-session pod that crossed
+// spec: §4.6.3 — DrainAgentPod retires a concurrent-session pod that crossed
 // the §5.2 unhealthy threshold by stamping the lenny.dev/drain-request
-// annotation on the agent Pod; the gateway writes no Sandbox.status.phase
+// annotation on the agent Pod; the gateway writes no AgentPod.status.phase
 // (the WarmPoolController is the sole writer and consumes the annotation).
 // The stamp is idempotent and a missing pod is tolerated.
 //
 // diagnosis: a failure means the gateway either failed to stamp the
 // drain-request annotation the WarmPoolController keys the unhealthy drain on,
-// or it wrote Sandbox.status.phase directly, breaking the §4.6.3 single-writer
+// or it wrote AgentPod.status.phase directly, breaking the §4.6.3 single-writer
 // invariant.
-func TestBinderDrainSandbox_spec_4_6_3(t *testing.T) {
+func TestBinderDrainAgentPod(t *testing.T) {
 	ns := testNamespace(t)
-	sb := concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7")
+	sb := concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7")
 	c := k8sClient(t, sb)
 	if err := c.Create(context.Background(), drainAgentPod(ns, "sbx-1")); err != nil {
 		t.Fatalf("seed agent pod: %v", err)
@@ -1029,37 +1029,37 @@ func TestBinderDrainSandbox_spec_4_6_3(t *testing.T) {
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, newConcurrentAdapter()))
 	ctx := context.Background()
 
-	if err := binder.DrainSandbox(ctx, "sbx-1"); err != nil {
-		t.Fatalf("DrainSandbox: %v", err)
+	if err := binder.DrainAgentPod(ctx, "sbx-1"); err != nil {
+		t.Fatalf("DrainAgentPod: %v", err)
 	}
 	// The gateway stamps the drain-request annotation on the agent Pod and
-	// writes no Sandbox.status.phase.
+	// writes no AgentPod.status.phase.
 	var pod corev1.Pod
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "sbx-1"}, &pod); err != nil {
 		t.Fatalf("get pod: %v", err)
 	}
 	if pod.Annotations[lennyv1.AnnotationDrainRequest] == "" {
-		t.Errorf("pod missing %s annotation after DrainSandbox", lennyv1.AnnotationDrainRequest)
+		t.Errorf("pod missing %s annotation after DrainAgentPod", lennyv1.AnnotationDrainRequest)
 	}
-	var got lennyv1.Sandbox
+	var got lennyv1.AgentPod
 	if err := c.Get(ctx, client.ObjectKey{Namespace: ns, Name: "sbx-1"}, &got); err != nil {
 		t.Fatalf("get sandbox: %v", err)
 	}
 	if got.Status.Phase == string(state.Draining) {
-		t.Errorf("gateway wrote Sandbox.status.phase=draining; the WPC is the sole writer (§4.6.3)")
+		t.Errorf("gateway wrote AgentPod.status.phase=draining; the WPC is the sole writer (§4.6.3)")
 	}
 	// Idempotent: a second drain re-stamps and does not error.
-	if err := binder.DrainSandbox(ctx, "sbx-1"); err != nil {
-		t.Fatalf("idempotent DrainSandbox: %v", err)
+	if err := binder.DrainAgentPod(ctx, "sbx-1"); err != nil {
+		t.Fatalf("idempotent DrainAgentPod: %v", err)
 	}
 	// Missing pod: tolerated (a pod with no slots needs no drain).
-	if err := binder.DrainSandbox(ctx, "sbx-absent"); err != nil {
-		t.Fatalf("DrainSandbox on missing pod: %v", err)
+	if err := binder.DrainAgentPod(ctx, "sbx-absent"); err != nil {
+		t.Fatalf("DrainAgentPod on missing pod: %v", err)
 	}
 }
 
-// drainAgentPod builds a minimal managed agent Pod named for its Sandbox so
-// the DrainSandbox annotation stamp has a pod to patch.
+// drainAgentPod builds a minimal managed agent Pod named for its AgentPod so
+// the DrainAgentPod annotation stamp has a pod to patch.
 func drainAgentPod(ns, name string) *corev1.Pod {
 	return &corev1.Pod{
 		ObjectMeta: metav1.ObjectMeta{
@@ -1083,7 +1083,7 @@ func drainAgentPod(ns, name string) *corev1.Pod {
 func TestMaterializeSlotMintsOneBindAttemptPerAttempt_spec_4_7_1(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	plan := uploadPlanBinder(t, binder)
 	stages := []string{"PrepareWorkspace", "FinalizeWorkspace", "RunSetup", "AssignCredentials"}
@@ -1126,7 +1126,7 @@ func TestReleaseSlotSendsUnconditionalTeardown_spec_4_7_1(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			ns := testNamespace(t)
 			a := newConcurrentAdapter()
-			c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+			c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 			binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 			binder.RecycleBoundary = &fakeRecycleBoundary{}
 			res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
@@ -1171,7 +1171,7 @@ func slotBindReq() podsession.SlotBindRequest {
 
 // slotEnv shares one envtest apiserver across the subtests of a table, so a
 // table does not pay an apiserver start per row. Each bind gets its own
-// Sandbox in its own pool, so no row can land on another row's pod.
+// AgentPod in its own pool, so no row can land on another row's pod.
 type slotEnv struct {
 	c client.Client
 	n int
@@ -1184,14 +1184,14 @@ func newSlotEnv(t *testing.T) *slotEnv {
 
 // failedSlotBind runs one BindSlot against a fresh pod in a fresh pool, with
 // an adapter the configure hook shapes to fail, and returns the
-// SlotBindError, the adapter, and the pod's Sandbox name. req.Pool is
+// SlotBindError, the adapter, and the pod's AgentPod name. req.Pool is
 // overwritten with the row's own pool.
 func (e *slotEnv) failedSlotBind(t *testing.T, configure func(*concurrentAdapter, *podsession.Binder), req podsession.SlotBindRequest) (*podsession.SlotBindError, *concurrentAdapter, string) {
 	t.Helper()
 	ns := testNamespace(t)
 	e.n++
-	sandboxName, pool := fmt.Sprintf("sbx-%d", e.n), fmt.Sprintf("pool-%d", e.n)
-	sb := concurrentIdleSandbox(ns, sandboxName, "10.244.1.7")
+	agentPodName, pool := fmt.Sprintf("sbx-%d", e.n), fmt.Sprintf("pool-%d", e.n)
+	sb := concurrentIdleAgentPod(ns, agentPodName, "10.244.1.7")
 	sb.Labels[warmpool.LabelPool] = pool
 	seedObjects(t, e.c, sb)
 	req.Pool = pool
@@ -1205,7 +1205,7 @@ func (e *slotEnv) failedSlotBind(t *testing.T, configure func(*concurrentAdapter
 	if !errors.As(err, &sbe) {
 		t.Fatalf("BindSlot error = %v, want *SlotBindError", err)
 	}
-	return sbe, a, sandboxName
+	return sbe, a, agentPodName
 }
 
 // attemptToken returns the bind attempt token the recorded bind-sequence
@@ -1487,7 +1487,7 @@ func TestSlotBindCompensatesWhenTheCallerContextExpired_spec_7_1(t *testing.T) {
 	t.Run("materializeSlot", func(t *testing.T) {
 		ns := testNamespace(t)
 		a := newConcurrentAdapter()
-		c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+		c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 		binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 		a.startBlocks = true
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
@@ -1502,7 +1502,7 @@ func TestSlotBindCompensatesWhenTheCallerContextExpired_spec_7_1(t *testing.T) {
 	t.Run("BindReservedSlot", func(t *testing.T) {
 		ns := testNamespace(t)
 		a := newConcurrentAdapter()
-		c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+		c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 		binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 		req := slotBindReq()
 		claim, err := binder.ClaimSlot(context.Background(), req)
@@ -1512,7 +1512,7 @@ func TestSlotBindCompensatesWhenTheCallerContextExpired_spec_7_1(t *testing.T) {
 		a.startBlocks = true
 		ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
 		defer cancel()
-		_, err = binder.BindReservedSlot(ctx, req, claim.SandboxName, claim.SlotID)
+		_, err = binder.BindReservedSlot(ctx, req, claim.AgentPodName, claim.SlotID)
 		var sbe *podsession.SlotBindError
 		if !errors.As(err, &sbe) {
 			t.Fatalf("BindReservedSlot error = %v, want *SlotBindError", err)
@@ -1542,14 +1542,14 @@ func TestBindReservedSlotReleasesWithTheReclaimDisposition_spec_7_1(t *testing.T
 	a := newConcurrentAdapter()
 	a.startErr = errors.New("runtime refused to start")
 	a.shutdownExitedCleanly = false
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 	req := slotBindReq()
 	claim, err := binder.ClaimSlot(context.Background(), req)
 	if err != nil {
 		t.Fatalf("ClaimSlot: %v", err)
 	}
-	_, err = binder.BindReservedSlot(context.Background(), req, claim.SandboxName, claim.SlotID)
+	_, err = binder.BindReservedSlot(context.Background(), req, claim.AgentPodName, claim.SlotID)
 	var sbe *podsession.SlotBindError
 	if !errors.As(err, &sbe) || !sbe.Leaked {
 		t.Fatalf("BindReservedSlot error = %v, want a leaked *SlotBindError", err)
@@ -1597,7 +1597,7 @@ func TestSlotBindCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T)
 		t.Run(tc.name, func(t *testing.T) {
 			var calls []slotReclaimCall
 			req := slotBindReq()
-			_, _, sandboxName := env.failedSlotBind(t, func(a *concurrentAdapter, b *podsession.Binder) {
+			_, _, agentPodName := env.failedSlotBind(t, func(a *concurrentAdapter, b *podsession.Binder) {
 				a.startErr = tc.startErr(t)
 				a.reclaimOutcome = tc.outcome
 				b.SlotReclaim = func(outcome, cause, pool, podName string) {
@@ -1606,8 +1606,8 @@ func TestSlotBindCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T)
 			}, req)
 			var want []slotReclaimCall
 			if tc.wantCause != "" {
-				pool := "pool-" + strings.TrimPrefix(sandboxName, "sbx-")
-				want = []slotReclaimCall{{"superseded", tc.wantCause, pool, sandboxName}}
+				pool := "pool-" + strings.TrimPrefix(agentPodName, "sbx-")
+				want = []slotReclaimCall{{"superseded", tc.wantCause, pool, agentPodName}}
 			}
 			if !slices.Equal(calls, want) {
 				t.Errorf("SlotReclaim calls = %+v, want %+v", calls, want)
@@ -1625,7 +1625,7 @@ func TestSlotBindCompensationOutcomeReachesTheReclaimHook_spec_7_1(t *testing.T)
 func TestBindSlotRunsEachSessionsSetupOnASharedPod_spec_7_5(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	var pods []string
@@ -1638,7 +1638,7 @@ func TestBindSlotRunsEachSessionsSetupOnASharedPod_spec_7_5(t *testing.T) {
 			t.Fatalf("BindSlot %s: %v", sessionID, err)
 		}
 		defer res.Adapter.Close()
-		pods = append(pods, res.SandboxName)
+		pods = append(pods, res.AgentPodName)
 	}
 	if pods[0] != pods[1] {
 		t.Fatalf("the two slots landed on different pods %v; the case needs one shared pod", pods)

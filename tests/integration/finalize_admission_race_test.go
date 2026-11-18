@@ -10,7 +10,7 @@
 // adapter over an in-memory gRPC connection. A hook store wraps the session
 // store and forces the interleaving each case needs. Interceptors on the
 // adapter count the pod RPCs the prepare phase issues, and a wrapper on the
-// envtest client counts SandboxClaim deletes, so a case observes what the
+// envtest client counts PodClaim deletes, so a case observes what the
 // refused or overtaken finalize call did to the pod rather than only its HTTP
 // response.
 
@@ -105,7 +105,7 @@ func (c *rpcCounter) serverOptions() []grpc.ServerOption {
 }
 
 // claimDeleteClient wraps the envtest client and records the name of every
-// SandboxClaim Delete, whether or not the object still exists.
+// PodClaim Delete, whether or not the object still exists.
 type claimDeleteClient struct {
 	client.Client
 
@@ -114,7 +114,7 @@ type claimDeleteClient struct {
 }
 
 func (c *claimDeleteClient) Delete(ctx context.Context, obj client.Object, opts ...client.DeleteOption) error {
-	if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+	if _, ok := obj.(*lennyv1.PodClaim); ok {
 		c.mu.Lock()
 		c.deleted = append(c.deleted, obj.GetName())
 		c.mu.Unlock()
@@ -414,7 +414,7 @@ func uploadFilePlan(uploadRef string) []byte {
 // finalize calls both read `created` before either entry write; exactly one
 // must commit `finalizing` and the other must be refused under the row lock
 // with 409 before any pod RPC. A second PrepareWorkspace, a second lease
-// assignment, a DemoteSDK, or a SandboxClaim delete means the refused call
+// assignment, a DemoteSDK, or a PodClaim delete means the refused call
 // ran the prepare phase against the pod the winner holds, or reclaimed it.
 func TestFinalizeEntryRaceRefusedCallIssuesNoPodRPC_spec_15_1(t *testing.T) {
 	t.Parallel()
@@ -487,7 +487,7 @@ func TestFinalizeEntryRaceRefusedCallIssuesNoPodRPC_spec_15_1(t *testing.T) {
 		t.Errorf("AssignProto calls = %d, want exactly 1 (only the admitted call assigns the lease)", n)
 	}
 	if got := f.cluster.claimDeletes(); len(got) != 0 {
-		t.Errorf("SandboxClaim deletes = %v, want none (the refused call must not reclaim the pod)", got)
+		t.Errorf("PodClaim deletes = %v, want none (the refused call must not reclaim the pod)", got)
 	}
 }
 
@@ -499,7 +499,7 @@ func TestFinalizeEntryRaceRefusedCallIssuesNoPodRPC_spec_15_1(t *testing.T) {
 // before its ready write. The finalize must answer 409 with
 // currentState=cancelled, keep the row cancelled, emit no ready status
 // change, and revoke its lease without reclaiming the pod, so the
-// SandboxClaim is deleted once, by the DELETE's terminal reclaim.
+// PodClaim is deleted once, by the DELETE's terminal reclaim.
 func TestFinalizeExitRaceKeepsCancelledAndReclaimsOnce_spec_15_1(t *testing.T) {
 	t.Parallel()
 	f := newAdmissionFixture(t)
@@ -543,9 +543,9 @@ func TestFinalizeExitRaceKeepsCancelledAndReclaimsOnce_spec_15_1(t *testing.T) {
 		t.Errorf("ReleaseSession calls = %v, want %v (the terminal reclaim and the finalize handler's revoke)", got, want)
 	}
 	if got := f.cluster.claimDeletes(); !reflect.DeepEqual(got, []string{"claim-sbx-1"}) {
-		t.Errorf("SandboxClaim deletes = %v, want exactly [claim-sbx-1] (the DELETE's terminal reclaim only)", got)
+		t.Errorf("PodClaim deletes = %v, want exactly [claim-sbx-1] (the DELETE's terminal reclaim only)", got)
 	}
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := f.cluster.Get(context.Background(), client.ObjectKey{Namespace: eagerNS, Name: "claim-sbx-1"}, &claim)
 	if err == nil {
 		t.Errorf("claim-sbx-1 still present after the DELETE's terminal reclaim")

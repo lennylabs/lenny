@@ -67,7 +67,7 @@ func TestUnitTimeoutExceedsObservedRuntime(t *testing.T) {
 	// binary (TEST-GAPS T-17.4.28), and pkg/embedded/stack took 13.5s
 	// (TEST-GAPS T-17.4.23), in a run of the four patterns the unit tier
 	// scoped to those changes, whose slowest package was cmd/lenny-gateway
-	// at 109.1s (load average 24 to 16). pkg/controller/sandbox
+	// at 109.1s (load average 24 to 16). pkg/controller/agentpod
 	// (464.3s to 19.8s, TEST-GAPS T-17.4.26) and pkg/gateway/podlifecycle/
 	// podsession (1776.6s to 46.0s, TEST-GAPS T-17.4.22) made the same change
 	// before them.

@@ -1,8 +1,8 @@
 {{- /*
 RBAC for the lenny-controller ServiceAccount (§4.6, §5.2). The
-WarmPoolController watches SandboxWarmPool and SandboxTemplate
-resources across agent namespaces and creates Sandbox pods, so the
-cluster role grants cross-namespace read plus Sandbox create and the
+WarmPoolController watches PodSet
+resources across agent namespaces and creates AgentPod pods, so the
+cluster role grants cross-namespace read plus AgentPod create and the
 status-subresource writes the §4.6.3 ownership table assigns to the
 controller. The §13.2 NET-022 cluster-CIDR drift detector additionally
 reads Nodes (for spec.podCIDR aggregation) and NetworkPolicies (for the
@@ -28,7 +28,7 @@ metadata:
     {{- include "lenny.labels" . | nindent 4 }}
 rules:
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates", "sandboxwarmpools"]
+    resources: ["podsets"]
     verbs: ["get", "list", "watch"]
   # Runtimes: the §5.1 RuntimeReconciler watches Runtime resources and
   # mirrors them into the gateway runtime registry. It manages a
@@ -41,22 +41,22 @@ rules:
   - apiGroups: ["lenny.dev"]
     resources: ["runtimes/finalizers"]
     verbs: ["update"]
-  # Sandboxes: the WarmPoolController creates idle pods, drains and
-  # recreates pods near cert expiry, and retires pod-failed Sandboxes;
+  # AgentPods: the WarmPoolController creates idle pods, drains and
+  # recreates pods near cert expiry, and retires pod-failed AgentPods;
   # the §4.6.1 cert-expiry replacement and pod-failed retire paths
   # require delete (§4.6.3 RBAC backstop grants create/update/delete).
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxes"]
+    resources: ["agentpods"]
     # patch is required for the WarmPoolController's Server-Side Apply write of
-    # the §4.7 nonce-only render decision onto the Sandbox.spec.requireSoPeercred
-    # carrier (pkg/controller/sandbox/controller.go recordNonceOnlyCarrier /
+    # the §4.7 nonce-only render decision onto the AgentPod.spec.requireSoPeercred
+    # carrier (pkg/controller/agentpod/controller.go recordNonceOnlyCarrier /
     # clearNonceOnlyCarrier); SSA issues an HTTP PATCH, for which `update` is
-    # insufficient — the same reason the sandboxes/status rule below needs patch.
+    # insufficient — the same reason the agentpods/status rule below needs patch.
     verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
-  # SandboxClaims: the §4.6.1 occupancy projection watches SandboxClaim
-  # resources and computes Sandbox.status.phase as a level-triggered
+  # PodClaims: the §4.6.1 occupancy projection watches PodClaim
+  # resources and computes AgentPod.status.phase as a level-triggered
   # projection of claim existence and binding state, so the
-  # WarmPoolController needs `get`/`watch` here. The Sandbox-to-Pod
+  # WarmPoolController needs `get`/`watch` here. The AgentPod-to-Pod
   # reconciler additionally `get`s the per-pod claim to read the §6.1
   # rewarmStartedAt stamp, which re-anchors the sdk_connecting watchdog
   # clock on the recycle re-warm edge. The §4.6.1 orphaned-claim
@@ -64,25 +64,25 @@ rules:
   # live session references (§4.6.3 RBAC backstop grants
   # get/list/watch/delete).
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxclaims"]
+    resources: ["podclaims"]
     verbs: ["get", "list", "watch", "delete"]
   - apiGroups: ["lenny.dev"]
-    resources: ["sandboxtemplates/status", "sandboxwarmpools/status", "sandboxes/status", "runtimes/status"]
+    resources: ["podsets/status", "agentpods/status", "runtimes/status"]
     verbs: ["get", "update", "patch"]
-  # PodDisruptionBudgets: the §4.6.1 per-SandboxTemplate warm-pod PDB
+  # PodDisruptionBudgets: the §4.6.1 per-PodSet warm-pod PDB
   # management owns one PDB per pool (maxUnavailable: 1) and tears it
   # down when the pool is deleted or scaled to zero.
   - apiGroups: ["policy"]
     resources: ["poddisruptionbudgets"]
     verbs: ["get", "list", "watch", "create", "update", "delete"]
-  # Pods: the Sandbox-to-Pod reconciler creates and deletes backing
+  # Pods: the AgentPod-to-Pod reconciler creates and deletes backing
   # pods, and patches the §4.6.1 lenny.dev/state label so the per-pool
   # warm-pod PodDisruptionBudget's idle selector tracks pod lifecycle.
   - apiGroups: [""]
     resources: ["pods"]
     verbs: ["get", "list", "watch", "create", "patch", "delete"]
   # Pods/status: the §6.1 syncReadinessGate flips the
-  # lenny.dev/sandbox-ready pod readiness gate to True once the backing
+  # lenny.dev/agent-pod-ready pod readiness gate to True once the backing
   # pod's containers report ready, which is what makes a warm pod
   # claimable (the kubelet holds Pod.Ready False until the gate is set).
   # The reconciler patches it through the status subresource

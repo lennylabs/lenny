@@ -278,9 +278,9 @@ func TestRuntimeCRFromFileDefaultsRequiredFields_spec_5_1(t *testing.T) {
 // runtime-agnostic pool derivation: the verb reproduces the echo seed's
 // poolstore→CRD field mapping (MinWarm = MaxWarm = warmCount, runtimeRef, the
 // runtime's isolation profile, and the embedded egress/DNS/resource defaults)
-// for an arbitrary runtime, so a runtime materialized through the verb warms a
-// pod the same way the echo seed does. The pool is named for the runtime so
-// multiple runtimes each get their own pool.
+// on one PodSet for an arbitrary runtime, so a runtime materialized through the
+// verb warms a pod the same way the echo seed does. The pool is named for the
+// runtime so multiple runtimes each get their own pool.
 //
 // spec: §4.6.2 (the poolstore→CRD projection), §5.2 (single-pod hot pool),
 // §13.2 (cluster-default DNS opt-out).
@@ -289,42 +289,39 @@ func TestRuntimePoolObjectsReproducesEchoFieldMapping_spec_4_6_2(t *testing.T) {
 	cr.Name = "my-agent"
 	cr.Spec.IsolationProfile = "standard"
 
-	tmpl, pool := runtimePoolObjects(cr)
+	ps := runtimePoolObject(cr)
 
 	const wantPool = "my-agent-pool"
-	if tmpl.Name != wantPool || pool.Name != wantPool {
-		t.Errorf("CRD pair names = %q/%q, want %q", tmpl.Name, pool.Name, wantPool)
+	if ps.Name != wantPool {
+		t.Errorf("PodSet name = %q, want %q", ps.Name, wantPool)
 	}
-	if tmpl.Namespace != agentNamespace || pool.Namespace != agentNamespace {
-		t.Errorf("CRD pair namespaces = %q/%q, want %q", tmpl.Namespace, pool.Namespace, agentNamespace)
+	if ps.Namespace != agentNamespace {
+		t.Errorf("PodSet namespace = %q, want %q", ps.Namespace, agentNamespace)
 	}
-	if tmpl.Spec.RuntimeRef != "my-agent" {
-		t.Errorf("template runtimeRef = %q, want my-agent", tmpl.Spec.RuntimeRef)
+	if ps.Spec.RuntimeRef != "my-agent" {
+		t.Errorf("PodSet runtimeRef = %q, want my-agent", ps.Spec.RuntimeRef)
 	}
-	if tmpl.Spec.IsolationProfile != "standard" {
-		t.Errorf("template isolationProfile = %q, want standard (from runtime)", tmpl.Spec.IsolationProfile)
+	if ps.Spec.IsolationProfile != "standard" {
+		t.Errorf("PodSet isolationProfile = %q, want standard (from runtime)", ps.Spec.IsolationProfile)
 	}
-	if tmpl.Spec.EgressProfile != echoPoolEgressProfile {
-		t.Errorf("template egressProfile = %q, want %q (echo seed default)", tmpl.Spec.EgressProfile, echoPoolEgressProfile)
+	if ps.Spec.EgressProfile != echoPoolEgressProfile {
+		t.Errorf("PodSet egressProfile = %q, want %q (echo seed default)", ps.Spec.EgressProfile, echoPoolEgressProfile)
 	}
-	if tmpl.Spec.DNSPolicy != echoPoolDNSPolicy {
-		t.Errorf("template dnsPolicy = %q, want %q (§13.2 opt-out)", tmpl.Spec.DNSPolicy, echoPoolDNSPolicy)
+	if ps.Spec.DNSPolicy != echoPoolDNSPolicy {
+		t.Errorf("PodSet dnsPolicy = %q, want %q (§13.2 opt-out)", ps.Spec.DNSPolicy, echoPoolDNSPolicy)
 	}
-	if tmpl.Spec.ResourceClass != echoPoolResourceClass {
-		t.Errorf("template resourceClass = %q, want %q", tmpl.Spec.ResourceClass, echoPoolResourceClass)
+	if ps.Spec.ResourceClass != echoPoolResourceClass {
+		t.Errorf("PodSet resourceClass = %q, want %q", ps.Spec.ResourceClass, echoPoolResourceClass)
 	}
-	if pool.Spec.TemplateRef != wantPool {
-		t.Errorf("warm pool templateRef = %q, want %q", pool.Spec.TemplateRef, wantPool)
-	}
-	if pool.Spec.MinWarm != runtimeApplyWarmCount || pool.Spec.MaxWarm != runtimeApplyWarmCount {
-		t.Errorf("warm pool minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
-			pool.Spec.MinWarm, pool.Spec.MaxWarm, runtimeApplyWarmCount, runtimeApplyWarmCount)
+	if ps.Spec.MinWarm != runtimeApplyWarmCount || ps.Spec.MaxWarm != runtimeApplyWarmCount {
+		t.Errorf("PodSet minWarm/maxWarm = %d/%d, want %d/%d (single-pod hot pool)",
+			ps.Spec.MinWarm, ps.Spec.MaxWarm, runtimeApplyWarmCount, runtimeApplyWarmCount)
 	}
 }
 
 // TestRuntimePoolUnstructuredCarriesGVK_spec_4_6_2 covers that the derived pool
-// pair is encoded as unstructured objects carrying the lenny.dev/v1alpha1 GVK,
-// so the shared C1 applier resolves each GVR via the RESTMapper and
+// is encoded as one unstructured PodSet carrying the lenny.dev/v1alpha1 GVK,
+// so the shared C1 applier resolves its GVR via the RESTMapper and
 // server-side-applies it, the same dynamic-apply transport the echo seed uses.
 //
 // spec: §4.6.2 (the pool CRDs materialize through the dynamic-apply path).
@@ -337,24 +334,20 @@ func TestRuntimePoolUnstructuredCarriesGVK_spec_4_6_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("runtimePoolUnstructured: %v", err)
 	}
-	if len(objs) != 2 {
-		t.Fatalf("runtimePoolUnstructured returned %d objects, want 2", len(objs))
+	if len(objs) != 1 {
+		t.Fatalf("runtimePoolUnstructured returned %d objects, want 1 (PodSet)", len(objs))
 	}
-	want := map[string]bool{"SandboxTemplate": false, "SandboxWarmPool": false}
-	for _, o := range objs {
-		if got := o.GetAPIVersion(); got != lennyv1alpha1.GroupVersion.String() {
-			t.Errorf("%s apiVersion = %q, want %q", o.GetKind(), got, lennyv1alpha1.GroupVersion.String())
-		}
-		if o.GetNamespace() != agentNamespace {
-			t.Errorf("%s namespace = %q, want %q", o.GetKind(), o.GetNamespace(), agentNamespace)
-		}
-		if _, ok := want[o.GetKind()]; ok {
-			want[o.GetKind()] = true
-		}
+	o := objs[0]
+	if o.GetKind() != "PodSet" {
+		t.Errorf("kind = %q, want PodSet", o.GetKind())
 	}
-	for kind, seen := range want {
-		if !seen {
-			t.Errorf("runtimePoolUnstructured produced no %s", kind)
-		}
+	if got := o.GetAPIVersion(); got != lennyv1alpha1.GroupVersion.String() {
+		t.Errorf("apiVersion = %q, want %q", got, lennyv1alpha1.GroupVersion.String())
+	}
+	if o.GetNamespace() != agentNamespace {
+		t.Errorf("namespace = %q, want %q", o.GetNamespace(), agentNamespace)
+	}
+	if o.GetName() != "my-agent-pool" {
+		t.Errorf("name = %q, want my-agent-pool", o.GetName())
 	}
 }

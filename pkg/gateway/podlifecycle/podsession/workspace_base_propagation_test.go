@@ -28,7 +28,7 @@ func TestBindPathsCarryReportedWorkspaceBaseVerbatim_spec_6_4(t *testing.T) {
 	srv.WorkspaceBase = base
 	srv.Runtime = rt
 
-	c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newBinder(ns, c, adapterDialer(t, srv))
 
 	req := podsession.BindRequest{
@@ -41,7 +41,7 @@ func TestBindPathsCarryReportedWorkspaceBaseVerbatim_spec_6_4(t *testing.T) {
 	if claim.WorkspaceBase != base {
 		t.Errorf("ClaimResult.WorkspaceBase = %q, want the reported base %q", claim.WorkspaceBase, base)
 	}
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	prep, err := binder.Prepare(context.Background(), req)
 	if err != nil {
 		t.Fatalf("Prepare: %v", err)
@@ -71,7 +71,7 @@ func TestBindSlotCarriesReportedWorkspaceBase_spec_5_2(t *testing.T) {
 	ns := testNamespace(t)
 	a := newConcurrentAdapter()
 	a.workspaceBase = "/workspace"
-	c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	binder := newSlotBinder(t, c, concurrentAdapterDialer(t, a))
 
 	res, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{

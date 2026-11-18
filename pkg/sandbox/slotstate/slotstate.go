@@ -20,7 +20,7 @@ package slotstate
 import "fmt"
 
 // SubState is a slot's per-slotId sub-state, distinct from the pod-level
-// Sandbox phase. spec: §6.2.
+// AgentPod phase. spec: §6.2.
 type SubState string
 
 const (

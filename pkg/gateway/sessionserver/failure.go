@@ -17,7 +17,7 @@ import (
 
 // FailureReport is the §7.3
 // payload. It is the single entry-point a pod-failure detector
-// (controller-side Sandbox CR watcher, gateway-side adapter-call error
+// (controller-side AgentPod CR watcher, gateway-side adapter-call error
 // path, manual operator drain) calls into the session server with;
 // ReportSessionFailure runs the §7.3 classifier and writes the
 // matching state-machine edge.

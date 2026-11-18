@@ -12,7 +12,7 @@
 // no session holds keeps a bound claim; and no member is removed twice in
 // one reservation.
 //
-// spec: §5.2 (Slot assignment atomicity), §4.6.3 (SandboxClaim: a release
+// spec: §5.2 (Slot assignment atomicity), §4.6.3 (PodClaim: a release
 // that ends the occupancy without reuse), §6.2 (Pod State Machine), §10.1.5
 // (Stale Replica Behavior), §11.4 (User Invalidation), §7.1 (Post-terminal
 // window), §4.6.1 (Warm Pool Controller (Pod Lifecycle)).
@@ -28,7 +28,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -94,7 +94,7 @@ func deleteSession(t *testing.T, h *lifecycleharness.Harness, r *lifecycleharnes
 	}
 }
 
-// spec: §5.2 (Slot assignment atomicity), §4.6.3 (SandboxClaim: a release
+// spec: §5.2 (Slot assignment atomicity), §4.6.3 (PodClaim: a release
 // that ends the occupancy without reuse), §6.2 (Pod State Machine)
 // diagnosis: a DELETE handled on one replica of a session that never
 // started, created on another replica, released more than its own slot on

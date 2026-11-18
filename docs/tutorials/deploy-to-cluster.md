@@ -266,10 +266,10 @@ kubectl get crd | grep lenny
 Expected output:
 
 ```
-sandboxclaims.lenny.dev       2026-04-09T10:00:00Z
-sandboxes.lenny.dev           2026-04-09T10:00:00Z
-sandboxtemplates.lenny.dev    2026-04-09T10:00:00Z
-sandboxwarmpools.lenny.dev    2026-04-09T10:00:00Z
+podclaims.lenny.dev       2026-04-09T10:00:00Z
+agentpods.lenny.dev           2026-04-09T10:00:00Z
+podsets.lenny.dev    2026-04-09T10:00:00Z
+podsets.lenny.dev    2026-04-09T10:00:00Z
 ```
 
 ### Run Helm Install
@@ -428,7 +428,7 @@ lenny-token-svc     ClusterIP   10.96.10.101   <none>        8081/TCP
 ### Check CRDs
 
 ```bash
-kubectl get sandboxwarmpools -n lenny-agents
+kubectl get podsets -n lenny-agents
 ```
 
 Expected output:

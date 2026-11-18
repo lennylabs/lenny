@@ -25,7 +25,7 @@ import (
 // condition timestamps are nullable so a session that never carried the
 // condition reads NULL.
 //
-// spec: 6.49 (session-condition relocation off Sandbox.status.conditions),
+// spec: 6.49 (session-condition relocation off AgentPod.status.conditions),
 // 7.1 (sessionIsolationLevel.conversationContinuity persistence), 7.2 / 8.8
 // (Terminated/Suspended conditions on the Postgres session model)
 func TestSessionConditionsMigrationSQL_spec_6_49_7_1(t *testing.T) {

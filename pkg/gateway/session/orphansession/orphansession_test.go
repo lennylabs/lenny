@@ -311,7 +311,7 @@ func TestTick_staleMirrorFallbackAlive(t *testing.T) {
 }
 
 // spec: §10.1.4 — a missing mirror row resolves through the
-// fallback; a deleted Sandbox (found=false) is itself a terminal signal.
+// fallback; a deleted AgentPod (found=false) is itself a terminal signal.
 func TestTick_mirrorMissFallbackPodGone_spec10_1_line51(t *testing.T) {
 	store := memstore.New()
 	mkSession(t, store, "acme", "s1", session.StateFinalizing, "pod-gone", "pool-a")

@@ -20,12 +20,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // envtestScheme registers lenny.dev/v1alpha1 and corev1 so the envtest
-// client can read/write SandboxClaims and Pods.
+// client can read/write PodClaims and Pods.
 func envtestScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -64,16 +64,16 @@ func newEnvtestClient(t *testing.T, objs ...client.Object) client.WithWatch {
 	return c
 }
 
-// seedRecyclingClaim creates a per-pod SandboxClaim and patches it through
+// seedRecyclingClaim creates a per-pod PodClaim and patches it through
 // bound → recycling, the precondition the recycle disposition driver
 // patches from.
 func seedRecyclingClaim(t *testing.T, c client.Client, podID string) string {
 	t.Helper()
 	ns := testNamespace(t)
 	name := podclaim.ClaimName(podID)
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: podID, TenantID: "acme"},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: podID, TenantID: "acme"},
 	}
 	if err := c.Create(context.Background(), claim); err != nil {
 		t.Fatalf("create claim %s: %v", name, err)
@@ -87,10 +87,10 @@ func seedRecyclingClaim(t *testing.T, c client.Client, podID string) string {
 	return name
 }
 
-func getClaim(t *testing.T, c client.Client, name string) *lennyv1.SandboxClaim {
+func getClaim(t *testing.T, c client.Client, name string) *lennyv1.PodClaim {
 	t.Helper()
 	ns := testNamespace(t)
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err != nil {
 		t.Fatalf("get claim %s: %v", name, err)
 	}
@@ -243,7 +243,7 @@ func TestHoldCoordinatorExpiresReservedClaimAgainstAPIServer_spec_3_2(t *testing
 
 	deadline := time.Now().Add(5 * time.Second)
 	for {
-		var got lennyv1.SandboxClaim
+		var got lennyv1.PodClaim
 		err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got)
 		if apierrors.IsNotFound(err) {
 			return // the claim was deleted: the pod returns to idle
@@ -293,7 +293,7 @@ func TestHoldCoordinatorExpiryAbortsAfterRebindAgainstAPIServer_spec_3_2(t *test
 	// Wait past the grace period; the claim must survive (the DELETE aborted)
 	// and remain bound.
 	time.Sleep(recycle.HoldExpiryGracePeriod + 500*time.Millisecond)
-	var got lennyv1.SandboxClaim
+	var got lennyv1.PodClaim
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err != nil {
 		t.Fatalf("rebound claim must survive a stale expiry DELETE, got: %v", err)
 	}
@@ -691,13 +691,13 @@ func TestInspectForRecycleVMRestartAgainstApiserver_spec_5_2(t *testing.T) {
 	}
 }
 
-// deleteClaim removes the per-pod SandboxClaim, simulating a concurrent
+// deleteClaim removes the per-pod PodClaim, simulating a concurrent
 // reclaim (a racing hold-expiry DELETE or the §4.6.1 orphan GC) that removes
 // the claim while the agent Pod object survives.
 func deleteClaim(t *testing.T, c client.Client, podID string) {
 	t.Helper()
 	ns := testNamespace(t)
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(podID), Namespace: ns},
 	}
 	if err := c.Delete(context.Background(), claim); err != nil && !apierrors.IsNotFound(err) {
@@ -795,7 +795,7 @@ func TestClaimDispositionRetireClaimGoneAgainstApiserver_spec_3_4(t *testing.T) 
 }
 
 // TestInspectForRecycleClaimGonePodPresentAgainstApiserver verifies the
-// inspector reports found=false when the SandboxClaim is gone while the agent
+// inspector reports found=false when the PodClaim is gone while the agent
 // Pod object survives against a real API server, so the disposition is skipped
 // before any counter advances. spec: 3.4 (skip when the claim is gone), 4.6.1
 // (orphan GC reclaiming a recycling claim), 4.7 (concurrent-retirement no-op)
@@ -991,7 +991,7 @@ func waitForClaimPhase(t *testing.T, c client.Client, name string, want claimsta
 	ns := testNamespace(t)
 	deadline := time.Now().Add(3 * time.Second)
 	for time.Now().Before(deadline) {
-		var got lennyv1.SandboxClaim
+		var got lennyv1.PodClaim
 		if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &got); err == nil {
 			if got.Status.Phase == string(want) {
 				return true

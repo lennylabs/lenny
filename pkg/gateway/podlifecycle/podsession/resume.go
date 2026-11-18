@@ -16,7 +16,7 @@ import (
 
 // ResumeRequest describes a session to restore onto a fresh warm pod.
 type ResumeRequest struct {
-	// Pool is the SandboxWarmPool to claim a pod from.
+	// Pool is the PodSet to claim a pod from.
 	Pool string
 	// SessionID is the §7.1 session being resumed.
 	SessionID string
@@ -56,10 +56,10 @@ type ResumeRequest struct {
 	// workspace size pre-check before extraction. F-7.3.26.
 	ExpectedWorkspaceBytes int64
 	// WorkspaceSizeLimitBytes is the §4.4 hard workspace size cap from
-	// the SandboxTemplate. F-7.3.26.
+	// the PodSet. F-7.3.26.
 	WorkspaceSizeLimitBytes int64
 	// ExpectedWorkspaceRoot is the §7.3 the original session ran against. The gateway records the
-	// SandboxTemplate's WorkspaceRoot at session creation; the adapter
+	// PodSet's WorkspaceRoot at session creation; the adapter
 	// asserts on Resume that the replacement pod's WorkspaceRoot
 	// matches. Empty disables the assertion. F-7.3.15.
 	ExpectedWorkspaceRoot string
@@ -182,7 +182,7 @@ type ResumeResult struct {
 //
 // spec: §7.3 (Retry and Resume); §5.2 (atomic slot reservation).
 func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, error) {
-	sandboxName, err := b.claimPod(ctx, podclaim.ClaimRequest{
+	agentPodName, err := b.claimPod(ctx, podclaim.ClaimRequest{
 		Pool: req.Pool, SessionID: req.SessionID, TenantID: req.TenantID,
 		ReusesPods: req.ReusesPods, RequiresProcessAcknowledgment: req.RequiresProcessAcknowledgment,
 	})
@@ -196,7 +196,7 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 	// ledger under-counts it. The reservation runs on the claimed pod rather
 	// than through a pool scan, which would increment a different pod's
 	// counter.
-	slotID, err := b.reserveResumeSlot(ctx, sandboxName, req)
+	slotID, err := b.reserveResumeSlot(ctx, agentPodName, req)
 	if err != nil {
 		return ResumeResult{}, err
 	}
@@ -207,12 +207,12 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 	// nothing for the session. releaseResumeSlot logs a release error, and
 	// the §4.6.1 orphan-claim GC collects what it could not release.
 	if err := runOnClaimed(ctx, req.OnClaimed); err != nil {
-		_ = b.releaseResumeSlot(ctx, sandboxName, slotID, false)
+		_ = b.releaseResumeSlot(ctx, agentPodName, slotID, false)
 		return ResumeResult{}, err
 	}
-	sb, cl, neg, err := b.handshake(ctx, sandboxName, req.Pool)
+	sb, cl, neg, err := b.handshake(ctx, agentPodName, req.Pool)
 	if err != nil {
-		_ = b.releaseResumeSlot(ctx, sandboxName, slotID, false)
+		_ = b.releaseResumeSlot(ctx, agentPodName, slotID, false)
 		return ResumeResult{}, err
 	}
 	// spec: §7.3 (Credential leases on the replacement pod); §4.9
@@ -244,14 +244,14 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 	}
 	// spec: §6.2 — the resumed session's fine states
 	// (resume_pending, resuming, running) are session-model states on the
-	// Postgres session row, not coarse Sandbox.status.phase values; the fresh
+	// Postgres session row, not coarse AgentPod.status.phase values; the fresh
 	// pod stays in the coarse `claimed` phase. Release drains the pod when the
 	// session settles.
 	return ResumeResult{
 		Result: &BindResult{
 			SessionID:     req.SessionID,
 			TenantID:      req.TenantID,
-			SandboxName:   sb.Name,
+			AgentPodName:  sb.Name,
 			PodIP:         sb.Status.PodIP,
 			Adapter:       cl,
 			WorkspaceBase: neg.WorkspaceBase,
@@ -291,11 +291,11 @@ func (b *Binder) Resume(ctx context.Context, req ResumeRequest) (ResumeResult, e
 //
 // spec: §5.2 (atomic slot reservation), §7.1 (resume onto a replacement
 // pod).
-func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req ResumeRequest) (string, error) {
+func (b *Binder) reserveResumeSlot(ctx context.Context, agentPodName string, req ResumeRequest) (string, error) {
 	if req.MaxConcurrentSessions <= 1 {
 		return "", nil
 	}
-	res, err := b.slotClaimer().ReserveSlotOnPod(ctx, sandboxName, podclaim.SlotRequest{
+	res, err := b.slotClaimer().ReserveSlotOnPod(ctx, agentPodName, podclaim.SlotRequest{
 		Pool:                  req.Pool,
 		SessionID:             req.SessionID,
 		TenantID:              req.TenantID,
@@ -311,7 +311,7 @@ func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req 
 		if errors.Is(err, podclaim.ErrNoConcurrentSlot) {
 			return "", err
 		}
-		return "", fmt.Errorf("podsession: reserve resume slot on pod %s: %w", sandboxName, err)
+		return "", fmt.Errorf("podsession: reserve resume slot on pod %s: %w", agentPodName, err)
 	}
 	return res.SlotID, nil
 }
@@ -354,16 +354,16 @@ func (b *Binder) reserveResumeSlot(ctx context.Context, sandboxName string, req 
 // resume; Credential leases on the replacement pod); §4.7.1 (role and gateway
 // RPC contract); §4.9 (credential leasing service); §5.2 (pool configuration
 // and execution modes).
-func (b *Binder) failResume(ctx context.Context, cl *adapterclient.Client, sandboxName, slotID, bindAttempt string, req ResumeRequest, minted []string, cause error) error {
+func (b *Binder) failResume(ctx context.Context, cl *adapterclient.Client, agentPodName, slotID, bindAttempt string, req ResumeRequest, minted []string, cause error) error {
 	b.releaseAttemptCredentials(minted)
 	_, cleanly, cerr := b.compensateAndNote(ctx, cl, req.SessionID, bindAttempt,
-		req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, req.Pool, sandboxName, slotID, cause)
+		req.CleanupTimeoutSeconds, req.MaxConcurrentSessions, req.Pool, agentPodName, slotID, cause)
 	leaked := cerr != nil || !cleanly
 	cl.Close()
-	relErr := b.releaseResumeSlot(ctx, sandboxName, slotID, leaked)
-	sbe := b.slotBindError(sandboxName, slotID, slotFailureResume, cause)
+	relErr := b.releaseResumeSlot(ctx, agentPodName, slotID, leaked)
+	sbe := b.slotBindError(agentPodName, slotID, slotFailureResume, cause)
 	sbe.Leaked = leaked || relErr != nil
-	return fmt.Errorf("podsession: resume session on pod %s: %w", sandboxName, sbe)
+	return fmt.Errorf("podsession: resume session on pod %s: %w", agentPodName, sbe)
 }
 
 // errUncommittedRestore is the cause an uncommitted restore's compensation is
@@ -403,17 +403,17 @@ func (b *Binder) ReleaseUncommitted(ctx context.Context, result *BindResult, req
 	if result.Adapter != nil {
 		outcome, cleanly, cerr = b.compensateAndNote(ctx, result.Adapter, result.SessionID, result.BindAttempt,
 			result.CleanupTimeoutSeconds, result.MaxConcurrentSessions, result.Pool,
-			result.SandboxName, result.SlotID, errUncommittedRestore)
+			result.AgentPodName, result.SlotID, errUncommittedRestore)
 		result.Adapter.Close()
 	}
 	if requireReclaimed && (cerr != nil || outcome != adapterv1.SlotReclaimOutcome_SLOT_RECLAIM_OUTCOME_RECLAIMED) {
 		slog.Warn("podsession: reclaim of an uncommitted restore not confirmed; releasing nothing",
-			"session_id", result.SessionID, "sandbox", result.SandboxName,
+			"session_id", result.SessionID, "agent_pod", result.AgentPodName,
 			"outcome", outcome.String(), "error", cerr)
-		return fmt.Errorf("%w: session %s on pod %s", ErrReclaimUnconfirmed, result.SessionID, result.SandboxName)
+		return fmt.Errorf("%w: session %s on pod %s", ErrReclaimUnconfirmed, result.SessionID, result.AgentPodName)
 	}
 	leaked := cerr != nil || !cleanly
-	relErr := b.releaseResumeSlot(ctx, result.SandboxName, result.SlotID, leaked)
+	relErr := b.releaseResumeSlot(ctx, result.AgentPodName, result.SlotID, leaked)
 	b.releaseAttemptCredentials(result.MintedLeaseIDs)
 	return relErr
 }
@@ -429,16 +429,16 @@ func (b *Binder) ReleaseUncommitted(ctx context.Context, result *BindResult, req
 //
 // spec: §7.3 (Retry and Resume); §5.2 (slot retry releases the reservation);
 // §4.6.1 (occupancy projection on claim DELETE).
-func (b *Binder) releaseResumeSlot(ctx context.Context, sandboxName, slotID string, leaked bool) error {
+func (b *Binder) releaseResumeSlot(ctx context.Context, agentPodName, slotID string, leaked bool) error {
 	if slotID == "" {
-		if err := b.deleteClaimDetached(ctx, sandboxName); err != nil {
-			log.Printf("podsession: delete resume claim on pod %s: %v", sandboxName, err)
+		if err := b.deleteClaimDetached(ctx, agentPodName); err != nil {
+			log.Printf("podsession: delete resume claim on pod %s: %v", agentPodName, err)
 			return err
 		}
 		return nil
 	}
-	if err := b.ReleaseSlotReservation(ctx, sandboxName, slotID, leaked); err != nil {
-		log.Printf("podsession: release resume slot reservation on pod %s: %v", sandboxName, err)
+	if err := b.ReleaseSlotReservation(ctx, agentPodName, slotID, leaked); err != nil {
+		log.Printf("podsession: release resume slot reservation on pod %s: %v", agentPodName, err)
 		return err
 	}
 	return nil

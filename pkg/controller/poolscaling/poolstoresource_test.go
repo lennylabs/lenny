@@ -26,7 +26,7 @@ func newMemoryStore(t *testing.T, pools ...poolstore.Pool) poolstore.Store {
 }
 
 // spec: §4.6.2 — the PoolStoreSource maps active store rows into the
-// SandboxTemplate spec and the bootstrap minWarm/maxWarm.
+// PodSet spec and the bootstrap minWarm/maxWarm.
 func TestPoolStoreSourceMapsActivePools(t *testing.T) {
 	store := newMemoryStore(t, poolstore.Pool{
 		Name:                 "acme-agents",
@@ -50,17 +50,17 @@ func TestPoolStoreSourceMapsActivePools(t *testing.T) {
 	if c.Name != "acme-agents" || c.Namespace != "lenny-agents" {
 		t.Fatalf("name/namespace = %q/%q", c.Name, c.Namespace)
 	}
-	if c.Template.RuntimeRef != "claude-code" {
-		t.Fatalf("runtimeRef = %q", c.Template.RuntimeRef)
+	if c.Settings.RuntimeRef != "claude-code" {
+		t.Fatalf("runtimeRef = %q", c.Settings.RuntimeRef)
 	}
-	if c.Template.IsolationProfile != "sandboxed" {
-		t.Fatalf("isolationProfile = %q", c.Template.IsolationProfile)
+	if c.Settings.IsolationProfile != "sandboxed" {
+		t.Fatalf("isolationProfile = %q", c.Settings.IsolationProfile)
 	}
-	if c.Template.ResourceClass != "medium" || c.Template.ExecutionMode != "session" {
-		t.Fatalf("resourceClass/executionMode = %q/%q", c.Template.ResourceClass, c.Template.ExecutionMode)
+	if c.Settings.ResourceClass != "medium" || c.Settings.ExecutionMode != "session" {
+		t.Fatalf("resourceClass/executionMode = %q/%q", c.Settings.ResourceClass, c.Settings.ExecutionMode)
 	}
-	if c.Template.MaxSessionAgeSeconds != 3600 {
-		t.Fatalf("maxSessionAgeSeconds = %d", c.Template.MaxSessionAgeSeconds)
+	if c.Settings.MaxSessionAgeSeconds != 3600 {
+		t.Fatalf("maxSessionAgeSeconds = %d", c.Settings.MaxSessionAgeSeconds)
 	}
 	// v1 bootstrap: warmCount is both the minWarm floor and maxWarm.
 	if c.MinWarm != 3 || c.MaxWarm != 3 {
@@ -104,7 +104,7 @@ func TestPoolStoreSourceRequiresNamespace(t *testing.T) {
 
 // TestPoolStoreSourceFoldsScrubProfileIntoCRD verifies the store recycle
 // scrub control (microvmScrubMode → scrubProfile, plus the residual-state
-// acknowledgment) is folded onto SandboxTemplate.spec.sessionPolicy.recycle
+// acknowledgment) is folded onto PodSet.spec.sessionPolicy.recycle
 // so the pool-config validator's fail-closed in-place gate sees the
 // deployer's intent. The remaining recycle and concurrency knobs reach the
 // gateway through the poolstore directly and are not carried on the CRD.
@@ -141,7 +141,7 @@ func TestPoolStoreSourceFoldsScrubProfileIntoCRD(t *testing.T) {
 	if len(configs) != 1 {
 		t.Fatalf("want 1 config, got %d", len(configs))
 	}
-	sp := configs[0].Template.SessionPolicy
+	sp := configs[0].Settings.SessionPolicy
 	if sp == nil || sp.Recycle == nil {
 		t.Fatal("CRD SessionPolicy.Recycle not populated")
 	}
@@ -180,7 +180,7 @@ func TestPoolStoreSourceMapsVMRestartScrubMode(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListPoolConfigs: %v", err)
 	}
-	sp := configs[0].Template.SessionPolicy
+	sp := configs[0].Settings.SessionPolicy
 	if sp == nil || sp.Recycle == nil {
 		t.Fatal("CRD SessionPolicy.Recycle not populated")
 	}
@@ -276,16 +276,16 @@ func TestPoolStoreSourceLeavesSessionPolicyNilWithoutScrubControl(t *testing.T) 
 	if err != nil {
 		t.Fatalf("ListPoolConfigs: %v", err)
 	}
-	if sp := configs[0].Template.SessionPolicy; sp != nil {
+	if sp := configs[0].Settings.SessionPolicy; sp != nil {
 		t.Errorf("SessionPolicy = %#v, want nil for a pool with no scrub control", sp)
 	}
 }
 
 // TestPoolStoreSourceMirrorsNonceOnlyAck verifies the PoolStoreSource, the
 // §4.6.3 Postgres→CRD channel, copies the §5.3 acknowledgeNonceOnlyAuth opt-in
-// from the store row onto SandboxTemplate.spec so the WarmPoolController render
+// from the store row onto PodSet.spec so the WarmPoolController render
 // gate can require it before rendering --require-so-peercred=false. A pool
-// carrying the acknowledgment maps to a SandboxTemplate spec with the flag set;
+// carrying the acknowledgment maps to a PodSet spec with the flag set;
 // a pool without it maps to a spec with the flag false.
 //
 // spec: §4.7, §5.3.
@@ -315,7 +315,7 @@ func TestPoolStoreSourceMirrorsNonceOnlyAck(t *testing.T) {
 	}
 	byName := map[string]bool{}
 	for _, c := range configs {
-		byName[c.Name] = c.Template.AcknowledgeNonceOnlyAuth
+		byName[c.Name] = c.Settings.AcknowledgeNonceOnlyAuth
 	}
 	if got, ok := byName["nonce-ack"]; !ok || !got {
 		t.Errorf("nonce-ack template acknowledgeNonceOnlyAuth = %v (present=%v), want true", got, ok)
@@ -327,13 +327,13 @@ func TestPoolStoreSourceMirrorsNonceOnlyAck(t *testing.T) {
 
 // TestPoolStoreSourceMirrorsDeliveryFields verifies the §4.9 pool-definition
 // deliveryMode and spiffeBinding flow from the poolstore source of truth onto
-// SandboxTemplate.spec so the lenny-direct-mode-isolation ValidatingAdmissionWebhook
+// PodSet.spec so the lenny-direct-mode-isolation ValidatingAdmissionWebhook
 // and the preflight scan read live values rather than the empty strings the CRD
 // carried before the PoolScalingController populated them. Against the pre-fix
 // mapping (which copied IsolationProfile/EgressProfile but neither delivery
 // field) the CRD deliveryMode/spiffeBinding stayed empty and this assertion
 // fails. The two deployer opt-in acknowledgments are deliberately absent from
-// the CRD spec, which the SandboxTemplateSpec type enforces structurally: the
+// the CRD spec, which the PodSetSpec type enforces structurally: the
 // webhook rejects the forbidden combinations in multi-tenant mode regardless of
 // any opt-in value, so the CRD carries only the fields the admission gate reads.
 //
@@ -371,23 +371,23 @@ func TestPoolStoreSourceMirrorsDeliveryFields(t *testing.T) {
 		byName[c.Name] = c
 	}
 	set := byName["proxy-spiffe-disabled"]
-	if set.Template.DeliveryMode != "proxy" {
-		t.Errorf("proxy-spiffe-disabled template deliveryMode = %q, want proxy", set.Template.DeliveryMode)
+	if set.Settings.DeliveryMode != "proxy" {
+		t.Errorf("proxy-spiffe-disabled template deliveryMode = %q, want proxy", set.Settings.DeliveryMode)
 	}
-	if set.Template.SpiffeBinding != "disabled" {
-		t.Errorf("proxy-spiffe-disabled template spiffeBinding = %q, want disabled", set.Template.SpiffeBinding)
+	if set.Settings.SpiffeBinding != "disabled" {
+		t.Errorf("proxy-spiffe-disabled template spiffeBinding = %q, want disabled", set.Settings.SpiffeBinding)
 	}
 	def := byName["default-delivery"]
-	if def.Template.DeliveryMode != "" {
-		t.Errorf("default-delivery template deliveryMode = %q, want empty (runtime default)", def.Template.DeliveryMode)
+	if def.Settings.DeliveryMode != "" {
+		t.Errorf("default-delivery template deliveryMode = %q, want empty (runtime default)", def.Settings.DeliveryMode)
 	}
-	if def.Template.SpiffeBinding != "" {
-		t.Errorf("default-delivery template spiffeBinding = %q, want empty (runtime default)", def.Template.SpiffeBinding)
+	if def.Settings.SpiffeBinding != "" {
+		t.Errorf("default-delivery template spiffeBinding = %q, want empty (runtime default)", def.Settings.SpiffeBinding)
 	}
 }
 
 // TestPoolStoreSourceMirrorsDNSPolicy verifies the §13.2 per-pool DNS
-// opt-out flows from the store row onto SandboxTemplate.spec.dnsPolicy so
+// opt-out flows from the store row onto PodSet.spec.dnsPolicy so
 // the WarmPoolController stamps the lenny.dev/dns-policy: cluster-default
 // label and the supplemental allow-pod-egress-kube-dns NetworkPolicy
 // selects the pool's pods. A pool with no opt-out maps to an empty
@@ -421,7 +421,7 @@ func TestPoolStoreSourceMirrorsDNSPolicy(t *testing.T) {
 	}
 	byName := map[string]string{}
 	for _, c := range configs {
-		byName[c.Name] = c.Template.DNSPolicy
+		byName[c.Name] = c.Settings.DNSPolicy
 	}
 	if got := byName["dns-optout"]; got != poolstore.DNSPolicyClusterDefault {
 		t.Errorf("dns-optout template dnsPolicy = %q, want %q", got, poolstore.DNSPolicyClusterDefault)

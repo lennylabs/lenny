@@ -592,7 +592,7 @@ kubectl get sc -o jsonpath='{range .items[*]}{.metadata.name}{":"}{.metadata.ann
 done
 
 echo "==[5c/6] cluster fixtures (RuntimeClasses + sandbox-gvisor node label)==" >&2
-# The Sandbox controller maps §5.3 isolationProfile to a Kubernetes
+# The AgentPod controller maps §5.3 isolationProfile to a Kubernetes
 # RuntimeClass on the pod spec: standard → runc, sandboxed → gvisor,
 # microvm → kata-containers. Kubernetes admission rejects a pod
 # whose runtimeClassName references a missing RuntimeClass, so all

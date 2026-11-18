@@ -365,7 +365,7 @@ func RunResumeExitCells(t *testing.T, newStore func(t *testing.T) sessionstore.S
 			for _, p := range h.Cluster.Pods() {
 				switch {
 				case tc.spare == 0:
-					if err := h.Cluster.RemoveSandbox(context.Background(), p); err != nil {
+					if err := h.Cluster.RemoveAgentPod(context.Background(), p); err != nil {
 						t.Fatalf("remove sandbox: %v", err)
 					}
 				case tc.broken:

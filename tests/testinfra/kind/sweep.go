@@ -28,7 +28,7 @@ var sweepOnce sync.Map // map[string]*sync.Once
 // empty namespace selects a cluster-scoped resource type. The selector must
 // be the fixture's own label (for example lenny.dev/test=chaos-concurrency),
 // so the sweep never touches state another fixture or the platform owns. A
-// SandboxClaim the sweep selects has its finalizers cleared first: a fixture
+// PodClaim the sweep selects has its finalizers cleared first: a fixture
 // that parks a claim behind a test finalizer would otherwise leave it
 // Terminating forever. Later calls in the same process are no-ops, because
 // every object then matching the selector belongs to this run.
@@ -71,7 +71,7 @@ func sweepResource(t testing.TB, c *Cluster, namespace, selector, resource strin
 	if len(names) == 0 {
 		return
 	}
-	if resource == "sandboxclaims" || strings.HasPrefix(resource, "sandboxclaims.") {
+	if resource == "podclaims" || strings.HasPrefix(resource, "podclaims.") {
 		for _, name := range names {
 			if pout, perr := c.KubectlOut(t, namespaceArgs(namespace, "patch", name, "--type=merge",
 				"-p", `{"metadata":{"finalizers":null}}`)...); perr != nil {
@@ -92,17 +92,14 @@ func sweepResource(t testing.TB, c *Cluster, namespace, selector, resource strin
 // SweepNamedOnce is the start-time sweep for a fixture whose objects carry no
 // label of the fixture's own, so they can be recognized only by name. Objects
 // a platform controller derives from a fixture's request are the usual case:
-// the PoolScalingController names a pool's SandboxTemplate and
-// SandboxWarmPool after the pool and stamps only platform labels on them.
+// the PoolScalingController names a pool's PodSet after the pool and stamps
+// only platform labels on it.
 //
 // The first call per (namespace, pattern) pair in a process lists each named
 // resource type in namespace, in the order given, and deletes every object
 // whose name StaleNames selects. The caller orders resources so a dependent
-// object goes before the object it references (a SandboxWarmPool before its
-// SandboxTemplate), and each delete waits for the objects to leave the API
-// server before the next type is swept. The wait matters for a template: the
-// sandboxtemplate-deletion-guard admits a template delete without consulting
-// the gateway only once no SandboxWarmPool references the template.
+// object goes before the object it references, and each delete waits for
+// the objects to leave the API server before the next type is swept.
 //
 // The pattern must be anchored on the fixture's own name prefix, so the sweep
 // never touches state another fixture or the platform owns. keep names this
@@ -149,7 +146,7 @@ func sweepNamedResource(t testing.TB, c *Cluster, namespace string, pattern *reg
 // SweepNamedOnce, kept free of cluster I/O so it can be unit tested. A match
 // that covers only part of a name does not select it, so a pattern written as
 // prefix plus fixed suffix cannot select a longer name that merely contains
-// the fixture's prefix (a member Sandbox named after its pool, or another
+// the fixture's prefix (a member AgentPod named after its pool, or another
 // suite's object that shares the stem).
 func StaleNames(names []string, pattern *regexp.Regexp, keep ...string) []string {
 	skip := make(map[string]bool, len(keep)+len(names))

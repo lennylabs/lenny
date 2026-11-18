@@ -3,7 +3,7 @@
 // Package podregistry is the §12.6 PodRegistry data-access layer
 // for agent pods. The §4.6.1 PodLifecycleManager and PoolManager
 // delegate their state reads and writes here; the v1 implementation
-// (CRDPodRegistry, in this package) reads and writes Sandbox CRD
+// (CRDPodRegistry, in this package) reads and writes AgentPod CRD
 // status via the Kubernetes API. Tier-4 deploys may swap in
 // PostgresPodRegistry against the agent_pod_state table without
 // restructuring the §4.6.1 business logic.
@@ -22,7 +22,7 @@ import (
 // single canonical definition shared with storerouter and eventbus.
 type (
 	// PodID identifies an agent pod. The CRD-backed implementation maps
-	// this to the Sandbox metadata.name; the Postgres-backed
+	// this to the AgentPod metadata.name; the Postgres-backed
 	// implementation maps it to agent_pod_state.pod_id.
 	PodID = store.PodID
 
@@ -37,7 +37,7 @@ type (
 )
 
 // PodRecord is the §12.6 view of one agent pod's authoritative
-// state. The fields mirror the §6.2 Sandbox.status subresource and
+// state. The fields mirror the §6.2 AgentPod.status subresource and
 // the agent_pod_state Postgres table.
 type PodRecord struct {
 	PodID            PodID
@@ -58,7 +58,7 @@ type PodRecord struct {
 
 // StateTransition is the §6.2 state-machine edge a write requests.
 // The CRD-backed implementation validates From against the current
-// Sandbox.status.phase before writing To.
+// AgentPod.status.phase before writing To.
 type StateTransition struct {
 	From string
 	To   string
@@ -108,7 +108,7 @@ type StateCounts map[string]int
 
 // PodSpec is the input to CreatePod: the pool the new pod belongs
 // to and the per-pod fields the §4.6.1 lifecycle manager sets on
-// the new Sandbox. spec: §12.6 — the key fields are
+// the new AgentPod. spec: §12.6 — the key fields are
 // RuntimeDefinitionRef, IsolationProfile, ExecutionMode, and resource
 // limits (modeled here as ResourceClass, per §5.1/§5.2). A pod carries no
 // workspace plan: a session binds its plan at creation or finalize (§14.1).
@@ -116,7 +116,7 @@ type PodSpec struct {
 	PoolID PoolID
 
 	// RuntimeDefinitionRef names the lenny.dev/v1alpha1 Runtime the new pod
-	// runs. CreatePod stamps it onto Sandbox.spec.runtimeRef, which is a
+	// runs. CreatePod stamps it onto AgentPod.spec.runtimeRef, which is a
 	// required field — a pod created without it fails CRD validation.
 	RuntimeDefinitionRef string
 
@@ -160,7 +160,7 @@ var (
 )
 
 // PodRegistry is the §12.6 data-access layer. The v1 implementation
-// (CRDPodRegistry) reads and writes Sandbox CRD status; the Tier-4
+// (CRDPodRegistry) reads and writes AgentPod CRD status; the Tier-4
 // PostgresPodRegistry replaces CRD status writes with
 // agent_pod_state. The §4.6.1 business interfaces
 // (PodLifecycleManager, PoolManager) delegate their state primitives

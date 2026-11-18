@@ -108,8 +108,8 @@ runbooks:
     test: TestNodeDrainDuringMinIOOutage
     severity: P0
     coverage: core
-  sandbox-finalizer-hang:
-    test: TestSandboxFinalizerHang
+  agent-pod-finalizer-hang:
+    test: TestAgentPodFinalizerHang
     severity: P1
     coverage: extended
   runtime-upgrade-stuck:
@@ -199,8 +199,8 @@ runbooks:
 
   # ---- Concurrency (§12.8) ----
 
-  sandbox-claim-race:
-    test: TestSandboxClaimRaceUnder100Goroutines
+  pod-claim-race:
+    test: TestPodClaimRaceUnder100Goroutines
     severity: P0
     coverage: core
   double-claim-verification:
@@ -415,7 +415,7 @@ runbooks:
     severity: P1
     coverage: extended
   stuck-finalizer:
-    test: TestSandboxFinalizerHang
+    test: TestAgentPodFinalizerHang
     severity: P1
     coverage: extended
   tenant-deletion-overdue:
@@ -473,7 +473,7 @@ runbooks:
     test: TestGatewayReplicaFailure
     severity: P0
     coverage: extended
-  sandboxclaim-guard-unavailable:
+  podclaim-guard-unavailable:
     test: TestAdmissionWebhookOutage
     severity: P0
     coverage: extended
@@ -502,7 +502,7 @@ runbooks:
   # ---- §4.7 nonce-only / SO_PEERCRED security-degradation runbook ----
   # The PoolSecurityDegraded alert-driven runbook has a dedicated chaos
   # scenario: TestNonceOnlyModeDegradationAndRecovery injects the
-  # SOPeercredDisabled state onto an acknowledged pool's member Sandboxes,
+  # SOPeercredDisabled state onto an acknowledged pool's member AgentPods,
   # asserts the live WarmPoolController surfaces SecurityDegradedMode=True
   # and publishes lenny_pool_security_degraded == 1, then reverts the
   # runtime field and replaces the last nonce-only pod and asserts the

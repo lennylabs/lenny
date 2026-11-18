@@ -262,7 +262,7 @@ func TestPoolUpgradeJourney_RollbackFromExpanding(t *testing.T) {
 }
 
 // spec: §10.5 ("From `Draining` or `Contracting`: Rollback is possible if
-// the old pool's SandboxTemplate CRD has not yet been deleted.
+// the old pool's PodSet CRD has not yet been deleted.
 // `lenny-ctl admin pools upgrade rollback --restore-old-pool` recreates the
 // old pool configuration from the stored RuntimeUpgrade.previousPoolSpec
 // field and restores routing ... the old pool's spec is always preserved in

@@ -142,7 +142,7 @@ Emitted by the gateway when `deliveryMode: proxy` pools are active. The gateway 
 | `lenny_pool_bootstrap_mode` | Gauge | `pool` | 1 = bootstrap scaling active, 0 = formula-driven. | `PoolBootstrapMode` alert. |
 | `lenny_pool_config_reconciliation_lag_seconds` | Gauge | `pool` | Time since last CRD reconciliation from Postgres. | `PoolConfigDrift` alert. |
 | `lenny_pool_draining_sessions_total` | Gauge | `pool` | In-flight sessions during pool drain. | Drain progress monitoring. |
-| `lenny_pool_security_degraded` | Gauge | `pool` | `1` while the pool renders nonce-only `SO_PEERCRED` pods (its `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`), or while a nonce-only pod remains after the operator reverted the runtime field; `0` otherwise. Published by the WarmPoolController in the same reconcile step that writes the `SecurityDegradedMode=True` condition on the `SandboxTemplate`. See [Adapter-Agent Boundary](../operator-guide/security.md#adapter-agent-boundary). | `PoolSecurityDegraded` alert. |
+| `lenny_pool_security_degraded` | Gauge | `pool` | `1` while the pool renders nonce-only `SO_PEERCRED` pods (its `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`), or while a nonce-only pod remains after the operator reverted the runtime field; `0` otherwise. Published by the WarmPoolController in the same reconcile step that writes the `SecurityDegradedMode=True` condition on the `PodSet`. See [Adapter-Agent Boundary](../operator-guide/security.md#adapter-agent-boundary). | `PoolSecurityDegraded` alert. |
 | `lenny_crd_ssa_conflict_total` | Counter | `crd`, `controller` | Increments once per five-consecutive-409 SSA stuck episode on a CRD field a controller does not own; per-resource identity is on the `crd_ssa_conflict_stuck` structured log. | `CRDSSAConflictStuck` alert. |
 
 ### Pod claim metrics
@@ -320,8 +320,8 @@ These are derived from credential lifecycle counters, not directly named in the 
 |:-------|:-----|:-------|:------------|:--------|
 | `lenny_controller_leader_lease_renewal_age_seconds` | Gauge | `controller` | Seconds since leader last renewed its lease. | `ControllerLeaderElectionFailed` alert. |
 | `lenny_controller_queue_overflow_total` | Counter | -- | Reconciliation events dropped due to queue overflow. | Operational monitoring. |
-| `lenny_orphaned_claims_total` | Counter | `pool` | Orphaned SandboxClaim deletions. | `SandboxClaimOrphanRateHigh` alert. |
-| `lenny_sandboxclaim_guard_rejections_total` | Counter | `service_instance_id` | Admission webhook rejections of double-claim attempts. | Bug detection. |
+| `lenny_orphaned_claims_total` | Counter | `pool` | Orphaned PodClaim deletions. | `PodClaimOrphanRateHigh` alert. |
+| `lenny_podclaim_guard_rejections_total` | Counter | `service_instance_id` | Admission webhook rejections of double-claim attempts. | Bug detection. |
 
 ### PodRegistry metrics
 
@@ -490,7 +490,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `AuditGrantDrift` | Unexpected UPDATE/DELETE grants detected on audit tables | Critical |
 | `NetworkPolicyCIDRDrift` | Installed NetworkPolicy CIDRs no longer match cluster CIDRs | Critical |
 | `AdmissionWebhookUnavailable` | Admission policy webhook unreachable for > 30s | Critical |
-| `SandboxClaimGuardUnavailable` | SandboxClaim guard webhook unreachable for > 30s | Critical |
+| `PodClaimGuardUnavailable` | PodClaim guard webhook unreachable for > 30s | Critical |
 | `DualStoreUnavailable` | Both Postgres and Redis simultaneously unreachable | Critical |
 | `DataResidencyWebhookUnavailable` | Data residency validator webhook unreachable for > 30s | Critical |
 | `DataResidencyViolationAttempt` | Cross-border transfer attempt detected | Critical |
@@ -560,7 +560,7 @@ Events on the EventBus are wrapped in a CloudEvents v1.0.2 envelope; see [CloudE
 | `EphemeralContainerCredGuardUnavailable` | `up{job="lenny-ephemeral-container-cred-guard"} == 0` sustained > 5 min; all `update` operations on `pods/ephemeralcontainers` in agent namespaces are denied while the webhook is down (credential-boundary invariant remains protected by fail-closed policy). See spec §16.5 for canonical expression. | Warning |
 | `AdmissionPlaneFeatureFlagDowngrade` | The `lenny-deployment-phase-stamp` ConfigMap records `lenny.dev/flag-<slug>-enabled="true"` for a feature flag whose gated ValidatingWebhookConfiguration is absent from the cluster, sustained > 2 min. One PrometheusRule per `(flag, webhook)` pair in the Feature-gated chart inventory (§17.2); each rule carries static `flag_name` and `expected_webhook_name` labels. Sole runtime signal for feature-flag downgrade drift because the paired per-webhook `*Unavailable` alert does not fire when its `PrometheusRule` was removed alongside the webhook Deployment via the feature-flag flip. See spec §16.5 for the full four-pair expression. | Warning |
 | `CircuitBreakerStale` | `lenny_circuit_breaker_cache_stale_seconds > 60` on any gateway replica; admission decisions are being served against stale state | Warning |
-| `PoolSecurityDegraded` | `lenny_pool_security_degraded == 1` for any pool — the pool is rendering nonce-only `SO_PEERCRED` pods (its `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`), or a nonce-only pod remains after the operator reverted the runtime field. The adapter-agent `SO_PEERCRED` authentication boundary is in its degraded fallback for this pool, and the state is under a human-review SLA. Published by the WarmPoolController alongside the `SecurityDegradedMode=True` condition on the `SandboxTemplate`. Deployers who wire a scrape target for adapter metrics additionally alert on `lenny_adapter_sopeercred_disabled_total > 0`. See [nonce-only-mode](../runbooks/nonce-only-mode.md). | Warning |
+| `PoolSecurityDegraded` | `lenny_pool_security_degraded == 1` for any pool — the pool is rendering nonce-only `SO_PEERCRED` pods (its `deploymentModel: sidecar` runtime sets `requireSoPeercred: false` and the pool carries `acknowledgeNonceOnlyAuth: true`), or a nonce-only pod remains after the operator reverted the runtime field. The adapter-agent `SO_PEERCRED` authentication boundary is in its degraded fallback for this pool, and the state is under a human-review SLA. Published by the WarmPoolController alongside the `SecurityDegradedMode=True` condition on the `PodSet`. Deployers who wire a scrape target for adapter metrics additionally alert on `lenny_adapter_sopeercred_disabled_total > 0`. See [nonce-only-mode](../runbooks/nonce-only-mode.md). | Warning |
 
 ### SLO burn-rate alerts
 

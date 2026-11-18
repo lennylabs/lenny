@@ -15,13 +15,13 @@ import (
 // RunningRuntimePodContainerNames lists the container names across the agent
 // pods a runtime currently has placed in the embedded cluster, deduplicated.
 // It selects the runtime's agent pods by the §6.2 runtime-name label the
-// Sandbox controller stamps on every agent pod (state.LabelRuntime), the same
+// AgentPod controller stamps on every agent pod (state.LabelRuntime), the same
 // selector lenny logs runtime-<name> uses, and returns the set of container
 // names found across them.
 //
 // The §17.4 custom-runtime smoke leg uses it to assert that a sidecar-model
 // runtime's agent pod carries the lenny-adapter sidecar container the
-// controller stamps (named "adapter"; pkg/controller/sandbox/podspec
+// controller stamps (named "adapter"; pkg/controller/agentpod/podspec
 // builds it), proving placement is runtime-agnostic rather than echo-only.
 // An empty result means the runtime has no placed pod yet.
 //

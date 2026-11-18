@@ -127,7 +127,7 @@ func (c coordinationBindings) BindingGeneration(sessionID string) int64 {
 // can send CoordinatorFence as the first RPC. *podsession.Binder satisfies it
 // through ReadoptConnect.
 type readoptDialer interface {
-	ReadoptConnect(ctx context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, error)
+	ReadoptConnect(ctx context.Context, agentPodName string) (*lennyv1.AgentPod, *adapterclient.Client, error)
 }
 
 // readoptFencer announces the session's coordination_generation to the
@@ -161,9 +161,9 @@ type readoptPublisher interface {
 	Put(b *podsession.BindResult)
 }
 
-// sandboxNameReader resolves the persisted SandboxName that names the
+// agentPodNameReader resolves the persisted AgentPodName that names the
 // still-running pod to re-adopt. sessionstore.Store satisfies it through Get.
-type sandboxNameReader interface {
+type agentPodNameReader interface {
 	Get(ctx context.Context, tenantID, id string) (sessionstore.Session, error)
 }
 
@@ -244,7 +244,7 @@ type readoptSeams struct {
 	dialer   readoptDialer
 	fencer   readoptFencer
 	registry readoptPublisher
-	sessions sandboxNameReader
+	sessions agentPodNameReader
 	releaser leaseReleaser
 	pools    readoptPoolResolver
 }
@@ -352,7 +352,7 @@ func readoptBinding(row sessionstore.Session, match podsession.PoolMatch, podIP 
 	bind := &podsession.BindResult{
 		SessionID:             row.ID,
 		TenantID:              row.TenantID,
-		SandboxName:           row.PodAssignment,
+		AgentPodName:          row.PodAssignment,
 		PodIP:                 podIP,
 		Adapter:               adapter,
 		Recycle:               match.Recycle,

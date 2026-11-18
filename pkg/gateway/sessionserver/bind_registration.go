@@ -14,7 +14,7 @@ import (
 
 // registerBinding publishes a successful startOnPod / resumeOnPod
 // result so the message and teardown paths can reach the pod, and
-// persists the bound pod's SandboxName to sessions.pod_assignment so
+// persists the bound pod's AgentPodName to sessions.pod_assignment so
 // a fresh gateway replica can recover the binding after a coordinator
 // handoff. The persist is best-effort: a failure leaves the in-memory
 // Registry authoritative and the next coordination sweep re-publishes
@@ -62,7 +62,7 @@ func (s *Server) publishBinding(ctx context.Context, result *podsession.BindResu
 		return
 	}
 	s.podRegistry.Put(result)
-	s.persistPodAssignment(ctx, result.TenantID, result.SessionID, result.SandboxName)
+	s.persistPodAssignment(ctx, result.TenantID, result.SessionID, result.AgentPodName)
 	// spec: §7.3; §6.4 — capture the workspace base the adapter reported
 	// on the §15.5 handshake (carried verbatim through BindResult on both
 	// bind paths) on the first non-empty bind. persistWorkspaceRoot derives
@@ -100,7 +100,7 @@ func createdRowGeneration(generation int64) int64 {
 	return generation
 }
 
-// persistPodAssignment writes the bound pod's SandboxName back to the
+// persistPodAssignment writes the bound pod's AgentPodName back to the
 // session row so a fresh gateway replica can pick up the binding from
 // Postgres after a coordinator handoff. Best-effort: an update failure
 // is logged via the configured error handler but does not fail the

@@ -62,7 +62,7 @@ The most important security suite. Every store, query path, API surface, and ada
 
 ## TESTING.md §14.9 Pool and warm-pod lifecycle
 
-- **The e2e_kind tier**: `TestWarmPool`, `TestSandboxClaim`, `TestPodLifecycle`, `TestPoolUpgrade` — all skip until Kind cluster bring-up lands.
+- **The e2e_kind tier**: `TestWarmPool`, `TestPodClaim`, `TestPodLifecycle`, `TestPoolUpgrade` — all skip until Kind cluster bring-up lands.
 
 ## TESTING.md §14.10 Compliance and erasure
 

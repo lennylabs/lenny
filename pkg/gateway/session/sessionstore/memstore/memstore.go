@@ -655,7 +655,7 @@ func (s *Store) DeleteSlotReservation(_ context.Context, podID, sessionID string
 // since before cutoff, or is non-terminal and names another pod, with the
 // predicate the Postgres store uses.
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
-// §4.6.1 (Orphaned SandboxClaim detection).
+// §4.6.1 (Orphaned PodClaim detection).
 func (s *Store) ReclaimSlotReservations(_ context.Context, cutoff time.Time) (int, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()

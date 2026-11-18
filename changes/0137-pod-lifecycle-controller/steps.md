@@ -58,7 +58,7 @@ The pool-name and runtime-name rule of "PLC-7": the §5.2 **Pool name.** and §5
 The step depends on nothing. It fixes today's defects, a pool or a runtime that is stored while its pool never warms, under today's kind names, so it can land before 0137.S1. Its §5.2 paragraph names the pod-set label only once 0137.S1 has landed, and states the pool label alone if it lands first. Its §5.1 paragraph names the tenant-derived runtime create only once DR-4 ([0147.S4](../0147-tenant-derived-runtimes/steps.md#steps)) has landed, as "Specification changes" states. If 0137.S4 lands first, DR-4's route calls the new `runtimestore.ValidateName` when it lands. It and DR-1 ([0147.S1](../0147-tenant-derived-runtimes/steps.md#steps)) each limit runtime names to 63 characters, and whichever lands first closes F-5.1.31.
 
 ### 0137.S5 Kind renames and the PodSet merge
-- status: Building
+- status: Landed
 - aliases: [PLC-C, PLC-5, PLC-2 (part)]
 - lanes: [specification, code, documentation]
 - ruled-ready: 2026-11-16, names only, and no decision of 0137 is open

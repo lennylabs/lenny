@@ -133,7 +133,7 @@ func (h *Harness) fingerprint() string {
 		}
 		for _, r := range h.Replicas {
 			if bind, ok := r.Registry.Get(id); ok {
-				fmt.Fprintf(&b, "B%s=%s@%d;", r.ID, bind.SandboxName, bind.CoordinationGeneration)
+				fmt.Fprintf(&b, "B%s=%s@%d;", r.ID, bind.AgentPodName, bind.CoordinationGeneration)
 			}
 		}
 	}
@@ -174,7 +174,7 @@ var noLeaseStates = map[session.State]bool{
 //
 // spec: §7.2 (Interactive Session Model), §7.3 (Resume driver), §10.1.1
 // (one coordinating replica per session), §6.1 (per-session credential lease
-// lifecycle), §7.1 (Post-terminal window), §4.6.1 (Orphaned SandboxClaim
+// lifecycle), §7.1 (Post-terminal window), §4.6.1 (Orphaned PodClaim
 // detection)
 func (h *Harness) Invariants() []Invariant {
 	ctx := context.Background()
@@ -195,7 +195,7 @@ func (h *Harness) Invariants() []Invariant {
 		bound := map[string]bool{}
 		for _, r := range h.Surviving() {
 			for _, b := range r.Registry.Snapshot() {
-				bound[b.SandboxName] = true
+				bound[b.AgentPodName] = true
 			}
 		}
 		podsClaims.Violations = h.podsClaimsViolations(claims, held, bound, h.occupiedPods(ctx))
@@ -261,7 +261,7 @@ func (h *Harness) Invariants() []Invariant {
 // withdrawal after the winner's last release leaves exactly that claim for
 // the claim-orphan GC.
 //
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.3, §5.2 (Slot
+// spec: §4.6.1 (Orphaned PodClaim detection), §7.3, §5.2 (Slot
 // assignment atomicity), §6.2 (leaked slot semantics), §7.1 (Post-terminal
 // window)
 func (h *Harness) podsClaimsViolations(claims []string, held, bound, occupied map[string]bool) []string {
@@ -311,7 +311,7 @@ func (r sessionRow) holdsPod() bool {
 // heldPods returns the pods some row holds under the §7.1 holder predicate,
 // the pods-and-claims and empty-pod invariants' notion of a held pod.
 //
-// spec: §7.1 (Post-terminal window), §4.6.1 (Orphaned SandboxClaim
+// spec: §7.1 (Post-terminal window), §4.6.1 (Orphaned PodClaim
 // detection)
 func heldPods(rows map[string]sessionRow) map[string]bool {
 	held := map[string]bool{}

@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
-// createAgentPod creates the agent pod backing the fixture's Sandbox, which
+// createAgentPod creates the agent pod backing the fixture's AgentPod, which
 // the §4.6.1 reconciler names identically, so the gateway's tenant stamp has
 // a pod to land on.
 func (f *releaseFixture) createAgentPod(t *testing.T) {
@@ -32,7 +32,7 @@ func (f *releaseFixture) createAgentPod(t *testing.T) {
 }
 
 // projectOccupancy runs one WarmPoolController occupancy reconcile of the
-// fixture's Sandbox and returns the phase it leaves.
+// fixture's AgentPod and returns the phase it leaves.
 func (f *releaseFixture) projectOccupancy(t *testing.T) string {
 	t.Helper()
 	r := &warmpool.OccupancyReconciler{Client: f.kube}
@@ -41,9 +41,9 @@ func (f *releaseFixture) projectOccupancy(t *testing.T) string {
 	}); err != nil {
 		t.Fatalf("occupancy reconcile: %v", err)
 	}
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := f.kube.Get(context.Background(), client.ObjectKey{Namespace: releaseNS, Name: releasePod}, &sb); err != nil {
-		t.Fatalf("read the Sandbox: %v", err)
+		t.Fatalf("read the AgentPod: %v", err)
 	}
 	return sb.Status.Phase
 }
@@ -78,7 +78,7 @@ func TestReleaseBeforeClaimedProjectionLeavesPinnedIdlePod_spec_4_6_1(t *testing
 			t.Fatal("the release did not delete the claim")
 		}
 		if got := f.projectOccupancy(t); got != "idle" {
-			t.Errorf("Sandbox phase = %q, want idle", got)
+			t.Errorf("AgentPod phase = %q, want idle", got)
 		}
 		if got := f.podTenant(t); got != "acme" {
 			t.Errorf("pod tenant pin = %q, want acme", got)
@@ -92,13 +92,13 @@ func TestReleaseBeforeClaimedProjectionLeavesPinnedIdlePod_spec_4_6_1(t *testing
 		f.createAgentPod(t)
 		f.reserve(t, "sess-a")
 		if got := f.projectOccupancy(t); got != "claimed" {
-			t.Fatalf("Sandbox phase with a bound claim = %q, want claimed", got)
+			t.Fatalf("AgentPod phase with a bound claim = %q, want claimed", got)
 		}
 		if err := f.binder.ReleaseSlotReservation(context.Background(), releasePod, "sess-a", false); err != nil {
 			t.Fatalf("ReleaseSlotReservation: %v", err)
 		}
 		if got := f.projectOccupancy(t); got != "draining" {
-			t.Errorf("Sandbox phase = %q, want draining", got)
+			t.Errorf("AgentPod phase = %q, want draining", got)
 		}
 	})
 }

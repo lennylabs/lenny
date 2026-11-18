@@ -45,7 +45,7 @@ type BasePoolResolver interface {
 //   - paused:    the variant pool's minWarm is pinned to 0 (existing warm
 //     pods drain naturally; the CRD is retained for re-activation).
 //   - concluded: the variant pool is marked DrainAndDelete, draining to
-//     0/0 and deleting its SandboxWarmPool CRD once readyCount hits 0.
+//     0/0 and deleting its PodSet CRD once readyCount hits 0.
 //
 // Base-pool restoration on pause/conclude is automatic: a paused or
 // concluded variant's weight is not summed into its base pool, so the
@@ -97,7 +97,7 @@ func (s *ExperimentVariantSource) ListPoolConfigs(ctx context.Context) ([]PoolCo
 	// to a managed pool (eligible for ResolveVariantRoles' base-pool
 	// adjustment) and the rest (variant pool sized directly, no base
 	// adjustment). A variant whose own pool is not a managed pool is
-	// dropped: the controller cannot size a SandboxWarmPool it does not
+	// dropped: the controller cannot size a PodSet it does not
 	// own.
 	var resolvable, orphan []ActiveVariant
 	for _, e := range exps {
@@ -184,7 +184,7 @@ func (s *ExperimentVariantSource) ListPoolConfigs(ctx context.Context) ([]PoolCo
 	}
 
 	// spec: §10.7 — a concluded variant pool drains to 0/0 and
-	// its SandboxWarmPool is deleted once readyCount reaches 0.
+	// its PodSet is deleted once readyCount reaches 0.
 	for _, e := range exps {
 		if e.Status != experiment.StatusConcluded {
 			continue

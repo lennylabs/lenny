@@ -289,7 +289,7 @@ var slotAddressCaseFiles = []string{
 	"pkg/adapter/tracingcontext_sampling_test.go",
 	"pkg/adapter/usage_test.go",
 	"pkg/adapter/warmlayout_test.go",
-	"pkg/controller/sandbox/podspec/podspec_test.go",
+	"pkg/controller/agentpod/podspec/podspec_test.go",
 	"pkg/gateway/checkpoint/checkpointer/checkpointer_test.go",
 	"pkg/gateway/checkpoint/checkpointer/checkpointstart_test.go",
 	"pkg/gateway/checkpoint/checkpointer/uploaddriver_test.go",

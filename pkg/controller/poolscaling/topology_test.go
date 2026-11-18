@@ -15,18 +15,18 @@ import (
 )
 
 // spec: §5.2 — the PoolScalingController owns
-// SandboxTemplate.spec and writes the soft zone/node spread defaults
+// PodSet.spec and writes the soft zone/node spread defaults
 // when the pool definition carries none.
 func TestSyncWritesTopologyDefaults_spec_5_2_631(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	if err := syncOnce(t, c, src); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	got := getTemplate(t, c).Spec.TopologySpreadConstraints
+	got := getPodSet(t, c).Spec.TopologySpreadConstraints
 	if len(got) != 2 {
 		t.Fatalf("topology constraints = %d, want 2 (zone + node)", len(got))
 	}
@@ -57,10 +57,10 @@ func TestSyncWritesTopologyDefaults_spec_5_2_631(t *testing.T) {
 // verbatim rather than replacing them with the defaults.
 func TestSyncPreservesTopologyOverride_spec_5_2_636(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 
 	cfg := config()
-	cfg.Template.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
+	cfg.Settings.TopologySpreadConstraints = []corev1.TopologySpreadConstraint{{
 		MaxSkew:           1,
 		TopologyKey:       "topology.kubernetes.io/zone",
 		WhenUnsatisfiable: corev1.DoNotSchedule,
@@ -72,7 +72,7 @@ func TestSyncPreservesTopologyOverride_spec_5_2_636(t *testing.T) {
 		t.Fatalf("Sync: %v", err)
 	}
 
-	got := getTemplate(t, c).Spec.TopologySpreadConstraints
+	got := getPodSet(t, c).Spec.TopologySpreadConstraints
 	if len(got) != 1 {
 		t.Fatalf("topology constraints = %d, want 1 (the override, not the 2 defaults)", len(got))
 	}
@@ -90,7 +90,7 @@ func TestSyncPreservesTopologyOverride_spec_5_2_636(t *testing.T) {
 // pass, so the count stays at 2.
 func TestSyncTopologyDefaultsAreIdempotent_spec_5_2_631(t *testing.T) {
 	s := newScheme(t)
-	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.SandboxWarmPool{}).Build()
+	c := fake.NewClientBuilder().WithScheme(s).WithStatusSubresource(&lennyv1.PodSet{}).Build()
 	src := &fakeSource{configs: []poolscaling.PoolConfig{config()}}
 
 	if err := syncOnce(t, c, src); err != nil {
@@ -100,14 +100,14 @@ func TestSyncTopologyDefaultsAreIdempotent_spec_5_2_631(t *testing.T) {
 		t.Fatalf("second Sync: %v", err)
 	}
 
-	if got := getTemplate(t, c).Spec.TopologySpreadConstraints; len(got) != 2 {
+	if got := getPodSet(t, c).Spec.TopologySpreadConstraints; len(got) != 2 {
 		t.Fatalf("after re-sync topology constraints = %d, want 2", len(got))
 	}
 	// The source PoolConfig is never mutated by the sync (the defaults
 	// are applied to a copy), so a follow-up read of the config still
 	// shows no constraints.
 	cfgs, _ := src.ListPoolConfigs(context.Background())
-	if len(cfgs[0].Template.TopologySpreadConstraints) != 0 {
-		t.Errorf("source PoolConfig was mutated: %+v", cfgs[0].Template.TopologySpreadConstraints)
+	if len(cfgs[0].Settings.TopologySpreadConstraints) != 0 {
+		t.Errorf("source PoolConfig was mutated: %+v", cfgs[0].Settings.TopologySpreadConstraints)
 	}
 }

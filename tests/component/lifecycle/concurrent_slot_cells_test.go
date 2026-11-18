@@ -14,7 +14,7 @@ import (
 )
 
 // spec: §5.2 (Slot assignment atomicity), §6.2 (Pod State Machine), §4.6.3
-// (SandboxClaim: a release that ends the occupancy without reuse)
+// (PodClaim: a release that ends the occupancy without reuse)
 // diagnosis: on a concurrent-workspace pool, a DELETE of a session that never
 // started released more than its own slot: the shared per-pod claim was
 // deleted under a live sibling, the sibling's member was removed, or the

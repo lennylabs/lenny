@@ -114,7 +114,7 @@ type TerminalReleaser interface {
 
 // Readopter re-establishes coordination of a still-running pod on the
 // crash-takeover edge. The production implementation (wired in the gateway
-// binary) dials the pod from its persisted SandboxName and sends
+// binary) dials the pod from its persisted AgentPodName and sends
 // CoordinatorFence as the first RPC over that connection, before any §15.5
 // version handshake, because a crash-takeover pod is already in its §10.1
 // hold state and rejects every inbound RPC except CoordinatorFence. It

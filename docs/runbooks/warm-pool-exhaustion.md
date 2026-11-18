@@ -66,8 +66,8 @@ GET /v1/admin/diagnostics/pools/<pool-name>
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandboxes -n <agent-ns> -l pool=<pool> -o wide
-kubectl get sandboxes -n <agent-ns> -l pool=<pool> \
+kubectl get agentpods -n <agent-ns> -l pool=<pool> -o wide
+kubectl get agentpods -n <agent-ns> -l pool=<pool> \
   -o jsonpath='{range .items[*]}{.status.phase}{"\n"}{end}' | sort | uniq -c
 ```
 

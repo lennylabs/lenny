@@ -17,13 +17,13 @@
 // This is the live-cluster companion to the §4.6.1 binding-state-aware GC
 // component tests (reclaimReserved) and the recycling-claim crash chaos test
 // (orphan_gc_recovery_test.go). It injects the reserved-hold holder-crash
-// residue directly on a real warm pod: a SandboxClaim named claim-<podName> in
+// residue directly on a real warm pod: a PodClaim named claim-<podName> in
 // the `reserved` binding state whose holdExpiresAt has just passed, the exact
 // state a crashed holder leaves behind. The occupancy projection moves the
-// Sandbox to reserved from the claim and back to idle once the GC deletes it;
-// the fixture writes no Sandbox status itself (see orphan_gc_recovery_test.go
-// for why). A real pod is required for the idle assertion: a Sandbox with no
-// backing pod is retired from idle by the Sandbox-to-Pod reconciler at once.
+// AgentPod to reserved from the claim and back to idle once the GC deletes it;
+// the fixture writes no AgentPod status itself (see orphan_gc_recovery_test.go
+// for why). A real pod is required for the idle assertion: an AgentPod with no
+// backing pod is retired from idle by the AgentPod-to-Pod reconciler at once.
 // The test skips with a precise diagnosis when the controller Deployment is
 // not Ready or the workload has no idle warm pod.
 
@@ -39,7 +39,7 @@ import (
 )
 
 // spec: 4.6.1 (Warm Pool Controller (Pod Lifecycle), "Reserved hold (claim
-// retention across same-tenant sessions)" and "Orphaned SandboxClaim
+// retention across same-tenant sessions)" and "Orphaned PodClaim
 // detection"), 4.6.3 (CRD Field Ownership and Write Boundaries, the
 // holdExpiresAt status field), 6.2 (Pod State Machine, reserved → idle).
 // diagnosis: the §4.6.1 orphan GC did not reclaim a `reserved` claim whose
@@ -62,21 +62,21 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 			lennyControllerDeployment)
 	}
 
-	sandboxRef := idleWarmSandbox(t, c, orphanGCFixturePool)
-	// The occupancy projection associates a claim with its Sandbox by the
+	agentPodRef := idleWarmAgentPod(t, c, orphanGCFixturePool)
+	// The occupancy projection associates a claim with its AgentPod by the
 	// deterministic per-pod name claim-<podName> (observeClaim). spec: §4.6.1
 	// (claim-<podName>).
-	claimName := "claim-" + sandboxRef
-	t.Logf("injecting the reserved-hold residue on warm pod %s", sandboxRef)
+	claimName := "claim-" + agentPodRef
+	t.Logf("injecting the reserved-hold residue on warm pod %s", agentPodRef)
 
 	// Create the claim, then patch its status to the holder-crash residue:
 	// `reserved` with a holdExpiresAt that has just passed. The crashed
 	// holder's in-process timer never fired, so the deadline elapses with the
 	// claim still present. The GC waits the reserved-hold grace (60s) past
 	// holdExpiresAt before it reclaims, which leaves the occupancy projection
-	// time to move the Sandbox to reserved first, so the test observes the
+	// time to move the AgentPod to reserved first, so the test observes the
 	// reserved → idle edge rather than a claim deleted before the pod was held.
-	claim := sandboxClaimManifest(claimName, agentNamespace, sandboxRef, "sess-reserved-hold")
+	claim := podClaimManifest(claimName, agentNamespace, agentPodRef, "sess-reserved-hold")
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, claim) })
 	if out, err := c.ApplyStdin(t, claim); err != nil {
 		t.Fatalf("failed to create the reserved claim: %v\n%s", err, out)
@@ -86,22 +86,22 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 		`{"status":{"phase":"reserved","bindingStateTransitionTime":%q,"holdExpiresAt":%q}}`,
 		now.Add(-10*time.Second).Format(time.RFC3339), now.Format(time.RFC3339),
 	)
-	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "sandboxclaim", claimName,
+	if out, err := c.KubectlOut(t, "-n", agentNamespace, "patch", "podclaim", claimName,
 		"--subresource=status", "--type=merge", "-p", statusPatch); err != nil {
 		t.Fatalf("failed to stamp the reserved binding state: %v\n%s", err, out)
 	}
 
 	// The occupancy projection holds the pod: reserved, excluded from idle
 	// inventory. spec: §6.2.
-	if !pollUntil(30*time.Second, 2*time.Second, func() bool { return sandboxPhase(t, c, sandboxRef) == "reserved" }) {
-		t.Fatalf("Sandbox %s did not project reserved from its reserved claim (phase %q); the "+
-			"holder-crash residue is not in place", sandboxRef, sandboxPhase(t, c, sandboxRef))
+	if !pollUntil(30*time.Second, 2*time.Second, func() bool { return agentPodPhase(t, c, agentPodRef) == "reserved" }) {
+		t.Fatalf("AgentPod %s did not project reserved from its reserved claim (phase %q); the "+
+			"holder-crash residue is not in place", agentPodRef, agentPodPhase(t, c, agentPodRef))
 	}
 
 	// holdExpiresAt plus the 60s grace, then up to two 60s sweeps plus
 	// reconcile latency.
 	reclaimed := pollUntil(3*time.Minute, 5*time.Second, func() bool {
-		out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "sandboxclaim", claimName,
+		out, err := c.KubectlOut(t, "-n", agentNamespace, "get", "podclaim", claimName,
 			"--ignore-not-found", "-o", "name")
 		return err == nil && strings.TrimSpace(out) == ""
 	})
@@ -114,10 +114,10 @@ func TestOrphanGCReclaimsReservedClaimAfterHolderCrash(t *testing.T) {
 	// The pod must return to idle (the reserved reclaim): a reserved pod is
 	// scrubbed and SDK-warm, so re-pooling it is safe and is the expected
 	// outcome. A drain here would retire a good warm pod.
-	idle := pollUntil(time.Minute, 2*time.Second, func() bool { return sandboxPhase(t, c, sandboxRef) == "idle" })
+	idle := pollUntil(time.Minute, 2*time.Second, func() bool { return agentPodPhase(t, c, agentPodRef) == "idle" })
 	if !idle {
-		t.Errorf("§4.6.1 violation: Sandbox %s did not return to idle after the reserved-claim "+
+		t.Errorf("§4.6.1 violation: AgentPod %s did not return to idle after the reserved-claim "+
 			"reclaim (phase = %q); a scrubbed, SDK-warm reserved pod must re-pool, not drain",
-			sandboxRef, sandboxPhase(t, c, sandboxRef))
+			agentPodRef, agentPodPhase(t, c, agentPodRef))
 	}
 }
