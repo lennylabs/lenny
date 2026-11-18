@@ -24,7 +24,7 @@ depends-on: [GW, GWSTREAM, GWUPLOAD, GWTOOLS, GWLLM, GWAPI, GWCOORD, GWCLAIM]
 
 The gateway runs as one process. Its seams (the stream proxy, the upload handler, the platform tools seam, and the metering proxy) share that process with the session core and with the parts that apply to the whole replica. This page states every call that crosses the boundary between a seam and the core, in either direction, and the interface through which each part registers its HTTP routes with the API front. Today each operation is an in-process method call. Extracting a seam into its own service puts a transport under the operations this page states, and changes none of them.
 
-The operations are grouped by the party that serves them and the parties that call them. They cover the calls a part makes by importing another part's package and the calls it makes through an interface that `cmd/lenny-gateway` satisfies with another part's value. The metering proxy calls the core to stamp session activity and to run the terminal pipeline, and calls the platform tools seam to request a budget extension; it serves the per-session budget state it enforces to both.
+The operations are grouped by the party that serves them and the parties that call them. They cover the calls a part makes by importing another part's package and the calls it makes through an interface that `cmd/lenny-gateway` satisfies with another part's value. The metering proxy calls the core to stamp session activity, to expire a session whose token budget is exhausted, and to rotate a faulted upstream credential, and calls the platform tools seam to request a budget extension. It serves the per-session budget state it enforces to both.
 
 ## Conventions
 
@@ -378,7 +378,7 @@ summary: Retires a pod with a retirement reason, its lifetime counts, and a deta
 
 ## Operations served by the session core to the platform tools seam, the metering proxy, and the API front
 
-A part that moves a session to a terminal state, such as a cancel tool, the orphan and deadlock sweeps, the metering proxy's budget enforcement, or an operator's force-terminate, runs the session core's terminal pipeline through these operations.
+A part that moves a session to a terminal state, such as a cancel tool, the orphan and deadlock sweeps, or an operator's force-terminate, runs the session core's terminal pipeline through these operations.
 
 <a id="gwseam-beginterminal"></a>
 
@@ -434,6 +434,32 @@ method: Go method
 path: seam.Activity
 requirements: [GW-R1]
 summary: Records activity on a session, so that the idle watchdog does not count a session that works through platform tools or the metering proxy as idle.
+```
+
+## Operations served by the session core to the metering proxy
+
+The session core serves these operations. The metering proxy's budget enforcement calls [`GWSEAM-ExpireSession`](#gwseam-expiresession) when a session exhausts its token budget, and its credential fallback calls [`GWSEAM-RotateCredential`](#gwseam-rotatecredential) when an upstream credential faults and the fallback chain names another pool.
+
+<a id="gwseam-expiresession"></a>
+
+```lenny-def
+kind: operation
+name: ExpireSession
+method: Go method
+path: seam.SessionExpiry
+requirements: [GW-R1]
+summary: Moves a session to the expired state with the failure reason the caller gives and runs the terminal pipeline, and returns without waiting for either. A session already in a terminal state is left as it is.
+```
+
+<a id="gwseam-rotatecredential"></a>
+
+```lenny-def
+kind: operation
+name: RotateCredential
+method: Go method
+path: seam.CredentialRotations
+requirements: [GW-R1]
+summary: Issues a replacement credential lease from a given pool for a session whose upstream credential faulted, and pushes it to the session's pod when this replica holds the pod's binding.
 ```
 
 ## Operations served by the session core to the API front

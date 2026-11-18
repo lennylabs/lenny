@@ -45,7 +45,7 @@ Upstreams and removal: LU-1, LU-2, the routes and session binding of LU-3, LU-4,
 
 It needs EG-2 for the removal of `provider-direct`.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-CheckChildCredentials` with the pre-claim credential check (LU-4), and reshapes `GWSEAM-MaterializeChild`, which no longer assigns an LLM credential lease.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-CheckChildCredentials` with the pre-claim credential check and `GWSEAM-RotateCredential` with the credential fallback (LU-4), and reshapes `GWSEAM-MaterializeChild`, which no longer assigns an LLM credential lease.
 
 ### 0133.S3 Rate cards and credit budgets
 - status: Planned
