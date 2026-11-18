@@ -25,6 +25,9 @@ const (
 	OnStructField Rule = "annotation on a struct field"
 	// SectionInTestName is a section number in a test name.
 	SectionInTestName Rule = "section number in a test name"
+	// IdentifierInTestName is a requirement or issue identifier in a
+	// test name.
+	IdentifierInTestName Rule = "identifier in a test name"
 	// QuotedSpecText is specification text copied into a comment.
 	QuotedSpecText Rule = "specification text in a comment"
 	// UnresolvedIdentifier is an identifier citation the registry does
@@ -78,7 +81,7 @@ func (l Lint) Check(f ChangedFile) ([]Finding, error) {
 	var out []Finding
 	out = append(out, l.placement(fset, file, f)...)
 	if strings.HasSuffix(f.Path, "_test.go") {
-		out = append(out, testNames(fset, file, f)...)
+		out = append(out, testNames(fset, file, f, newNameIdentifiers(l.Registry))...)
 	}
 	if l.Spec != nil {
 		out = append(out, l.quotes(fset, file, f)...)
@@ -161,18 +164,28 @@ var sectionInSubtest = regexp.MustCompile(`(?i)§\s*\d|\bspec[ _]?\d+(?:[._]\d+)
 // testFuncPrefixes are the prefixes `go test` runs.
 var testFuncPrefixes = []string{"Test", "Benchmark", "Fuzz", "Example"}
 
-// testNames refuses a section number in the name of a test function or
-// of a subtest a changed line declares.
-func testNames(fset *token.FileSet, file *ast.File, f ChangedFile) []Finding {
+// testNames refuses a section number or a requirement or issue
+// identifier in the name of a test function or of a subtest a changed
+// line declares.
+func testNames(fset *token.FileSet, file *ast.File, f ChangedFile, ids nameIdentifiers) []Finding {
 	var out []Finding
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch t := n.(type) {
 		case *ast.FuncDecl:
 			line := fset.Position(t.Name.Pos()).Line
-			if t.Recv == nil && f.Lines[line] && isTestFunc(t.Name.Name) && sectionInName.MatchString(t.Name.Name) {
+			if t.Recv != nil || !f.Lines[line] || !isTestFunc(t.Name.Name) {
+				return true
+			}
+			if sectionInName.MatchString(t.Name.Name) {
 				out = append(out, Finding{
 					f.Path, line, SectionInTestName,
 					fmt.Sprintf("%s: name the behavior and cite the requirement in the doc comment", t.Name.Name),
+				})
+			}
+			if id, ok := ids.find(t.Name.Name); ok {
+				out = append(out, Finding{
+					f.Path, line, IdentifierInTestName,
+					fmt.Sprintf("%s spells %s: name the behavior and cite the identifier in the doc comment", t.Name.Name, id),
 				})
 			}
 		case *ast.CallExpr:
@@ -186,10 +199,21 @@ func testNames(fset *token.FileSet, file *ast.File, f ChangedFile) []Finding {
 			}
 			line := fset.Position(lit.Pos()).Line
 			name, err := strconv.Unquote(lit.Value)
-			if err == nil && f.Lines[line] && sectionInSubtest.MatchString(name) {
+			if err != nil || !f.Lines[line] {
+				return true
+			}
+			if sectionInSubtest.MatchString(name) {
 				out = append(out, Finding{
 					f.Path, line, SectionInTestName,
 					fmt.Sprintf("subtest %q: name the behavior", name),
+				})
+			}
+			// `go test` writes a space in a subtest name as an
+			// underscore, so `CLAIM R4` names the subtest `CLAIM_R4`.
+			if id, ok := ids.find(strings.ReplaceAll(name, " ", "_")); ok {
+				out = append(out, Finding{
+					f.Path, line, IdentifierInTestName,
+					fmt.Sprintf("subtest %q spells %s: name the behavior", name, id),
 				})
 			}
 		}
@@ -197,6 +221,124 @@ func testNames(fset *token.FileSet, file *ast.File, f ChangedFile) []Finding {
 	})
 	return out
 }
+
+// identifierWithSeparator matches, at the start of its input, a
+// requirement or issue identifier whose hyphen is kept or written as an
+// underscore, such as `POOL_R5` or `POOL-I2`. Its code has the page-code
+// form of spec/conventions.md, two to nine upper-case letters, so a
+// token with a digit such as `V1_R2` or `IPV4_R1` is not read as a code.
+// It needs no registry, so the check holds before the tree carries one.
+var identifierWithSeparator = regexp.MustCompile(`^[A-Z]{2,9}[-_][RI][0-9]+`)
+
+// nameIdentifiers finds a requirement or issue identifier spelled in a
+// test or subtest name.
+//
+// A spelling with an upper-case code that keeps the hyphen or writes it
+// as an underscore is found by its form alone. Every other spelling,
+// such as `POOLR5`, `PoolR5`, or `Pool_R5`, is found only for a page
+// code the registry carries, because the form alone matches acronyms,
+// words, and versions such as `HTTPR2`. A registered page code matches
+// in upper case, or with only its first letter in upper case.
+type nameIdentifiers struct {
+	// registered matches a registered page code, an optional separator,
+	// and a requirement or issue number. It is nil without a registry.
+	registered *regexp.Regexp
+}
+
+// newNameIdentifiers builds the matcher over the registry's page codes.
+// A nil registry leaves only the spellings with a separator.
+func newNameIdentifiers(r *Registry) nameIdentifiers {
+	if r == nil {
+		return nameIdentifiers{}
+	}
+	codes := r.PageCodes()
+	if len(codes) == 0 {
+		return nameIdentifiers{}
+	}
+	// Longer codes first, so `GWCLAIM` is tried before `GW`.
+	sort.Slice(codes, func(i, j int) bool {
+		if len(codes[i]) != len(codes[j]) {
+			return len(codes[i]) > len(codes[j])
+		}
+		return codes[i] < codes[j]
+	})
+	alts := make([]string, 0, 2*len(codes))
+	for _, c := range codes {
+		// A code outside the page-code form, which the reference tool
+		// refuses, would only add a spelling no name can carry.
+		if !pageCode.MatchString(c) {
+			continue
+		}
+		alts = append(alts, regexp.QuoteMeta(c))
+		if title := c[:1] + strings.ToLower(c[1:]); title != c {
+			alts = append(alts, regexp.QuoteMeta(title))
+		}
+	}
+	if len(alts) == 0 {
+		return nameIdentifiers{}
+	}
+	return nameIdentifiers{registered: regexp.MustCompile(`^(?:` + strings.Join(alts, "|") + `)[-_]?[RI][0-9]+`)}
+}
+
+// find returns the first identifier the name spells, in its canonical
+// form `CODE-Rn` or `CODE-In`.
+//
+// A spelling starts where startsSpelling allows, which keeps a code from
+// matching inside a longer acronym. A spelling that drops the hyphen also has to end
+// where the number meets the end of the name or a character that is not
+// a lower-case letter, which keeps `ClaimR5ms` from reading as `R5`
+// followed by a word. A spelling with a hyphen or an underscore is an
+// identifier whatever follows it.
+func (m nameIdentifiers) find(name string) (string, bool) {
+	for i := 0; i < len(name); i++ {
+		if !startsSpelling(name, i) {
+			continue
+		}
+		for _, re := range []*regexp.Regexp{identifierWithSeparator, m.registered} {
+			if re == nil {
+				continue
+			}
+			loc := re.FindStringIndex(name[i:])
+			if loc == nil {
+				continue
+			}
+			end := i + loc[1]
+			dropped := !strings.ContainsAny(name[i:end], "-_")
+			if dropped && end < len(name) && isLower(name[end]) {
+				continue
+			}
+			return canonicalIdentifier(name[i:end]), true
+		}
+	}
+	return "", false
+}
+
+// startsSpelling reports whether an identifier spelling can start at
+// byte i of name: at an upper-case letter that does not continue a run
+// of upper-case letters, or at one that opens a camel-case word after an
+// acronym, as `Claim` does in `APIClaimR4`.
+func startsSpelling(name string, i int) bool {
+	if !isUpper(name[i]) {
+		return false
+	}
+	if i == 0 || !isUpper(name[i-1]) {
+		return true
+	}
+	return i+1 < len(name) && isLower(name[i+1])
+}
+
+// canonicalIdentifier writes a spelling found in a name as `CODE-Rn` or
+// `CODE-In`. The last `R` or `I` of the spelling opens the number,
+// because the number holds only digits.
+func canonicalIdentifier(spelling string) string {
+	s := strings.NewReplacer("-", "", "_", "").Replace(spelling)
+	cut := strings.LastIndexAny(s, "RI")
+	return strings.ToUpper(s[:cut]) + "-" + s[cut:]
+}
+
+func isUpper(b byte) bool { return b >= 'A' && b <= 'Z' }
+func isLower(b byte) bool { return b >= 'a' && b <= 'z' }
+func isDigit(b byte) bool { return b >= '0' && b <= '9' }
 
 // isTestFunc reports whether a function name is one `go test` runs.
 func isTestFunc(name string) bool {

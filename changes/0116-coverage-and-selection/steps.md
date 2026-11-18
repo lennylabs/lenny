@@ -55,7 +55,7 @@ The edits of CS-8 to the §28 lead, N4 of §28.1, §28.4, the §28.5 lead, §29.
 The retirements of CS-9: `tests/spec-map.json`, `tests/spec-map-exceptions.yaml`, `tests/spec-map-pending.txt`, `tests/change-graph.json`, `tests/change-graph-pending.txt`, the two change-graph registers and their residual class, `cmd/lenny-test/changegraph`, `cmd_validate_testdirs.go`, the map checks of `validate-maps` (renamed `validate`) with the annotation check that replaces `validateTestFilesMapped`, the nine category F files of tier 0, the spec-map conjunct of the heading walker, the spec-map read of `compliance_check_channel_naming_test.go`, `delegation_tree_spec_map_currency_test.go`, and the map steps of `scripts/refactor` and `scope.go`. The documentation pages under "Documentation" in `change.md` drop the maps. The second and third validation items land before the deletion.
 
 ### 0116.S7 Identifiers in test names
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0115.S5]
 

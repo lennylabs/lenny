@@ -24,7 +24,8 @@ import (
 
 // diagnosis: a line this branch adds or changes puts a // spec:
 // annotation inside a function body or on a struct field, names a test
-// with a section number, or copies specification text into a comment.
+// or a subtest with a section number or a requirement or issue
+// identifier, or copies specification text into a comment.
 // Each finding names the file, the line, and the rule it breaks.
 func TestSpecAnnotationLintPassesOnTheBranchDiff(t *testing.T) {
 	t.Parallel()

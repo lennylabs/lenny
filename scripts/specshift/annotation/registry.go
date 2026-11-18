@@ -40,6 +40,10 @@ var ErrNoRegistry = errors.New("the tree carries no " + RegistryPath)
 type Registry struct {
 	names   map[string]bool
 	retired map[string]ref.Retired
+	// codes holds the live page codes and aliases in upper case, the
+	// stems of the requirement and issue identifiers a test name must
+	// not spell.
+	codes []string
 }
 
 // LoadRegistry reads the registry at file. A registry the tree does not
@@ -65,9 +69,11 @@ func LoadRegistry(read scope.FileReader, file string) (*Registry, error) {
 		}
 	}
 	for _, p := range doc.Pages {
-		add(p.Code)
-		for _, a := range p.Aliases {
-			add(a)
+		for _, c := range append([]string{p.Code}, p.Aliases...) {
+			add(c)
+			if c != "" {
+				r.codes = append(r.codes, strings.ToUpper(c))
+			}
 		}
 	}
 	for _, ids := range [][]ref.Identifier{doc.Requirements, doc.Operations} {
@@ -121,6 +127,11 @@ func leadingIssue(name string) string {
 		return name
 	}
 	return parts[0] + "-" + parts[1]
+}
+
+// PageCodes returns the live page codes and aliases in upper case.
+func (r *Registry) PageCodes() []string {
+	return append([]string(nil), r.codes...)
 }
 
 // Has reports whether the identifier is a live registered name.

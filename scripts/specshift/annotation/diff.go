@@ -20,26 +20,57 @@ import (
 // order they are tried.
 var BaseRefs = []string{"main", "origin/main"}
 
-// ErrNoBase reports that no integration ref has a merge base with HEAD,
-// such as in a shallow clone, so there is no branch diff to lint.
-var ErrNoBase = errors.New("no merge base with " + strings.Join(BaseRefs, " or "))
+// ErrNoBase reports that the repository carries none of the integration
+// refs, such as a clone that fetched only its own branch, so there is no
+// branch diff to read. The gates that read a branch diff skip on it.
+var ErrNoBase = errors.New("no merge base with " + strings.Join(BaseRefs, " or ") + ": neither ref exists")
 
 // MergeBase returns the merge base of HEAD with the first integration ref
-// that has one, and the ref it used.
+// the repository carries, and the ref it used.
+//
+// It returns ErrNoBase only when no integration ref exists. Every other
+// failure is returned as an error: a git command that fails, such as on a
+// repository git refuses for dubious ownership, and an integration ref
+// that has no merge base with HEAD. A gate that skips on ErrNoBase counts
+// as passing, so a fault that hides the diff fails the gate instead.
 func MergeBase(ctx context.Context, root string) (base, ref string, err error) {
 	for _, ref := range BaseRefs {
-		if _, err := git(ctx, root, "rev-parse", "--verify", "--quiet", ref+"^{commit}"); err != nil {
+		ok, err := refExists(ctx, root, ref)
+		if err != nil {
+			return "", "", err
+		}
+		if !ok {
 			continue
 		}
 		out, err := git(ctx, root, "merge-base", "HEAD", ref)
 		if err != nil {
-			continue
+			return "", "", fmt.Errorf("find the merge base of HEAD with %s: %w", ref, err)
 		}
-		if base := strings.TrimSpace(out); base != "" {
-			return base, ref, nil
+		base := strings.TrimSpace(out)
+		if base == "" {
+			return "", "", fmt.Errorf("find the merge base of HEAD with %s: git printed no commit", ref)
 		}
+		return base, ref, nil
 	}
 	return "", "", ErrNoBase
+}
+
+// refExists reports whether ref names a commit in the repository at root.
+// `git rev-parse --verify --quiet` exits with status 1 and prints nothing
+// for a ref that does not exist; any other failure is an error.
+func refExists(ctx context.Context, root, ref string) (bool, error) {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && exit.ExitCode() == 1 && strings.TrimSpace(stderr.String()) == "" {
+		return false, nil
+	}
+	return false, fmt.Errorf("git rev-parse --verify --quiet %s^{commit}: %w: %s", ref, err, strings.TrimSpace(stderr.String()))
 }
 
 // ChangedGoLines returns, for each Go file the working tree adds or
