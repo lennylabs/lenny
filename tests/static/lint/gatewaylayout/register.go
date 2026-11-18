@@ -3,6 +3,7 @@
 package gatewaylayout
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"regexp"
@@ -38,19 +39,27 @@ type ImportRow struct {
 	RemovedBy string `yaml:"removed-by,omitempty"`
 }
 
-// LoadRegister reads and decodes a register file. Unknown keys are refused,
-// so a misspelled key cannot silently drop a row's step.
+// LoadRegister reads and decodes a register file.
 func LoadRegister(path string) (Register, error) {
-	f, err := os.Open(path)
+	data, err := os.ReadFile(path)
 	if err != nil {
 		return Register{}, err
 	}
-	defer f.Close()
+	r, err := ParseRegister(data)
+	if err != nil {
+		return Register{}, fmt.Errorf("decode %s: %w", path, err)
+	}
+	return r, nil
+}
+
+// ParseRegister decodes a register. Unknown keys are refused, so a
+// misspelled key cannot silently drop a row's step.
+func ParseRegister(data []byte) (Register, error) {
 	var r Register
-	dec := yaml.NewDecoder(f)
+	dec := yaml.NewDecoder(bytes.NewReader(data))
 	dec.KnownFields(true)
 	if err := dec.Decode(&r); err != nil {
-		return Register{}, fmt.Errorf("decode %s: %w", path, err)
+		return Register{}, err
 	}
 	return r, nil
 }

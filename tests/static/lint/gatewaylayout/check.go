@@ -19,6 +19,7 @@ const (
 	RuleSeamImports          = "seam-imports"
 	RuleCoreImports          = "core-imports"
 	RuleAPIFrontImports      = "api-front-imports"
+	RuleReplicaImports       = "replica-imports"
 	RuleSeamInterfaceImports = "seam-interface-imports"
 	RuleOutsideImports       = "outside-imports"
 	RulePlacement            = "placement"
@@ -27,7 +28,7 @@ const (
 func knownRule(rule string) bool {
 	switch rule {
 	case RuleSeamImports, RuleCoreImports, RuleAPIFrontImports,
-		RuleSeamInterfaceImports, RuleOutsideImports:
+		RuleReplicaImports, RuleSeamInterfaceImports, RuleOutsideImports:
 		return true
 	}
 	return false
@@ -200,6 +201,10 @@ func (c *checker) importRule(from string, kind Kind, to string) string {
 	case KindAPIFront:
 		if toKind == KindSeam || toKind == KindCore {
 			return RuleAPIFrontImports
+		}
+	case KindReplica:
+		if toKind == KindSeam {
+			return RuleReplicaImports
 		}
 	case KindSeamInterface:
 		if toKind != KindSeamInterface {

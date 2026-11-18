@@ -17,6 +17,8 @@
 //     API front package;
 //   - api-front-imports: an API front package imports no seam package and
 //     no session core package;
+//   - replica-imports: a package of another replica-level part, or of the
+//     web playground, imports no seam package;
 //   - seam-interface-imports: the seam interface imports nothing else under
 //     pkg/gateway;
 //   - outside-imports: no package outside pkg/gateway and cmd/lenny-gateway

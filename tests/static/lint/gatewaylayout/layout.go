@@ -20,8 +20,8 @@ const (
 	// KindAPIFront is a package of the API front.
 	KindAPIFront
 	// KindReplica is a package of a replica-level part other than the API
-	// front, or of the web playground. The rules do not constrain its
-	// imports.
+	// front, or of the web playground. It may import the session core and
+	// the seam interface, and no seam.
 	KindReplica
 	// KindDomain is a registered package that leaves pkg/gateway.
 	KindDomain

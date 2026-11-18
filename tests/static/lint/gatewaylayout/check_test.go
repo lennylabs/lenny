@@ -134,6 +134,14 @@ func TestEachRuleRefusesTheImportThatBreaksIt(t *testing.T) {
 			Violation{RuleSeamInterfaceImports, "pkg/gateway/seam/values", "pkg/gateway/drain"},
 		},
 		{
+			"a replica-level part imports a seam", pkg("pkg/gateway/drain/prestop", "pkg/gateway/streamproxy/bus"),
+			Violation{RuleReplicaImports, "pkg/gateway/drain/prestop", "pkg/gateway/streamproxy/bus"},
+		},
+		{
+			"the playground imports a seam", pkg("pkg/gateway/playground", "pkg/gateway/platformtools/mcp"),
+			Violation{RuleReplicaImports, "pkg/gateway/playground", "pkg/gateway/platformtools/mcp"},
+		},
+		{
 			"another component imports the core", pkg("pkg/podregistry", "pkg/gateway/core/podclaim"),
 			Violation{RuleOutsideImports, "pkg/podregistry", "pkg/gateway/core/podclaim"},
 		},
@@ -382,5 +390,82 @@ func writeFile(t *testing.T, path, content string) {
 	}
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		t.Fatal(err)
+	}
+}
+
+// TestRatchetAcceptsDeletionsAndMovesAndRefusesNewRows checks the
+// register's ratchet against its merge-base copy.
+// spec: GW-R1
+func TestRatchetAcceptsDeletionsAndMovesAndRefusesNewRows(t *testing.T) {
+	base := Register{Version: 1, Packages: []PackageRow{
+		{Package: "pkg/gateway/llmproxy/llmproxy", Part: "metering-proxy", Step: "0117.S3"},
+		{Package: "pkg/gateway/session/sessionevents", Part: "stream-proxy", Step: "0117.S6"},
+		{Package: "pkg/gateway/core/semver", Part: PartDomain, Step: "0117.S4"},
+	}, Imports: []ImportRow{
+		{From: "pkg/gateway/mcpfabric/mcp", To: "pkg/gateway/session/sessionevents", Rule: RuleSeamImports, Step: "0117.S6"},
+		{From: "pkg/gateway/sessionserver", To: "pkg/gateway/mcpfabric/mcp", Rule: RuleCoreImports, Step: "0117.S7"},
+	}}
+	moves := []Move{
+		{Old: "pkg/gateway/session/sessionevents", New: "pkg/gateway/streamproxy/sessionevents", Step: "0117.S6"},
+		{Old: "pkg/gateway/mcpfabric/mcptools", New: "pkg/gateway/platformtools/mcptools", Step: "0117.S7"},
+	}
+
+	// Unchanged, deleted, and move-rewritten rows pass, and so does a row
+	// a pre-existing transit package keeps inside a table directory.
+	current := Register{Version: 1, Packages: base.Packages[2:], Imports: []ImportRow{
+		{From: "pkg/gateway/sessionserver", To: "pkg/gateway/mcpfabric/mcp", Rule: RuleCoreImports, Step: "0117.S7"},
+	}}
+	if got := Ratchet(base, current, moves, Layout); len(got) != 0 {
+		t.Fatalf("deletions were refused: %v", got)
+	}
+	carried := current
+	carried.Imports = append([]ImportRow{}, base.Imports...)
+	carried.Imports[0].To = "pkg/gateway/streamproxy/sessionevents"
+	if got := Ratchet(base, carried, moves, Layout); len(got) != 0 {
+		t.Fatalf("a row whose path a move rewrote was refused: %v", got)
+	}
+
+	// A row the step that moves its package adds passes.
+	atStep := current
+	atStep.Imports = append(atStep.Imports, ImportRow{From: "pkg/gateway/platformtools/mcptools", To: "pkg/gateway/core/session", Rule: RuleSeamImports, Step: "0117.S7"})
+	if got := Ratchet(base, atStep, moves, Layout); len(got) != 0 {
+		t.Fatalf("a row added by the step that moves its package was refused: %v", got)
+	}
+
+	// New rows outside a move are refused, and so is a new transit row
+	// inside a table directory.
+	added := current
+	added.Packages = append(
+		append([]PackageRow{}, current.Packages...),
+		PackageRow{Package: "pkg/gateway/quota/newstore", Part: PartDomain, Step: "0117.S9"},
+		PackageRow{Package: "pkg/gateway/platformtools/mcptools/internal/gen", Part: PartRemoved, RemovedBy: "0138"},
+	)
+	added.Imports = append(added.Imports, ImportRow{From: "pkg/gateway/x", To: "pkg/gateway/y", Rule: RuleCoreImports, Step: "0117.S11"})
+	got := strings.Join(Ratchet(base, added, moves, Layout), "\n")
+	for _, want := range []string{
+		"package row pkg/gateway/quota/newstore: the row is new since the merge base",
+		"package row pkg/gateway/platformtools/mcptools/internal/gen: a removed package sits in pkg/gateway/platformtools",
+		"import row pkg/gateway/x -> pkg/gateway/y: the row is new since the merge base",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ratchet lacks %q in:\n%s", want, got)
+		}
+	}
+
+	// A row whose step changed is new.
+	restepped := Register{Version: 1, Packages: []PackageRow{{Package: "pkg/gateway/llmproxy/llmproxy", Part: "metering-proxy", Step: "0117.S4"}}}
+	if got := Ratchet(base, restepped, moves, Layout); len(got) != 1 {
+		t.Errorf("a re-stepped row was not refused: %v", got)
+	}
+}
+
+// TestParseRegisterRefusesMalformedYAML checks the decoder on bytes.
+func TestParseRegisterRefusesMalformedYAML(t *testing.T) {
+	if _, err := ParseRegister([]byte("version: [")); err == nil {
+		t.Error("malformed YAML parsed")
+	}
+	r, err := ParseRegister([]byte("version: 1\n"))
+	if err != nil || r.Version != 1 {
+		t.Errorf("ParseRegister = %+v, %v", r, err)
 	}
 }
