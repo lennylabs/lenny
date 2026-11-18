@@ -30,7 +30,7 @@ The operations are grouped by the party that serves them and the parties that ca
 
 - **Package.** Each operation is a method of a Go interface in the package `pkg/gateway/seam`, which imports no other package of the gateway.
 - **Identifiers.** Each operation is identified `GWSEAM-<method>`, where the method is the Go method that declares it. The `path` field of each operation's block names the Go interface that declares it. Package documentation holds the Go signatures.
-- **Context.** Every operation that reads or writes state, blocks, or reaches another replica takes the caller's context and honors its cancellation.
+- **Context.** Every operation that reads or writes state, blocks, or reaches another replica takes the caller's context and honors its cancellation. An operation that returns at once and runs its work on the serving part's own context, such as [`GWSEAM-StampActivity`](#gwseam-stampactivity) and [`GWSEAM-ExpireSession`](#gwseam-expiresession), takes no caller context.
 - **Errors.** An operation reports a failure the caller branches on as one of the errors the `returns` field of its block names. The package `pkg/gateway/seam` declares each of them. A `Refusal` carries a client API error code with its message and details. It is not transient: the caller reports it as it came and does not retry the operation. Any other error is a transient failure the caller reports as such.
 - **Authorization.** An operation trusts the identity that its caller's context carries. A seam that serves a client request resolves the caller's authorization through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession) before it reads or writes the session.
 - **Values.** The operations carry values that the package `pkg/gateway/seam` declares or that packages outside the gateway declare, and no value that a package of another part declares. A session crosses the boundary as a session record: its identifier, tenant, owning user, parent and root sessions, runtime, pool, state, and the sequence number of its last event.
@@ -859,7 +859,7 @@ summary: Returns the deployment floor that elicitation settings may not go below
 
 ## Operations served by the metering proxy
 
-The metering proxy serves these operations. The session core calls [`GWSEAM-ForgetBudget`](#gwseam-forgetbudget) and [`GWSEAM-TrackedBudgetSessions`](#gwseam-trackedbudgetsessions), and the platform tools seam calls [`GWSEAM-RaiseBudget`](#gwseam-raisebudget) and [`GWSEAM-TerminateForBudget`](#gwseam-terminateforbudget) when a budget extension resolves.
+The metering proxy serves these operations. The session core calls [`GWSEAM-ForgetBudget`](#gwseam-forgetbudget) and [`GWSEAM-TrackedBudgetSessions`](#gwseam-trackedbudgetsessions), and the platform tools seam calls [`GWSEAM-RaiseBudget`](#gwseam-raisebudget) and [`GWSEAM-TerminateForBudget`](#gwseam-terminateforbudget) when a budget extension resolves. Each pair is an interface of its own, so neither caller holds the other's operations.
 
 <a id="gwseam-forgetbudget"></a>
 
@@ -867,7 +867,7 @@ The metering proxy serves these operations. The session core calls [`GWSEAM-Forg
 kind: operation
 name: ForgetBudget
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetTracking
 requirements: [GW-R1]
 summary: Discards the metering proxy's budget state for a session that ended.
 ```
@@ -878,7 +878,7 @@ summary: Discards the metering proxy's budget state for a session that ended.
 kind: operation
 name: TrackedBudgetSessions
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetTracking
 requirements: [GW-R1]
 summary: Returns the sessions for which the metering proxy holds budget state.
 ```
@@ -889,7 +889,7 @@ summary: Returns the sessions for which the metering proxy holds budget state.
 kind: operation
 name: RaiseBudget
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetResolutions
 requirements: [GW-R1]
 summary: Raises a session's budget by a granted amount.
 ```
@@ -900,7 +900,7 @@ summary: Raises a session's budget by a granted amount.
 kind: operation
 name: TerminateForBudget
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetResolutions
 requirements: [GW-R1]
 summary: Ends a session whose budget extension was refused.
 ```
