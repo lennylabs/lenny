@@ -945,7 +945,7 @@ func runStaticTier() (string, string, *tierResult) {
 			out, err := exec.Command(self, "validate-diagnosis").CombinedOutput()
 			return string(out), err
 		}},
-		{name: "validate", run: func() (string, error) {
+		{name: "lenny-test validate", run: func() (string, error) {
 			// The selection and register files parse and resolve, and
 			// every component-and-up test carries a spec annotation.
 			self, err := os.Executable()
