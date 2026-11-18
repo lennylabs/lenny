@@ -140,7 +140,8 @@ func runGvisorFetch(t *testing.T, section, dir, serve string) (string, bool, []s
 		section +
 		"\ntree=\"$(fetch_gvisor_release aarch64)\"\necho \"FETCHED ${tree}\"\n"
 	cmd := exec.Command("bash", "-c", script)
-	cmd.Env = append(os.Environ(),
+	cmd.Env = append(
+		os.Environ(),
 		"PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"),
 		"STUB_SERVE="+serve,
 		"STUB_LOG="+calls,
