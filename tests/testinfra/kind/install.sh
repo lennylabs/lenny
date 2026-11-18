@@ -646,16 +646,38 @@ if [[ "${LENNY_SKIP_BUILD:-}" != "1" ]]; then
   # External prebuilt images: the S3 server and client the data-store
   # fixtures and the chart's bucket-lifecycle Job run. Each is pulled by
   # its digest-pinned reference, tagged locally as <repo>:<tag> (a pull by
-  # digest leaves the image untagged, and `kind load` loads by name), and
-  # loaded onto the nodes that lack it. Step 2c registers the
-  # digest-pinned name on every node.
+  # digest leaves the image untagged), and loaded onto the nodes that lack
+  # it. Step 2c registers the digest-pinned name on every node.
+  #
+  # Each is a multi-platform image. Docker's containerd image store keeps
+  # the whole OCI index after a pull but only the host platform's layers,
+  # and `kind load docker-image` imports with --all-platforms, so the
+  # import fails on the first absent layer ("content digest ... not
+  # found"). The image is therefore saved for the node platform alone with
+  # `docker save --platform` and loaded as an archive, which holds every
+  # layer it references. Kind nodes run on the Docker server's platform.
+  ext_platform="linux/$(docker version --format '{{.Server.Arch}}')"
   for img in "${EXTERNAL_IMAGES[@]}"; do
     if ! docker image inspect "${img}" >/dev/null 2>&1; then
       log "pulling external image ${img}"
-      docker pull "${img}"
+      docker pull --platform "${ext_platform}" "${img}"
     fi
     docker tag "${img}" "${img%@*}"
-    kind load docker-image --name "${CLUSTER}" "${img%@*}"
+    lacking=()
+    for node in ${nodes}; do
+      if ! docker exec "${node}" ctr -n k8s.io images ls -q 2>/dev/null |
+        grep -qxF "docker.io/${img%@*}"; then
+        lacking+=("${node}")
+      fi
+    done
+    if ((${#lacking[@]} > 0)); then
+      log "loading external image ${img%@*} (${ext_platform}) onto ${lacking[*]}"
+      ext_archive="$(mktemp)"
+      docker save --platform "${ext_platform}" -o "${ext_archive}" "${img%@*}"
+      ext_nodes="${lacking[*]}"
+      kind load image-archive --name "${CLUSTER}" --nodes "${ext_nodes// /,}" "${ext_archive}"
+      rm -f "${ext_archive}"
+    fi
   done
 
   # The §13.2 dedicated CoreDNS image (ghcr.io/lennylabs/lenny-coredns) is
