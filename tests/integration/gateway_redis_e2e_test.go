@@ -24,6 +24,13 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )
 
+// TestGatewayRedisBreakerE2E confirms that a circuit breaker opened
+// through the admin API is stored in Redis with its runtime scope.
+//
+// spec: §11.6 (Circuit Breakers)
+// diagnosis: opening a circuit breaker through the admin API did not
+// leave an open breaker record with its runtime scope in Redis, so the
+// gateway replicas do not share the breaker state.
 func TestGatewayRedisBreakerE2E(t *testing.T) {
 	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
@@ -76,6 +83,11 @@ func TestGatewayRedisBreakerE2E(t *testing.T) {
 // coordination sweeper is wired: a session created through the gateway
 // acquires its coordination lease in Redis within a sweep interval,
 // held by the gateway replica.
+//
+// spec: §10.1.1 (Stateless Replicas and Per-Session Coordination)
+// diagnosis: a session created through the gateway did not acquire its
+// coordination lease in Redis within a sweep interval, so no replica
+// holds the session's coordination.
 func TestGatewayRedisCoordinationE2E(t *testing.T) {
 	t.Parallel()
 	gateway.SkipUnlessAvailable(t)

@@ -69,7 +69,7 @@ func mustResolve(t *testing.T, s selector) resolvedSelector {
 // `--changed` and `--since` is scoped to the packages the diff reaches, and
 // selectors compose by intersection)
 func TestTierWithSinceKeepsTheChangedUnitScope(t *testing.T) {
-	stub := useChangedPlan(t, changedFixturePlan(), []string{"1 changed path(s) have no tests/change-graph.json key: X.md"})
+	stub := useChangedPlan(t, changedFixturePlan(), []string{"1 changed path(s) no package owns and no non-Go input row matches: X.md"})
 
 	r := mustResolve(t, selector{tiers: []string{tierUnit}, changed: true, since: "HEAD~3", rdepsDepth: 1})
 	if stub.calls != 1 {

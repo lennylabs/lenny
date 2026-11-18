@@ -16,12 +16,9 @@ import (
 // run moves, and the symbol references it carries for the tokens the run
 // renames.
 //
-// A key is a whole scalar: the path a citation baseline is keyed by, the
-// path a skip-reason baseline files a call site under, the glob key of
-// the change graph, the spec file of a spec-map section, and each member
-// of the arrays that section carries, the `schemas` array among them,
-// which no check existence-checks and which would therefore go stale
-// silently. A residual register's member is a key too, and it is written
+// A key is a whole scalar: the path a citation baseline is keyed by, or
+// the path a skip-reason baseline files a call site under. A residual
+// register's member is a key too, and it is written
 // as the head of a block scalar rather than as a whole scalar, so it has
 // its own rule. A scalar that merely mentions the path inside a wider
 // value is not a key, and is left for the stale-key check to report
@@ -83,19 +80,12 @@ func matchSpans(expr *regexp.Regexp, content string) [][2]int {
 // whole scalar in a register of the carrier's format, each with the
 // delimiters captured either side so the replacement keeps them.
 //
-// The JSON form is the quoted string, in a key position and in an array
-// member alike, together with the `<path>::` prefix of a symbol
-// reference, whose symbol half is rewritten by the symbol rule. The YAML
-// form is the value of a mapping key or of a sequence item, quoted or
-// bare.
+// The YAML form is the value of a mapping key or of a sequence item,
+// quoted or bare. Every path-keyed register is a YAML file under
+// tests/registers/ since change 0116 retired the two JSON maps.
 func scalarExprs(target, path string) []*regexp.Regexp {
 	quoted := regexp.QuoteMeta(path)
 	switch strings.ToLower(filepath.Ext(target)) {
-	case ".json":
-		return []*regexp.Regexp{
-			regexp.MustCompile(`(")` + quoted + `(")`),
-			regexp.MustCompile(`(")` + quoted + `(::)`),
-		}
 	case ".yaml", ".yml":
 		return []*regexp.Regexp{
 			regexp.MustCompile(`(?m)((?:^|[ \t])(?:-[ \t]+)?(?:[A-Za-z0-9_.-]+:[ \t]+)?['"]?)` + quoted + `(['"]?[ \t]*$)`),

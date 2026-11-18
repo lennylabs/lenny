@@ -10,7 +10,7 @@
 # test; after that, nightly invocations of phase-launch-gate fail.
 #
 # The quarantine is capped. `cap` is the largest number of entries the
-# list may hold, and `lenny-test validate-maps` fails while the list holds
+# list may hold, and `lenny-test validate` fails while the list holds
 # more. A test enters quarantine only when it names its owner (the person
 # who fixes or deletes it) and its reason (what the failure is and why it
 # is not a defect in the code under test). When the list is at the cap, a
@@ -21,7 +21,7 @@
 # Every entry also carries an associated issue link and an ETA, per
 # TESTING.md §21.4. The validator that enforces this file is
 # validateFlakeBudgetYAML in cmd/lenny-test, which `lenny-test
-# validate-maps` runs in the static gate.
+# validate` runs in the static gate.
 
 version: 1
 

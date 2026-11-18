@@ -41,7 +41,7 @@ func TestGateBoundsTheChangedSelection(t *testing.T) {
 		t.Run(tc.gate, func(t *testing.T) {
 			useChangedPlan(t, wideChangedPlan(), nil)
 			r := mustResolve(t, selector{changed: true, since: "main", gate: tc.gate})
-			if got := planNames(r.tiers); !reflect.DeepEqual(got, tc.want) && !(len(got) == 0 && len(tc.want) == 0) {
+			if got := planNames(r.tiers); strings.Join(got, ",") != strings.Join(tc.want, ",") {
 				t.Errorf("--gate %s kept %v; want %v", tc.gate, got, tc.want)
 			}
 			for _, p := range r.tiers {

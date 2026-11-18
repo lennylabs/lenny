@@ -469,84 +469,36 @@ func TestSpecsPlanRefusesAnUnknownQuery(t *testing.T) {
 	}
 }
 
-// specMapFixture adds a spec map to the fixture: section 5.2 lists a
-// security test and a unit test the annotations do not name, and key
-// 6.5, which names no numbered heading, lists a component test.
-func specMapFixture() specTree {
+// TestSpecSelectionIgnoresARetiredSpecMap pins that list --spec and
+// run --spec read the annotation index alone since change 0116 retired
+// tests/spec-map.json (CS-9): a stray map file in the tree adds no test,
+// selects no tier, keeps the unit tier's package scope, and makes no
+// section number known that names no numbered heading.
+func TestSpecSelectionIgnoresARetiredSpecMap(t *testing.T) {
+	t.Parallel()
 	tree := specFixture()
 	tree["tests/spec-map.json"] = `{"version": 1, "sections": {
   "5.2": {"tests": ["tests/security/pool_test.go::TestFloorIsolation", "pkg/pool/floor_test.go::TestFloorMath"]},
-  "6.5": {"tests": ["tests/component/other/other_test.go::TestOther"]},
-  "5.3": {"tests": []}
+  "6.5": {"tests": ["tests/component/other/other_test.go::TestOther"]}
 }}`
-	return tree
-}
-
-func TestSpecSelectionIsTheUnionOfTheIndexAndTheSpecMap(t *testing.T) {
-	t.Parallel()
-	m := fixtureModel(t, specMapFixture())
+	m := fixtureModel(t, tree)
 	plan, err := specsPlanIn(m, []string{sec + "5.2"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := map[string][]string{}
-	var tiers []string
-	for _, p := range plan {
-		tiers = append(tiers, p.name)
-		got[p.name] = p.tests
-		if p.name == tierUnit && p.pkgs != nil {
-			t.Errorf("the spec map lists a unit test, so the unit tier runs whole as before the index: %v", p.pkgs)
-		}
+	if len(plan) != 1 || plan[0].name != tierUnit || !reflect.DeepEqual(plan[0].pkgs, []string{"./pkg/pool"}) {
+		t.Errorf("--spec 5.2 = %+v; want the unit tier scoped to ./pkg/pool", plan)
 	}
-	if want := []string{"unit", "security"}; !reflect.DeepEqual(tiers, want) {
-		t.Fatalf("tiers: got %v, want %v", tiers, want)
+	if _, err := specsPlanIn(m, []string{"6.5"}); err == nil {
+		t.Errorf("a section number with no numbered heading resolved through the retired map")
 	}
-	if want := []string{"pkg/pool/claim_test.go::TestFloor", "pkg/pool/floor_test.go::TestFloorMath"}; !reflect.DeepEqual(got[tierUnit], want) {
-		t.Errorf("unit tests: got %v, want %v", got[tierUnit], want)
+	listed, err := testsForSpecIn(m, []string{"5.2"})
+	if err != nil || !reflect.DeepEqual(listed, []string{"pkg/pool/claim_test.go::TestFloor"}) {
+		t.Errorf("list --spec 5.2 = %v, %v", listed, err)
 	}
-	plan, err = specsPlanIn(m, []string{"6.5"})
-	if err != nil || len(plan) != 1 || plan[0].name != "component" {
-		t.Errorf("a spec-map key with no numbered heading still resolves: %+v, %v", plan, err)
-	}
-	plan, err = specsPlanIn(m, []string{"POOL", "5.3"})
-	if err != nil || plan[0].name != tierUnit || plan[0].pkgs != nil {
-		t.Errorf("a spec-map key whose entries name no tier runs the whole unit tier: %+v, %v", plan, err)
-	}
-	listed, err := testsForSpecIn(m, []string{"5.2", "6.5"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	want := []string{
-		"pkg/pool/claim_test.go::TestFloor",
-		"tests/security/pool_test.go::TestFloorIsolation",
-		"pkg/pool/floor_test.go::TestFloorMath",
-		"tests/component/other/other_test.go::TestOther",
-	}
-	if !reflect.DeepEqual(listed, want) {
-		t.Errorf("list --spec: got %v, want %v", listed, want)
-	}
-}
-
-func TestSpecSelectionKeepsTheIndexScopeWhenTheMapListsNoUnitTest(t *testing.T) {
-	t.Parallel()
-	tree := specMapFixture()
-	tree["tests/spec-map.json"] = `{"version": 1, "sections": {"5.2": {"tests": ["tests/security/pool_test.go::TestFloorIsolation"]}}}`
-	m := fixtureModel(t, tree)
-	plan, err := specsPlanIn(m, []string{"5.2"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if plan[0].name != tierUnit || !reflect.DeepEqual(plan[0].pkgs, []string{"./pkg/pool"}) {
-		t.Errorf("unit scope: %+v", plan[0])
-	}
-}
-
-func TestModelRefusesASpecMapThatDoesNotParse(t *testing.T) {
-	t.Parallel()
-	tree := specFixture()
 	tree["tests/spec-map.json"] = "{"
-	if _, err := buildSpecModel(context.Background(), tree.list, tree.read); err == nil {
-		t.Fatal("a spec map that does not parse is an error")
+	if _, err := buildSpecModel(context.Background(), tree.list, tree.read); err != nil {
+		t.Errorf("a map file that does not parse fails the model, which no longer reads it: %v", err)
 	}
 }
 

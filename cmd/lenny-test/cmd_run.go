@@ -945,15 +945,14 @@ func runStaticTier() (string, string, *tierResult) {
 			out, err := exec.Command(self, "validate-diagnosis").CombinedOutput()
 			return string(out), err
 		}},
-		{name: "validate-maps", run: func() (string, error) {
-			// §5 spec-map integrity: spec_file existence,
-			// change-graph file existence, every component-and-later test file
-			// appears in spec-map.
+		{name: "validate", run: func() (string, error) {
+			// The selection and register files parse and resolve, and
+			// every component-and-up test carries a spec annotation.
 			self, err := os.Executable()
 			if err != nil {
 				return "", fmt.Errorf("locate self: %w", err)
 			}
-			out, err := exec.Command(self, "validate-maps").CombinedOutput()
+			out, err := exec.Command(self, "validate").CombinedOutput()
 			return string(out), err
 		}},
 	}

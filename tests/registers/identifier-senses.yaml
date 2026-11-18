@@ -1001,12 +1001,6 @@ entries:
   - file: sdks/runtime/typescript/src/types.ts
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: tests/spec-map.json
-    occurrence: 1
-    channel: CH-RUNTIMEOPS
-  - file: tests/spec-map.json
-    occurrence: 2
-    channel: CH-RUNTIMEOPS
   - file: tests/static/build/schemas_test.go
     occurrence: 1
     channel: CH-RUNTIMEOPS

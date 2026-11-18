@@ -7,8 +7,8 @@
 #   - file globs (e.g., tests/e2e_kind/sandbox_claim_*_test.go)
 #   - tier-relative suite names (e.g., admission/inventory)
 #
-# The harness resolves patterns against the change graph and the discovered
-# test list. Unresolved patterns fail `lenny-test validate-maps`.
+# The harness resolves patterns against the discovered test list.
+# Unresolved patterns fail `lenny-test validate`.
 
 version: 1
 

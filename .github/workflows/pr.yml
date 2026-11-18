@@ -109,7 +109,7 @@ jobs:
       - name: Build lenny-test
         run: go build -o bin/lenny-test ./cmd/lenny-test
       - name: Validate maps
-        run: ./bin/lenny-test validate-maps
+        run: ./bin/lenny-test validate
       - name: Validate diagnosis coverage
         run: ./bin/lenny-test validate-diagnosis
       - name: Run static tier

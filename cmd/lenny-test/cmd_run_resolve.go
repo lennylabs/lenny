@@ -80,10 +80,10 @@ func baseNonGoInputs(ctx context.Context, root, ref string) *nonGoInputs {
 }
 
 // resolveSpecsPlan resolves identifiers, page codes, and numbered
-// sections to the tests the annotation index and the spec map name for
-// them (see specModel.selectFor), and plans the tiers of those tests. The
-// notes carry a model that could not load; the error names each query
-// the tree does not know.
+// sections to the tests the annotation index names for them (see
+// specModel.testsFor), and plans the tiers of those tests. The notes
+// carry a model that could not load; the error names each query the
+// tree does not know.
 func resolveSpecsPlan(specs []string) ([]tierPlan, []string, error) {
 	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
@@ -95,48 +95,26 @@ func resolveSpecsPlan(specs []string) ([]tierPlan, []string, error) {
 }
 
 // specsPlanIn is resolveSpecsPlan over a loaded model. Each tier that
-// holds a selected test runs, and lists its tests. The unit tier runs
-// whole when the spec map lists a unit test for a query, or carries the
-// query as a key whose entries name no tier, as it did before the index,
-// and is otherwise scoped to the packages of the unit tests
-// the index resolved. When no test resolves, the unit tier runs whole, so
-// the selection still gives feedback. A query that neither the index nor
-// the spec map knows fails the selection.
+// holds a selected test runs, and lists its tests. The unit tier is
+// scoped to the packages of the unit tests the index resolved. When no
+// test resolves, the unit tier runs whole, so the selection still gives
+// feedback. A query the index does not know fails the selection.
 func specsPlanIn(m *specModel, specs []string) ([]tierPlan, error) {
 	byTier := map[string][]string{}
 	unitPkgs := map[string]bool{}
-	unitWhole := false
 	var unknown []string
 	for _, q := range specs {
-		sel, ok := m.selectFor(q)
+		tests, ok := m.testsFor(q)
 		if !ok {
 			unknown = append(unknown, q)
 			continue
 		}
-		for _, t := range sel.tests {
+		for _, t := range tests {
 			tier := testTier(t)
 			byTier[tier] = append(byTier[tier], t.String())
 			if tier == tierUnit {
 				unitPkgs["./"+t.Dir] = true
 			}
-		}
-		mappedTiers := 0
-		for _, entry := range sel.mapped {
-			tier := inferTierFromPath(entry)
-			if tier == "" {
-				continue
-			}
-			mappedTiers++
-			byTier[tier] = append(byTier[tier], entry)
-			unitWhole = unitWhole || tier == tierUnit
-		}
-		// A spec-map key whose entries name no tier ran the whole unit
-		// tier before the index, so it still does.
-		if sel.inMap && mappedTiers == 0 {
-			if _, ok := byTier[tierUnit]; !ok {
-				byTier[tierUnit] = []string{}
-			}
-			unitWhole = true
 		}
 	}
 	if len(unknown) > 0 {
@@ -152,7 +130,7 @@ func specsPlanIn(m *specModel, specs []string) ([]tierPlan, error) {
 	plan := planFromTierSet(tiers)
 	for i := range plan {
 		plan[i].tests = dedupeStrings(byTier[plan[i].name])
-		if plan[i].name == tierUnit && !unitWhole {
+		if plan[i].name == tierUnit {
 			plan[i].pkgs = collapsePatterns(unitPkgs)
 		}
 	}
@@ -160,9 +138,9 @@ func specsPlanIn(m *specModel, specs []string) ([]tierPlan, error) {
 }
 
 // unknownSpecQueries is the error for --spec queries that name no
-// identifier, page code, numbered section, or spec-map key.
+// identifier, page code, or numbered section.
 func unknownSpecQueries(queries []string) error {
-	return fmt.Errorf("--spec %s: not a registered identifier, page code, numbered section, or spec-map key", strings.Join(queries, ", "))
+	return fmt.Errorf("--spec %s: not a registered identifier, page code, or numbered section", strings.Join(queries, ", "))
 }
 
 // dedupeStrings drops repeated values and keeps the first order.
@@ -302,7 +280,7 @@ func planFromTierSet(tiers map[string]bool) []tierPlan {
 // (--changed, --spec, --pkg) produced, in canonical tier order, with the
 // tests each tier listed. A tier's package scope and the test functions
 // it runs by name are the union of the contributors'; an unscoped
-// contributor (nil pkgs, such as --spec when the spec map lists a unit
+// contributor (nil pkgs, such as --spec when the index resolves no unit
 // test for a query, or a tier a selection runs whole) makes the merged
 // tier unscoped, and --all makes the unit tier unscoped, so a merge never
 // narrows what any one selector asked to run.

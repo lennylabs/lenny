@@ -12,9 +12,9 @@ import (
 	"github.com/lennylabs/lenny/scripts/refactor/rewrite"
 )
 
-// These tests exercise the driver orchestration (git mv, tree rewrite, JSON
+// These tests exercise the driver orchestration (git mv, tree rewrite, register
 // rewrite, audit) against a throwaway temp git repo, with the go-build/vet/
-// validate-maps gates skipped (the temp tree is not the real module, so those
+// validate gates skipped (the temp tree is not the real module, so those
 // gates do not apply; the pure-rewrite correctness is pinned in the rewrite
 // package's unit tests). They are unit tests over the driver's wiring.
 //
@@ -22,8 +22,8 @@ import (
 // boundary-anchored path rewrites; the driver executes it reproducibly).
 
 // initTempRepo lays out a minimal repo: a moved package directory, a Go file
-// importing it (and reading it by runtime path), and the two JSON maps naming
-// it. It returns the repo root.
+// importing it (and reading it by runtime path), and a register naming it.
+// It returns the repo root.
 func initTempRepo(t *testing.T) string {
 	t.Helper()
 	root := t.TempDir()
@@ -55,10 +55,8 @@ func init() {
 `
 	writeFile(t, filepath.Join(root, "pkg", "consumer", "consumer.go"), consumer)
 
-	writeFile(t, filepath.Join(root, "tests", "spec-map.json"),
-		"{\n  \"packages\": [\n    \"pkg/gateway/playground/...\",\n    \"pkg/gateway/playground/token_test.go\"\n  ]\n}\n")
-	writeFile(t, filepath.Join(root, "tests", "change-graph.json"),
-		"{\n  \"globs\": {\n    \"pkg/gateway/playground\": {\n      \"unit\": [\"pkg/gateway/playground/...\"]\n    }\n  }\n}\n")
+	writeFile(t, filepath.Join(root, "tests", "registers", "skip-reasons.yaml"),
+		"kind: skip-reasons\nentries:\n  - path: pkg/gateway/playground/token_test.go\n")
 
 	// A prose file that names the OLD path (should warn) and one that names only
 	// the NEW path (must not warn, guarding the boundary-aware prose check).
@@ -108,17 +106,10 @@ func TestDriver_GitMoveAndRewrite(t *testing.T) {
 		}
 	}
 
-	// JSON maps rewritten.
-	specMap := readFile(t, filepath.Join(root, "tests", "spec-map.json"))
-	if !strings.Contains(specMap, `"pkg/gateway/mcpfabric/playground/..."`) {
-		t.Errorf("spec-map.json glob not rewritten:\n%s", specMap)
-	}
-	if !strings.Contains(specMap, `"pkg/gateway/mcpfabric/playground/token_test.go"`) {
-		t.Errorf("spec-map.json file ref not rewritten:\n%s", specMap)
-	}
-	changeGraph := readFile(t, filepath.Join(root, "tests", "change-graph.json"))
-	if !strings.Contains(changeGraph, `"pkg/gateway/mcpfabric/playground"`) {
-		t.Errorf("change-graph.json key not rewritten:\n%s", changeGraph)
+	// The register keyed by package path rewritten.
+	register := readFile(t, filepath.Join(root, "tests", "registers", "skip-reasons.yaml"))
+	if !strings.Contains(register, "path: pkg/gateway/mcpfabric/playground/token_test.go") {
+		t.Errorf("skip-reasons.yaml path not rewritten:\n%s", register)
 	}
 }
 
@@ -143,7 +134,7 @@ func TestDriver_AuditAbortsOnSurvivingGoLiteral(t *testing.T) {
 
 // rollback: a gate failure must roll the move back, restoring the working tree
 // to the pre-move (committed) state, rather than leaving the staged git mv and
-// the *.go/JSON rewrites in place for the operator to undo by hand (proposal §2:
+// the *.go and register rewrites in place for the operator to undo by hand (proposal §2:
 // a failed gate "aborts and rolls back that one move"; §6: "A move that fails any
 // check is rolled back"). The temp repo has no go.mod, so the go build gate fails
 // deterministically; after execute returns the error, the moved directory must
@@ -247,71 +238,6 @@ func TestDriver_RefusesDirtyTree(t *testing.T) {
 	}
 }
 
-// The audit must abort when a JSON map still names a moved path.
-func TestDriver_AuditAbortsOnSurvivingJSONToken(t *testing.T) {
-	root := initTempRepo(t)
-	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: true, skipAudit: true}}
-	// Do NOT run the rewrite; the JSON still carries the old token. git-move
-	// only, then audit.
-	if err := d.gitMove(testModuleMove()); err != nil {
-		t.Fatalf("gitMove: %v", err)
-	}
-	if err := d.audit(); err == nil {
-		t.Fatal("audit must abort on a surviving JSON token")
-	}
-}
-
-// The JSON audit must record an informational-string occurrence of a moved path
-// inside a "notes" value as a warning (not abort, not silently drop it), the
-// same way the *.go and prose surfaces are handled (proposal 0020 §4 C4). The
-// driver's JSONTokens rewrites only quote/slash-bounded tokens, so a path inside
-// a "notes" sentence (bounded by a space or '.') survives by design and must be
-// surfaced for the manual sweep. This is constructed to FAIL against the pre-fix
-// auditJSONMaps, which collected only Abort results and dropped the warning.
-func TestDriver_AuditJSONMapsWarnsOnInformationalNote(t *testing.T) {
-	root := initTempRepo(t)
-	d := &driver{root: root, moves: []rewrite.Move{testModuleMove()}, cfg: config{skipGates: true, skipAudit: true}}
-
-	// Rewrite the maps cleanly first so the quote/slash-bounded tokens are gone
-	// and only an informational "notes" reference remains stale. Append the note
-	// after the move+rewrite, then assert auditJSONMaps warns and does not abort.
-	if err := d.gitMove(testModuleMove()); err != nil {
-		t.Fatalf("gitMove: %v", err)
-	}
-	if err := d.rewriteTree(); err != nil {
-		t.Fatalf("rewriteTree: %v", err)
-	}
-
-	// Inject a stale informational reference into spec-map.json's content. The
-	// token sits inside a sentence bounded by a space and a period, the form the
-	// driver provably cannot rewrite.
-	specMapPath := filepath.Join(root, "tests", "spec-map.json")
-	note := "{\n  \"notes\": \"the writer pkg/gateway/playground persists the row.\"\n}\n"
-	writeFile(t, specMapPath, note)
-
-	aborts, warns, err := d.auditJSONMaps()
-	if err != nil {
-		t.Fatalf("auditJSONMaps: %v", err)
-	}
-	if len(aborts) != 0 {
-		t.Fatalf("informational JSON note must not abort; aborts=%v", aborts)
-	}
-	var sawWarn bool
-	for _, w := range warns {
-		if strings.HasPrefix(w, "tests/spec-map.json") && strings.Contains(w, "pkg/gateway/playground") {
-			sawWarn = true
-		}
-	}
-	if !sawWarn {
-		t.Fatalf("auditJSONMaps must warn on the stale informational note; warns=%v", warns)
-	}
-
-	// The full audit must surface the warning and still pass (no abort).
-	if err := d.audit(); err != nil {
-		t.Fatalf("audit must pass with only an informational JSON warning; got %v", err)
-	}
-}
-
 // The audit must NOT abort on a comment-form occurrence, and must record it as a
 // warning. A clean post-rewrite tree with a stale comment passes the audit.
 func TestDriver_AuditWarnsButDoesNotAbortOnComment(t *testing.T) {
@@ -365,11 +291,11 @@ func TestDriver_ProseAuditBoundaryAware(t *testing.T) {
 // fixtures (which carry literal "...pkg/gateway/<pkg>" strings as test data) nor
 // flags them as stale references. This is constructed to FAIL against the
 // pre-fix walks, which descended into every directory and would have rewritten
-// the fixture's import literal and JSON token.
+// the fixture's import literal and path token.
 func TestDriver_SkipsOwnRefactorSubtree(t *testing.T) {
 	root := initTempRepo(t)
 
-	// Lay down a driver-package fixture that names the moved leaf and its JSON
+	// Lay down a driver-package fixture that names the moved leaf and its path
 	// token as test data, the way scripts/refactor/rewrite/rewrite_test.go does.
 	fixture := filepath.Join(root, "scripts", "refactor", "rewrite", "fixture_test.go")
 	fixtureSrc := "package rewrite\n\n" +

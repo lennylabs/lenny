@@ -136,8 +136,8 @@ pr-full: install ## Run the full pr group (everything that runs on every push)
 	@lenny-test --group pr --output human
 
 .PHONY: validate
-validate: install ## Run validate-maps and validate-diagnosis
-	@lenny-test validate-maps
+validate: install ## Run validate and validate-diagnosis
+	@lenny-test validate
 	@lenny-test validate-diagnosis
 
 .PHONY: lint

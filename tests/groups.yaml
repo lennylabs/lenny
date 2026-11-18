@@ -84,7 +84,7 @@ groups:
     selectors:
       tiers: [static, docs]
       additional_checks:
-        - validate-maps
+        - validate
         - validate-diagnosis
 
   phase-1-gate:
@@ -407,7 +407,7 @@ groups:
         - tier: load_kind
           subset: tthw
       additional_checks:
-        - validate-maps
+        - validate
         - validate-diagnosis
         - adr-catalog-intact
 

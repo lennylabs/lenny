@@ -71,10 +71,6 @@ type specModel struct {
 	headings []ref.NumberedHeading
 	heading  map[string]*ref.NumberedHeading
 	issues   []issueRecord
-	// specMap holds the test entries of each key of tests/spec-map.json.
-	// Selection by specification reads it beside the index until change
-	// 0116 retires the map (see testsFor).
-	specMap map[string][]string
 	// resolver answers whether a cited identifier is live; nil when the
 	// tree carries no registry.
 	resolver *annotation.Registry
@@ -102,9 +98,6 @@ func buildSpecModel(ctx context.Context, list scope.Lister, read scope.FileReade
 	}
 	if m.resolver != nil {
 		m.resolver.AddIssuePaths(all)
-	}
-	if err := m.loadSpecMap(read); err != nil {
-		return nil, err
 	}
 	sort.Strings(all)
 	for _, p := range all {
@@ -173,35 +166,6 @@ func (m *specModel) loadRegistry(read scope.FileReader) error {
 		it := &m.items[i]
 		m.itemOf[strings.ToLower(it.ID)] = it
 		m.itemOf[strings.ToLower(it.Anchor)] = it
-	}
-	return nil
-}
-
-// specMapPath is the hand-kept map from section numbers to tests that
-// change 0116 retires once the coverage view is shown equivalent.
-const specMapPath = "tests/spec-map.json"
-
-// loadSpecMap reads the test entries of each key of the spec map. A tree
-// without the map has none.
-func (m *specModel) loadSpecMap(read scope.FileReader) error {
-	data, err := read(specMapPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("read %s: %w", specMapPath, err)
-	}
-	var doc struct {
-		Sections map[string]struct {
-			Tests []string `json:"tests"`
-		} `json:"sections"`
-	}
-	if err := json.Unmarshal(data, &doc); err != nil {
-		return fmt.Errorf("parse %s: %w", specMapPath, err)
-	}
-	m.specMap = map[string][]string{}
-	for key, sec := range doc.Sections {
-		m.specMap[key] = sec.Tests
 	}
 	return nil
 }
@@ -446,32 +410,6 @@ func sectionQuery(q string) (string, bool) {
 		}
 	}
 	return n, true
-}
-
-// specSelection is what one query of `list --spec` or `run --spec`
-// selects: the tests the annotation index resolves, and the entries the
-// spec map lists under the query's section number.
-type specSelection struct {
-	tests  []annotation.TestFunc
-	mapped []string
-	// inMap reports whether the spec map carries the query as a key.
-	inMap bool
-}
-
-// selectFor resolves one query to the union of the index and the spec
-// map, so that no query selects less than the spec map did before the
-// index (change 0116, step S1). The union ends when step S6 shows the
-// coverage view equivalent and deletes the map. It reports false for a
-// query that neither names.
-func (m *specModel) selectFor(q string) (specSelection, bool) {
-	tests, indexed := m.testsFor(q)
-	sel := specSelection{tests: tests}
-	mapped, inMap := m.specMap[strings.TrimSpace(q)]
-	if n, ok := sectionQuery(q); ok {
-		mapped, inMap = m.specMap[n]
-	}
-	sel.mapped, sel.inMap = mapped, inMap
-	return sel, indexed || inMap
 }
 
 // testsFor resolves one query of `list --spec` or `run --spec` to the
