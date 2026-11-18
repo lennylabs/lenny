@@ -2,7 +2,32 @@
 
 ## Open decisions
 
-None.
+21. **The metrics a seam emits.** The wiring check counts the gateway's metric set (`replica/gatewaymetrics`) handed to a seam's metrics interface as a crossing, because a seam may not import a replica-level part. The seam interface page said each part emits its metrics through a metrics interface it declares, which the gateway's metric set satisfies. The register carried five such rows into the metering proxy at 0117.S4, and the stream proxy, the upload handler, and the platform tools seam meet the same question at 0117.S5 to 0117.S7.
+    - (a) A seam registers its own metric collectors on the gateway's metric registry, which the composition root hands it as a `prometheus.Registerer`, a dependency type that is not a crossing target under decision 17. The upload handler's byte and queue metrics, the playground, the health service, the event bus, and the T4 KMS probe already register their own collectors this way.
+    - (b) Each seam's metrics interfaces are declared in `pkg/gateway/seam` beside the operations, and the gateway's metric set still satisfies them.
+    - (c) The wiring check leaves out a value of the gateway's metric set.
+
+    Recommendation: (a). It follows the pattern the tree already uses, an extracted seam takes its collectors with it, and the check keeps its reach. Option (b) puts interfaces in the seam package that are not operations of the seam interface, and option (c) weakens the check. The branch of 0117.S4 builds (a): the seam page's "Crossings without an operation" says a seam registers its own collectors, and `llmproxy.PromMetrics` holds the metering proxy's active-connection, translation, credential rotation, fallback exhaustion, and session budget collectors with their names, labels, and buckets unchanged. The credential rotation and fallback exhaustion counters were built in the gateway's metric set but never registered, so `lenny_credential_rotation_total` and `lenny_gateway_credential_fallback_exhausted_total` were absent from `/metrics`; the metering proxy's set registers them. Choosing (b) or (c) moves the collectors back into `gatewaymetrics` and reverts the page edit. Raised by the build of 0117.S4 on 2026-11-18.
+
+22. **The web playground's token packages.** The playground mints the playground bearer itself: it signs and verifies JWTs through `pkg/auth/jwt`, reads the issued-token store, and checks that a tenant exists through the tenant store. GW-R2 confines all three and allowed none of them to the playground, so the layout register carried two import rows and the wiring register eight confined-value rows at 0117.S4.
+    - (a) GW-R2 lets the web playground import the JWT package, the issued-token store, and the tenant store, the packages its token mint reads, as decision 11 lets the API front import the packages its admin handlers read.
+    - (b) Route the mint through operations of the seam interface served by the session core: sign, verify, read an issued-token row, and look up a tenant, with claim values that `pkg/gateway/seam` declares, because the seam package may not import the JWT package.
+    - (c) Move the playground's token routes into the API front, which GW-R2 already allows those packages, and leave the playground the UI and its session records.
+
+    Recommendation: (a). The playground is a replica-level part that is not extracted, which is decision 11's reason for the API front, and the packages are the ones the API front may already import. Option (b) adds four operations that exist only to keep a token issuer away from its signing package, and option (c) splits the playground's component page across two parts. The branch of 0117.S4 builds (a) in GW-R2, `confined.go` (a `Playground` mark on the JWT package, the issued-token store, and the tenant store at both their paths), the layout gate's tests, `pkg/gateway/ARCHITECTURE.md`, and `code-best-practices.md`. Choosing (b) or (c) reverts those edits and restores the ten rows until the step that builds the choice. Raised by the build of 0117.S4 on 2026-11-18.
+
+23. **Confined jobs on the replica's leader gate.** The leader gate (`replica/gatewayleader`) runs the gateway-singleton sweeps while the replica holds the leader lease. The composition root handed it the T4 KMS probe of `pkg/tenantkms`, which GW-R2 confines, as a job, which the wiring register carried as two confined-value rows at 0117.S4. The admin-token reclaimer, handed to the gate the same way, is registered at 0117.S8 under decision 16.
+    - (a) The session core holds the confined jobs in a set of its own (`pkg/gateway/core/leaderjobs`), and the leader gate runs the set as one job, so the gate holds a session core value, which a replica-level part may hold.
+    - (b) The leader gate reports each leadership term to the composition root, which starts the confined jobs itself. This adds a goroutine to the startup order that the order guard of decision 7 pins.
+    - (c) GW-R2 lets the leader gate's job slot take a confined job, because the gate runs the job and reads nothing from it.
+
+    Recommendation: (a). It keeps GW-R2 and both guards of decision 7 unchanged, and 0117.S8 registers the admin-token reclaimer in the same set. The branch of 0117.S4 builds (a): the T4 KMS probe runs from `core/leaderjobs`, which the gate runs as the job `core-leader-jobs`, and the startup log line still counts every sweep. Choosing (b) or (c) removes `core/leaderjobs` and hands the probe back to the gate. Raised by the build of 0117.S4 on 2026-11-18.
+
+24. **Route registration for the parts of 0117.S4.** Decision 3 has each part register its routes with the API front through the route registration interface of `pkg/gateway/seam`, which no part implements until 0117.S8. The playground serves its routes on the client listener as path prefixes that dispatch by method inside the handler, and the drain and ops endpoints serve on the internal port, which the interface's listeners (client, pod proxy, and forward) do not name.
+    - (a) The composition root keeps mounting these routes on today's muxes until 0117.S8 implements the interface, and 0117.S8 adds an internal listener to the interface and moves the registrations into the parts.
+    - (b) The playground registers its routes now, one route per method and path, through an adapter over today's mux, and the internal routes wait for 0117.S8.
+
+    Recommendation: (a). Option (b) changes how the client mux answers a method the playground does not serve, which the move steps leave unchanged, and the adapter would be written again at 0117.S8. The branch of 0117.S4 builds (a) by leaving the mounts in `cmd/lenny-gateway`. Raised by the build of 0117.S4 on 2026-11-18.
 
 ## Decisions
 
