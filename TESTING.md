@@ -60,7 +60,7 @@ This file changes when the test taxonomy changes, when a new dependency is intro
 
 The infrastructure is complete when an implementing agent can:
 
-1. Run `lenny-test --spec <section>` and get every test that encodes that spec section.
+1. Run `lenny-test --spec <identifier | code | §N.M>` and get every test whose `// spec:` annotation cites that requirement, page, or section.
 2. Run `lenny-test --changed` and get the minimal set of tests affected by uncommitted changes.
 3. Run `lenny-test --group pr` and get the PR gate suite that completes in under fifteen minutes on a laptop.
 4. Run `lenny-test --group nightly` and get the nightly suite that includes e2e on Kind and a representative load and chaos pass.
@@ -300,9 +300,31 @@ lenny/
 
 ## 5. Spec traceability and the change graph
 
+### Annotation index
+
+The `// spec:` annotations are the record of what each test verifies and of which code makes the decision a requirement states (`.claude/rules/spec-annotations.md`). `scripts/specshift/annotation` reads them into an index: every annotation in the Go files of the shared read domain, with its file, line, the declaration whose doc comment carries it, its site kind (test, code, or package doc comment), the identifiers its items cite, and the section numbers its items cite. The index also lists every top-level test function, annotated or not. It leaves out `testdata/` directories, generated files, the change records, and the staged proposals. The index is computed on each run and never committed; reading the whole tree takes about two seconds.
+
+The tier of a test is the tier whose directory holds its package, from the table in `cmd/lenny-test/tiers.go`. A test outside the tier directories is a unit test.
+
+The index serves `lenny-test coverage --spec`, `lenny-test list --spec`, `lenny-test --spec`, the `spec_sections` of a verdict's failures, and the site lists of `specshift where` and `specshift digest`. The harness indexes the tracked files. `where` and `digest` index the working tree, including untracked files that are not ignored, so they report on work not yet committed.
+
+### Coverage view
+
+`lenny-test coverage --spec [<identifier | code | §N.M>...] [--area <area>] [--json]` prints what the index says about the specification. It reads the index, `spec/registry.json`, the successor stubs of the numbered files, and the open and planned issues under `issues/`.
+
+- **Identifiers.** For each requirement, operation, and definition block in the registry, the view lists the tests that cite it, grouped by tier, the code that cites it, and the open and planned issues whose `requirements` list names it. It also lists the tests that reach the identifier indirectly: a test that cites a numbered section, or a subsection of it, whose successor stub links the identifier.
+- **Pages.** For each page, the view lists the code and the tests that cite its page code, and the identifiers the page holds.
+- **Numbered sections.** For each numbered heading that is not a full successor stub, the view lists the tests that cite the section or one of its subsections. A heading with no citing test is reported as uncovered, and the reader judges whether it states behavior.
+- **Unresolved citations.** Cited section numbers that name no numbered heading, and cited identifiers that neither the registry nor an issue record carries, are listed with the annotations that cite them. Each area change fixes the ones in its packages when it re-annotates them.
+- **Unannotated tests.** The view counts the test functions with no annotation, per tier and per package.
+
+With no argument the view prints one line per page, identifier, and numbered heading, followed by the unresolved citations and the unannotated tests. Each argument selects rows and prints every test, code site, and issue of each: an identifier selects itself, a page code selects the page and its identifiers, and `§N.M` (or `N.M`) selects the numbered heading and the identifiers its stub lists. `--area` selects the pages whose front matter names the area, given by its folder name or by the code of one of its pages, and leaves the numbered sections out. `--json` prints the same rows as JSON. The rate is the share of identifier and numbered-heading rows with at least one citing test, direct or indirect, and `--threshold <fraction>` fails the command when the rate falls below it.
+
+`lenny-test list --spec` and `lenny-test --spec` resolve their arguments the same way. An identifier resolves to the tests that cite it directly or through a stub, a page code to those of every identifier on the page and the tests that cite the code, and a numbered section to the tests that cite it or a subsection and those of the identifiers its stub lists.
+
 ### Spec map
 
-`tests/spec-map.json` maps every spec section to the tests, packages, migrations, and chart templates that encode it.
+`tests/spec-map.json` maps every spec section to the tests, packages, migrations, and chart templates that encode it. The harness no longer reads it to select or report tests; `lenny-test validate-maps` still checks it until change 0116 retires it with its exceptions file.
 
 ```json
 {
@@ -405,7 +427,7 @@ lenny-test --changed --max-tier component         # Layered escalation
 lenny-test --since main                           # Diff from the merge base with main
 lenny-test --changed --rdeps-depth -1             # Unit scope takes every transitive importer
 lenny-test --changed --all                        # Unit tier runs every package
-lenny-test --spec 4.2,12.3                        # Spec sections
+lenny-test --spec POOL-R5,§4.2                    # Identifiers, page codes, or numbered sections
 lenny-test --pkg pkg/store/session                # Explicit package
 
 # Persona journeys (see §12.13); outside --max-tier and the merge gate
@@ -445,7 +467,7 @@ lenny-test watch  --changed
 
 # Coverage
 lenny-test coverage --go                          # Go coverage from tests/results/cover.out
-lenny-test coverage --spec                        # spec-section coverage
+lenny-test coverage --spec [<id | code | §N.M>]   # coverage view from the annotations (see §5)
 lenny-test coverage --diff <ref>                  # coverage of lines changed since <ref>
 
 # Mutation (§19.3)
@@ -478,7 +500,7 @@ lenny-test --verdict-file tests/results/<name>.json
    - `--max-tier` → all tests with tags up to and including that tier.
    - `--group` → the set named in `tests/groups.yaml`.
    - `--changed` → walks `git diff --name-only` (staged plus unstaged plus untracked under `pkg/`, `schemas/`, `migrations/`, `charts/`) through the change graph. `--since <ref>` diffs from the merge base of `<ref>` and `HEAD` instead, and accepts an explicit `A..B` or `A...B` range. The change graph selects the tiers. The unit tier runs a package scope rather than `./...`: the unit targets the change graph lists for each changed path, the Go package that owns each changed path, and the in-module packages that import an owning package (test imports included) to the depth `--rdeps-depth` sets. The default depth is 1; 0 runs the owning packages alone, and -1 walks the full transitive closure. The static tier type-checks every package with `go vet ./...`, so a signature change that breaks a distant importer still fails the run. A changed path that no change-graph key covers is reported, and its owning package joins the unit scope, so an unmapped change still runs the nearest tests. A change to `go.mod`, `go.sum`, or `go.work` is reported as module-wide, and `--all` runs every package in the unit tier. `--dry-run` prints the scope and these reports without running anything.
-   - `--spec` → resolves each section through the spec map.
+   - `--spec` → resolves each identifier, page code, or numbered section (`§N.M` or `N.M`) through the annotation index to the tests that cite it (see §5, "Coverage view"). Each tier that holds such a test runs, and the unit tier is scoped to the packages of the unit tests it found. When no test resolves, the unit tier runs whole.
    - `--pkg` → resolves through the change graph. The unit tier runs the named package recursively plus the unit targets of the change-graph keys it matches.
 2. Intersect with `--max-tier` if both selectors are present.
 3. Order by tier ascending. Within a tier, group by package to maximize test-binary reuse.
@@ -592,7 +614,7 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
           "package": "tests/component/stores",
           "file": "tests/component/stores/session_store_test.go",
           "line": 142,
-          "spec_sections": ["4.2", "4.6"],
+          "spec_sections": ["POOL-R5", "§4.2", "§4.6"],
           "diagnosis": "SELECT ... FOR UPDATE SKIP LOCKED returned an already-claimed row. ...",
           "error": "expected session claimed by gateway-1, got gateway-2",
           "duration_ms": 340,
@@ -619,7 +641,8 @@ Every `lenny-test` invocation writes `tests/results/latest.json`. The format is 
 - `verdict` is one of `PASS`, `FAIL`, `INCONCLUSIVE`, and `UNVERIFIED`. `INCONCLUSIVE` means the harness could not complete the run (for example, infrastructure failed to start), and the harness exits 2. `UNVERIFIED` means a check could not reach a conclusion, so the run establishes neither success nor failure, and the harness exits 3.
 - `tiers.<name>.status` is one of `pass`, `fail`, `skipped`, `inconclusive`, `unverified`, and `not-selected`. `skipped` carries a `reason`. `inconclusive` marks a tier whose failure the harness classified as infrastructure-class rather than a test failure. `unverified` marks a tier in which a check could not reach a conclusion.
 - `next_action` is one short, machine-readable sentence describing what the implementing agent should do next.
-- `spec_section_status` aggregates test results by spec section. An agent working on section 4.2 reads this field to know whether the section is currently green.
+- `spec_sections` lists what the failing test's `// spec:` annotation cites, read from the annotation index (§5): its identifiers, then its section numbers written `§N.M`. A failing subtest reports the annotation of its top-level test.
+- `spec_section_status` aggregates test results by the values of `spec_sections`. An agent working on section 4.2 or on a requirement reads this field to know whether it is currently green.
 - `rerun_command` is a copy-paste-ready command that runs the single failing test.
 
 ### Auxiliary formats
