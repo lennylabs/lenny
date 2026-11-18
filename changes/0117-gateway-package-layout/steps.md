@@ -107,7 +107,7 @@ The rest of `sessionserver` and the core packages of "SP-1" to `pkg/gateway/core
 - lanes: [code, documentation]
 - depends-on: [0117.S12]
 
-Runs before v1 closes, after the member changes that remove packages listed in the layout gate's register have landed (decision 5). Every package in that register that its change did not delete, and every part of one that remains, moves into the layout as decision 2 places it and is named as decision 6 states. The step lands when the register is empty.
+Runs before v1 closes, after the member changes that remove packages listed in the layout gate's register have landed (decision 5). Every package in that register that its change did not delete, and every part of one that remains, moves into the layout as decision 2 places it and is named as decision 6 states. The step lands when the register is empty. A leftover it moves under a confined path stays confined under GW-R2: `credfallback`, `credrenewal`, and `leaserevoke`, which 0133 removes, and `connectorauthz`, which 0124 removes.
 
 ### Notes on package names
 
