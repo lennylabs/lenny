@@ -38,16 +38,6 @@ crossings:
     from: pkg/gateway/externalapi/admintoken/reclaimer
     type: Reclaimer.Run
     step: 0117.S8
-  - to: pkg/gateway/replica/gatewayleader
-    interface: Gate.Add(1)
-    from: pkg/tenantkms
-    type: Prober
-    step: 0117.S4
-  - to: pkg/gateway/replica/gatewayleader
-    interface: Gate.Add(1)
-    from: pkg/tenantkms
-    type: Prober.Start
-    step: 0117.S4
   - to: pkg/gateway/externalapi/admin
     interface: ConnectorOAuth.ClientSecrets
     from: pkg/gateway/connectors/connectorsecret

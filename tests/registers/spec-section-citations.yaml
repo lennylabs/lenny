@@ -329,6 +329,8 @@ packages:
       count: 6
     - package: pkg/gateway/coordination/coordlease/pgstore
       count: 1
+    - package: pkg/gateway/core/leaderjobs
+      count: 2
     - package: pkg/gateway/credentials/credassign
       count: 81
     - package: pkg/gateway/credentials/credcache

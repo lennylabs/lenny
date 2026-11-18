@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/leaderjobs"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
@@ -85,6 +86,11 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	// leaderGate collects every gateway-singleton sweep; registered jobs run
 	// only while this replica holds the lease (or always, under AlwaysLeader).
 	leaderGate := gatewayleader.NewGate(leaderElector)
+	// coreLeaderJobs holds the gateway-singleton jobs that act on a package
+	// GW-R2 confines. The leader gate runs the set as one job, so the gate,
+	// a replica-level part, holds a session core value rather than the
+	// confined package's (decision 23 of change 0117, open).
+	var coreLeaderJobs leaderjobs.Set
 
 	// ----- §7.1 artifact-retention GC -----
 	// Collects the workspace snapshot, transcript, and blobs of every
@@ -404,7 +410,7 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 		}
 		log.Printf("lenny-gateway: §12.5 continuous T4 KMS probe interval=%ds rate=%.1f/s",
 			*t4KmsProbeIntervalSeconds, *t4KmsProbeRateLimit)
-		leaderGate.Add("t4-kms-probe", func(ctx context.Context) {
+		coreLeaderJobs.Add("t4-kms-probe", func(ctx context.Context) {
 			if err := prober.Start(ctx); err != nil {
 				log.Printf("lenny-gateway: §12.5 T4 KMS probe loop exited: %v", err)
 			}
@@ -481,7 +487,10 @@ func (w *gatewayWiring) startLeaderElectedSweeps() {
 	// and run every registered gateway-singleton sweep only while this
 	// replica holds the lease (or always, under the AlwaysLeader fallback).
 	// Started after every leaderGate.Add above so the full set is gated.
-	log.Printf("lenny-gateway: §12.5 gateway-leader gate driving %d singleton sweep(s)", leaderGate.Len())
+	if coreLeaderJobs.Len() > 0 {
+		leaderGate.Add("core-leader-jobs", coreLeaderJobs.Run)
+	}
+	log.Printf("lenny-gateway: §12.5 gateway-leader gate driving %d singleton sweep(s)", leaderGate.Len()-1+coreLeaderJobs.Len())
 	go leaderGate.Run(w.watchdogCtx)
 }
 
