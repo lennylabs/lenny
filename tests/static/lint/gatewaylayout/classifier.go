@@ -53,7 +53,3 @@ func IsGatewayPart(k Kind) bool {
 // MapBack returns the path a package had before the move whose new path is
 // it or holds it, or the path unchanged.
 func MapBack(path string, moves []Move) string { return mapBack(path, moves) }
-
-// MovedAtStep reports whether a move at step lands path or a directory that
-// holds it.
-func MovedAtStep(path, step string, moves []Move) bool { return movedAtStep(path, step, moves) }

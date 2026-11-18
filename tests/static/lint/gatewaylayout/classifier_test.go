@@ -36,7 +36,4 @@ func TestClassifierGivesTheRegisterPartOrTheDirectoryPart(t *testing.T) {
 	if got := MapBack("pkg/gateway/core/a/sub", moves); got != "pkg/gateway/a/sub" {
 		t.Errorf("MapBack = %q", got)
 	}
-	if !MovedAtStep("pkg/gateway/core/a", "0117.S11", moves) || MovedAtStep("pkg/gateway/core/a", "0117.S7", moves) {
-		t.Error("MovedAtStep does not match the move's step only")
-	}
 }

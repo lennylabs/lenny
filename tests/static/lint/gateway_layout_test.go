@@ -53,16 +53,14 @@ func TestGatewayLayoutHoldsTheImportRule(t *testing.T) {
 }
 
 // TestGatewayLayoutRegisterOnlyShrinks compares the register with its copy
-// at the merge base with main: a branch may delete rows, and may add or
-// rewrite a row only where a move of the manifest rewrote its paths or in
-// the step of a move the branch performs. A new row that places a package
-// in another part's directory is refused, and so is any row naming a step
-// that has landed.
+// at the merge base with main: a branch may delete rows, and may rewrite a
+// row only where a move of the manifest rewrote its paths. No branch adds a
+// row, a move step included, and a new row that places a package in another
+// part's directory is refused.
 //
 // diagnosis: a refused row means a change registered a new layout
 // violation instead of fixing it; route the import through
-// pkg/gateway/seam or place the package in its part's directory. A row
-// naming a landed step is a violation that step left behind.
+// pkg/gateway/seam or place the package in its part's directory.
 // spec: GW-R1, GW-R2
 func TestGatewayLayoutRegisterOnlyShrinks(t *testing.T) {
 	root := schematest.RepoRoot(t)
@@ -71,9 +69,6 @@ func TestGatewayLayoutRegisterOnlyShrinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := newRatchetContext(t, root)
-	for _, problem := range gatewaylayout.LandedRows(reg, r.input.Landed) {
-		t.Error(problem)
-	}
 	baseData, ok := r.baseFile(t, gatewayLayoutRegister)
 	if !ok {
 		t.Logf("the register does not exist at the merge base %s, so the branch introduces it and the ratchet starts from this copy", r.base)
@@ -83,7 +78,7 @@ func TestGatewayLayoutRegisterOnlyShrinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode the merge-base register: %v", err)
 	}
-	for _, problem := range gatewaylayout.Ratchet(baseReg, reg, r.input, gatewaylayout.Layout) {
+	for _, problem := range gatewaylayout.Ratchet(baseReg, reg, r.moves, gatewaylayout.Layout) {
 		t.Error(problem)
 	}
 }

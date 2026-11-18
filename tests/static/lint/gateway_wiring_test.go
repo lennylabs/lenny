@@ -54,13 +54,11 @@ func TestGatewayWiringCrossesOnlyThroughTheSeam(t *testing.T) {
 
 // TestGatewayWiringRegisterOnlyShrinks compares the wiring register with
 // its copy at the merge base with main: a branch may delete rows, and may
-// add or rewrite one only where a move of the manifest rewrote its paths or
-// in the step of a move the branch performs. Any row naming a step that has
-// landed is refused.
+// rewrite one only where a move of the manifest rewrote its paths. No
+// branch adds a row, a move step included.
 //
 // diagnosis: a refused row means a change registered a new crossing
-// instead of routing it through pkg/gateway/seam, or a landed step left a
-// crossing behind.
+// instead of routing it through pkg/gateway/seam.
 // spec: GW-R1, GW-R2
 func TestGatewayWiringRegisterOnlyShrinks(t *testing.T) {
 	root := schematest.RepoRoot(t)
@@ -69,9 +67,6 @@ func TestGatewayWiringRegisterOnlyShrinks(t *testing.T) {
 		t.Fatal(err)
 	}
 	r := newRatchetContext(t, root)
-	for _, problem := range gatewaywiring.LandedRows(reg, r.input.Landed) {
-		t.Error(problem)
-	}
 	baseData, ok := r.baseFile(t, gatewayWiringRegister)
 	if !ok {
 		t.Logf("the register does not exist at the merge base %s, so the branch introduces it and the ratchet starts from this copy", r.base)
@@ -81,7 +76,7 @@ func TestGatewayWiringRegisterOnlyShrinks(t *testing.T) {
 	if err != nil {
 		t.Fatalf("decode the merge-base register: %v", err)
 	}
-	for _, problem := range gatewaywiring.Ratchet(baseReg, reg, r.input) {
+	for _, problem := range gatewaywiring.Ratchet(baseReg, reg, r.moves) {
 		t.Error(problem)
 	}
 }

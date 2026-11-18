@@ -21,21 +21,18 @@ import (
 // gateway layout and wiring registers share. It reads the tree and git
 // rather than a requirement, so it carries no specification annotation.
 
-const (
-	gatewayManifest = "scripts/refactor/manifest"
-	gatewaySteps    = "changes/0117-gateway-package-layout/steps.md"
-)
+const gatewayManifest = "scripts/refactor/manifest"
 
-// ratchetContext is the merge base and the ratchet input read from it.
+// ratchetContext is the merge base and the moves of the manifest, which a
+// renamed row maps back through.
 type ratchetContext struct {
 	root  string
 	base  string
-	input gatewaylayout.RatchetInput
+	moves []gatewaylayout.Move
 }
 
 // newRatchetContext finds the merge base with main, skipping the test when
-// there is none, and reads the manifest at HEAD and at the merge base, the
-// directories the manifest names at the merge base, and the landed steps.
+// there is none, and reads the manifest at HEAD.
 func newRatchetContext(t *testing.T, root string) *ratchetContext {
 	t.Helper()
 	base, _, err := annotation.MergeBase(context.Background(), root)
@@ -45,18 +42,11 @@ func newRatchetContext(t *testing.T, root string) *ratchetContext {
 	if err != nil {
 		t.Fatal(err)
 	}
-	r := &ratchetContext{root: root, base: base}
-	moves := parseManifest(t, readFile(t, filepath.Join(root, filepath.FromSlash(gatewayManifest))))
-	var baseMoves []gatewaylayout.Move
-	if data, ok := r.baseFile(t, gatewayManifest); ok {
-		baseMoves = parseManifest(t, data)
+	return &ratchetContext{
+		root:  root,
+		base:  base,
+		moves: parseManifest(t, readFile(t, filepath.Join(root, filepath.FromSlash(gatewayManifest)))),
 	}
-	r.input = gatewaylayout.RatchetInput{
-		Moves:     moves,
-		Performed: gatewaylayout.PerformedMoves(moves, baseMoves, func(p string) bool { return r.existsAtBase(t, p) }),
-		Landed:    gatewaylayout.LandedSteps(string(readFile(t, filepath.Join(root, filepath.FromSlash(gatewaySteps))))),
-	}
-	return r
 }
 
 // baseFile returns a file's content at the merge base, or false when the
