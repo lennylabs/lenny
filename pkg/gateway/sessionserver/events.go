@@ -13,8 +13,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // eventSortField is the sort key for the JSON list view of the events

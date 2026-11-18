@@ -656,9 +656,6 @@ packages:
   - package: pkg/gateway/session/sessioncheckpointmeta/pgstore
     part: domain
     step: 0117.S12
-  - package: pkg/gateway/session/sessionevents
-    part: stream-proxy
-    step: 0117.S6
   - package: pkg/gateway/session/sessionidle
     part: core
     step: 0117.S11
@@ -785,7 +782,7 @@ imports:
     rule: outside-imports
     step: 0117.S11
   - from: pkg/gateway/gatewaycontrol/inputwaitrecovery
-    to: pkg/gateway/session/sessionevents
+    to: pkg/gateway/streamproxy/sessionevents
     rule: seam-imports
     step: 0117.S6
   - from: pkg/gateway/mcpfabric/delegation/exportwire
@@ -797,7 +794,7 @@ imports:
     rule: seam-imports
     step: 0117.S7
   - from: pkg/gateway/mcpfabric/mcp
-    to: pkg/gateway/session/sessionevents
+    to: pkg/gateway/streamproxy/sessionevents
     rule: seam-imports
     step: 0117.S6
   - from: pkg/gateway/mcpfabric/mcptools
@@ -817,7 +814,7 @@ imports:
     rule: seam-imports
     step: 0117.S7
   - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/session/sessionevents
+    to: pkg/gateway/streamproxy/sessionevents
     rule: seam-imports
     step: 0117.S6
   - from: pkg/gateway/mcpfabric/mcptools
@@ -877,7 +874,7 @@ imports:
     rule: core-imports
     step: 0117.S7
   - from: pkg/gateway/sessionserver
-    to: pkg/gateway/session/sessionevents
+    to: pkg/gateway/streamproxy/sessionevents
     rule: core-imports
     step: 0117.S6
   - from: pkg/gateway/sessionserver
@@ -885,7 +882,7 @@ imports:
     rule: core-imports
     step: 0117.S7
   - from: pkg/gateway/storage/evictionfallback
-    to: pkg/gateway/session/sessionevents
+    to: pkg/gateway/streamproxy/sessionevents
     rule: core-imports
     step: 0117.S6
   - from: pkg/podlifecycle

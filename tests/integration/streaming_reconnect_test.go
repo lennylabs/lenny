@@ -5,7 +5,7 @@
 // Integration test: drives the real §7.2/§10.4 client-reconnect-
 // with-Last-Event-ID journey against the cmd/lenny-gateway subprocess
 // and its real in-memory session event bus
-// (pkg/gateway/session/sessionevents), not just the in-process
+// (pkg/gateway/streamproxy/sessionevents), not just the in-process
 // httptest handler unit tests in
 // pkg/gateway/sessionserver/events_test.go and the load_local-tier throughput
 // scenarios (which measure load, not per-event replay correctness).

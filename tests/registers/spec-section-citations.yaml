@@ -647,7 +647,7 @@ packages:
       count: 5
     - package: pkg/gateway/session/sessioncheckpointmeta/pgstore
       count: 2
-    - package: pkg/gateway/session/sessionevents
+    - package: pkg/gateway/streamproxy/sessionevents
       count: 22
     - package: pkg/gateway/session/sessionidle
       count: 19
