@@ -110,25 +110,36 @@ func Reconcile(crossings []Crossing, reg Register) Result {
 }
 
 // Ratchet returns the rows the branch added since the merge base that the
-// ratchet refuses. A row passes when mapping its package paths back through
-// the moves gives a row of the base register; a move step adds no row
-// (decision 15 of change 0117).
+// ratchet refuses. Each base row backs at most one current row: a row
+// identical to a base row is backed by it first, and a row is otherwise
+// accepted only when mapping its package paths back through the moves
+// gives a base row no other current row uses. A move step adds no row
+// (decision 15 of change 0117). The caller passes only the moves that
+// gatewaylayout.RenameMoves admits.
 func Ratchet(base, current Register, moves []gatewaylayout.Move) []string {
-	baseRows := map[string]bool{}
+	backing := map[string]int{}
 	for _, row := range base.Crossings {
-		baseRows[row.key()+"\x00"+row.Step] = true
+		backing[row.key()+"\x00"+row.Step]++
+	}
+	exact := make([]bool, len(current.Crossings))
+	for i, row := range current.Crossings {
+		if k := row.key() + "\x00" + row.Step; backing[k] > 0 {
+			backing[k]--
+			exact[i] = true
+		}
 	}
 	var out []string
-	for _, row := range current.Crossings {
-		if baseRows[row.key()+"\x00"+row.Step] {
+	for i, row := range current.Crossings {
+		if exact[i] {
 			continue
 		}
 		back := row
 		back.To, back.From = gatewaylayout.MapBack(row.To, moves), gatewaylayout.MapBack(row.From, moves)
-		if baseRows[back.key()+"\x00"+back.Step] {
+		if k := back.key() + "\x00" + back.Step; (back.To != row.To || back.From != row.From) && backing[k] > 0 {
+			backing[k]--
 			continue
 		}
-		out = append(out, "row "+row.String()+": the row is new since the merge base; the register only shrinks")
+		out = append(out, "row "+row.String()+": the row is new since the merge base, or maps back to a base row another row already uses; the register only shrinks")
 	}
 	sort.Strings(out)
 	return out

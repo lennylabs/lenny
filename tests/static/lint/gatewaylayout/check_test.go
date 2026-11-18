@@ -598,3 +598,42 @@ func TestRatchetRefusesANewRowPlacingAPackageInAnotherPartsDirectory(t *testing.
 		t.Errorf("a row present at the merge base was refused: %v", got)
 	}
 }
+
+// TestRatchetLetsEachBaseRowBackOneRow checks that a row mapped back
+// through a move is refused while the row it maps back to remains, and
+// that a duplicate of a base row is refused.
+// spec: GW-R1
+func TestRatchetLetsEachBaseRowBackOneRow(t *testing.T) {
+	moves := []Move{{Old: "pkg/gateway/mcpfabric/mcptools", New: "pkg/gateway/platformtools/mcptools", Step: "0117.S7"}}
+	row := ImportRow{From: "pkg/gateway/mcpfabric/mcptools", To: "pkg/gateway/sessionserver", Rule: RuleSeamImports, Step: "0117.S7"}
+	base := Register{Version: 1, Imports: []ImportRow{row}}
+	renamed := row
+	renamed.From = "pkg/gateway/platformtools/mcptools"
+	if got := Ratchet(base, Register{Version: 1, Imports: []ImportRow{renamed}}, moves, Layout); len(got) != 0 {
+		t.Errorf("a renamed row alone was refused: %v", got)
+	}
+	if got := Ratchet(base, Register{Version: 1, Imports: []ImportRow{row, renamed}}, moves, Layout); len(got) != 1 {
+		t.Errorf("a renamed row kept beside its original passed: %v", got)
+	}
+	if got := Ratchet(base, Register{Version: 1, Imports: []ImportRow{row, row}}, moves, Layout); len(got) != 1 {
+		t.Errorf("a duplicated base row passed: %v", got)
+	}
+	pkgRow := PackageRow{Package: "pkg/gateway/mcpfabric/mcptools", Part: "platform-tools", Step: "0117.S7"}
+	pbase := Register{Version: 1, Packages: []PackageRow{pkgRow}}
+	if got := Ratchet(pbase, Register{Version: 1, Packages: []PackageRow{pkgRow, pkgRow}}, moves, Layout); len(got) != 1 {
+		t.Errorf("a duplicated base package row passed: %v", got)
+	}
+}
+
+// TestRenameMovesAdmitsOnlyMergeBaseLinesThatRan checks the moves a renamed
+// row may map back through.
+func TestRenameMovesAdmitsOnlyMergeBaseLinesThatRan(t *testing.T) {
+	ran := Move{Old: "pkg/gateway/a", New: "pkg/gateway/core/a", Step: "0117.S11"}
+	pending := Move{Old: "pkg/gateway/b", New: "pkg/gateway/core/b", Step: "0117.S11"}
+	added := Move{Old: "pkg/gateway/c", New: "pkg/gateway/core/c", Step: "0117.S11"}
+	exists := map[string]bool{"pkg/gateway/b": true}
+	got := RenameMoves([]Move{ran, pending, added}, []Move{ran, pending}, func(p string) bool { return exists[p] })
+	if len(got) != 1 || got[0] != ran {
+		t.Errorf("RenameMoves = %+v, want only the merge-base line whose old path is gone", got)
+	}
+}

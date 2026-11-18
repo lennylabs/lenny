@@ -147,3 +147,36 @@ func TestLoadProgramFailsOnACompileErrorAndOnNoGoFiles(t *testing.T) {
 		t.Errorf("a target with no Go files: %v", err)
 	}
 }
+
+// TestWiringRatchetLetsEachBaseRowBackOneRowAndMapsOnlyAdmittedMoves pins
+// the review's ratchet probes: a renamed copy kept beside its original, a
+// sub-path that maps back to a path the base never held, and a manifest
+// line the branch adds to map an unrelated package onto a base row.
+// spec: GW-R1
+func TestWiringRatchetLetsEachBaseRowBackOneRowAndMapsOnlyAdmittedMoves(t *testing.T) {
+	baseRow := Row{To: "pkg/gateway/mcpfabric/mcptools", Interface: "Terminal", From: "pkg/gateway/sessionserver", Type: "Server", Step: "0117.S7"}
+	base := Register{Version: 1, Crossings: []Row{baseRow}}
+	moves := []gatewaylayout.Move{{Old: "pkg/gateway/mcpfabric/mcptools", New: "pkg/gateway/platformtools/mcptools", Step: "0117.S7"}}
+
+	renamed := baseRow
+	renamed.To = "pkg/gateway/platformtools/mcptools"
+	if got := Ratchet(base, Register{Version: 1, Crossings: []Row{renamed}}, moves); len(got) != 0 {
+		t.Errorf("a renamed row alone was refused: %v", got)
+	}
+	if got := Ratchet(base, Register{Version: 1, Crossings: []Row{baseRow, renamed}}, moves); len(got) != 1 {
+		t.Errorf("a renamed copy kept beside its original passed: %v", got)
+	}
+	sub := baseRow
+	sub.To = "pkg/gateway/platformtools/mcptools/x"
+	if got := Ratchet(base, Register{Version: 1, Crossings: []Row{baseRow, sub}}, moves); len(got) != 1 {
+		t.Errorf("a sub-path row mapping to a path the base never held passed: %v", got)
+	}
+
+	forged := append(append([]gatewaylayout.Move{}, moves...), gatewaylayout.Move{Old: "pkg/gateway/sessionserver", New: "pkg/gateway/playground/evil", Step: "0117.S4"})
+	admitted := gatewaylayout.RenameMoves(forged, moves, func(string) bool { return false })
+	evil := baseRow
+	evil.From = "pkg/gateway/playground/evil"
+	if got := Ratchet(base, Register{Version: 1, Crossings: []Row{evil}}, admitted); len(got) != 1 {
+		t.Errorf("a row mapped through a manifest line the branch added passed: %v", got)
+	}
+}

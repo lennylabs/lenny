@@ -23,8 +23,8 @@ import (
 
 const gatewayManifest = "scripts/refactor/manifest"
 
-// ratchetContext is the merge base and the moves of the manifest, which a
-// renamed row maps back through.
+// ratchetContext is the merge base and the moves a renamed row may map back
+// through: lines of the merge-base manifest whose old path is gone at HEAD.
 type ratchetContext struct {
 	root  string
 	base  string
@@ -32,7 +32,7 @@ type ratchetContext struct {
 }
 
 // newRatchetContext finds the merge base with main, skipping the test when
-// there is none, and reads the manifest at HEAD.
+// there is none, and reads the manifest at HEAD and at the merge base.
 func newRatchetContext(t *testing.T, root string) *ratchetContext {
 	t.Helper()
 	base, _, err := annotation.MergeBase(context.Background(), root)
@@ -42,11 +42,17 @@ func newRatchetContext(t *testing.T, root string) *ratchetContext {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &ratchetContext{
-		root:  root,
-		base:  base,
-		moves: parseManifest(t, readFile(t, filepath.Join(root, filepath.FromSlash(gatewayManifest)))),
+	r := &ratchetContext{root: root, base: base}
+	moves := parseManifest(t, readFile(t, filepath.Join(root, filepath.FromSlash(gatewayManifest))))
+	var baseMoves []gatewaylayout.Move
+	if data, ok := r.baseFile(t, gatewayManifest); ok {
+		baseMoves = parseManifest(t, data)
 	}
+	r.moves = gatewaylayout.RenameMoves(moves, baseMoves, func(rel string) bool {
+		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
+		return err == nil
+	})
+	return r
 }
 
 // baseFile returns a file's content at the merge base, or false when the
