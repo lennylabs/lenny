@@ -12,6 +12,7 @@ import (
 
 	"nhooyr.io/websocket"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
@@ -44,7 +45,7 @@ func TestWebSocketUpgradeSurvivesMiddlewareChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("gatewaymetrics.New: %v", err)
 	}
-	h = metrics.Middleware(h, func(_ *http.Request) string { return "/mcp/v1/ws" })
+	h = requestmetrics.Wrap(h, metrics, func(_ *http.Request) string { return "/mcp/v1/ws" })
 	h = recovermw.Middleware(h)
 	h = correlationmw.Wrap(h, correlationmw.Options{})
 	h = mcp.WebSocketBearerCarrier(h)

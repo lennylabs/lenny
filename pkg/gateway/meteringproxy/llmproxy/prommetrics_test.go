@@ -44,7 +44,8 @@ lenny_gateway_credential_fallback_exhausted_total{error_type="rate_limited",pool
 # TYPE lenny_gateway_session_budget_exceeded_total counter
 lenny_gateway_session_budget_exceeded_total{tenant_id="acme"} 1
 `
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(want),
+	if err := testutil.GatherAndCompare(
+		reg, strings.NewReader(want),
 		"lenny_gateway_llm_proxy_active_connections",
 		"lenny_gateway_llm_translation_errors_total",
 		"lenny_credential_rotation_total",

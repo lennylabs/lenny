@@ -230,7 +230,8 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	)
 
 	// §15.1 REST mux and HTTP server. Records w.mux and w.httpSrv.
-	w.buildHTTPSurface(parts.playground,
+	w.buildHTTPSurface(
+		parts.playground,
 		gwMetrics, sessionSrv, w.openaiHandler, w.responsesHandler, w.credServer,
 		mcpSrv, policyChain, auditSink, auditAppender, opsEmitter, environments,
 		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
