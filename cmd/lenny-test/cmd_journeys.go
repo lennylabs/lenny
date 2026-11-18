@@ -247,14 +247,17 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 	if err := os.MkdirAll(resultsDir, 0o700); err != nil {
 		return journeysFail(err)
 	}
+	// The probe's records are written through the redactor's record
+	// files, like a trial's.
+	red := journeys.NewRedactor(agentCfg.Token)
 	transcriptPath := filepath.Join(resultsDir, "probe-"+runID+".jsonl")
-	transcript, err := os.OpenFile(transcriptPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	transcript, err := red.Create(transcriptPath)
 	if err != nil {
 		return journeysFail(err)
 	}
 	defer transcript.Close()
 	stderrPath := filepath.Join(resultsDir, "probe-"+runID+".stderr.log")
-	stderr, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	stderr, err := red.Create(stderrPath)
 	if err != nil {
 		return journeysFail(err)
 	}
@@ -264,7 +267,7 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 	rep, code, probeErr := journeys.RunProbe(ctx, agentCfg, journeys.ProbeInput{
 		Target: target, RunID: runID, Scratch: filepath.Join(scratch, "probe"), HostHome: home,
 		HostContexts: journeys.HostContexts(filepath.Join(home, ".kube", "config")),
-		Transcript:   transcript, Stderr: stderr, Redactor: journeys.NewRedactor(agentCfg.Token), Log: os.Stdout,
+		Transcript:   transcript, Stderr: stderr, Redactor: red, Log: os.Stdout,
 	}, ledger)
 	out, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(out))

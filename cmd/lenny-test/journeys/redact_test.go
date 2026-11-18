@@ -3,7 +3,6 @@
 package journeys
 
 import (
-	"bytes"
 	"encoding/base64"
 	"os"
 	"path/filepath"
@@ -40,19 +39,10 @@ func TestRedactorRemovesKnownValuesAndSecretForms(t *testing.T) {
 	}
 	var nilRedactor *Redactor
 	if nilRedactor.String("x") != "x" {
-		t.Error("a nil redactor changed the text")
+		t.Error("a nil redactor changed text that holds no secret")
 	}
-}
-
-func TestRedactorWriterRedactsEachWrite(t *testing.T) {
-	var buf bytes.Buffer
-	w := NewRedactor("secret-value-abc").Writer(&buf)
-	n, err := w.Write([]byte("line with secret-value-abc\n"))
-	if err != nil || n != len("line with secret-value-abc\n") {
-		t.Fatalf("write = %d, %v", n, err)
-	}
-	if buf.String() != "line with "+Redacted+"\n" {
-		t.Fatalf("written = %q", buf.String())
+	if got := nilRedactor.String("Authorization: Bearer opaque-token-123"); got != "Authorization: Bearer "+Redacted {
+		t.Errorf("a nil redactor left a credential form in clear: %q", got)
 	}
 }
 
