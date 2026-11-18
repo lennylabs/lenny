@@ -488,7 +488,7 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		pkg("pkg/gateway/core/admission", "pkg/gateway/quota/quotastore", "pkg/policy/policy", "pkg/gateway/credentials/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
-		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore"),
+		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/externalapi/admintoken"),
 		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),
 		pkg("pkg/gateway/billing/usage", "pkg/gateway/quota/quotastore"),
@@ -543,6 +543,22 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		{
 			"the API front imports the credential store", pkg("pkg/gateway/api/c", "pkg/credential/credentialstore"),
 			Violation{RuleConfinedImports, "pkg/gateway/api/c", "pkg/credential/credentialstore"},
+		},
+		{
+			"a seam imports a package of the credentials subtree", pkg("pkg/gateway/platformtools/c", "pkg/gateway/credentials/credrenewal"),
+			Violation{RuleConfinedImports, "pkg/gateway/platformtools/c", "pkg/gateway/credentials/credrenewal"},
+		},
+		{
+			"a seam imports the Token Service proxy", pkg("pkg/gateway/streamproxy/t", "pkg/tokensvcproxy"),
+			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/t", "pkg/tokensvcproxy"},
+		},
+		{
+			"the API front imports a package under the shared credential package", pkg("pkg/gateway/api/c2", "pkg/credential/credfallback"),
+			Violation{RuleConfinedImports, "pkg/gateway/api/c2", "pkg/credential/credfallback"},
+		},
+		{
+			"the API front imports token introspection", pkg("pkg/gateway/api/i", "pkg/auth/introspection"),
+			Violation{RuleConfinedImports, "pkg/gateway/api/i", "pkg/auth/introspection"},
 		},
 		{
 			"a seam imports an authorization predicate", pkg("pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"),

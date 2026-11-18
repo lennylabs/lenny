@@ -12,6 +12,10 @@ type Confinement struct {
 	// authentication middleware its request pipeline runs, and the stores
 	// and packages its admin handlers read.
 	APIFront bool
+	// Exact matches the directory alone rather than its subtree, as for the
+	// shared credential package, which the API front may import while the
+	// packages under it stay confined.
+	Exact bool
 }
 
 // Confined lists the subtrees GW-R2 names. Each is listed at its directory
@@ -20,33 +24,28 @@ type Confinement struct {
 // change removes has no destination. The first entry whose directory holds
 // a path decides, so a narrower entry comes before a wider one.
 var Confined = []Confinement{
-	// The credential packages.
-	{Path: "pkg/gateway/credentials/credentialstore"},
-	{Path: "pkg/gateway/credentials/credleasestore"},
-	{Path: "pkg/gateway/credentials/credassign"},
-	{Path: "pkg/gateway/credentials/credcache"},
+	// The credential packages: the gateway's credentials subtree, the
+	// shared credential package with its subtree, and the credential
+	// packages outside them.
 	{Path: "pkg/gateway/credentials/credentialpoolstore", APIFront: true},
 	{Path: "pkg/credential/credentialpoolstore", APIFront: true},
-	{Path: "pkg/gateway/credentials/credentialserver"},
-	{Path: "pkg/gateway/credentials/usercreds"},
 	{Path: "pkg/gateway/credentials/impersonation", APIFront: true},
 	{Path: "pkg/credential/impersonation", APIFront: true},
-	{Path: "pkg/gateway/credentials/revocation"},
-	{Path: "pkg/gateway/credentials/denylist"},
+	{Path: "pkg/gateway/credentials"},
+	{Path: "pkg/credential", APIFront: true, Exact: true},
+	{Path: "pkg/credential"},
 	{Path: "pkg/gateway/connectors/connectorcredstore", APIFront: true},
 	{Path: "pkg/gateway/connectors/connectorsecret"},
+	{Path: "pkg/gateway/connectors/connectorauthz"},
 	{Path: "pkg/gateway/provisioning/vcscred"},
 	{Path: "pkg/workspaceplan/vcscred"},
 	{Path: "pkg/gateway/llmproxy/credrouter"},
-	{Path: "pkg/credential/credentialstore"},
-	{Path: "pkg/credential/credcache"},
-	{Path: "pkg/credential/credentialserver"},
-	{Path: "pkg/credential/usercreds"},
-	{Path: "pkg/credential/revocation"},
-	{Path: "pkg/credential/denylist"},
-	{Path: "pkg/credential", APIFront: true},
 	// The token and key packages.
 	{Path: "pkg/auth/jwt", APIFront: true},
+	{Path: "pkg/auth/introspection"},
+	{Path: "pkg/tokensvcproxy"},
+	{Path: "pkg/gateway/externalapi/admintoken", APIFront: true},
+	{Path: "pkg/gateway/api/admintoken", APIFront: true},
 	{Path: "pkg/gateway/storage/issuedtokenstore", APIFront: true},
 	{Path: "pkg/storage/issuedtokenstore", APIFront: true},
 	{Path: "pkg/kms/rekey", APIFront: true},
@@ -87,7 +86,7 @@ var Confined = []Confinement{
 func confinedImport(kind Kind, part, to string, confined []Confinement) bool {
 	var hit *Confinement
 	for i := range confined {
-		if within(to, confined[i].Path) {
+		if to == confined[i].Path || (!confined[i].Exact && within(to, confined[i].Path)) {
 			hit = &confined[i]
 			break
 		}
