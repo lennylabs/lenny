@@ -14,16 +14,23 @@ import (
 const gatewayWiringRegister = "tests/registers/gateway-wiring.yaml"
 
 // TestGatewayWiringCrossesOnlyThroughTheSeam runs the wiring check over
-// cmd/lenny-gateway: every value of one gateway part the composition root
-// passes where another part expects an interface or a function not
-// declared in pkg/gateway/seam is a crossing, and the check refuses a
-// crossing tests/registers/gateway-wiring.yaml does not carry and a row
-// that no longer occurs.
+// cmd/lenny-gateway. A crossing is a value attributed to one gateway part,
+// given where another part expects an interface or a function not declared
+// in pkg/gateway/seam, where the import rules refuse the receiving part
+// importing the value's package; adapters, closures, methods, locals, and
+// fields of the composition root are attributed to the parts they reach.
+// The check also reports a value attributed to a confined package, handed
+// to a part GW-R2 does not allow that package. It refuses each crossing
+// tests/registers/gateway-wiring.yaml does not carry and each row that no
+// longer occurs.
 //
 // diagnosis: an unregistered crossing means a change wired a value of one
 // part into another part's own interface; declare the interface in
-// pkg/gateway/seam and wire it there. A stale row means a step routed a
-// crossing through the seam interface; delete its row in the same commit.
+// pkg/gateway/seam and wire it there. An unregistered confined value means
+// a change handed a credential or admission package to a part GW-R2 does
+// not allow; reach it through an operation of pkg/gateway/seam. A stale row
+// means a step routed a crossing through the seam interface; delete its row
+// in the same commit.
 // spec: GW-R1, GW-R2
 func TestGatewayWiringCrossesOnlyThroughTheSeam(t *testing.T) {
 	root := schematest.RepoRoot(t)

@@ -12,13 +12,43 @@
 // platform tools seam expects its terminal interface; no import crosses
 // there. This check finds those crossings wherever the composition root
 // gives a value to a target whose type is an interface or a function: call
-// arguments, struct literal fields, map, slice, and array elements, field
-// assignments, typed variable declarations, return statements, and channel
-// sends. It counts a crossing only where the import rules of the layout
-// refuse the receiving part importing the value's package (decision 12 of
-// change 0117). A value of an adapter type the composition root declares
-// counts as the values its fields hold, and a function literal or a method
-// value of the composition root counts as what its body calls and captures.
+// arguments, struct literal fields, map, slice, and array elements, field,
+// local, index, and tuple assignments, variable declarations, return
+// statements, and channel sends. It counts a crossing only where the import
+// rules of the layout refuse the receiving part importing the value's
+// package (decision 12 of change 0117).
+//
+// The resolver attributes each value to the parts it reaches. It follows a
+// value through conversions and type assertions, through local variables
+// and every value they are given, through fields of the composition root's
+// structs and every value they are given, through calls to composition-root
+// functions and the values they return, through adapters (structs the
+// composition root declares) by their field values, nested adapters
+// included, and through function literals, methods, and functions of the
+// composition root by what their bodies call and capture, calls to other
+// composition-root functions included. A function read from another part's
+// struct field, or returned by another part's function, is attributed to
+// that part. The resolver stops after a bounded number of hops and never
+// visits a variable, field, type, or function twice for one value.
+//
+// The check also reports a value attributed to a package GW-R2 confines,
+// handed to a struct field, parameter, or result of a part GW-R2 does not
+// allow that package (the confined-value report). It uses the same
+// resolver, so a confined store held by an adapter or captured by a closure
+// counts.
+//
+// Some forms stay out of reach, and review is the backstop for them:
+//
+//   - generic helpers, whose type arguments the resolver does not follow;
+//   - package-level variables, read anywhere and set anywhere, and globals
+//     read inside an adapter's methods;
+//   - parameters of composition-root functions, whose values depend on
+//     every caller;
+//   - values stored in or read from maps, slices, and channels the
+//     composition root builds, beyond the literal or assignment that puts
+//     them there;
+//   - reflection, and values that pass through interfaces of the standard
+//     library or a dependency before they reach a part.
 //
 // The register tests/registers/gateway-wiring.yaml lists the crossings
 // that existed when the check landed, each with the step of change 0117
@@ -27,5 +57,6 @@
 // tree test compares the register with its copy at the merge base, so the
 // register only shrinks.
 //
-// The check states the wiring form of GW-R1 on the gateway's index page.
+// The check states the wiring form of GW-R1 and the confined-value form of
+// GW-R2 on the gateway's index page.
 package gatewaywiring
