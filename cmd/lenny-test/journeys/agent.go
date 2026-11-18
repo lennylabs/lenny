@@ -87,8 +87,8 @@ var AgentTools = []string{"Bash", "Read", "Glob", "Grep"}
 
 // AgentRun is one invocation of the agent.
 type AgentRun struct {
-	// Name is the agent container's name, and the prefix of its network
-	// and companion containers.
+	// Name is the agent container's name. The names of its network and
+	// companion containers are derived from a hash of it (namesFor).
 	Name string
 	// RunID labels every Docker object of the run (RunLabel).
 	RunID string
