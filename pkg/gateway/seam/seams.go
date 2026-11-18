@@ -5,6 +5,7 @@ package seam
 import (
 	"context"
 	"encoding/json"
+	"net/http"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
@@ -67,6 +68,15 @@ type DelegationAdmin interface {
 
 	// ElicitationFloor is GWSEAM-ElicitationFloor.
 	ElicitationFloor() string
+}
+
+// RequestIdentity is the request identity the API front answers for the
+// seams that handle client requests.
+type RequestIdentity interface {
+	// RequestTenant is GWSEAM-RequestTenant. It returns the empty string
+	// for a request whose tenant did not resolve, which a route behind the
+	// API front's tenant check never receives.
+	RequestTenant(r *http.Request) string
 }
 
 // BearerRevocations is served by the API front to the platform tools seam.
@@ -217,9 +227,10 @@ type Events interface {
 	// session's stream without a tenant scope.
 	Publish(tenantID, sessionID, eventType, data string, at time.Time) Event
 
-	// Subscribe is GWSEAM-Subscribe. buffer sizes the channel, and the
-	// caller calls the returned function to end the subscription.
-	Subscribe(tenantID, sessionID string, afterSeq uint64, buffer int) (<-chan Event, func(), error)
+	// Subscribe is GWSEAM-Subscribe. buffer sizes the live channel, and
+	// the caller calls the subscription's Close to end it. An empty tenant
+	// subscribes without a tenant scope, as an empty tenant publishes.
+	Subscribe(tenantID, sessionID string, afterSeq uint64, buffer int) (Subscription, error)
 
 	// OldestRetainedSeq returns the sequence number of the oldest event
 	// retained for a session, or false.
@@ -240,11 +251,28 @@ type StreamStats struct {
 	MaxReplayBufferUtilization float64
 }
 
+// Subscription is the result of Events.Subscribe.
+type Subscription struct {
+	// Backlog holds the retained events whose sequence numbers follow the
+	// subscription's cursor, in order. The caller reads them before Events.
+	Backlog []Event
+	// Events delivers the events published after the subscription opened.
+	// Close closes it.
+	Events <-chan Event
+	// Close ends the subscription. It is safe to call more than once.
+	Close func()
+}
+
 // Event is one event on a session's stream.
 type Event struct {
-	Seq       uint64
-	SessionID string
-	Type      string
-	Data      string
-	Timestamp time.Time
+	// Seq is the event's sequence number on its session's stream, from 1.
+	Seq uint64 `json:"seq"`
+	// SessionID is the session whose stream carries the event.
+	SessionID string `json:"sessionId"`
+	// Type is the event type, such as status_change or response.
+	Type string `json:"type"`
+	// Data is the event's payload, an encoded JSON object.
+	Data string `json:"data"`
+	// Timestamp is the instant the event was published, in UTC.
+	Timestamp time.Time `json:"timestamp"`
 }
