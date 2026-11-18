@@ -8,7 +8,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 2 |
+| Building | 1 |
 | Ready | 6 |
 | Waiting on decisions | 40 |
 | Blocked | 136 |
@@ -30,7 +30,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
 | [0117.S3](0117-gateway-package-layout/steps.md#0117s3-metering-proxy-51-import-sites) | Metering proxy (51 import sites) | Building |  |
-| [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Building |  |
 | [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Ready |  |
 | [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Ready |  |
 | [0117.S4](0117-gateway-package-layout/steps.md#0117s4-seam-model-replica-level-parts-and-the-playground-108-import-sites) | Seam model, replica-level parts, and the playground (108 import sites) | Ready |  |
@@ -271,4 +270,3 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
-| [0157](0157-persona-journeys/change.md) | Persona journey tier | `In progress` | 0 of 1 | 0 |
