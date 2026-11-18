@@ -5,6 +5,7 @@ package gatewaywiring
 import (
 	"fmt"
 	"go/ast"
+	"go/token"
 	"go/types"
 	"path/filepath"
 	"sort"
@@ -44,21 +45,45 @@ func (c Crossing) String() string {
 	return fmt.Sprintf("%s.%s receives %s.%s (%s)", c.To, c.Interface, c.From, c.Type, c.Site)
 }
 
-// PartOf classifies a repository-relative package path.
-type PartOf func(rel string) (part string, kind gatewaylayout.Kind)
+// Layout classifies repository-relative package paths and answers the
+// import rules; gatewaylayout.Classifier implements it.
+type Layout interface {
+	Part(rel string) (part string, kind gatewaylayout.Kind)
+	ImportRefused(importer, imported string) bool
+}
+
+// origin is a package and a name a value is attributed to.
+type origin struct {
+	pkg  *types.Package
+	name string
+}
 
 // Crossings returns every crossing the program makes, sorted by key. A
 // crossing is a value whose package belongs to one gateway part, passed to
-// a target whose package belongs to another, unless the target's package
-// is the seam interface; or a value whose named type a confined package
-// declares, handed to a part GW-R2 does not allow that package.
+// a target whose package belongs to another part that the import rules
+// refuse importing the value's package, unless the target's package is the
+// seam interface; or a value whose named type a confined package declares,
+// handed to a part GW-R2 does not allow that package. A value of an adapter
+// type the composition root declares is attributed to the parts whose
+// values its fields hold, and a function literal to the parts whose
+// functions or methods it calls or whose values it captures.
 //
 // The check reads call arguments, keyed and positional struct literal
 // fields, map, slice, and array literal elements, assignments to fields,
 // variable declarations with a type, return statements against the
 // enclosing function's results, and channel sends.
-func Crossings(p *Program, partOf PartOf) []Crossing {
-	w := &walker{p: p, partOf: partOf, seen: map[string]bool{}}
+func Crossings(p *Program, layout Layout) []Crossing {
+	w := &walker{p: p, layout: layout, seen: map[string]bool{}, adapters: map[*types.TypeName][]origin{}, decls: map[*types.Func]*ast.FuncDecl{}}
+	for _, f := range p.Files {
+		for _, decl := range f.Decls {
+			if fd, ok := decl.(*ast.FuncDecl); ok && fd.Body != nil {
+				if fn, ok := p.Info.Defs[fd.Name].(*types.Func); ok {
+					w.decls[fn] = fd
+				}
+			}
+		}
+	}
+	w.collectAdapters()
 	for _, f := range p.Files {
 		for _, decl := range f.Decls {
 			switch d := decl.(type) {
@@ -82,10 +107,180 @@ func Crossings(p *Program, partOf PartOf) []Crossing {
 }
 
 type walker struct {
-	p      *Program
-	partOf PartOf
-	seen   map[string]bool
-	out    []Crossing
+	p        *Program
+	layout   Layout
+	seen     map[string]bool
+	out      []Crossing
+	adapters map[*types.TypeName][]origin
+	decls    map[*types.Func]*ast.FuncDecl
+}
+
+// collectAdapters records, for each struct type the composition root
+// declares, the origins of the values its fields are given anywhere in the
+// composition root: in keyed or positional struct literals and in field
+// assignments.
+func (w *walker) collectAdapters() {
+	add := func(named *types.Named, value ast.Expr) {
+		if named == nil || named.Obj().Pkg() != w.p.Pkg {
+			return
+		}
+		for _, o := range w.origins(value, false) {
+			if !hasOrigin(w.adapters[named.Obj()], o) {
+				w.adapters[named.Obj()] = append(w.adapters[named.Obj()], o)
+			}
+		}
+	}
+	for _, f := range w.p.Files {
+		ast.Inspect(f, func(n ast.Node) bool {
+			switch n := n.(type) {
+			case *ast.CompositeLit:
+				t := w.p.Info.TypeOf(n)
+				if t == nil {
+					return true
+				}
+				if _, ok := t.Underlying().(*types.Struct); !ok {
+					return true
+				}
+				for _, elt := range n.Elts {
+					if kv, ok := elt.(*ast.KeyValueExpr); ok {
+						elt = kv.Value
+					}
+					add(namedOf(t), elt)
+				}
+			case *ast.AssignStmt:
+				if len(n.Lhs) != len(n.Rhs) {
+					return true
+				}
+				for i, lhs := range n.Lhs {
+					sel, ok := ast.Unparen(lhs).(*ast.SelectorExpr)
+					if !ok {
+						continue
+					}
+					if s := w.p.Info.Selections[sel]; s != nil && s.Kind() == types.FieldVal {
+						add(namedOf(s.Recv()), n.Rhs[i])
+					}
+				}
+			}
+			return true
+		})
+	}
+}
+
+func hasOrigin(list []origin, o origin) bool {
+	for _, x := range list {
+		if x.pkg == o.pkg && x.name == o.name {
+			return true
+		}
+	}
+	return false
+}
+
+// origins returns the packages and names a value is attributed to: a
+// method value's receiver type, a function, a function literal's calls and
+// captures, a value of an adapter type the composition root declares by
+// the adapter's field values (when expand is set), and otherwise the
+// value's named type.
+func (w *walker) origins(value ast.Expr, expand bool) []origin {
+	value = ast.Unparen(value)
+	switch v := value.(type) {
+	case *ast.FuncLit:
+		return w.literalOrigins(v)
+	case *ast.SelectorExpr:
+		if s := w.p.Info.Selections[v]; s != nil && s.Kind() == types.MethodVal {
+			named := namedOf(s.Recv())
+			if named == nil {
+				return nil
+			}
+			if expand && named.Obj().Pkg() == w.p.Pkg {
+				return w.declOrigins(s.Obj())
+			}
+			return []origin{{named.Obj().Pkg(), named.Obj().Name() + "." + v.Sel.Name}}
+		}
+		if fn, ok := w.p.Info.Uses[v.Sel].(*types.Func); ok {
+			if expand && fn.Pkg() == w.p.Pkg {
+				return w.declOrigins(fn)
+			}
+			return []origin{{fn.Pkg(), fn.Name()}}
+		}
+	case *ast.Ident:
+		if fn, ok := w.p.Info.Uses[v].(*types.Func); ok {
+			if expand && fn.Pkg() == w.p.Pkg {
+				return w.declOrigins(fn)
+			}
+			return []origin{{fn.Pkg(), fn.Name()}}
+		}
+	}
+	t := w.p.Info.TypeOf(value)
+	if t == nil {
+		return nil
+	}
+	named := namedOf(t)
+	if named == nil {
+		return nil
+	}
+	if expand && named.Obj().Pkg() == w.p.Pkg {
+		return w.adapters[named.Obj()]
+	}
+	return []origin{{named.Obj().Pkg(), named.Obj().Name()}}
+}
+
+// declOrigins attributes a function or method the composition root
+// declares, given as a function value, to what its body calls and
+// captures, as a function literal is.
+func (w *walker) declOrigins(obj types.Object) []origin {
+	fn, ok := obj.(*types.Func)
+	if !ok {
+		return nil
+	}
+	fd := w.decls[fn]
+	if fd == nil {
+		return nil
+	}
+	return w.bodyOrigins(fd.Body, fd.Pos(), fd.End())
+}
+
+// literalOrigins attributes a function literal to the functions and
+// methods it calls and to the named types of the variables it captures,
+// leaving out what the composition root declares itself.
+func (w *walker) literalOrigins(lit *ast.FuncLit) []origin {
+	return w.bodyOrigins(lit.Body, lit.Pos(), lit.End())
+}
+
+// bodyOrigins attributes a function body to the functions and methods it
+// calls and to the named types of the variables it captures: those
+// declared outside the range [start, end).
+func (w *walker) bodyOrigins(body *ast.BlockStmt, start, end token.Pos) []origin {
+	var out []origin
+	add := func(o origin) {
+		if o.pkg != nil && o.pkg != w.p.Pkg && !hasOrigin(out, o) {
+			out = append(out, o)
+		}
+	}
+	ast.Inspect(body, func(n ast.Node) bool {
+		switch n := n.(type) {
+		case *ast.CallExpr:
+			var id *ast.Ident
+			switch f := ast.Unparen(n.Fun).(type) {
+			case *ast.Ident:
+				id = f
+			case *ast.SelectorExpr:
+				id = f.Sel
+			}
+			if fn, ok := w.p.Info.Uses[id].(*types.Func); ok && id != nil {
+				add(origin{fn.Pkg(), funcName(fn)})
+			}
+		case *ast.Ident:
+			v, ok := w.p.Info.Uses[n].(*types.Var)
+			if !ok || v.IsField() || (v.Pos() >= start && v.Pos() < end) {
+				return true
+			}
+			if named := namedOf(v.Type()); named != nil {
+				add(origin{named.Obj().Pkg(), named.Obj().Name()})
+			}
+		}
+		return true
+	})
+	return out
 }
 
 // body walks a function body, checking its return statements against the
@@ -306,24 +501,81 @@ func (w *walker) check(target types.Type, ownerPkg *types.Package, ownerName str
 	if toPkg == nil {
 		return
 	}
-	fromPkg, fromName := w.source(target, value)
-	if fromPkg == nil {
+	to, ok := w.p.Rel(toPkg.Path())
+	if !ok {
 		return
 	}
-	to, ok1 := w.p.Rel(toPkg.Path())
-	from, ok2 := w.p.Rel(fromPkg.Path())
-	if !ok1 || !ok2 {
+	toPart, toKind := w.layout.Part(to)
+	if !gatewaylayout.IsGatewayPart(toKind) || toKind == gatewaylayout.KindSeamInterface {
 		return
 	}
-	toPart, toKind := w.partOf(to)
-	fromPart, fromKind := w.partOf(from)
-	if !gatewaylayout.IsGatewayPart(toKind) || !gatewaylayout.IsGatewayPart(fromKind) {
-		return
+	for _, o := range w.valueOrigins(target, value) {
+		from, ok := w.p.Rel(o.pkg.Path())
+		if !ok {
+			continue
+		}
+		fromPart, fromKind := w.layout.Part(from)
+		if !gatewaylayout.IsGatewayPart(fromKind) || toPart == fromPart || !w.layout.ImportRefused(to, from) {
+			continue
+		}
+		w.record(Crossing{To: to, Interface: toName, From: from, Type: o.name, Site: w.site(value)})
 	}
-	if toPart == fromPart || toKind == gatewaylayout.KindSeamInterface {
-		return
+}
+
+// valueOrigins returns what a value given to an interface or function
+// target is attributed to: for a function target, the method value's
+// receiver type, the function, or the function literal's calls and
+// captures; for an interface target, the value's named type. A value of an
+// adapter type the composition root declares is attributed to the values
+// its fields hold, each named after the adapter.
+func (w *walker) valueOrigins(target types.Type, value ast.Expr) []origin {
+	value = ast.Unparen(value)
+	_, isFunc := target.Underlying().(*types.Signature)
+	if lit, ok := value.(*ast.FuncLit); ok {
+		if !isFunc {
+			return nil
+		}
+		var out []origin
+		for _, o := range w.literalOrigins(lit) {
+			out = append(out, origin{o.pkg, "func(" + o.name + ")"})
+		}
+		return out
 	}
-	w.record(Crossing{To: to, Interface: toName, From: from, Type: fromName, Site: w.site(value)})
+	direct := w.origins(value, false)
+	if len(direct) != 1 || direct[0].pkg == nil {
+		return nil
+	}
+	if direct[0].pkg != w.p.Pkg {
+		if isFunc && !w.isFuncValue(value) {
+			return nil
+		}
+		return direct
+	}
+	var out []origin
+	for _, o := range w.origins(value, true) {
+		if o.pkg != nil && o.pkg != w.p.Pkg {
+			out = append(out, origin{o.pkg, direct[0].name + "(" + o.name + ")"})
+		}
+	}
+	return out
+}
+
+// isFuncValue reports whether a value given to a function target is a
+// method value or a function, the forms a function target's origin is
+// read from.
+func (w *walker) isFuncValue(value ast.Expr) bool {
+	switch v := value.(type) {
+	case *ast.SelectorExpr:
+		if s := w.p.Info.Selections[v]; s != nil {
+			return s.Kind() == types.MethodVal
+		}
+		_, ok := w.p.Info.Uses[v.Sel].(*types.Func)
+		return ok
+	case *ast.Ident:
+		_, ok := w.p.Info.Uses[v].(*types.Func)
+		return ok
+	}
+	return false
 }
 
 // confined records a value whose named type a confined package declares,
@@ -346,7 +598,7 @@ func (w *walker) confined(ownerPkg *types.Package, ownerName string, value ast.E
 	if !ok1 || !ok2 {
 		return
 	}
-	part, kind := w.partOf(to)
+	part, kind := w.layout.Part(to)
 	if !gatewaylayout.ConfinedImport(kind, part, from) {
 		return
 	}
@@ -359,43 +611,6 @@ func (w *walker) record(c Crossing) {
 	}
 	w.seen[c.Key()] = true
 	w.out = append(w.out, c)
-}
-
-// source returns the package and name the value belongs to: its named
-// type for an interface target, and its method or function for a function
-// target. A function literal or a value of an unnamed type belongs to no
-// package.
-func (w *walker) source(target types.Type, value ast.Expr) (*types.Package, string) {
-	value = ast.Unparen(value)
-	if _, isFunc := target.Underlying().(*types.Signature); isFunc {
-		var id *ast.Ident
-		switch v := value.(type) {
-		case *ast.SelectorExpr:
-			if s := w.p.Info.Selections[v]; s != nil && s.Kind() == types.MethodVal {
-				if named := namedOf(s.Recv()); named != nil {
-					return named.Obj().Pkg(), named.Obj().Name() + "." + v.Sel.Name
-				}
-				return nil, ""
-			}
-			id = v.Sel
-		case *ast.Ident:
-			id = v
-		default:
-			return nil, ""
-		}
-		if fn, ok := w.p.Info.Uses[id].(*types.Func); ok {
-			return fn.Pkg(), fn.Name()
-		}
-		return nil, ""
-	}
-	t := w.p.Info.TypeOf(value)
-	if t == nil {
-		return nil, ""
-	}
-	if named := namedOf(t); named != nil {
-		return named.Obj().Pkg(), named.Obj().Name()
-	}
-	return nil, ""
 }
 
 func (w *walker) site(n ast.Node) string {

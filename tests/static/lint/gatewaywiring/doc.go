@@ -10,12 +10,15 @@
 // composition root passes it a value of the other part through an interface
 // the first part declares, such as the session server passed where the
 // platform tools seam expects its terminal interface; no import crosses
-// there. This check finds those crossings at every call argument, struct
-// literal field, and field assignment of the composition root whose target
-// type is an interface or a function, and whose value's type, method, or
-// function belongs to another part. A value the composition root builds
-// itself, such as an adapter type or a function literal declared in
-// cmd/lenny-gateway, is the composition root's own and is not a crossing.
+// there. This check finds those crossings wherever the composition root
+// gives a value to a target whose type is an interface or a function: call
+// arguments, struct literal fields, map, slice, and array elements, field
+// assignments, typed variable declarations, return statements, and channel
+// sends. It counts a crossing only where the import rules of the layout
+// refuse the receiving part importing the value's package (decision 12 of
+// change 0117). A value of an adapter type the composition root declares
+// counts as the values its fields hold, and a function literal or a method
+// value of the composition root counts as what its body calls and captures.
 //
 // The register tests/registers/gateway-wiring.yaml lists the crossings
 // that existed when the check landed, each with the step of change 0117

@@ -69,8 +69,19 @@ type Server struct{}
 
 func (s *Server) Begin(id string) {}
 func (s *Server) Stamp(id string) {}
+func (s *Server) Observe()         {}
 
 func Hook(id string) {}
+
+type Observer interface{ Observe() }
+
+func Watch(o Observer) {}
+`,
+	"pkg/gateway/replica/metrics/metrics.go": `package metrics
+
+type Metrics struct{}
+
+func (Metrics) Observe() {}
 `,
 }
 
@@ -89,6 +100,19 @@ func returned(srv *session.Server) tools.Returned { return srv }
 func notACrossing() (tools.Returned, error) { return adapter{}, nil }
 
 func (adapter) Begin(id string) {}
+
+type holder struct{ s *session.Server }
+
+func (h holder) Begin(id string) { h.s.Begin(id) }
+
+type wiring struct {
+	srv   *session.Server
+	count int
+}
+
+func (w *wiring) hook(id string) { w.srv.Begin(id) }
+
+func (w *wiring) idle(id string) { w.count++ }
 
 func main() {
 	srv := &session.Server{}
@@ -109,10 +133,17 @@ func main() {
 	_ = tools.Pair{srv, "x"}
 	_ = map[string]tools.Mapped{"a": srv}
 	_ = []tools.Listed{srv}
+	var _ = session.Observer(nil)
 	ch := make(chan tools.Sent, 1)
 	ch <- srv
 	_ = tools.Deps{Quota: &quotastore.Store{}}
 	_ = func() tools.Returned { return adapter{} }
+	tools.New(holder{s: srv})
+	d.F = func(id string) { srv.Begin(id) }
+	wr := &wiring{srv: srv}
+	d.F = wr.hook
+	d.F = wr.idle
+	session.Watch(srv)
 }
 `
 
@@ -121,17 +152,19 @@ const cleanMain = `package main
 import (
 	"example.com/fix/pkg/gateway/core/session"
 	"example.com/fix/pkg/gateway/platformtools/tools"
+	"example.com/fix/pkg/gateway/replica/metrics"
 )
 
-type adapter struct{ s *session.Server }
+type empty struct{}
 
-func (a adapter) Begin(id string) { a.s.Begin(id) }
+func (empty) Begin(id string) {}
 
 func main() {
 	srv := &session.Server{}
-	tools.New(adapter{s: srv})
 	tools.Stamped(srv)
-	_ = tools.Deps{Seam: srv, F: func(id string) { srv.Begin(id) }}
+	session.Watch(metrics.Metrics{})
+	_ = tools.Deps{Seam: srv, F: func(id string) {}}
+	tools.New(empty{})
 }
 `
 
@@ -163,8 +196,8 @@ func writeFixture(t *testing.T, main string) string {
 	return dir
 }
 
-func classifier() PartOf {
-	return gatewaylayout.NewClassifier(gatewaylayout.Layout, gatewaylayout.Register{Version: 1}).Part
+func classifier() Layout {
+	return gatewaylayout.NewClassifier(gatewaylayout.Layout, gatewaylayout.Register{Version: 1})
 }
 
 // TestCrossingsFindsEachWiringFormOfACrossing checks a composition root
@@ -175,9 +208,13 @@ func classifier() PartOf {
 // of a package function, an unnamed function parameter, a return statement
 // in a function and in a function literal, a typed variable declaration, a
 // positional struct literal, map and slice literal elements, and a channel
-// send; and a value of a confined package handed to the seam. The seam
-// interface, the composition root's own adapter, and a function literal
-// are not crossings.
+// send; an adapter type of the composition root by the values its fields
+// hold, a function literal and a method value of the composition root by
+// what its body calls and captures; and a value
+// of a confined package handed to the seam. The seam interface, an adapter
+// whose fields hold no part's value, a function literal that reaches no
+// part, and a core value given to the core's own interface are not
+// crossings.
 // spec: GW-R1, GW-R2
 func TestCrossingsFindsEachWiringFormOfACrossing(t *testing.T) {
 	prog := loadFixture(t, crossingMain)
@@ -193,6 +230,9 @@ func TestCrossingsFindsEachWiringFormOfACrossing(t *testing.T) {
 		"pkg/gateway/platformtools/tools Declared <- pkg/gateway/core/session Server",
 		"pkg/gateway/platformtools/tools Deps.F <- pkg/gateway/core/session Hook",
 		"pkg/gateway/platformtools/tools Deps.F <- pkg/gateway/core/session Server.Begin",
+		"pkg/gateway/platformtools/tools Deps.F <- pkg/gateway/core/session func(Server)",
+		"pkg/gateway/platformtools/tools Deps.F <- pkg/gateway/core/session func(Server.Begin)",
+		"pkg/gateway/platformtools/tools Deps.F <- pkg/gateway/core/session wiring.hook(Server.Begin)",
 		"pkg/gateway/platformtools/tools Deps.Iface <- pkg/gateway/core/session Server",
 		"pkg/gateway/platformtools/tools Deps.Quota <- pkg/gateway/quota/quotastore Store",
 		"pkg/gateway/platformtools/tools Listed <- pkg/gateway/core/session Server",
@@ -202,6 +242,7 @@ func TestCrossingsFindsEachWiringFormOfACrossing(t *testing.T) {
 		"pkg/gateway/platformtools/tools Sent <- pkg/gateway/core/session Server",
 		"pkg/gateway/platformtools/tools Svc.Set(0) <- pkg/gateway/core/session Server.Begin",
 		"pkg/gateway/platformtools/tools Terminal <- pkg/gateway/core/session Server",
+		"pkg/gateway/platformtools/tools Terminal <- pkg/gateway/core/session holder(Server)",
 	}
 	if strings.Join(keys, "\n") != strings.Join(want, "\n") {
 		t.Errorf("crossings:\n%s\nwant:\n%s", strings.Join(keys, "\n"), strings.Join(want, "\n"))
@@ -209,7 +250,9 @@ func TestCrossingsFindsEachWiringFormOfACrossing(t *testing.T) {
 }
 
 // TestCrossingsIsEmptyWhenTheRootWiresOnlyThroughTheSeamOrItsOwnAdapters
-// checks the passing case.
+// checks the passing case: values given to the seam interface, a replica
+// value given to the session core, which may import it, and an adapter and
+// a function literal that reach no part.
 // spec: GW-R1
 func TestCrossingsIsEmptyWhenTheRootWiresOnlyThroughTheSeamOrItsOwnAdapters(t *testing.T) {
 	if got := Crossings(loadFixture(t, cleanMain), classifier()); len(got) != 0 {

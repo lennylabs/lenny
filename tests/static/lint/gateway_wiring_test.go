@@ -40,7 +40,7 @@ func TestGatewayWiringCrossesOnlyThroughTheSeam(t *testing.T) {
 		t.Fatalf("load cmd/lenny-gateway: %v", err)
 	}
 	cl := gatewaylayout.NewClassifier(gatewaylayout.Layout, layout)
-	res := gatewaywiring.Reconcile(gatewaywiring.Crossings(prog, cl.Part), reg)
+	res := gatewaywiring.Reconcile(gatewaywiring.Crossings(prog, cl), reg)
 	for _, m := range res.Malformed {
 		t.Errorf("malformed register row: %s", m)
 	}

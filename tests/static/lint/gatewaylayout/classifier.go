@@ -30,6 +30,14 @@ func (cl *Classifier) Part(rel string) (string, Kind) {
 	return "", kind
 }
 
+// ImportRefused reports whether the import rules of the layout refuse the
+// package importer importing the package imported, both repository-relative.
+// The confinement rule of GW-R2 is not among them; ConfinedImport answers
+// it.
+func (cl *Classifier) ImportRefused(importer, imported string) bool {
+	return cl.c.importRule(importer, cl.c.classify(importer), imported) != ""
+}
+
 // IsGatewayPart reports whether a kind is a part of the gateway: the seam
 // interface, a seam, the session core, the API front, or another
 // replica-level part. A package in transit, the composition root, and
