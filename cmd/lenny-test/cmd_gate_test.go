@@ -475,14 +475,46 @@ func TestGateDockerfileWritesTheMarkerAndPinsItsSources(t *testing.T) {
 	}
 }
 
-func TestGateRejectsPositionalArguments(t *testing.T) {
+// TestGateTakesTheMergeGateNameAndRefusesTheOthers pins the gate
+// command's argument of change 0116 (CS-7): `lenny-test gate merge` runs
+// the merge gate, a leading or trailing `merge` is accepted, the area and
+// release gates are refused with the run command that bounds a selection
+// by them, and any other word is refused rather than ignored. It tests
+// contributor tooling, so it carries no spec annotation.
+func TestGateTakesTheMergeGateNameAndRefusesTheOthers(t *testing.T) {
+	for _, tc := range []struct {
+		args []string
+		want []string
+	}{
+		{nil, nil},
+		{[]string{"merge"}, []string{}},
+		{[]string{"merge", "--here", "--base", "main"}, []string{"--here", "--base", "main"}},
+		{[]string{"--here"}, []string{"--here"}},
+	} {
+		got, err := gateCommandArgs(tc.args)
+		if err != nil || strings.Join(got, " ") != strings.Join(tc.want, " ") {
+			t.Errorf("gateCommandArgs(%q) = %q, %v; want %q", tc.args, got, err, tc.want)
+		}
+	}
+	for _, name := range []string{gateArea, gateRelease} {
+		_, err := gateCommandArgs([]string{name, "--here"})
+		if err == nil || !strings.Contains(err.Error(), "run --gate "+name) {
+			t.Errorf("gate %s: %v; want a refusal naming `run --gate %s`", name, err, name)
+		}
+	}
+	if _, err := gateCommandArgs([]string{"nightly"}); err == nil || !strings.Contains(err.Error(), `"nightly"`) {
+		t.Errorf("an unknown gate name is accepted or unnamed: %v", err)
+	}
 	if err := gateRejectPositional(nil); err != nil {
 		t.Errorf("no arguments refused: %v", err)
 	}
-	if err := gateRejectPositional([]string{"merge"}); err == nil || !strings.Contains(err.Error(), `"merge"`) {
-		t.Errorf("positional argument accepted or unnamed: %v", err)
+	if err := gateRejectPositional([]string{"merge"}); err != nil {
+		t.Errorf("a trailing merge is refused: %v", err)
 	}
-	for _, args := range [][]string{{"merge"}, {"--base", "main", "release"}} {
+	if err := gateRejectPositional([]string{"extra"}); err == nil || !strings.Contains(err.Error(), `"extra"`) {
+		t.Errorf("a positional argument is accepted or unnamed: %v", err)
+	}
+	for _, args := range [][]string{{"area"}, {"release", "--here"}, {"--base", "main", "release"}, {"nightly"}} {
 		if code := runGate(args); code != 2 {
 			t.Errorf("runGate(%q) = %d; want the usage exit code 2", args, code)
 		}

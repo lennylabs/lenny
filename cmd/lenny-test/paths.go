@@ -31,10 +31,6 @@ const (
 	// LENNY_COVER_PROFILE is unset.
 	coverProfileFile = resultsDir + "/cover.out"
 
-	// specMapExceptionsFile records sections that intentionally
-	// have no tests (non-normative, post-v1, etc.).
-	specMapExceptionsFile = "tests/spec-map-exceptions.yaml"
-
 	// nonGoInputsFile maps the inputs no Go package owns, such as the
 	// chart and the compose stack, to the test packages and tiers that
 	// read them (change 0116, CS-6).

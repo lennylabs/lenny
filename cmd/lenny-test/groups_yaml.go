@@ -26,7 +26,7 @@ type groupSelectors struct {
 type groupSelector struct {
 	Tiers           []string       `yaml:"tiers"`
 	SpecSections    []string       `yaml:"spec_sections"`
-	MaxTier         string         `yaml:"max_tier"`
+	Gate            string         `yaml:"gate"`
 	Include         []groupInclude `yaml:"include"`
 	AdditionalCheck []string       `yaml:"additional_checks"`
 }
@@ -65,6 +65,9 @@ func tiersForGroupFromYAML(name string) []tierPlan {
 	}
 	sel := g.Selectors
 	if len(sel.Tiers) == 0 && len(sel.Include) == 0 {
+		if tiers, ok := gateTiers(sel.Gate); ok {
+			return wholeTierPlans(tiers, nil)
+		}
 		return nil
 	}
 	// Build the plan by walking the selectors block.
@@ -85,16 +88,9 @@ func tiersForGroupFromYAML(name string) []tierPlan {
 		seen[inc.Tier] = len(plan)
 		plan = append(plan, tierPlan{name: inc.Tier, subsets: subsets})
 	}
-	// Apply max_tier when present.
-	if sel.MaxTier != "" {
-		bound := indexOf(allTiers(), sel.MaxTier)
-		filtered := []tierPlan{}
-		for _, p := range plan {
-			if i := indexOf(allTiers(), p.name); i >= 0 && i <= bound {
-				filtered = append(filtered, p)
-			}
-		}
-		plan = filtered
+	// A gate bounds the plan at its tiers, as --gate does.
+	if _, ok := gateTiers(sel.Gate); ok {
+		plan = boundByGate(plan, sel.Gate)
 	}
 	return plan
 }

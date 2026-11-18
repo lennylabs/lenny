@@ -33,7 +33,7 @@ The work toward this goal is planned as milestones. A milestone is done when its
 | Milestone | Steps landed | State |
 |:----------|:-------------|:------|
 | Workflow in place | 10 of 10 | Done |
-| Specification structure foundation (current) | 23 of 25 | In progress |
+| Specification structure foundation (current) | 25 of 25 | Done |
 | Gateway package layout and the journey pilot | 3 of 13 | In progress |
 | Areas, one milestone each, ordered once the "Specification structure" change lands | None assigned yet | Not started |
 | Closing v1 | 0 of 1 | Not started |
@@ -48,7 +48,7 @@ All 10 of its steps have landed.
 
 Exit criteria: Every merge passes the merge gate and `main` is green. The conventions, the identifier registry, the reference tool, the gates, and the annotation and documentation rules have landed, coverage and test selection are derived from annotations and the import graph, and the kind renames and the `PodSet` merge are done tree-wide. The test tiers carry names and the static tier is split.
 
-23 of its 25 steps have landed, and 0 are being built.
+All 25 of its steps have landed.
 
 ### Gateway package layout and the journey pilot
 
@@ -58,7 +58,7 @@ Exit criteria: The gateway layout is decided and the package moves have landed. 
 
 ### Areas, one milestone each, ordered once the "Specification structure" change lands
 
-Exit criteria: For each area, the specification pages are written at the target state, the code steps of every change touching the area have landed, the area's old section citations are at zero, its test names carry no section number, its findings from the gap records are filed as issues and closed, and its test tiers pass. The area's docs-tier reconciliation tests and gap-record tests are deleted or replaced, its stores have conformance suites, and its persona journeys run.
+Exit criteria: For each area, the specification pages are written at the target state, the code steps of every change touching the area have landed, the area's old section citations are at zero, its test names carry no section number, its integration tests sit in a Go package of their own, its findings from the gap records are filed as issues and closed, and its test tiers pass. The area's docs-tier reconciliation tests and gap-record tests are deleted or replaced, its stores have conformance suites, and its persona journeys run.
 
 No steps are assigned to this milestone yet.
 

@@ -500,7 +500,7 @@ func TestDryRunListsEachTierScopeAndNotes(t *testing.T) {
 		t.Errorf("only an unscoped unit tier prints every package:\n%s", out)
 	}
 	buf.Reset()
-	writeDryRun(&buf, selector{tier: tierUnit}, resolvedSelector{tiers: []tierPlan{{name: tierUnit}}})
+	writeDryRun(&buf, selector{tiers: []string{tierUnit}}, resolvedSelector{tiers: []tierPlan{{name: tierUnit}}})
 	if !strings.Contains(buf.String(), "./... (every package)") {
 		t.Errorf("unscoped dry run does not say it runs every package:\n%s", buf.String())
 	}

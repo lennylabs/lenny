@@ -109,37 +109,9 @@ func TestImportLiterals_SelfPrefixDoesNotCorruptGroupSibling(t *testing.T) {
 	}
 }
 
-// JSON self-prefix collision: the same single-pass safety holds for the JSON
-// map token rewrite, so the policy group's "pkg/gateway/policy/..." glob and the
-// "pkg/gateway/policy/interceptor/..." sibling glob stay distinct.
-func TestJSONTokens_SelfPrefixDoesNotCorruptGroupSibling(t *testing.T) {
-	moves := []Move{
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptor", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"},
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/policy", New: "github.com/lennylabs/lenny/pkg/gateway/policy/policy"},
-	}
-	content := `{
-  "a": "pkg/gateway/policy/...",
-  "b": "pkg/gateway/interceptor/...",
-  "c": "pkg/gateway/interceptor/store_test.go::TestX"
-}`
-	got := JSONTokens(content, moves)
-	for _, w := range []string{
-		`"pkg/gateway/policy/policy/..."`,
-		`"pkg/gateway/policy/interceptor/..."`,
-		`"pkg/gateway/policy/interceptor/store_test.go::TestX"`,
-	} {
-		if !strings.Contains(got, w) {
-			t.Errorf("JSON token rewrite missing %s; got:\n%s", w, got)
-		}
-	}
-	if strings.Contains(got, "policy/policy/interceptor") {
-		t.Errorf("JSON self-prefix doubled the interceptor glob; got:\n%s", got)
-	}
-}
-
-// closing-quote escape handling: a JSON value carrying an escaped quote must not
-// close the literal early, so a path token in a later value still rewrites and
-// the escaped value is preserved byte-for-byte.
+// closing-quote escape handling: a literal carrying an escaped quote must not
+// close early, so a path token in a later literal still rewrites and the
+// escaped literal is preserved byte-for-byte.
 func TestReplaceQuotedPaths_HonorsEscapedQuote(t *testing.T) {
 	moves := []Move{
 		{Old: "github.com/lennylabs/lenny/pkg/gateway/leasestore", New: "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"},
@@ -148,7 +120,7 @@ func TestReplaceQuotedPaths_HonorsEscapedQuote(t *testing.T) {
   "notes": "the value says \"hi\" and continues",
   "pkg": "pkg/gateway/leasestore/..."
 }`
-	got := JSONTokens(content, moves)
+	got := replaceQuotedPaths(content, relOldNew(moves))
 	if !strings.Contains(got, `"pkg/gateway/storage/leasestore/..."`) {
 		t.Errorf("path token after an escaped-quote value was not rewritten; got:\n%s", got)
 	}
@@ -287,67 +259,6 @@ func TestRuntimePaths_SplitSegmentAnchoredUnderGateway(t *testing.T) {
 	}
 }
 
-// JSON token boundaries: the exact path, the /... glob, and a deeper file
-// reference must each rewrite; a longer sibling key must not.
-func TestJSONTokens_BoundaryForms(t *testing.T) {
-	moves := []Move{
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/mcp", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"},
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/mcptools", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"},
-	}
-	json := `{
-  "exact": "pkg/gateway/mcp",
-  "glob": "pkg/gateway/mcp/...",
-  "file": "pkg/gateway/mcptools/mcptools_test.go",
-  "method": "pkg/gateway/mcptools/discover_test.go::TestDiscover"
-}`
-	got := JSONTokens(json, moves)
-
-	for _, want := range []string{
-		`"pkg/gateway/mcpfabric/mcp"`,
-		`"pkg/gateway/mcpfabric/mcp/..."`,
-		`"pkg/gateway/mcpfabric/mcptools/mcptools_test.go"`,
-		`"pkg/gateway/mcpfabric/mcptools/discover_test.go::TestDiscover"`,
-	} {
-		if !strings.Contains(got, want) {
-			t.Errorf("expected %s in rewritten JSON; got:\n%s", want, got)
-		}
-	}
-	// The mcp rule must not have corrupted the mcptools entries into
-	// mcpfabric/mcp + tools.
-	if strings.Contains(got, "mcpfabric/mcptools") == false {
-		t.Errorf("mcptools entry lost; got:\n%s", got)
-	}
-	if strings.Contains(got, "mcpfabric/mcpfabric") {
-		t.Errorf("doubled rewrite; got:\n%s", got)
-	}
-}
-
-// JSON token boundaries: a moved path that is a strict prefix of a sibling glob
-// key must not eat the sibling. "pkg/gateway/interceptor" vs
-// "pkg/gateway/interceptorstore".
-func TestJSONTokens_PrefixGlobSafe(t *testing.T) {
-	moves := []Move{
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptor", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"},
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/interceptorstore", New: "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"},
-	}
-	json := `[
-  "pkg/gateway/interceptor/...",
-  "pkg/gateway/interceptorstore/..."
-]`
-	got := JSONTokens(json, moves)
-	if !strings.Contains(got, `"pkg/gateway/policy/interceptor/..."`) {
-		t.Errorf("interceptor glob not rewritten; got:\n%s", got)
-	}
-	if !strings.Contains(got, `"pkg/gateway/policy/interceptor/interceptorstore/..."`) {
-		t.Errorf("interceptorstore glob not rewritten correctly; got:\n%s", got)
-	}
-	// The interceptor rule must not have produced
-	// policy/interceptorstore (i.e. eaten the "store" sibling).
-	if strings.Contains(got, `"pkg/gateway/policy/interceptorstore`) {
-		t.Errorf("interceptor rule corrupted interceptorstore; got:\n%s", got)
-	}
-}
-
 // warn-vs-abort: a surviving import literal in a Go file is an Abort (the
 // driver was supposed to rewrite it).
 func TestClassifyGo_SurvivingImportLiteralAborts(t *testing.T) {
@@ -460,129 +371,6 @@ func TestClassifyGo_NoneWhenAbsent(t *testing.T) {
 	content := `import "github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"`
 	if got := ClassifyGo(content, m, []Move{m}); got != None {
 		t.Errorf("rewritten content must classify None; got %v", got)
-	}
-}
-
-// warn-vs-abort: a surviving JSON token always aborts (no comment form in JSON).
-func TestClassifyJSON_SurvivorAborts(t *testing.T) {
-	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcptools", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"}
-	if got := ClassifyJSON(`"pkg/gateway/mcptools/mcptools_test.go"`, m, []Move{m}); got != Abort {
-		t.Errorf("surviving JSON token must abort; got %v", got)
-	}
-	if got := ClassifyJSON(`"pkg/gateway/mcpfabric/mcptools/mcptools_test.go"`, m, []Move{m}); got != None {
-		t.Errorf("rewritten JSON token must classify None; got %v", got)
-	}
-}
-
-// warn-vs-abort (JSON informational string): an in-manifest old path that
-// survives only inside a larger informational JSON string value (a "notes"
-// sentence, where the token is bounded by a space, '(', '.', or ';' rather than
-// by a quote or a slash) must classify Warn, not None and not Abort. The
-// driver's JSONTokens rewrites only quote/slash-bounded tokens, so it leaves
-// such a reference untouched by design; the §4 C4 audit must still record it for
-// the manual sweep, the same way it records the equivalent *.go and prose
-// informational strings. tests/spec-map.json carries exactly these references in
-// its "notes" values (for example pkg/gateway/podclaim.SlotClaimer,
-// pkg/gateway/jwtaudit, pkg/gateway/auditstore, pkg/gateway/eventbus), bounded
-// by '.', a space, or '('. This test is constructed to FAIL against the pre-fix
-// ClassifyJSON, which returned None for every non-quote/slash occurrence.
-func TestClassifyJSON_InformationalStringWarns(t *testing.T) {
-	cases := []struct {
-		name    string
-		old     string
-		content string
-	}{
-		{
-			name:    "notes dotted method reference",
-			old:     "github.com/lennylabs/lenny/pkg/gateway/podclaim",
-			content: `"notes": "Phase 12c adds pkg/gateway/podclaim.SlotClaimer as the per-pod slot claim path."`,
-		},
-		{
-			name:    "notes parenthesized package reference",
-			old:     "github.com/lennylabs/lenny/pkg/gateway/jwtaudit",
-			content: `"notes": "the audit observer (pkg/gateway/jwtaudit), and the rotation state machine."`,
-		},
-		{
-			name:    "notes space-bounded package reference",
-			old:     "github.com/lennylabs/lenny/pkg/gateway/auditstore",
-			content: `"notes": "the audit-log row writer pkg/gateway/auditstore with the advisory lock."`,
-		},
-		{
-			name:    "notes colon-bounded package reference",
-			old:     "github.com/lennylabs/lenny/pkg/gateway/eventbus",
-			content: `"notes": "The EventBus is implemented by pkg/gateway/eventbus: the RedisEventBus."`,
-		},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			// A real move re-anchors the package under a group, so the old token is
-			// genuinely stale post-move (its new path differs).
-			m := Move{Old: c.old, New: strings.Replace(c.old, "pkg/gateway/", "pkg/gateway/group/", 1)}
-			if got := ClassifyJSON(c.content, m, []Move{m}); got != Warn {
-				t.Errorf("informational JSON string %q must classify Warn, got %v", c.content, got)
-			}
-		})
-	}
-}
-
-// warn-vs-abort (JSON): a quote/slash-bounded driver-rewritable token still
-// aborts, taking precedence over the informational-string warn path, so the
-// new Warn branch does not weaken the abort guarantee for tokens the driver was
-// supposed to rewrite.
-func TestClassifyJSON_QuotedSurvivorStillAbortsOverWarn(t *testing.T) {
-	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/eventbus", New: "github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"}
-	// Same file carries both a stale quoted glob (Abort) and an informational
-	// "notes" reference (Warn); the quoted form must win and abort.
-	content := `{
-  "key": "pkg/gateway/eventbus/...",
-  "notes": "implemented by pkg/gateway/eventbus: the RedisEventBus."
-}`
-	if got := ClassifyJSON(content, m, []Move{m}); got != Abort {
-		t.Errorf("a surviving quoted JSON token must abort even alongside an informational reference; got %v", got)
-	}
-}
-
-// warn-vs-abort (JSON): the informational warn path must not false-positive on
-// the new path, which carries the old path as a prefix substring. After a clean
-// rewrite the JSON names only the new path; ClassifyJSON must return None.
-func TestClassifyJSON_NewPathInformationalIsNone(t *testing.T) {
-	m := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcp", New: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"}
-	content := `"notes": "the pkg/gateway/mcpfabric/mcp package handles schema validation."`
-	if got := ClassifyJSON(content, m, []Move{m}); got != None {
-		t.Errorf("a new path carrying the old path as a prefix must classify None; got %v", got)
-	}
-}
-
-// self-prefix abort: a self-prefix move (policy -> policy/policy,
-// llmproxy -> llmproxy/llmproxy, coordination -> coordination/coordination from
-// the committed manifest) makes the correct new token carry the old path as a
-// prefix: "pkg/gateway/policy/policy/..." contains the substring
-// "pkg/gateway/policy/. A naive deeper-reference check would re-flag the token
-// the driver already correctly rewrote and abort the move, violating the §4 C4
-// invariant that the abort condition matches the driver's rewrite granularity.
-// ClassifyJSON and ClassifyGo must therefore return None on the correctly
-// rewritten content, and Abort only on a genuine surviving pre-move token.
-func TestClassifyJSON_SelfPrefixRewrittenIsNone(t *testing.T) {
-	moves := []Move{
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/policy", New: "github.com/lennylabs/lenny/pkg/gateway/policy/policy"},
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/llmproxy", New: "github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"},
-		{Old: "github.com/lennylabs/lenny/pkg/gateway/coordination", New: "github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"},
-	}
-	for _, m := range moves {
-		// The recursive-glob form the maps carry for every package, after a clean
-		// rewrite by JSONTokens.
-		oldGlob := `"` + RepoRel(m.Old) + `/..."`
-		rewritten := JSONTokens(oldGlob, []Move{m})
-		if rewritten == oldGlob {
-			t.Fatalf("JSONTokens did not rewrite self-prefix glob %q", oldGlob)
-		}
-		if got := ClassifyJSON(rewritten, m, []Move{m}); got != None {
-			t.Errorf("ClassifyJSON on rewritten self-prefix %s = %v, want None (rewritten=%q)", RepoRel(m.Old), got, rewritten)
-		}
-		// A genuine surviving pre-move token (the un-rewritten old glob) must abort.
-		if got := ClassifyJSON(oldGlob, m, []Move{m}); got != Abort {
-			t.Errorf("ClassifyJSON on surviving self-prefix token %s = %v, want Abort", RepoRel(m.Old), got)
-		}
 	}
 }
 

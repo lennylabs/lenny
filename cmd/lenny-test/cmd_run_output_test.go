@@ -50,7 +50,7 @@ func captureStdout(t *testing.T, fn func()) string {
 // not reach a conclusion and whose unit tier passed.
 func unverifiedVerdict(t *testing.T) *verdict {
 	t.Helper()
-	v := newVerdict(selector{maxTier: "unit"})
+	v := newVerdict(selector{tiers: []string{"unit"}})
 	v.recordTier(tierStatic, verdictstatus.Unverified, 5*time.Millisecond, "protoc not on PATH")
 	v.recordTier(tierUnit, verdictstatus.Pass, 5*time.Millisecond, "")
 	v.finalize()
