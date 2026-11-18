@@ -14,12 +14,10 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The three YAML configuration files under tests/ — groups.yaml,
-// groups.subsets.yaml, and spec-map-exceptions.yaml — drive
-// selector resolution, subset expansion, and the spec-coverage
-// exemption list. A typo in any of them silently misroutes a CI
-// run. These validators give validate-maps the same teeth on YAML
-// that it already has on the JSON traceability files.
+// The YAML configuration files under tests/, groups.yaml and
+// groups.subsets.yaml among them, drive selector resolution and subset
+// expansion. A typo in any of them silently misroutes a CI run, so
+// validate checks each one.
 
 func validateGroupsYAML(path string) checkResult {
 	body, err := os.ReadFile(path)
@@ -71,10 +69,23 @@ func validateGroupsYAML(path string) checkResult {
 			k := g.Selectors.Content[i]
 			v := g.Selectors.Content[i+1]
 			switch k.Value {
-			case "max_tier", "tier":
+			case "tier":
 				if v.Value != "" && !knownTiers[v.Value] {
 					problems = append(problems, fmt.Sprintf("%s: unknown %s %q", name, k.Value, v.Value))
 				}
+			case "gate":
+				gated, ok := gateTiers(v.Value)
+				if !ok {
+					problems = append(problems, fmt.Sprintf("%s: unknown gate %q (valid: %s)", name, v.Value, strings.Join(gateNames(), ", ")))
+					break
+				}
+				// A gate beside tiers or includes bounds them; a bound
+				// that keeps none of them runs nothing and passes.
+				if named := groupNamedTiers(g.Selectors); len(named) > 0 && len(intersectTiers(named, gated)) == 0 {
+					problems = append(problems, fmt.Sprintf("%s: gate %q keeps none of the tiers the group names (%s)", name, v.Value, strings.Join(named, ", ")))
+				}
+			case "max_tier":
+				problems = append(problems, fmt.Sprintf("%s: max_tier is removed; bound the group with gate or tiers", name))
 			case "tiers":
 				for _, t := range v.Content {
 					if !knownTiers[t.Value] {
@@ -160,150 +171,6 @@ func validateGroupsSubsetsYAML(path string) checkResult {
 	}
 	return newResult("groups.subsets.yaml", true,
 		fmt.Sprintf("%d subset(s); every entry has a tier and at least one content slot", len(doc.Subsets)))
-}
-
-// exceptionReasonPendingImplementation exempts a spec heading that
-// exists with no implementation key yet. The exemption is temporary by
-// construction, so an entry under it names the open item whose closure
-// retires it and the date it was written, in the same vocabulary the
-// shared register contract uses for the same two facts.
-const exceptionReasonPendingImplementation = "pending-implementation"
-
-// validateSpecMapExceptionsYAML holds tests/spec-map-exceptions.yaml to
-// its entry schema and to the tracking rules that keep a temporary
-// exemption temporary. The pending-implementation class is the route by
-// which a spec heading with no implementation key lands green, so an
-// entry that passed with an empty blocker or an unparseable date would
-// exempt that heading permanently. The blocker and opened_at fields are
-// named and validated as the shared register contract names and
-// validates them, so one vocabulary covers both registers, and the two
-// rules apply to any entry carrying either field regardless of its
-// reason class.
-func validateSpecMapExceptionsYAML(path string, rules registerRules) checkResult {
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return newResult("spec-map-exceptions.yaml", false, fmt.Sprintf("could not read: %v", err))
-	}
-	var doc struct {
-		Version    int `yaml:"version"`
-		Exceptions []struct {
-			Section       string `yaml:"section"`
-			Reason        string `yaml:"reason"`
-			Justification string `yaml:"justification"`
-			// Blocker names the open item whose closure retires the
-			// entry, and OpenedAt is the date the entry was written,
-			// in YYYY-MM-DD. Both are required under
-			// pending-implementation and validated wherever they appear.
-			Blocker  string `yaml:"blocker"`
-			OpenedAt string `yaml:"opened_at"`
-		} `yaml:"exceptions"`
-	}
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return newResult("spec-map-exceptions.yaml", false, fmt.Sprintf("invalid YAML: %v", err))
-	}
-	if doc.Version != 1 {
-		return newResult("spec-map-exceptions.yaml", false, fmt.Sprintf("expected version 1, got %d", doc.Version))
-	}
-	if len(doc.Exceptions) == 0 {
-		return newResult("spec-map-exceptions.yaml", true, "no exceptions defined")
-	}
-	allowedReasons := map[string]bool{
-		"non-normative":                      true,
-		"indirect-coverage":                  true,
-		"meta":                               true,
-		"deferred":                           true,
-		"empty":                              true,
-		"post-v1":                            true,
-		"anti-feature":                       true,
-		exceptionReasonPendingImplementation: true,
-	}
-	var problems []string
-	seen := map[string]int{}
-	for i, e := range doc.Exceptions {
-		if e.Section == "" {
-			problems = append(problems, fmt.Sprintf("exceptions[%d]: missing section", i))
-			continue
-		}
-		if prev, dup := seen[e.Section]; dup {
-			problems = append(problems, fmt.Sprintf("exceptions[%d]: section %q already declared at exceptions[%d]", i, e.Section, prev))
-		}
-		seen[e.Section] = i
-		if e.Reason == "" {
-			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): missing reason", i, e.Section))
-		} else if !allowedReasons[e.Reason] {
-			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): unknown reason %q", i, e.Section, e.Reason))
-		}
-		if strings.TrimSpace(e.Justification) == "" {
-			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): missing justification", i, e.Section))
-		}
-		problems = append(problems, exceptionTrackingProblems(i, e.Section, e.Reason, e.OpenedAt, e.Blocker, rules)...)
-	}
-	if len(problems) > 0 {
-		return newResult("spec-map-exceptions.yaml", false, summarizeProblems(problems))
-	}
-	return newResult("spec-map-exceptions.yaml", true,
-		fmt.Sprintf("%d exception(s); every entry has a reason and a justification", len(doc.Exceptions)))
-}
-
-// exceptionTrackingProblems applies the blocker and opened_at rules to
-// one exception entry. An entry under pending-implementation carries
-// both fields, because the class exempts a heading only until the
-// implementation lands and an entry with neither field would exempt it
-// forever. An entry under any other class carries neither field, and
-// carrying one holds it to the same rules: a blocker that names no open
-// item, or a date that does not parse, is as unmeasurable under one
-// class as under another. The rules fail closed, so an entry whose
-// blocker cannot be resolved is a violation rather than an exemption.
-func exceptionTrackingProblems(i int, section, reason, openedAt, blocker string, rules registerRules) []string {
-	openedAt = strings.TrimSpace(openedAt)
-	blocker = strings.TrimSpace(blocker)
-	pending := strings.TrimSpace(reason) == exceptionReasonPendingImplementation
-	var problems []string
-	switch {
-	case openedAt != "":
-		if _, err := time.Parse("2006-01-02", openedAt); err != nil {
-			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): opened_at %q not YYYY-MM-DD", i, section, openedAt))
-		}
-	case pending:
-		problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): reason %s requires opened_at",
-			i, section, exceptionReasonPendingImplementation))
-	}
-	switch {
-	case blocker != "":
-		if !rules.resolvesBlocker(blocker) {
-			problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): blocker %q does not resolve to an open item", i, section, blocker))
-		}
-	case pending:
-		problems = append(problems, fmt.Sprintf("exceptions[%d] (%q): reason %s requires blocker",
-			i, section, exceptionReasonPendingImplementation))
-	}
-	return problems
-}
-
-// readExceptionSections returns the set of spec sections listed in
-// tests/spec-map-exceptions.yaml. A missing or unparseable file
-// yields an empty set; validateSpecMapExceptionsYAML reports the
-// parse error separately.
-func readExceptionSections(path string) map[string]bool {
-	out := map[string]bool{}
-	body, err := os.ReadFile(path)
-	if err != nil {
-		return out
-	}
-	var doc struct {
-		Exceptions []struct {
-			Section string `yaml:"section"`
-		} `yaml:"exceptions"`
-	}
-	if err := yaml.Unmarshal(body, &doc); err != nil {
-		return out
-	}
-	for _, e := range doc.Exceptions {
-		if e.Section != "" {
-			out[e.Section] = true
-		}
-	}
-	return out
 }
 
 // validateFlakeBudgetYAML enforces the flake budget policy on
@@ -410,11 +277,9 @@ func validateFlakeBudgetYAML(path string) checkResult {
 //     expiry and blocker rules would fail every such entry;
 //   - a baseline is keyed for the rewrite it drives and is rewritten
 //     downward as that rewrite proceeds. The per-file line-citation
-//     counts, the per-citation resolution baseline, the change-graph
-//     coverage baseline keyed by path prefix, and the skip-reason
+//     counts, the per-citation resolution baseline, and the skip-reason
 //     baseline keyed by file and call site are all baselines, and a
-//     path with no glob key or a host-capability skip has no pending
-//     item a blocker could name;
+//     host-capability skip has no pending item a blocker could name;
 //   - a sense map is keyed by file and occurrence and records which
 //     identifier a rewrite writes at each site, so it records a
 //     decision rather than an exemption.
@@ -1030,13 +895,34 @@ func summarizeProblems(problems []string) string {
 }
 
 // yamlPaths returns the canonical paths to the YAML config files
-// under tests/. validate-maps validates each in turn. The repo-
-// relative names live in paths.go.
-func yamlPaths(root string) (groups, subsets, exceptions, flakeBudget, parityMatrix string) {
+// under tests/. validate validates each in turn. The repo-relative names
+// live in paths.go.
+func yamlPaths(root string) (groups, subsets, flakeBudget, parityMatrix string) {
 	groups = filepath.Join(root, groupsFile)
 	subsets = filepath.Join(root, groupsSubsetsFile)
-	exceptions = filepath.Join(root, specMapExceptionsFile)
 	flakeBudget = filepath.Join(root, flakeBudgetFile)
 	parityMatrix = filepath.Join(root, parityMatrixFile)
 	return
+}
+
+// groupNamedTiers returns the tiers a group's selectors name through
+// `tiers` and `include`.
+func groupNamedTiers(selectors yaml.Node) []string {
+	var out []string
+	for i := 0; i+1 < len(selectors.Content); i += 2 {
+		k, v := selectors.Content[i], selectors.Content[i+1]
+		switch k.Value {
+		case "tiers":
+			for _, t := range v.Content {
+				out = append(out, t.Value)
+			}
+		case "include":
+			for _, item := range v.Content {
+				if tier := mappingValue(item, "tier"); tier != "" {
+					out = append(out, tier)
+				}
+			}
+		}
+	}
+	return out
 }

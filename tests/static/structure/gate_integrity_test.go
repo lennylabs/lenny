@@ -21,8 +21,8 @@ import (
 //
 // A gate is only worth what its invocation is worth. The repository hard-gates
 // two channels: a Go test under `tests/static/`, which the harness runs
-// and fails the tier on, and a check inside `runValidateMaps`, which
-// `lenny-test validate-maps` runs. A check invoked from a shell script under
+// and fails the tier on, and a check inside `runValidate`, which
+// `lenny-test validate` runs. A check invoked from a shell script under
 // `scripts/` is not a third channel, because the lint invocation is downgraded
 // to a warning and a script that is absent exits zero, so a gate moved there
 // stops failing anything while still appearing to exist.
@@ -73,11 +73,12 @@ var tierZeroGates = []tierZeroGate{
 	{"TestCoordinatorHoldAllowlistNamesMethodsTheAdapterServes", "coordinator_hold_allowlist_test.go", "every coordinator-hold allowlist entry names a method the adapter serves"},
 	{"TestDeploymentBoundaryEveryAdapterInputIsRenderedOrRegistered", "deployment_boundary_test.go", "every input the adapter reads is rendered or registered"},
 	{"TestSkipReasonClassifierCertifiesTheTree", "skip_reason_classifier_test.go", "every skipped test names a classified skip reason"},
-	// The two checks below run on the second hard-gated channel, inside
-	// runValidateMaps, so they are named by the file that carries that
-	// function rather than by a static-tier test file.
-	{"validateChangeGraphCompleteness", validateMapsFile, "every tracked source path is covered by the change graph"},
-	{"validateSpecMapExceptionsYAML", validateMapsFile, "every spec-map exception is well-formed, which is the heading walker's escape hatch"},
+	// The check below runs on the second hard-gated channel, inside
+	// runValidate, so it is named by the file that carries that function
+	// rather than by a static-tier test file. Change 0116 added it in place
+	// of the spec-map check that every test file from the component tier on
+	// was mapped.
+	{"validateTierTestsAnnotated", validateFile, "every test from the component tier on carries a spec annotation"},
 	// The meta-gate names itself, because the list is the whole set of gates the
 	// migration registers at the static tier and nothing in the domain split excludes it.
 	// The entry catches a rename or a move of the meta-gate's own registration.
@@ -103,11 +104,11 @@ var gatesOutsideTierZero = []tierZeroGate{
 // goTestFunc matches a Go test declaration.
 var goTestFunc = regexp.MustCompile(`(?m)^func (Test\w+)\(`)
 
-// validateMapsBody matches the body of runValidateMaps, up to the first
+// validateBody matches the body of runValidate, up to the first
 // closing brace in the first column.
-var validateMapsBody = regexp.MustCompile(`(?s)func runValidateMaps\(.*?\n}`)
+var validateBody = regexp.MustCompile(`(?s)func runValidate\(.*?\n}`)
 
-// validateCheck matches a check invoked inside runValidateMaps.
+// validateCheck matches a check invoked inside runValidate.
 var validateCheck = regexp.MustCompile(`\b(validate\w+)\(`)
 
 // scriptInvocation matches a gate invoked from a shell script, which is not a
@@ -119,14 +120,14 @@ var scriptInvocation = regexp.MustCompile(`\.sh\b`)
 // structure packages below it, so the enumeration walks the directory.
 var tierZeroPackage = filepath.Join("tests", "static")
 
-// validateMapsFile is the file that carries runValidateMaps, relative to a
+// validateFile is the file that carries runValidate, relative to a
 // tree root, in the slash-separated form a gate names it by.
-const validateMapsFile = "cmd/lenny-test/cmd_validate.go"
+const validateFile = "cmd/lenny-test/cmd_validate.go"
 
 // gateFilePath resolves a gate's File to a path under root. A name with no
 // separator is a file in one of the static tier's packages, found by walking
 // them; a slash-separated name is relative to the root, which is how the
-// runValidateMaps channel is named. A name no package holds resolves to a
+// runValidate channel is named. A name no package holds resolves to a
 // path that does not exist.
 func gateFilePath(root string, g tierZeroGate) string {
 	if strings.Contains(g.File, "/") {
@@ -172,7 +173,7 @@ func walkTierZeroTests(root string, fn func(path, name string) error) error {
 // hardGatedGates enumerates every gate the two channels the repository
 // hard-gates carry under root, mapped to the file that carries it: a Go test
 // declared in one of the static tier's packages, and a check invoked inside
-// runValidateMaps.
+// runValidate.
 // It takes a root and returns the enumeration so that the meta-gate's own
 // cases can drive it over a fixture tree rather than over the live repository.
 func hardGatedGates(root string) (map[string]string, error) {
@@ -192,17 +193,17 @@ func hardGatedGates(root string) (map[string]string, error) {
 		return nil, fmt.Errorf("read the static-tier packages: %w", err)
 	}
 
-	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(validateMapsFile)))
+	body, err := os.ReadFile(filepath.Join(root, filepath.FromSlash(validateFile)))
 	switch {
 	case err == nil:
-		for _, m := range validateCheck.FindAllStringSubmatch(validateMapsBody.FindString(string(body)), -1) {
-			declared[m[1]] = validateMapsFile
+		for _, m := range validateCheck.FindAllStringSubmatch(validateBody.FindString(string(body)), -1) {
+			declared[m[1]] = validateFile
 		}
 	case errors.Is(err, os.ErrNotExist):
-		// A tree that carries no runValidateMaps has only the one channel.
+		// A tree that carries no runValidate has only the one channel.
 		// The registration check below reports any gate that named it.
 	default:
-		return nil, fmt.Errorf("read %s: %w", validateMapsFile, err)
+		return nil, fmt.Errorf("read %s: %w", validateFile, err)
 	}
 
 	return declared, nil
@@ -336,11 +337,11 @@ var exampleGate = tierZeroGate{
 	"the fixture gate",
 }
 
-// exampleRegisterCheck is the runValidateMaps check the fixture trees
+// exampleRegisterCheck is the runValidate check the fixture trees
 // register, which is the second channel the repository hard-gates.
 var exampleRegisterCheck = tierZeroGate{
 	"validateExampleRegister",
-	validateMapsFile,
+	validateFile,
 	"the fixture register check",
 }
 
@@ -356,7 +357,7 @@ func TestAGateOnEitherHardGatedChannelIsRegistered(t *testing.T) {
 			exampleGate.Test, got, exampleGate.File)
 	}
 	if got := declared[exampleRegisterCheck.Test]; got != exampleRegisterCheck.File {
-		t.Errorf("the runValidateMaps channel carries %s in %q, expected %q",
+		t.Errorf("the runValidate channel carries %s in %q, expected %q",
 			exampleRegisterCheck.Test, got, exampleRegisterCheck.File)
 	}
 	gates := []tierZeroGate{exampleGate, exampleRegisterCheck}

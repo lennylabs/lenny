@@ -9,10 +9,10 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 1 |
-| Ready | 9 |
+| Ready | 7 |
 | Waiting on decisions | 40 |
 | Blocked | 136 |
-| Landed | 8 |
+| Landed | 3 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -23,13 +23,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Ready |  |
-| [0116.S6](0116-coverage-and-selection/steps.md#0116s6-retire-the-maps-their-registers-and-their-self-tests) | Retire the maps, their registers, and their self-tests | Ready |  |
-| [0116.S1](0116-coverage-and-selection/steps.md#0116s1-annotation-index-and-coverage-view) | Annotation index and coverage view | Landed |  |
-| [0116.S2](0116-coverage-and-selection/steps.md#0116s2-coverage-gate) | Coverage gate | Landed |  |
-| [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Landed |  |
-| [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Landed |  |
-| [0116.S7](0116-coverage-and-selection/steps.md#0116s7-identifiers-in-test-names) | Identifiers in test names | Landed |  |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Landed |  |
 
 ### M2: Gateway package layout and the journey pilot
@@ -240,7 +233,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `In progress` | 5 of 7 | 4 |
 | [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `In progress` | 2 of 13 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |

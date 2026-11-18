@@ -631,11 +631,6 @@ func TestEveryTestInfrastructureRegisterIsRekeyedByARename(t *testing.T) {
 	if registers == 0 {
 		t.Fatal("the tracked tree carries no test-infrastructure register, so the case measured nothing")
 	}
-	for _, m := range []string{"tests/change-graph.json", "tests/spec-map.json"} {
-		if !scope.KeyWritable(m) {
-			t.Errorf("%s is keyed by tracked path and a rename does not rekey it", m)
-		}
-	}
 }
 
 // TestEveryReadableTrackedPathIsWritableBySomePass pins the property the
@@ -1021,8 +1016,9 @@ func TestTheKeyRewriteChannelSelectsARegisterByItsOwnTrackedPath(t *testing.T) {
 	// Membership is the register's own path against the rule.
 	for target, want := range map[string]bool{
 		"tests/registers/line-citations.yaml": true,
-		"tests/change-graph.json":             true,
-		"tests/spec-map.json":                 true,
+		// The two JSON maps change 0116 retired are outside the rule.
+		"tests/change-graph.json": false,
+		"tests/spec-map.json":     false,
 		// A register-shaped document whose entries are keyed by paths
 		// under the specification directory, sitting outside the register
 		// directory. Its entries do not put it in the channel.
@@ -6861,8 +6857,6 @@ func TestAConfinedRunReportsItsDeferredEntriesSortedByFileAndPosition(t *testing
 			"pkg/adapter/lifecyclechannel_test.go occurrence 1",
 			"pkg/adapter/lifecyclechannel_test.go occurrence 2",
 			"schemas/lifecycle-events.schema.json file name",
-			"tests/change-graph.json occurrence 1",
-			"tests/spec-map.json occurrence 1",
 		}
 		if got := r.Deferred(); !reflect.DeepEqual(got, want) {
 			t.Errorf("the specification-confined identifier run defers %v, want %v", got, want)
@@ -8931,41 +8925,6 @@ func TestIdentifierPassRefusesACarrierTheFormOfTheSiteRulesOut(t *testing.T) {
 	}
 }
 
-// TestIdentifierPassRewritesASitePathKeyedRegisterCarriesOutsideAKey
-// pins the write domain of the two path-keyed registers that sit inside
-// the read domain the passes and the gates share. Their keys move on the
-// key channel, and every other occurrence they carry, a section title
-// and a wildcard glob key here, is an ordinary site resolved through the
-// sense register. Leaving those occurrences to the key channel would
-// leave a readable file with a retired spelling no pass can write, which
-// the identifier-resolution gate and the residual scan both report.
-//
-// spec: §28.1 (N4, the naming law: the canonical identifier is written
-// in every carrier of the channel it denotes)
-func TestIdentifierPassRewritesASitePathKeyedRegisterCarriesOutsideAKey(t *testing.T) {
-	t.Parallel()
-	root := idTree(t, "tree")
-	before := treeSnapshot(t, root)
-	for _, register := range []string{"tests/change-graph.json", "tests/spec-map.json"} {
-		if !strings.Contains(before[register], "LifecycleChannel") && !strings.Contains(before[register], "lifecyclechannel*") {
-			t.Fatalf("the fixture %s carries no occurrence outside a key position", register)
-		}
-	}
-	applyIDPass(t, root, "tree.yaml")
-	after := treeSnapshot(t, root)
-	if !strings.Contains(after["tests/spec-map.json"], "Registers of the RuntimeOpsChannel") {
-		t.Errorf("the section title was left at its retired spelling:\n%s", after["tests/spec-map.json"])
-	}
-	if !strings.Contains(after["tests/change-graph.json"], "pkg/adapter/runtimeops*_test.go") {
-		t.Errorf("the wildcard glob key was left at its retired spelling:\n%s", after["tests/change-graph.json"])
-	}
-	// The keys the move writes are not resolved a second time as sites,
-	// so each is written once and reads as the path the file moved to.
-	if !strings.Contains(after["tests/change-graph.json"], `"pkg/adapter/runtimeops.go"`) {
-		t.Errorf("the moved glob key is not the path the file moved to:\n%s", after["tests/change-graph.json"])
-	}
-}
-
 // TestIdentifierPassLeavesASingleChannelSpellingAtANonChannelSiteAsItStands
 // pins both dispositions of the occurrence-scoped trigger. A spelling
 // the naming table maps to exactly one channel still occurs where the
@@ -9063,8 +9022,7 @@ func TestIdentifierPassLeavesEveryWriteExcludedCarrierByteIdentical(t *testing.T
 }
 
 // TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates reads
-// each register after the run rather than asking a validator, because
-// the map validator does not existence-check the `schemas` paths and no
+// each register after the run rather than asking a validator, because no
 // check reads a citation baseline at all, so a stale key there is
 // invisible to every gate until the gate that owns it fires on the wrong
 // file. Without the rekey the line-citation ratchet fires on a rename
@@ -9090,12 +9048,10 @@ func TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates(t *testing.T
 	registers := keyWritableIn(t, root)
 	inDomain := membership(registers)
 	for _, want := range []string{
-		"tests/change-graph.json",
 		"tests/registers/line-citation-resolution.yaml",
 		"tests/registers/line-citations.yaml",
 		"tests/registers/residual-skip-reasons.yaml",
 		"tests/registers/skip-reasons.yaml",
-		"tests/spec-map.json",
 	} {
 		if !inDomain[want] {
 			t.Fatalf("the rekey domain over the fixture tree omits %s", want)
@@ -9112,20 +9068,6 @@ func TestIdentifierPassRekeysEveryPathKeyedRegisterAMoveInvalidates(t *testing.T
 			t.Errorf("%s still carries a key of the file the run moved:\n%s", register, after[register])
 		}
 		assertRewritten(t, root, register)
-	}
-	// The spec map carries three key positions a rename invalidates: the
-	// package path, the schemas entry no check existence-checks, and the
-	// `::<symbol>` reference, which is keyed by symbol rather than by
-	// path and is resolved against its declaring file by a static-tier check.
-	spec := after["tests/spec-map.json"]
-	for _, want := range []string{
-		"pkg/adapter/runtimeops.go",
-		"schemas/runtime-ops-events.schema.json",
-		"pkg/adapter/runtimeops_test.go::TestRuntimeOpsChannelServes",
-	} {
-		if !strings.Contains(spec, want) {
-			t.Errorf("the spec map does not carry %s after the run:\n%s", want, spec)
-		}
 	}
 }
 
@@ -9377,8 +9319,8 @@ func TestAConfinedIdentifierRunPlansNoRenameOutsideItsConfinement(t *testing.T) 
 // the channel's identifier)
 func TestAConfinedIdentifierRunRekeysNoRegisterForACarrierItLeavesInPlace(t *testing.T) {
 	t.Parallel()
-	const keyed = "tests/change-graph.json"
-	const carrier = "pkg/adapter/lifecyclechannel.go"
+	const keyed = "tests/registers/skip-reasons.yaml"
+	const carrier = "pkg/adapter/lifecyclechannel_test.go"
 	root := idTree(t, "tree")
 	before := treeSnapshot(t, root)
 	confine := pass.NewConfinement([]string{keyed}, nil)

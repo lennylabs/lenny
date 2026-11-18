@@ -21,7 +21,7 @@ import (
 // no Go package owns, such as the chart, the compose stack, and the runtime
 // supervisor's C sources, each mapped to the test packages or tiers that
 // read, execute, or deploy it. The import graph selects every other input,
-// so the list stays short, and `validate-maps` fails a dead row so it stays
+// so the list stays short, and `validate` fails a dead row so it stays
 // current. The harness is contributor tooling, so this file carries no
 // specification annotation.
 
@@ -155,7 +155,7 @@ func inputPatternRegexp(pattern string) (*regexp.Regexp, error) {
 	return regexp.Compile(b.String())
 }
 
-// validateNonGoInputsFile is the `validate-maps` check of the list: it
+// validateNonGoInputsFile is the `validate` check of the list: it
 // parses, every row has a pattern, a target, and a reason, every pattern
 // matches at least one tracked file, every package target is a directory
 // that holds Go files, and every other target is a tier name. A dead row

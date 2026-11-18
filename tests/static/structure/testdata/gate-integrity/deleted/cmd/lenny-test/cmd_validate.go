@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
 // Fixture: a gate registered through the second channel the repository
-// hard-gates, a check inside runValidateMaps. It is fixture material rather
+// hard-gates, a check inside runValidate. It is fixture material rather
 // than compiled source; the go tool does not read a testdata tree.
 
 package main
 
-func runValidateMaps(args []string) int {
+func runValidate(args []string) int {
 	results := []checkResult{
 		validateExampleRegister(args),
 	}

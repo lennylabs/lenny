@@ -12,23 +12,21 @@
 //     split path-segment form) across every *.go file, using the
 //     boundary-anchored primitives in the rewrite subpackage so a moved path
 //     that is a strict prefix of a sibling does not corrupt the sibling;
-//  3. rewrite the same references in the maps and registers keyed by package
-//     path (pathCarriers: tests/spec-map.json, tests/change-graph.json,
-//     tests/claim-map.json, the registers under tests/registers that name
-//     package paths, among them the gateway layout register, and the pending
-//     lists beside the maps) on a path-token boundary, skipping a carrier
-//     that no longer exists;
+//  3. rewrite the same references in the registers keyed by package path
+//     (pathCarriers: the registers under tests/registers that name package
+//     paths, among them the gateway layout register) on a path-token
+//     boundary, skipping a carrier that no longer exists;
 //  4. gofmt -w and goimports -w the touched Go files to regroup imports;
-//  5. gate on go build ./..., go vet ./..., lenny-test validate-maps, and
+//  5. gate on go build ./..., go vet ./..., lenny-test validate, and
 //     go list ./... (zero import cycles), aborting on any failure;
-//  6. regenerate the change-graph index (tests/change-graph.json is the index;
-//     the in-place rewrite in step 3 is its regeneration, re-validated by the
-//     step-5 validate-maps gate);
-//  7. run the post-move audit: grep tests/spec-map.json, tests/change-graph.json,
-//     and *.go (test files included) for a surviving pre-move path token in a
-//     driver-rewritable boundary-anchored form and ABORT on it; surface
-//     comment and informational-string occurrences and non-Go prose files as a
-//     NON-FATAL warning.
+//  6. run the post-move audit: grep *.go (test files included) for a
+//     surviving pre-move path token in a driver-rewritable boundary-anchored
+//     form and ABORT on it; surface comment and informational-string
+//     occurrences and non-Go prose files as a NON-FATAL warning.
+//
+// Change 0116 retired the two JSON maps the driver used to rewrite and
+// audit, tests/spec-map.json and tests/change-graph.json: test selection
+// reads the Go import graph, which a move updates with the imports.
 //
 // Rollback is part of the gated move (proposal §2: a failed gate "aborts and
 // rolls back that one move"; §6: "A move that fails any check is rolled back").
@@ -51,7 +49,7 @@
 //	                     store cluster, the session cluster, and so on, each
 //	                     applied, gated green, and committed before the next)
 //	  -dry-run           parse, plan, and print the moves without touching the tree
-//	  -skip-gates        skip the go build/vet/validate-maps/go list gates
+//	  -skip-gates        skip the go build/vet/validate/go list gates
 //	                     (for fast local iteration; never in CI)
 //	  -skip-audit        skip the post-move audit (never in CI)
 //
@@ -104,7 +102,7 @@ func parseFlags() config {
 	flag.StringVar(&cfg.step, "step", "", "apply only the moves the manifest assigns to this step")
 	flag.StringVar(&cfg.group, "group", "", "apply only the moves whose destination group equals this")
 	flag.BoolVar(&cfg.dryRun, "dry-run", false, "plan without touching the tree")
-	flag.BoolVar(&cfg.skipGates, "skip-gates", false, "skip the go build/vet/validate-maps/go list gates")
+	flag.BoolVar(&cfg.skipGates, "skip-gates", false, "skip the go build/vet/validate/go list gates")
 	flag.BoolVar(&cfg.skipAudit, "skip-audit", false, "skip the post-move audit")
 	flag.Parse()
 	return cfg
@@ -317,7 +315,7 @@ func (d *driver) requireCleanTree() error {
 // failed gate or audit, so the failed move is reverted as the proposal specifies
 // (§2, §6) rather than left for the operator to undo by hand. Because execute
 // required a clean tree before starting, git reset --hard reverts the staged
-// git mv and the *.go/JSON rewrites to HEAD, and git clean removes the empty
+// git mv and the *.go and register rewrites to HEAD, and git clean removes the empty
 // group directories the move created (git mv left them in place after the reset
 // re-materialized the original directory). reset --hard targets HEAD, which is
 // the current commit on the current branch; it does not switch branches.
@@ -458,7 +456,7 @@ func (d *driver) gitMoveSelfPrefix(oldRel, newRel string) error {
 	return nil
 }
 
-// rewriteTree applies the import-literal, runtime-path, and JSON-token rewrites
+// rewriteTree applies the import-literal, runtime-path, and register-token rewrites
 // across the tree for every move in this batch. It walks once and rewrites each
 // file against all moves, so a file importing several moved packages is fixed in
 // a single pass.
@@ -496,16 +494,12 @@ func (d *driver) rewriteGoFiles() error {
 }
 
 // pathCarriers are the files outside Go that key entries by package path:
-// the JSON test maps, and the registers and lists whose entries name a
-// package directory. A move rewrites each one that exists, so a carrier a
+// the registers whose entries name a package directory, and the non-Go
+// input list, whose rows name test packages that `lenny-test validate`
+// requires to exist. A move rewrites each one that exists, so a carrier a
 // later change retires is skipped rather than failing the move.
 var pathCarriers = []string{
-	"tests/spec-map.json",
-	"tests/change-graph.json",
-	"tests/claim-map.json",
-	"tests/change-graph-pending.txt",
-	"tests/spec-map-pending.txt",
-	"tests/registers/change-graph-coverage.yaml",
+	"tests/non-go-inputs.yaml",
 	"tests/registers/skip-reasons.yaml",
 	"tests/registers/residual-skip-reasons.yaml",
 	"tests/registers/spec-section-citations.yaml",
@@ -515,11 +509,8 @@ var pathCarriers = []string{
 }
 
 // rewritePathCarriers rewrites the package-path references in every carrier
-// that exists. The JSON maps take the quote-anchored token rewrite; the
-// registers and lists take the bare-token rewrite, because a YAML key or a
-// list line names a path without quotes. For the JSON maps this is also the
-// "regenerate the change-graph index" step: the maps are the index, and the
-// validate-maps gate re-validates them.
+// that exists, with the bare-token rewrite, because a YAML key or a list
+// line names a path without quotes.
 func (d *driver) rewritePathCarriers() error {
 	for _, rel := range pathCarriers {
 		path := filepath.Join(d.root, filepath.FromSlash(rel))
@@ -527,9 +518,6 @@ func (d *driver) rewritePathCarriers() error {
 			continue
 		}
 		rewriteFn := func(content string) string { return rewrite.PathTokens(content, d.moves) }
-		if strings.HasSuffix(rel, ".json") {
-			rewriteFn = func(content string) string { return rewrite.JSONTokens(content, d.moves) }
-		}
 		if err := d.rewriteFile(path, rewriteFn); err != nil {
 			return fmt.Errorf("rewrite %s: %w", rel, err)
 		}
@@ -609,13 +597,13 @@ func (d *driver) touchedGoFiles() []string {
 }
 
 // runGates runs the static-tier gate the proposal mandates: go build ./..., go vet
-// ./..., go list ./... (zero import cycles), and lenny-test validate-maps. Any
+// ./..., go list ./... (zero import cycles), and lenny-test validate. Any
 // failure aborts; the caller reverts the move with git.
 func (d *driver) runGates() error {
 	if err := d.runGoGates(); err != nil {
 		return err
 	}
-	return d.runValidateMaps()
+	return d.runValidate()
 }
 
 // runGoGates runs the go-toolchain gates: build, vet, and list (the import-cycle
@@ -638,11 +626,11 @@ func (d *driver) runGoGates() error {
 	return nil
 }
 
-// runValidateMaps runs lenny-test validate-maps via go run, so the gate works
+// runValidate runs lenny-test validate via go run, so the gate works
 // without a prebuilt binary on PATH.
-func (d *driver) runValidateMaps() error {
-	if out, err := d.runIn(d.root, "go", "run", "./cmd/lenny-test", "validate-maps"); err != nil {
-		return fmt.Errorf("lenny-test validate-maps failed:\n%s", out)
+func (d *driver) runValidate() error {
+	if out, err := d.runIn(d.root, "go", "run", "./cmd/lenny-test", "validate"); err != nil {
+		return fmt.Errorf("lenny-test validate failed:\n%s", out)
 	}
 	return nil
 }
@@ -675,7 +663,7 @@ func skipDir(name string) bool {
 // and, critically, the driver's own scripts/refactor subtree by path. The driver
 // package carries manifest path strings as test fixtures (the rewrite and audit
 // unit tests assert against literal "github.com/lennylabs/lenny/pkg/gateway/<pkg>"
-// strings and JSON token fixtures). A tree-wide rewrite that descended into the
+// strings and path-token fixtures). A tree-wide rewrite that descended into the
 // driver's own sources would corrupt those fixtures (turning an Old->New move
 // fixture into a no-op Old==New pair) and the audit would then flag the driver's
 // test data as a stale reference. The driver imports no moved gateway package, so

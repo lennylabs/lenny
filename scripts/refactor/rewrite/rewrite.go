@@ -119,8 +119,8 @@ func replaceQuotedPaths(content string, pairs []oldNew) string {
 			continue
 		}
 		// Find the closing quote of this string literal, honoring backslash
-		// escapes so an escaped \" inside a JSON value does not close the
-		// literal early (the spec-map carries such values).
+		// escapes so an escaped \" inside the literal does not close it
+		// early.
 		end := closingQuote(content, i+1)
 		if end < 0 {
 			// Unterminated; emit the rest verbatim.
@@ -276,32 +276,10 @@ func commonPrefixLen(a, b []string) int {
 	return n
 }
 
-// JSONTokens rewrites the gateway path references in a JSON map file's content
-// (tests/spec-map.json, tests/change-graph.json). Each map entry names a path
-// as a JSON string value or key; the rewrite matches on a path-token boundary
-// so the short path does not collide with a longer sibling entry or a /...
-// glob. The four boundary forms a map entry uses are, for old path P:
-//
-//	"P"        the exact path (a package key or a bare package reference)
-//	"P/...     a glob prefix (the package's recursive test selector)
-//	"P/        a deeper reference (a file or method under the package)
-//
-// All three are anchored on the opening quote and the trailing '"', '/', so
-// the replacement never matches inside "P-sibling" or "Plonger". The '/'
-// and "'..." forms collapse to a single "P/ -> Q/ rule because both start
-// with the path followed by a slash.
-//
-// Like ImportLiterals, the rewrite is a single pass that classifies each
-// quoted token against the original text, so a self-prefix move (policy ->
-// policy/policy) does not corrupt a sibling glob already moved into the group
-// (policy/interceptor's "pkg/gateway/policy/interceptor/..." entry stays final).
-func JSONTokens(content string, moves []Move) string {
-	return replaceQuotedPaths(content, jsonOldNew(moves))
-}
-
-// jsonOldNew projects the moves onto their repo-relative paths for the JSON-map
-// token rewrite, skipping no-op moves (oldRel == newRel).
-func jsonOldNew(moves []Move) []oldNew {
+// relOldNew projects the moves onto their repo-relative paths for the
+// register token rewrite and the runtime-path survivor check, skipping no-op
+// moves (oldRel == newRel).
+func relOldNew(moves []Move) []oldNew {
 	out := make([]oldNew, 0, len(moves))
 	for _, m := range moves {
 		oldRel := RepoRel(m.Old)
@@ -361,7 +339,7 @@ func ClassifyGo(content string, m Move, allMoves []Move) SurvivorClass {
 	if survivesAsQuoted(content, m.Old, importOldNew(allMoves)) {
 		return Abort
 	}
-	if survivesAsQuoted(content, oldRel, jsonOldNew(allMoves)) {
+	if survivesAsQuoted(content, oldRel, relOldNew(allMoves)) {
 		return Abort
 	}
 	if hasSplitSegmentRun(content, oldRel, newRel) {
@@ -369,30 +347,6 @@ func ClassifyGo(content string, m Move, allMoves []Move) SurvivorClass {
 	}
 
 	// Non-rewritable forms (comment or informational string): a warning.
-	if hasBoundedToken(content, oldRel) {
-		return Warn
-	}
-	return None
-}
-
-// ClassifyJSON returns the survivor class for the old path of move m in a JSON
-// map file's content, evaluated against the whole batch allMoves. A
-// driver-rewritable boundary form ("P", "P/..., "P/file) aborts, because the
-// driver provably could and should have rewritten it. An in-manifest old path
-// that survives only inside a larger informational JSON string value (a "notes"
-// sentence, where the token is bounded by a space or by '(', ')', '.', ';', ',',
-// ':' rather than by a quote or a slash) warns: the driver's JSONTokens rewrites
-// only quote/slash-bounded tokens, so it never touches such an occurrence, and
-// aborting on it would make a group move unsatisfiable. The abort check is the
-// same set-aware quoted-token survivor test ClassifyGo uses, so a sibling moved
-// into a self-prefix group is not mis-flagged. spec: §4.1 (proposal 0020 §4 C4 —
-// the post-move audit surfaces informational-string occurrences across all three
-// audited surfaces).
-func ClassifyJSON(content string, m Move, allMoves []Move) SurvivorClass {
-	oldRel := RepoRel(m.Old)
-	if survivesAsQuoted(content, oldRel, jsonOldNew(allMoves)) {
-		return Abort
-	}
 	if hasBoundedToken(content, oldRel) {
 		return Warn
 	}

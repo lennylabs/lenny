@@ -32,7 +32,7 @@ func TestIsJourneysTierRecognizesTheTierFlag(t *testing.T) {
 	}
 	for _, tier := range allTiers() {
 		if tier == tierJourneys {
-			t.Error("the journeys tier is in allTiers, so --max-tier and the gate would reach a tier that spends money")
+			t.Error("the journeys tier is in allTiers, so a gate bound or a --tier list would reach a tier that spends money")
 		}
 	}
 }

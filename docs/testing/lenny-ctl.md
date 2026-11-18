@@ -73,7 +73,7 @@ The full category list is in spec §15.1; the test naming convention is `TestCtl
 
 When the `lenny-ctl` binary ships:
 1. Move the scaffolded tests under `tests/integration/scaffolds_test.go` (e.g. `TestAdminBootstrap`) into per-category files.
-2. Add entries to `tests/spec-map.json` under §15.1 referencing each test.
+2. Give each test a `// spec:` annotation in its doc comment naming the section or requirement it verifies, so `lenny-test --spec` and the coverage view find it.
 3. Update `tests/groups.yaml` phase-4.5-gate to include the new test files.
 
 Until then the category-level scaffolds sit under `tests/integration/scaffolds_test.go` with `t.Skip("not implemented: §15.1 ...")`.

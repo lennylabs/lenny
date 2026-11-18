@@ -79,7 +79,11 @@ groups:
     description: Fast PR feedback.
     selectors:
       changed: true
-      max_tier: component
+      tiers: [static, unit, component]
+  pr:
+    description: The merge gate's tiers.
+    selectors:
+      gate: merge
   phase-0-gate:
     selectors:
       tiers: [static, docs]
@@ -110,9 +114,58 @@ groups:
   bad-tier:
     description: References a tier that does not exist.
     selectors:
-      max_tier: nonexistent
+      tier: nonexistent
 `)
 	expectFail(t, validateGroupsYAML(path), "nonexistent")
+}
+
+// TestValidateGroupsYAMLRefusesAnUnknownGateAndMaxTier pins the group
+// bounds of change 0116 (CS-7): a gate must name the merge, area, or
+// release gate, and max_tier, which the gates replace, is refused rather
+// than ignored. It tests contributor tooling, so it carries no spec
+// annotation.
+func TestValidateGroupsYAMLRefusesAnUnknownGateAndMaxTier(t *testing.T) {
+	path := writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  bad-gate:
+    description: Names a gate that does not exist.
+    selectors:
+      gate: nightly
+`)
+	expectFail(t, validateGroupsYAML(path), "unknown gate", "nightly")
+	path = writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  old-bound:
+    description: Uses the removed bound.
+    selectors:
+      max_tier: component
+`)
+	expectFail(t, validateGroupsYAML(path), "max_tier is removed")
+	path = writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  empty-bound:
+    description: A gate that keeps none of the group's tiers.
+    selectors:
+      gate: merge
+      tiers: [e2e_kind]
+      include:
+        - tier: chaos
+          subset: core
+`)
+	expectFail(t, validateGroupsYAML(path), "keeps none of the tiers", "e2e_kind, chaos")
+	path = writeYAML(t, "groups.yaml", `
+version: 1
+groups:
+  shared-bound:
+    description: A gate that keeps one of the group's tiers.
+    selectors:
+      gate: area
+      tiers: [unit, e2e_kind]
+`)
+	expectPass(t, validateGroupsYAML(path))
 }
 
 func TestValidateGroupsYAMLDescriptionRequiredForNonGate(t *testing.T) {
@@ -206,162 +259,6 @@ subsets:
     tests: all
 `)
 	expectPass(t, validateGroupsSubsetsYAML(path))
-}
-
-// ---- spec-map-exceptions.yaml -------------------------------------
-
-func TestValidateSpecMapExceptionsHappy(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "1"
-    reason: non-normative
-    justification: Executive summary.
-  - section: "20"
-    reason: empty
-    justification: All open questions resolved.
-  - section: "27"
-    reason: post-v1
-    justification: Web playground is post-v1.
-`)
-	expectPass(t, validateSpecMapExceptionsYAML(path, testRegisterRules()))
-}
-
-func TestValidateSpecMapExceptionsUnknownReason(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "1"
-    reason: handwave
-    justification: just because
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "handwave")
-}
-
-func TestValidateSpecMapExceptionsMissingJustification(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "1"
-    reason: non-normative
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "1", "justification")
-}
-
-func TestValidateSpecMapExceptionsDuplicateSection(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "1"
-    reason: non-normative
-    justification: First entry.
-  - section: "1"
-    reason: non-normative
-    justification: Second entry.
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "1", "already declared")
-}
-
-// The pending-implementation class exempts a spec heading that exists
-// with no implementation key yet, so an entry under it stays measurable:
-// it names the open item whose closure retires it and the date it was
-// written. An entry that passed with either field empty or unparseable
-// would exempt its heading permanently, which is the outcome these cases
-// rule out. The blocker and opened_at fields carry the names and the
-// rules the shared register contract gives them, so the two rules also
-// range over an entry under an older reason class that carries either
-// field.
-
-func TestValidateSpecMapExceptionsPendingImplementationTracked(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "4.6.1"
-    reason: pending-implementation
-    justification: The warm pool controller is queued behind the binding split.
-    blocker: F-1.2.3
-    opened_at: 2026-07-01
-`)
-	expectPass(t, validateSpecMapExceptionsYAML(path, testRegisterRules()))
-}
-
-func TestValidateSpecMapExceptionsPendingImplementationMissingBlocker(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "4.6.1"
-    reason: pending-implementation
-    justification: The warm pool controller is queued.
-    opened_at: 2026-07-01
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "requires blocker")
-}
-
-func TestValidateSpecMapExceptionsPendingImplementationMissingOpenedAt(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "4.6.1"
-    reason: pending-implementation
-    justification: The warm pool controller is queued.
-    blocker: F-1.2.3
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "requires opened_at")
-}
-
-func TestValidateSpecMapExceptionsPendingImplementationBlockerNotOpen(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "4.6.1"
-    reason: pending-implementation
-    justification: The warm pool controller is queued.
-    blocker: F-9.9.9
-    opened_at: 2026-07-01
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "F-9.9.9", "does not resolve to an open item")
-}
-
-func TestValidateSpecMapExceptionsOpenedAtNotADate(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "4.6.1"
-    reason: pending-implementation
-    justification: The warm pool controller is queued.
-    blocker: F-1.2.3
-    opened_at: soon
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()), "4.6.1", "opened_at", "YYYY-MM-DD")
-}
-
-// An entry under an existing reason class carries neither field, and
-// carrying one holds it to the same rules: an unresolvable blocker and
-// an unparseable date are as unmeasurable under non-normative as under
-// pending-implementation.
-func TestValidateSpecMapExceptionsTrackingFieldsCheckedUnderEveryReason(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "1"
-    reason: non-normative
-    justification: Executive summary.
-    blocker: F-9.9.9
-    opened_at: whenever
-`)
-	expectFail(t, validateSpecMapExceptionsYAML(path, testRegisterRules()),
-		"F-9.9.9", "does not resolve to an open item", "opened_at")
-}
-
-func TestValidateSpecMapExceptionsExistingReasonNeedsNoTrackingFields(t *testing.T) {
-	path := writeYAML(t, "spec-map-exceptions.yaml", `
-version: 1
-exceptions:
-  - section: "1"
-    reason: non-normative
-    justification: Executive summary.
-`)
-	expectPass(t, validateSpecMapExceptionsYAML(path, testRegisterRules()))
 }
 
 // ---- flake-budget.yaml --------------------------------------------
@@ -676,7 +573,7 @@ func TestCheckRegisterWrongVersionFails(t *testing.T) {
 // register; reading it as one would apply the shared rules to a
 // document written for another schema.
 func TestCheckRegisterUndeclaredKindFails(t *testing.T) {
-	path := writeYAML(t, "change-graph-exceptions.yaml", "version: 1\nentries: []\n")
+	path := writeYAML(t, "other-exceptions.yaml", "version: 1\nentries: []\n")
 	expectFail(t, checkRegister("register", path, nil, testRegisterRules()), "expected kind", "exception-register")
 }
 
@@ -777,7 +674,7 @@ func TestValidateRegistersDirMissingDirectoryFails(t *testing.T) {
 // instead of going unseen because the file was named outside a
 // convention.
 func TestValidateRegistersDirHoldsEveryFileDeclaringTheSharedSchema(t *testing.T) {
-	path := writeYAML(t, "change-graph-exceptions.yaml", `
+	path := writeYAML(t, "other-exceptions.yaml", `
 kind: exception-register
 version: 1
 entries:
@@ -790,7 +687,7 @@ entries:
     reason: Named outside the filename convention.
 `)
 	expectFail(t, validateRegistersDir(filepath.Dir(path), testRegisterRules()),
-		"change-graph-exceptions.yaml", "expiry 2026-07-30 has passed")
+		"other-exceptions.yaml", "expiry 2026-07-30 has passed")
 }
 
 // TestValidateRegistersDirLeavesFilesDeclaringNoSharedKind pins that
