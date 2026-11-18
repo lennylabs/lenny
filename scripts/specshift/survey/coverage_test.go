@@ -344,14 +344,16 @@ func TestCoverageOfABranchThatChangesNoRequirementIsEmpty(t *testing.T) {
 	}
 }
 
-func TestCoverageReturnsErrNoBaseWithoutAMergeBase(t *testing.T) {
+func TestCoverageFailsWhenMainSharesNoHistoryWithTheBranch(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
-	// An orphan branch shares no history with main.
+	// An orphan branch shares no history with main. annotation.MergeBase
+	// returns ErrNoBase only when no integration ref exists, so the gate
+	// fails here rather than skipping, since a skip counts as a pass.
 	f.git("checkout", "-q", "--orphan", "unrelated")
 	f.commit("unrelated history", "2026-03-01T12:00:00")
-	if _, err := CheckCoverage(context.Background(), f.root); !errors.Is(err, annotation.ErrNoBase) {
-		t.Errorf("err %v; want annotation.ErrNoBase", err)
+	if _, err := CheckCoverage(context.Background(), f.root); err == nil || errors.Is(err, annotation.ErrNoBase) {
+		t.Errorf("err %v; want an error other than annotation.ErrNoBase", err)
 	}
 }
 
