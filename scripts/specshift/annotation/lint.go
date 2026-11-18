@@ -208,7 +208,9 @@ func testNames(fset *token.FileSet, file *ast.File, f ChangedFile, ids nameIdent
 					fmt.Sprintf("subtest %q: name the behavior", name),
 				})
 			}
-			if id, ok := ids.find(name); ok {
+			// `go test` writes a space in a subtest name as an
+			// underscore, so `CLAIM R4` names the subtest `CLAIM_R4`.
+			if id, ok := ids.find(strings.ReplaceAll(name, " ", "_")); ok {
 				out = append(out, Finding{
 					f.Path, line, IdentifierInTestName,
 					fmt.Sprintf("subtest %q spells %s: name the behavior", name, id),
@@ -222,9 +224,11 @@ func testNames(fset *token.FileSet, file *ast.File, f ChangedFile, ids nameIdent
 
 // identifierWithSeparator matches, at the start of its input, a
 // requirement or issue identifier whose hyphen is kept or written as an
-// underscore, such as `POOL_R5` or `POOL-I2`. It needs no registry, so
-// the check holds before the tree carries one.
-var identifierWithSeparator = regexp.MustCompile(`^[A-Z][A-Z0-9]{1,11}[-_][RI][0-9]+`)
+// underscore, such as `POOL_R5` or `POOL-I2`. Its code has the page-code
+// form of spec/conventions.md, two to nine upper-case letters, so a
+// token with a digit such as `V1_R2` or `IPV4_R1` is not read as a code.
+// It needs no registry, so the check holds before the tree carries one.
+var identifierWithSeparator = regexp.MustCompile(`^[A-Z]{2,9}[-_][RI][0-9]+`)
 
 // nameIdentifiers finds a requirement or issue identifier spelled in a
 // test or subtest name.
@@ -279,16 +283,15 @@ func newNameIdentifiers(r *Registry) nameIdentifiers {
 // find returns the first identifier the name spells, in its canonical
 // form `CODE-Rn` or `CODE-In`.
 //
-// A spelling starts at an upper-case letter that does not continue a
-// run of upper-case letters, which keeps a code from matching inside a
-// longer acronym. A spelling that drops the hyphen also has to end
+// A spelling starts where startsSpelling allows, which keeps a code from
+// matching inside a longer acronym. A spelling that drops the hyphen also has to end
 // where the number meets the end of the name or a character that is not
 // a lower-case letter, which keeps `ClaimR5ms` from reading as `R5`
 // followed by a word. A spelling with a hyphen or an underscore is an
 // identifier whatever follows it.
 func (m nameIdentifiers) find(name string) (string, bool) {
 	for i := 0; i < len(name); i++ {
-		if !isUpper(name[i]) || (i > 0 && isUpper(name[i-1])) {
+		if !startsSpelling(name, i) {
 			continue
 		}
 		for _, re := range []*regexp.Regexp{identifierWithSeparator, m.registered} {
@@ -308,6 +311,20 @@ func (m nameIdentifiers) find(name string) (string, bool) {
 		}
 	}
 	return "", false
+}
+
+// startsSpelling reports whether an identifier spelling can start at
+// byte i of name: at an upper-case letter that does not continue a run
+// of upper-case letters, or at one that opens a camel-case word after an
+// acronym, as `Claim` does in `APIClaimR4`.
+func startsSpelling(name string, i int) bool {
+	if !isUpper(name[i]) {
+		return false
+	}
+	if i == 0 || !isUpper(name[i-1]) {
+		return true
+	}
+	return i+1 < len(name) && isLower(name[i+1])
 }
 
 // canonicalIdentifier writes a spelling found in a name as `CODE-Rn` or

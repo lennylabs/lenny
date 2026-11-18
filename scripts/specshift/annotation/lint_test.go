@@ -148,6 +148,9 @@ func TestLintRefusesIdentifiersInTestAndSubtestNames(t *testing.T) {
 		43: "CLAIM-R4",   // a benchmark
 		47: "CLAIM-R4",   // an underscore spelling followed by a lower-case word
 		49: "CLAIM-R4",   // a title-case underscore spelling followed by a lower-case word
+		52: "CLAIM-R4",   // subtest, a space that go test writes as an underscore
+		53: "CLAIM-R4",   // subtest, the number followed by punctuation
+		58: "CLAIM-R4",   // a title-case code after an acronym
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("identifier-name findings %v, want %v", got, want)
@@ -157,11 +160,13 @@ func TestLintRefusesIdentifiersInTestAndSubtestNames(t *testing.T) {
 func TestLintAcceptsTestNamesThatSpellNoIdentifier(t *testing.T) {
 	t.Parallel()
 	got := identifierNameFindings(t, fixtureLint(t), "pkg/claim/claim_test.go", nil)
-	// Line 9 is a plain subtest, 13 a version, 14 a count, 29 an
-	// unregistered code with its hyphen dropped, 33 and 35 versions, 37
-	// a duration after a registered code, 39 a code inside a word, 41 an
-	// operation, and 45 a function `go test` does not run.
-	for _, line := range []int{8, 9, 13, 14, 29, 33, 35, 37, 39, 41, 45} {
+	// Line 8 is a plain test name, 9 a plain subtest, 13 a version, 14 a
+	// count, 29 an unregistered code with its hyphen dropped, 33 and 35
+	// versions, 37 a duration after a registered code, 39 a code inside a
+	// word, 41 an operation, 45 a function `go test` does not run, 55 a
+	// subtest named by a variable, which the lint does not read, and 60
+	// and 62 tokens with a digit before an underscore spelling.
+	for _, line := range []int{8, 9, 13, 14, 29, 33, 35, 37, 39, 41, 45, 51, 54, 55, 60, 62} {
 		if id, ok := got[line]; ok {
 			t.Errorf("line %d refused as spelling %s", line, id)
 		}
@@ -183,10 +188,10 @@ func TestLintWithoutARegistryRefusesOnlyIdentifiersWithASeparator(t *testing.T) 
 	t.Parallel()
 	// Without a registry, a code is recognized only in upper case and
 	// followed by a hyphen or an underscore, so the title-case codes of
-	// lines 19 and 49 and the dropped hyphens of lines 12, 21, 23, 25,
-	// 31, and 43 pass.
+	// lines 19, 49, and 58 and the dropped hyphens of lines 12, 21, 23,
+	// 25, 31, and 43 pass.
 	got := identifierNameFindings(t, Lint{}, "pkg/claim/claim_test.go", nil)
-	want := map[int]string{10: "CLAIM-R4", 11: "CLAIM-I4", 17: "CLAIM-R4", 27: "POOL-R5", 47: "CLAIM-R4"}
+	want := map[int]string{10: "CLAIM-R4", 11: "CLAIM-I4", 17: "CLAIM-R4", 27: "POOL-R5", 47: "CLAIM-R4", 52: "CLAIM-R4", 53: "CLAIM-R4"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("findings without a registry %v, want %v", got, want)
 	}
