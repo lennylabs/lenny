@@ -21,6 +21,7 @@ import (
 // over-budget session is force-transitioned to the §7.1 `expired`
 // terminal with the §8.8 expired:budget reason and the terminal pipeline
 // runs.
+// spec: GWSEAM-ExpireSession
 func TestBudgetTerminatorExpiresRunningSession_spec_7_1(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
@@ -63,6 +64,7 @@ func TestBudgetTerminatorExpiresRunningSession_spec_7_1(t *testing.T) {
 
 // An already-terminal session is a no-op: no state change, no terminal
 // pipeline re-run (idempotent against a concurrent natural transition).
+// spec: GWSEAM-ExpireSession
 func TestBudgetTerminatorIdempotentOnTerminal_spec_11_2(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()

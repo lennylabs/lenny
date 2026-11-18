@@ -498,7 +498,7 @@ packages:
     - package: pkg/gateway/mcpfabric/playground
       count: 93
     - package: pkg/gateway/meteringproxy/llmproxy
-      count: 63
+      count: 68
     - package: pkg/gateway/meteringproxy/metering
       count: 53
     - package: pkg/gateway/meteringproxy/sessionbudget
