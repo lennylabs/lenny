@@ -61,3 +61,34 @@ func TestRegistryRegistersNoPathOrRecordField(t *testing.T) {
 		}
 	}
 }
+
+func TestRegistryPageCodesHoldEveryLiveCodeAndAliasInUpperCase(t *testing.T) {
+	t.Parallel()
+	doc := `{"version": 1, "pages": [
+		{"code": "CLAIM", "path": "spec/a.md", "type": "capability", "status": "", "aliases": ["hold"]},
+		{"code": "POOL", "path": "spec/b.md", "type": "capability", "status": ""}
+	], "requirements": [], "operations": [], "terms": [], "blocks": [], "retired": [], "moves": []}`
+	reg, err := LoadRegistry(func(string) ([]byte, error) { return []byte(doc), nil }, RegistryPath)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := reg.PageCodes()
+	if want := []string{"CLAIM", "HOLD", "POOL"}; strings.Join(got, ",") != strings.Join(want, ",") {
+		t.Errorf("PageCodes = %v, want %v", got, want)
+	}
+	// The returned slice is a copy, so the lint's sort of it leaves the
+	// registry's order alone.
+	got[0] = "X"
+	if reg.PageCodes()[0] != "CLAIM" {
+		t.Error("PageCodes returned the registry's own slice")
+	}
+	// An alias stands for its page in a test name, as the code does.
+	src := []byte("package claim\n\nimport \"testing\"\n\nfunc TestHoldR2Expires(t *testing.T) {}\n")
+	found, err := Lint{Registry: reg}.Check(ChangedFile{Path: "pkg/claim/claim_test.go", Src: src, Lines: allLines(src)})
+	if err != nil {
+		t.Fatalf("lint: %v", err)
+	}
+	if len(found) != 1 || found[0].Rule != IdentifierInTestName || !strings.Contains(found[0].Detail, "HOLD-R2") {
+		t.Errorf("findings %v, want one identifier-name finding for HOLD-R2", found)
+	}
+}
