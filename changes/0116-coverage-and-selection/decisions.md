@@ -2,21 +2,7 @@
 
 ## Open decisions
 
-8. **The docs tier in an unbounded `run --changed` (0116.S4).** CS-7 says that `run --changed` without `--tier` or `--gate` runs "every tier the selection reaches that runs without infrastructure: static, unit, component, and contract". The docs tier also starts no compose stack and no cluster, and `tests/non-go-inputs.yaml` routes every edit under `docs/` and `spec/` to it, so the enumerated list and the criterion disagree for it. Under the list, a documentation-only edit runs the static tier, and the selection notes name the docs tier as reached and left out.
-   - (a) Keep the list of CS-7: static, unit, component, and contract. The note names the docs tier, and `--tier docs` or `--gate merge` runs it.
-   - (b) Add the docs tier to the unbounded run, because it needs no infrastructure. The whole docs tier runs for any edit under `docs/` or `spec/`, including the prose-matching tests that 0155 and the areas retire, and the host Helm render test that fails on darwin.
-   - **Recommendation: (a).** It is what CS-7 states, the merge gate already runs the general documentation gates on every branch, and the rest of the docs tier is the set the areas are deleting. 0116.S4 builds (a); (b) is one entry in `infraFreeTiers` in `cmd/lenny-test/tier_bounds.go`.
-
-9. **How a test from the component tier on says it verifies no requirement (0116.S6).** CS-9 has `validate` check that every test function in the tiers `validate-diagnosis` covers "carries a `// spec:` annotation or the comment the annotation rule asks of a test that verifies no requirement". `.claude/rules/spec-annotations.md` asks such a test to carry no annotation "and say why in a comment", and fixes no form a check can read.
-   - (a) A phrase: the doc comment contains "verifies no requirement", read with the comment's lines joined and in any case, so the sentence that says why also satisfies the check.
-   - (b) A marker line, such as `// spec: none (<reason>)`, which the annotation lint would have to accept as an item that is neither a section nor an identifier.
-   - (c) No exemption: every test from the component tier on carries an annotation, and a test that verifies no requirement moves to the unit tier or to `tests/testinfra/`.
-   - **Recommendation: (a).** It reads the sentence the rule already asks for, needs no change to the annotation lint, and no test in those tiers uses it today, so it binds nothing yet. 0116.S6 builds (a); the phrase is `noRequirementPhrase` in `cmd/lenny-test/cmd_validate_annotated.go`, and the rule's "Tests" bullet would name it if the owner keeps it.
-
-11. **The scope of the infrastructure-free bound (0116.S4).** CS-7 states the bound for `run --changed`: without `--tier` or `--gate` it runs the static, unit, component, and contract tiers. The review of 0116.S4 found the first build applied it to `--spec` and `--pkg` too, so `--spec 13.2.3`, whose tests sit in the security tier, ran only the unit tier.
-    - (a) Bound `--changed` and `--since` only; `--spec` and `--pkg` name their tests and run every tier they resolve.
-    - (b) Bound every discovery selector, as the first build did, with the note naming what a gate or `--tier` would add.
-    - **Recommendation: (a).** It is what CS-7 states, and a developer who names a section or a package asks for its tests. 0116.S4 builds (a) after the review; (b) is the `!s.changed` guard in `selector.boundDiscovery`.
+None.
 
 ## Decisions
 
@@ -36,3 +22,27 @@ Settled by the owner on 2026-11-18, after an elaboration of the open decisions 0
 Settled by the owner on 2026-11-18 in the words "0116 decision 10: (a)", after an elaboration of the open decision 0116.S6 raised; the question as framed is in `review-history.md`.
 
 10. **Ending the selection union without coverage equivalence.** `list --spec` and `run --spec` select what the annotations cite, and the spec map's half of the union ends with 0116.S6 although the coverage-equivalence item did not show that the index selects at least what the map did for every key. The measured loss stands in `evidence/coverage-equivalence.md`: 49 of 213 keys lose a tier and 15 select no test through the index. Every such test stays reachable through `--changed`, `--pkg`, and the merge gate's import-graph selection, and each area's re-annotation narrows the gap.
+
+Settled by the owner on 2026-11-18 in the words "all ok", after an elaboration; each decision below keeps its number, and the question as framed is its text.
+
+8. **The docs tier in an unbounded `run --changed` (0116.S4).** CS-7 says that `run --changed` without `--tier` or `--gate` runs "every tier the selection reaches that runs without infrastructure: static, unit, component, and contract". The docs tier also starts no compose stack and no cluster, and `tests/non-go-inputs.yaml` routes every edit under `docs/` and `spec/` to it, so the enumerated list and the criterion disagree for it. Under the list, a documentation-only edit runs the static tier, and the selection notes name the docs tier as reached and left out.
+   - (a) Keep the list of CS-7: static, unit, component, and contract. The note names the docs tier, and `--tier docs` or `--gate merge` runs it.
+   - (b) Add the docs tier to the unbounded run, because it needs no infrastructure. The whole docs tier runs for any edit under `docs/` or `spec/`, including the prose-matching tests that 0155 and the areas retire, and the host Helm render test that fails on darwin.
+   - **Recommendation: (a).** It is what CS-7 states, the merge gate already runs the general documentation gates on every branch, and the rest of the docs tier is the set the areas are deleting. 0116.S4 builds (a); (b) is one entry in `infraFreeTiers` in `cmd/lenny-test/tier_bounds.go`.
+
+   Settled on option (a), the recommendation the branch built.
+
+9. **How a test from the component tier on says it verifies no requirement (0116.S6).** CS-9 has `validate` check that every test function in the tiers `validate-diagnosis` covers "carries a `// spec:` annotation or the comment the annotation rule asks of a test that verifies no requirement". `.claude/rules/spec-annotations.md` asks such a test to carry no annotation "and say why in a comment", and fixes no form a check can read.
+   - (a) A phrase: the doc comment contains "verifies no requirement", read with the comment's lines joined and in any case, so the sentence that says why also satisfies the check.
+   - (b) A marker line, such as `// spec: none (<reason>)`, which the annotation lint would have to accept as an item that is neither a section nor an identifier.
+   - (c) No exemption: every test from the component tier on carries an annotation, and a test that verifies no requirement moves to the unit tier or to `tests/testinfra/`.
+   - **Recommendation: (a).** It reads the sentence the rule already asks for, needs no change to the annotation lint, and no test in those tiers uses it today, so it binds nothing yet. 0116.S6 builds (a); the phrase is `noRequirementPhrase` in `cmd/lenny-test/cmd_validate_annotated.go`, and the rule's "Tests" bullet would name it if the owner keeps it.
+
+   Settled on option (a), the recommendation the branch built.
+
+11. **The scope of the infrastructure-free bound (0116.S4).** CS-7 states the bound for `run --changed`: without `--tier` or `--gate` it runs the static, unit, component, and contract tiers. The review of 0116.S4 found the first build applied it to `--spec` and `--pkg` too, so `--spec 13.2.3`, whose tests sit in the security tier, ran only the unit tier.
+    - (a) Bound `--changed` and `--since` only; `--spec` and `--pkg` name their tests and run every tier they resolve.
+    - (b) Bound every discovery selector, as the first build did, with the note naming what a gate or `--tier` would add.
+    - **Recommendation: (a).** It is what CS-7 states, and a developer who names a section or a package asks for its tests. 0116.S4 builds (a) after the review; (b) is the `!s.changed` guard in `selector.boundDiscovery`.
+
+   Settled on option (a), the recommendation the branch built.
