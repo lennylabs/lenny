@@ -240,7 +240,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `In progress` | 5 of 7 | 4 |
+| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `In progress` | 5 of 7 | 3 |
 | [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `In progress` | 2 of 13 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
