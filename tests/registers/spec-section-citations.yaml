@@ -1170,7 +1170,7 @@ packages:
     - package: tests/contract/workspaceplan
       count: 15
     - package: tests/docs
-      count: 1202
+      count: 1191
     - package: tests/e2e_cloud
       count: 77
     - package: tests/e2e_kind
@@ -1208,9 +1208,9 @@ packages:
     - package: tests/static/chart
       count: 99
     - package: tests/static/lint
-      count: 18
+      count: 20
     - package: tests/static/structure
-      count: 164
+      count: 132
     - package: tests/testinfra/ackruntime
       count: 2
     - package: tests/testinfra/admission

@@ -1,0 +1,61 @@
+# SPDX-License-Identifier: MIT
+#
+# Persona journey: a tenant administrator sets up a tenant, a user with a
+# role, and a credential. TESTING.md ("Persona journeys") describes the
+# format.
+name: tenant-admin-onboarding
+persona: tenant-admin
+summary: A tenant administrator creates a tenant, gives a user the tenant-admin role, and registers a credential for the tenant.
+target: kind
+setup: lenny
+docs:
+  - docs/tutorials/multi-tenant-setup.md
+  - docs/operator-guide/multi-tenancy.md
+  - docs/tutorials/user-credentials.md
+  - docs/api/admin.md
+  - docs/operator-guide/lenny-ctl.md
+goal: |
+  We are onboarding Globex onto our Lenny platform. Create a tenant for
+  them with the ID globex-{{nonce}}. Make Carol an administrator of that
+  tenant; her Lenny user ID is carol@globex.com, exactly as written, and
+  that ID is how Lenny identifies her. Then register Globex's Anthropic API key
+  as a credential their sessions can use, in a credential pool that
+  belongs to the tenant. The key is sk-ant-journey-{{nonce}}. It is a
+  placeholder for this exercise, so no request to Anthropic will succeed
+  with it, and that is expected.
+steps:
+  - Create the tenant with lenny-ctl or the admin API.
+  - Add the user to the tenant and assign the tenant-admin role.
+  - Store the API key where Lenny reads credential secrets, and create a credential pool for the tenant that holds it.
+  - Read the tenant, its users, and its credential pools back to confirm.
+environment: |
+  Lenny is installed and running on the cluster, and you administer the
+  platform. Your admin token and the gateway's URL are in your
+  environment, and your kubeconfig reaches the cluster.
+credentials:
+  - kubeconfig
+  - gateway-url
+  - admin-token
+tools:
+  - kubectl
+  - lenny-ctl
+timeLimit: 45m
+postconditions:
+  - name: tenant-exists
+    description: The tenant globex-<nonce> exists.
+    api: {method: GET, path: "/v1/admin/tenants/globex-{{nonce}}", as: platform-admin}
+    expect:
+      path: id
+      equals: "globex-{{nonce}}"
+  - name: carol-is-tenant-admin
+    description: carol@globex.com holds the tenant-admin role in the tenant.
+    api: {method: GET, path: "/v1/admin/tenants/globex-{{nonce}}/users", as: platform-admin}
+    expect:
+      path: "items[user_id=carol@globex.com].role"
+      equals: tenant-admin
+  - name: credential-pool-holds-a-credential
+    description: A credential pool of the tenant holds at least one credential.
+    api: {method: GET, path: "/v1/admin/credential-pools?tenantId=globex-{{nonce}}", as: platform-admin}
+    expect:
+      path: items.*.credentials.*.id
+      minItems: 1

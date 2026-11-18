@@ -1179,6 +1179,79 @@ var stagedLineSupersessions = []stagedLineSupersession{
 			"**Replica address:** states the holder value |",
 	},
 	{
+		// §28.4 becomes "Implementation status": a mechanism the tree does
+		// not carry out is recorded as an issue under issues/, and the claim
+		// register retires. The opening paragraph, N4's deferral clause, the
+		// heading, and the section's text follow.
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "table that records the spelling each carrier takes. §28.4 states the claim register",
+		from:       "§28.4 states the claim register, which records the",
+		to:         "§28.4 states where the implementation status of a",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "implementation status of every statement this section makes.",
+		from:       "implementation status of every statement this section makes.",
+		to:         "mechanism this section specifies is recorded.",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "carries a claim-register row with status `ABSENT` naming that step, per §28.4.",
+		from:       "carries a claim-register row with status `ABSENT` naming that step, per §28.4.",
+		to:         "is recorded as an issue, per §28.4.",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "### 28.4 Claim register",
+		from:       "Claim register",
+		to:         "Implementation status",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "Every normative statement this section makes about a mechanism carries a row",
+		from:       "Every normative statement this section makes about a mechanism carries a row in the claim register at",
+		to:         "A mechanism this section specifies that the tree does not carry out, or carries out with no production",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "`tests/claim-map.json`, with a status drawn from a closed set.",
+		from: "`tests/claim-map.json`, with a status drawn from a closed set. `WIRED` means the mechanism is " +
+			"reachable from production code. `UNWIRED`",
+		to: "caller, is recorded as an issue under `issues/`, filed under the code of the specification page " +
+			"that owns",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "means it is implemented and has no production caller.",
+		from:       "means it is implemented and has no production caller. `ABSENT` means it is specified and not implemented.",
+		to:         "the mechanism's contract. When a step plans the issue, the issue's `change` field names that step.",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "A `WIRED` row names the production surface that reaches the mechanism.",
+		from:       "A `WIRED` row names the production surface that reaches the mechanism. A row whose status is not `WIRED`",
+		to:         "A mechanism the tree carries out has no record in this section. The `// spec:` annotation on the code that",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "names, through a deferral identifier, the step that closes it,",
+		from:       "names, through a deferral identifier, the step that closes it, which makes the register the work queue for",
+		to:         "makes the mechanism's decision identifies where the tree carries it out, and the issue that recorded the",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "the steps that follow.",
+		from:       "the steps that follow.",
+		to:         "mechanism closes when the step that carries it out lands, as `issues/README.md` states.",
+	},
+	{
+		proposal:   "changes/0116-coverage-and-selection (0116.S5)",
+		linePrefix: "The claim register carries its own schema rather than the entry schema",
+		from: "The claim register carries its own schema rather than the entry schema the migration registers " +
+			"share,",
+		removes: 4,
+	},
+	{
 		// The REG-PODSTATE writer cell names the per-pod kind by the name
 		// change 0137 gave it. The staged name is spelled in parts, so the
 		// retired-name check reads this file like any other.

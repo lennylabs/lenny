@@ -9,7 +9,7 @@
 ## Steps
 
 ### 0157.S1 The journey tier and three pilot journeys
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0155.S1]
 

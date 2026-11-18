@@ -11,7 +11,7 @@ Integration history is explicit, `main` stays green, and branches are short-live
 - A branch merges only when the merge-gate verdict for its head commit is `PASS`. `lenny-test gate` runs the merge gate in the gate container and writes the verdict to `tests/results/gate-<run>.json`; `.claude/rules/test-coverage.md` ("Gates") states the tiers it runs. The verdict counts for the head only when its `trigger.git_revision` is the branch head and its `gate.dirty` is false. A commit added to the branch after the run, including a conflict resolution, needs a new verdict.
 - A records-only commit is the one exception: a commit after a `PASS` verdict keeps that verdict when both of the following hold.
   1. Every path the commit touches is under `changes/` (the step's digest, which records the verdict, the step statuses, and the board), or is `docs/about/status.md` with every changed line between its `<!-- generated:status -->` and `<!-- /generated:status -->` markers.
-  2. The static-tier records checks pass on the commit: `python3 scripts/changes/changes.py check`, `python3 scripts/changes/changes.py board --check`, and `python3 scripts/changes/changes.py status-page --check` when `changes.py` has the `status-page` command (change 0115 adds it).
+  2. The static-tier records checks and the secret scan pass on the commit: `python3 scripts/changes/changes.py check`, `python3 scripts/changes/changes.py board --check`, `python3 scripts/changes/changes.py status-page --check` when `changes.py` has the `status-page` command (change 0115 adds it), and `lenny-test secretscan`, which runs the static tier's secret scan on the committed tree at `HEAD` and passes only with exit code 0 and the verdict `PASS`. An `UNVERIFIED` result, such as on a host without the gitleaks release the gate image pins, does not pass (change 0158, decision 10).
 
   A commit that touches any other path, or any line of `docs/about/status.md` outside the markers, needs a new verdict.
 - The merge commit message or the step's digest names the verdict's run identifier, so the green run behind each merge can be found.
@@ -19,8 +19,8 @@ Integration history is explicit, `main` stays green, and branches are short-live
 
 ## Review changes to the merge gate
 
-- The merge gate builds `lenny-test` from the branch under test, so a branch that changes the harness is judged by its own version of it, and a branch could turn a check off and still pass. A branch whose diff against its merge base with `main` touches `cmd/lenny-test/`, `tests/gate/`, `tests/flake-budget.yaml`, or `.gitleaks.toml` is reviewed with the `review` skill over that diff before it merges.
-- The review checks whether the diff removes, weakens, or skips a check, changes what a check reads, widens the quarantine, or adds an allowlist entry for a value that is not a fake secret by design. A finding that needs the owner's decision blocks the merge until the owner settles it.
+- The merge gate builds `lenny-test` from the branch under test, so a branch that changes the harness is judged by its own version of it, and a branch could turn a check off and still pass. A branch whose diff against its merge base with `main` touches `cmd/lenny-test/`, `tests/gate/`, `tests/static/`, `tests/registers/`, `tests/flake-budget.yaml`, `.gitleaks.toml`, `go.mod`, or `go.sum` is reviewed with the `review` skill over that diff before it merges. The secret scan's registers of reviewed binary files and skipped paths are under `tests/registers/`. Scripts and the packages `lenny-test` imports are outside this rule (change 0158, decision 6).
+- The review checks whether the diff removes, weakens, or skips a check, changes what a check reads, widens the quarantine, adds an allowlist entry for a value that is not a fake secret by design, adds or updates a register entry for a binary file or a skipped path without reviewing that file's content, or adds or changes a module dependency in a way that puts new code into `lenny-test` or the checks it runs. A finding that needs the owner's decision blocks the merge until the owner settles it.
 - The step's digest, or the merge commit message when there is no digest, records the review's outcome.
 - The owner revisits this rule when pull requests replace direct merges (change 0158, decision 1).
 
@@ -45,7 +45,7 @@ Integration history is explicit, `main` stays green, and branches are short-live
 
 ## How to apply when merging
 
-1. Confirm the feature branch's work is complete, run `lenny-test gate` on its committed head, and confirm the verdict is `PASS` for that commit with a clean tree. Do not merge on any other verdict.
+1. Confirm the feature branch's work is complete, run `lenny-test gate` on its committed head, and confirm the verdict is `PASS` for that commit with a clean tree. Do not merge on any other verdict. When a records-only commit follows the verdict, run the records checks and `lenny-test secretscan` on that commit, and confirm that each passes, before relying on the verdict.
 2. When the branch's diff touches a path that "Review changes to the merge gate" names, confirm that the `review` skill ran over that diff and that no finding awaits the owner.
 3. Merge into the target with `git merge --no-ff`, with a message naming what the branch implemented.
 4. Delete the local branch with `git branch -d`, and delete the remote branch with `git push origin --delete` when it was pushed.

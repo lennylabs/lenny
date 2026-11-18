@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
-| Ready | 5 |
+| Building | 2 |
+| Ready | 3 |
 | Waiting on decisions | 40 |
 | Blocked | 148 |
 | Landed | 1 |
@@ -25,20 +25,19 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | :-- | :-- | :-- |
 | [0137.S5](0137-pod-lifecycle-controller/steps.md#0137s5-kind-renames-and-the-podset-merge) | Kind renames and the PodSet merge | Building |  |
 | [0116.S1](0116-coverage-and-selection/steps.md#0116s1-annotation-index-and-coverage-view) | Annotation index and coverage view | Ready |  |
-| [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Ready |  |
 | [0116.S7](0116-coverage-and-selection/steps.md#0116s7-identifiers-in-test-names) | Identifiers in test names | Ready |  |
 | [0116.S2](0116-coverage-and-selection/steps.md#0116s2-coverage-gate) | Coverage gate | Blocked | 0116.S1 |
 | [0116.S3](0116-coverage-and-selection/steps.md#0116s3-selection-from-the-import-graph-specification-edits-and-non-go-inputs) | Selection from the import graph, specification edits, and non-Go inputs | Blocked | 0116.S1 |
 | [0116.S4](0116-coverage-and-selection/steps.md#0116s4-tier-bounds-by-gate) | Tier bounds by gate | Blocked | 0116.S3 |
 | [0116.S6](0116-coverage-and-selection/steps.md#0116s6-retire-the-maps-their-registers-and-their-self-tests) | Retire the maps, their registers, and their self-tests | Blocked | 0116.S2, 0116.S3 |
-| [0158.S1](0158-merge-gate-follow-ups/steps.md#0158s1-secret-scan-in-the-gate-and-the-review-rule-for-gate-changes) | Secret scan in the gate and the review rule for gate changes | Landed |  |
+| [0116.S5](0116-coverage-and-selection/steps.md#0116s5-claim-register-into-issues) | Claim register into issues | Landed |  |
 
 ### M2: Gateway package layout and the journey pilot
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Building |  |
 | [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Ready |  |
-| [0157.S1](0157-persona-journeys/steps.md#0157s1-the-journey-tier-and-three-pilot-journeys) | The journey tier and three pilot journeys | Ready |  |
 | [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Blocked | 0117.S2, 0137.S5 |
 | [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Blocked | 0117.S5, 0117.S6, 0117.S7, 0117.S8, 0137.S5 |
 | [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Blocked | 0117.S2, 0137.S5 |
@@ -241,7 +240,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `Decided` | 0 of 7 | 0 |
+| [0116](0116-coverage-and-selection/change.md) | Coverage and test selection from annotations | `In progress` | 1 of 7 | 0 |
 | [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `Decided` | 0 of 13 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
@@ -258,7 +257,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 0 |
 | [0131](0131-incremental-checkpoint/change.md) | Incremental checkpoints | `Draft` | 0 of 9 | 0 |
 | [0132](0132-llm-response-cache-removal/change.md) | LLM response cache removal | `Draft` | 0 of 1 | 1 |
-| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 3 |
+| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 4 |
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 4 | 0 |
 | [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 0 |
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 6 | 17 |
@@ -280,5 +279,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
-| [0157](0157-persona-journeys/change.md) | Persona journey tier | `Decided` | 0 of 1 | 0 |
-| [0158](0158-merge-gate-follow-ups/change.md) | Merge gate follow-ups | `In progress` | 1 of 1 | 3 |
+| [0157](0157-persona-journeys/change.md) | Persona journey tier | `In progress` | 0 of 1 | 0 |

@@ -306,7 +306,7 @@ func TestDeepCopyInSyncWithGoTypes(t *testing.T) {
 
 	// The same two steps the Makefile generate target runs, with the output
 	// redirected so the check never writes to the tree.
-	cmd := exec.Command(cg, "object:headerFile=hack/boilerplate.go.txt",
+	cmd := exec.Command(cg, "object:headerFile=scripts/codegen/boilerplate.go.txt",
 		"paths=./pkg/apis/lenny/v1alpha1/...",
 		"output:object:dir="+tmp)
 	cmd.Dir = root

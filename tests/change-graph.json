@@ -1263,6 +1263,15 @@
       "unit": ["cmd/lenny-test/..."],
       "docs": ["tests/docs/static_tier_check_inventory_test.go"]
     },
+    "cmd/lenny-test/journeys": {
+      "unit": ["cmd/lenny-test/journeys/...", "cmd/lenny-test/..."]
+    },
+    "cmd/lenny-test/journeys/egress": {
+      "unit": ["cmd/lenny-test/journeys/egress/...", "cmd/lenny-test/journeys/..."]
+    },
+    "tests/journeys": {
+      "unit": ["cmd/lenny-test/journeys/..."]
+    },
     "cmd/lenny-test/verdictstatus": {
       "static": ["tests/static/..."],
       "unit": ["cmd/lenny-test/verdictstatus/..."],

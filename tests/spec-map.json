@@ -697,14 +697,6 @@
       "title": "Runtime Adapter",
       "spec_file": "spec/04_system-components.md",
       "tests": [
-        "tests/static/structure/claim_register_test.go::TestClaimRegisterSaysWhatTheSpecificationRequires",
-        "tests/static/structure/claim_register_test.go::TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore",
-        "tests/static/structure/claim_register_test.go::TestClaimRegisterCredentialRowStatusMatchesTheGatewayCaller",
-        "tests/static/structure/claim_register_test.go::TestClaimRegisterCredentialRowsAnchorToTheRuntimeOpsContractCard",
-        "tests/static/structure/claim_register_test.go::TestClaimRegisterWiredCredentialRowNamesItsProductionCaller",
-        "tests/static/structure/claim_register_test.go::TestAdapterClientReachabilityRequiresAProductionCaller",
-        "tests/static/structure/claim_register_test.go::TestAdapterClientReachabilityIgnoresCommentTextAndForeignReceivers",
-        "tests/static/structure/claim_register_generator_test.go::TestClaimRegisterIsReproducibleFromItsGenerator",
         "pkg/adapter/...",
         "tests/contract/gatewaycontrol_scrub/scrub_wire_test.go",
         "tests/contract/crd_schema/nonce_only_fields_test.go",
@@ -2251,7 +2243,6 @@
         "pkg/gateway/sessionserver/workspace_root_persist_test.go",
         "tests/chaos/token_service_unavailability_guard_test.go",
         "pkg/adapter/tracingcontext_sampling_test.go",
-        "tests/static/structure/claim_register_proto_agreement_test.go",
         "tests/component/migrations/prod_columns_test.go",
         "pkg/adapter/slotlayout/slotlayout_test.go",
         "pkg/adapter/slotsession_test.go",
@@ -2552,7 +2543,6 @@
         "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestFiledSuspendResumeFindingsMatchTheTree_spec_7_2",
         "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestBlockedSkipsNameOpenFindings_spec_7_2",
         "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestSuspendResumeRecordProbes_spec_7_2",
-        "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestSessionInboxRedeliveryRowNamesTheForwardHold_spec_29_3",
         "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestOffHolderInboxFindingCrossReferencesTheForwardFinding_spec_29_3",
         "tests/load_local/tree_reattach_resume_delete_race_test.go::TestResumeRacingDeleteEndsCancelledWithNoPodClaimed_spec_7_3",
         "tests/integration/slot_holder_pgstore_test.go",
@@ -2748,11 +2738,9 @@
         "tests/e2e_kind/stream_failure_kind_test.go::TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2",
         "tests/docs/session_failure_outcome_doc_reconciliation_test.go::TestRetiredFailureOutcomePhrasesAbsent",
         "tests/docs/session_failure_outcome_doc_reconciliation_test.go::TestFailureOutcomeEdgesStated",
-        "tests/docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureClaimRowsNameDeclaredSymbols_spec_28_5_1",
         "tests/docs/build_gaps_stream_failure_records_currency_test.go::TestClosedStreamFindingsCiteLandedCodeAndTests_spec_7_3",
         "tests/docs/build_gaps_stream_failure_records_currency_test.go::TestRemediationPlanRecordsTheStreamFailureProposal_spec_28_5_1",
         "tests/docs/build_gaps_stream_failure_records_currency_test.go::TestStreamFailureRecordProbes_spec_28_5_1",
-        "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestSuspendResumeClaimRowsNameDeclaredSymbols_spec_7_3",
         "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestClosedSuspendResumeFindingsCiteLandedCodeAndTests_spec_7_3",
         "tests/docs/build_gaps_suspend_resume_records_currency_test.go::TestRemediationPlanRecordsTheSuspendResumeProposal_spec_7_3",
         "tests/integration/elicitation_expiry_test.go::TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2",
@@ -3392,9 +3380,6 @@
       "tests": [
         "tests/contract/adapter_chunk_encoding/chunk_encoding_wire_test.go",
         "tests/component/stores/checkpoint_encoding_roundtrip_test.go",
-        "tests/static/structure/claim_register_test.go::TestClaimRegisterSaysWhatTheSpecificationRequires",
-        "tests/static/structure/claim_register_test.go::TestClaimRegisterRecordsPerSessionAddressingOfCredentialsAndRestore",
-        "tests/static/structure/claim_register_generator_test.go::TestClaimRegisterIsReproducibleFromItsGenerator",
         "tests/component/coordination/...",
         "tests/component/stores/coordleasestore_test.go",
         "tests/contract/adapter_checkpointbarrier/...",
@@ -3445,7 +3430,6 @@
         "pkg/gateway/sessionserver/delegated_child_materialize_test.go",
         "pkg/gateway/sessionserver/resume_chunk_selection_internal_test.go",
         "pkg/gateway/sessionserver/start_pod_lease_component_test.go",
-        "tests/static/structure/claim_register_proto_agreement_test.go",
         "tests/component/legalholdreconciler/reconciler_test.go",
         "tests/integration/checkpoint_grant_remint_test.go",
         "tests/integration/checkpoint_intent_generation_test.go",
@@ -8275,7 +8259,6 @@
         "tests/static/structure/compliance_check_channel_naming_test.go::TestSpecMapComplianceCheckReferencesResolve",
         "tests/docs/spec_28_reserved_phrase_test.go",
         "tests/static/lint/coordinator_hold_allowlist_test.go",
-        "tests/static/structure/claim_register_test.go",
         "tests/docs/successor_pointer_test.go"
       ],
       "packages": [],
@@ -8336,12 +8319,9 @@
       "notes": "The channel, link, register-entry, and naming registers. Every identifier in the tree resolves to one register row, every register row has a stated writer, and the downstream matrix is keyed by the channel register."
     },
     "28.4": {
-      "title": "Claim register",
+      "title": "Implementation status",
       "spec_file": "spec/28_communication-channels.md",
       "tests": [
-        "tests/static/structure/claim_register_test.go",
-        "tests/static/structure/claim_register_proto_agreement_test.go",
-        "tests/static/structure/claim_register_generator_test.go",
         "tests/static/structure/citation_document_test.go"
       ],
       "packages": [],
@@ -8349,7 +8329,7 @@
         "28.3"
       ],
       "blocked_until_phase": "0",
-      "notes": "The schema of tests/claim-map.json and the resolution of the citations its rows carry: a claim that is not WIRED names the step that wires it, and a spec_anchor resolves to a heading of this section's file."
+      "notes": "Where the implementation status of a mechanism this section specifies is recorded: an issue under issues/ for a mechanism the tree does not carry out. The section states a record rather than a behavior, so the issues it points to are records and no test reads them."
     },
     "28.5.3": {
       "title": "Intra-pod",

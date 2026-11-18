@@ -39,7 +39,7 @@ It has no dependency. It runs on today's proxy and records the pool in place of 
 - aliases: [LU-B, LU-1, LU-2, LU-3, LU-4, LU-8, LU-9, LU-10, LU-11]
 - lanes: [specification, code, documentation]
 - depends-on: [0133.S1, 0127.S2]
-- closes: [F-4.9.48]
+- closes: [F-4.9.48, CHEGRESS-I1, CHGWPOD-I9, CHGWPOD-I12, CHGWPOD-I15]
 
 Upstreams and removal: LU-1, LU-2, the routes and session binding of LU-3, LU-4, LU-8, LU-9, LU-10, and LU-11, with the specification rewrite of §4.9's LLM half and every section of "Specification changes" that the removal reaches. It includes the `google-generate` format with its routes, its parser, and the `gemini-api` channel, Google Cloud workload identity beside the AWS and Azure exchangers, the §26 format declarations with `gemini-cli` on `google-generate`, and the statement of calls outside the proxy. It resolves the lease findings.
 

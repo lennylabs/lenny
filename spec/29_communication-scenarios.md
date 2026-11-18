@@ -106,8 +106,8 @@ happens, the step records that the specification does not state it, in those wor
 the §28.8 matrix carry: a reader cannot afterwards distinguish a behaviour the specification fixes from one
 a trace invented. An `unstated` step keeps its number and its position in the sequence, so the gap is
 visible where it occurs rather than omitted from the trace. A step whose mechanism is specified and not
-implemented is stated normally and carries its implementation status in the §28.4 claim register, which is
-a separate case from an `unstated` step.
+implemented is stated normally, and its implementation status is recorded as an issue, as §28.4 states.
+That case is separate from an `unstated` step.
 
 ### 29.2 Session start
 

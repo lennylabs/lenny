@@ -3,12 +3,8 @@
 package main
 
 import (
-	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -17,10 +13,10 @@ import (
 	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
 
-// The secret scan of the static tier runs gitleaks over the files git
-// tracks, as they stand in the working tree. It implements the merge gate
-// rather than a specification behavior, so it carries no spec annotation
-// (TESTING.md, "Static (`static`)"; change 0158).
+// The secret scan of the static tier runs gitleaks over the committed tree
+// at HEAD. It implements the merge gate rather than a specification
+// behavior, so it carries no spec annotation (TESTING.md, "Static
+// (`static`)"; change 0158).
 //
 // Mode. gitleaks has two scanning modes. `gitleaks git` reads patches
 // from `git log -p`, so it judges history: a secret that a later commit
@@ -29,28 +25,44 @@ import (
 // the gate claims to judge, and it is the mode this check uses. History
 // scanning stays with the secret-scan workflow under .github/workflows.
 //
-// Scope. `gitleaks dir` walks every file under its target and does not
-// consult git, so from the repository root it would also read untracked
-// scratch trees, the verdicts under tests/results, and, in the main
-// checkout, every nested worktree under .claude/worktrees. The check
-// therefore places the files `git ls-files --cached` lists into a temporary
-// tree, by hard link or by copy, and scans that tree. Untracked files that
-// other static checks write while they run stay out of the scan. Paths in the report are
-// relative to the copy's root, so they read as repository paths and the
-// path rules of the configuration match them.
+// Scope. The check reads every blob of the tree at HEAD with git and writes
+// it into a temporary tree, which gitleaks scans (secretscan_tree.go). The
+// working tree and the index play no part, so untracked files, uncommitted
+// edits, skip-worktree and assume-unchanged entries, and paths missing from
+// disk cannot change what is scanned. Paths in the scan tree are the
+// repository paths, so the path rules of the configuration match them,
+// except for the renamed files below, which the report maps back.
 //
-// Allowlist. The allowlist is .gitleaks.toml at the repository root, which
-// is reviewed before it merges (.claude/rules/git-workflow.md), together
-// with the global allowlist of the default configuration it extends. The
-// check passes --ignore-gitleaks-allow, so a `gitleaks:allow` comment in a
-// file does not silence a finding, and it points --gitleaks-ignore-path at
-// an empty directory and leaves a root .gitleaksignore out of the scanned
-// tree, so a .gitleaksignore file does not either.
+// Skipped paths. gitleaks skips any file or directory whose path matches
+// the global allowlist of its default configuration, which .gitleaks.toml
+// extends (secretscan_skipped.go). The check writes each committed file
+// under such a path into the scan tree under a renamed path no pattern
+// matches, keeping its name or extension (renamedScanCandidates), so
+// gitleaks reads it and the rules scoped to a name or an extension apply.
 //
-// Limits. gitleaks skips archives (no --max-archive-depth is passed, and the
-// tracked upload fixtures include archive bombs) and files it detects as
-// binary, and the default global allowlist skips some paths, as the header
-// of .gitleaks.toml lists. A secret in such a file is not found.
+// Allowlist. The allowlist is .gitleaks.toml at HEAD, which is reviewed
+// before it merges (.claude/rules/git-workflow.md). gitleaks skips a
+// whole file when it matches the `paths` of any global `[[allowlists]]`
+// entry, whatever its condition, so the check refuses an entry that
+// names no targetRules: an entry with targetRules joins those rules'
+// allowlists, which gitleaks evaluates per finding with the entry's
+// condition. The check validates the configuration before the scan
+// (secretscan_config.go). The check passes
+// --ignore-gitleaks-allow, so a `gitleaks:allow` comment in a file does
+// not silence a finding, and it points --gitleaks-ignore-path at an empty
+// directory and renames a root .gitleaksignore in the scan tree, so a
+// .gitleaksignore file does not either.
+//
+// Coverage. gitleaks does not read archives, files whose content it
+// detects as binary, or symbolic links. Before it runs gitleaks, the check
+// holds each committed file of those kinds, and each text file under a
+// skipped path, to a reviewed entry in tests/registers, and fails on one
+// with no matching entry (secretscan_coverage.go). That half needs no
+// gitleaks, so it runs and can fail on a host without it.
+//
+// Version. The copied default patterns and the classification rules are
+// those of gitleaks gitleaksDefaultsVersion. A gitleaks of another version
+// still runs, and a clean scan then reports unverified rather than a pass.
 
 // secretScanConfig is the gitleaks configuration at the repository root.
 const secretScanConfig = ".gitleaks.toml"
@@ -65,36 +77,135 @@ type secretScanFinding struct {
 	StartLine   int    `json:"StartLine"`
 }
 
-// runSecretScan runs gitleaks over the files git tracks under root. It
-// reports the unverified marker when gitleaks is not installed, because a
-// scan that did not run proves nothing, and it fails closed when the
-// tracked files cannot be listed or the configuration is missing.
+// committedScan is what one pass over the committed tree produced: the
+// scan tree, the facts the coverage half needs, and the committed content
+// of the files the check itself reads.
+type committedScan struct {
+	tree    *scanTree
+	facts   map[string]trackedFileFacts
+	files   int
+	config  []byte
+	binReg  []byte
+	skipReg []byte
+}
+
+// runSecretScan checks that every committed file gitleaks does not read
+// has a reviewed entry, then runs gitleaks over the committed tree at HEAD
+// under root. It reports the unverified marker when gitleaks is not
+// installed or is not the release the check's copied rules belong to,
+// because such a scan proves nothing, and it fails closed when the
+// committed tree cannot be read, a register or the configuration is
+// missing, the configuration has an allowlist that skips whole files, or
+// a file gitleaks does not read lacks its entry.
 func runSecretScan(root string) (string, error) {
-	bin, err := exec.LookPath("gitleaks")
-	if err != nil {
-		return verdictstatus.UnverifiedMarker + " gitleaks not on PATH; the secret scan did not run (the gate image installs it)", nil
-	}
-	config := filepath.Join(root, secretScanConfig)
-	if _, err := os.Stat(config); err != nil {
-		return "", fmt.Errorf("secret scan configuration: %w", err)
-	}
-	files, err := trackedFiles(root)
-	if err != nil {
-		return "", err
-	}
 	work, err := os.MkdirTemp("", "lenny-secretscan-")
 	if err != nil {
 		return "", fmt.Errorf("secret scan work directory: %w", err)
 	}
 	defer os.RemoveAll(work)
-	tree := filepath.Join(work, "tree")
-	noIgnore := filepath.Join(work, "no-ignore")
-	if err := os.MkdirAll(noIgnore, 0o755); err != nil {
-		return "", fmt.Errorf("secret scan work directory: %w", err)
-	}
-	copied, err := copyTrackedFiles(root, tree, files)
+	scan, err := readCommittedScan(root, work)
 	if err != nil {
 		return "", err
+	}
+	coverage, err := checkSecretScanCoverage(scan.facts, scan.binReg, scan.skipReg)
+	if err != nil {
+		return coverage, err
+	}
+	if scan.config == nil {
+		return "", fmt.Errorf("secret scan configuration: %s is not in the committed tree", secretScanConfig)
+	}
+	if err := checkSecretScanConfig(scan.config); err != nil {
+		return "", err
+	}
+	bin, err := exec.LookPath("gitleaks")
+	if err != nil {
+		return verdictstatus.UnverifiedMarker + " gitleaks not on PATH; the secret scan did not run (the gate image installs it)\n" + coverage, nil
+	}
+	version, err := gitleaksVersion(bin)
+	if err != nil {
+		return "", err
+	}
+	findings, out, err := runGitleaks(bin, work, scan)
+	if len(findings) > 0 {
+		return formatSecretScanFindings(findings), fmt.Errorf("gitleaks: %d finding(s) in committed files", len(findings))
+	}
+	if err != nil {
+		return out, err
+	}
+	summary := fmt.Sprintf("gitleaks %s: no secrets in %d committed files; %s", version, scan.files, coverage)
+	if version != gitleaksDefaultsVersion {
+		return verdictstatus.UnverifiedMarker + fmt.Sprintf(" gitleaks %s is not %s, the release whose default allowlist and file classification the check copies; the scan is not a verdict\n", version, gitleaksDefaultsVersion) + summary, nil
+	}
+	return summary, nil
+}
+
+// readCommittedScan reads every blob of the tree at HEAD, writes each
+// regular file into the scan tree, and records the facts of each file.
+func readCommittedScan(root, work string) (*committedScan, error) {
+	blobs, err := committedTree(root)
+	if err != nil {
+		return nil, err
+	}
+	paths := make([]string, 0, len(blobs))
+	for _, b := range blobs {
+		if !committedPathIsLocal(b.path) {
+			return nil, fmt.Errorf("secret scan: the committed path %q is not a plain relative path", b.path)
+		}
+		if strings.HasPrefix(b.path, renamedScanDir+"/") {
+			return nil, fmt.Errorf("secret scan: the committed path %s is under %s, which the scan tree reserves", b.path, renamedScanDir)
+		}
+		paths = append(paths, b.path)
+	}
+	attrBinary, err := attributeBinaryFiles(root, work, paths)
+	if err != nil {
+		return nil, err
+	}
+	scan := &committedScan{tree: newScanTree(filepath.Join(work, "tree")), facts: map[string]trackedFileFacts{}}
+	if err := os.MkdirAll(scan.tree.dir, 0o755); err != nil {
+		return nil, fmt.Errorf("secret scan work directory: %w", err)
+	}
+	err = readBlobs(root, blobs, func(b treeBlob, content []byte) error {
+		scan.facts[b.path] = blobFacts(b.path, b.mode, content, attrBinary[b.path])
+		switch b.path {
+		case secretScanConfig:
+			scan.config = content
+		case binaryFilesRegister:
+			scan.binReg = content
+		case skippedPathsRegister:
+			scan.skipReg = content
+		}
+		if b.mode == gitModeSymlink {
+			return nil
+		}
+		scan.files++
+		return scan.tree.place(b.path, content, textNamedLikeArchive(b.path, scan.facts[b.path]))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return scan, nil
+}
+
+// gitleaksVersion returns the version `gitleaks version` prints, without
+// a leading "v".
+func gitleaksVersion(bin string) (string, error) {
+	out, err := exec.Command(bin, "version").Output()
+	if err != nil {
+		return "", fmt.Errorf("gitleaks version: %w", err)
+	}
+	return strings.TrimPrefix(strings.TrimSpace(string(out)), "v"), nil
+}
+
+// runGitleaks scans the scan tree with the committed configuration and
+// returns the findings with their repository paths.
+func runGitleaks(bin, work string, scan *committedScan) ([]secretScanFinding, string, error) {
+	config := filepath.Join(work, "gitleaks.toml")
+	if err := os.WriteFile(config, scan.config, 0o600); err != nil {
+		return nil, "", fmt.Errorf("secret scan configuration: %w", err)
+	}
+	noIgnore := filepath.Join(work, "no-ignore")
+	if err := os.MkdirAll(noIgnore, 0o755); err != nil {
+		return nil, "", fmt.Errorf("secret scan work directory: %w", err)
 	}
 	report := filepath.Join(work, "report.json")
 	cmd := exec.Command(
@@ -110,98 +221,19 @@ func runSecretScan(root string) (string, error) {
 		"--report-format", "json",
 		"--report-path", report,
 	)
-	cmd.Dir = tree
+	cmd.Dir = scan.tree.dir
 	out, runErr := cmd.CombinedOutput()
 	findings, readErr := readSecretScanReport(report)
+	for i := range findings {
+		findings[i].File = scan.tree.repositoryPath(findings[i].File)
+	}
 	if len(findings) > 0 {
-		return formatSecretScanFindings(findings), fmt.Errorf("gitleaks: %d finding(s) in tracked files", len(findings))
+		return findings, string(out), nil
 	}
 	if runErr != nil {
-		return string(out), fmt.Errorf("gitleaks: %w", runErr)
+		return nil, string(out), fmt.Errorf("gitleaks: %w", runErr)
 	}
-	if readErr != nil {
-		return string(out), readErr
-	}
-	return fmt.Sprintf("gitleaks: no secrets in %d tracked files", copied), nil
-}
-
-// trackedFiles returns the slash-separated, root-relative paths git lists
-// in the index under root.
-func trackedFiles(root string) ([]string, error) {
-	cmd := exec.Command("git", "ls-files", "-z", "--cached")
-	cmd.Dir = root
-	out, err := cmd.Output()
-	if err != nil {
-		return nil, fmt.Errorf("list tracked files: %w", err)
-	}
-	var files []string
-	for _, p := range bytes.Split(out, []byte{0}) {
-		if len(p) > 0 {
-			files = append(files, string(p))
-		}
-	}
-	return files, nil
-}
-
-// copyTrackedFiles places the working-tree content of each listed regular
-// file from root into dst at the same relative path, and returns how many
-// it placed. A listed path that the working tree no longer holds is
-// skipped, because a deletion carries no secret. A symbolic link is
-// skipped, because its content is a path and following it could read a
-// file outside the checkout. A directory is a submodule, whose files
-// belong to another repository. A .gitleaksignore at the root is left
-// out, because gitleaks reads that file from the root of the tree it scans
-// whatever --gitleaks-ignore-path names, and the allowlist lives in
-// .gitleaks.toml alone.
-func copyTrackedFiles(root, dst string, files []string) (int, error) {
-	copied := 0
-	for _, rel := range files {
-		src := filepath.Join(root, filepath.FromSlash(rel))
-		info, err := os.Lstat(src)
-		if errors.Is(err, fs.ErrNotExist) {
-			continue
-		}
-		if err != nil {
-			return copied, fmt.Errorf("secret scan: %w", err)
-		}
-		if !info.Mode().IsRegular() || rel == ".gitleaksignore" {
-			continue
-		}
-		if err := copyFile(src, filepath.Join(dst, filepath.FromSlash(rel))); err != nil {
-			return copied, fmt.Errorf("secret scan: copy %s: %w", rel, err)
-		}
-		copied++
-	}
-	return copied, nil
-}
-
-// copyFile places one regular file at dst, creating the parent
-// directories. It hard-links the file when src and dst share a file system,
-// which costs no copy, and copies it otherwise, as in the gate container,
-// where the temporary directory and the mounted worktree are on different
-// file systems. gitleaks only reads the file, so a link is as good as a
-// copy.
-func copyFile(src, dst string) error {
-	if err := os.MkdirAll(filepath.Dir(dst), 0o755); err != nil {
-		return err
-	}
-	if os.Link(src, dst) == nil {
-		return nil
-	}
-	in, err := os.Open(src)
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(dst, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
+	return nil, string(out), readErr
 }
 
 // readSecretScanReport parses the JSON report gitleaks wrote. A report
@@ -223,7 +255,7 @@ func readSecretScanReport(path string) ([]secretScanFinding, error) {
 // the remedy. It prints no secret value.
 func formatSecretScanFindings(findings []secretScanFinding) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "gitleaks found %d possible secret(s) in tracked files:\n", len(findings))
+	fmt.Fprintf(&b, "gitleaks found %d possible secret(s) in committed files:\n", len(findings))
 	for _, f := range findings {
 		fmt.Fprintf(&b, "  %s:%d  %s (%s)\n", f.File, f.StartLine, f.RuleID, f.Description)
 	}

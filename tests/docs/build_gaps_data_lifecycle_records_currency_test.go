@@ -3,9 +3,9 @@
 // docs-tier consistency checks between the records of the data-lifecycle work
 // (proposals 0094 and 0095) and the tree they describe.
 //
-// The build loops read BUILD-GAPS.md, TEST-GAPS.md, the remediation plan, and
-// the claim register as statements about the current tree. These checks hold
-// the data-lifecycle records to it:
+// The build loops read BUILD-GAPS.md, TEST-GAPS.md, and the remediation plan
+// as statements about the current tree. These checks hold the data-lifecycle
+// records to it:
 //
 //   - The findings the work closed stay closed only while the code that closed
 //     them is in the tree, and every test file their resolutions cite exists.
@@ -20,10 +20,6 @@
 //     each proposal closed, left open, and filed, and the first item no longer
 //     says that erasure waits for terminal hooks, which the specification
 //     dropped.
-//   - The claim register carries the terminal-tail residual as an ABSENT row
-//     deferred to the off-holder eviction step, naming the drain it describes
-//     and the finding that records it, and its message-queue row says both
-//     erasure paths erase the queues.
 //   - The test-gap records the second-half work reconciled are resolved or
 //     annotated as it left them.
 //
@@ -31,13 +27,11 @@
 // infrastructure), the same posture as the other docs checks. It
 // asserts a documentation contract rather than a platform behavior, so it
 // carries no specification-section credit: no specification heading states how
-// these records are written, and the claim register's own §28.4 gates already
-// hold the register's format.
+// these records are written.
 
 package docs_test
 
 import (
-	"encoding/json"
 	"go/ast"
 	"os"
 	"path/filepath"
@@ -341,16 +335,6 @@ func TestRemediationPlanRecordsTheDataLifecycleProposal(t *testing.T) {
 			t.Errorf("the data-lifecycle item does not mention %s", want)
 		}
 	}
-}
-
-// claimRow is the part of a claim-register row these checks read.
-type claimRow struct {
-	Claim      string `json:"claim"`
-	Status     string `json:"status"`
-	SpecAnchor string `json:"spec_anchor"`
-	DeferralID string `json:"deferral_id"`
-	Surface    string `json:"surface"`
-	Note       string `json:"note"`
 }
 
 // diagnosis: the probes above no longer read a plan item or a source file the
@@ -712,35 +696,6 @@ func TestRemediationPlanRecordsTheDataLifecycleSecondHalf(t *testing.T) {
 			t.Errorf("the P5b item does not mention %s", w)
 		}
 	}
-}
-
-// diagnosis: the claim register's message-queue row still says tenant
-// deletion does not erase the queues, or no longer says it does. Edit the
-// row's note in scripts/seed-claim-register.py and regenerate
-// tests/claim-map.json; never edit the register by hand.
-func TestClaimRegisterMessageQueueRowNamesBothErasurePaths(t *testing.T) {
-	root := repoRoot(t)
-	raw, err := os.ReadFile(filepath.Join(root, "tests", "claim-map.json"))
-	if err != nil {
-		t.Fatalf("read tests/claim-map.json: %v", err)
-	}
-	var doc struct {
-		Claims []claimRow `json:"claims"`
-	}
-	if err := json.Unmarshal(raw, &doc); err != nil {
-		t.Fatalf("parse tests/claim-map.json: %v", err)
-	}
-	const claim = "User erasure deletes each session's message queues"
-	for _, c := range doc.Claims {
-		if c.Claim != claim {
-			continue
-		}
-		if strings.Contains(c.Note, "does not yet") || !strings.Contains(c.Note, "tenant deletion") {
-			t.Errorf("claim %q note = %q, want it to say tenant deletion erases the queues too", claim, c.Note)
-		}
-		return
-	}
-	t.Fatalf("tests/claim-map.json has no claim %q", claim)
 }
 
 // testGapsHeading matches a TEST-GAPS.md finding heading and captures its
