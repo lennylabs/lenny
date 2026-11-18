@@ -100,7 +100,7 @@ func TestCRDSchemaVersionCheckFailsOnMissingCRD_spec_10_443(t *testing.T) {
 func TestCRDSchemaVersionCheckFailsOnMissingAnnotation_spec_10_443(t *testing.T) {
 	var objs []client.Object
 	for _, name := range preflight.LennyCRDNames {
-		if name == "sandboxes.lenny.dev" {
+		if name == "agentpods.lenny.dev" {
 			objs = append(objs, crdWithoutAnnotation(name))
 			continue
 		}
@@ -123,7 +123,7 @@ func TestCRDSchemaVersionCheckFailsOnMissingAnnotation_spec_10_443(t *testing.T)
 func TestCRDSchemaVersionCheckFailsOnMismatch_spec_10_443(t *testing.T) {
 	var objs []client.Object
 	for _, name := range preflight.LennyCRDNames {
-		if name == "sandboxwarmpools.lenny.dev" {
+		if name == "podsets.lenny.dev" {
 			objs = append(objs, crdWithSchemaVersion(name, "0"))
 			continue
 		}
@@ -189,7 +189,7 @@ func TestCRDSchemaVersionCheckPostUpgradeMessage_spec_17_6(t *testing.T) {
 func TestCRDSchemaVersionCheckPostUpgradeNamespacePlaceholder_spec_17_6(t *testing.T) {
 	var objs []client.Object
 	for _, name := range preflight.LennyCRDNames {
-		if name == "sandboxes.lenny.dev" {
+		if name == "agentpods.lenny.dev" {
 			objs = append(objs, crdWithoutAnnotation(name))
 			continue
 		}

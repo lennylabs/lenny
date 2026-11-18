@@ -279,7 +279,7 @@ The adapter-agent connection within a pod is secured via:
 - **Primary:** `SO_PEERCRED` UID check + manifest nonce
 - **Fallback (gVisor):** Nonce + per-connection HMAC challenge-response
 
-Nonce-only mode is an operator opt-in for a confirmed gVisor `SO_PEERCRED` divergence, rather than an automatic reaction. After confirming the divergence (the Phase 3.5 `SO_PEERCRED` integration tests), the operator sets `Runtime.spec.requireSoPeercred: false` on the affected runtime, and the pool that references it must carry `acknowledgeNonceOnlyAuth: true`. A pool referencing a nonce-only runtime without the acknowledgment is rejected by the gateway pool admission path. When an acknowledged pool renders nonce-only pods, the platform surfaces the state: the WarmPoolController sets `SOPeercredDisabled=True` on each `Sandbox` and `SecurityDegradedMode=True` on the `SandboxTemplate`, and the bundled `PoolSecurityDegraded` alert fires on the `lenny_pool_security_degraded` gauge. The setting returns to `requireSoPeercred: true` when the divergence is fixed, and is re-evaluated when the container runtime version changes. See [nonce-only-mode](../runbooks/nonce-only-mode.md).
+Nonce-only mode is an operator opt-in for a confirmed gVisor `SO_PEERCRED` divergence, rather than an automatic reaction. After confirming the divergence (the Phase 3.5 `SO_PEERCRED` integration tests), the operator sets `Runtime.spec.requireSoPeercred: false` on the affected runtime, and the pool that references it must carry `acknowledgeNonceOnlyAuth: true`. A pool referencing a nonce-only runtime without the acknowledgment is rejected by the gateway pool admission path. When an acknowledged pool renders nonce-only pods, the platform surfaces the state: the WarmPoolController sets `SOPeercredDisabled=True` on each `AgentPod` and `SecurityDegradedMode=True` on the `PodSet`, and the bundled `PoolSecurityDegraded` alert fires on the `lenny_pool_security_degraded` gauge. The setting returns to `requireSoPeercred: true` when the divergence is fixed, and is re-evaluated when the container runtime version changes. See [nonce-only-mode](../runbooks/nonce-only-mode.md).
 
 ### Runtime Supervisor
 
@@ -394,9 +394,9 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 
 | ServiceAccount | Namespace | Purpose | Key Permissions |
 |---|---|---|---|
-| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write Sandbox CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
+| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write AgentPod CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
 | `lenny-gateway` | `credentials.namespace` | Credential Secret writer | `create`, `update`, `delete`, and `deletecollection` on `secrets`, with no `get`, `list`, `watch`, or `patch` |
-| `lenny-controller` | `lenny-system` | Warm Pool Controller | Full Sandbox CRD management |
+| `lenny-controller` | `lenny-system` | Warm Pool Controller | Full AgentPod CRD management |
 | `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt; namespace-wide `get` on `secrets` in `credentials.namespace`, with no `list` or `watch`; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
 | `lenny-ops-sa` | `lenny-system` | `lenny-ops` | KMS `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names; no `Sign` |
 

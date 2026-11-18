@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: MIT
 
-// Package poolstore is the §5.2 SandboxWarmPool registry. It backs
+// Package poolstore is the §5.2 PodSet registry. It backs
 // the pool admission used by session creation (`runtimeRef` →
-// `SandboxWarmPool` lookup), the §15.1 admin pool CRUD endpoints,
+// `PodSet` lookup), the §15.1 admin pool CRUD endpoints,
 // and the §4.6.2 PoolScalingController.
 //
 // Per §5.1 pools are platform-global (no tenant_id, no RLS). The
@@ -25,7 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
-// Pool captures the §5.2 SandboxWarmPool CRD shape. v1 models the
+// Pool captures the §5.2 PodSet CRD shape. v1 models the
 // essential fields; extension fields (sessionPolicy, credentialPolicy,
 // env, image overrides) attach to the row but are not strictly
 // validated by this store — the admin handler owns the cross-field
@@ -93,7 +93,7 @@ type Pool struct {
 	AllowStandardIsolation bool
 
 	// DeliveryMode is the §4.9 pool-definition credential-delivery mode
-	// (`proxy`, `direct`) reconciled onto the SandboxTemplate CRD. It is
+	// (`proxy`, `direct`) reconciled onto the PodSet CRD. It is
 	// the denormalized warm-pool copy the pool-registration and admission
 	// layers inspect against IsolationProfile/SpiffeBinding for the two
 	// cross-tenant-risky combinations. Empty inherits the runtime default.
@@ -101,7 +101,7 @@ type Pool struct {
 	DeliveryMode string
 
 	// SpiffeBinding is the §4.9 pool-definition SPIFFE-binding mode
-	// (`enabled`, `disabled`) reconciled onto the SandboxTemplate CRD. In
+	// (`enabled`, `disabled`) reconciled onto the PodSet CRD. In
 	// multi-tenant mode `deliveryMode: proxy` + `spiffeBinding: disabled`
 	// is a forbidden combination the enforcement layers reject. Empty
 	// inherits the runtime default. spec: §4.9.
@@ -127,7 +127,7 @@ type Pool struct {
 	// requireSoPeercred: false is rejected by the gateway pool admission
 	// path unless this flag is set. The check is unconditional and
 	// applies in every tenancy mode. The PoolScalingController mirrors
-	// the flag onto SandboxTemplate.spec so the WarmPoolController renders
+	// the flag onto PodSet.spec so the WarmPoolController renders
 	// nonce-only mode only for acknowledged pools. spec: §5.3, §4.7.
 	AcknowledgeNonceOnlyAuth bool
 
@@ -158,7 +158,7 @@ type Pool struct {
 	DeletedAt time.Time
 
 	// Generation is the §4.6.2 pool_config_generation counter, bumped
-	// on every admin-API write and stamped onto the pool's CRD pair as
+	// on every admin-API write and stamped onto the pool's PodSet as
 	// the lenny.dev/config-generation annotation so the §4.6.2
 	// PoolConfigDrift alert can compare Postgres-side and CRD-side
 	// generations. spec: §4.6.2.

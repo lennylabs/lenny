@@ -522,8 +522,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{Prober: w.blobProbe})
 
 	// ----- §10.5 runtime-upgrade-active endpoint (unauthenticated) -----
-	// The lenny-sandboxtemplate-deletion-guard webhook probes this before
-	// admitting a SandboxTemplate DELETE, so the old template cannot be
+	// The lenny-podset-deletion-guard webhook probes this before
+	// admitting a PodSet DELETE, so the old template cannot be
 	// deleted while a RuntimeUpgrade referencing its pool is still active
 	// (§10.5). The same record's schemaGated flag gates a Phase 3
 	// migration for the pool (§10.5). Same internal-port

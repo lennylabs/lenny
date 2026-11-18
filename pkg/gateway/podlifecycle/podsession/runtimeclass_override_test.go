@@ -49,7 +49,7 @@ func TestBinderLabelsRuntimeClassThroughTheOverride_spec_16_1(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(string(tc.profile), func(t *testing.T) {
 				ns := testNamespace(t)
-				sb := idleSandbox(ns, "sbx-1", "10.244.1.7")
+				sb := idleAgentPod(ns, "sbx-1", "10.244.1.7")
 				sb.Spec.IsolationProfile = string(tc.profile)
 				binder := newBinder(ns, k8sClient(t, sb), adapterDialer(t, newAdapter(t)))
 				binder.RuntimeClassNameOverrides = runscOverrides()
@@ -71,7 +71,7 @@ func TestBinderLabelsRuntimeClassThroughTheOverride_spec_16_1(t *testing.T) {
 
 	t.Run("setup failure on the exclusive bind", func(t *testing.T) {
 		ns := testNamespace(t)
-		sb := idleSandbox(ns, "sbx-1", "10.244.1.7")
+		sb := idleAgentPod(ns, "sbx-1", "10.244.1.7")
 		sb.Spec.IsolationProfile = string(isolation.ProfileSandboxed)
 		binder := newBinder(ns, k8sClient(t, sb), adapterDialer(t, newAdapter(t)))
 		binder.RuntimeClassNameOverrides = runscOverrides()
@@ -84,7 +84,7 @@ func TestBinderLabelsRuntimeClassThroughTheOverride_spec_16_1(t *testing.T) {
 
 	t.Run("setup failure on the slot bind", func(t *testing.T) {
 		ns := testNamespace(t)
-		c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+		c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 		binder := newSlotBinder(t, c, adapterDialer(t, newAdapter(t)))
 		binder.RuntimeClassNameOverrides = runscOverrides()
 		_, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{

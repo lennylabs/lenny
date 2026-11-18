@@ -130,9 +130,8 @@ func TestDeriveAndReplayClaimAWarmPodAtCreate_spec_7_1(t *testing.T) {
 			rt.seed(t, store)
 			h, cluster, _ := claimingServer(
 				t, store, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusCreated {
@@ -149,7 +148,7 @@ func TestDeriveAndReplayClaimAWarmPodAtCreate_spec_7_1(t *testing.T) {
 				t.Errorf("binding = (%q, %q), want (sbx-1, echo-pool): the row must carry the create-time claim",
 					row.PodAssignment, row.PoolRef)
 			}
-			var claim lennyv1.SandboxClaim
+			var claim lennyv1.PodClaim
 			if err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim); err != nil {
 				t.Fatalf("the create-time claim object is missing: %v", err)
 			}
@@ -173,8 +172,7 @@ func TestDeriveAndReplayClaimFailureLeavesNoRowAndNoCopy_spec_7_1(t *testing.T) 
 			rt.seed(t, store)
 			h, _, snap := claimingServer(
 				t, store, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusServiceUnavailable {
@@ -211,15 +209,14 @@ func TestDeriveAndReplayInsertFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 			rt.seed(t, mem)
 			h, cluster, _ := claimingServer(
 				t, &insertRejectingStore{Store: mem}, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusInternalServerError {
 				t.Fatalf("status = %d, want 500; body=%s", rr.Code, rr.Body.String())
 			}
-			var claim lennyv1.SandboxClaim
+			var claim lennyv1.PodClaim
 			err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 			if !apierrors.IsNotFound(err) {
 				t.Errorf("claim-sbx-1 after the failed insert: err=%v phase=%q, want NotFound (released)", err, claim.Status.Phase)
@@ -246,9 +243,8 @@ func TestDeriveAndReplayMintFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 			rt.seed(t, store)
 			h, cluster, _ := claimingServer(
 				t, store, rt,
-				podBindWarmPool(t, "echo-pool", "echo-tmpl"),
-				podBindTemplate(t, "echo-tmpl", "echo", string(isolation.ProfileSandboxed)),
-				podBindIdleSandbox(t, "sbx-1", "echo-pool", "10.244.2.5"),
+				podBindPodSet(t, "echo-pool", "echo", string(isolation.ProfileSandboxed)),
+				podBindIdleAgentPod(t, "sbx-1", "echo-pool", "10.244.2.5"),
 			)
 			rr := rt.call(t, h)
 			if rr.Code != http.StatusServiceUnavailable {
@@ -260,7 +256,7 @@ func TestDeriveAndReplayMintFailureReleasesTheClaim_spec_7_1(t *testing.T) {
 			if _, err := store.Get(context.Background(), "acme", rt.newID); err == nil {
 				t.Error("a row was persisted although the mint failed")
 			}
-			var claim lennyv1.SandboxClaim
+			var claim lennyv1.PodClaim
 			err := cluster.Get(context.Background(), client.ObjectKey{Namespace: testNS(t), Name: "claim-sbx-1"}, &claim)
 			if !apierrors.IsNotFound(err) {
 				t.Errorf("claim-sbx-1 after the failed mint: err=%v phase=%q, want NotFound (released)", err, claim.Status.Phase)

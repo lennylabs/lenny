@@ -59,7 +59,7 @@ type ActiveVariant struct {
 // Conservative handling of malformed input, all spec-consistent:
 //
 //   - A VariantPool that names a pool absent from configs is an error.
-//     The variant pool's own SandboxWarmPool would never be sized, so
+//     The variant pool's own PodSet would never be sized, so
 //     the experiment would route traffic to a pool with no warm-pod
 //     floor. The configuration is rejected rather than silently dropped.
 //   - A pool that is named as both a BasePool and a VariantPool is an

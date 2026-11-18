@@ -4,9 +4,9 @@ Enforces data-residency region integrity at the Kubernetes resource
 layer: it intercepts CREATE and UPDATE on the tenant-scoped CRD
 resources that carry a dataResidencyRegion field and rejects any
 resource whose resolved region is not declared in the deployment's
-storage.regions map. Among the Lenny CRDs, SandboxClaim is the
+storage.regions map. Among the Lenny CRDs, PodClaim is the
 resource that carries dataResidencyRegion, so the webhook rules scope
-to sandboxclaims; the §12.8 inheritance check additionally applies to
+to podclaims; the §12.8 inheritance check additionally applies to
 any Tenant or Environment configuration resource the gateway path
 validates. Configured fail-closed (failurePolicy: Fail) with a 5s
 timeout per §12.8: a webhook outage denies admission so a resource
@@ -42,12 +42,12 @@ webhooks:
           values: ["true"]
     rules:
       - apiGroups: ["lenny.dev"]
-        # The SandboxClaim CRD serves v1alpha1 and no other version, so
+        # The PodClaim CRD serves v1alpha1 and no other version, so
         # a rule naming v1 matches no request and the webhook is never
         # called. matchPolicy: Equivalent cannot bridge the gap either:
         # it converts between served versions, and there is only one.
         apiVersions: ["v1alpha1"]
-        resources: ["sandboxclaims"]
+        resources: ["podclaims"]
         operations: ["CREATE", "UPDATE"]
         scope: Namespaced
     clientConfig:

@@ -129,7 +129,7 @@ func warmPDBMinAvailable(t *testing.T, c *kind.Cluster, name string) (string, bo
 	return v, true
 }
 
-// poolMinWarm returns the .spec.minWarm of the SandboxWarmPool CR whose
+// poolMinWarm returns the .spec.minWarm of the PodSet CR whose
 // name matches the pool label (reconcilePDB sets LabelPool to pool.Name,
 // so the pool label value is the CR name), plus whether the read
 // succeeded. minWarm is the steady-state idle target the PDB's
@@ -138,7 +138,7 @@ func poolMinWarm(t *testing.T, c *kind.Cluster, pool string) (int, bool) {
 	t.Helper()
 	out, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandboxwarmpool", pool,
+		"-n", agentNamespace, "get", "podset", pool,
 		"-o", "jsonpath={.spec.minWarm}",
 	)
 	if err != nil {
@@ -165,7 +165,7 @@ func poolMinWarm(t *testing.T, c *kind.Cluster, pool string) (int, bool) {
 // unavailable, and asserts the pool replenishes to its pre-eviction idle
 // count. A failure means either the PDB deadlocks warm-pod eviction (the
 // node-drain stall a maxUnavailable budget causes because the idle pods'
-// Sandbox owner has no /scale subresource) or the controller did not
+// AgentPod owner has no /scale subresource) or the controller did not
 // replace the evicted pod.
 func TestWarmPodEvictionProactiveReplacement(t *testing.T) {
 	c := kind.InstallLenny(t)

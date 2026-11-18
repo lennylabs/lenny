@@ -15,7 +15,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -55,7 +55,7 @@ func crashAfterTerminalCommit(t *testing.T, h *lifecycleharness.Harness, r *life
 	}
 }
 
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §5.2 (Slot assignment
+// spec: §4.6.1 (Orphaned PodClaim detection), §5.2 (Slot assignment
 // atomicity), §7.2 (Interactive Session Model)
 // diagnosis: a replica that exited between a session's terminal commit and
 // its release left a residue other than the accepted one. On a concurrent
@@ -119,7 +119,7 @@ func TestCrashBetweenTerminalCommitAndRelease_spec_4_6_1(t *testing.T) {
 }
 
 // spec: 6.2 (finalize timeout), 15.1 (finalize row), 5.2 (Slot assignment
-// atomicity), 4.6.1 (Orphaned SandboxClaim detection)
+// atomicity), 4.6.1 (Orphaned PodClaim detection)
 // diagnosis: a finalize whose prepare phase failed on a concurrent pool, and
 // whose failure write then reported a store error, released the session's
 // slot other than the accepted way. When the write did not commit, the
@@ -162,7 +162,7 @@ func TestFailFinalizingStoreError_spec_6_2(t *testing.T) {
 			}
 			// The pool no longer resolves, so finalize fails before Prepare,
 			// the only pre-Prepare exit a concurrent pool reaches.
-			if err := h.Cluster.Client.Delete(context.Background(), &lennyv1.SandboxWarmPool{
+			if err := h.Cluster.Client.Delete(context.Background(), &lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: lifecycleharness.Pool, Namespace: lifecycleharness.Namespace},
 			}); err != nil {
 				t.Fatalf("delete the warm pool: %v", err)

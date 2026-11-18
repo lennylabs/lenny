@@ -29,7 +29,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/tests/testinfra/kind"
 )
 
@@ -107,7 +107,7 @@ spec:
 const credGroupOverbroadReason = "POD_SPEC_CRED_GROUP_OVERBROAD"
 
 // credReadersGID is the lenny-cred-readers supplementary GID the §13.1
-// cross-UID credential-delivery path uses. The Sandbox podspec builder
+// cross-UID credential-delivery path uses. The AgentPod podspec builder
 // pins it; the webhook validates a non-credential container's
 // runAsGroup against it.
 const credReadersGID = 65534

@@ -71,7 +71,7 @@ func (a *reapAdapter) Shutdown(_ context.Context, req *adapterv1.ShutdownRequest
 }
 
 // reapFixture is a binder over a fake Kubernetes client holding one idle
-// Sandbox, a miniredis-backed slot counter, and a reap adapter.
+// AgentPod, a miniredis-backed slot counter, and a reap adapter.
 type reapFixture struct {
 	binder *podsession.Binder
 	adp    *reapAdapter
@@ -98,7 +98,7 @@ func newReapFixture(t *testing.T, members ...string) *reapFixture {
 		redis: mr,
 	}
 	kube := fake.NewClientBuilder().WithScheme(newScheme(t)).
-		WithObjects(concurrentIdleSandbox(ns, reapPod, "10.244.3.9")).Build()
+		WithObjects(concurrentIdleAgentPod(ns, reapPod, "10.244.3.9")).Build()
 	dial := podAdapterDialer(t, f.adp)
 	f.binder = newBinder(ns, kube, func(addr string) (*adapterclient.Client, error) {
 		f.dials++
@@ -146,7 +146,7 @@ func (w *countingWait) wait(context.Context) error {
 // The reaper removes a stale member only after the pod's adapter tore its
 // slot down cleanly: a clean absent answer and a clean reclaimed answer each
 // remove it. An unclean answer, a Shutdown error, a dial failure, and a
-// missing Sandbox each keep it, and no Reap follows them. wait runs once per
+// missing AgentPod each keep it, and no Reap follows them. wait runs once per
 // identifier.
 func TestReapStaleSlotsRemovesOnlyAfterACleanTeardown_spec_5_2(t *testing.T) {
 	ctx := context.Background()
@@ -216,7 +216,7 @@ func TestReapStaleSlotsRemovesOnlyAfterACleanTeardown_spec_5_2(t *testing.T) {
 		}
 	})
 
-	t.Run("a missing Sandbox keeps every member and dials nothing", func(t *testing.T) {
+	t.Run("a missing AgentPod keeps every member and dials nothing", func(t *testing.T) {
 		f := newReapFixture(t, keep, "s1")
 		if released, err := f.binder.ReapStaleSlots(ctx, "sbx-gone", []string{"s1"}, (&countingWait{}).wait); err == nil || released != 0 {
 			t.Fatalf("ReapStaleSlots = %d, %v, want an error", released, err)
@@ -249,7 +249,7 @@ func TestReapStaleSlotsRemovesOnlyAfterACleanTeardown_spec_5_2(t *testing.T) {
 
 // spec: §5.2 (Slot assignment atomicity)
 //
-// The Sandbox read, the adapter dial, and the version negotiation run under
+// The AgentPod read, the adapter dial, and the version negotiation run under
 // the per-slot cleanup floor. An adapter that accepts the connection and
 // never answers the negotiation ends the call with an error once the floor
 // elapses, even though the pass context carries no deadline; the member is

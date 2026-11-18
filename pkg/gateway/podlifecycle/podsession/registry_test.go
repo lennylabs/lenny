@@ -12,15 +12,15 @@ import (
 
 func TestRegistryPutGet(t *testing.T) {
 	r := podsession.NewRegistry()
-	bind := &podsession.BindResult{SessionID: "sess-1", SandboxName: "sbx-1", PodIP: "10.0.0.1"}
+	bind := &podsession.BindResult{SessionID: "sess-1", AgentPodName: "sbx-1", PodIP: "10.0.0.1"}
 	r.Put(bind)
 
 	got, ok := r.Get("sess-1")
 	if !ok {
 		t.Fatal("Get returned ok=false for a stored binding")
 	}
-	if got.SandboxName != "sbx-1" {
-		t.Errorf("binding sandbox = %q, want sbx-1", got.SandboxName)
+	if got.AgentPodName != "sbx-1" {
+		t.Errorf("binding sandbox = %q, want sbx-1", got.AgentPodName)
 	}
 }
 
@@ -33,10 +33,10 @@ func TestRegistryGetAbsent(t *testing.T) {
 
 func TestRegistryRemove(t *testing.T) {
 	r := podsession.NewRegistry()
-	r.Put(&podsession.BindResult{SessionID: "sess-1", SandboxName: "sbx-1"})
+	r.Put(&podsession.BindResult{SessionID: "sess-1", AgentPodName: "sbx-1"})
 
 	got, ok := r.Remove("sess-1")
-	if !ok || got.SandboxName != "sbx-1" {
+	if !ok || got.AgentPodName != "sbx-1" {
 		t.Fatalf("Remove returned (%v, %t), want the stored binding", got, ok)
 	}
 	if _, ok := r.Get("sess-1"); ok {
@@ -53,12 +53,12 @@ func TestRegistryRemoveAbsent(t *testing.T) {
 
 func TestRegistryPutReplacesPriorBinding(t *testing.T) {
 	r := podsession.NewRegistry()
-	r.Put(&podsession.BindResult{SessionID: "sess-1", SandboxName: "old"})
-	r.Put(&podsession.BindResult{SessionID: "sess-1", SandboxName: "new"})
+	r.Put(&podsession.BindResult{SessionID: "sess-1", AgentPodName: "old"})
+	r.Put(&podsession.BindResult{SessionID: "sess-1", AgentPodName: "new"})
 
 	got, _ := r.Get("sess-1")
-	if got.SandboxName != "new" {
-		t.Errorf("binding sandbox = %q, want the replacement new", got.SandboxName)
+	if got.AgentPodName != "new" {
+		t.Errorf("binding sandbox = %q, want the replacement new", got.AgentPodName)
 	}
 	if r.Len() != 1 {
 		t.Errorf("registry length = %d, want 1 after replacing one session", r.Len())

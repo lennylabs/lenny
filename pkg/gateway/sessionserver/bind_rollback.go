@@ -27,7 +27,7 @@ import (
 //
 // spec: §7.1 (Atomicity of session creation (steps 2–8)); §7.1 (Terminal
 // pipeline context: release allowance bounds the release); §4.6.1 (Orphaned
-// SandboxClaim detection); §4.6.3 (SandboxClaim: a release that ends the
+// PodClaim detection); §4.6.3 (PodClaim: a release that ends the
 // occupancy without reuse); §5.2 (Recycle lifecycle).
 func (s *Server) rollbackBinding(ctx context.Context, result *podsession.BindResult) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.streamFailureReportTimeout)
@@ -120,7 +120,7 @@ func createClaimNeedsRollback(claim *podsession.ClaimResult, err error) bool {
 //
 // spec: §7.1 (Atomicity of session creation (steps 2–8)); §7.1 (Terminal
 // pipeline context: release allowance bounds the release); §4.6.1 (Orphaned
-// SandboxClaim detection); §4.6.3 (SandboxClaim: a release that ends the
+// PodClaim detection); §4.6.3 (PodClaim: a release that ends the
 // occupancy without reuse); §5.2 (Slot assignment atomicity).
 func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResult, sessionID string) {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), s.streamFailureReportTimeout)
@@ -128,7 +128,7 @@ func (s *Server) rollbackClaim(ctx context.Context, claim *podsession.ClaimResul
 	if claim == nil || s.podBinder == nil {
 		return
 	}
-	if err := s.podBinder.ReclaimClaimed(ctx, claim.SandboxName, sessionID, claim.SlotID != ""); err != nil {
-		log.Printf("sessionserver: rollback create-time claim %s for session %s: %v", claim.SandboxName, sessionID, err)
+	if err := s.podBinder.ReclaimClaimed(ctx, claim.AgentPodName, sessionID, claim.SlotID != ""); err != nil {
+		log.Printf("sessionserver: rollback create-time claim %s for session %s: %v", claim.AgentPodName, sessionID, err)
 	}
 }

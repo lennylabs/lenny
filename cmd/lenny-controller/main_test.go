@@ -20,10 +20,10 @@ func TestBuildSchemeRegistersControllerTypes(t *testing.T) {
 
 	for _, obj := range []runtime.Object{
 		&lennyv1.Runtime{},
-		&lennyv1.Sandbox{},
-		&lennyv1.SandboxClaim{},
-		&lennyv1.SandboxTemplate{},
-		&lennyv1.SandboxWarmPool{},
+		&lennyv1.AgentPod{},
+		&lennyv1.PodClaim{},
+		&lennyv1.PodSet{},
+		&lennyv1.PodSet{},
 	} {
 		if _, _, err := s.ObjectKinds(obj); err != nil {
 			t.Errorf("%T is not registered with the manager scheme: %v", obj, err)

@@ -69,7 +69,7 @@ func FirstTerminated(states []PodState, container string) (ContainerState, bool)
 	return ContainerState{}, false
 }
 
-// ClaimWatch follows the SandboxClaim the gateway creates when it claims one
+// ClaimWatch follows the PodClaim the gateway creates when it claims one
 // pod, named claim-<pod>. It records whether that claim was created or
 // updated while the watch ran, so a test can tell that a session start was
 // placed on the pod even when the start failed and the claim was removed
@@ -85,7 +85,7 @@ func WatchClaim(t testing.TB, c *kind.Cluster, pod string) *ClaimWatch {
 	t.Helper()
 	buf := &syncBuffer{}
 	name := "claim-" + pod
-	cmd := c.Kubectl("-n", Namespace, "get", "sandboxclaims", "--field-selector", "metadata.name="+name,
+	cmd := c.Kubectl("-n", Namespace, "get", "podclaims", "--field-selector", "metadata.name="+name,
 		"--watch", "--output-watch-events", "-o", "json")
 	cmd.Stdout = buf
 	if err := cmd.Start(); err != nil {

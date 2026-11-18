@@ -163,10 +163,10 @@ func WaitReadyPods(t testing.TB, c *kind.Cluster, pool string, n int, timeout ti
 
 // WaitClaimablePods waits until pool has n pods a session start can claim
 // and returns them: each is Ready, not being deleted, and has no
-// SandboxClaim, and the pool's SandboxTemplate no longer reports
+// PodClaim, and the pool's PodSet no longer reports
 // PoolWarmingUp. A Ready pod that served an earlier session can still hold a
 // claim through its reserved hold and drain, and the gateway answers a start
-// with 503 RUNTIME_UNAVAILABLE while the template reports PoolWarmingUp, so
+// with 503 RUNTIME_UNAVAILABLE while the PodSet reports PoolWarmingUp, so
 // neither a Ready pod alone nor an unclaimed pod alone makes a start
 // claimable. A pool that does not reach n within timeout skips the test as
 // not yet applicable, as WaitReadyPods does.
@@ -188,7 +188,7 @@ func WaitClaimablePods(t testing.TB, c *kind.Cluster, pool string, n int, timeou
 	}
 }
 
-// WaitPoolAvailable waits up to timeout for pool's SandboxTemplate to stop
+// WaitPoolAvailable waits up to timeout for pool's PodSet to stop
 // reporting PoolWarmingUp, so the gateway claims from the pool rather than
 // answering 503 RUNTIME_UNAVAILABLE. A pool still warming at timeout skips
 // the test as not yet applicable. spec: §5.2 (PoolWarmingUp condition).
@@ -204,7 +204,7 @@ func WaitPoolAvailable(t testing.TB, c *kind.Cluster, pool string, timeout time.
 }
 
 // unclaimedReadyPods returns the pods of pool that are Ready, not being
-// deleted, and hold no SandboxClaim.
+// deleted, and hold no PodClaim.
 func unclaimedReadyPods(t testing.TB, c *kind.Cluster, pool string) []PodState {
 	t.Helper()
 	var idle []PodState
@@ -216,20 +216,16 @@ func unclaimedReadyPods(t testing.TB, c *kind.Cluster, pool string) []PodState {
 	return idle
 }
 
-// PoolWarmingUp reports whether the SandboxTemplate behind pool carries the
+// PoolWarmingUp reports whether the pool's PodSet carries the
 // PoolWarmingUp condition with status True, the condition the gateway reads
 // to refuse a start while the pool has no idle pod.
 // spec: §5.2 (PoolWarmingUp condition).
 func PoolWarmingUp(t testing.TB, c *kind.Cluster, pool string) bool {
 	t.Helper()
-	tmpl, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxwarmpool", pool, "-o", "jsonpath={.spec.templateRef}")
-	if err != nil {
-		t.Fatalf("read templateRef of %s: %v\n%s", pool, err, tmpl)
-	}
-	out, err := c.KubectlOut(t, "-n", Namespace, "get", "sandboxtemplate", strings.TrimSpace(tmpl), "-o",
+	out, err := c.KubectlOut(t, "-n", Namespace, "get", "podset", pool, "-o",
 		`jsonpath={.status.conditions[?(@.type=="PoolWarmingUp")].status}`)
 	if err != nil {
-		t.Fatalf("read PoolWarmingUp of template %s: %v\n%s", tmpl, err, out)
+		t.Fatalf("read PoolWarmingUp of PodSet %s: %v\n%s", pool, err, out)
 	}
 	return strings.TrimSpace(out) == "True"
 }

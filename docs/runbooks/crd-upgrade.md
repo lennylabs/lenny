@@ -33,7 +33,7 @@ CRDs in the cluster are out of sync with the deployed gateway/controller image. 
 
 - `CRDVersionSkew` — controller observes a CRD whose schema does not match the version embedded in the binary.
 - `StaleCRDDetected` — preflight or periodic check finds a CRD version older than the installed chart.
-- Gateway logs at startup: `crd "sandboxes.lenny.dev" not found` or `unknown field in spec`.
+- Gateway logs at startup: `crd "agentpods.lenny.dev" not found` or `unknown field in spec`.
 - Controller logs: repeated `failed to convert ... spec.runtimeClass` or schema validation errors.
 
 ## Diagnosis

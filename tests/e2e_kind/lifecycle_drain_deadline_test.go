@@ -157,23 +157,23 @@ func TestErasureReleaseBoundIsBindReleaseWindowPlusSeal_spec_12_8(t *testing.T) 
 	}
 }
 
-// TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8
+// TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedAgentPod
 // pins what the Kind suspend case accepts as a pod returned to the pool.
 // The erasure case holds a weaker condition, which
 // TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8 pins.
 //
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (occupancy projection on claim DELETE), 4.6.3 (SandboxClaim binding state)
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 4.6.1 (occupancy projection on claim DELETE), 4.6.3 (PodClaim binding state)
 // diagnosis: a failure means the probe accepts a pod still held out of the
 // warm pool: a claim that still exists in a non-bound phase (recycling,
-// reserved, released, or failed), or a deleted claim whose Sandbox still
+// reserved, released, or failed), or a deleted claim whose AgentPod still
 // projects an occupied phase.
-func TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8(t *testing.T) {
+func TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedAgentPod(t *testing.T) {
 	cases := []struct {
-		name         string
-		claimFound   bool
-		claimPhase   string
-		sandboxPhase string
-		want         bool
+		name          string
+		claimFound    bool
+		claimPhase    string
+		agentPodPhase string
+		want          bool
 	}{
 		{"claim bound", true, "bound", "claimed", false},
 		{"claim recycling", true, "recycling", "claimed", false},
@@ -192,7 +192,7 @@ func TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8(t *
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got, state := podReturnedToPool(tc.claimFound, tc.claimPhase, tc.sandboxPhase)
+			got, state := podReturnedToPool(tc.claimFound, tc.claimPhase, tc.agentPodPhase)
 			if got != tc.want {
 				t.Fatalf("podReturnedToPool = %v (%s), want %v", got, state, tc.want)
 			}
@@ -202,13 +202,13 @@ func TestPodReturnedToPoolRequiresDeletedClaimAndUnoccupiedSandbox_spec_12_8(t *
 
 // TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8 pins what the Kind
 // erasure case accepts: the erased session's claim is deleted or in any
-// phase other than bound, whatever the Sandbox's phase. It is weaker than
+// phase other than bound, whatever the AgentPod's phase. It is weaker than
 // podReturnedToPool, which the suspend case holds.
 //
-// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 11.4 (User Invalidation), 4.6.3 (SandboxClaim binding state)
+// spec: 12.8 (Compliance Interfaces: Lifecycle fence and drain), 11.4 (User Invalidation), 4.6.3 (PodClaim binding state)
 // diagnosis: a failure means the erasure probe rejects a claim the release
 // already moved out of bound (released, failed, or deleted before the
-// Sandbox re-warms), holding the erasure case to the suspend case's
+// AgentPod re-warms), holding the erasure case to the suspend case's
 // pool-return condition, or it accepts a claim still bound to the erased
 // user's session.
 func TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8(t *testing.T) {
@@ -233,7 +233,7 @@ func TestErasureClaimProbeAcceptsAnyNonBoundClaim_spec_12_8(t *testing.T) {
 			}
 		})
 	}
-	// A claim released while the Sandbox still reads claimed
+	// A claim released while the AgentPod still reads claimed
 	// passes the erasure probe and fails the suspend probe.
 	if ok, _ := claimNoLongerBound(true, "released"); !ok {
 		t.Fatal("erasure probe rejects a released claim")

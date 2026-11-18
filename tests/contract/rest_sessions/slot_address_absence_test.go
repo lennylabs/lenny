@@ -215,12 +215,12 @@ func (r *recordingExecutor) Send(ctx context.Context, sessionID string, messages
 	return r.Executor.Send(ctx, sessionID, messages)
 }
 
-// slotFailNamespace is the agent namespace the slot-failure fixture's warm
-// pool, template, and Sandbox live in.
+// slotFailNamespace is the agent namespace the slot-failure fixture's
+// PodSet and AgentPod live in.
 const slotFailNamespace = "lenny-agents"
 
 // slotFailCluster boots an envtest control plane holding a
-// concurrent-session warm pool, its template, and one idle Sandbox, so the
+// concurrent-session pool's PodSet and one idle AgentPod, so the
 // §5.2 slot reservation the /start route drives is a real one. The
 // controller-runtime fake client cannot serve the SSA Apply the slot
 // claimer's binding-state write needs, so the reservation half of this
@@ -247,15 +247,13 @@ func slotFailCluster(t *testing.T) client.Client {
 		t.Fatalf("create namespace: %v", err)
 	}
 	objs := []client.Object{
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "conc-pool", Namespace: slotFailNamespace},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "conc-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.SandboxTemplate{
-			ObjectMeta: metav1.ObjectMeta{Name: "conc-tmpl", Namespace: slotFailNamespace},
-			Spec: lennyv1.SandboxTemplateSpec{
+			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:       "echo",
 				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
 			},
 		},
 	}
@@ -264,7 +262,7 @@ func slotFailCluster(t *testing.T) client.Client {
 			t.Fatalf("create %T %s: %v", o, o.GetName(), err)
 		}
 	}
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "sbx-conc-1",
 			Namespace: slotFailNamespace,
@@ -274,11 +272,11 @@ func slotFailCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, sb); err != nil {
 		t.Fatalf("create sandbox: %v", err)
 	}
-	// The WarmPoolController owns Sandbox.status, so the idle phase and pod
+	// The WarmPoolController owns AgentPod.status, so the idle phase and pod
 	// address are seeded under its field manager rather than the gateway's.
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName(sb.Name)
 	u.SetNamespace(sb.Namespace)
 	if err := unstructured.SetNestedField(u.Object,

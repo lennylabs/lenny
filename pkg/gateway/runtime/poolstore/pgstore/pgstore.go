@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MIT
 
 // Package pgstore is the Postgres-backed poolstore.Store, persisting
-// the §5.2 SandboxWarmPool registry to the sandbox_warm_pools table.
+// the §5.2 PodSet registry to the pools table.
 // It is a drop-in alternative to poolstore.Memory.
 //
-// sandbox_warm_pools is platform-global (§5.1): pools are
+// pools is platform-global (§5.1): pools are
 // platform-wide records keyed by name, so operations run as plain
 // queries without an app.current_tenant context. Create and Update
 // run the same §5.2 / §5.3 validation as poolstore.Memory so the
@@ -234,7 +234,7 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 	if err != nil {
 		return err
 	}
-	_, err = s.pool.Exec(ctx, `INSERT INTO sandbox_warm_pools (
+	_, err = s.pool.Exec(ctx, `INSERT INTO pools (
 		name, runtime_ref, isolation_profile, execution_mode,
 		resource_class, warm_count, max_session_age_seconds,
 		allow_standard_isolation, max_concurrent,
@@ -265,7 +265,7 @@ func (s *Store) Create(ctx context.Context, p poolstore.Pool) error {
 // ErrNotFound.
 func (s *Store) Get(ctx context.Context, name string) (poolstore.Pool, error) {
 	row := s.pool.QueryRow(ctx,
-		`SELECT `+selectList+` FROM sandbox_warm_pools WHERE name = $1`, name)
+		`SELECT `+selectList+` FROM pools WHERE name = $1`, name)
 	p, err := scanPool(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return poolstore.Pool{}, poolstore.ErrNotFound
@@ -286,7 +286,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 	defer func() { _ = tx.Rollback(ctx) }()
 
 	row := tx.QueryRow(ctx,
-		`SELECT `+selectList+` FROM sandbox_warm_pools WHERE name = $1 FOR UPDATE`, name)
+		`SELECT `+selectList+` FROM pools WHERE name = $1 FOR UPDATE`, name)
 	p, err := scanPool(row)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return poolstore.Pool{}, poolstore.ErrNotFound
@@ -318,7 +318,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 	if err != nil {
 		return poolstore.Pool{}, err
 	}
-	if _, err := tx.Exec(ctx, `UPDATE sandbox_warm_pools SET
+	if _, err := tx.Exec(ctx, `UPDATE pools SET
 		runtime_ref = $2, isolation_profile = $3, execution_mode = $4,
 		resource_class = $5, warm_count = $6, max_session_age_seconds = $7,
 		allow_standard_isolation = $8, max_concurrent = $9,
@@ -349,7 +349,7 @@ func (s *Store) Update(ctx context.Context, name string, mutate func(*poolstore.
 // dropped unless filter.IncludeDeleted is set, and a non-empty
 // filter.RuntimeRef restricts the result to that runtime.
 func (s *Store) List(ctx context.Context, filter poolstore.ListFilter) ([]poolstore.Pool, error) {
-	q := `SELECT ` + selectList + ` FROM sandbox_warm_pools`
+	q := `SELECT ` + selectList + ` FROM pools`
 	var args []any
 	var conds []string
 	if !filter.IncludeDeleted {
@@ -389,7 +389,7 @@ func (s *Store) List(ctx context.Context, filter poolstore.ListFilter) ([]poolst
 // soft-deleting an already-deleted pool is a no-op success.
 func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error {
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE sandbox_warm_pools SET deleted_at = $2, updated_at = $2,
+		`UPDATE pools SET deleted_at = $2, updated_at = $2,
 			pool_config_generation = pool_config_generation + 1
 		 WHERE name = $1 AND deleted_at IS NULL`, name, at)
 	if err != nil {
@@ -400,7 +400,7 @@ func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error
 	}
 	var exists bool
 	if err := s.pool.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM sandbox_warm_pools WHERE name = $1)`, name).Scan(&exists); err != nil {
+		`SELECT EXISTS(SELECT 1 FROM pools WHERE name = $1)`, name).Scan(&exists); err != nil {
 		return err
 	}
 	if !exists {
@@ -418,7 +418,7 @@ func (s *Store) SoftDelete(ctx context.Context, name string, at time.Time) error
 func (s *Store) BumpResumeEpoch(ctx context.Context, name string) (int64, error) {
 	var epoch int64
 	err := s.pool.QueryRow(ctx,
-		`UPDATE sandbox_warm_pools
+		`UPDATE pools
 			SET reconciliation_resume_epoch = reconciliation_resume_epoch + 1
 		 WHERE name = $1 AND deleted_at IS NULL
 		 RETURNING reconciliation_resume_epoch`, name).Scan(&epoch)

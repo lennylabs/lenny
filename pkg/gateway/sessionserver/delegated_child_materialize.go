@@ -128,7 +128,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 		}
 		if outcome.Claim != nil {
 			createClaim = outcome.Claim
-			row.PodAssignment = createClaim.SandboxName
+			row.PodAssignment = createClaim.AgentPodName
 			row.PoolRef = createClaim.Pool
 			startCtx.PodClaim = createClaim.PodClaim
 		}
@@ -188,7 +188,7 @@ func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childI
 			rr.PoolRef = createClaim.Pool
 		}
 		if bound != nil {
-			rr.PodAssignment = bound.SandboxName
+			rr.PodAssignment = bound.AgentPodName
 			rr.SetupOutput = setupOutputsFromBind(bound.SetupOutputs)
 		}
 		return nil

@@ -75,7 +75,7 @@ tests:
           path: metadata.annotations["cert-manager.io/inject-ca-from"]
           value: lenny-system/lenny-data-residency-validator
 
-  - it: scopes the webhook to sandboxclaim CREATE and UPDATE in agent namespaces
+  - it: scopes the webhook to podclaim CREATE and UPDATE in agent namespaces
     set:
       features.compliance: true
     documentIndex: 4
@@ -85,8 +85,8 @@ tests:
           value: lenny.dev
       - equal:
           path: webhooks[0].rules[0].resources[0]
-          value: sandboxclaims
-      # The SandboxClaim CRD serves v1alpha1 only. A rule naming any
+          value: podclaims
+      # The PodClaim CRD serves v1alpha1 only. A rule naming any
       # other version matches no request, which leaves the validator
       # installed and never called.
       - equal:

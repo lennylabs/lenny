@@ -18,8 +18,8 @@ import (
 func reapWait(context.Context) error { return nil }
 
 // spec: 5.2 (Slot assignment atomicity)
-// diagnosis: the reaper cannot reach a pod from its Sandbox, so stale members are never released.
-func TestReapStaleSlotsResolvesThePodFromItsSandbox_spec_5_2(t *testing.T) {
+// diagnosis: the reaper cannot reach a pod from its AgentPod, so stale members are never released.
+func TestReapStaleSlotsResolvesThePodFromItsAgentPod(t *testing.T) {
 	ctx := context.Background()
 
 	t.Run("a stale member is torn down and removed", func(t *testing.T) {
@@ -54,16 +54,16 @@ func TestReapStaleSlotsResolvesThePodFromItsSandbox_spec_5_2(t *testing.T) {
 		}
 	})
 
-	t.Run("a missing Sandbox keeps every member", func(t *testing.T) {
+	t.Run("a missing AgentPod keeps every member", func(t *testing.T) {
 		f := newReleaseFixture(t, &slotRuntime{})
 		f.bindSlot(t, "sess-stale")
 		f.bindSlot(t, "sess-live")
-		sb := &lennyv1.Sandbox{}
+		sb := &lennyv1.AgentPod{}
 		if err := f.kube.Get(ctx, client.ObjectKey{Namespace: releaseNS, Name: releasePod}, sb); err != nil {
-			t.Fatalf("read the Sandbox: %v", err)
+			t.Fatalf("read the AgentPod: %v", err)
 		}
 		if err := f.kube.Delete(ctx, sb); err != nil {
-			t.Fatalf("delete the Sandbox: %v", err)
+			t.Fatalf("delete the AgentPod: %v", err)
 		}
 		released, err := f.binder.ReapStaleSlots(ctx, releasePod, []string{"sess-stale"}, reapWait)
 		if err == nil || released != 0 {

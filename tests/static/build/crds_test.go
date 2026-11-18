@@ -43,11 +43,10 @@ type crdManifest struct {
 // platform-global and cluster-scoped; the pod-fabric CRDs live in agent
 // namespaces and are namespaced.
 var expectedCRDs = map[string]string{
-	"Runtime":         "Cluster",
-	"Sandbox":         "Namespaced",
-	"SandboxClaim":    "Namespaced",
-	"SandboxTemplate": "Namespaced",
-	"SandboxWarmPool": "Namespaced",
+	"Runtime":  "Cluster",
+	"AgentPod": "Namespaced",
+	"PodClaim": "Namespaced",
+	"PodSet":   "Namespaced",
 }
 
 func crdDir(t *testing.T) string {

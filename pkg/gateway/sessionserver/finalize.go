@@ -277,7 +277,7 @@ func (s *Server) prepareAtFinalize(ctx context.Context, row sessionstore.Session
 	}
 	agentInterface, minPlatformVersion := s.runtimeManifestFields(ctx, row.RuntimeRef)
 	bindReq := s.exclusiveBindRequest(ctx, row, match, plan, credPools, userCredProviders, agentInterface, minPlatformVersion)
-	bindReq.SandboxName = row.PodAssignment
+	bindReq.AgentPodName = row.PodAssignment
 	if row.PoolRef != "" {
 		bindReq.Pool = row.PoolRef
 	}
@@ -501,17 +501,17 @@ func isPreconditionError(err error) bool {
 // and deletes the shared claim only when that release empties the set, and on
 // an exclusive pool it deletes the claim by name. Best-effort: the §4.6.1
 // orphan-claim GC backstops a release error.
-// spec: §15.1 (finalize row), §6.2 (finalize timeout), §4.6.3 (SandboxClaim: a
+// spec: §15.1 (finalize row), §6.2 (finalize timeout), §4.6.3 (PodClaim: a
 // release that ends the occupancy without reuse), §5.2 (Slot assignment
 // atomicity), §6.1 (Per-session credential lease lifecycle), §4.6.1
 // (orphan-claim GC).
-func (s *Server) reclaimFinalizedPod(ctx context.Context, sandboxName, sessionID string, perSlot bool) {
-	if s.podBinder == nil || sandboxName == "" {
+func (s *Server) reclaimFinalizedPod(ctx context.Context, agentPodName, sessionID string, perSlot bool) {
+	if s.podBinder == nil || agentPodName == "" {
 		return
 	}
-	if err := s.podBinder.ReclaimClaimed(ctx, sandboxName, sessionID, perSlot); err != nil {
+	if err := s.podBinder.ReclaimClaimed(ctx, agentPodName, sessionID, perSlot); err != nil {
 		log.Printf("sessionserver: reclaim finalized pod %s for session %s after finalize failure: %v",
-			sandboxName, sessionID, err)
+			agentPodName, sessionID, err)
 	}
 }
 

@@ -74,7 +74,7 @@ var spec161Metrics = []string{
 	"lenny_warmpool_claims_total", "lenny_warmpool_sdk_demotions_total", "lenny_pod_session_reuse_count",
 	"lenny_pool_config_reconciliation_lag_seconds", "lenny_pool_bootstrap_mode",
 	"lenny_pool_scaling_admission_denied_total", "lenny_pool_termination_budget_exceeded_total",
-	"lenny_sandboxclaim_guard_rejections_total", "lenny_warmpool_idle_pod_minutes",
+	"lenny_podclaim_guard_rejections_total", "lenny_warmpool_idle_pod_minutes",
 	"lenny_pod_claim_fallback_total", "lenny_agent_pod_state_mirror_lag_seconds",
 	"lenny_warmpool_failover_claims_served_fraction", "lenny_pod_registry_operation_duration_seconds",
 	"lenny_pod_registry_error_total", "lenny_pod_registry_watch_lag_seconds",

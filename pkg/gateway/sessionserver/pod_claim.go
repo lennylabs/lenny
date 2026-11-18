@@ -85,7 +85,7 @@ const (
 // pool: its claim is a per-session slot reservation (ClaimSlot) rather than
 // an exclusive whole-pod claim, so the §15.1 created-state invariant (a warm
 // pod has been claimed) and the §4.6 durable binding hold uniformly. The
-// returned ClaimResult carries the reserved slot's SandboxName, Pool, and
+// returned ClaimResult carries the reserved slot's AgentPodName, Pool, and
 // SlotID for the caller to persist on row.PodAssignment + row.PoolRef; /start
 // reconnects to the reserved slot rather than re-reserving. Pool warming,
 // pool/slot exhaustion, and a credential-availability miss are returned as
@@ -135,7 +135,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	}
 	// spec: §5.2 — service mode is claimless: a service-mode session is a
 	// connection handle routed through the pool's Service/EndpointSlice, with
-	// no SandboxClaim and no workspace materialization. No pod is claimed at
+	// no PodClaim and no workspace materialization. No pod is claimed at
 	// create; the row persists with execution_mode=service.
 	if match.ExecutionMode == string(runtimestore.ExecutionModeService) {
 		return &claimOutcome{Level: level, CredPools: credPools, PoolDeliveryModes: poolDeliveryModes, UserCredProviders: userCredProviders}, nil
@@ -146,7 +146,7 @@ func (s *Server) claimAtCreate(ctx context.Context, row sessionstore.Session, pl
 	// pool, so the §15.1 created-state invariant (a warm pod has been claimed)
 	// and the §4.6 durable binding hold uniformly. The concurrent-pool claim
 	// is a per-session slot reservation (ClaimSlot): it lands the session on a
-	// shared pod's slot and persists SandboxName + Pool, and /start reconnects
+	// shared pod's slot and persists AgentPodName + Pool, and /start reconnects
 	// to that reserved slot (BindReservedSlot) rather than re-reserving. The
 	// SlotID equals the session id, so the binding is reconstructable from the
 	// persisted columns. Pool/slot exhaustion at the reservation surfaces as

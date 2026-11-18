@@ -163,7 +163,7 @@ lenny-ctl admin pools upgrade rollback \
   --restore-old-pool
 ```
 
-This recreates the old pool configuration from `RuntimeUpgrade.previousPoolSpec` and restores routing. Only valid while the old `SandboxTemplate` CRD still exists.
+This recreates the old pool configuration from `RuntimeUpgrade.previousPoolSpec` and restores routing. Only valid while the old `PodSet` CRD still exists.
 
 ### Helm Rollback
 
@@ -204,7 +204,7 @@ Helm does **not** update CRDs on `helm upgrade`. This is a known limitation that
 
 3. **Verify CRD versions:**
    ```bash
-   kubectl get crd sandboxtemplates.lenny.dev \
+   kubectl get crd podsets.lenny.dev \
      -o jsonpath='{.metadata.annotations.lenny\.dev/schema-version}'
    ```
 
@@ -297,7 +297,7 @@ When retiring a protocol version:
 lenny-ctl admin pools drain --pool <pool-name>
 
 # Monitor draining progress
-kubectl get sandboxes -A -l lenny.dev/pool=<pool-name>
+kubectl get agentpods -A -l lenny.dev/pool=<pool-name>
 ```
 
 ---

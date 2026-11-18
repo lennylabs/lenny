@@ -70,9 +70,9 @@ type attachConn struct {
 	// The binding identity, captured at open, so the approval gate and the
 	// end-of-stream handling never re-read a registry entry that a later
 	// bind may have replaced.
-	tenantID    string
-	sessionID   string
-	sandboxName string
+	tenantID     string
+	sessionID    string
+	agentPodName string
 	// bind is the binding the stream was opened for, read under e.mu by
 	// streamFor. endConn marks it crashed on a reported stream failure, so a
 	// release whose unbind follows the end retires the pod. spec: §28.5.1
@@ -173,15 +173,15 @@ func (c *attachConn) stoppedByClosing(err error) bool {
 func newAttachConn(ctx context.Context, bind *podsession.BindResult) *attachConn {
 	sctx, cancel := context.WithCancel(context.WithoutCancel(ctx))
 	return &attachConn{
-		ctx:         sctx,
-		cancel:      cancel,
-		tenantID:    bind.TenantID,
-		sessionID:   bind.SessionID,
-		sandboxName: bind.SandboxName,
-		bind:        bind,
-		ready:       make(chan struct{}),
-		token:       make(chan struct{}, 1),
-		done:        make(chan struct{}),
+		ctx:          sctx,
+		cancel:       cancel,
+		tenantID:     bind.TenantID,
+		sessionID:    bind.SessionID,
+		agentPodName: bind.AgentPodName,
+		bind:         bind,
+		ready:        make(chan struct{}),
+		token:        make(chan struct{}, 1),
+		done:         make(chan struct{}),
 	}
 }
 
@@ -445,7 +445,7 @@ func (e *PodExecutor) endConn(c *attachConn, err error) {
 	// before done closes, so a Send waiting on this conn returns only after
 	// the failure has been reported.
 	if e.onStreamFailure != nil && isReportedStreamFailure(err) {
-		e.onStreamFailure(c.tenantID, c.sessionID, c.sandboxName, err)
+		e.onStreamFailure(c.tenantID, c.sessionID, c.agentPodName, err)
 	}
 
 	c.cancel()

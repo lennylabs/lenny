@@ -114,7 +114,7 @@ func (g *crashingGateway) heal() {
 	g.healed = true
 }
 
-// compLossPod is one agent pod: its Sandbox, its adapter, and its runtime.
+// compLossPod is one agent pod: its AgentPod, its adapter, and its runtime.
 type compLossPod struct {
 	name, pool, ip string
 	srv            *adapter.Server
@@ -139,7 +139,7 @@ func newCompLossPod(t *testing.T, name, pool, ip string) *compLossPod {
 	return &compLossPod{name: name, pool: pool, ip: ip, srv: srv, rt: rt, lis: lis}
 }
 
-// compLossCluster starts envtest and seeds one idle Sandbox per pod, each in
+// compLossCluster starts envtest and seeds one idle AgentPod per pod, each in
 // its own pool so a bind's placement is fixed by the pool it names.
 func compLossCluster(t *testing.T, pods ...*compLossPod) client.Client {
 	t.Helper()
@@ -161,14 +161,14 @@ func compLossCluster(t *testing.T, pods ...*compLossPod) client.Client {
 		t.Fatalf("create namespace: %v", err)
 	}
 	for _, p := range pods {
-		sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+		sb := &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{
 			Name: p.name, Namespace: compLossNS,
 			Labels: map[string]string{warmpool.LabelPool: p.pool},
 		}}
 		if err := c.Create(ctx, sb); err != nil {
 			t.Fatalf("create sandbox %s: %v", p.name, err)
 		}
-		sb.Status = lennyv1.SandboxStatus{Phase: "idle", PodIP: p.ip}
+		sb.Status = lennyv1.AgentPodStatus{Phase: "idle", PodIP: p.ip}
 		if err := c.Status().Update(ctx, sb); err != nil {
 			t.Fatalf("seed sandbox %s status: %v", p.name, err)
 		}
@@ -177,7 +177,7 @@ func compLossCluster(t *testing.T, pods ...*compLossPod) client.Client {
 }
 
 // compLossBinder wires the gateway binder to the pods, routing each dial by
-// the pod IP the claimed Sandbox reports, through the crashing interceptor.
+// the pod IP the claimed AgentPod reports, through the crashing interceptor.
 func compLossBinder(t *testing.T, c client.Client, gw *crashingGateway, pods ...*compLossPod) *podsession.Binder {
 	t.Helper()
 	byAddr := map[string]*compLossPod{}
@@ -276,8 +276,8 @@ func TestCompensationLostToAGatewayCrashLeavesTheEntryRefusable_spec_7_1(t *test
 		t.Fatalf("placement onto the other pod: %v", err)
 	}
 	defer res.Adapter.Close()
-	if res.SandboxName != "sbx-b" {
-		t.Fatalf("placement landed on %s, want sbx-b", res.SandboxName)
+	if res.AgentPodName != "sbx-b" {
+		t.Fatalf("placement landed on %s, want sbx-b", res.AgentPodName)
 	}
 	if got := podB.rt.startedSessions(); len(got) != 1 || got[0] != "sess-bob" {
 		t.Errorf("the other pod started %v, want [sess-bob]", got)

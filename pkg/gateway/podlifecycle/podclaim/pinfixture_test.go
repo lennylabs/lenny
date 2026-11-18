@@ -25,7 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
-// pinnedPod builds a minimal agent Pod backing the same-named Sandbox in
+// pinnedPod builds a minimal agent Pod backing the same-named AgentPod in
 // pool, carrying the §5.2 tenant pin label when tenant is non-empty.
 func pinnedPod(ns, pool, name, tenant string) *corev1.Pod {
 	p := &corev1.Pod{
@@ -54,23 +54,23 @@ func lifetimePod(ns, pool, name, tenant, lifetime string) *corev1.Pod {
 	return p
 }
 
-// reservedIn builds a Sandbox in pool projecting the §6.2 `reserved` phase
+// reservedIn builds an AgentPod in pool projecting the §6.2 `reserved` phase
 // for tenant.
-func reservedIn(ns, pool, name, tenant string) *lennyv1.Sandbox {
-	sb := sandboxIn(ns, pool, name, "reserved")
+func reservedIn(ns, pool, name, tenant string) *lennyv1.AgentPod {
+	sb := agentPodIn(ns, pool, name, "reserved")
 	sb.Status.TenantID = tenant
 	return sb
 }
 
-// setSandboxPhase writes phase on the Sandbox's status under the
+// setAgentPodPhase writes phase on the AgentPod's status under the
 // WarmPoolController field manager, as the occupancy projection would.
-func setSandboxPhase(t *testing.T, c client.Client, name, phase string) {
+func setAgentPodPhase(t *testing.T, c client.Client, name, phase string) {
 	t.Helper()
 	ns := testNamespace(t)
-	patch := &lennyv1.Sandbox{
-		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1.GroupVersion.String(), Kind: "Sandbox"},
+	patch := &lennyv1.AgentPod{
+		TypeMeta:   metav1.TypeMeta{APIVersion: lennyv1.GroupVersion.String(), Kind: "AgentPod"},
 		ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: ns},
-		Status:     lennyv1.SandboxStatus{Phase: phase},
+		Status:     lennyv1.AgentPodStatus{Phase: phase},
 	}
 	if err := c.Status().Patch(context.Background(), patch, client.Apply,
 		client.FieldOwner(string(ownership.WarmPoolController)), client.ForceOwnership); err != nil {
@@ -103,16 +103,16 @@ type pinRecorder struct {
 	mu sync.Mutex
 	// podPatches lists every Pod name a Patch was issued for.
 	podPatches []string
-	// claimGets lists every SandboxClaim name a Get was issued for.
+	// claimGets lists every PodClaim name a Get was issued for.
 	claimGets []string
-	// claimCreates lists every SandboxClaim name a Create was issued for.
+	// claimCreates lists every PodClaim name a Create was issued for.
 	claimCreates []string
 
 	failPodGet   map[string]error
 	failClaimGet map[string]error
 	failPodPatch map[string]error
 	// onClaimDelete, when set, runs in place of the default delegation for
-	// a SandboxClaim Delete.
+	// a PodClaim Delete.
 	onClaimDelete func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error
 }
 
@@ -124,7 +124,7 @@ func (r *pinRecorder) wrap(c client.WithWatch) client.WithWatch {
 			switch obj.(type) {
 			case *corev1.Pod:
 				injected = r.failPodGet[key.Name]
-			case *lennyv1.SandboxClaim:
+			case *lennyv1.PodClaim:
 				r.claimGets = append(r.claimGets, key.Name)
 				injected = r.failClaimGet[key.Name]
 			}
@@ -147,7 +147,7 @@ func (r *pinRecorder) wrap(c client.WithWatch) client.WithWatch {
 			return cl.Patch(ctx, obj, patch, opts...)
 		},
 		Create: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.CreateOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+			if _, ok := obj.(*lennyv1.PodClaim); ok {
 				r.mu.Lock()
 				r.claimCreates = append(r.claimCreates, obj.GetName())
 				r.mu.Unlock()
@@ -155,7 +155,7 @@ func (r *pinRecorder) wrap(c client.WithWatch) client.WithWatch {
 			return cl.Create(ctx, obj, opts...)
 		},
 		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok && r.onClaimDelete != nil {
+			if _, ok := obj.(*lennyv1.PodClaim); ok && r.onClaimDelete != nil {
 				return r.onClaimDelete(ctx, cl, obj, opts...)
 			}
 			return cl.Delete(ctx, obj, opts...)
@@ -251,7 +251,7 @@ func errorMentions(r logRecord, substr string) bool {
 func claimAbsent(t *testing.T, c client.Client, podName string) bool {
 	t.Helper()
 	ns := testNamespace(t)
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(podName)}, &lennyv1.SandboxClaim{})
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(podName)}, &lennyv1.PodClaim{})
 	if apierrors.IsNotFound(err) {
 		return true
 	}

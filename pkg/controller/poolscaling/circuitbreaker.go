@@ -15,7 +15,7 @@
 //
 // The rolling demotion window itself lives in PoolScalingController
 // memory and is not persisted. Only the open/closed decision is
-// persisted, on SandboxWarmPool.status.sdkWarmCircuitBreaker, so the
+// persisted, on PodSet.status.sdkWarmCircuitBreaker, so the
 // decision survives a PSC leader failover. On a fresh leader the
 // in-memory window starts at zero; the minOpenUntil grace period masks
 // that cold start by holding a tripped breaker open until the window

@@ -20,7 +20,7 @@ import (
 
 // spec: 12.4 (Redis HA and failure modes: the session slot set's Postgres
 // fallback under a per-pod advisory lock), 5.2 (Slot assignment atomicity),
-// 4.6.1 (Orphaned SandboxClaim detection).
+// 4.6.1 (Orphaned PodClaim detection).
 // diagnosis: a failure means a Redis outage that began while admissions were
 // in flight let three gateway replicas admit more sessions onto one pod than
 // maxConcurrentSessions (F-12.4.38): either an admission the Redis set made

@@ -27,8 +27,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // callerKey is the gRPC metadata key naming which replica sent a Shutdown.
@@ -208,7 +208,7 @@ func (f *reapRace) lateRelease(t *testing.T, round int, stale string) {
 		return
 	}
 	if err := f.late.ReleaseSlot(context.Background(), &podsession.BindResult{
-		SessionID: stale, SandboxName: slotRacePod, Adapter: cl,
+		SessionID: stale, AgentPodName: slotRacePod, Adapter: cl,
 	}); err != nil {
 		t.Errorf("round %d: late release: %v", round, err)
 	}

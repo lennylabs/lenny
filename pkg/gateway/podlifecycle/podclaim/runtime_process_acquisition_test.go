@@ -33,7 +33,7 @@ func claimRestartPoolClaim(claimer *podclaim.Claimer, pool, session string) (str
 	if err != nil {
 		return "", err
 	}
-	return claim.Spec.SandboxRef, nil
+	return claim.Spec.AgentPodRef, nil
 }
 
 // spec: §5.2 (Runtime-process lifetime), §5.2 (Deployer acknowledgment (runtime process kept across sessions))
@@ -46,15 +46,15 @@ func TestIdleScanRefusesUsedKeepPodWhenAcknowledgmentNotRequired_spec_5_2(t *tes
 	ns := testNamespace(t)
 	base := newEnvtestClient(
 		t,
-		sandboxIn(ns, "lt-idle", "a-keep-acme", "idle"),
+		agentPodIn(ns, "lt-idle", "a-keep-acme", "idle"),
 		lifetimePod(ns, "lt-idle", "a-keep-acme", "acme", "keep"),
-		sandboxIn(ns, "lt-idle", "b-keep-globex", "idle"),
+		agentPodIn(ns, "lt-idle", "b-keep-globex", "idle"),
 		lifetimePod(ns, "lt-idle", "b-keep-globex", "globex", "keep"),
-		sandboxIn(ns, "lt-idle", "c-nolabel-acme", "idle"),
+		agentPodIn(ns, "lt-idle", "c-nolabel-acme", "idle"),
 		lifetimePod(ns, "lt-idle", "c-nolabel-acme", "acme", ""),
-		sandboxIn(ns, "lt-idle", "d-restart-globex", "idle"),
+		agentPodIn(ns, "lt-idle", "d-restart-globex", "idle"),
 		lifetimePod(ns, "lt-idle", "d-restart-globex", "globex", "restart"),
-		sandboxIn(ns, "lt-idle", "e-restart-acme", "idle"),
+		agentPodIn(ns, "lt-idle", "e-restart-acme", "idle"),
 		lifetimePod(ns, "lt-idle", "e-restart-acme", "acme", "restart"),
 	)
 	claimer := &podclaim.Claimer{Client: base, Namespace: ns}
@@ -90,15 +90,15 @@ func TestRebindRefusesReservedKeepPodWhenAcknowledgmentNotRequired_spec_4_6_1(t 
 		t,
 		reservedIn(ns, "lt-res", "rk-held", "acme"),
 		lifetimePod(ns, "lt-res", "rk-held", "acme", "keep"),
-		sandboxIn(ns, "lt-res", "rk-z", "idle"),
+		agentPodIn(ns, "lt-res", "rk-z", "idle"),
 		pinnedPod(ns, "lt-res", "rk-z", ""),
 		reservedIn(ns, "lt-rr", "rr-held", "acme"),
 		lifetimePod(ns, "lt-rr", "rr-held", "acme", "restart"),
 		reservedIn(ns, "lt-gone", "rg-held", "acme"),
-		sandboxIn(ns, "lt-gone", "rg-z", "idle"),
+		agentPodIn(ns, "lt-gone", "rg-z", "idle"),
 		reservedIn(ns, "lt-err", "re-held", "acme"),
 		lifetimePod(ns, "lt-err", "re-held", "acme", "restart"),
-		sandboxIn(ns, "lt-err", "re-z", "idle"),
+		agentPodIn(ns, "lt-err", "re-z", "idle"),
 	)
 	for _, pod := range []string{"rk-held", "rr-held", "rg-held", "re-held"} {
 		seedReservedClaim(t, base, pod, "acme", fixedNow, time.Minute)

@@ -22,7 +22,7 @@ func failingSetupPlan() *adapterv1.WorkspacePlan {
 // A setup-command failure on the exclusive bind and on the slot bind carries
 // the pool and the RuntimeClass of the pod the setup ran on, which label the
 // gateway's setup_command_failed count of lenny_warmpool_warmup_failure_total.
-// The exclusive bind maps the bound Sandbox's isolation profile, and the slot
+// The exclusive bind maps the bound AgentPod's isolation profile, and the slot
 // bind maps the profile its request carries from the resolved pool.
 //
 // spec: 16.1 (Metrics), 7.5 (Setup Commands), 5.3 (Isolation Profiles)
@@ -40,7 +40,7 @@ func TestSetupCommandFailureCarriesPoolAndRuntimeClass_spec_16_1(t *testing.T) {
 	}{
 		{name: "exclusive bind", bind: func(t *testing.T) error {
 			ns := testNamespace(t)
-			sb := idleSandbox(ns, "sbx-1", "10.244.1.7")
+			sb := idleAgentPod(ns, "sbx-1", "10.244.1.7")
 			sb.Spec.IsolationProfile = string(isolation.ProfileSandboxed)
 			binder := newBinder(ns, k8sClient(t, sb), adapterDialer(t, newAdapter(t)))
 			_, err := binder.Bind(context.Background(), podsession.BindRequest{
@@ -51,7 +51,7 @@ func TestSetupCommandFailureCarriesPoolAndRuntimeClass_spec_16_1(t *testing.T) {
 		}},
 		{name: "slot bind", bind: func(t *testing.T) error {
 			ns := testNamespace(t)
-			c := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+			c := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 			binder := newSlotBinder(t, c, adapterDialer(t, newAdapter(t)))
 			_, err := binder.BindSlot(context.Background(), podsession.SlotBindRequest{
 				Pool: testPool, IsolationProfile: string(isolation.ProfileSandboxed),

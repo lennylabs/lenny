@@ -133,7 +133,7 @@ Each subsystem (`stream_proxy`, `upload_handler`, `mcp_fabric`, `llm_proxy`) emi
 | `ControllerLeaderElectionFailed` | Lease not renewed within 15s | Check controller pods, RBAC |
 | `DualStoreUnavailable` | Both Postgres and Redis unreachable | Follow dual-store recovery procedure |
 | `SessionEvictionTotalLoss` | Both MinIO and Postgres unavailable during eviction | Immediate investigation required |
-| `SandboxClaimGuardUnavailable` | Admission webhook unreachable > 30s | Check webhook deployment |
+| `PodClaimGuardUnavailable` | Admission webhook unreachable > 30s | Check webhook deployment |
 | `EtcdUnavailable` | API server etcd connectivity errors sustained > 15s | Treat as cluster-wide incident |
 | `CosignWebhookUnavailable` | Cosign image verification webhook returning errors > 60s | Pod admission blocked; check webhook deployment |
 | `DataResidencyWebhookUnavailable` | `lenny-data-residency-validator` webhook unreachable > 30s | Tenant-scoped CRD operations denied; check webhook |

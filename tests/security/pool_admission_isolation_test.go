@@ -411,7 +411,7 @@ func cleanupPool(t *testing.T, c *kind.Cluster, probe, gatewayIP string, admin g
 // pool means the §13.2 NET-006 mutual-exclusivity boundary is bypassable at
 // registration: proxy mode keeps API keys off the pod, but provider-direct
 // egress opens a direct CIDR path to the same provider endpoints, and the
-// stored pool would reconcile into a SandboxTemplate the failurePolicy: Fail
+// stored pool would reconcile into a PodSet the failurePolicy: Fail
 // layer-2 webhook then rejects, wedging the PoolScalingController. NET-006 is
 // rejected in every tenancy mode, so this runs on the standard install.
 // spec: 4.9, 13.2

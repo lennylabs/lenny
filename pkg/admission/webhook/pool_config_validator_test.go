@@ -20,9 +20,9 @@ import (
 )
 
 // spec: §4.6.3 (spec/04_system-components.md) — the
-// lenny-pool-config-validator webhook transport dispatches on the
-// admitted resource Kind, decodes a SandboxWarmPool or SandboxTemplate,
-// and surfaces a rule-set-1 rejection as a 422 with the
+// lenny-pool-config-validator webhook transport admits the PodSet kind
+// only, decodes the PodSet, applies the warm-target and pool-setting
+// rules to it, and surfaces a rule-set-1 rejection as a 422 with the
 // INVALID_POOL_CONFIGURATION reason code.
 
 // poolConfigReq builds an AdmissionRequest for the given Kind carrying
@@ -50,25 +50,25 @@ func poolConfigReqAs(t *testing.T, kind string, obj any, username string) *admis
 	}
 }
 
-func TestPoolConfigValidatorAdmitsValidWarmPool(t *testing.T) {
-	pool := lennyv1.SandboxWarmPool{
+func TestPoolConfigValidatorAdmitsValidWarmTargets(t *testing.T) {
+	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 10},
 	}
-	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxWarmPool", pool))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", pool))
 	if !resp.Allowed {
-		t.Fatalf("a SandboxWarmPool with minWarm <= maxWarm must be admitted: %+v", resp.Result)
+		t.Fatalf("a PodSet with minWarm <= maxWarm must be admitted: %+v", resp.Result)
 	}
 }
 
-func TestPoolConfigValidatorRejectsWarmPoolBudgetViolation(t *testing.T) {
-	pool := lennyv1.SandboxWarmPool{
+func TestPoolConfigValidatorRejectsWarmTargetBudgetViolation(t *testing.T) {
+	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 20, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 20, MaxWarm: 10},
 	}
-	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxWarmPool", pool))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", pool))
 	if resp.Allowed {
-		t.Fatal("a SandboxWarmPool with minWarm above maxWarm must be rejected")
+		t.Fatal("a PodSet with minWarm above maxWarm must be rejected")
 	}
 	if resp.Result == nil || resp.Result.Code != 422 {
 		t.Fatalf("rejection code = %v, want 422", resp.Result)
@@ -78,10 +78,10 @@ func TestPoolConfigValidatorRejectsWarmPoolBudgetViolation(t *testing.T) {
 	}
 }
 
-func TestPoolConfigValidatorAdmitsValidTemplate(t *testing.T) {
-	tpl := lennyv1.SandboxTemplate{
+func TestPoolConfigValidatorAdmitsValidPoolSettings(t *testing.T) {
+	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
 			SessionPolicy: &lennyv1.SessionPolicy{
 				Recycle: &lennyv1.RecyclePolicy{
@@ -91,25 +91,25 @@ func TestPoolConfigValidatorAdmitsValidTemplate(t *testing.T) {
 			},
 		},
 	}
-	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 	if !resp.Allowed {
-		t.Fatalf("an acknowledged in-place recycle SandboxTemplate must be admitted: %+v", resp.Result)
+		t.Fatalf("an acknowledged in-place recycle PodSet must be admitted: %+v", resp.Result)
 	}
 }
 
-func TestPoolConfigValidatorRejectsTemplateInvariantViolation(t *testing.T) {
-	tpl := lennyv1.SandboxTemplate{
+func TestPoolConfigValidatorRejectsPoolSettingViolation(t *testing.T) {
+	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
 			SessionPolicy: &lennyv1.SessionPolicy{
 				Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "in-place"},
 			},
 		},
 	}
-	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 	if resp.Allowed {
-		t.Fatal("an in-place recycle SandboxTemplate without the residual-state acknowledgment must be rejected")
+		t.Fatal("an in-place recycle PodSet without the residual-state acknowledgment must be rejected")
 	}
 	if resp.Result == nil || resp.Result.Code != 422 {
 		t.Fatalf("rejection code = %v, want 422", resp.Result)
@@ -118,7 +118,7 @@ func TestPoolConfigValidatorRejectsTemplateInvariantViolation(t *testing.T) {
 
 func TestPoolConfigValidatorRejectsUnknownKind(t *testing.T) {
 	resp := webhook.PoolConfigValidator(nil)(context.Background(),
-		poolConfigReq(t, "Sandbox", lennyv1.Sandbox{}))
+		poolConfigReq(t, "AgentPod", lennyv1.AgentPod{}))
 	if resp.Allowed {
 		t.Fatal("an unexpected resource kind must be rejected fail-closed")
 	}
@@ -128,19 +128,19 @@ func TestPoolConfigValidatorRejectsUnknownKind(t *testing.T) {
 }
 
 // spec: §4.6.3 — rule set 2:
-// manual writes to a SandboxWarmPool/SandboxTemplate spec from any
+// manual writes to a PodSet spec from any
 // principal other than the PoolScalingController SA are rejected with
 // HTTP 403 and the UNAUTHORIZED_POOL_CONFIG_WRITE reason code, even when
 // the write satisfies every rule-set-1 budget invariant.
-func TestPoolConfigValidatorRejectsManualWarmPoolWrite(t *testing.T) {
-	pool := lennyv1.SandboxWarmPool{
+func TestPoolConfigValidatorRejectsManualWarmTargetWrite(t *testing.T) {
+	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 10},
 	}
-	req := poolConfigReqAs(t, "SandboxWarmPool", pool, "system:serviceaccount:acme:platform-admin")
+	req := poolConfigReqAs(t, "PodSet", pool, "system:serviceaccount:acme:platform-admin")
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
-		t.Fatal("a budget-valid SandboxWarmPool written by a non-PSC principal must be rejected by rule set 2")
+		t.Fatal("a budget-valid PodSet written by a non-PSC principal must be rejected by rule set 2")
 	}
 	if resp.Result == nil || resp.Result.Code != 403 {
 		t.Fatalf("rejection code = %v, want 403", resp.Result)
@@ -150,17 +150,17 @@ func TestPoolConfigValidatorRejectsManualWarmPoolWrite(t *testing.T) {
 	}
 }
 
-func TestPoolConfigValidatorRejectsManualTemplateWrite(t *testing.T) {
-	tpl := lennyv1.SandboxTemplate{
+func TestPoolConfigValidatorRejectsManualPoolSettingsWrite(t *testing.T) {
+	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef: "r", ExecutionMode: "session",
 		},
 	}
-	req := poolConfigReqAs(t, "SandboxTemplate", tpl, "kubernetes-admin")
+	req := poolConfigReqAs(t, "PodSet", tpl, "kubernetes-admin")
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
-		t.Fatal("a budget-valid SandboxTemplate written by a non-PSC principal must be rejected by rule set 2")
+		t.Fatal("a budget-valid PodSet written by a non-PSC principal must be rejected by rule set 2")
 	}
 	if resp.Result == nil || resp.Result.Code != 403 {
 		t.Fatalf("rejection code = %v, want 403", resp.Result)
@@ -171,11 +171,11 @@ func TestPoolConfigValidatorRejectsManualTemplateWrite(t *testing.T) {
 // writer is not the PSC SA; rule set 1 runs first so the more specific
 // budget message reaches the manual editor.
 func TestPoolConfigValidatorBudgetViolationPrecedesAuthz(t *testing.T) {
-	pool := lennyv1.SandboxWarmPool{
+	pool := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-pool"},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 20, MaxWarm: 10},
+		Spec:       lennyv1.PodSetSpec{MinWarm: 20, MaxWarm: 10},
 	}
-	req := poolConfigReqAs(t, "SandboxWarmPool", pool, "system:serviceaccount:acme:platform-admin")
+	req := poolConfigReqAs(t, "PodSet", pool, "system:serviceaccount:acme:platform-admin")
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
 		t.Fatal("a budget-violating write must be rejected regardless of principal")
@@ -210,16 +210,16 @@ func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
 func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *testing.T) {
 	floor := graceFloor(8, 0) // 8*90 + 30 = 750s > 600s
 	grace := floor
-	tpl := lennyv1.SandboxTemplate{
+	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:                    "r",
 			ExecutionMode:                 "service",
 			MaxConcurrent:                 8,
 			TerminationGracePeriodSeconds: &grace,
 		},
 	}
-	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 	if !resp.Allowed {
 		t.Fatalf("an above-600s floor with a matching grace must be admitted with a warning: %+v", resp.Result)
 	}
@@ -238,15 +238,15 @@ func TestPoolConfigValidatorPropagatesTerminationGraceWarning_spec_5_2_516(t *te
 func TestPoolConfigValidatorRejectsOmittedGraceBelowFloor_spec_5_2_516(t *testing.T) {
 	// maxConcurrent=2, default tier → floor 2*90 + 30 = 210s > the 120s
 	// §4.6.1 default the podspec renders for an omitted field.
-	tpl := lennyv1.SandboxTemplate{
+	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:    "r",
 			ExecutionMode: "service",
 			MaxConcurrent: 2,
 		},
 	}
-	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 	if resp.Allowed {
 		t.Fatalf("an omitted grace whose 120s default under-provisions must be rejected: floor=%ds", graceFloor(2, 0))
 	}
@@ -263,16 +263,16 @@ func TestPoolConfigValidatorRejectsOmittedGraceBelowFloor_spec_5_2_516(t *testin
 // breaches the ceiling.
 func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t *testing.T) {
 	ceiling := int64(600)
-	tpl := lennyv1.SandboxTemplate{
+	tpl := lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:                       "r",
 			ExecutionMode:                    "service",
 			MaxConcurrent:                    8,
 			MaxTerminationGracePeriodSeconds: &ceiling,
 		},
 	}
-	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+	resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 	if resp.Allowed {
 		t.Fatal("a floor above maxTerminationGracePeriodSeconds must be rejected")
 	}
@@ -284,7 +284,7 @@ func TestPoolConfigValidatorRejectsTerminationGraceCeilingBreach_spec_5_2_516(t 
 	}
 }
 
-// spec: §16.1 / §10.1 — every SandboxTemplate write
+// spec: §16.1 / §10.1 — every PodSet write
 // the webhook rejects on the termination-budget inequality increments
 // lenny_pool_termination_budget_exceeded_total, labeled by pool. The
 // BarrierAck-floor and execution-mode rejections must NOT increment it.
@@ -301,14 +301,14 @@ func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
 		spy := &budgetCounterSpy{}
 		// session-mode pool, default 90s tier, grace 1s → floor
 		// 1 × 90 + 30 = 120s > 1s.
-		tpl := lennyv1.SandboxTemplate{
+		tpl := lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-			Spec: lennyv1.SandboxTemplateSpec{
+			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:                    "r",
 				TerminationGracePeriodSeconds: int64p(1),
 			},
 		}
-		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 		if resp.Allowed {
 			t.Fatal("a below-floor template must be rejected")
 		}
@@ -319,15 +319,15 @@ func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
 
 	t.Run("BarrierAck-floor rejection does not increment the budget counter", func(t *testing.T) {
 		spy := &budgetCounterSpy{}
-		tpl := lennyv1.SandboxTemplate{
+		tpl := lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-			Spec: lennyv1.SandboxTemplateSpec{
+			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:                         "r",
 				WorkspaceSizeLimitBytes:            int64p(300 * 1024 * 1024),
 				CheckpointBarrierAckTimeoutSeconds: int64p(30),
 			},
 		}
-		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 		if resp.Allowed {
 			t.Fatal("a BarrierAck-floor violation must be rejected")
 		}
@@ -340,14 +340,14 @@ func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
 		spy := &budgetCounterSpy{}
 		// Single-slot pool at the reconciled floor 1×90 + 30 = 120s,
 		// derived from graceFloor so it tracks the timing constants.
-		tpl := lennyv1.SandboxTemplate{
+		tpl := lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-			Spec: lennyv1.SandboxTemplateSpec{
+			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:                    "r",
 				TerminationGracePeriodSeconds: int64p(graceFloor(1, 0)),
 			},
 		}
-		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		resp := webhook.PoolConfigValidator(spy)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 		if !resp.Allowed {
 			t.Fatalf("an at-floor template must be admitted: %+v", resp.Result)
 		}
@@ -357,14 +357,14 @@ func TestPoolConfigValidatorEmitsBudgetCounter_spec_16_1_129(t *testing.T) {
 	})
 
 	t.Run("nil sink is safe on a budget rejection", func(t *testing.T) {
-		tpl := lennyv1.SandboxTemplate{
+		tpl := lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "agent-template"},
-			Spec: lennyv1.SandboxTemplateSpec{
+			Spec: lennyv1.PodSetSpec{
 				RuntimeRef:                    "r",
 				TerminationGracePeriodSeconds: int64p(1),
 			},
 		}
-		resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "SandboxTemplate", tpl))
+		resp := webhook.PoolConfigValidator(nil)(context.Background(), poolConfigReq(t, "PodSet", tpl))
 		if resp.Allowed {
 			t.Fatal("a below-floor template must be rejected even with a nil metrics sink")
 		}
@@ -375,12 +375,12 @@ func TestPoolConfigValidatorRejectsMalformedObject(t *testing.T) {
 	req := &admissionv1.AdmissionRequest{
 		UID:       "test-uid",
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "SandboxWarmPool"},
+		Kind:      metav1.GroupVersionKind{Group: "lenny.dev", Version: "v1alpha1", Kind: "PodSet"},
 		Object:    runtime.RawExtension{Raw: []byte("{not json")},
 	}
 	resp := webhook.PoolConfigValidator(nil)(context.Background(), req)
 	if resp.Allowed {
-		t.Fatal("a SandboxWarmPool the webhook cannot decode must be rejected fail-closed")
+		t.Fatal("a PodSet the webhook cannot decode must be rejected fail-closed")
 	}
 	if resp.Result == nil || resp.Result.Code != 400 {
 		t.Fatalf("rejection code = %v, want 400", resp.Result)

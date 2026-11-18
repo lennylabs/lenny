@@ -464,7 +464,7 @@ func (s *Server) claimForNewRow(w http.ResponseWriter, r *http.Request, row *ses
 	if outcome.Claim != nil {
 		// spec: §4.6 — PodAssignment + PoolRef plus the session id
 		// reconstruct the deterministic claim and lease key.
-		row.PodAssignment = outcome.Claim.SandboxName
+		row.PodAssignment = outcome.Claim.AgentPodName
 		row.PoolRef = outcome.Claim.Pool
 	}
 	return level, outcome.Claim, true

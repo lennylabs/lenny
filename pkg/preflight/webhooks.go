@@ -32,14 +32,14 @@ import "fmt"
 var baselineValidatingWebhooks = []string{
 	"lenny-label-immutability",
 	"lenny-tenant-label-immutability",
-	"lenny-sandboxclaim-guard",
+	"lenny-podclaim-guard",
 	"lenny-pool-config-validator",
 	"lenny-ephemeral-container-cred-guard",
 	"lenny-pod-security",
 	"lenny-direct-mode-isolation",
 	// §10.5 — renders unconditionally and is fail-closed, so
 	// the inventory tracks it in the baseline set (F-10.5.14).
-	"lenny-sandboxtemplate-deletion-guard",
+	"lenny-podset-deletion-guard",
 }
 
 // WebhookFeatureFlags are the §17.2 chart feature flags that gate the
@@ -98,7 +98,7 @@ func ExpectedValidatingWebhooks(flags WebhookFeatureFlags) []string {
 var Spec17_2ValidatingWebhooks = []string{
 	"lenny-label-immutability",
 	"lenny-direct-mode-isolation",
-	"lenny-sandboxclaim-guard",
+	"lenny-podclaim-guard",
 	"lenny-data-residency-validator",
 	"lenny-pool-config-validator",
 	"lenny-t4-node-isolation",
@@ -122,8 +122,8 @@ var Spec17_2ValidatingWebhooks = []string{
 //     imageVerification.cosign.enabled.
 //   - lenny-registry-digest is the §5.2 / §25.8 digest-pinning webhook,
 //     gated by platform.registry.requireDigest.
-//   - lenny-sandboxtemplate-deletion-guard is the §10.5 runtime-
-//     upgrade safety webhook (it blocks deleting a SandboxTemplate while
+//   - lenny-podset-deletion-guard is the §10.5 runtime-
+//     upgrade safety webhook (it blocks deleting a PodSet while
 //     a RuntimeUpgrade referencing its pool is active). It renders
 //     unconditionally and is part of the baseline set; the §17.2
 //     admission-policies catalogue does not enumerate it (F-10.5.14).
@@ -138,7 +138,7 @@ var implementationOnlyValidatingWebhooks = []string{
 	"lenny-pod-security",
 	"lenny-cosign-verify",
 	"lenny-registry-digest",
-	"lenny-sandboxtemplate-deletion-guard",
+	"lenny-podset-deletion-guard",
 	"lenny-tenant-label-immutability",
 }
 

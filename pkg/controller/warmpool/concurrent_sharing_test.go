@@ -48,10 +48,10 @@ func sharingCondition(t *testing.T, conds []metav1.Condition) (metav1.Condition,
 // spec: §13.1 — the cross-slot credential-sharing warning fires
 // when a pool runs more than one session per pod
 // (`maxConcurrentSessions > 1`). That trigger lives on the gateway-side
-// sessionPolicy mirror in the poolstore, which the SandboxTemplate CRD
+// sessionPolicy mirror in the poolstore, which the PodSet CRD
 // does not carry, so the condition is unmanaged from the CRD surface
 // until the warmpool step wires the mirror into the reconcile. The
-// SandboxTemplate `executionMode` enum no longer admits `concurrent`, so
+// PodSet `executionMode` enum no longer admits `concurrent`, so
 // no CRD template selects the warning branch. F-13.1.5.
 func TestReconcileSessionModePoolLeavesCredentialSharingUnmanaged(t *testing.T) {
 	ns := testNamespace(t)
@@ -59,8 +59,7 @@ func TestReconcileSessionModePoolLeavesCredentialSharingUnmanaged(t *testing.T) 
 	c := newClient(
 		t, s,
 		runtimeCR("cred-runtime", []string{"anthropic_direct"}),
-		template(ns), // default session-mode template
-		pool(ns, 1, 3),
+		pool(ns, 1, 3), // default session-mode pool
 	)
 	reconcile(t, c, s)
 

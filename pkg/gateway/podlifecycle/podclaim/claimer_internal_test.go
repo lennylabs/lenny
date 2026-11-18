@@ -13,13 +13,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 )
 
 const claimerInternalNS = "lenny-agents"
 
 // internalScheme registers lenny.dev/v1alpha1 so the fake client reads the
-// SandboxClaim the rebind eligibility check inspects.
+// PodClaim the rebind eligibility check inspects.
 func internalScheme(t *testing.T) *runtime.Scheme {
 	t.Helper()
 	s := runtime.NewScheme()
@@ -31,10 +31,10 @@ func internalScheme(t *testing.T) *runtime.Scheme {
 
 // reservedClaim builds a per-pod claim seeded with a binding state, tenant pin,
 // and hold deadline, the inputs the reserved-hold eligibility check reads.
-func reservedClaim(pod, tenant string, phase claimstate.State, holdExpiresAt *time.Time) *lennyv1.SandboxClaim {
-	cl := &lennyv1.SandboxClaim{
+func reservedClaim(pod, tenant string, phase claimstate.State, holdExpiresAt *time.Time) *lennyv1.PodClaim {
+	cl := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: ClaimName(pod), Namespace: claimerInternalNS},
-		Spec:       lennyv1.SandboxClaimSpec{SandboxRef: pod, TenantID: tenant},
+		Spec:       lennyv1.PodClaimSpec{AgentPodRef: pod, TenantID: tenant},
 	}
 	cl.Status.Phase = string(phase)
 	if holdExpiresAt != nil {
@@ -59,7 +59,7 @@ func TestReservedClaimForTenantEligibility_spec_3_2(t *testing.T) {
 
 	cases := []struct {
 		name      string
-		claim     *lennyv1.SandboxClaim
+		claim     *lennyv1.PodClaim
 		wantFound bool
 	}{
 		{"reserved, same tenant, live hold is eligible", reservedClaim("pod-1", "acme", claimstate.Reserved, &future), true},
@@ -73,7 +73,7 @@ func TestReservedClaimForTenantEligibility_spec_3_2(t *testing.T) {
 			c := &Claimer{
 				Client: fake.NewClientBuilder().WithScheme(internalScheme(t)).
 					WithObjects(tc.claim).
-					WithStatusSubresource(&lennyv1.SandboxClaim{}).
+					WithStatusSubresource(&lennyv1.PodClaim{}).
 					Build(),
 				Namespace: claimerInternalNS,
 			}
@@ -129,8 +129,8 @@ func TestClaimByNameReReadsCurrentObject_spec_3_2(t *testing.T) {
 	if err != nil {
 		t.Fatalf("claimByName: %v", err)
 	}
-	if got.Spec.SandboxRef != "pod-2" {
-		t.Fatalf("re-read claim sandboxRef = %q, want pod-2", got.Spec.SandboxRef)
+	if got.Spec.AgentPodRef != "pod-2" {
+		t.Fatalf("re-read claim agentPodRef = %q, want pod-2", got.Spec.AgentPodRef)
 	}
 	if _, err := c.claimByName(context.Background(), ClaimName("ghost")); err == nil {
 		t.Fatal("claimByName on a gone claim returned nil error, want NotFound")
@@ -141,9 +141,9 @@ func TestClaimByNameReReadsCurrentObject_spec_3_2(t *testing.T) {
 // subresource so reservedClaimForTenant reads the binding state and hold
 // deadline the test set, which WithObjects does not project for a
 // status-subresource type.
-func seedClaimStatus(t *testing.T, cl client.Client, seed *lennyv1.SandboxClaim) {
+func seedClaimStatus(t *testing.T, cl client.Client, seed *lennyv1.PodClaim) {
 	t.Helper()
-	var cur lennyv1.SandboxClaim
+	var cur lennyv1.PodClaim
 	if err := cl.Get(context.Background(), client.ObjectKey{Namespace: seed.Namespace, Name: seed.Name}, &cur); err != nil {
 		t.Fatalf("get seeded claim: %v", err)
 	}

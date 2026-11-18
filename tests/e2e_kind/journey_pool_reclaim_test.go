@@ -3,7 +3,7 @@
 //go:build e2e_kind
 
 // Cluster-free coverage of the journey test's pool reclaim path. The
-// journey test creates a SandboxWarmPool per run, and a delete whose
+// journey test creates a PodSet per run, and a delete whose
 // failure is discarded leaves a Ready member pod carrying
 // lenny.dev/managed=true that later e2e_kind-tier cases have to reconcile
 // against a Runtime the run already removed. These cases pin that every
@@ -45,7 +45,7 @@ func recordingReclaim(
 // warm pool on the shared cluster with no signal.
 //
 // diagnosis: a failure here means the journey test can leak a
-// SandboxWarmPool and its member pod without saying so, and the leak
+// PodSet and its member pod without saying so, and the leak
 // only surfaces later as an unrelated e2e_kind-tier case failing on a pod whose
 // Runtime is gone.
 //
@@ -85,7 +85,7 @@ func TestJourneyPoolReclaimRemovesAPoolThatOutlivesItsDelete(t *testing.T) {
 	removed := ""
 	r.removeObjects = func(pool string) (string, error) {
 		removed = pool
-		return "sandboxwarmpool.lenny.dev \"" + pool + "\" deleted", nil
+		return "podset.lenny.dev \"" + pool + "\" deleted", nil
 	}
 
 	if !r.reclaim("bob-agent-2-pool") {

@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/controller/ratelimit"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
 )
 
 // spec: 4.1 (controller composition root parses its inputs once), 4.6.1

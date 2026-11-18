@@ -48,7 +48,7 @@ func TestStaleNamesSelectsOnlyWholeNameMatchesOfTheFixturePrefix(t *testing.T) {
 			name: "partial matches rejected",
 			names: []string{
 				"chaos-nonce-only-pool",                // bare prefix, no run suffix
-				"chaos-nonce-only-pool-0a1b2c3d-x7k2p", // member Sandbox named after its pool
+				"chaos-nonce-only-pool-0a1b2c3d-x7k2p", // member AgentPod named after its pool
 				"x-chaos-nonce-only-pool-0a1b2c3d",     // another suite sharing the stem
 				"chaos-nonce-only-pool-0A1B2C3D",       // suffix outside the minted alphabet
 				"chaos-nonce-only-pool-0a1b2c3",        // suffix too short
@@ -76,8 +76,8 @@ func TestNamespaceArgsOmitsTheFlagForClusterScopedResources(t *testing.T) {
 	if got, want := namespaceArgs("", "get", "runtimes"), []string{"get", "runtimes"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("namespaceArgs(\"\") = %q, want %q", got, want)
 	}
-	if got, want := namespaceArgs("lenny-agents", "get", "sandboxtemplates"),
-		[]string{"-n", "lenny-agents", "get", "sandboxtemplates"}; !reflect.DeepEqual(got, want) {
+	if got, want := namespaceArgs("lenny-agents", "get", "podsets"),
+		[]string{"-n", "lenny-agents", "get", "podsets"}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("namespaceArgs(lenny-agents) = %q, want %q", got, want)
 	}
 }

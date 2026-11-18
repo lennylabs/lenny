@@ -30,7 +30,7 @@ func (r *registrySealer) Seal(_ context.Context, _, sessionID string) error {
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	r.rpcs = append(r.rpcs, "checkpoint:"+bind.SandboxName)
+	r.rpcs = append(r.rpcs, "checkpoint:"+bind.AgentPodName)
 	return nil
 }
 

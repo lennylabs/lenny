@@ -1,12 +1,12 @@
 // SPDX-License-Identifier: MIT
 
 // Package podclaim holds the gateway-side pod-claim path (§4.6.1,
-// ADR-007). To run a session the gateway acquires an idle Sandbox pod by
-// creating a per-pod SandboxClaim with the deterministic name
+// ADR-007). To run a session the gateway acquires an idle AgentPod pod by
+// creating a per-pod PodClaim with the deterministic name
 // `claim-<podName>`. Exactly one gateway replica's CREATE wins; the
 // others receive an AlreadyExists conflict (or a Forbidden from the
-// lenny-sandboxclaim-guard webhook) and move to the next idle pod. The
-// gateway does not write Sandbox.status: the WarmPoolController projects
+// lenny-podclaim-guard webhook) and move to the next idle pod. The
+// gateway does not write AgentPod.status: the WarmPoolController projects
 // the pod's occupancy phase from the claim's binding state (§4.6.1
 // occupancy projection). The session-to-pod binding is recorded on the
 // Postgres session row's pod_assignment column by the session server, so
@@ -28,11 +28,11 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
-// ErrNoIdlePod reports that the pool has no claimable idle Sandbox. The
+// ErrNoIdlePod reports that the pool has no claimable idle AgentPod. The
 // caller retries against a refreshed pool view or surfaces warm-pool
 // exhaustion to the client.
 var ErrNoIdlePod = errors.New("podclaim: pool has no idle pod")
@@ -57,11 +57,11 @@ func (e *NoIdlePodError) Error() string { return ErrNoIdlePod.Error() }
 // Is reports whether target is ErrNoIdlePod.
 func (e *NoIdlePodError) Is(target error) bool { return target == ErrNoIdlePod }
 
-// Claimer binds a session to an idle Sandbox.
+// Claimer binds a session to an idle AgentPod.
 type Claimer struct {
 	// Client is the controller-runtime client addressing the cluster.
 	Client client.Client
-	// Namespace is the agent namespace the pool's Sandboxes live in.
+	// Namespace is the agent namespace the pool's AgentPods live in.
 	Namespace string
 	// Now supplies the wall clock for the §4.6.1 reserved-hold-window check on
 	// the rebind branch. Nil uses time.Now.
@@ -84,11 +84,11 @@ func (c *Claimer) now() time.Time {
 
 // ClaimRequest identifies the session a pod is claimed for.
 type ClaimRequest struct {
-	// Pool is the SandboxWarmPool to claim a pod from.
+	// Pool is the PodSet to claim a pod from.
 	Pool string
 	// SessionID is the §15.1 session the claim serves. It is recorded on
 	// the Postgres session row's pod_assignment column by the session
-	// server; the per-pod SandboxClaim carries no session identifier.
+	// server; the per-pod PodClaim carries no session identifier.
 	SessionID string
 	// TenantID is the tenant that owns the session.
 	TenantID string
@@ -109,17 +109,17 @@ type ClaimRequest struct {
 	RequiresProcessAcknowledgment bool
 }
 
-// Claim acquires an idle Sandbox pod in the request's pool by creating the
-// per-pod occupancy SandboxClaim (§4.6.1, the authoritative single-claim
-// guard backed by the lenny-sandboxclaim-guard ValidatingAdmissionWebhook)
+// Claim acquires an idle AgentPod pod in the request's pool by creating the
+// per-pod occupancy PodClaim (§4.6.1, the authoritative single-claim
+// guard backed by the lenny-podclaim-guard ValidatingAdmissionWebhook)
 // and then writing the claim's first `bound` binding-state status patch.
 //
-// The race protection is the SandboxClaim CREATE under the deterministic
+// The race protection is the PodClaim CREATE under the deterministic
 // name claim-<podName>: a second CREATE for the same pod collides on
 // AlreadyExists, and the webhook rejects a CREATE that races a different
 // claim for the same pod. On a CREATE rejection or an AlreadyExists
 // collision, Claim moves to the next idle pod. The gateway does not write
-// Sandbox.status; the WarmPoolController projects the pod's occupancy
+// AgentPod.status; the WarmPoolController projects the pod's occupancy
 // phase from the claim binding state (§4.6.1 occupancy projection).
 //
 // When no idle pod can be claimed, Claim returns a *NoIdlePodError, which
@@ -128,7 +128,7 @@ type ClaimRequest struct {
 // pinning),
 // §4.6.1 (pod claim mechanism, occupancy projection), §4.6.3 (ownership
 // decomposition), §5.2 (slot assignment atomicity).
-func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv1.SandboxClaim, retErr error) {
+func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv1.PodClaim, retErr error) {
 	// spec: §16.3 — the session.claim_pod span. The spec marks
 	// the span "Controller"; in this implementation the idle-pod claim is
 	// performed gateway-side (this package), so the span is emitted here.
@@ -140,7 +140,7 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 		span.End()
 	}()
 
-	var list lennyv1.SandboxList
+	var list lennyv1.AgentPodList
 	if err := c.Client.List(ctx, &list,
 		client.InNamespace(c.Namespace),
 		client.MatchingLabels{warmpool.LabelPool: req.Pool}); err != nil {
@@ -176,13 +176,13 @@ func (c *Claimer) Claim(ctx context.Context, req ClaimRequest) (retClaim *lennyv
 	return nil, &NoIdlePodError{Refused: refused}
 }
 
-// claimIdle walks the listed Sandboxes in order and claims the first idle
+// claimIdle walks the listed AgentPods in order and claims the first idle
 // pod the tenant pin admits. It returns the claim, or a nil claim and the
 // names of the pods AdmitTenantPin refused when no pod could be claimed. A
 // failed pin read ends the scan with its error, so no later candidate is
 // tried and the Postgres-backed fallback does not start. spec: §4.6.1 (pod
 // claim mechanism), §5.2 (Tenant pinning).
-func (c *Claimer) claimIdle(ctx context.Context, list *lennyv1.SandboxList, req ClaimRequest) (*lennyv1.SandboxClaim, []string, error) {
+func (c *Claimer) claimIdle(ctx context.Context, list *lennyv1.AgentPodList, req ClaimRequest) (*lennyv1.PodClaim, []string, error) {
 	var refused []string
 	for i := range list.Items {
 		sb := &list.Items[i]
@@ -205,9 +205,9 @@ func (c *Claimer) claimIdle(ctx context.Context, list *lennyv1.SandboxList, req 
 			}
 			continue
 		}
-		// §4.6.1 CREATE-first: the per-pod SandboxClaim is the
+		// §4.6.1 CREATE-first: the per-pod PodClaim is the
 		// authoritative single-claim guard. AlreadyExists (the deterministic
-		// claim-<podName> name) and Forbidden (the lenny-sandboxclaim-guard
+		// claim-<podName> name) and Forbidden (the lenny-podclaim-guard
 		// webhook flagging an existing claim for this pod) are the two race
 		// outcomes that mean "another claim already binds this pod"; either
 		// way a skip to the next idle pod leaves no cleanup behind. Every
@@ -232,7 +232,7 @@ func (c *Claimer) claimIdle(ctx context.Context, list *lennyv1.SandboxList, req 
 		// on first assignment by the gateway so the pod-scoped
 		// lenny-tenant-label-immutability webhook backstops the pin at the
 		// Kubernetes layer (the §13.2 NET-003 NetworkPolicies select pods,
-		// not Sandboxes). A missing pod is tolerated by the helper.
+		// not AgentPods). A missing pod is tolerated by the helper.
 		if err := StampPodTenant(ctx, c.Client, c.Namespace, sb.Name, req.TenantID); err != nil {
 			return nil, nil, fmt.Errorf("label pod %s with tenant: %w", sb.Name, err)
 		}
@@ -244,7 +244,7 @@ func (c *Claimer) claimIdle(ctx context.Context, list *lennyv1.SandboxList, req 
 // endReservedHolds ends every reserved hold in the pool on an acquisition
 // for a pool that reuses no pod, which refuses every reserved pod under the
 // runtime-process acknowledgment.
-// For each Sandbox projecting `reserved` it reads claim-<name>, skips a
+// For each AgentPod projecting `reserved` it reads claim-<name>, skips a
 // missing claim or one no longer in `reserved`, and deletes it with the
 // precondition-guarded DELETE hold expiry uses (the claim's UID and
 // resourceVersion), so a rebind that landed first aborts the delete. The pod
@@ -260,7 +260,7 @@ func (c *Claimer) claimIdle(ctx context.Context, list *lennyv1.SandboxList, req 
 // sessions)), §4.6.1 (Reserved hold: when an acquisition refuses the pod
 // under the runtime-process acknowledgment, it ends the hold with the same
 // precondition-guarded DELETE).
-func (c *Claimer) endReservedHolds(ctx context.Context, list *lennyv1.SandboxList) error {
+func (c *Claimer) endReservedHolds(ctx context.Context, list *lennyv1.AgentPodList) error {
 	for i := range list.Items {
 		sb := &list.Items[i]
 		if sb.Status.Phase != string(state.Reserved) {
@@ -317,7 +317,7 @@ func (c *Claimer) endReservedHolds(ctx context.Context, list *lennyv1.SandboxLis
 // patch), §4.6.1 (reserved hold, holdExpiresAt), §4.6.3 (reserved → bound),
 // §5.2 (Runtime-process lifetime; Deployer acknowledgment (runtime process
 // kept across sessions)).
-func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.SandboxList, req ClaimRequest) (*lennyv1.SandboxClaim, bool, error) {
+func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.AgentPodList, req ClaimRequest) (*lennyv1.PodClaim, bool, error) {
 	now := c.now()
 	for i := range list.Items {
 		sb := &list.Items[i]
@@ -382,38 +382,38 @@ func (c *Claimer) rebindReserved(ctx context.Context, list *lennyv1.SandboxList,
 // the acquisition fails closed as a failed pin read does. spec: §5.2
 // (Deployer acknowledgment (runtime process kept across sessions)), §4.6.1
 // (Reserved hold).
-func (c *Claimer) refuseReservedLifetime(ctx context.Context, sandboxName string, claim *lennyv1.SandboxClaim, req ClaimRequest) (bool, error) {
+func (c *Claimer) refuseReservedLifetime(ctx context.Context, agentPodName string, claim *lennyv1.PodClaim, req ClaimRequest) (bool, error) {
 	var pod corev1.Pod
-	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: sandboxName}, &pod); err != nil {
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: agentPodName}, &pod); err != nil {
 		if apierrors.IsNotFound(err) {
 			return true, nil
 		}
-		return false, fmt.Errorf("podclaim: read reserved pod %s: %w", sandboxName, err)
+		return false, fmt.Errorf("podclaim: read reserved pod %s: %w", agentPodName, err)
 	}
 	if !refusesUsedPodLifetime(&pod, req) {
 		return false, nil
 	}
 	hold := ReservedHold{UID: claim.UID, ResourceVersion: claim.ResourceVersion}
 	if _, err := DeleteOnHoldExpiry(ctx, c.Client, c.Namespace, claim.Name, hold); err != nil {
-		return false, fmt.Errorf("podclaim: end reserved hold of refused sandbox %s: %w", sandboxName, err)
+		return false, fmt.Errorf("podclaim: end reserved hold of refused sandbox %s: %w", agentPodName, err)
 	}
 	return true, nil
 }
 
-// reservedClaimForTenant reads the per-pod claim for sandboxName and returns
+// reservedClaimForTenant reads the per-pod claim for agentPodName and returns
 // it when it is a `reserved` claim pinned to tenantID with a hold window that
 // has not yet expired. found is false otherwise: no claim, a non-reserved
 // binding state (a racing rebind or expiry already moved it), a different
-// tenant pin, or an already-expired hold. The Sandbox phase having read
+// tenant pin, or an already-expired hold. The AgentPod phase having read
 // `reserved` is only a hint; the claim binding state is authoritative, so the
 // claim is re-checked here rather than trusted from the projection.
-func (c *Claimer) reservedClaimForTenant(ctx context.Context, sandboxName, tenantID string, now time.Time) (*lennyv1.SandboxClaim, bool, error) {
-	var claim lennyv1.SandboxClaim
-	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: ClaimName(sandboxName)}, &claim); err != nil {
+func (c *Claimer) reservedClaimForTenant(ctx context.Context, agentPodName, tenantID string, now time.Time) (*lennyv1.PodClaim, bool, error) {
+	var claim lennyv1.PodClaim
+	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: ClaimName(agentPodName)}, &claim); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil, false, nil
 		}
-		return nil, false, fmt.Errorf("podclaim: get reserved claim for sandbox %s: %w", sandboxName, err)
+		return nil, false, fmt.Errorf("podclaim: get reserved claim for sandbox %s: %w", agentPodName, err)
 	}
 	if claim.Status.Phase != string(claimstate.Reserved) {
 		return nil, false, nil
@@ -431,62 +431,62 @@ func (c *Claimer) reservedClaimForTenant(ctx context.Context, sandboxName, tenan
 	return &claim, true, nil
 }
 
-// claimByName re-reads a SandboxClaim by its claim name. It backs the
+// claimByName re-reads a PodClaim by its claim name. It backs the
 // post-rebind re-read so the caller dispatches against the current object.
-func (c *Claimer) claimByName(ctx context.Context, claimName string) (*lennyv1.SandboxClaim, error) {
-	var claim lennyv1.SandboxClaim
+func (c *Claimer) claimByName(ctx context.Context, claimName string) (*lennyv1.PodClaim, error) {
+	var claim lennyv1.PodClaim
 	if err := c.Client.Get(ctx, client.ObjectKey{Namespace: c.Namespace, Name: claimName}, &claim); err != nil {
 		return nil, err
 	}
 	return &claim, nil
 }
 
-// CreateClaim creates the per-pod occupancy SandboxClaim (§4.6.1) that
-// records the gateway's acquisition of the named Sandbox pod. The §4.6.1
+// CreateClaim creates the per-pod occupancy PodClaim (§4.6.1) that
+// records the gateway's acquisition of the named AgentPod pod. The §4.6.1
 // normal claim path and the Postgres-backed fallback claim path share this
-// helper so both create an identical SandboxClaim: the CRD a fallback claim
-// creates is a real object, so the lenny-sandboxclaim-guard admission
+// helper so both create an identical PodClaim: the CRD a fallback claim
+// creates is a real object, so the lenny-podclaim-guard admission
 // webhook's CREATE-time per-pod-uniqueness check guards the fallback
 // exactly as it guards the normal path. The claim name is deterministic
 // per pod (claim-<podName>), so a second CREATE for the same pod collides
 // at CREATE rather than duplicating the binding. The claim is created with
 // spec only; the gateway writes the first binding state with a subsequent
 // status patch (see writeBoundStatus).
-func CreateClaim(ctx context.Context, cl client.Client, namespace, sandboxName string, req ClaimRequest) (*lennyv1.SandboxClaim, error) {
-	claim := &lennyv1.SandboxClaim{
+func CreateClaim(ctx context.Context, cl client.Client, namespace, agentPodName string, req ClaimRequest) (*lennyv1.PodClaim, error) {
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName(sandboxName),
+			Name:      claimName(agentPodName),
 			Namespace: namespace,
 		},
-		Spec: lennyv1.SandboxClaimSpec{
-			// The per-pod occupancy claim (§4.6.3) carries only sandboxRef
+		Spec: lennyv1.PodClaimSpec{
+			// The per-pod occupancy claim (§4.6.3) carries only agentPodRef
 			// and tenantId; the session-to-pod binding lives on the Postgres
 			// session row's pod_assignment column.
-			SandboxRef: sandboxName,
-			TenantID:   req.TenantID,
+			AgentPodRef: agentPodName,
+			TenantID:    req.TenantID,
 		},
 	}
 	if err := cl.Create(ctx, claim); err != nil {
 		// The pod is acquired but its binding state is unset; the §4.6.1
 		// orphan-claim garbage collection reclaims it on the
 		// CREATE-before-status predicate.
-		return nil, fmt.Errorf("create sandbox claim for %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("create pod claim for %s: %w", agentPodName, err)
 	}
 	return claim, nil
 }
 
-// DeleteClaim deletes the per-pod occupancy SandboxClaim for podName. It is
+// DeleteClaim deletes the per-pod occupancy PodClaim for podName. It is
 // the gateway's only action when a session-mode occupancy episode ends: the
-// gateway never writes Sandbox.status (§4.6.3 ownership decomposition), so it
+// gateway never writes AgentPod.status (§4.6.3 ownership decomposition), so it
 // releases the pod by deleting the claim and the WarmPoolController projects
 // the resulting occupancy phase (§4.6.1 occupancy projection). The delete is
 // idempotent: a missing claim is a no-op so a double release or a claim the
 // orphan GC already collected does not error.
 //
 // spec: §4.6.1 (occupancy projection on claim DELETE); §4.6.3 (gateway is
-// not a writer of Sandbox.status; releases via the claim lifecycle).
+// not a writer of AgentPod.status; releases via the claim lifecycle).
 func DeleteClaim(ctx context.Context, cl client.Client, namespace, podName string) error {
-	claim := &lennyv1.SandboxClaim{
+	claim := &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      claimName(podName),
 			Namespace: namespace,
@@ -498,15 +498,15 @@ func DeleteClaim(ctx context.Context, cl client.Client, namespace, podName strin
 	return nil
 }
 
-// claimName is the deterministic SandboxClaim name for a pod, so a second
+// claimName is the deterministic PodClaim name for a pod, so a second
 // claim for the same pod collides at CREATE rather than duplicating. The
 // per-pod name (claim-<podName>) replaces the former per-session name now
-// that the SandboxClaim is a per-pod occupancy claim (§4.6.1).
+// that the PodClaim is a per-pod occupancy claim (§4.6.1).
 func claimName(podName string) string {
 	return ClaimName(podName)
 }
 
-// ClaimName is the exported §4.6.1 deterministic SandboxClaim name for a
+// ClaimName is the exported §4.6.1 deterministic PodClaim name for a
 // pod (`claim-<podName>`). The §4.7 recycle disposition driver resolves a
 // pod's claim by this name to patch its binding state, so the mapping lives
 // in one place rather than being re-derived by every caller.

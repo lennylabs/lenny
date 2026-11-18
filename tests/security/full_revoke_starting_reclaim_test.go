@@ -46,7 +46,7 @@ const revokeReclaimNS = "lenny-agents"
 // revokeReclaimClaimPresent reports whether pod's per-pod claim exists.
 func revokeReclaimClaimPresent(t *testing.T, c client.Client, pod string) bool {
 	t.Helper()
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: revokeReclaimNS, Name: podclaim.ClaimName(pod)}, &lennyv1.SandboxClaim{})
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: revokeReclaimNS, Name: podclaim.ClaimName(pod)}, &lennyv1.PodClaim{})
 	return err == nil
 }
 
@@ -64,9 +64,9 @@ func TestFullRevokeReclaimsARevokedUsersStartingSession_spec_11_4(t *testing.T) 
 		t.Fatalf("scheme: %v", err)
 	}
 	kube := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		&lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-alice"), Namespace: revokeReclaimNS}},
-		&lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-alice-ready"), Namespace: revokeReclaimNS}},
-		&lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-bob"), Namespace: revokeReclaimNS}},
+		&lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-alice"), Namespace: revokeReclaimNS}},
+		&lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-alice-ready"), Namespace: revokeReclaimNS}},
+		&lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-bob"), Namespace: revokeReclaimNS}},
 	).Build()
 	sessions := memstore.New()
 	for _, row := range []sessionstore.Session{

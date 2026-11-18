@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // In-package unit tests for the §4.6.1 agent_pod_state derivation: the
-// pure projection of a pool's live Sandbox set onto the mirror row set.
+// pure projection of a pool's live AgentPod set onto the mirror row set.
 // The Sync write path itself is covered by the Postgres component test
 // in tests/component/stores.
 package warmpool
@@ -16,44 +16,44 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 )
 
-func deriveTestPool() *lennyv1.SandboxWarmPool {
-	return &lennyv1.SandboxWarmPool{
+func deriveTestPool() *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker-small", Namespace: "lenny-agents"},
 	}
 }
 
-func deriveTestTemplate(execMode string) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
+func deriveTestTemplate(execMode string) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "claude-worker-small", Namespace: "lenny-agents"},
-		Spec:       lennyv1.SandboxTemplateSpec{ExecutionMode: execMode},
+		Spec:       lennyv1.PodSetSpec{ExecutionMode: execMode},
 	}
 }
 
-func TestDerivePodStatesProjectsSandboxFields(t *testing.T) {
+func TestDerivePodStatesProjectsAgentPodFields(t *testing.T) {
 	pool := deriveTestPool()
 	tmpl := deriveTestTemplate("task")
-	sandboxes := []lennyv1.Sandbox{
+	agentPods := []lennyv1.AgentPod{
 		{
 			ObjectMeta: metav1.ObjectMeta{Name: "sb-idle", ResourceVersion: "4096"},
-			Spec:       lennyv1.SandboxSpec{IsolationProfile: "sandboxed"},
-			Status:     lennyv1.SandboxStatus{Phase: "idle", NodeName: "node-7"},
+			Spec:       lennyv1.AgentPodSpec{IsolationProfile: "sandboxed"},
+			Status:     lennyv1.AgentPodStatus{Phase: "idle", NodeName: "node-7"},
 		},
 		{
-			// A Sandbox that has not yet reported a phase derives as
+			// An AgentPod that has not yet reported a phase derives as
 			// warming, matching observedPhase.
 			ObjectMeta: metav1.ObjectMeta{Name: "sb-fresh", ResourceVersion: "4100"},
-			Spec:       lennyv1.SandboxSpec{IsolationProfile: "microvm"},
+			Spec:       lennyv1.AgentPodSpec{IsolationProfile: "microvm"},
 		},
 	}
 
-	got := derivePodStates(pool, tmpl, sandboxes)
+	got := derivePodStates(pool, tmpl, agentPods)
 	if len(got) != 2 {
 		t.Fatalf("derivePodStates returned %d rows, want 2", len(got))
 	}
 
 	idle := got[0]
 	if idle.PodID != "sb-idle" {
-		t.Errorf("PodID = %q, want sb-idle (the Sandbox name)", idle.PodID)
+		t.Errorf("PodID = %q, want sb-idle (the AgentPod name)", idle.PodID)
 	}
 	if idle.PoolID != pool.Name {
 		t.Errorf("PoolID = %q, want %q", idle.PoolID, pool.Name)
@@ -62,7 +62,7 @@ func TestDerivePodStatesProjectsSandboxFields(t *testing.T) {
 		t.Errorf("State = %q, want idle", idle.State)
 	}
 	if idle.IsolationProfile != "sandboxed" {
-		t.Errorf("IsolationProfile = %q, want sandboxed (from the Sandbox spec)", idle.IsolationProfile)
+		t.Errorf("IsolationProfile = %q, want sandboxed (from the AgentPod spec)", idle.IsolationProfile)
 	}
 	if idle.ExecutionMode != "task" {
 		t.Errorf("ExecutionMode = %q, want task (the pool-level mode from the template)", idle.ExecutionMode)
@@ -80,7 +80,7 @@ func TestDerivePodStatesProjectsSandboxFields(t *testing.T) {
 
 	fresh := got[1]
 	if fresh.State != "warming" {
-		t.Errorf("a Sandbox with no reported phase derived State = %q, want warming", fresh.State)
+		t.Errorf("an AgentPod with no reported phase derived State = %q, want warming", fresh.State)
 	}
 	if fresh.IsolationProfile != "microvm" {
 		t.Errorf("IsolationProfile = %q, want microvm", fresh.IsolationProfile)
@@ -99,7 +99,7 @@ func TestDerivePodStatesEmptySet(t *testing.T) {
 
 func TestDerivePodStatesNilTemplate(t *testing.T) {
 	// A nil template must not panic; execution mode falls back to empty.
-	got := derivePodStates(deriveTestPool(), nil, []lennyv1.Sandbox{
+	got := derivePodStates(deriveTestPool(), nil, []lennyv1.AgentPod{
 		{ObjectMeta: metav1.ObjectMeta{Name: "sb-a", ResourceVersion: "1"}},
 	})
 	if len(got) != 1 {
@@ -147,7 +147,7 @@ func TestPoolDrainedConditionDerivation(t *testing.T) {
 
 // TestPoolDrainedTracksEntryTransition drives the PoolWarmingUp and
 // PoolDrained conditions through the common Available→Drained transition via
-// meta.SetStatusCondition (the exact path updateTemplateCondition uses) and
+// meta.SetStatusCondition (the exact path updatePoolConditions uses) and
 // asserts that PoolDrained's lastTransitionTime marks entry into Drained,
 // while PoolWarmingUp's does not. This is the regression for divergence #2:
 // meta.SetStatusCondition refreshes lastTransitionTime only on a Status
@@ -199,7 +199,7 @@ func TestPoolDrainedTracksEntryTransition(t *testing.T) {
 }
 
 // setAt applies a condition through meta.SetStatusCondition at a fixed time,
-// mirroring the updateTemplateCondition write path so the test exercises the
+// mirroring the updatePoolConditions write path so the test exercises the
 // same lastTransitionTime semantics the controller relies on.
 func setAt(conds *[]metav1.Condition, c metav1.Condition, at time.Time) {
 	c.LastTransitionTime = metav1.NewTime(at)

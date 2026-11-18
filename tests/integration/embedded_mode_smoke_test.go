@@ -230,8 +230,8 @@ func TestEmbeddedModeSmoke_spec_17_4_18(t *testing.T) {
 	// abstract @lenny-runtime socket and speaks §28.5.3 JSONL, the contract the
 	// stamped lenny-adapter container bridges), registers it through the §17.4
 	// walkthrough (lenny-ctl runtime publish writes the registry record; lenny
-	// runtime apply materializes its Runtime, SandboxTemplate, and
-	// SandboxWarmPool CRD set), starts a session, and asserts the controller
+	// runtime apply materializes its Runtime, PodSet, and
+	// PodSet CRD set), starts a session, and asserts the controller
 	// stamped the lenny-adapter sidecar container on the placed pod, proving
 	// placement is runtime-agnostic rather than echo-only. The genuine sidecar
 	// image is a docker-save artifact (the Makefile stages it and points
@@ -487,7 +487,7 @@ const customRuntimeName = "my-agent"
 // `lenny up` does not seed), then `lenny-ctl runtime publish --skip-push`
 // writes the registry record through the gateway admin API (authenticated with
 // the dev bearer the gateway trusts), then `lenny runtime apply` materializes
-// the runtime's Runtime, SandboxTemplate, and SandboxWarmPool CRD set (the
+// the runtime's Runtime and PodSet CRDs (the
 // no-Postgres pool-materialization path), then `lenny session new` places a
 // session, and finally the placed agent pod is inspected through the embedded
 // kubeconfig for the stamped "adapter" container.
@@ -500,7 +500,7 @@ const customRuntimeName = "my-agent"
 // spec: §17.4 (the custom-runtime walkthrough; a sidecar-model runtime runs
 // with the stamped lenny-adapter container), §4.7 (the adapter sidecar and the
 // sidecar deployment model), §28.5.3 (the JSONL contract the runtime container
-// speaks to the adapter), §5.2 (the applied SandboxWarmPool warms a pod), §5.3
+// speaks to the adapter), §5.2 (the applied PodSet warms a pod), §5.3
 // (the applied Runtime is digest-pinned).
 func customSidecarRuntimeLeg(t *testing.T, bin, home string) {
 	t.Helper()

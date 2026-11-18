@@ -70,7 +70,7 @@ func (s *getCountingBlobStore) getsFor(sessionID string) int {
 	return s.gets[sessionID]
 }
 
-// uploadScopeCluster seeds a warm pool, its template, and n idle Sandboxes
+// uploadScopeCluster seeds a warm pool, its template, and n idle AgentPods
 // for the create-time pod claims.
 func uploadScopeCluster(t *testing.T, n int) client.Client {
 	t.Helper()
@@ -91,37 +91,36 @@ func uploadScopeCluster(t *testing.T, n int) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: uploadScopeNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: uploadScopeNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       "echo",
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool: %v", err)
-	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: uploadScopeNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed)},
-	}); err != nil {
-		t.Fatalf("create template: %v", err)
+		t.Fatalf("create pod set: %v", err)
 	}
 	for i := 1; i <= n; i++ {
-		seedUploadScopeSandbox(t, c, fmt.Sprintf("sbx-%d", i), fmt.Sprintf("10.244.3.%d", i))
+		seedUploadScopeAgentPod(t, c, fmt.Sprintf("sbx-%d", i), fmt.Sprintf("10.244.3.%d", i))
 	}
 	return c
 }
 
-// seedUploadScopeSandbox creates one idle Sandbox, writing its status under
+// seedUploadScopeAgentPod creates one idle AgentPod, writing its status under
 // the warm-pool controller's field manager as the controller does.
-func seedUploadScopeSandbox(t *testing.T, c client.Client, name, podIP string) {
+func seedUploadScopeAgentPod(t *testing.T, c client.Client, name, podIP string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := c.Create(ctx, &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+	if err := c.Create(ctx, &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{
 		Name: name, Namespace: uploadScopeNS, Labels: map[string]string{warmpool.LabelPool: "echo-pool"},
 	}}); err != nil {
 		t.Fatalf("create sandbox %s: %v", name, err)
 	}
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName(name)
 	u.SetNamespace(uploadScopeNS)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": podIP}, "status")
@@ -138,7 +137,7 @@ type uploadScopeGateway struct {
 }
 
 // newUploadScopeGateway builds a session server over an envtest cluster of
-// pods idle Sandboxes, with a pod binder whose blob store counts Get calls.
+// pods idle AgentPods, with a pod binder whose blob store counts Get calls.
 func newUploadScopeGateway(t *testing.T, pods int) *uploadScopeGateway {
 	t.Helper()
 	adapterSrv := adapter.New("adapter-test")

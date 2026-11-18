@@ -32,10 +32,7 @@ import (
 // tests/security/live_session_test.go.
 const promptRoundtripTenant = "prompt-roundtrip-tenant"
 
-// spec: §7.1 (spec/07_session-lifecycle.md, Normal Flow) "16. Client →
-// Gateway: AttachSession(session_id) / 17. Gateway ↔ Pod: Bidirectional
-// stream proxy / 18. Client ↔ Gateway: Full interactive session
-// (prompts, responses, ...)"
+// spec: §7.1 (Normal Flow, the attach and interactive-session steps)
 //
 // spec: 28.5.1 (Gateway-to-pod), 7.2 (Interactive Session Model)
 //
@@ -45,7 +42,7 @@ const promptRoundtripTenant = "prompt-roundtrip-tenant"
 // never makes it back to the client through the synchronous message
 // response and the AttachSession event stream. This is the platform's
 // central guarantee (§6.3 / §15.1) and, unlike the in-process tier4
-// tests, exercises the real SandboxClaim-bound pod over the network. A
+// tests, exercises the real PodClaim-bound pod over the network. A
 // failure on the second prompt alone means the session's Attach stream
 // ended with the request that delivered the first prompt, rather than
 // being held for the life of the session's binding.

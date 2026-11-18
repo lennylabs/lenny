@@ -16,7 +16,7 @@ import (
 // API's Postgres pool definitions are the source of truth (§4.6.2
 // "CRDs become derived state"); this source lists the active pool rows
 // and maps each into the PoolConfig the controller upserts into its
-// SandboxTemplate and SandboxWarmPool CRD pair.
+// PodSet.
 //
 // v1 has no separately-modeled per-pool minWarm/maxWarm: the store's
 // warmCount is the operator-set bootstrap floor. Until the §4.6.2
@@ -27,7 +27,7 @@ type PoolStoreSource struct {
 	// Store is the pool registry. List returns the active (non
 	// soft-deleted) pool rows.
 	Store poolstore.Store
-	// Namespace is the agent namespace the derived CRD pair lives in.
+	// Namespace is the agent namespace the derived PodSet lives in.
 	// The CRDs are derived state, so a single agent namespace per
 	// deployment is the v1 assumption (§5.1 pools are platform-global;
 	// their CRDs are materialized in the agent namespace).
@@ -37,8 +37,8 @@ type PoolStoreSource struct {
 var _ PoolConfigSource = (*PoolStoreSource)(nil)
 
 // ListPoolConfigs returns one PoolConfig per active pool, mapping the
-// §5.2 store fields into the §5.2 SandboxTemplate spec and the §4.6.3
-// PoolScalingController-owned SandboxWarmPool fields.
+// §5.2 store fields into the §5.2 PodSet spec and the §4.6.3
+// PoolScalingController-owned PodSet fields.
 func (s *PoolStoreSource) ListPoolConfigs(ctx context.Context) ([]PoolConfig, error) {
 	if s.Namespace == "" {
 		return nil, fmt.Errorf("poolscaling: PoolStoreSource requires a target agent namespace")
@@ -55,7 +55,7 @@ func (s *PoolStoreSource) ListPoolConfigs(ctx context.Context) ([]PoolConfig, er
 }
 
 // toConfig maps one store row into a PoolConfig. The whole
-// SandboxTemplate spec is PoolScalingController-owned (§4.6.3), so every
+// PodSet spec is PoolScalingController-owned (§4.6.3), so every
 // field the CRD models is copied. spec: §5.2 — the §5.2 sessionPolicy
 // recycle block carries the cross-tenant microvm scrub controls
 // (scrubProfile and acknowledgeMicrovmResidualState) the API server
@@ -66,13 +66,13 @@ func (s *PoolStoreSource) ListPoolConfigs(ctx context.Context) ([]PoolConfig, er
 // directly rather than through the CRD.
 func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 	warm := int32(p.WarmCount)
-	spec := lennyv1.SandboxTemplateSpec{
+	spec := lennyv1.PodSetSpec{
 		RuntimeRef:       p.RuntimeRef,
 		IsolationProfile: string(p.IsolationProfile),
 		EgressProfile:    string(p.EgressProfile),
 		// spec: §4.9 — carry the pool-definition credential-delivery mode
 		// and SPIFFE-binding mode from the poolstore source of truth onto
-		// the SandboxTemplate CRD so the lenny-direct-mode-isolation
+		// the PodSet CRD so the lenny-direct-mode-isolation
 		// ValidatingAdmissionWebhook and the preflight scan read live values
 		// rather than empty strings when evaluating the two cross-tenant-risky
 		// combinations. The two deployer opt-in acknowledgments are not copied
@@ -93,7 +93,7 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 		MaxSessionAgeSeconds: int64(p.MaxSessionAgeSeconds),
 		// spec: §4.7 / §5.3 — the PSC is the §4.6.3 Postgres→CRD channel
 		// for pool configuration. Mirror the §5.3 nonce-only acknowledgment
-		// onto SandboxTemplate.spec so the WarmPoolController render gate can
+		// onto PodSet.spec so the WarmPoolController render gate can
 		// require it before rendering --require-so-peercred=false; a Runtime
 		// CR applied directly therefore cannot put an unacknowledged pool
 		// into nonce-only mode.
@@ -105,7 +105,7 @@ func (s *PoolStoreSource) toConfig(p poolstore.Pool) PoolConfig {
 	cfg := PoolConfig{
 		Name:        p.Name,
 		Namespace:   s.Namespace,
-		Template:    spec,
+		Settings:    spec,
 		MinWarm:     warm,
 		MaxWarm:     warm,
 		Generation:  p.Generation,

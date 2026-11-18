@@ -49,11 +49,11 @@ type postClaimEnv struct {
 func newPostClaimEnv(t *testing.T, dial func(string) (*adapterclient.Client, error)) *postClaimEnv {
 	t.Helper()
 	ns := testNamespace(t)
-	base := k8sClient(t, concurrentIdleSandbox(ns, "sbx-1", "10.244.1.7"))
+	base := k8sClient(t, concurrentIdleAgentPod(ns, "sbx-1", "10.244.1.7"))
 	deletes := &atomic.Int32{}
 	kube := interceptor.NewClient(base, interceptor.Funcs{
 		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+			if _, ok := obj.(*lennyv1.PodClaim); ok {
 				deletes.Add(1)
 			}
 			return c.Delete(ctx, obj, opts...)

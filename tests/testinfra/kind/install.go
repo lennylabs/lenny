@@ -118,7 +118,7 @@ type AgentPod struct {
 // workload and to skip cleanly on a host where install.sh has not
 // applied tests/testinfra/kind/agent-workload.yaml.
 //
-// The agent pods carry the lenny.dev/managed=true label the Sandbox
+// The agent pods carry the lenny.dev/managed=true label the AgentPod
 // reconciler stamps and a lenny.dev/pool label naming their warm pool.
 func RequireAgentWorkload(t testing.TB, c *Cluster) []AgentPod {
 	t.Helper()
@@ -166,7 +166,7 @@ func RequireAgentWorkload(t testing.TB, c *Cluster) []AgentPod {
 // deploymentModels reads the §4.7 deployment model every Runtime on the
 // cluster declares, keyed by Runtime name. The Runtime CRD's
 // spec.deploymentModel is the authoritative statement of the model: it
-// is what the Sandbox reconciler renders the pod's container topology
+// is what the AgentPod reconciler renders the pod's container topology
 // from. Deriving the model from the pool's name instead requires every
 // new reference pool to be added to a name list, and a pool that is not
 // on it reports no recognized model even though its Runtime declares
@@ -293,7 +293,7 @@ func (c *Cluster) ApplyStdin(t testing.TB, manifest string) (string, error) {
 //
 // A write the platform admits only from one of its own principals needs
 // this: the lenny-pool-config-validator webhook rejects a
-// SandboxTemplate or SandboxWarmPool spec write from any principal
+// PodSet spec write from any principal
 // other than the PoolScalingController service account, so a test that
 // needs such an object on the cluster creates it as that principal
 // rather than as the kubeconfig's cluster-admin.

@@ -143,10 +143,10 @@ func TestCommittedJourneysGetOnlyKindsTheChartDefines(t *testing.T) {
 
 func TestKubectlGetResourcesReadsTheResourceArgument(t *testing.T) {
 	cases := map[string][]string{
-		"-n lenny-agents get sandboxwarmpools -o json":     {"sandboxwarmpools"},
+		"-n lenny-agents get podsets -o json":              {"podsets"},
 		"get -n x deployment/lenny-gateway -o jsonpath={}": {"deployment"},
 		"--namespace=x get pods,svc":                       {"pods", "svc"},
-		"get sandboxes.lenny.dev":                          {"sandboxes.lenny.dev"},
+		"get agentpods.lenny.dev":                          {"agentpods.lenny.dev"},
 		"describe pod x":                                   nil,
 		"-o json version":                                  nil,
 	}

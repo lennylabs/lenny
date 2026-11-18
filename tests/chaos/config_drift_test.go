@@ -3,14 +3,14 @@
 //go:build chaos
 
 // Chaos tests for configuration drift. Each test manually
-// mutates a piece of live platform configuration — a SandboxWarmPool
+// mutates a piece of live platform configuration — a PodSet
 // spec, a rendered NetworkPolicy, or the migration framework's
 // schema_migrations table — and asserts the platform detects or
 // rejects the drift, then reverts the mutation and asserts recovery.
 //
 // The drift is injected with `kubectl` against the live cluster.
 // Detection is asserted either at admission time (the pool-config
-// validator rejects an invariant-violating SandboxWarmPool) or
+// validator rejects an invariant-violating PodSet) or
 // behaviorally (a NetworkPolicy edit changes effective connectivity,
 // observed from a probe pod). Every test reverts its mutation in a
 // t.Cleanup so the shared cluster is left in its rendered state.
@@ -27,18 +27,18 @@ import (
 )
 
 // poolConfigValidatorWebhook is the ValidatingWebhookConfiguration that
-// gates SandboxWarmPool / SandboxTemplate semantic budget invariants.
+// gates the PodSet semantic budget invariants.
 const poolConfigValidatorWebhook = "lenny-pool-config-validator"
 
 // poolConfigValidatorDeployment runs the validator webhook backend.
 const poolConfigValidatorDeployment = "lenny-pool-config-validator"
 
-// agentNamespace is the namespace agent-scoped CRDs (SandboxWarmPool,
-// SandboxClaim, Sandbox) live in on the e2e cluster.
+// agentNamespace is the namespace agent-scoped CRDs (PodSet,
+// PodClaim, AgentPod) live in on the e2e cluster.
 const agentNamespace = "lenny-agents"
 
 // poolScalingControllerSA is the only principal whose writes to a
-// SandboxWarmPool or SandboxTemplate spec the pool-config validator
+// PodSet spec the pool-config validator
 // admits. Every other principal, the kubeconfig's cluster-admin
 // included, is rejected with UNAUTHORIZED_POOL_CONFIG_WRITE before the
 // budget invariants are reached, so a test whose subject is those
@@ -50,7 +50,7 @@ const poolScalingControllerSA = "system:serviceaccount:lenny-system:lenny-pool-s
 // spec: 12.8
 // diagnosis: §12.8 / §4.6.2 pool-config drift was not rejected at
 // admission. The lenny-pool-config-validator webhook gates the §4.6.2
-// SandboxWarmPool budget invariants. The test creates a valid pool,
+// PodSet budget invariants. The test creates a valid pool,
 // then drifts its config with an UPDATE violating minWarm <= maxWarm.
 // The webhook must reject the drift with INVALID_POOL_CONFIGURATION and
 // leave the persisted spec unchanged; a later valid UPDATE is admitted.
@@ -72,16 +72,16 @@ func TestPoolConfigDrift(t *testing.T) {
 			poolConfigValidatorWebhook, strings.TrimSpace(policy))
 	}
 
-	// Create a valid SandboxWarmPool: minWarm <= maxWarm, both within
+	// Create a valid PodSet: minWarm <= maxWarm, both within
 	// the CRD's non-negative bound. This is the known-good baseline the
 	// drift mutates away from.
 	const poolName = "chaos-drift-pool"
 	validPool := warmPoolManifest(poolName, agentNamespace, 1, 3)
 	t.Cleanup(func() { _, _ = c.DeleteStdin(t, validPool) })
 	if out, err := c.ApplyStdinAs(t, validPool, poolScalingControllerSA); err != nil {
-		t.Fatalf("failed to create the valid baseline SandboxWarmPool: %v\n%s", err, out)
+		t.Fatalf("failed to create the valid baseline PodSet: %v\n%s", err, out)
 	}
-	t.Logf("precondition: valid SandboxWarmPool %s/%s created (minWarm=1, maxWarm=3)",
+	t.Logf("precondition: valid PodSet %s/%s created (minWarm=1, maxWarm=3)",
 		agentNamespace, poolName)
 
 	// Inject the drift: UPDATE the pool to minWarm=9, maxWarm=3 — a
@@ -94,10 +94,10 @@ func TestPoolConfigDrift(t *testing.T) {
 	driftedPool := warmPoolManifest(poolName, agentNamespace, 9, 3)
 	out, err := c.ReplaceStdinAs(t, driftedPool, poolScalingControllerSA)
 	if err == nil {
-		t.Errorf("§4.6.2 violation: the pool-config validator admitted a SandboxWarmPool UPDATE with "+
+		t.Errorf("§4.6.2 violation: the pool-config validator admitted a PodSet UPDATE with "+
 			"minWarm=9 > maxWarm=3; the minWarm <= maxWarm invariant must be rejected.\noutput:\n%s", out)
 	} else if !strings.Contains(out, "INVALID_POOL_CONFIGURATION") {
-		t.Errorf("the drifted SandboxWarmPool UPDATE was rejected, but the message does not carry "+
+		t.Errorf("the drifted PodSet UPDATE was rejected, but the message does not carry "+
 			"INVALID_POOL_CONFIGURATION; the rejection may be unrelated to the invariant.\noutput:\n%s", out)
 	} else {
 		t.Logf("drift rejected: the validator returned INVALID_POOL_CONFIGURATION for minWarm > maxWarm")
@@ -107,14 +107,14 @@ func TestPoolConfigDrift(t *testing.T) {
 	// rejected UPDATE must not partially apply.
 	persisted, err := c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandboxwarmpool", poolName,
+		"-n", agentNamespace, "get", "podset", poolName,
 		"-o", "jsonpath={.spec.minWarm}/{.spec.maxWarm}",
 	)
 	if err != nil {
-		t.Fatalf("failed to read the SandboxWarmPool after the rejected drift: %v\n%s", err, persisted)
+		t.Fatalf("failed to read the PodSet after the rejected drift: %v\n%s", err, persisted)
 	}
 	if strings.TrimSpace(persisted) != "1/3" {
-		t.Errorf("after the rejected drift the SandboxWarmPool spec is minWarm/maxWarm=%s, expected 1/3; "+
+		t.Errorf("after the rejected drift the PodSet spec is minWarm/maxWarm=%s, expected 1/3; "+
 			"a rejected UPDATE leaked into the persisted object", strings.TrimSpace(persisted))
 	}
 
@@ -122,19 +122,19 @@ func TestPoolConfigDrift(t *testing.T) {
 	// admitted, proving the validator is not blanket-rejecting writes.
 	recovered := warmPoolManifest(poolName, agentNamespace, 2, 5)
 	if out, err := c.ReplaceStdinAs(t, recovered, poolScalingControllerSA); err != nil {
-		t.Fatalf("a valid SandboxWarmPool UPDATE (minWarm=2, maxWarm=5) was rejected after the drift test: "+
+		t.Fatalf("a valid PodSet UPDATE (minWarm=2, maxWarm=5) was rejected after the drift test: "+
 			"%v\n%s", err, out)
 	}
 	persisted, _ = c.KubectlOut(
 		t,
-		"-n", agentNamespace, "get", "sandboxwarmpool", poolName,
+		"-n", agentNamespace, "get", "podset", poolName,
 		"-o", "jsonpath={.spec.minWarm}/{.spec.maxWarm}",
 	)
 	if strings.TrimSpace(persisted) != "2/5" {
 		t.Errorf("the valid recovery UPDATE did not persist; spec is minWarm/maxWarm=%s, expected 2/5",
 			strings.TrimSpace(persisted))
 	}
-	t.Logf("recovery: a valid SandboxWarmPool UPDATE was admitted; pool-config drift verified end to end")
+	t.Logf("recovery: a valid PodSet UPDATE was admitted; pool-config drift verified end to end")
 }
 
 // spec: 12.8
@@ -387,13 +387,12 @@ func TestSchemaMigrationDirtyFlag(t *testing.T) {
 		"schema-migration dirty-flag handling verified end to end")
 }
 
-// warmPoolManifest renders a SandboxWarmPool manifest with the given
-// minWarm/maxWarm. templateRef is required by the CRD; the referenced
-// template need not exist for the pool-config validator (it inspects
-// only the SandboxWarmPool spec, not the template).
+// warmPoolManifest renders a PodSet manifest with the given
+// minWarm/maxWarm. The CRD requires runtimeRef. The pool-config validator
+// reads only the PodSet spec, so the named Runtime need not exist.
 func warmPoolManifest(name, ns string, minWarm, maxWarm int) string {
 	return fmt.Sprintf(`apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
+kind: PodSet
 metadata:
   name: %s
   namespace: %s
@@ -402,7 +401,7 @@ metadata:
 spec:
   minWarm: %d
   maxWarm: %d
-  templateRef: chaos-drift-template
+  runtimeRef: chaos-drift-runtime
 `, name, ns, minWarm, maxWarm)
 }
 

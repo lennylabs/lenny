@@ -71,12 +71,12 @@ func newClusterClient(kubeconfigPath string) (kubernetes.Interface, error) {
 // poolReadyFn reports whether the seeded echo warm pool has at least one ready
 // idle pod. It is a package-level var so lenny status can distinguish
 // "gateway up" from "pool ready" in a unit test without a live cluster. The
-// default reads the SandboxWarmPool status.readyCount through the kubeconfig.
+// default reads the PodSet status.readyCount through the kubeconfig.
 // spec: §17.4 (lenny status distinguishes gateway-up from pool-ready), §5.2
 // (the hot pool's readyCount is its claimable-idle count).
 var poolReadyFn = echoPoolReady
 
-// echoPoolReady reads the seeded echo SandboxWarmPool's status.readyCount from
+// echoPoolReady reads the seeded echo PodSet's status.readyCount from
 // the embedded cluster and reports whether at least one warm pod has reached a
 // claimable ready state. A missing pool, an unreachable cluster, or a
 // zero readyCount all report not-ready, so lenny status reports "pool warming"
@@ -101,7 +101,7 @@ func echoPoolReadyFromConfig(ctx context.Context, cfg *rest.Config) bool {
 	if err != nil {
 		return false
 	}
-	var pool lennyv1alpha1.SandboxWarmPool
+	var pool lennyv1alpha1.PodSet
 	if err := cl.Get(ctx, ctrlclient.ObjectKey{Namespace: agentNamespace, Name: EchoPoolName}, &pool); err != nil {
 		return false
 	}
@@ -110,7 +110,7 @@ func echoPoolReadyFromConfig(ctx context.Context, cfg *rest.Config) bool {
 
 // lennyTypedClient builds a controller-runtime client carrying the lenny.dev
 // scheme for cfg, so the cluster-backed status read can Get the echo
-// SandboxWarmPool by name. It mirrors the scheme-building client the echo seed
+// PodSet by name. It mirrors the scheme-building client the echo seed
 // and the runtime-apply verb use rather than adding a second construction
 // idiom. spec: §5.1 (the lenny.dev CRDs).
 func lennyTypedClient(cfg *rest.Config) (ctrlclient.Client, error) {

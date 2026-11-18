@@ -41,8 +41,8 @@ const dispositionFailed = "failed"
 // claim). disposition is the session-terminal outcome the session reached
 // (completed, failed, cancelled, or expired); the fine session-terminal states
 // and the Terminated session-condition fact are recorded on the Postgres
-// session model (§7.2 / §8.8), so Release writes no Sandbox.status field — the
-// WarmPoolController is the sole writer of Sandbox.status (§4.6.3).
+// session model (§7.2 / §8.8), so Release writes no AgentPod.status field — the
+// WarmPoolController is the sole writer of AgentPod.status (§4.6.3).
 //
 // On a recycling pool (BindResult.Recycle, maxConcurrentSessions: 1) a clean
 // terminal (anything but "failed") on a binding not marked crashed brings
@@ -62,7 +62,7 @@ const dispositionFailed = "failed"
 // best-effort — a coordinating-gateway crash after the patch leaves the claim in
 // `recycling` and the §4.6.1 orphan GC drains the stuck pod — so on the recycle
 // path Release returns only an error from the recycling patch. The claim
-// writes (the recycling patch, and the retire path's Sandbox read and claim
+// writes (the recycling patch, and the retire path's AgentPod read and claim
 // delete) run on a detached context bounded by the §5.2 per-slot cleanup
 // floor, while the adapter Shutdown keeps the caller's context, so a caller
 // whose context ends during the Shutdown still has its claim deleted or
@@ -89,8 +89,8 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	// spec: §28.5.1 (Gateway-to-pod) — a binding whose attach stream ended in
 	// a reported stream failure retires the pod whatever the disposition.
 	if result.Recycle && disposition != dispositionFailed && !result.Crashed() {
-		if err := b.writeRecyclingDetached(ctx, result.SandboxName); err != nil {
-			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.SandboxName, err)
+		if err := b.writeRecyclingDetached(ctx, result.AgentPodName); err != nil {
+			return fmt.Errorf("podsession: patch claim recycling for sandbox %s: %w", result.AgentPodName, err)
 		}
 		// §4.7: arm the gateway-side missing-report timeout now that the claim
 		// is `recycling`. The adapter's ReportPodScrub cancels it; if the report
@@ -100,7 +100,7 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 		// the best-effort Shutdown so a Shutdown that blocks does not delay the
 		// timer.
 		if b.RecycleBoundary != nil {
-			b.RecycleBoundary.OnRecycling(result.SandboxName)
+			b.RecycleBoundary.OnRecycling(result.AgentPodName)
 		}
 		// The claim now projects `recycling`. This Shutdown carries the §4.7
 		// recycle disposition plus the pool's whole-pod scrub parameters: it is
@@ -118,37 +118,37 @@ func (b *Binder) Release(ctx context.Context, result *BindResult, disposition st
 	// pool retires its pod rather than triggering the scrub-and-reuse path, then
 	// tear the session's processes down and drain the pod.
 	b.shutdownAdapter(ctx, result, false)
-	return b.retireDetached(ctx, result.SandboxName)
+	return b.retireDetached(ctx, result.AgentPodName)
 }
 
-// writeRecyclingDetached patches the per-pod SandboxClaim of sandboxName
+// writeRecyclingDetached patches the per-pod PodClaim of agentPodName
 // bound → recycling on a detached context (detachedReleaseContext). The
 // executor removed the binding before calling Release and nothing retries
 // the release, so a caller context that has ended must not leave the claim
 // `bound` for the §4.6.1 orphan GC.
 //
-// spec: §5.2 (Recycle lifecycle); §4.6.3 (SandboxClaim binding state).
-func (b *Binder) writeRecyclingDetached(ctx context.Context, sandboxName string) error {
+// spec: §5.2 (Recycle lifecycle); §4.6.3 (PodClaim binding state).
+func (b *Binder) writeRecyclingDetached(ctx context.Context, agentPodName string) error {
 	rctx, cancel := detachedReleaseContext(ctx)
 	defer cancel()
-	return podclaim.WriteRecyclingStatus(rctx, b.Client, b.Namespace, podclaim.ClaimName(sandboxName), nil)
+	return podclaim.WriteRecyclingStatus(rctx, b.Client, b.Namespace, podclaim.ClaimName(agentPodName), nil)
 }
 
-// retireDetached reads the Sandbox and deletes its per-pod SandboxClaim on a
+// retireDetached reads the AgentPod and deletes its per-pod PodClaim on a
 // detached context created by this call, so the bound starts after the
 // best-effort adapter Shutdown returned. A Shutdown that runs to the caller's
 // deadline would otherwise spend the context the claim delete needs, and the
 // pod would wait for the §4.6.1 orphan GC although the session ended.
 //
-// spec: §5.2 (Recycle lifecycle); §4.6.3 (SandboxClaim: a release that ends
+// spec: §5.2 (Recycle lifecycle); §4.6.3 (PodClaim: a release that ends
 // the occupancy without reuse); §4.6.1 (occupancy projection on claim
 // DELETE).
-func (b *Binder) retireDetached(ctx context.Context, sandboxName string) error {
+func (b *Binder) retireDetached(ctx context.Context, agentPodName string) error {
 	rctx, cancel := detachedReleaseContext(ctx)
 	defer cancel()
-	var sb lennyv1.Sandbox
-	if err := b.Client.Get(rctx, client.ObjectKey{Namespace: b.Namespace, Name: sandboxName}, &sb); err != nil {
-		return fmt.Errorf("podsession: get sandbox %s: %w", sandboxName, err)
+	var sb lennyv1.AgentPod
+	if err := b.Client.Get(rctx, client.ObjectKey{Namespace: b.Namespace, Name: agentPodName}, &sb); err != nil {
+		return fmt.Errorf("podsession: get sandbox %s: %w", agentPodName, err)
 	}
 	return b.drain(rctx, &sb)
 }
@@ -168,7 +168,7 @@ func (b *Binder) retireDetached(ctx context.Context, sandboxName string) error {
 // fail-open regression on the crash path.
 //
 // On the recycle path it sends the §4.7 recycle disposition (ShutdownRecycle)
-// carrying the pod identity (SandboxName) and the pool's whole-pod scrub
+// carrying the pod identity (AgentPodName) and the pool's whole-pod scrub
 // parameters, which is the occupancy-zero signal that triggers the §5.2 scrub
 // the adapter reports via ReportPodScrub. On the retire path it sends a plain
 // Shutdown that tears the session's processes down before the pod drains. The
@@ -183,7 +183,7 @@ func (b *Binder) shutdownAdapter(ctx context.Context, result *BindResult, recycl
 	}
 	if recycle {
 		_, _ = result.Adapter.ShutdownRecycle(ctx, result.SessionID, adapterclient.RecycleScrub{
-			PodID:                 result.SandboxName,
+			PodID:                 result.AgentPodName,
 			CleanupCommands:       result.CleanupCommands,
 			CleanupTimeoutSeconds: int32(result.CleanupTimeoutSeconds),
 		})

@@ -36,7 +36,7 @@ Lenny's admission webhooks (OPA/Gatekeeper or Kyverno policy, and the cosign ima
 - `AdmissionWebhookUnavailable` — Lenny policy webhook unreachable past the configured sustain window.
 - `CosignWebhookUnavailable` — image-verification webhook erroring past the configured sustain window.
 - `WarmPoolBootstrapping` alert follows shortly after.
-- `kubectl get sandbox` shows no new pods being created.
+- `kubectl get agentpod` shows no new pods being created.
 
 Exact alert thresholds are deployer-configurable — see [Metrics Reference](../reference/metrics.html#alert-rules).
 

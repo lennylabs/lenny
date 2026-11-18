@@ -69,7 +69,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	start := time.Now()
 	// Limit (4 tokens) replicates the 4-burst the §5.2 session-start
 	// path consumes per request (list pools, get template, list
-	// sandboxes, patch sandbox).
+	// agentpods, patch sandbox).
 	if err := limiter.WaitN(ctx, 4); err != nil {
 		s.counters.IncOnError(ctx, "wait_errors", err)
 		return err

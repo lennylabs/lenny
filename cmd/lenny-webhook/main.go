@@ -8,7 +8,7 @@
 // Routes:
 //
 //	/label-immutability             — lenny-label-immutability (§17.2, §5.2 NET-003)
-//	/sandboxclaim-guard             — lenny-sandboxclaim-guard (§4.6.1, ADR-007)
+//	/podclaim-guard             — lenny-podclaim-guard (§4.6.1, ADR-007)
 //	/pool-config-validator          — lenny-pool-config-validator (§4.6.3)
 //	/ephemeral-container-cred-guard — lenny-ephemeral-container-cred-guard (§13.1)
 //	/direct-mode-isolation          — lenny-direct-mode-isolation (§4.9, §13.2)
@@ -21,7 +21,7 @@
 //	/crd-conversion                 — lenny-crd-conversion (§17.2)
 //	/healthz, /readyz               — liveness and readiness probes
 //
-// The sandboxclaim-guard route reads live cluster state, so the binary
+// The podclaim-guard route reads live cluster state, so the binary
 // builds a Kubernetes client from the in-cluster ServiceAccount or
 // KUBECONFIG. TLS is mandatory: the API server refuses a plaintext
 // webhook. The certificate is supplied by a mounted secret.
@@ -57,7 +57,7 @@ import (
 	cosignverify "github.com/lennylabs/lenny/pkg/admission/cosign_verify"
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	obsmetrics "github.com/lennylabs/lenny/pkg/observability/metrics"
 	"github.com/lennylabs/lenny/pkg/podsecurity"
@@ -124,7 +124,7 @@ func (s poolConfigCounterSink) IncPoolTerminationBudgetExceeded(pool string) {
 }
 
 // newMux wires every admission route plus the probes. reader backs the
-// sandboxclaim-guard and drain-readiness routes' API-server lookups;
+// podclaim-guard and drain-readiness routes' API-server lookups;
 // tenancyMode and devMode configure the direct-mode-isolation route's
 // §4.9 enforcement; drainReadinessURL is the gateway endpoint the
 // drain-readiness route probes; declaredRegions is the deployment's
@@ -142,10 +142,10 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 	// transition rules. The handler shares the binary and Service so the
 	// HA properties (replicas: 2 + PodDisruptionBudget) cover both.
 	mux.Handle("/tenant-label-immutability", webhook.Handler(webhook.TenantLabelImmutability()))
-	mux.Handle("/sandboxclaim-guard", webhook.Handler(webhook.SandboxClaimGuard(reader)))
+	mux.Handle("/podclaim-guard", webhook.Handler(webhook.PodClaimGuard(reader)))
 	// §4.6.3 pool-config-validator: the sole admission gate for the
-	// §4.6.2/§4.6.3 semantic budget invariants on SandboxWarmPool and
-	// SandboxTemplate spec writes. Pure in-process validation, so it
+	// §4.6.2/§4.6.3 semantic budget invariants on PodSet and
+	// PodSet spec writes. Pure in-process validation, so it
 	// needs no API-server reader.
 	mux.Handle("/pool-config-validator", webhook.Handler(webhook.PoolConfigValidator(poolBudgetSink)))
 	mux.Handle("/ephemeral-container-cred-guard", webhook.Handler(webhook.EphemeralContainerCredGuard(
@@ -163,14 +163,11 @@ func newMux(reader client.Reader, tenancyMode string, devMode bool, drainReadine
 		drainSink,
 		webhook.HTTPForcedDrainAuditSink{URL: drainAuditURL},
 	)))
-	// §10.5 sandboxtemplate-deletion-guard: blocks a
-	// SandboxTemplate DELETE while a RuntimeUpgrade referencing the
-	// template's pool is still active. The decider lists referencing
-	// SandboxWarmPools via the API-server reader and probes the gateway
-	// GET /internal/runtime-upgrade/active endpoint for each pool's
-	// upgrade state; fail-closed on a list or probe failure.
-	mux.Handle("/sandboxtemplate-deletion-guard", webhook.Handler(webhook.SandboxTemplateDeletionGuard(
-		reader,
+	// §10.5 podset-deletion-guard: blocks a PodSet DELETE while a
+	// RuntimeUpgrade of the PodSet's pool is still active. The decider
+	// probes the gateway GET /internal/runtime-upgrade/active endpoint for
+	// the pool's upgrade state; fail-closed on a probe failure.
+	mux.Handle("/podset-deletion-guard", webhook.Handler(webhook.PodSetDeletionGuard(
 		webhook.HTTPRuntimeUpgradeProbe{URL: runtimeUpgradeActiveURL},
 	)))
 	// §12.8 data-residency-validator: a nil TenantRegionResolver leaves
@@ -322,7 +319,7 @@ func main() {
 	drainAuditURL := flag.String("gateway-drain-audit-url", os.Getenv("LENNY_GATEWAY_DRAIN_AUDIT_URL"),
 		"gateway POST /internal/audit/node-drain-forced endpoint the §12.5 drain-readiness webhook calls on a drain-force override admission.")
 	runtimeUpgradeActiveURL := flag.String("gateway-runtime-upgrade-active-url", os.Getenv("LENNY_GATEWAY_RUNTIME_UPGRADE_ACTIVE_URL"),
-		"gateway GET /internal/runtime-upgrade/active endpoint the §10.5 sandboxtemplate-deletion-guard webhook probes to verify no active RuntimeUpgrade references the SandboxTemplate being deleted (line 508).")
+		"gateway GET /internal/runtime-upgrade/active endpoint the §10.5 podset-deletion-guard webhook probes to verify no active RuntimeUpgrade references the PodSet being deleted (line 508).")
 	storageRegions := flag.String("storage-regions", os.Getenv("LENNY_STORAGE_REGIONS"),
 		"comma-separated list of regions declared in the storage.regions Helm map. The §12.8 data-residency-validator webhook rejects, fail-closed, any resource whose resolved dataResidencyRegion is not in this set.")
 	cosignEnabled := flag.Bool("cosign-verify", os.Getenv("LENNY_COSIGN_VERIFY") == "true",

@@ -20,7 +20,7 @@ import (
 // admissionDeniedTotal is the §16.1
 // lenny_pool_scaling_admission_denied_total counter the §16.5
 // PoolScalingAdmissionStuck alert evaluates against. Per §4.6.2 item 1
-// it is labeled by pool, crd ∈ {SandboxTemplate, SandboxWarmPool}, and
+// it is labeled by pool, crd ∈ {PodSet}, and
 // the webhook-supplied reason code. The HTTP status class is captured
 // on the structured log event but deliberately not on the metric: all
 // 4xx denials share the single admission_denied retry path, so the
@@ -53,8 +53,9 @@ const (
 	backoffBase    = 1 * time.Second
 	backoffCeiling = 60 * time.Second
 	defaultReason  = "admission_denied"
-	crdSandboxTmpl = "SandboxTemplate"
-	crdSandboxPool = "SandboxWarmPool"
+	// crdPodSet names the one CRD tuple the PoolScalingController applies
+	// per pool.
+	crdPodSet = "PodSet"
 )
 
 // denialKey is the §4.6.2 per-tuple backoff key: a denial on one

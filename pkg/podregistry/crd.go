@@ -19,11 +19,11 @@ import (
 )
 
 // CRDPodRegistry is the §12.6 v1 PodRegistry implementation: it
-// reads and writes Sandbox CRD status via the Kubernetes API. The
+// reads and writes AgentPod CRD status via the Kubernetes API. The
 // optimistic-locking CAS that the §4.6.1 lifecycle manager runs
-// against UpdatePodState uses Sandbox.metadata.resourceVersion.
+// against UpdatePodState uses AgentPod.metadata.resourceVersion.
 //
-// Namespace is the agent namespace the Sandbox CRs live in. The
+// Namespace is the agent namespace the AgentPod CRs live in. The
 // production install renders this from the `agent` namespace value
 // in the Helm chart; tests pass an envtest-scoped namespace.
 type CRDPodRegistry struct {
@@ -49,7 +49,7 @@ type CRDPodRegistry struct {
 // resync, yet bounded so a stalled consumer is detected.
 const defaultWatchBufferSize = 32
 
-// PoolLabel is the §4.6 label every Sandbox carries so the registry
+// PoolLabel is the §4.6 label every AgentPod carries so the registry
 // can filter by pool without parsing spec.poolRef on every read.
 // The §4.6.1 controller writes it alongside the spec field at
 // creation time.
@@ -95,7 +95,7 @@ func (r *CRDPodRegistry) GetPod(ctx context.Context, podID PodID) (rec *PodRecor
 	start := time.Now()
 	var pool PoolID
 	defer func() { r.recordOp(opGet, pool, start, err) }()
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err = r.Client.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: string(podID)}, &sb); err != nil {
 		if apierrors.IsNotFound(err) {
 			err = ErrNotFound
@@ -104,21 +104,21 @@ func (r *CRDPodRegistry) GetPod(ctx context.Context, podID PodID) (rec *PodRecor
 		err = fmt.Errorf("podregistry: get sandbox %s: %w", podID, err)
 		return nil, err
 	}
-	pool = PoolID(sb.Spec.PoolRef)
+	pool = PoolID(sb.Spec.PodSetRef)
 	out := toPodRecord(&sb)
 	return &out, nil
 }
 
 // UpdatePodState writes a §6.2 state transition under optimistic
 // CAS. A transition whose From does not match the current
-// Sandbox.status.phase returns ErrInvalidTransition. A concurrent
+// AgentPod.status.phase returns ErrInvalidTransition. A concurrent
 // write that bumps resourceVersion returns ErrResourceConflict so
 // the caller can refresh and retry.
 func (r *CRDPodRegistry) UpdatePodState(ctx context.Context, podID PodID, transition StateTransition) (err error) {
 	start := time.Now()
 	var pool PoolID
 	defer func() { r.recordOp(opUpdateState, pool, start, err) }()
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err = r.Client.Get(ctx, client.ObjectKey{Namespace: r.Namespace, Name: string(podID)}, &sb); err != nil {
 		if apierrors.IsNotFound(err) {
 			err = ErrNotFound
@@ -127,7 +127,7 @@ func (r *CRDPodRegistry) UpdatePodState(ctx context.Context, podID PodID, transi
 		err = fmt.Errorf("podregistry: get sandbox %s: %w", podID, err)
 		return err
 	}
-	pool = PoolID(sb.Spec.PoolRef)
+	pool = PoolID(sb.Spec.PodSetRef)
 	if transition.From != "" && sb.Status.Phase != transition.From {
 		err = fmt.Errorf("%w: current phase %q, transition.From %q",
 			ErrInvalidTransition, sb.Status.Phase, transition.From)
@@ -147,25 +147,25 @@ func (r *CRDPodRegistry) UpdatePodState(ctx context.Context, podID PodID, transi
 
 // ClaimPod acquires an idle pod from the pool under the §4.6.1 per-pod
 // occupancy claim model: it lists idle pods and, for each, creates the
-// deterministic per-pod SandboxClaim (`claim-<podName>`, spec carries
-// sandboxRef and tenantId) and writes its first `bound` binding state.
+// deterministic per-pod PodClaim (`claim-<podName>`, spec carries
+// agentPodRef and tenantId) and writes its first `bound` binding state.
 // The CREATE under the deterministic name is the authoritative
 // single-claim guard: an AlreadyExists collision (or a Forbidden from the
-// lenny-sandboxclaim-guard webhook) means another writer already bound the
+// lenny-podclaim-guard webhook) means another writer already bound the
 // pod, so the loop moves to the next idle pod. ErrPoolExhausted reports no
 // idle pod could be claimed.
 //
-// The gateway does not write Sandbox.status: the WarmPoolController
+// The gateway does not write AgentPod.status: the WarmPoolController
 // projects the pod's coarse occupancy phase (claimed) from the claim's
 // binding state (§4.6.3 ownership decomposition, §4.6.1 occupancy
 // projection). The session-to-pod binding lives on the Postgres session
 // row's pod_assignment column rather than on the CRD, so the per-pod claim
 // carries no session identifier; the returned PodRecord echoes the
 // claim's tenant and the requesting session for the caller's attribution
-// without persisting either on the Sandbox.
+// without persisting either on the AgentPod.
 //
 // spec: §4.6.1 (per-pod occupancy claim), §4.6.3 (gateway is not a
-// Sandbox.status writer).
+// AgentPod.status writer).
 func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *PodRecord, err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opClaim, opts.PoolID, start, err) }()
@@ -177,14 +177,14 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 		err = errors.New("podregistry: ClaimOpts.SessionID is required")
 		return nil, err
 	}
-	var pods []lennyv1.Sandbox
-	pods, err = r.listSandboxes(ctx, opts.PoolID, PodFilter{State: "idle"})
+	var pods []lennyv1.AgentPod
+	pods, err = r.listAgentPods(ctx, opts.PoolID, PodFilter{State: "idle"})
 	if err != nil {
 		return nil, err
 	}
 	for i := range pods {
 		sb := &pods[i]
-		if cerr := r.claimViaSandboxClaim(ctx, sb, opts.TenantID); cerr != nil {
+		if cerr := r.claimViaPodClaim(ctx, sb, opts.TenantID); cerr != nil {
 			if apierrors.IsAlreadyExists(cerr) || apierrors.IsForbidden(cerr) {
 				// Another writer already bound this pod; try the next idle pod.
 				continue
@@ -193,7 +193,7 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 			return nil, err
 		}
 		// Project the claimed occupancy phase onto the returned record. The
-		// WarmPoolController writes the actual Sandbox.status.phase from the
+		// WarmPoolController writes the actual AgentPod.status.phase from the
 		// claim's `bound` binding state (§4.6.1 occupancy projection); the
 		// record echoes that projection so the caller sees the post-claim
 		// state without a re-read.
@@ -207,7 +207,7 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 	return nil, err
 }
 
-// claimViaSandboxClaim creates the per-pod SandboxClaim for sb and writes its
+// claimViaPodClaim creates the per-pod PodClaim for sb and writes its
 // first `bound` binding state through the canonical pkg/gateway/podclaim
 // helpers, so this gateway-side path shares one writer with the live S19 claim
 // path: podclaim.CreateClaim performs the spec-only CREATE under the
@@ -216,7 +216,7 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 // orphan GC keys its live-binding-state reclaim on.
 //
 // The bound status write is a Server-Side Apply PATCH on the
-// `sandboxclaims/status` subresource under the gateway field manager, because
+// `podclaims/status` subresource under the gateway field manager, because
 // the gateway ServiceAccount holds `get`/`patch` (and explicitly no `update`)
 // on that subresource (§4.6.3 ownership decomposition); a Status().Update
 // would issue an HTTP PUT the API server authorizes against the absent
@@ -229,8 +229,8 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 // by a crash via its CREATE-before-status predicate.
 //
 // spec: §4.6.1 (per-pod claim; first `bound` status patch), §4.6.3 (gateway
-// holds patch-only on sandboxclaims/status, no update verb).
-func (r *CRDPodRegistry) claimViaSandboxClaim(ctx context.Context, sb *lennyv1.Sandbox, tenantID string) error {
+// holds patch-only on podclaims/status, no update verb).
+func (r *CRDPodRegistry) claimViaPodClaim(ctx context.Context, sb *lennyv1.AgentPod, tenantID string) error {
 	claim, err := podclaim.CreateClaim(ctx, r.Client, r.Namespace, sb.Name, podclaim.ClaimRequest{TenantID: tenantID})
 	if err != nil {
 		// CreateClaim wraps the API error with %w, so ClaimPod's
@@ -246,18 +246,18 @@ func (r *CRDPodRegistry) claimViaSandboxClaim(ctx context.Context, sb *lennyv1.S
 }
 
 // ReleasePod releases a pod by deleting its deterministic per-pod
-// SandboxClaim (`claim-<podName>`); the WarmPoolController projects the pod's
-// occupancy phase (§4.6.1 occupancy projection). The gateway does not write Sandbox.status to roll the
-// pod back: the `sandboxes/status` grant is removed under the §4.6.3 ownership
-// decomposition, so a Sandbox.status write here would be RBAC-denied. The
-// release reason is no longer recorded on Sandbox.status; a terminal
+// PodClaim (`claim-<podName>`); the WarmPoolController projects the pod's
+// occupancy phase (§4.6.1 occupancy projection). The gateway does not write AgentPod.status to roll the
+// pod back: the `agentpods/status` grant is removed under the §4.6.3 ownership
+// decomposition, so an AgentPod.status write here would be RBAC-denied. The
+// release reason is no longer recorded on AgentPod.status; a terminal
 // retirement disposition is written to the claim's binding state on the live
-// recycle-coordinator path rather than mapped to a Sandbox phase here. The
+// recycle-coordinator path rather than mapped to an AgentPod phase here. The
 // delete is idempotent: a missing claim is a no-op so a double release or a
 // claim the orphan GC already reclaimed does not error.
 //
 // spec: §4.6.1 (occupancy projection on claim DELETE), §4.6.3 (gateway is not
-// a Sandbox.status writer; releases via the claim lifecycle).
+// an AgentPod.status writer; releases via the claim lifecycle).
 func (r *CRDPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason ReleaseReason) (err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opRelease, "", start, err) }()
@@ -269,14 +269,14 @@ func (r *CRDPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason Rel
 	return nil
 }
 
-// ListPodsByPool returns every Sandbox in the pool, optionally
+// ListPodsByPool returns every AgentPod in the pool, optionally
 // filtered by state. Results sort by name so a paginated read is
 // deterministic.
 func (r *CRDPodRegistry) ListPodsByPool(ctx context.Context, poolID PoolID, filter PodFilter) (_ []PodRecord, err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opList, poolID, start, err) }()
-	var pods []lennyv1.Sandbox
-	pods, err = r.listSandboxes(ctx, poolID, filter)
+	var pods []lennyv1.AgentPod
+	pods, err = r.listAgentPods(ctx, poolID, filter)
 	if err != nil {
 		return nil, err
 	}
@@ -294,8 +294,8 @@ func (r *CRDPodRegistry) ListPodsByPool(ctx context.Context, poolID PoolID, filt
 func (r *CRDPodRegistry) CountByState(ctx context.Context, poolID PoolID) (_ StateCounts, err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opCount, poolID, start, err) }()
-	var pods []lennyv1.Sandbox
-	pods, err = r.listSandboxes(ctx, poolID, PodFilter{})
+	var pods []lennyv1.AgentPod
+	pods, err = r.listAgentPods(ctx, poolID, PodFilter{})
 	if err != nil {
 		return nil, err
 	}
@@ -306,7 +306,7 @@ func (r *CRDPodRegistry) CountByState(ctx context.Context, poolID PoolID) (_ Sta
 	return counts, nil
 }
 
-// CreatePod creates a new Sandbox in the pool with the supplied
+// CreatePod creates a new AgentPod in the pool with the supplied
 // spec. The §4.6 controller-runtime sets up the Pod afterward; this
 // path only writes the CR.
 func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodSpec) (_ *PodRecord, err error) {
@@ -317,13 +317,13 @@ func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodS
 		return nil, err
 	}
 	name := fmt.Sprintf("%s-%s", poolID, uuid.NewUUID()[:8])
-	sb := &lennyv1.Sandbox{}
+	sb := &lennyv1.AgentPod{}
 	sb.Namespace = r.Namespace
 	sb.Name = name
 	sb.Labels = map[string]string{PoolLabel: string(poolID)}
-	sb.Spec.PoolRef = string(poolID)
+	sb.Spec.PodSetRef = string(poolID)
 	// spec: §12.6 — CreatePod stamps the per-pod PodSpec fields
-	// onto the Sandbox so they round-trip through toPodRecord rather than
+	// onto the AgentPod so they round-trip through toPodRecord rather than
 	// silently falling back to pool-template defaults. RuntimeRef is a
 	// required CRD field; stamping it from the PodSpec is what lets the
 	// gateway-created-pod path (Tier 4+) express a runtime other than the
@@ -347,11 +347,11 @@ func (r *CRDPodRegistry) CreatePod(ctx context.Context, poolID PoolID, spec PodS
 	return &rec, nil
 }
 
-// DeletePod removes the Sandbox.
+// DeletePod removes the AgentPod.
 func (r *CRDPodRegistry) DeletePod(ctx context.Context, podID PodID) (err error) {
 	start := time.Now()
 	defer func() { r.recordOp(opDelete, "", start, err) }()
-	sb := &lennyv1.Sandbox{}
+	sb := &lennyv1.AgentPod{}
 	sb.Namespace = r.Namespace
 	sb.Name = string(podID)
 	if err = r.Client.Delete(ctx, sb); err != nil {
@@ -499,11 +499,11 @@ func trySend(out chan<- PodEvent, event PodEvent) bool {
 	}
 }
 
-// listSandboxes is the shared list path: it filters by the
+// listAgentPods is the shared list path: it filters by the
 // PoolLabel and applies a phase filter if one is set.
-func (r *CRDPodRegistry) listSandboxes(ctx context.Context, poolID PoolID, filter PodFilter) ([]lennyv1.Sandbox, error) {
+func (r *CRDPodRegistry) listAgentPods(ctx context.Context, poolID PoolID, filter PodFilter) ([]lennyv1.AgentPod, error) {
 	selector := labels.SelectorFromSet(labels.Set{PoolLabel: string(poolID)})
-	var list lennyv1.SandboxList
+	var list lennyv1.AgentPodList
 	if err := r.Client.List(ctx, &list,
 		client.InNamespace(r.Namespace),
 		client.MatchingLabelsSelector{Selector: selector}); err != nil {
@@ -512,7 +512,7 @@ func (r *CRDPodRegistry) listSandboxes(ctx context.Context, poolID PoolID, filte
 	if filter.State == "" {
 		return list.Items, nil
 	}
-	out := make([]lennyv1.Sandbox, 0, len(list.Items))
+	out := make([]lennyv1.AgentPod, 0, len(list.Items))
 	for i := range list.Items {
 		if list.Items[i].Status.Phase == filter.State {
 			out = append(out, list.Items[i])
@@ -521,14 +521,14 @@ func (r *CRDPodRegistry) listSandboxes(ctx context.Context, poolID PoolID, filte
 	return out, nil
 }
 
-// toPodRecord projects a Sandbox onto a PodRecord. spec: §12.6 — every key field, including SessionID (set on claim,
-// from status) and ExecutionMode (denormalized onto the Sandbox spec
-// from the pool's SandboxTemplate), is carried so a consumer can rely
+// toPodRecord projects an AgentPod onto a PodRecord. spec: §12.6 — every key field, including SessionID (set on claim,
+// from status) and ExecutionMode (denormalized onto the AgentPod spec
+// from the pool's PodSet), is carried so a consumer can rely
 // on the record for claim attribution and task-vs-session mode.
-func toPodRecord(sb *lennyv1.Sandbox) PodRecord {
+func toPodRecord(sb *lennyv1.AgentPod) PodRecord {
 	return PodRecord{
 		PodID:            PodID(sb.Name),
-		PoolID:           PoolID(sb.Spec.PoolRef),
+		PoolID:           PoolID(sb.Spec.PodSetRef),
 		State:            sb.Status.Phase,
 		TenantID:         sb.Status.TenantID,
 		SessionID:        sb.Status.SessionID,

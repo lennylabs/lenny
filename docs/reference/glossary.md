@@ -86,7 +86,7 @@ An automatic or operator-managed mechanism that stops traffic to a failing compo
 ### Claim (Pod Claim)
 {: #claim }
 
-The process by which the gateway acquires an idle warm pod for an occupancy episode. The claim is a per-pod `SandboxClaim` CRD with the deterministic name `claim-<podName>`; the CREATE race resolves pod acquisition between gateway replicas. A `lenny-sandboxclaim-guard` admission webhook intercepts CREATE only and rejects a second non-terminal claim for the same pod. Binding-state transitions are `SandboxClaim.status` patches serialized by resourceVersion preconditions. The session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. See [State Machines](state-machines).
+The process by which the gateway acquires an idle warm pod for an occupancy episode. The claim is a per-pod `PodClaim` CRD with the deterministic name `claim-<podName>`; the CREATE race resolves pod acquisition between gateway replicas. A `lenny-podclaim-guard` admission webhook intercepts CREATE only and rejects a second non-terminal claim for the same pod. Binding-state transitions are `PodClaim.status` patches serialized by resourceVersion preconditions. The session-to-pod binding is recorded on the Postgres session row's `pod_assignment` column. See [State Machines](state-machines).
 
 ### Connector
 {: #connector }
@@ -106,7 +106,7 @@ A set of API keys or OAuth credentials for a specific LLM provider or external s
 ### CRD (Custom Resource Definition)
 {: #crd }
 
-A Kubernetes extension mechanism used by Lenny to define platform-specific resources. Key CRDs include `Sandbox` (agent pod), `SandboxTemplate` (pool template), `SandboxClaim` (pod claim), and `RuntimeUpgrade` (rolling upgrade). See [Operator Guide](../operator-guide/).
+A Kubernetes extension mechanism used by Lenny to define platform-specific resources. Key CRDs include `AgentPod` (agent pod), `PodSet` (pool template), `PodClaim` (pod claim), and `RuntimeUpgrade` (rolling upgrade). See [Operator Guide](../operator-guide/).
 
 ## D
 
@@ -255,7 +255,7 @@ The unit of content delivery in Lenny sessions. MessageParts support multiple ty
 ### Occupancy Episode
 {: #occupancy-episode }
 
-The interval during which a pod holds at least one bound session under a single `SandboxClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pod the pool's current configuration no longer admits for reuse, or when a release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)). See [State Machines](state-machines).
+The interval during which a pod holds at least one bound session under a single `PodClaim`, plus the reserved hold that extends it across idle gaps. Claim CREATE and DELETE traffic scales with occupancy episodes rather than with sessions: one claim spans many sessions on a recycling pod, and the per-pod claim is deleted only when the reserved hold expires or the pod terminates, when an acquisition ends the hold on a pod the pool's current configuration no longer admits for reuse, or when a release ends the occupancy without reuse ([Recycle lifecycle](execution-modes#recycle-lifecycle)). See [State Machines](state-machines).
 
 ## P
 
@@ -277,7 +277,7 @@ The default warm pod state where the agent process is NOT started. The pod is sc
 ### Pool
 {: #pool }
 
-A logical grouping of warm pods sharing the same runtime, resource class, and isolation profile. Pools are defined via `SandboxTemplate` CRDs and managed by the Warm Pool Controller. Each pool has its own `minWarm` target, scaling policy, and checkpointing configuration. See [Configuration Reference](configuration).
+A logical grouping of warm pods sharing the same runtime, resource class, and isolation profile. Pools are defined via `PodSet` CRDs and managed by the Warm Pool Controller. Each pool has its own `minWarm` target, scaling policy, and checkpointing configuration. See [Configuration Reference](configuration).
 
 ### PoolScalingController
 {: #poolscalingcontroller }
@@ -333,15 +333,15 @@ A Kubernetes resource that specifies which container runtime handler (runc, gVis
 
 Re-running a completed session's prompt history against a different runtime version for regression testing. Initiated via `POST /v1/sessions/{id}/replay`. The replayed session creates a new independent session with the source's workspace and prompt history but executes against the target runtime. See [REST API Reference](../api/rest).
 
-### Sandbox CRD
+### AgentPod CRD
 {: #sandbox-crd }
 
-The `kubernetes-sigs/agent-sandbox` Custom Resource Definition used by Lenny as its pod lifecycle primitive. `Sandbox` resources represent individual agent pods; `SandboxTemplate` resources define pool templates. Adopted as Lenny's infrastructure layer.
+The `kubernetes-sigs/agent-sandbox` Custom Resource Definition used by Lenny as its pod lifecycle primitive. `AgentPod` resources represent individual agent pods; `PodSet` resources define pool templates. Adopted as Lenny's infrastructure layer.
 
-### SandboxTemplate
-{: #sandboxtemplate }
+### PodSet
+{: #podset }
 
-A CRD defining a warm pool's pod template -- container image, resource limits, RuntimeClass, environment variables, and other pod-level configuration. The Warm Pool Controller creates `Sandbox` pods from `SandboxTemplate` resources.
+A CRD defining a warm pool's pod template -- container image, resource limits, RuntimeClass, environment variables, and other pod-level configuration. The Warm Pool Controller creates `AgentPod` pods from `PodSet` resources.
 
 ### Scope Narrowing
 {: #scope-narrowing }

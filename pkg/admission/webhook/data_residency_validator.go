@@ -16,7 +16,7 @@ import (
 // validator decodes from any admitted resource: the dataResidencyRegion
 // field (read from either spec or the object root) and the tenant the
 // resource belongs to. Every tenant-scoped CRD the §12.8 webhook
-// covers — SandboxClaim and any Tenant or Environment configuration
+// covers — PodClaim and any Tenant or Environment configuration
 // resource — exposes these under one of the JSON paths probed below.
 type residencyObject struct {
 	Metadata struct {
@@ -58,8 +58,8 @@ type TenantRegionResolver interface {
 // match or inherit their tenant's region. A Tenant resource is not in
 // the set — a tenant has no parent to inherit from.
 var environmentScopedKinds = map[string]struct{}{
-	"Environment":  {},
-	"SandboxClaim": {},
+	"Environment": {},
+	"PodClaim":    {},
 }
 
 // DataResidencyValidator returns the Decider for the

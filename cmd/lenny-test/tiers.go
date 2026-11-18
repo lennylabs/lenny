@@ -161,7 +161,7 @@ func tiersForGroup(name string) []tierPlan {
 	case "phase-1-gate":
 		return []tierPlan{
 			{name: "static", notes: "schemas validate, contract tests compile, examples round-trip"},
-			{name: "unit", notes: "state-machine packages: Session, TaskRecord, Sandbox, SandboxClaim"},
+			{name: "unit", notes: "state-machine packages: Session, TaskRecord, AgentPod, PodClaim"},
 		}
 	case "phase-1.5-gate":
 		return []tierPlan{
@@ -195,7 +195,7 @@ func tiersForGroup(name string) []tierPlan {
 	case "phase-3.5-gate":
 		return []tierPlan{
 			{name: "static", notes: "admission decision packages build"},
-			{name: "unit", notes: "§4.6.1 sandboxclaim_guard, §17.2 label_immutability, §4.6.3 ownership matrix — every rule asserted"},
+			{name: "unit", notes: "§4.6.1 podclaim_guard, §17.2 label_immutability, §4.6.3 ownership matrix — every rule asserted"},
 		}
 	case "phase-4-gate":
 		return []tierPlan{

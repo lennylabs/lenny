@@ -76,12 +76,10 @@ const (
 	matCredControlRuntime = "control-tool"
 	matCredRaceRuntime    = "race-tool"
 
-	matCredControlPool    = "control-pool"
-	matCredRacePool       = "race-pool"
-	matCredControlTmpl    = "control-tmpl"
-	matCredRaceTmpl       = "race-tmpl"
-	matCredControlSandbox = "sbx-mat-control"
-	matCredRaceSandbox    = "sbx-mat-race"
+	matCredControlPool     = "control-pool"
+	matCredRacePool        = "race-pool"
+	matCredControlAgentPod = "sbx-mat-control"
+	matCredRaceAgentPod    = "sbx-mat-race"
 )
 
 // materializeLeaseRecord captures one AssignProto delivery: the credential pool
@@ -353,10 +351,10 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 		}
 
 		// The claimed warm pod was released (rollbackClaim): its per-pod
-		// SandboxClaim is deleted, so no warm pod leaks past the losing
+		// PodClaim is deleted, so no warm pod leaks past the losing
 		// assignment.
-		var claim lennyv1.SandboxClaim
-		if err := cluster.Get(ctx, client.ObjectKey{Namespace: deliveryGateNS, Name: "claim-" + matCredRaceSandbox}, &claim); err == nil {
+		var claim lennyv1.PodClaim
+		if err := cluster.Get(ctx, client.ObjectKey{Namespace: deliveryGateNS, Name: "claim-" + matCredRaceAgentPod}, &claim); err == nil {
 			t.Error("per-pod claim still present after the assignment race; the claimed warm pod leaked")
 		} else if !apierrors.IsNotFound(err) {
 			t.Fatalf("get race claim: %v", err)
@@ -390,7 +388,7 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 // materializeCredCluster returns an envtest-backed cluster seeded with the
 // control and race warm pools, their templates (SPIFFE binding not disabled, so
 // the §4.9 credential-delivery isolation gate does not reject the control
-// child), and one idle Sandbox per pool for the delegated child to claim.
+// child), and one idle AgentPod per pool for the delegated child to claim.
 func materializeCredCluster(t *testing.T) client.Client {
 	t.Helper()
 	env := envtest.Start(t)
@@ -409,39 +407,38 @@ func materializeCredCluster(t *testing.T) client.Client {
 	if err := c.Create(ctx, &corev1.Namespace{ObjectMeta: metav1.ObjectMeta{Name: deliveryGateNS}}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	seedMaterializeCredPool(t, c, matCredControlPool, matCredControlTmpl, matCredControlRuntime)
-	seedMaterializeCredSandbox(t, c, matCredControlSandbox, matCredControlPool, "10.244.5.21")
-	seedMaterializeCredPool(t, c, matCredRacePool, matCredRaceTmpl, matCredRaceRuntime)
-	seedMaterializeCredSandbox(t, c, matCredRaceSandbox, matCredRacePool, "10.244.5.22")
+	seedMaterializeCredPool(t, c, matCredControlPool, matCredControlRuntime)
+	seedMaterializeCredAgentPod(t, c, matCredControlAgentPod, matCredControlPool, "10.244.5.21")
+	seedMaterializeCredPool(t, c, matCredRacePool, matCredRaceRuntime)
+	seedMaterializeCredAgentPod(t, c, matCredRaceAgentPod, matCredRacePool, "10.244.5.22")
 	return c
 }
 
-// seedMaterializeCredPool creates a SandboxWarmPool and its SandboxTemplate for
+// seedMaterializeCredPool creates a PodSet for
 // the given runtime under the sandboxed §5.3 profile.
-func seedMaterializeCredPool(t *testing.T, c client.Client, pool, tmpl, runtimeRef string) {
+func seedMaterializeCredPool(t *testing.T, c client.Client, pool, runtimeRef string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := c.Create(ctx, &lennyv1.SandboxWarmPool{
+	if err := c.Create(ctx, &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: pool, Namespace: deliveryGateNS},
-		Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: tmpl, MinWarm: 1, MaxWarm: 5},
+		Spec: lennyv1.PodSetSpec{
+			RuntimeRef:       runtimeRef,
+			IsolationProfile: string(isolation.ProfileSandboxed),
+			MinWarm:          1,
+			MaxWarm:          5,
+		},
 	}); err != nil {
-		t.Fatalf("create warm pool %s: %v", pool, err)
-	}
-	if err := c.Create(ctx, &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: tmpl, Namespace: deliveryGateNS},
-		Spec:       lennyv1.SandboxTemplateSpec{RuntimeRef: runtimeRef, IsolationProfile: string(isolation.ProfileSandboxed)},
-	}); err != nil {
-		t.Fatalf("create template %s: %v", tmpl, err)
+		t.Fatalf("create pod set %s: %v", pool, err)
 	}
 }
 
-// seedMaterializeCredSandbox creates an idle Sandbox in the pool and stamps its
+// seedMaterializeCredAgentPod creates an idle AgentPod in the pool and stamps its
 // status under the WarmPoolController field owner, matching the production
 // Apply path the create/claim path reads.
-func seedMaterializeCredSandbox(t *testing.T, c client.Client, name, pool, podIP string) {
+func seedMaterializeCredAgentPod(t *testing.T, c client.Client, name, pool, podIP string) {
 	t.Helper()
 	ctx := context.Background()
-	if err := c.Create(ctx, &lennyv1.Sandbox{
+	if err := c.Create(ctx, &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name: name, Namespace: deliveryGateNS,
 			Labels: map[string]string{warmpool.LabelPool: pool},
@@ -451,7 +448,7 @@ func seedMaterializeCredSandbox(t *testing.T, c client.Client, name, pool, podIP
 	}
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName(name)
 	u.SetNamespace(deliveryGateNS)
 	_ = unstructured.SetNestedField(u.Object, map[string]interface{}{"phase": "idle", "podIP": podIP}, "status")

@@ -16,7 +16,7 @@ import (
 
 // spec: §10.5 — GET /internal/runtime-upgrade/active reports
 // whether a pool has an active (non-terminal) RuntimeUpgrade so the
-// sandboxtemplate-deletion-guard webhook can refuse a delete.
+// podset-deletion-guard webhook can refuse a delete.
 
 // seed builds a memory store carrying one record for pool.
 func seed(t *testing.T, rec runtimeupgradestore.Record) *runtimeupgradestore.Memory {

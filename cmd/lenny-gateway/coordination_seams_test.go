@@ -145,17 +145,17 @@ type fakeReadoptDialer struct {
 	podIP        string
 	adapter      *adapterclient.Client
 	err          error
-	gotSandbox   string
+	gotAgentPod  string
 	dialAttempts int
 }
 
-func (d *fakeReadoptDialer) ReadoptConnect(_ context.Context, sandboxName string) (*lennyv1.Sandbox, *adapterclient.Client, error) {
+func (d *fakeReadoptDialer) ReadoptConnect(_ context.Context, agentPodName string) (*lennyv1.AgentPod, *adapterclient.Client, error) {
 	d.dialAttempts++
-	d.gotSandbox = sandboxName
+	d.gotAgentPod = agentPodName
 	if d.err != nil {
 		return nil, nil, d.err
 	}
-	return &lennyv1.Sandbox{Status: lennyv1.SandboxStatus{PodIP: d.podIP}}, d.adapter, nil
+	return &lennyv1.AgentPod{Status: lennyv1.AgentPodStatus{PodIP: d.podIP}}, d.adapter, nil
 }
 
 // fakeReadoptFencer records the fence call and returns a scripted outcome.
@@ -170,12 +170,12 @@ func (f *fakeReadoptFencer) Fence(_ context.Context, _ *adapterclient.Client, _,
 	return f.relinquished, f.err
 }
 
-type fakeSandboxReader struct {
+type fakeAgentPodReader struct {
 	row sessionstore.Session
 	err error
 }
 
-func (r fakeSandboxReader) Get(_ context.Context, _, _ string) (sessionstore.Session, error) {
+func (r fakeAgentPodReader) Get(_ context.Context, _, _ string) (sessionstore.Session, error) {
 	return r.row, r.err
 }
 
@@ -214,7 +214,7 @@ func (r *recordingReleaser) Release(_ context.Context, tenantID, sessionID, hold
 }
 
 // TestReadoptAndFencePublishesOnFenceAck pins the crash-takeover happy path:
-// the re-adopt dials the still-running pod from its persisted SandboxName,
+// the re-adopt dials the still-running pod from its persisted AgentPodName,
 // fences it, and returns a publish callback that places the re-established
 // serving binding into the registry only after the fence acknowledges.
 //
@@ -227,7 +227,7 @@ func TestReadoptAndFencePublishesOnFenceAck(t *testing.T) {
 	fencer := &fakeReadoptFencer{}
 	pub := &recordingPublisher{}
 	rel := &recordingReleaser{}
-	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+	sessions := fakeAgentPodReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
 	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err != nil {
@@ -236,8 +236,8 @@ func TestReadoptAndFencePublishesOnFenceAck(t *testing.T) {
 	if len(rel.released) != 0 {
 		t.Fatalf("readoptAndFence released the lease on a successful fence: releases=%v", rel.released)
 	}
-	if dialer.gotSandbox != "sbx-1" {
-		t.Fatalf("dialed sandbox %q, want the persisted PodAssignment sbx-1", dialer.gotSandbox)
+	if dialer.gotAgentPod != "sbx-1" {
+		t.Fatalf("dialed sandbox %q, want the persisted PodAssignment sbx-1", dialer.gotAgentPod)
 	}
 	if len(pub.published) != 0 {
 		t.Fatal("binding published before the Sweeper invoked the publish callback (violates the no-RPC-before-fence precondition)")
@@ -247,7 +247,7 @@ func TestReadoptAndFencePublishesOnFenceAck(t *testing.T) {
 		t.Fatalf("publish callback did not publish the binding: %d bindings", len(pub.published))
 	}
 	got := pub.published[0]
-	if got.SessionID != "s1" || got.TenantID != "acme" || got.SandboxName != "sbx-1" || got.PodIP != "10.0.0.7" || got.Adapter != adapterConn {
+	if got.SessionID != "s1" || got.TenantID != "acme" || got.AgentPodName != "sbx-1" || got.PodIP != "10.0.0.7" || got.Adapter != adapterConn {
 		t.Fatalf("published binding = %+v, want the re-established serving binding for s1", got)
 	}
 }
@@ -266,7 +266,7 @@ func TestReadoptAndFenceClosesConnAndReturnsErrorOnFenceFailure(t *testing.T) {
 	fencer := &fakeReadoptFencer{relinquished: true, err: errors.New("relinquished")}
 	pub := &recordingPublisher{}
 	rel := &recordingReleaser{}
-	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+	sessions := fakeAgentPodReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
 	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
@@ -307,7 +307,7 @@ func TestReadoptAndFenceReleasesLeaseOnNonRelinquishFenceFailure(t *testing.T) {
 	fencer := &fakeReadoptFencer{relinquished: false, err: errors.New("read coordination_generation")}
 	pub := &recordingPublisher{}
 	rel := &recordingReleaser{}
-	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+	sessions := fakeAgentPodReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
 	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
@@ -343,7 +343,7 @@ func TestReadoptAndFenceSurfacesReleaseFailureOnNonRelinquishFence(t *testing.T)
 	fencer := &fakeReadoptFencer{relinquished: false, err: errors.New("read coordination_generation")}
 	pub := &recordingPublisher{}
 	rel := &recordingReleaser{err: errors.New("redis unavailable")}
-	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+	sessions := fakeAgentPodReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
 	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
@@ -374,7 +374,7 @@ func TestReadoptAndFenceReleasesLeaseOnDialFailure(t *testing.T) {
 	fencer := &fakeReadoptFencer{}
 	pub := &recordingPublisher{}
 	rel := &recordingReleaser{}
-	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
+	sessions := fakeAgentPodReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1"}}
 
 	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
@@ -411,7 +411,7 @@ func TestReadoptAndFenceReleasesLeaseOnSessionReadFailure(t *testing.T) {
 	fencer := &fakeReadoptFencer{}
 	pub := &recordingPublisher{}
 	rel := &recordingReleaser{}
-	sessions := fakeSandboxReader{err: errors.New("session row read failed")}
+	sessions := fakeAgentPodReader{err: errors.New("session row read failed")}
 
 	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: fencer, registry: pub, sessions: sessions, releaser: rel, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 2)
 	if err == nil {
@@ -462,7 +462,7 @@ func TestReadoptPublishesHandoffGeneration_spec_10_1_5(t *testing.T) {
 	adapterConn := dialSeamsAdapter(t)
 	dialer := &fakeReadoptDialer{podIP: "10.0.0.7", adapter: adapterConn}
 	pub := &recordingPublisher{}
-	sessions := fakeSandboxReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1", CoordinationGeneration: 6}}
+	sessions := fakeAgentPodReader{row: sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "sbx-1", CoordinationGeneration: 6}}
 
 	publish, err := readoptAndFence(context.Background(), readoptSeams{dialer: dialer, fencer: &fakeReadoptFencer{}, registry: pub, sessions: sessions, releaser: &recordingReleaser{}, pools: fakePoolResolver{}}, "acme", "s1", "replica-A", 7)
 	if err != nil {

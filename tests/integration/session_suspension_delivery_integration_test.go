@@ -204,7 +204,7 @@ func TestHeldMessagesReachTheRuntimeInOrder_spec_7_2(t *testing.T) {
 		// until the DLQ entry below is enqueued.
 		for _, p := range h.Cluster.Pods() {
 			if p.Name != h.Row(id).PodAssignment {
-				_ = h.Cluster.RemoveSandbox(ctx, p)
+				_ = h.Cluster.RemoveAgentPod(ctx, p)
 			}
 		}
 		lifecycleharness.Report(t, r, id, string(session.FailureRuntimeCrash))

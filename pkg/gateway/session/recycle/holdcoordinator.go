@@ -88,7 +88,7 @@ type timerHandle interface {
 
 // HoldCoordinatorOptions configures a HoldCoordinator.
 type HoldCoordinatorOptions struct {
-	// Client patches the SandboxClaim status subresource on a rebind and
+	// Client patches the PodClaim status subresource on a rebind and
 	// deletes the claim on hold expiry. Required.
 	Client client.Client
 	// Namespace is the agent namespace the claims live in. Required.

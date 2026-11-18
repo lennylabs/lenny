@@ -141,7 +141,7 @@ type releaseFixture struct {
 }
 
 // newReleaseFixture brings up a real kube-apiserver holding one idle
-// Sandbox, a miniredis-backed slot counter, and an adapter served over an
+// AgentPod, a miniredis-backed slot counter, and an adapter served over an
 // in-memory connection.
 func newReleaseFixture(t *testing.T, rt adapter.RuntimeProcess, configure ...func(*adapter.Server)) *releaseFixture {
 	t.Helper()
@@ -223,7 +223,7 @@ func (f *releaseFixture) activeSlots(t *testing.T) int {
 // episode and is disposed of when the pod's last slot releases.
 func (f *releaseFixture) claimExists(t *testing.T) bool {
 	t.Helper()
-	var claim lennyv1.SandboxClaim
+	var claim lennyv1.PodClaim
 	err := f.kube.Get(context.Background(), client.ObjectKey{
 		Namespace: releaseNS, Name: podclaim.ClaimName(releasePod),
 	}, &claim)
@@ -493,7 +493,7 @@ func TestHoldTerminatedSessionDecrementsItsSlotExactlyOnce_spec_10_1(t *testing.
 }
 
 // releaseKubeClient starts an envtest kube-apiserver holding one idle
-// Sandbox in the pool. The gateway's slot claim uses SSA Apply, which the
+// AgentPod in the pool. The gateway's slot claim uses SSA Apply, which the
 // controller-runtime fake client does not implement, so the case needs a
 // real apiserver.
 func releaseKubeClient(t *testing.T) client.Client {
@@ -516,28 +516,28 @@ func releaseKubeClient(t *testing.T) client.Client {
 	}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	sb := &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+	sb := &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{
 		Name:      releasePod,
 		Namespace: releaseNS,
 		Labels:    map[string]string{warmpool.LabelPool: releasePool},
 	}}
 	if err := c.Create(ctx, sb); err != nil {
-		t.Fatalf("create Sandbox: %v", err)
+		t.Fatalf("create AgentPod: %v", err)
 	}
 	// §4.6.3 field ownership: the WarmPoolController owns the phase and
 	// the pod address, so the seed is applied under its field manager.
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName(releasePod)
 	u.SetNamespace(releaseNS)
 	if err := unstructured.SetNestedField(u.Object,
 		map[string]interface{}{"phase": "idle", "podIP": "10.244.2.5"}, "status"); err != nil {
-		t.Fatalf("build Sandbox status seed: %v", err)
+		t.Fatalf("build AgentPod status seed: %v", err)
 	}
 	if err := c.Status().Patch(ctx, u, client.Apply,
 		client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
-		t.Fatalf("seed Sandbox status: %v", err)
+		t.Fatalf("seed AgentPod status: %v", err)
 	}
 	return c
 }

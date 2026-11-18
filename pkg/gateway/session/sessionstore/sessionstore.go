@@ -61,9 +61,9 @@ type Session struct {
 	FailureReason string
 
 	// TerminatedAt and TerminatedReason carry the §7.2 / §8.8 Terminated
-	// session-condition fact, relocated off Sandbox.status.conditions by
-	// the §5.2 mode collapse: the gateway writes no Sandbox.status field
-	// and the WarmPoolController is the sole writer of Sandbox.status
+	// session-condition fact, relocated off AgentPod.status.conditions by
+	// the §5.2 mode collapse: the gateway writes no AgentPod.status field
+	// and the WarmPoolController is the sole writer of AgentPod.status
 	// (§4.6.3), so the terminal-disposition fact lives on the session row
 	// and is read through the session API (§7.2). TerminatedAt
 	// is the wall-clock instant the session reached a terminal state
@@ -85,7 +85,7 @@ type Session struct {
 	PodReleasedAt time.Time
 
 	// SuspendedAt and SuspendedReason carry the §7.2 Suspended
-	// session-condition fact, relocated off Sandbox.status.conditions
+	// session-condition fact, relocated off AgentPod.status.conditions
 	// alongside the Terminated fact. SuspendedAt is the wall-clock instant
 	// the session entered `suspended`; it is the zero time while the
 	// session is not suspended. SuspendedReason is the coded reason the
@@ -100,7 +100,7 @@ type Session struct {
 	// at create-time and immutable across the session lifetime.
 	RuntimeRef string
 
-	// PoolRef identifies the `SandboxWarmPool` this session was
+	// PoolRef identifies the `PodSet` this session was
 	// scheduled against. Optional; left blank when the row is created
 	// before the gateway has resolved a pool (every primary
 	// `POST /v1/sessions` row populates this at admission).
@@ -121,7 +121,7 @@ type Session struct {
 
 	// ExecutionMode is the §5.2 pool execution mode the assigned pool
 	// resolved to at session creation: "session" (default) or "service".
-	// Resolved from the pool's SandboxTemplate at
+	// Resolved from the pool's PodSet at
 	// /v1/sessions and frozen for the session lifetime per §7.1
 	// so GET /v1/sessions/{id} returns the same envelope a client
 	// received from the create response. Empty when the gateway has not
@@ -350,7 +350,7 @@ type Session struct {
 	// gateway captures it once on the first non-empty Bind and never
 	// rewrites it — a subsequent Resume passes the recorded value to
 	// the replacement pod's adapter for the "same absolute cwd path"
-	// assertion, so a SandboxTemplate change between the original and
+	// assertion, so a PodSet change between the original and
 	// replacement pods cannot silently restore into the wrong path.
 	// Empty when the session never reached a §15.5-capable adapter (a
 	// pre-bind session row or an older adapter that does not report
@@ -1240,7 +1240,7 @@ type Store interface {
 	// less than the cutoff, is kept, so an unreclaimed record over-counts
 	// its pod and never under-counts it.
 	// spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment
-	// atomicity), §4.6.1 (Orphaned SandboxClaim detection).
+	// atomicity), §4.6.1 (Orphaned PodClaim detection).
 	ReclaimSlotReservations(ctx context.Context, cutoff time.Time) (int, error)
 
 	// PoolDrainStats returns the §15.1 pool-drain accounting for

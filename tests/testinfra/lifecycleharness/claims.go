@@ -4,7 +4,7 @@ package lifecycleharness
 
 import "sync"
 
-// ClaimLog records the Sandbox each SandboxClaim a replica's binder created
+// ClaimLog records the AgentPod each PodClaim a replica's binder created
 // names, in creation order. A claim that a later release deletes stays in
 // the log, so a scenario that asserts how many pods a race claimed counts
 // the claims an uncommitted restore retired as well as the claims still

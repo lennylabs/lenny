@@ -32,7 +32,7 @@ type PoolReader interface {
 	// registered pool.
 	ListPools(ctx context.Context) ([]PoolStatus, error)
 	// GetPoolStatus reports a single pool's status. It returns
-	// ErrPoolNotFound when poolName has no SandboxTemplate.
+	// ErrPoolNotFound when poolName has no PodSet.
 	GetPoolStatus(ctx context.Context, poolName string) (PoolStatus, error)
 }
 
@@ -41,7 +41,7 @@ type PoolReader interface {
 type PodLifecycleManager interface {
 	PoolReader
 	// ClaimPod acquires an idle pod from poolName for sessionID by creating
-	// the §4.6.1 per-pod occupancy SandboxClaim (`claim-<podName>`) that
+	// the §4.6.1 per-pod occupancy PodClaim (`claim-<podName>`) that
 	// guards acquisition; the returned handle references the claimed pod.
 	// The claim is keyed off the pod, not the session: the session-to-pod
 	// binding lives on the Postgres session row's pod_assignment column, and
@@ -68,12 +68,12 @@ type PodLifecycleManager interface {
 // spec: §4.6.1.
 type PoolManager interface {
 	PoolReader
-	// ReconcilePool ensures the pool's runtime CRDs (SandboxTemplate +
-	// SandboxWarmPool) match the desired configuration.
+	// ReconcilePool ensures the pool's runtime CRDs (PodSet +
+	// PodSet) match the desired configuration.
 	ReconcilePool(ctx context.Context, poolConfig PoolConfig) error
 	// ApplyPoolDefinition is the CRUD surface for pool definitions. It
-	// creates, updates, or deletes the pool's SandboxTemplate and
-	// SandboxWarmPool CRDs. A poolDef with Deleted = true tears the
+	// creates, updates, or deletes the pool's PodSet and
+	// PodSet CRDs. A poolDef with Deleted = true tears the
 	// pool down.
 	ApplyPoolDefinition(ctx context.Context, poolDef PoolDefinition) error
 	// ReplacePod proactively replaces a pod (cert-expiry refresh,
@@ -81,15 +81,15 @@ type PoolManager interface {
 	// replacement metric.
 	ReplacePod(ctx context.Context, handle PodHandle, reason string) error
 	// TransitionPodState writes a §6.2 phase transition on the pod's
-	// Sandbox status. It rejects transitions the state machine does
+	// AgentPod status. It rejects transitions the state machine does
 	// not allow (TransitionRejectedError).
 	TransitionPodState(ctx context.Context, handle PodHandle, from, to PodState) error
 	// GarbageCollect runs the §4.6.1 orphan-detection sweep: orphaned
-	// Sandboxes (no matching pool) and orphaned SandboxClaims (no
+	// AgentPods (no matching pool) and orphaned PodClaims (no
 	// matching active session).
 	GarbageCollect(ctx context.Context) ([]OrphanResult, error)
 	// ManageFinalizer adds or removes the §4.6.1 lenny.dev/session-
-	// cleanup finalizer on the pod's Sandbox.
+	// cleanup finalizer on the pod's AgentPod.
 	ManageFinalizer(ctx context.Context, handle PodHandle, action FinalizerAction) error
 	// ManagePDB creates, updates, or deletes the pool's
 	// PodDisruptionBudget per config.
@@ -98,7 +98,7 @@ type PoolManager interface {
 	// true each drain runs the §7.1 seal-and-export sequence.
 	DrainPool(ctx context.Context, poolName string, checkpointFirst bool) error
 	// SetPoolCondition writes a status condition on the pool's
-	// SandboxTemplate (e.g., Degraded when the RuntimeClass is
+	// PodSet (e.g., Degraded when the RuntimeClass is
 	// missing). reason is the condition's free-form reason field.
 	SetPoolCondition(ctx context.Context, poolName string, condition PoolCondition, reason string) error
 }
@@ -106,9 +106,9 @@ type PoolManager interface {
 // ClaimOpts carries the per-claim parameters from §4.6.1.
 type ClaimOpts struct {
 	// TenantID is the tenant the claimed pod is pinned to. ClaimPod stamps
-	// it onto the per-pod SandboxClaim spec (`spec.tenantId`) alongside
-	// sandboxRef, matching the §4.6.1 claim-spec contract: the claim's
-	// spec carries sandboxRef and tenantId. Empty leaves the claim
+	// it onto the per-pod PodClaim spec (`spec.tenantId`) alongside
+	// agentPodRef, matching the §4.6.1 claim-spec contract: the claim's
+	// spec carries agentPodRef and tenantId. Empty leaves the claim
 	// unpinned, the §5.2 default for a pool without lifetime tenant pinning.
 	TenantID string
 	// Priority is the §5.2 scheduling priority class hint. An empty
@@ -123,12 +123,12 @@ type ClaimOpts struct {
 // "PodHandle carries metadata: warmMode, certExpiresAt, adapterEndpoint"
 // surface plus the namespace+name lookup keys the implementations need.
 type PodHandle struct {
-	// SandboxName names the Sandbox CRD claimed for the session.
-	SandboxName string
-	// Namespace is the agent namespace the Sandbox lives in.
+	// AgentPodName names the AgentPod CRD claimed for the session.
+	AgentPodName string
+	// Namespace is the agent namespace the AgentPod lives in.
 	Namespace string
 	// SessionID is the session the claim was acquired for. The per-pod
-	// occupancy SandboxClaim (`claim-<SandboxName>`) is keyed off the pod,
+	// occupancy PodClaim (`claim-<AgentPodName>`) is keyed off the pod,
 	// not the session, so this field is attribution only: the
 	// session-to-pod binding lives on the Postgres session row's
 	// pod_assignment column (§4.6.1).
@@ -149,19 +149,19 @@ type PodHandle struct {
 // PodStatus is the read-only pod-status response returned by
 // GetPodStatus. spec: §4.6.1.
 type PodStatus struct {
-	// Phase is the §6.2 phase from Sandbox.status.phase.
+	// Phase is the §6.2 phase from AgentPod.status.phase.
 	Phase PodState
 	// PodIP is the cluster IP of the backing Pod.
 	PodIP string
-	// PodName is the underlying Pod backing the Sandbox.
+	// PodName is the underlying Pod backing the AgentPod.
 	PodName string
 	// NodeName is the host node the pod is scheduled on.
 	NodeName string
-	// CertExpiresAt is the adapter cert expiry on the Sandbox.
+	// CertExpiresAt is the adapter cert expiry on the AgentPod.
 	CertExpiresAt time.Time
 	// TenantID is the §5.2 tenant pinning, empty for an unassigned
 	// pod. The per-pod slot count lives in the Redis counter (§5.2),
-	// no longer on Sandbox.status, so it is not surfaced here.
+	// no longer on AgentPod.status, so it is not surfaced here.
 	TenantID string
 }
 
@@ -170,7 +170,7 @@ type PodStatus struct {
 type PoolStatus struct {
 	// Name is the pool name.
 	Name string
-	// Namespace is the agent namespace the pool's SandboxTemplate
+	// Namespace is the agent namespace the pool's PodSet
 	// lives in.
 	Namespace string
 	// MinWarm is the spec'd minimum warm-pod count.
@@ -202,7 +202,7 @@ type DrainResult struct {
 	// was exhausted (the pod was torn down anyway, per §7.1).
 	SealExhausted bool
 	// TornDown reports whether the underlying pod was actually
-	// deleted. A drain of an already-deleted Sandbox is a no-op.
+	// deleted. A drain of an already-deleted AgentPod is a no-op.
 	TornDown bool
 }
 
@@ -226,14 +226,14 @@ type PoolDefinition struct {
 	// false. When Deleted is true Spec is ignored.
 	Spec PoolConfig
 	// Deleted = true tears the pool down (the implementation deletes
-	// the SandboxTemplate + SandboxWarmPool CRDs).
+	// the PodSet CRDs).
 	Deleted bool
 }
 
 // OrphanResult is one row of the GarbageCollect sweep. spec:
 // §4.6.1.
 type OrphanResult struct {
-	// Kind names the orphan resource: "Sandbox" or "SandboxClaim".
+	// Kind names the orphan resource: "AgentPod" or "PodClaim".
 	Kind string
 	// Namespace + Name identify the orphan.
 	Namespace string
@@ -289,7 +289,7 @@ const (
 )
 
 // PodState mirrors the §6.2 coarse pod-occupancy phase written into
-// Sandbox.status.phase. The named constants here are the only values the
+// AgentPod.status.phase. The named constants here are the only values the
 // WarmPoolController projects onto the CRD; the fine session-lifecycle
 // states live in the Postgres session model and are not mirrored here
 // (spec: §6.2). This block stays in lockstep with

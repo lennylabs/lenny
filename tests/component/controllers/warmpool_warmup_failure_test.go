@@ -14,7 +14,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	ctrlmetrics "sigs.k8s.io/controller-runtime/pkg/metrics"
 
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -87,7 +87,7 @@ func (e *terminatedAdapterEnv) setPodEvicted(name string) {
 // diagnosis: A warming pod whose runtime container waits on an image pull
 // failure was not counted as error_type="image_pull_error" with the pool
 // and runtime_class labels, or a level-triggered reconcile counted the same
-// stuck pod more than once. Check the Sandbox reconciler's warm-up failure
+// stuck pod more than once. Check the AgentPod reconciler's warm-up failure
 // meter and classifyWarmupPod.
 func TestWarmingPodImagePullFailureCountedOnce(t *testing.T) {
 	e := newTerminatedAdapterEnv(t)
@@ -96,7 +96,7 @@ func TestWarmingPodImagePullFailureCountedOnce(t *testing.T) {
 
 	e.setPodWaitingOnImagePull(name)
 	for i := 0; i < 3; i++ {
-		e.reconcileSandbox(name)
+		e.reconcileAgentPod(name)
 	}
 	if got := warmupFailures(t, "image_pull_error") - before; got != 1 {
 		t.Fatalf("image_pull_error delta = %v after three reconciles of one stuck pod, want 1", got)
@@ -108,7 +108,7 @@ func TestWarmingPodImagePullFailureCountedOnce(t *testing.T) {
 
 // spec: 16.1 (Metrics), 6.2 (Pod State Machine, warming → failed)
 // diagnosis: A warming pod failed by a kubelet node-pressure eviction was
-// not counted as error_type="node_pressure", or the Sandbox did not take
+// not counted as error_type="node_pressure", or the AgentPod did not take
 // the warming → failed edge. Check classifyWarmupPod and the observation
 // order in Reconcile (the meter reads the phase before the reconcile
 // moves it).
@@ -118,11 +118,11 @@ func TestWarmingPodEvictionCountedAsNodePressure(t *testing.T) {
 	before := warmupFailures(t, "node_pressure")
 
 	e.setPodEvicted(name)
-	e.reconcileSandbox(name)
+	e.reconcileAgentPod(name)
 	if got := e.phase(name); got != state.Failed {
 		t.Fatalf("evicted warming pod: phase = %q, want failed", got)
 	}
-	e.reconcileSandbox(name) // failed → draining: past warm-up, no count
+	e.reconcileAgentPod(name) // failed → draining: past warm-up, no count
 	if got := warmupFailures(t, "node_pressure") - before; got != 1 {
 		t.Fatalf("node_pressure delta = %v, want 1", got)
 	}
@@ -154,9 +154,9 @@ func TestWarmPodCreationRejectedByQuotaCounted(t *testing.T) {
 	}
 
 	e.reconcilePool()
-	sbs := e.sandboxes()
+	sbs := e.agentPods()
 	if len(sbs) != 1 {
-		t.Fatalf("pool fill created %d sandboxes, want 1", len(sbs))
+		t.Fatalf("pool fill created %d agentpods, want 1", len(sbs))
 	}
 	name := sbs[0].Name
 	before := warmupFailures(t, "resource_quota_exceeded")
@@ -170,6 +170,6 @@ func TestWarmPodCreationRejectedByQuotaCounted(t *testing.T) {
 		t.Fatalf("a pod was created under a pods=0 quota")
 	}
 	if got := warmupFailures(t, "resource_quota_exceeded") - before; got != 1 {
-		t.Fatalf("resource_quota_exceeded delta = %v after three rejected creations of one Sandbox, want 1", got)
+		t.Fatalf("resource_quota_exceeded delta = %v after three rejected creations of one AgentPod, want 1", got)
 	}
 }

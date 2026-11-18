@@ -4,9 +4,9 @@
 // limiting: two dedicated client-side token buckets routed by request, so
 // pod-creation traffic is never starved by status-update traffic.
 //
-//   - Pod creation bucket: Create calls for new Sandbox pods.
-//   - Status update bucket: UpdateStatus calls on Sandbox and
-//     SandboxWarmPool resources.
+//   - Pod creation bucket: Create calls for new AgentPod pods.
+//   - Status update bucket: UpdateStatus calls on AgentPod and
+//     PodSet resources.
 //
 // All other API server requests (reads, deletions, finalizer updates)
 // share the controller-runtime default rate limiter. The buckets are
@@ -104,12 +104,12 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // classify routes a request to its bucket from the HTTP method and path.
-// POST to a sandboxes collection is a pod Create; PUT/PATCH to a
-// sandboxes or sandboxwarmpools status subresource is a status update.
+// POST to an agentpods collection is a pod Create; PUT/PATCH to an
+// agentpods or podsets status subresource is a status update.
 func classify(method, path string) bucket {
 	switch method {
 	case http.MethodPost:
-		if isSandboxCollection(path) {
+		if isAgentPodCollection(path) {
 			return bucketCreate
 		}
 	case http.MethodPut, http.MethodPatch:
@@ -120,21 +120,21 @@ func classify(method, path string) bucket {
 	return bucketOther
 }
 
-// isSandboxCollection reports whether path addresses the sandboxes
+// isAgentPodCollection reports whether path addresses the agentpods
 // collection (a Create target) rather than a named resource or
 // subresource.
-func isSandboxCollection(path string) bool {
+func isAgentPodCollection(path string) bool {
 	trimmed := strings.TrimRight(path, "/")
-	return strings.HasSuffix(trimmed, "/sandboxes")
+	return strings.HasSuffix(trimmed, "/agentpods")
 }
 
 // isStatusSubresource reports whether path addresses the /status
-// subresource of a sandbox or sandboxwarmpool resource.
+// subresource of an agentpod or podset resource.
 func isStatusSubresource(path string) bool {
 	if !strings.HasSuffix(path, "/status") {
 		return false
 	}
-	return strings.Contains(path, "/sandboxes/") || strings.Contains(path, "/sandboxwarmpools/")
+	return strings.Contains(path, "/agentpods/") || strings.Contains(path, "/podsets/")
 }
 
 // WrapConfig installs the dual rate limiter on cfg. It disables the

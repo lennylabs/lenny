@@ -246,7 +246,7 @@ type ExportScanObserver interface {
 // (nil Observer) makes RunPreExportMaterialization a pure scan with no
 // emission, preserving its use as an independently-testable helper.
 type ExportScanContext struct {
-	// Pool is the §16.1 pool label (the SandboxTemplate name).
+	// Pool is the §16.1 pool label (the PodSet name).
 	Pool string
 	// PolicyName is the §11.7 policy_name: the DelegationPolicy
 	// whose contentPolicy owns the export.

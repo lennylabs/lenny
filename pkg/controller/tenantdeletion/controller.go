@@ -61,7 +61,7 @@ type CredentialRevoker interface {
 }
 
 // CRDCleaner is the §12.8 Phase 5 seam: it removes the tenant-scoped
-// Kubernetes CRD instances (SandboxClaim, pool annotations,
+// Kubernetes CRD instances (PodClaim, pool annotations,
 // NetworkPolicy labels).
 type CRDCleaner interface {
 	// CleanTenantCRDs removes every tenant-scoped CRD instance for
@@ -595,7 +595,7 @@ func (r *Reconciler) runPhase(ctx context.Context, job *Job) error {
 		// §12.8 Phase 5: remove tenant-scoped CRD instances. Optional: a
 		// reconciler hosted without a Kubernetes client (e.g. in the
 		// gateway) relies on Phase 2 session termination and the warm-pool
-		// GC to reap the tenant's SandboxClaims.
+		// GC to reap the tenant's PodClaims.
 		if r.Cleaner != nil {
 			return r.Cleaner.CleanTenantCRDs(ctx, job.TenantID)
 		}

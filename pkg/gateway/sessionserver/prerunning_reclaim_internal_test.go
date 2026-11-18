@@ -84,7 +84,7 @@ type recyclingArmer struct{ armed []string }
 func (r *recyclingArmer) OnRecycling(pod string) { r.armed = append(r.armed, pod) }
 
 // preRunningFixture is a funnel Server whose binder runs over a fake cluster
-// holding pod-a's Sandbox and per-pod claim, a miniredis slot set, a
+// holding pod-a's AgentPod and per-pod claim, a miniredis slot set, a
 // recording assigner, and a recording recycle armer. Every claim delete,
 // claim status patch, and Pod patch (the drain-request stamp) is logged.
 type preRunningFixture struct {
@@ -105,17 +105,17 @@ func newPreRunningFixture(t *testing.T) *preRunningFixture {
 		t.Fatalf("AddToScheme corev1: %v", err)
 	}
 	c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-		&lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{Name: reclaimPod, Namespace: funnelNS}},
-		&lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(reclaimPod), Namespace: funnelNS}},
+		&lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{Name: reclaimPod, Namespace: funnelNS}},
+		&lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(reclaimPod), Namespace: funnelNS}},
 	).WithInterceptorFuncs(interceptor.Funcs{
 		Delete: func(ctx context.Context, cl client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+			if _, ok := obj.(*lennyv1.PodClaim); ok {
 				writes.add("delete-claim")
 			}
 			return cl.Delete(ctx, obj, opts...)
 		},
 		SubResourcePatch: func(ctx context.Context, cl client.Client, sub string, obj client.Object, patch client.Patch, opts ...client.SubResourcePatchOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok {
+			if _, ok := obj.(*lennyv1.PodClaim); ok {
 				writes.add("patch-claim-status")
 			}
 			return cl.SubResource(sub).Patch(ctx, obj, patch, opts...)
@@ -171,7 +171,7 @@ func (p *preRunningFixture) claimPresent(t *testing.T) bool {
 // reservation does after the last release deleted it.
 func (p *preRunningFixture) recreateClaim(t *testing.T) {
 	t.Helper()
-	if err := p.c.Create(context.Background(), &lennyv1.SandboxClaim{
+	if err := p.c.Create(context.Background(), &lennyv1.PodClaim{
 		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName(reclaimPod), Namespace: funnelNS},
 	}); err != nil {
 		t.Fatalf("recreate claim: %v", err)
@@ -195,7 +195,7 @@ func (p *preRunningFixture) terminal(t *testing.T, id string, from, to session.S
 
 func claimExistsIn(t *testing.T, c client.Client, ns, pod string) bool {
 	t.Helper()
-	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(pod)}, &lennyv1.SandboxClaim{})
+	err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(pod)}, &lennyv1.PodClaim{})
 	if err == nil {
 		return true
 	}
@@ -216,7 +216,7 @@ func claimExistsIn(t *testing.T, c client.Client, ns, pod string) bool {
 // shared claim stays and no drain is requested. Every cell releases the
 // session's leases once and makes no executor release.
 //
-// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// spec: §4.6.3 (PodClaim: a release that ends the occupancy without
 // reuse), §5.2 (Slot assignment atomicity), §6.2 (pre-attached
 // disposition), §7.1 step 23 (lease release)
 func TestPreRunningTerminalWritersReleaseByPoolKind_spec_4_6_3(t *testing.T) {
@@ -290,7 +290,7 @@ func TestPreRunningTerminalWritersReleaseByPoolKind_spec_4_6_3(t *testing.T) {
 // slot counted through its leaked member.
 //
 // spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
-// §4.6.3 (SandboxClaim: a release that ends the occupancy without reuse)
+// §4.6.3 (PodClaim: a release that ends the occupancy without reuse)
 func TestPreRunningSlotReleaseIsOncePerSession_spec_5_2(t *testing.T) {
 	ctx := context.Background()
 	deleteTerminal := func(t *testing.T, p *preRunningFixture) {
@@ -298,7 +298,7 @@ func TestPreRunningSlotReleaseIsOncePerSession_spec_5_2(t *testing.T) {
 	}
 	peerRelease := func(t *testing.T, p *preRunningFixture, a *reclaimAdapter) {
 		t.Helper()
-		res := &podsession.BindResult{SessionID: "sess-1", TenantID: "acme", SandboxName: reclaimPod, SlotID: "sess-1"}
+		res := &podsession.BindResult{SessionID: "sess-1", TenantID: "acme", AgentPodName: reclaimPod, SlotID: "sess-1"}
 		if a != nil {
 			res.Adapter = dialReclaimAdapter(t, a)
 		}
@@ -371,7 +371,7 @@ func TestPreRunningSlotReleaseIsOncePerSession_spec_5_2(t *testing.T) {
 // name; a slot reservation removes the session's member and deletes the
 // shared claim only when the set empties. A nil claim releases nothing.
 //
-// spec: §7.1 (atomic-creation rollback), §4.6.3 (SandboxClaim: a release
+// spec: §7.1 (atomic-creation rollback), §4.6.3 (PodClaim: a release
 // that ends the occupancy without reuse), §5.2 (Slot assignment atomicity)
 func TestRollbackClaimReleasesByClaimKind_spec_7_1(t *testing.T) {
 	for _, tc := range []struct {
@@ -384,15 +384,15 @@ func TestRollbackClaimReleasesByClaimKind_spec_7_1(t *testing.T) {
 	}{
 		{name: "nil claim", wantClaim: true, wantMembers: "[]", wantLease: "[]"},
 		{
-			name: "exclusive claim", claim: &podsession.ClaimResult{SandboxName: reclaimPod},
+			name: "exclusive claim", claim: &podsession.ClaimResult{AgentPodName: reclaimPod},
 			wantClaim: false, wantMembers: "[]", wantLease: "[sess-1]",
 		},
 		{
-			name: "slot reservation, alone", claim: &podsession.ClaimResult{SandboxName: reclaimPod, SlotID: "sess-1"},
+			name: "slot reservation, alone", claim: &podsession.ClaimResult{AgentPodName: reclaimPod, SlotID: "sess-1"},
 			reserve: []string{"sess-1"}, wantClaim: false, wantMembers: "[]", wantLease: "[sess-1]",
 		},
 		{
-			name: "slot reservation, live sibling", claim: &podsession.ClaimResult{SandboxName: reclaimPod, SlotID: "sess-1"},
+			name: "slot reservation, live sibling", claim: &podsession.ClaimResult{AgentPodName: reclaimPod, SlotID: "sess-1"},
 			reserve: []string{"sess-1", "sib"}, wantClaim: true, wantMembers: "[sib]", wantLease: "[sess-1]",
 		},
 	} {
@@ -421,7 +421,7 @@ func TestRollbackClaimReleasesByClaimKind_spec_7_1(t *testing.T) {
 // Shutdown; with a live sibling, the claim stays; with a leaked Shutdown,
 // the slot stays counted and the claim stays.
 //
-// spec: §4.6.3 (SandboxClaim: a release that ends the occupancy without
+// spec: §4.6.3 (PodClaim: a release that ends the occupancy without
 // reuse), §5.2 (Recycle lifecycle), §7.1 (atomic-creation rollback)
 func TestRollbackBindingEndsOccupancyWithoutReuse_spec_4_6_3(t *testing.T) {
 	for _, tc := range []struct {
@@ -443,7 +443,7 @@ func TestRollbackBindingEndsOccupancyWithoutReuse_spec_4_6_3(t *testing.T) {
 			p.reserve(t, tc.reserve...)
 			a := &reclaimAdapter{fail: tc.failStop}
 			res := &podsession.BindResult{
-				SessionID: "sess-1", TenantID: "acme", SandboxName: reclaimPod,
+				SessionID: "sess-1", TenantID: "acme", AgentPodName: reclaimPod,
 				Adapter: dialReclaimAdapter(t, a), Recycle: true,
 			}
 			if tc.slot {

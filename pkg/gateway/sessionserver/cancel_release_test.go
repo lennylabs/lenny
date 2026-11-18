@@ -170,7 +170,7 @@ func TestSessionModePodDrainedOnTerminalTransition_spec_6_1(t *testing.T) {
 // terminal writer records the §7.2 / §8.8 Terminated session-condition fact
 // (TerminatedAt + TerminatedReason) on the session row in the same write that
 // sets the terminal state, for DELETE (cancelled) and POST /terminate
-// (completed). The gateway writes no Sandbox.status field for the terminal
+// (completed). The gateway writes no AgentPod.status field for the terminal
 // disposition (§4.6.3), so the fact lives on the session row and is read
 // through the session API (§7.2). The post-terminal funnel stamps nothing
 // itself. F-6.2.12.

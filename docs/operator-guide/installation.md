@@ -136,8 +136,8 @@ Helm does not update CRDs on `helm upgrade`. CRDs must be applied as a separate 
 kubectl apply -f https://github.com/lennylabs/lenny/releases/latest/download/crds.yaml
 
 # Verify installation
-kubectl get crd sandboxtemplates.lenny.dev sandboxwarmpools.lenny.dev \
-  sandboxes.lenny.dev sandboxclaims.lenny.dev
+kubectl get crd podsets.lenny.dev podsets.lenny.dev \
+  agentpods.lenny.dev podclaims.lenny.dev
 ```
 
 For GitOps workflows (ArgoCD/Flux), configure CRDs as a separate sync wave:
@@ -325,7 +325,7 @@ Lenny's validating/conversion admission webhooks are grouped into a baseline set
 | `features.drainReadiness` | `false` | `lenny-drain-readiness` |
 | `features.compliance` | `false` | `lenny-data-residency-validator`, `lenny-t4-node-isolation` |
 
-The baseline set (always expected) is `lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, and the CRD conversion webhook. Flipping a feature flag from `true` to `false` after the corresponding phase has been reached is an unsupported downgrade — the per-webhook unavailability alerts and runtime enforcement paths depend on the webhook's continued presence.
+The baseline set (always expected) is `lenny-label-immutability`, `lenny-podclaim-guard`, `lenny-pool-config-validator`, and the CRD conversion webhook. Flipping a feature flag from `true` to `false` after the corresponding phase has been reached is an unsupported downgrade — the per-webhook unavailability alerts and runtime enforcement paths depend on the webhook's continued presence.
 
 ---
 
@@ -399,11 +399,11 @@ kubectl get pods -n lenny-agents
 kubectl exec -n lenny-system deploy/lenny-gateway -- wget -qO- http://localhost:8080/healthz
 
 # 3. Verify warm pool is populating
-kubectl get sandboxwarmpools -A
-kubectl get sandboxes -A
+kubectl get podsets -A
+kubectl get agentpods -A
 
 # 4. Check CRD versions match
-kubectl get crd sandboxtemplates.lenny.dev \
+kubectl get crd podsets.lenny.dev \
   -o jsonpath='{.metadata.annotations.lenny\.dev/schema-version}'
 
 # 5. Verify admission webhooks are operational

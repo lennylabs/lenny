@@ -181,7 +181,7 @@ func assertDetachedWithinAllowance(t *testing.T, what string, obs []ctxObservati
 }
 
 // spec: §7.1 (Atomicity of session creation (steps 2–8)), §4.6.1 (Orphaned
-// SandboxClaim detection)
+// PodClaim detection)
 // diagnosis: rollbackBinding must release a bound pod even when the request
 // context that ran the create has already ended. The exclusive release goes
 // through Binder.Release and the concurrent-slot release through ReleaseSlot;
@@ -205,17 +205,17 @@ func TestRollbackBindingDetachesFromCancelledCaller_spec_7_1(t *testing.T) {
 			srv := rollbackTestServer(t, rollbackFakeCluster(t, &claimWrites), nil, rollbackTestAllowance)
 			fa := &rollbackFakeAdapter{}
 			result := &podsession.BindResult{
-				SessionID:   "sess-rollback",
-				SandboxName: "sbx-1",
-				SlotID:      tc.slotID,
-				Adapter:     dialRollbackFakeAdapter(t, fa),
+				SessionID:    "sess-rollback",
+				AgentPodName: "sbx-1",
+				SlotID:       tc.slotID,
+				Adapter:      dialRollbackFakeAdapter(t, fa),
 			}
 
 			srv.rollbackBinding(cancelledCtx(), result)
 
 			assertDetachedWithinAllowance(t, "adapter Shutdown", fa.shutdowns.snapshot(), rollbackTestAllowance)
 			if tc.slotID == "" {
-				// The retire path reads the Sandbox on the binder's own
+				// The retire path reads the AgentPod on the binder's own
 				// detached context, which keeps the caller's values but
 				// must not inherit its cancellation.
 				for i, o := range claimWrites.snapshot() {
@@ -229,7 +229,7 @@ func TestRollbackBindingDetachesFromCancelledCaller_spec_7_1(t *testing.T) {
 }
 
 // spec: §7.1 (Atomicity of session creation (steps 2–8)), §4.6.1 (Orphaned
-// SandboxClaim detection)
+// PodClaim detection)
 // diagnosis: rollbackClaim must delete the create-time claim even when the
 // request context has already ended. A failure here means ReclaimClaimed saw
 // a done context, so the claim delete failed and the warm pod stayed claimed
@@ -239,7 +239,7 @@ func TestRollbackClaimDetachesFromCancelledCaller_spec_7_1(t *testing.T) {
 	var claimWrites ctxRecorder
 	srv := rollbackTestServer(t, rollbackFakeCluster(t, &claimWrites), nil, rollbackTestAllowance)
 
-	srv.rollbackClaim(cancelledCtx(), &podsession.ClaimResult{SandboxName: "sbx-1"}, "sess-rollback")
+	srv.rollbackClaim(cancelledCtx(), &podsession.ClaimResult{AgentPodName: "sbx-1"}, "sess-rollback")
 
 	obs := claimWrites.snapshot()
 	if len(obs) == 0 {
@@ -256,7 +256,7 @@ func TestRollbackClaimDetachesFromCancelledCaller_spec_7_1(t *testing.T) {
 }
 
 // spec: §7.1 (Atomicity of session creation (steps 2–8)), §4.6.1 (Orphaned
-// SandboxClaim detection)
+// PodClaim detection)
 // diagnosis: releaseCoordinationLease runs beside rollbackBinding on the
 // early-commit paths and must release the lease this replica acquired even
 // when the request context has already ended. A failure here means the lease
@@ -291,9 +291,9 @@ func TestRollbackBindingBoundedByReleaseAllowance_spec_7_1(t *testing.T) {
 	srv := rollbackTestServer(t, rollbackFakeCluster(t, &claimWrites), nil, allowance)
 	fa := &rollbackFakeAdapter{block: true}
 	result := &podsession.BindResult{
-		SessionID:   "sess-blocked",
-		SandboxName: "sbx-1",
-		Adapter:     dialRollbackFakeAdapter(t, fa),
+		SessionID:    "sess-blocked",
+		AgentPodName: "sbx-1",
+		Adapter:      dialRollbackFakeAdapter(t, fa),
 	}
 
 	done := make(chan struct{})

@@ -25,7 +25,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/lennylabs/lenny/pkg/admission/webhook"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/podsecurity"
 )
 

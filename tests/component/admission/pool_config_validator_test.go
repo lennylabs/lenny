@@ -3,11 +3,11 @@
 //go:build component
 
 // Component tests for the lenny-pool-config-validator
-// DecideTemplate path (§4.6.3, §5.2). The unit suites in
+// DecidePoolSettings path (§4.6.3, §5.2). The unit suites in
 // pkg/admission/pool_config_validator and pkg/admission/webhook exercise
 // the decision logic and the AdmissionReview transport against
 // hand-built Go structs. This suite adds the higher-fidelity property:
-// the SandboxTemplate objects pass through a real kube-apiserver and the
+// the PodSet objects pass through a real kube-apiserver and the
 // lenny.dev CRD OpenAPI schema before the webhook decision runs.
 //
 // The split of responsibility the suite pins:
@@ -22,9 +22,9 @@
 //     §5.2 terminationGracePeriodSeconds floor. The CRD schema admits
 //     these objects (they are schema-valid); the webhook is the gate.
 //
-// Each derived-property case creates a schema-valid SandboxTemplate
+// Each derived-property case creates a schema-valid PodSet
 // through the real API server, reads it back so the object has
-// round-tripped the CRD codec, and runs DecideTemplate on the
+// round-tripped the CRD codec, and runs DecidePoolSettings on the
 // round-tripped object. A rejection that depended only on a Go literal
 // would not catch a regression where the CRD codec drops or renames a
 // field the webhook reads; this suite does.
@@ -78,15 +78,15 @@ func newClient(t *testing.T) (client.Client, context.Context) {
 // through the CRD codec. A creation failure is fatal: the case asserts a
 // webhook-level rejection of a schema-VALID object, so a schema rejection
 // here would mean the case is no longer exercising the property it names.
-func roundTrip(t *testing.T, c client.Client, ctx context.Context, tpl *lennyv1.SandboxTemplate) *lennyv1.SandboxTemplate {
+func roundTrip(t *testing.T, c client.Client, ctx context.Context, tpl *lennyv1.PodSet) *lennyv1.PodSet {
 	t.Helper()
 	if err := c.Create(ctx, tpl); err != nil {
-		t.Fatalf("the API server rejected a schema-valid SandboxTemplate %q; the case must start from a "+
+		t.Fatalf("the API server rejected a schema-valid PodSet %q; the case must start from a "+
 			"schema-valid object so the webhook is the gate, not the OpenAPI schema: %v", tpl.GetName(), err)
 	}
-	got := &lennyv1.SandboxTemplate{}
+	got := &lennyv1.PodSet{}
 	if err := c.Get(ctx, client.ObjectKeyFromObject(tpl), got); err != nil {
-		t.Fatalf("read back SandboxTemplate %q: %v", tpl.GetName(), err)
+		t.Fatalf("read back PodSet %q: %v", tpl.GetName(), err)
 	}
 	t.Cleanup(func() { _ = c.Delete(context.Background(), got) })
 	return got
@@ -95,19 +95,19 @@ func roundTrip(t *testing.T, c client.Client, ctx context.Context, tpl *lennyv1.
 // spec: 5.2 (Kata/microvm scrub variant), 17.2 (admission inventory item
 // lenny-pool-config-validator)
 // diagnosis: the §5.2 in-place scrub-profile residual-state gate did not
-// survive a SandboxTemplate's round-trip through the real CRD codec, OR
+// survive a PodSet's round-trip through the real CRD codec, OR
 // the gate's input fields (sessionPolicy.recycle.scrubProfile /
 // acknowledgeMicrovmResidualState) are dropped or renamed by the OpenAPI
 // schema so the webhook can no longer see them. The test creates a
 // schema-valid in-place-without-acknowledgment template through envtest,
-// reads it back, and asserts DecideTemplate rejects it with 422. An admit
+// reads it back, and asserts DecidePoolSettings rejects it with 422. An admit
 // here means a cross-tenant residual-state acknowledgment is bypassable.
 func TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2(t *testing.T) {
 	c, ctx := newClient(t)
 
-	tpl := &lennyv1.SandboxTemplate{
+	tpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "inplace-no-ack", Namespace: admissionNS},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			ExecutionMode:    "session",
 			IsolationProfile: "microvm",
@@ -123,9 +123,9 @@ func TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2(t *testing.T) {
 	}
 	got := roundTrip(t, c, ctx, tpl)
 
-	d := pcv.DecideTemplate(got)
+	d := pcv.DecidePoolSettings(got)
 	if d.Allowed {
-		t.Fatal("§5.2: an in-place recycle SandboxTemplate without acknowledgeMicrovmResidualState " +
+		t.Fatal("§5.2: an in-place recycle PodSet without acknowledgeMicrovmResidualState " +
 			"must be rejected by the pool-config-validator webhook")
 	}
 	if d.Code != 422 {
@@ -143,14 +143,14 @@ func TestDecideTemplateRejectsInPlaceWithoutAck_spec_5_2(t *testing.T) {
 // diagnosis: the §5.2 in-place scrub gate became over-broad and rejects a
 // template that carries the acknowledgment. The test is the positive
 // control: an acknowledged in-place template must round-trip the CRD codec
-// and be admitted by DecideTemplate, so the rejection above is not a false
+// and be admitted by DecidePoolSettings, so the rejection above is not a false
 // positive.
 func TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2(t *testing.T) {
 	c, ctx := newClient(t)
 
-	tpl := &lennyv1.SandboxTemplate{
+	tpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "inplace-with-ack", Namespace: admissionNS},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			ExecutionMode:    "session",
 			IsolationProfile: "microvm",
@@ -164,20 +164,20 @@ func TestDecideTemplateAdmitsInPlaceWithAck_spec_5_2(t *testing.T) {
 	}
 	got := roundTrip(t, c, ctx, tpl)
 
-	if d := pcv.DecideTemplate(got); !d.Allowed {
-		t.Fatalf("§5.2: an acknowledged in-place recycle SandboxTemplate must be admitted: %q", d.Reason)
+	if d := pcv.DecidePoolSettings(got); !d.Allowed {
+		t.Fatalf("§5.2: an acknowledged in-place recycle PodSet must be admitted: %q", d.Reason)
 	}
 }
 
 // spec: 5.2 (terminationGracePeriodSeconds floor), 10.1 (agent-pod grace
 // floor), 17.2
 // diagnosis: the §5.2 / §10.1 agent-pod terminationGracePeriodSeconds
-// floor did not survive a SandboxTemplate's round-trip through the real
+// floor did not survive a PodSet's round-trip through the real
 // CRD codec, OR the budget input fields (executionMode, maxConcurrent,
 // terminationGracePeriodSeconds) are dropped or renamed by the OpenAPI
 // schema. The test creates a schema-valid service-mode template whose
 // declared grace period is below the floor, reads it back, and asserts
-// DecideTemplate rejects it. An admit means a pool could be SIGKILL'd
+// DecidePoolSettings rejects it. An admit means a pool could be SIGKILL'd
 // mid-checkpoint on drain.
 func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 	c, ctx := newClient(t)
@@ -189,9 +189,9 @@ func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 	// terminationGracePeriodSeconds is a schema-valid field, so the API
 	// server admits the object and the webhook is the gate.
 	grace := int64(120)
-	tpl := &lennyv1.SandboxTemplate{
+	tpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "below-grace-floor", Namespace: admissionNS},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:                    "claude-code",
 			ExecutionMode:                 "service",
 			MaxConcurrent:                 8,
@@ -200,9 +200,9 @@ func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 	}
 	got := roundTrip(t, c, ctx, tpl)
 
-	d := pcv.DecideTemplate(got)
+	d := pcv.DecidePoolSettings(got)
 	if d.Allowed {
-		t.Fatal("§5.2: a service-mode SandboxTemplate whose terminationGracePeriodSeconds is below the " +
+		t.Fatal("§5.2: a service-mode PodSet whose terminationGracePeriodSeconds is below the " +
 			"per-pod checkpoint floor must be rejected")
 	}
 	if d.Code != 422 {
@@ -219,22 +219,22 @@ func TestDecideTemplateRejectsBelowGraceFloor_spec_5_2_516(t *testing.T) {
 // spec: 5.2 (terminationGracePeriodSeconds floor), 10.1 (agent-pod grace
 // floor), 17.2
 // diagnosis: the §5.2 / §10.1 agent-pod grace floor is bypassed for an
-// omitted terminationGracePeriodSeconds. The SandboxTemplate CRD field is
+// omitted terminationGracePeriodSeconds. The PodSet CRD field is
 // *int64 with omitempty and no +kubebuilder:default, so an absent field
 // must round-trip back nil and the webhook must vet the pool against the
 // §4.6.1 120s effective default. The test creates a schema-valid
 // service-mode template with maxConcurrent: 2 and no grace field (floor
 // 2*90 + 30 = 210s > the 120s default), reads it back to confirm the
-// codec applied no default, and asserts DecideTemplate rejects it. A
+// codec applied no default, and asserts DecidePoolSettings rejects it. A
 // non-nil round-tripped field means a +kubebuilder:default crept onto the
 // CRD; an admit means the omitted-field nil-bypass regressed and a pool
 // could be SIGKILL'd mid-checkpoint on drain.
 func TestDecideTemplateRejectsAbsentGraceBelowFloor_spec_5_2_516(t *testing.T) {
 	c, ctx := newClient(t)
 
-	tpl := &lennyv1.SandboxTemplate{
+	tpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "absent-grace-below-floor", Namespace: admissionNS},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:    "claude-code",
 			ExecutionMode: "service",
 			MaxConcurrent: 2,
@@ -250,9 +250,9 @@ func TestDecideTemplateRejectsAbsentGraceBelowFloor_spec_5_2_516(t *testing.T) {
 			*got.Spec.TerminationGracePeriodSeconds)
 	}
 
-	d := pcv.DecideTemplate(got)
+	d := pcv.DecidePoolSettings(got)
 	if d.Allowed {
-		t.Fatal("§5.2: a service-mode SandboxTemplate whose omitted terminationGracePeriodSeconds defaults below the " +
+		t.Fatal("§5.2: a service-mode PodSet whose omitted terminationGracePeriodSeconds defaults below the " +
 			"agent-pod floor must be rejected; the omitted field must not bypass the floor")
 	}
 	if d.Code != 422 {
@@ -282,9 +282,9 @@ func TestDecideTemplateRejectsAbsentGraceBelowFloor_spec_5_2_516(t *testing.T) {
 func TestDecideTemplateAdmitsAbsentGraceAtFloor_spec_5_2_516(t *testing.T) {
 	c, ctx := newClient(t)
 
-	tpl := &lennyv1.SandboxTemplate{
+	tpl := &lennyv1.PodSet{
 		ObjectMeta: metav1.ObjectMeta{Name: "absent-grace-at-floor", Namespace: admissionNS},
-		Spec: lennyv1.SandboxTemplateSpec{
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:    "claude-code",
 			ExecutionMode: "session",
 			// terminationGracePeriodSeconds omitted: the §4.6.1 120s agent
@@ -299,14 +299,14 @@ func TestDecideTemplateAdmitsAbsentGraceAtFloor_spec_5_2_516(t *testing.T) {
 			*got.Spec.TerminationGracePeriodSeconds)
 	}
 
-	if d := pcv.DecideTemplate(got); !d.Allowed {
+	if d := pcv.DecidePoolSettings(got); !d.Allowed {
 		t.Fatalf("§5.2: a single-slot default-tier pool whose 120s effective default equals the agent-pod floor "+
 			"must be admitted: %q", d.Reason)
 	}
 }
 
 // spec: 5.2 (executionMode enum), 17.2
-// diagnosis: the SandboxTemplate executionMode OpenAPI enum no longer
+// diagnosis: the PodSet executionMode OpenAPI enum no longer
 // pins the §5.2 mode set {session, service}. The test asserts the API
 // server itself (not the webhook) rejects a removed mode value, proving
 // the CRD schema regenerated to the collapsed mode set. A removed value
@@ -317,9 +317,9 @@ func TestExecutionModeEnumRejectsRemovedModes_spec_5_2(t *testing.T) {
 
 	for _, mode := range []string{"task", "concurrent"} {
 		t.Run(mode, func(t *testing.T) {
-			tpl := &lennyv1.SandboxTemplate{
+			tpl := &lennyv1.PodSet{
 				ObjectMeta: metav1.ObjectMeta{Name: "mode-" + mode, Namespace: admissionNS},
-				Spec: lennyv1.SandboxTemplateSpec{
+				Spec: lennyv1.PodSetSpec{
 					RuntimeRef:    "claude-code",
 					ExecutionMode: mode,
 				},
@@ -327,7 +327,7 @@ func TestExecutionModeEnumRejectsRemovedModes_spec_5_2(t *testing.T) {
 			err := c.Create(ctx, tpl)
 			if err == nil {
 				_ = c.Delete(ctx, tpl)
-				t.Fatalf("§5.2: the API server admitted a SandboxTemplate with the removed executionMode %q; "+
+				t.Fatalf("§5.2: the API server admitted a PodSet with the removed executionMode %q; "+
 					"the CRD OpenAPI enum must reject it", mode)
 			}
 			if !apierrors.IsInvalid(err) {

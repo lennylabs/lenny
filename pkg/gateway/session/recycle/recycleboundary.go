@@ -17,8 +17,8 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
 )
 
 // MissingReportGracePeriod pads the §5.2 gateway-side missing-report timeout
@@ -246,7 +246,7 @@ func NewRecycleBoundaryCoordinator(opts RecycleBoundaryCoordinatorOptions) (*Rec
 // cluster client. A gone claim reports exists=false.
 func bindingReader(cl client.Client, ns string) claimBindingReader {
 	return func(ctx context.Context, podID string) (claimstate.State, bool, bool, error) {
-		var claim lennyv1.SandboxClaim
+		var claim lennyv1.PodClaim
 		if err := cl.Get(ctx, client.ObjectKey{Namespace: ns, Name: podclaim.ClaimName(podID)}, &claim); err != nil {
 			if apierrors.IsNotFound(err) {
 				return "", false, false, nil

@@ -25,7 +25,7 @@ func readoptPublishOnce(t *testing.T, row sessionstore.Session, pools readoptPoo
 		dialer:   &fakeReadoptDialer{podIP: "10.0.0.9", adapter: dialSeamsAdapter(t)},
 		fencer:   &fakeReadoptFencer{},
 		registry: pub,
-		sessions: fakeSandboxReader{row: row},
+		sessions: fakeAgentPodReader{row: row},
 		releaser: &recordingReleaser{},
 		pools:    pools,
 	}
@@ -80,8 +80,8 @@ func TestReadoptPublishesRecycleBindingWithoutSlotOnExclusivePool_spec_5_2(t *te
 		t.Fatalf("binding recycle fields = (%v, %v, %d), want the pool's recycle disposition and scrub parameters",
 			got.Recycle, got.CleanupCommands, got.CleanupTimeoutSeconds)
 	}
-	if got.SandboxName != "sbx-2" || got.PodIP != "10.0.0.9" {
-		t.Errorf("binding pod = (%s, %s), want sbx-2 at 10.0.0.9", got.SandboxName, got.PodIP)
+	if got.AgentPodName != "sbx-2" || got.PodIP != "10.0.0.9" {
+		t.Errorf("binding pod = (%s, %s), want sbx-2 at 10.0.0.9", got.AgentPodName, got.PodIP)
 	}
 }
 
@@ -98,7 +98,7 @@ func TestReadoptResolveErrorPublishesNothingAndReleasesLease_spec_10_1_2(t *test
 		dialer:   dialer,
 		fencer:   &fakeReadoptFencer{},
 		registry: pub,
-		sessions: fakeSandboxReader{row: sessionstore.Session{ID: "s3", TenantID: "acme", PodAssignment: "sbx-3", PoolRef: "gone"}},
+		sessions: fakeAgentPodReader{row: sessionstore.Session{ID: "s3", TenantID: "acme", PodAssignment: "sbx-3", PoolRef: "gone"}},
 		releaser: rel,
 		pools:    fakePoolResolver{err: podsession.ErrNoMatchingPool},
 	}
@@ -132,18 +132,14 @@ func TestPoolResolverPinsPlacedPoolRef_spec_5_2(t *testing.T) {
 		t.Fatalf("AddToScheme: %v", err)
 	}
 	const ns = "lenny-agents"
-	objs := []*lennyv1.SandboxTemplate{
-		{ObjectMeta: metav1.ObjectMeta{Name: "tmpl-a", Namespace: ns}, Spec: lennyv1.SandboxTemplateSpec{RuntimeRef: "rt"}},
-		{ObjectMeta: metav1.ObjectMeta{Name: "tmpl-b", Namespace: ns}, Spec: lennyv1.SandboxTemplateSpec{RuntimeRef: "rt"}},
+	objs := []*lennyv1.PodSet{
+		{ObjectMeta: metav1.ObjectMeta{Name: "pool-a", Namespace: ns}, Spec: lennyv1.PodSetSpec{RuntimeRef: "rt"}},
+		{ObjectMeta: metav1.ObjectMeta{Name: "pool-b", Namespace: ns}, Spec: lennyv1.PodSetSpec{RuntimeRef: "rt"}},
 	}
 	builder := fake.NewClientBuilder().WithScheme(scheme)
 	for _, o := range objs {
 		builder = builder.WithObjects(o)
 	}
-	builder = builder.WithObjects(
-		&lennyv1.SandboxWarmPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-a", Namespace: ns}, Spec: lennyv1.SandboxWarmPoolSpec{TemplateRef: "tmpl-a"}},
-		&lennyv1.SandboxWarmPool{ObjectMeta: metav1.ObjectMeta{Name: "pool-b", Namespace: ns}, Spec: lennyv1.SandboxWarmPoolSpec{TemplateRef: "tmpl-b"}},
-	)
 	r := poolResolver{reader: builder.Build(), namespace: ns}
 
 	match, err := r.ResolveReadoptPool(context.Background(), sessionstore.Session{ID: "s4", RuntimeRef: "rt", Pool: "pool-a", PoolRef: "pool-b"})

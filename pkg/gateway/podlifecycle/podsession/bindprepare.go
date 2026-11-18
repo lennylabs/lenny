@@ -50,8 +50,8 @@ type PrepareResult struct {
 }
 
 // Prepare runs the §4.3 finalize-time preparation barrier against the pod
-// claimed at create. It reconnects to req.SandboxName from the persisted
-// binding (resolve the Sandbox, dial the adapter, re-run the §15.5 version
+// claimed at create. It reconnects to req.AgentPodName from the persisted
+// binding (resolve the AgentPod, dial the adapter, re-run the §15.5 version
 // handshake), then runs the §4.7 setup chain: the §6.1 SDK-warm demotion
 // decision (now made here because it depends on the materialized plan),
 // stageWorkspace (PrepareWorkspace), FinalizeWorkspace, RunSetup, and
@@ -74,17 +74,17 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		// hold leases another attempt minted, and ReclaimClaimed's
 		// session-wide revoke would strip them. spec: §7.3 (Retry and Resume).
 		if req.attemptScoped {
-			b.releaseClaimAfterFailure(ctx, req.SandboxName, req.SessionID, err)
+			b.releaseClaimAfterFailure(ctx, req.AgentPodName, req.SessionID, err)
 			return nil, err
 		}
 		// Prepare runs only on an exclusive pool, so the reclaim deletes the
 		// claim by name rather than releasing a slot.
-		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID, false); rerr != nil {
-			log.Printf("podsession: reclaim claimed pod %s after Prepare reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
+		if rerr := b.ReclaimClaimed(ctx, req.AgentPodName, req.SessionID, false); rerr != nil {
+			log.Printf("podsession: reclaim claimed pod %s after Prepare reconnect failure for session %s: %v", req.AgentPodName, req.SessionID, rerr)
 		}
 		return nil, err
 	}
-	sandboxName := sb.Name
+	agentPodName := sb.Name
 	// spec: §4.7.1 (role and gateway RPC contract) — Prepare is one bind
 	// attempt. It mints its token before its first entry-touching RPC and
 	// carries it on PrepareWorkspace, FinalizeWorkspace, RunSetup, and
@@ -121,9 +121,9 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 				// spec: §6.1 — the runtime declared preConnect
 				// but its adapter cannot tear down the SDK; fail the
 				// session rather than serve it with stale SDK state.
-				return nil, &SDKDemotionNotSupported{Pod: sandboxName}
+				return nil, &SDKDemotionNotSupported{Pod: agentPodName}
 			}
-			return nil, fmt.Errorf("podsession: demote SDK on pod %s: %w", sandboxName, err)
+			return nil, fmt.Errorf("podsession: demote SDK on pod %s: %w", agentPodName, err)
 		}
 		demoted = true
 		if b.SDKDemotion != nil {
@@ -134,7 +134,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 
 	// spec: §6.2 — the fine session-lifecycle states (receiving_uploads,
 	// finalizing_workspace, running_setup, starting_session) are session-model
-	// states on the Postgres session row, not coarse Sandbox.status.phase
+	// states on the Postgres session row, not coarse AgentPod.status.phase
 	// occupancy values. The pod projects the coarse `claimed` phase set at
 	// claim time, so Prepare runs the §4.7 setup RPCs without writing any
 	// per-step CRD phase. On a pre-attached failure the pod is reclaimed by
@@ -151,7 +151,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	stagedPlan, stageWarnings, err := b.stageWorkspace(ctx, cl, req.SessionID, req.TenantID, req.Plan, allow, bindAttempt)
 	if err != nil {
 		reclaim(err)
-		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: stage workspace on pod %s: %w", agentPodName, err)
 	}
 	// spec: §7.1 (Derive restore semantics) — the restore capabilities are
 	// minted at the moment of use, so they are still valid when the adapter
@@ -159,12 +159,12 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 	restore, err := mintRestoreChunks(ctx, req.RestoreChunks)
 	if err != nil {
 		reclaim(err)
-		return nil, fmt.Errorf("podsession: resolve workspace restore on pod %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: resolve workspace restore on pod %s: %w", agentPodName, err)
 	}
 	finalizeWarnings, err := cl.FinalizeWorkspace(ctx, req.SessionID, stagedPlan, req.ArchivePolicy, restore, bindAttempt, false)
 	if err != nil {
 		reclaim(err)
-		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: finalize workspace on pod %s: %w", agentPodName, err)
 	}
 	// §7.4 strip-skip warnings now originate gateway-side (the
 	// archive is no longer decompressed in the pod); merge them ahead of
@@ -181,7 +181,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		// spec: §16.1 — the pool and the pod's runtime class label the
 		// gateway's setup_command_failed count.
 		return nil, &SetupCommandFailure{
-			Pod:          sandboxName,
+			Pod:          agentPodName,
 			Pool:         req.Pool,
 			RuntimeClass: b.runtimeClassLabel(sb.Spec.IsolationProfile),
 			Cause:        err,
@@ -203,7 +203,7 @@ func (b *Binder) Prepare(ctx context.Context, req BindRequest) (*PrepareResult, 
 		// reclaim closure and outside its refusal guard.
 		b.releaseAttemptCredentials(minted)
 		reclaim(err)
-		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: assign credentials on pod %s: %w", agentPodName, err)
 	}
 	// The lease is now held; a failure after this point must also revoke it.
 	leaseAssigned = true

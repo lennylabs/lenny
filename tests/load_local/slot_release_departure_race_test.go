@@ -3,8 +3,8 @@
 //go:build load_local
 
 // load_local-tier departure cases: races whose residue §5.2 (Slot assignment
-// atomicity), §4.6.1 (Orphaned SandboxClaim detection), and §4.6.3
-// (SandboxClaim: a release that ends the occupancy without reuse) accept,
+// atomicity), §4.6.1 (Orphaned PodClaim detection), and §4.6.3
+// (PodClaim: a release that ends the occupancy without reuse) accept,
 // and the reseed of a lost slot set racing concurrent reservations while a
 // session is in its §7.1 post-terminal window. The harness checker applies
 // the §7.1 holder predicate to the pods-and-claims and slot-set invariants.
@@ -32,7 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	claimstate "github.com/lennylabs/lenny/pkg/sandboxclaim/state"
+	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -158,7 +158,7 @@ func classifyJoin(t *testing.T, h *lifecycleharness.Harness, round int, id strin
 	}
 }
 
-// spec: §5.2 (Slot assignment atomicity), §4.6.3 (SandboxClaim: a release
+// spec: §5.2 (Slot assignment atomicity), §4.6.3 (PodClaim: a release
 // that ends the occupancy without reuse), §7.3 (Resume flow after pod
 // failure)
 // diagnosis: a session start reserving onto a concurrent pod raced the
@@ -233,7 +233,7 @@ func TestEmptyingReleaseRacesAReservation_spec_5_2(t *testing.T) {
 	h.Check(t)
 }
 
-// resumeClaimFault fails the first SandboxClaim status write either replica
+// resumeClaimFault fails the first PodClaim status write either replica
 // makes once armed, which is the bound write of the resume's claimIdle, and
 // starts the sibling's session when it fires. It then holds the by-name
 // delete claimIdle makes after the failure for a random delay that spans the
@@ -265,7 +265,7 @@ func (f *resumeClaimFault) fault(_ context.Context, op lifecycleharness.ClaimOp,
 	return nil
 }
 
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §5.2 (Slot assignment
+// spec: §4.6.1 (Orphaned PodClaim detection), §5.2 (Slot assignment
 // atomicity), §7.3 (Resume flow after pod failure)
 // diagnosis: on a concurrent pool, a Binder.Resume whose claimIdle bound
 // status write failed deleted its fresh claim by name while a same-tenant
@@ -326,8 +326,8 @@ func TestResumeClaimDeleteRacesASlotJoin_spec_5_2(t *testing.T) {
 	h.Check(t)
 }
 
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §5.2 (Slot assignment
-// atomicity), §4.6.3 (SandboxClaim: a release that ends the occupancy
+// spec: §4.6.1 (Orphaned PodClaim detection), §5.2 (Slot assignment
+// atomicity), §4.6.3 (PodClaim: a release that ends the occupancy
 // without reuse)
 // diagnosis: the accepted departure for a CREATE loser whose withdrawal
 // empties the set after the winner's last release changed. The winner's
@@ -432,7 +432,7 @@ func (o recycleRebindOrder) String() string {
 // runs on the replica that serves it, and its pre-running reclaim deletes
 // the claim by name there.
 //
-// spec: §5.2 (Recycle lifecycle), §4.6.3 (SandboxClaim: a release that ends
+// spec: §5.2 (Recycle lifecycle), §4.6.3 (PodClaim: a release that ends
 // the occupancy without reuse), §4.6.1 (within-hold rebind), §7.3 (Resume
 // flow after pod failure), §11.4 (User Invalidation), §29.3 (Interactive
 // message send) Forwarding, §7.2 (Session state machine: ready → starting)
@@ -562,7 +562,7 @@ func recycleRebindRound(t *testing.T, h *lifecycleharness.Harness, rng *rand.Ran
 
 // completeScrub stands in for the scrub report the harness does not deliver
 // and the occupancy projection it does not run: the recycled claim moves to
-// `reserved` with a hold, and the pod's Sandbox to `reserved`, so a
+// `reserved` with a hold, and the pod's AgentPod to `reserved`, so a
 // same-tenant acquisition rebinds it. The rebind reads the agent Pod for its
 // runtime-process lifetime and skips a candidate whose Pod is absent, so the
 // Pod the WarmPoolController would have created is seeded first, pinned to

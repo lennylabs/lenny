@@ -15,7 +15,7 @@ import (
 
 // BindRequest describes a session to place on a warm pod.
 type BindRequest struct {
-	// Pool is the SandboxWarmPool to claim a pod from.
+	// Pool is the PodSet to claim a pod from.
 	Pool string
 	// SessionID is the §15.1 session being started.
 	SessionID string
@@ -107,12 +107,12 @@ type BindRequest struct {
 	// failed/crashed session always retires regardless of this flag. spec:
 	// §5.2 (recycle on occupancy-zero).
 	Recycle bool
-	// SandboxName is the pod claimed at /create, persisted on the session
+	// AgentPodName is the pod claimed at /create, persisted on the session
 	// row. The decomposed §7.1 lifecycle (§4.6) sets it so Prepare and Launch
 	// reconnect to the claimed pod from the binding rather than holding the
 	// claim connection across /create → /finalize → /start. Empty for Claim,
 	// which produces the binding. spec: §4.6 (proposal).
-	SandboxName string
+	AgentPodName string
 	// Demoted carries the §6.1 SDK-warm demotion decision Prepare made into
 	// Launch, so Launch chooses StartSession (demoted or pod-warm) vs.
 	// ConfigureWorkspace (still SDK-warm) without re-running the blocking-path
@@ -168,8 +168,8 @@ type BindResult struct {
 	SessionID string
 	// TenantID is the tenant that owns the session.
 	TenantID string
-	// SandboxName is the claimed Sandbox.
-	SandboxName string
+	// AgentPodName is the claimed AgentPod.
+	AgentPodName string
 	// PodIP is the bound pod's address.
 	PodIP string
 	// SlotID identifies the §5.2 concurrent-workspace slot the session was
@@ -192,7 +192,7 @@ type BindResult struct {
 	// parameters carried from the bind request so the recycle-path Shutdown
 	// delivers them to the adapter without re-resolving the pool.
 	// shutdownAdapter builds them into the §4.7 RecycleScrub sub-message (with
-	// PodId == SandboxName) only on the recycle branch; the retire path sends a
+	// PodId == AgentPodName) only on the recycle branch; the retire path sends a
 	// plain Shutdown and ignores them. They are populated only on the
 	// session-mode (exclusive) bind result; the concurrent-session bind result
 	// leaves them empty because its occupancy-zero recycle trigger is a
@@ -393,7 +393,7 @@ func (r *BindResult) Closing() bool { return r.closing.Load() }
 type SetupCommandFailure struct {
 	// Pod is the sandbox name the failure was observed on.
 	Pod string
-	// Pool is the SandboxWarmPool the pod belongs to, and RuntimeClass the
+	// Pool is the PodSet the pod belongs to, and RuntimeClass the
 	// RuntimeClass its §5.3 isolation profile maps to (empty for an
 	// unrecognized profile). The gateway labels its setup_command_failed
 	// count of lenny_warmpool_warmup_failure_total with both, as §16.1

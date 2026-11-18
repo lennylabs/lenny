@@ -37,7 +37,7 @@ import (
 // package).
 const gvisorAgentNamespace = "lenny-agents"
 
-// gvisorPoolName is the SandboxWarmPool tests/testinfra/kind/install.sh
+// gvisorPoolName is the PodSet tests/testinfra/kind/install.sh
 // seeds with isolationProfile: sandboxed (gvisor-echo-pool in the
 // generated bootstrap overlay).
 const gvisorPoolName = "gvisor-echo-pool"
@@ -50,14 +50,14 @@ const gvisorNodeLabelSelector = "lenny.dev/pool=sandbox-gvisor"
 // diagnosis: TestGvisorIsolation asserts the default production
 // isolation profile (sandboxed) actually runs a pod under a real
 // gVisor sandbox rather than only carrying the gvisor RuntimeClass
-// name. A failure here means either the SandboxWarmPool never scheduled
+// name. A failure here means either the PodSet never scheduled
 // a pod under the gvisor RuntimeClass (the §5.3 profile-to-RuntimeClass
 // mapping regressed, or the pod landed on a node without runsc), the
 // §13.1 capability-drop invariant stopped applying to sandboxed pods
 // specifically, or the pod's kernel is not actually gVisor's
 // intercepting sentry (a silent fallback to the host runc kernel would
-// defeat the "kernel-level isolation prevents container escape via
-// kernel exploits" guarantee §5.3 makes for the sandboxed profile).
+// defeat the kernel-level isolation guarantee §5.3 makes for the
+// sandboxed profile).
 func TestGvisorIsolation(t *testing.T) {
 	c := kind.InstallLenny(t)
 	requireGvisorRuntimeClass(t, c)

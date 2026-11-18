@@ -47,69 +47,69 @@ func assertAllowed(t *testing.T, d pcv.Decision) {
 	}
 }
 
-// warmPool builds a SandboxWarmPool with the given spec.
-func warmPool(spec lennyv1.SandboxWarmPoolSpec) *lennyv1.SandboxWarmPool {
-	return &lennyv1.SandboxWarmPool{Spec: spec}
+// warmPool builds a PodSet with the given spec.
+func warmPool(spec lennyv1.PodSetSpec) *lennyv1.PodSet {
+	return &lennyv1.PodSet{Spec: spec}
 }
 
-// template builds a SandboxTemplate with the given spec.
-func template(spec lennyv1.SandboxTemplateSpec) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{Spec: spec}
+// template builds a PodSet with the given spec.
+func template(spec lennyv1.PodSetSpec) *lennyv1.PodSet {
+	return &lennyv1.PodSet{Spec: spec}
 }
 
 // int64ptr returns a pointer to v, for optional *int64 spec fields.
 func int64ptr(v int64) *int64 { return &v }
 
-// --- SandboxWarmPool invariants (§4.6.2 / §4.6.3) ---
+// --- PodSet invariants (§4.6.2 / §4.6.3) ---
 
 func TestWarmPool(t *testing.T) {
 	tests := []struct {
 		name       string
-		spec       lennyv1.SandboxWarmPoolSpec
+		spec       lennyv1.PodSetSpec
 		reject     bool
 		wantSubstr string
 	}{
 		{
 			name: "minWarm below maxWarm is admitted",
-			spec: lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 2, MaxWarm: 10},
+			spec: lennyv1.PodSetSpec{MinWarm: 2, MaxWarm: 10},
 		},
 		{
 			name: "minWarm equal to maxWarm is admitted",
-			spec: lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 5, MaxWarm: 5},
+			spec: lennyv1.PodSetSpec{MinWarm: 5, MaxWarm: 5},
 		},
 		{
 			name: "scale-to-zero floor is admitted",
-			spec: lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 0, MaxWarm: 0},
+			spec: lennyv1.PodSetSpec{MinWarm: 0, MaxWarm: 0},
 		},
 		{
 			name:       "minWarm above maxWarm is rejected",
-			spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 12, MaxWarm: 10},
+			spec:       lennyv1.PodSetSpec{MinWarm: 12, MaxWarm: 10},
 			reject:     true,
 			wantSubstr: "spec.minWarm (12) exceeds spec.maxWarm (10)",
 		},
 		{
 			name:       "negative minWarm is rejected",
-			spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: -1, MaxWarm: 10},
+			spec:       lennyv1.PodSetSpec{MinWarm: -1, MaxWarm: 10},
 			reject:     true,
 			wantSubstr: "spec.minWarm (-1) must not be negative",
 		},
 		{
 			name:       "negative maxWarm is rejected",
-			spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "t", MinWarm: 0, MaxWarm: -3},
+			spec:       lennyv1.PodSetSpec{MinWarm: 0, MaxWarm: -3},
 			reject:     true,
 			wantSubstr: "spec.maxWarm (-3) must not be negative",
 		},
 		{
 			name: "bootstrapMinWarm within maxWarm is admitted",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{BootstrapMinWarm: 8},
 			},
 		},
 		{
 			name: "bootstrapMinWarm above maxWarm is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{BootstrapMinWarm: 25},
 			},
 			reject:     true,
@@ -117,8 +117,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "negative bootstrapMinWarm is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{BootstrapMinWarm: -2},
 			},
 			reject:     true,
@@ -126,8 +126,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "valid schedule window is admitted",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "17:00", MinWarm: 8}},
 				},
@@ -135,8 +135,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "schedule window with malformed start is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "9am", End: "17:00", MinWarm: 3}},
 				},
@@ -146,8 +146,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "schedule window with malformed end is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "25:61", MinWarm: 3}},
 				},
@@ -157,8 +157,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "zero-duration schedule window is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "09:00", MinWarm: 3}},
 				},
@@ -168,8 +168,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "schedule window minWarm above maxWarm is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "17:00", MinWarm: 40}},
 				},
@@ -179,8 +179,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "negative schedule window minWarm is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{{Start: "09:00", End: "17:00", MinWarm: -1}},
 				},
@@ -190,8 +190,8 @@ func TestWarmPool(t *testing.T) {
 		},
 		{
 			name: "second schedule window violation is rejected",
-			spec: lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 1, MaxWarm: 10,
+			spec: lennyv1.PodSetSpec{
+				MinWarm: 1, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{
 					Schedules: []lennyv1.ScheduleWindow{
 						{Start: "09:00", End: "17:00", MinWarm: 8},
@@ -205,7 +205,7 @@ func TestWarmPool(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d := pcv.DecideWarmPool(warmPool(tc.spec))
+			d := pcv.DecideWarmTargets(warmPool(tc.spec))
 			if tc.reject {
 				assertRejected(t, d, tc.wantSubstr)
 				return
@@ -215,22 +215,22 @@ func TestWarmPool(t *testing.T) {
 	}
 }
 
-// --- SandboxTemplate invariants (§5.2) ---
+// --- PodSet invariants (§5.2) ---
 
 func TestTemplate(t *testing.T) {
 	tests := []struct {
 		name       string
-		spec       lennyv1.SandboxTemplateSpec
+		spec       lennyv1.PodSetSpec
 		reject     bool
 		wantSubstr string
 	}{
 		{
 			name: "session mode carries no pool-config invariant",
-			spec: lennyv1.SandboxTemplateSpec{RuntimeRef: "r", ExecutionMode: "session"},
+			spec: lennyv1.PodSetSpec{RuntimeRef: "r", ExecutionMode: "session"},
 		},
 		{
 			name: "empty execution mode is treated as session",
-			spec: lennyv1.SandboxTemplateSpec{RuntimeRef: "r"},
+			spec: lennyv1.PodSetSpec{RuntimeRef: "r"},
 		},
 		{
 			// A service pool carries no acknowledgment invariant at the CRD
@@ -238,7 +238,7 @@ func TestTemplate(t *testing.T) {
 			// (4*90 + 30 = 390s) so the separate grace-floor rule admits and
 			// this case isolates the acknowledgment-invariant absence.
 			name: "service mode carries no pool-config invariant",
-			spec: lennyv1.SandboxTemplateSpec{
+			spec: lennyv1.PodSetSpec{
 				RuntimeRef: "r", ExecutionMode: "service", MaxConcurrent: 4,
 				TerminationGracePeriodSeconds: int64ptr(graceFloor(4, 0)),
 			},
@@ -251,7 +251,7 @@ func TestTemplate(t *testing.T) {
 			// acknowledgment the CRD carries; the rest re-key onto the
 			// gateway-side poolstore mirror.
 			name: "recycle in-place scrub with residual-state acknowledgment is admitted",
-			spec: lennyv1.SandboxTemplateSpec{
+			spec: lennyv1.PodSetSpec{
 				RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
 				SessionPolicy: &lennyv1.SessionPolicy{
 					Recycle: &lennyv1.RecyclePolicy{
@@ -263,7 +263,7 @@ func TestTemplate(t *testing.T) {
 		},
 		{
 			name: "recycle in-place scrub without residual-state acknowledgment is rejected",
-			spec: lennyv1.SandboxTemplateSpec{
+			spec: lennyv1.PodSetSpec{
 				RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
 				SessionPolicy: &lennyv1.SessionPolicy{
 					Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "in-place"},
@@ -274,7 +274,7 @@ func TestTemplate(t *testing.T) {
 		},
 		{
 			name: "recycle vm-restart scrub carries no residual-state gate",
-			spec: lennyv1.SandboxTemplateSpec{
+			spec: lennyv1.PodSetSpec{
 				RuntimeRef: "r", ExecutionMode: "session", IsolationProfile: "microvm",
 				SessionPolicy: &lennyv1.SessionPolicy{
 					Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "vm-restart"},
@@ -283,7 +283,7 @@ func TestTemplate(t *testing.T) {
 		},
 		{
 			name: "recycle standard scrub carries no residual-state gate",
-			spec: lennyv1.SandboxTemplateSpec{
+			spec: lennyv1.PodSetSpec{
 				RuntimeRef: "r", ExecutionMode: "session",
 				SessionPolicy: &lennyv1.SessionPolicy{
 					Recycle: &lennyv1.RecyclePolicy{ScrubProfile: "standard"},
@@ -293,7 +293,7 @@ func TestTemplate(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			d := pcv.DecideTemplate(template(tc.spec))
+			d := pcv.DecidePoolSettings(template(tc.spec))
 			if tc.reject {
 				assertRejected(t, d, tc.wantSubstr)
 				return
@@ -325,7 +325,7 @@ func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
 }
 
 // spec: §5.2 — the
-// SandboxWarmPool admission webhook enforces the agent-pod
+// PodSet admission webhook enforces the agent-pod
 // `terminationGracePeriodSeconds` floor, fanning the per-slot checkpoint
 // cap across maxConcurrent slots for a service-mode pool
 // (`maxConcurrent × max_tiered_checkpoint_cap + 30`) and using a
@@ -341,11 +341,11 @@ func graceFloor(maxConcurrent int32, workspaceBytes int64) int64 {
 func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	int64p := func(v int64) *int64 { return &v }
 
-	baseSpec := func() lennyv1.SandboxTemplateSpec {
+	baseSpec := func() lennyv1.PodSetSpec {
 		// A service-mode pool fans the per-slot checkpoint cap across
 		// maxConcurrent slots, so the §5.2 / §10.1 agent-pod grace floor
 		// applies with the maxConcurrent multiplier.
-		return lennyv1.SandboxTemplateSpec{
+		return lennyv1.PodSetSpec{
 			RuntimeRef:    "r",
 			ExecutionMode: "service",
 			MaxConcurrent: 2,
@@ -356,7 +356,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		// maxConcurrent=2, unset workspace → 90s tier, floor = 2*90 + 30 = 210s.
 		spec := baseSpec()
 		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, 0)) // 210s
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertAllowed(t, d)
 		if len(d.Warnings) != 0 {
 			t.Fatalf("did not expect warnings: %v", d.Warnings)
@@ -370,7 +370,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		spec.MaxConcurrent = 8
 		floor := graceFloor(8, 0) // 750s
 		spec.TerminationGracePeriodSeconds = int64p(floor)
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertAllowed(t, d)
 		if len(d.Warnings) != 1 {
 			t.Fatalf("want one warning, got %v", d.Warnings)
@@ -385,7 +385,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		spec := baseSpec()
 		spec.MaxConcurrent = 8
 		spec.MaxTerminationGracePeriodSeconds = int64p(600)
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertRejected(t, d, "exceeds spec.maxTerminationGracePeriodSeconds (600s)")
 		if !d.BudgetExceeded {
 			t.Error("a ceiling-breach rejection must set BudgetExceeded so the counter increments")
@@ -396,7 +396,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		// floor = 210s; deployer set 200s.
 		spec := baseSpec()
 		spec.TerminationGracePeriodSeconds = int64p(200)
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertRejected(t, d, fmt.Sprintf("below the §5.2 agent-pod floor for this pool (%ds", graceFloor(2, 0)))
 		if !strings.Contains(d.Reason, "declared") {
 			t.Errorf("reason %q does not name the grace period as declared", d.Reason)
@@ -409,7 +409,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	t.Run("declared grace at floor → admitted", func(t *testing.T) {
 		spec := baseSpec()
 		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, 0)) // 210s
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertAllowed(t, d)
 	})
 
@@ -419,7 +419,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		spec := baseSpec()
 		spec.WorkspaceSizeLimitBytes = int64p(ws)
 		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, ws)) // 90s
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertAllowed(t, d)
 	})
 
@@ -429,7 +429,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		spec := baseSpec()
 		spec.WorkspaceSizeLimitBytes = int64p(ws)
 		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, ws)) // 150s
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertAllowed(t, d)
 	})
 
@@ -439,7 +439,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		spec := baseSpec()
 		spec.WorkspaceSizeLimitBytes = int64p(300 * 1024 * 1024)
 		spec.CheckpointBarrierAckTimeoutSeconds = int64p(30)
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertRejected(t, d, "must be >= max_tiered_checkpoint_cap (60s)")
 	})
 
@@ -453,17 +453,17 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		spec.WorkspaceSizeLimitBytes = int64p(ws)
 		spec.CheckpointBarrierAckTimeoutSeconds = int64p(30)
 		spec.TerminationGracePeriodSeconds = int64p(graceFloor(2, ws)) // 90s
-		d := pcv.DecideTemplate(template(spec))
+		d := pcv.DecidePoolSettings(template(spec))
 		assertAllowed(t, d)
 	})
 
-	// The grace-floor rule applies to EVERY SandboxTemplate write
+	// The grace-floor rule applies to EVERY PodSet write
 	// regardless of executionMode. A session-mode pool that allows a
 	// default-tier (90s) workspace but declares a 1s grace period has a
 	// floor of 1*90 + 30 = 120s and must be rejected, not silently
 	// admitted to SIGKILL on drain. spec: §5.2, §10.1.
 	t.Run("session-mode pool below the floor → rejected", func(t *testing.T) {
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 			RuntimeRef:                    "r",
 			TerminationGracePeriodSeconds: int64p(1),
 		}))
@@ -478,7 +478,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 
 	t.Run("session-mode pool at the floor → admitted", func(t *testing.T) {
 		// floor = 1*90 + 30 = 120s.
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 			RuntimeRef:                    "r",
 			TerminationGracePeriodSeconds: int64p(graceFloor(1, 0)),
 		}))
@@ -491,7 +491,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		// §4.6.1 120s agent default, which is below the floor. The pre-fix
 		// code guarded this comparison behind a non-nil field and admitted
 		// the pool; the fix rejects it fail-closed.
-		d := pcv.DecideTemplate(template(baseSpec()))
+		d := pcv.DecidePoolSettings(template(baseSpec()))
 		assertRejected(t, d, fmt.Sprintf("below the §5.2 agent-pod floor for this pool (%ds", graceFloor(2, 0)))
 		if !strings.Contains(d.Reason, "the §4.6.1 default") {
 			t.Errorf("reason %q does not name the grace period as the §4.6.1 default", d.Reason)
@@ -511,7 +511,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		if got := graceFloor(1, 0); got != testAgentDefaultTerminationGraceSecs {
 			t.Fatalf("single-slot floor = %ds, want the %ds agent default", got, testAgentDefaultTerminationGraceSecs)
 		}
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{RuntimeRef: "r"}))
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{RuntimeRef: "r"}))
 		assertAllowed(t, d)
 		if len(d.Warnings) != 0 {
 			t.Fatalf("did not expect warnings: %v", d.Warnings)
@@ -521,14 +521,14 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 	t.Run("empty RuntimeRef-only pool → admitted at the default floor", func(t *testing.T) {
 		// The minimal schema-valid template (RuntimeRef only) collapses to
 		// a single slot; its 120s effective default equals the 120s floor.
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{RuntimeRef: "r"}))
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{RuntimeRef: "r"}))
 		assertAllowed(t, d)
 	})
 
 	t.Run("service pool with unit slot below the floor → rejected", func(t *testing.T) {
 		// A service pool with maxConcurrent 1 checkpoints a single
 		// workspace, so the multiplier is 1: floor = 1*90 + 30 = 120s.
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 			RuntimeRef:                    "r",
 			ExecutionMode:                 "service",
 			MaxConcurrent:                 1,
@@ -544,7 +544,7 @@ func TestDecideTemplate_TerminationGraceFloor_spec_5_2_516(t *testing.T) {
 		// Single-slot default-tier floor is 120s; a declared 119s is one
 		// second short and must be rejected.
 		floor := graceFloor(1, 0)
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 			RuntimeRef:                    "r",
 			TerminationGracePeriodSeconds: int64p(floor - 1),
 		}))
@@ -568,7 +568,7 @@ func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) 
 	int64p := func(v int64) *int64 { return &v }
 
 	t.Run("maxTerminationGracePeriodSeconds breach sets BudgetExceeded", func(t *testing.T) {
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 			RuntimeRef:                       "r",
 			ExecutionMode:                    "service",
 			MaxConcurrent:                    8,
@@ -582,7 +582,7 @@ func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) 
 
 	t.Run("BarrierAck-floor rejection does NOT set BudgetExceeded", func(t *testing.T) {
 		// 300 MB → 60s tier; ack 30s < tier cap → BarrierAck-floor reject.
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 			RuntimeRef:                         "r",
 			WorkspaceSizeLimitBytes:            int64p(300 * 1024 * 1024),
 			CheckpointBarrierAckTimeoutSeconds: int64p(30),
@@ -594,7 +594,7 @@ func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) 
 	})
 
 	t.Run("warm-count rejection does NOT set BudgetExceeded", func(t *testing.T) {
-		d := pcv.DecideWarmPool(warmPool(lennyv1.SandboxWarmPoolSpec{MinWarm: 20, MaxWarm: 10}))
+		d := pcv.DecideWarmTargets(warmPool(lennyv1.PodSetSpec{MinWarm: 20, MaxWarm: 10}))
 		if d.Allowed || d.BudgetExceeded {
 			t.Errorf("a warm-count rejection must reject without BudgetExceeded: %+v", d)
 		}
@@ -609,7 +609,7 @@ func TestDecideTemplate_BudgetExceededDiscriminator_spec_10_1_129(t *testing.T) 
 func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 	t.Run("proxy + provider-direct rejected regardless of execution mode", func(t *testing.T) {
 		for _, mode := range []string{"", "session", "task", "concurrent"} {
-			d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 				ExecutionMode: mode,
 				DeliveryMode:  "proxy",
 				EgressProfile: "provider-direct",
@@ -635,7 +635,7 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 		} {
 			t.Run(tc.name, func(t *testing.T) {
 				// session mode carries no other invariant, isolating the combo gate.
-				d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+				d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 					DeliveryMode:     tc.delivery,
 					EgressProfile:    tc.egr,
 					IsolationProfile: tc.iso,
@@ -650,7 +650,7 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 	// default) is rejected. F-13.2.11.
 	t.Run("internet requires sandboxed or microvm isolation", func(t *testing.T) {
 		for _, iso := range []string{"", "standard"} {
-			d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 				EgressProfile:    "internet",
 				IsolationProfile: iso,
 			}))
@@ -662,7 +662,7 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 			}
 		}
 		for _, iso := range []string{"sandboxed", "microvm"} {
-			d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+			d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 				EgressProfile:    "internet",
 				IsolationProfile: iso,
 			}))
@@ -674,7 +674,7 @@ func TestDecideTemplate_EgressDeliveryCombo_spec_13_2_NET006(t *testing.T) {
 		// A task-mode pool missing taskPolicy would normally reject with
 		// the §5.2 task message; the NET-006 combo must take precedence so
 		// the reported defect is the security-relevant one.
-		d := pcv.DecideTemplate(template(lennyv1.SandboxTemplateSpec{
+		d := pcv.DecidePoolSettings(template(lennyv1.PodSetSpec{
 			ExecutionMode: "task",
 			DeliveryMode:  "proxy",
 			EgressProfile: "provider-direct",
@@ -789,11 +789,11 @@ func TestWarmPoolScaleToZero(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			spec := lennyv1.SandboxWarmPoolSpec{
-				TemplateRef: "t", MinWarm: 0, MaxWarm: 10,
+			spec := lennyv1.PodSetSpec{
+				MinWarm: 0, MaxWarm: 10,
 				ScalePolicy: &lennyv1.ScalePolicy{ScaleToZero: tc.policy},
 			}
-			d := pcv.DecideWarmPool(warmPool(spec))
+			d := pcv.DecideWarmTargets(warmPool(spec))
 			if tc.reject {
 				assertRejected(t, d, tc.wantSubstr)
 				return

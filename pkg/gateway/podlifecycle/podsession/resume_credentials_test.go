@@ -307,7 +307,7 @@ func TestReleaseOfACrashedBindingRetiresTheRecyclingPod_spec_5_2(t *testing.T) {
 				srv := adapter.New("adapter-test")
 				srv.WorkspaceBase = t.TempDir()
 				srv.Runtime = &fakeRuntime{}
-				c := k8sClient(t, idleSandbox(ns, "sbx-1", "10.244.1.7"))
+				c := k8sClient(t, idleAgentPod(ns, "sbx-1", "10.244.1.7"))
 				binder := newBinder(ns, c, adapterDialer(t, srv))
 				armer := &fakeRecycleBoundary{}
 				binder.RecycleBoundary = armer

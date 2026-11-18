@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package podsession is the gateway-side path that places a session on
-// a warm pod. Bind claims an idle Sandbox (§4.6.1), resolves the bound
+// a warm pod. Bind claims an idle AgentPod (§4.6.1), resolves the bound
 // pod's adapter address, performs the §15.5 version handshake, and
 // starts the session on the pod's §4.7 adapter. It joins the pod-claim
 // path, the adapter client, and the recorded pod address into the
@@ -27,9 +27,9 @@ import (
 // Binder places sessions on warm pods.
 type Binder struct {
 	// Client addresses the cluster: it backs the pod claim and the
-	// Sandbox lookup that resolves the pod address.
+	// AgentPod lookup that resolves the pod address.
 	Client client.Client
-	// Namespace is the agent namespace the pools and Sandboxes live in.
+	// Namespace is the agent namespace the pools and AgentPods live in.
 	Namespace string
 	// AdapterPort is the TCP port a pod's §4.7 adapter listens on.
 	AdapterPort int
@@ -97,7 +97,7 @@ type Binder struct {
 	// (precondition 2): before initiating the Postgres-backed fallback,
 	// the gateway probes API server reachability (a lightweight GET
 	// /readyz). When it returns an error the fallback is skipped, because
-	// the lenny-sandboxclaim-guard CREATE check the fallback relies on
+	// the lenny-podclaim-guard CREATE check the fallback relies on
 	// traverses the API server. Nil disables the probe and the fallback
 	// proceeds; production wires it from the cluster rest config.
 	APIServerReachable func(ctx context.Context) error
@@ -248,7 +248,7 @@ func (b *Binder) Bind(ctx context.Context, req BindRequest) (*BindResult, error)
 	// Thread the claim binding onto the request the way the persisted row
 	// would for the decomposed path, so Prepare and Launch reconnect from
 	// the binding rather than a held connection.
-	req.SandboxName = claim.SandboxName
+	req.AgentPodName = claim.AgentPodName
 	prep, err := b.Prepare(ctx, req)
 	if err != nil {
 		return nil, err

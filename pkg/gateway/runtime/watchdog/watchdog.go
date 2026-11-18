@@ -335,7 +335,7 @@ func (s StaticTenants) ListTenants(_ context.Context) ([]string, error) { return
 // through the same Server.recordSessionCompleted path the REST handlers
 // use.
 //
-// spec: §5.2 — slot release on session end / expiry; §6.2 — executor release maps the terminal phase onto the Sandbox.
+// spec: §5.2 — slot release on session end / expiry; §6.2 — executor release maps the terminal phase onto the AgentPod.
 type TerminalHook interface {
 	// BeginTerminal opens the writer's terminal claim for the session before
 	// its terminal Update and returns the idempotent function that ends it.

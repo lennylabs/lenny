@@ -109,7 +109,7 @@ rules:
     resources: ["customresourcedefinitions"]
     verbs: ["get", "list", "watch"]
   # §25.4 — lenny.dev custom resources (Runtime,
-  # SandboxWarmPool, etc.) for drift detection and inventory.
+  # PodSet, etc.) for drift detection and inventory.
   - apiGroups: ["lenny.dev"]
     resources: ["*"]
     verbs: ["get", "list", "watch"]

@@ -637,12 +637,12 @@
       "unit": ["pkg/gateway/middleware/circuitbreaker/..."],
       "contract": ["tests/contract/rest_circuitbreaker/..."]
     },
-    "pkg/controller/sandbox": {
+    "pkg/controller/agentpod": {
       "static": [
         "tests/static/chart/deployment_boundary_test.go",
         "tests/static/chart/deployment_boundary_render_test.go"
       ],
-      "unit": ["pkg/controller/sandbox/..."],
+      "unit": ["pkg/controller/agentpod/..."],
       "component": [
         "tests/component/controllers/warmpool_terminated_adapter_test.go",
         "tests/component/controllers/warmpool_deleted_pod_test.go",
@@ -764,8 +764,8 @@
       "unit": ["pkg/gateway/credentials/credfallback/..."],
       "integration": ["tests/integration/credential_fallback_test.go"]
     },
-    "pkg/admission/sandboxclaim_guard": {
-      "unit": ["pkg/admission/sandboxclaim_guard/..."],
+    "pkg/admission/podclaim_guard": {
+      "unit": ["pkg/admission/podclaim_guard/..."],
       "e2e_kind": ["tests/e2e_kind/sandbox_claim_test.go"]
     },
     "pkg/admission/label_immutability": {
@@ -1127,7 +1127,7 @@
       ],
       "unit": [
         "pkg/adapter/prestop/...",
-        "pkg/controller/sandbox/podspec/...",
+        "pkg/controller/agentpod/podspec/...",
         "cmd/lenny-adapter/...",
         "cmd/runtimes/echo-embedded/...",
         "cmd/runtimes/preconnect-echo/..."
@@ -1249,8 +1249,8 @@
     "pkg/sandbox/state": {
       "unit": ["pkg/sandbox/state/..."]
     },
-    "pkg/sandboxclaim/state": {
-      "unit": ["pkg/sandboxclaim/state/..."]
+    "pkg/podclaim/state": {
+      "unit": ["pkg/podclaim/state/..."]
     },
     "pkg/tokenservice": {
       "unit": ["pkg/tokenservice/..."],

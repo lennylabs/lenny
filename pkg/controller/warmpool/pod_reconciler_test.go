@@ -74,10 +74,10 @@ func getCorePod(t *testing.T, c client.Client, name string) corev1.Pod {
 	return p
 }
 
-func getSandbox(t *testing.T, c client.Client, name string) lennyv1.Sandbox {
+func getAgentPod(t *testing.T, c client.Client, name string) lennyv1.AgentPod {
 	t.Helper()
 	ns := testNamespace(t)
-	var sb lennyv1.Sandbox
+	var sb lennyv1.AgentPod
 	if err := c.Get(context.Background(), client.ObjectKey{Namespace: ns, Name: name}, &sb); err != nil {
 		t.Fatalf("get sandbox %s: %v", name, err)
 	}
@@ -158,13 +158,13 @@ func TestPodReconcileForeignPodIgnored(t *testing.T) {
 
 // TestPodReconcileCertExpiryDrainsIdlePod_spec_4_6 verifies that an idle
 // pod whose certificate is inside the §4.6.1 replacement window has its
-// backing Sandbox transitioned to draining (the pool reconciler then
+// backing AgentPod transitioned to draining (the pool reconciler then
 // recreates a fresh pod).
 func TestPodReconcileCertExpiryDrainsIdlePod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := time.Now()
-	sb := idleSandbox(ns, "pod-expiring")
+	sb := idleAgentPod(ns, "pod-expiring")
 	// Cert expires in 10 minutes — inside the 30-minute window.
 	pod := managedPod(ns, "pod-expiring", "", string(state.Idle), map[string]string{
 		warmpool.AnnotationCertNotAfter: now.Add(10 * time.Minute).Format(time.RFC3339),
@@ -174,7 +174,7 @@ func TestPodReconcileCertExpiryDrainsIdlePod_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{Client: c, Now: func() time.Time { return now }}
 	res := reconcilePod(t, r, "pod-expiring")
 
-	if got := getSandbox(t, c, "pod-expiring").Status.Phase; got != string(state.Draining) {
+	if got := getAgentPod(t, c, "pod-expiring").Status.Phase; got != string(state.Draining) {
 		t.Fatalf("sandbox phase=%q after cert-expiry reconcile, want %q", got, state.Draining)
 	}
 	if res.RequeueAfter != 0 {
@@ -189,7 +189,7 @@ func TestPodReconcileCertExpiryKeepsFreshPod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := time.Now()
-	sb := idleSandbox(ns, "pod-fresh")
+	sb := idleAgentPod(ns, "pod-fresh")
 	pod := managedPod(ns, "pod-fresh", "", string(state.Idle), map[string]string{
 		warmpool.AnnotationCertNotAfter: now.Add(2 * time.Hour).Format(time.RFC3339),
 	})
@@ -198,7 +198,7 @@ func TestPodReconcileCertExpiryKeepsFreshPod_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{Client: c, Now: func() time.Time { return now }}
 	res := reconcilePod(t, r, "pod-fresh")
 
-	if got := getSandbox(t, c, "pod-fresh").Status.Phase; got != string(state.Idle) {
+	if got := getAgentPod(t, c, "pod-fresh").Status.Phase; got != string(state.Idle) {
 		t.Fatalf("sandbox phase=%q for a fresh-cert idle pod, want %q", got, state.Idle)
 	}
 	// 2h expiry minus the 30m threshold leaves ~90m before the next check.
@@ -215,13 +215,13 @@ func TestPodReconcileCertExpirySkipsClaimedPod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := time.Now()
-	sb := &lennyv1.Sandbox{
+	sb := &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      "pod-claimed",
 			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: testPool},
 		},
-		Status: lennyv1.SandboxStatus{Phase: string(state.Claimed)},
+		Status: lennyv1.AgentPodStatus{Phase: string(state.Claimed)},
 	}
 	pod := managedPod(ns, "pod-claimed", "", string(state.Claimed), map[string]string{
 		warmpool.AnnotationCertNotAfter: now.Add(5 * time.Minute).Format(time.RFC3339),
@@ -231,21 +231,21 @@ func TestPodReconcileCertExpirySkipsClaimedPod_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{Client: c, Now: func() time.Time { return now }}
 	reconcilePod(t, r, "pod-claimed")
 
-	if got := getSandbox(t, c, "pod-claimed").Status.Phase; got != string(state.Claimed) {
+	if got := getAgentPod(t, c, "pod-claimed").Status.Phase; got != string(state.Claimed) {
 		t.Fatalf("claimed pod drained for cert expiry: phase=%q, want %q", got, state.Claimed)
 	}
 }
 
-// warmingSandbox returns a Sandbox in the §4.6.1 warming (pre-idle) phase
+// warmingAgentPod returns an AgentPod in the §4.6.1 warming (pre-idle) phase
 // so the §10.3 issuance-grace drain has a live object to patch.
-func warmingSandbox(ns, name string) *lennyv1.Sandbox {
-	return &lennyv1.Sandbox{
+func warmingAgentPod(ns, name string) *lennyv1.AgentPod {
+	return &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: testPool},
 		},
-		Status: lennyv1.SandboxStatus{Phase: string(state.Warming)},
+		Status: lennyv1.AgentPodStatus{Phase: string(state.Warming)},
 	}
 }
 
@@ -266,11 +266,11 @@ func (m *recordingCertMetric) Clear(ns, pod string)          { m.clear[ns+"/"+po
 // TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3 verifies the
 // §10.3 cert-issuance grace: a pre-idle pod that has not presented
 // a valid certificate within the grace window of its creation is drained for
-// replacement (its Sandbox transitions to draining) when the check is enabled.
+// replacement (its AgentPod transitions to draining) when the check is enabled.
 func TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := warmingSandbox(ns, "pod-noissue")
+	sb := warmingAgentPod(ns, "pod-noissue")
 	pod := managedPod(ns, "pod-noissue", "", string(state.Warming), nil) // no cert annotation
 	c := newClient(t, s, sb, pod)
 
@@ -283,7 +283,7 @@ func TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3(t *testing.T)
 	}
 	reconcilePod(t, r, "pod-noissue")
 
-	if got := getSandbox(t, c, "pod-noissue").Status.Phase; got != string(state.Draining) {
+	if got := getAgentPod(t, c, "pod-noissue").Status.Phase; got != string(state.Draining) {
 		t.Fatalf("sandbox phase=%q after issuance-grace expiry, want %q", got, state.Draining)
 	}
 }
@@ -294,7 +294,7 @@ func TestPodReconcileCertIssuanceFailureDrainsPreIdlePod_spec_10_3(t *testing.T)
 func TestPodReconcileCertIssuanceInsideGraceKeepsPreIdlePod_spec_10_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := warmingSandbox(ns, "pod-young")
+	sb := warmingAgentPod(ns, "pod-young")
 	pod := managedPod(ns, "pod-young", "", string(state.Warming), nil)
 	c := newClient(t, s, sb, pod)
 
@@ -307,7 +307,7 @@ func TestPodReconcileCertIssuanceInsideGraceKeepsPreIdlePod_spec_10_3(t *testing
 	}
 	res := reconcilePod(t, r, "pod-young")
 
-	if got := getSandbox(t, c, "pod-young").Status.Phase; got != string(state.Warming) {
+	if got := getAgentPod(t, c, "pod-young").Status.Phase; got != string(state.Warming) {
 		t.Fatalf("sandbox phase=%q for a pod inside the issuance grace, want %q", got, state.Warming)
 	}
 	if res.RequeueAfter <= 0 {
@@ -321,7 +321,7 @@ func TestPodReconcileCertIssuanceInsideGraceKeepsPreIdlePod_spec_10_3(t *testing
 func TestPodReconcileCertIssuanceDisabledKeepsPreIdlePod_spec_10_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := warmingSandbox(ns, "pod-default")
+	sb := warmingAgentPod(ns, "pod-default")
 	pod := managedPod(ns, "pod-default", "", string(state.Warming), nil)
 	c := newClient(t, s, sb, pod)
 
@@ -332,7 +332,7 @@ func TestPodReconcileCertIssuanceDisabledKeepsPreIdlePod_spec_10_3(t *testing.T)
 	}
 	reconcilePod(t, r, "pod-default")
 
-	if got := getSandbox(t, c, "pod-default").Status.Phase; got != string(state.Warming) {
+	if got := getAgentPod(t, c, "pod-default").Status.Phase; got != string(state.Warming) {
 		t.Fatalf("sandbox phase=%q with issuance check disabled, want %q (unchanged)", got, state.Warming)
 	}
 }
@@ -343,7 +343,7 @@ func TestPodReconcileCertExpiryGaugeEmitted_spec_10_3(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := time.Now()
-	sb := idleSandbox(ns, "pod-gauge")
+	sb := idleAgentPod(ns, "pod-gauge")
 	pod := managedPod(ns, "pod-gauge", "", string(state.Idle), map[string]string{
 		warmpool.AnnotationCertNotAfter: now.Add(45 * time.Minute).Format(time.RFC3339),
 	})
@@ -430,7 +430,7 @@ func TestPodReconcileDrainRequestDrainsClaimedPod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := time.Now()
-	sb := claimedSandbox(ns, "pod-drainreq")
+	sb := claimedAgentPod(ns, "pod-drainreq")
 	pod := managedPod(ns, "pod-drainreq", "", string(state.Claimed), map[string]string{
 		lennyv1.AnnotationDrainRequest: now.Format(time.RFC3339Nano),
 	})
@@ -439,7 +439,7 @@ func TestPodReconcileDrainRequestDrainsClaimedPod_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{Client: c, Now: func() time.Time { return now }}
 	reconcilePod(t, r, "pod-drainreq")
 
-	if got := getSandbox(t, c, "pod-drainreq").Status.Phase; got != string(state.Draining) {
+	if got := getAgentPod(t, c, "pod-drainreq").Status.Phase; got != string(state.Draining) {
 		t.Fatalf("sandbox phase=%q after drain-request reconcile, want %q", got, state.Draining)
 	}
 }
@@ -451,14 +451,14 @@ func TestPodReconcileDrainRequestDrainsClaimedPod_spec_4_6(t *testing.T) {
 func TestPodReconcileDrainRequestIgnoredWhenAbsent_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := claimedSandbox(ns, "pod-noreq")
+	sb := claimedAgentPod(ns, "pod-noreq")
 	pod := managedPod(ns, "pod-noreq", "", string(state.Claimed), nil)
 	c := newClient(t, s, sb, pod)
 
 	r := &warmpool.PodReconciler{Client: c}
 	reconcilePod(t, r, "pod-noreq")
 
-	if got := getSandbox(t, c, "pod-noreq").Status.Phase; got != string(state.Claimed) {
+	if got := getAgentPod(t, c, "pod-noreq").Status.Phase; got != string(state.Claimed) {
 		t.Fatalf("sandbox phase=%q for a pod with no drain-request, want %q", got, state.Claimed)
 	}
 }
@@ -471,7 +471,7 @@ func TestPodReconcileDrainRequestIgnoredWhenAbsent_spec_4_6(t *testing.T) {
 func TestPodReconcileDrainRequestCorruptStampIgnored_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := claimedSandbox(ns, "pod-corrupt")
+	sb := claimedAgentPod(ns, "pod-corrupt")
 	pod := managedPod(ns, "pod-corrupt", "", string(state.Claimed), map[string]string{
 		lennyv1.AnnotationDrainRequest: "not-a-timestamp",
 	})
@@ -480,14 +480,14 @@ func TestPodReconcileDrainRequestCorruptStampIgnored_spec_4_6(t *testing.T) {
 	r := &warmpool.PodReconciler{Client: c}
 	reconcilePod(t, r, "pod-corrupt")
 
-	if got := getSandbox(t, c, "pod-corrupt").Status.Phase; got != string(state.Claimed) {
+	if got := getAgentPod(t, c, "pod-corrupt").Status.Phase; got != string(state.Claimed) {
 		t.Fatalf("sandbox phase=%q for a corrupt drain-request stamp, want %q", got, state.Claimed)
 	}
 }
 
 // TestPodReconcileDrainRequestRecordsReason_spec_4_6 pins the CODE-E "record
 // the transition reason" clause: the drain-request consumer, on the edge that
-// flips a non-draining Sandbox to draining, emits a structured record naming
+// flips a non-draining AgentPod to draining, emits a structured record naming
 // the pool, pod, and reason=drain_request. The drain-request path emits no
 // retirement counter (the gateway path that stamped the annotation already
 // counted the pod), so the reason record is a log rather than a metric. It
@@ -500,7 +500,7 @@ func TestPodReconcileDrainRequestRecordsReason_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := time.Now()
-	sb := claimedSandbox(ns, "pod-reason")
+	sb := claimedAgentPod(ns, "pod-reason")
 	pod := managedPod(ns, "pod-reason", "", string(state.Claimed), map[string]string{
 		lennyv1.AnnotationDrainRequest: now.Format(time.RFC3339Nano),
 	})
@@ -565,7 +565,7 @@ type logRecord struct {
 func TestPodReconcileUptimeDrainsOverUptimePod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := claimedSandbox(ns, "pod-overuptime")
+	sb := claimedAgentPod(ns, "pod-overuptime")
 	pod := managedPod(ns, "pod-overuptime", "", string(state.Claimed), uptimeAnnotation(3600))
 	c := newClient(t, s, sb, pod)
 
@@ -578,7 +578,7 @@ func TestPodReconcileUptimeDrainsOverUptimePod_spec_4_6(t *testing.T) {
 	}
 	reconcilePod(t, r, "pod-overuptime")
 
-	if got := getSandbox(t, c, "pod-overuptime").Status.Phase; got != string(state.Draining) {
+	if got := getAgentPod(t, c, "pod-overuptime").Status.Phase; got != string(state.Draining) {
 		t.Fatalf("sandbox phase=%q after uptime drain, want %q", got, state.Draining)
 	}
 	if len(retired) != 1 || retired[0] != testPool {
@@ -607,7 +607,7 @@ func TestPodReconcileUptimePassesRuntimeClass_spec_16_1(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: rc},
 		Handler:    rc,
 	}
-	sb := claimedSandbox(ns, "pod-rc-uptime")
+	sb := claimedAgentPod(ns, "pod-rc-uptime")
 	pod := managedPod(ns, "pod-rc-uptime", "", string(state.Claimed), uptimeAnnotation(3600))
 	pod.Spec.RuntimeClassName = &rc
 	c := newClient(t, s, runtimeClass, sb, pod)
@@ -636,15 +636,15 @@ func TestPodReconcileUptimePassesRuntimeClass_spec_16_1(t *testing.T) {
 // TestPodReconcileUptimeCountsOncePerPod_spec_4_6 verifies the retirement is
 // counted once per pod rather than once per reconcile: a second reconcile of
 // the already-draining over-uptime pod re-reaches the level branch (a draining
-// Sandbox persists with a nil DeletionTimestamp while its sessions drain) but
-// patchSandboxDraining reports no transition, so OnUptimeRetirement does not
+// AgentPod persists with a nil DeletionTimestamp while its sessions drain) but
+// patchAgentPodDraining reports no transition, so OnUptimeRetirement does not
 // re-fire. This pins the transition-edge gate that prevents the summing
 // recording rule from over-reporting.
 // spec: 4.6.1 (uptime drain counted once per pod)
 func TestPodReconcileUptimeCountsOncePerPod_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := claimedSandbox(ns, "pod-recount")
+	sb := claimedAgentPod(ns, "pod-recount")
 	pod := managedPod(ns, "pod-recount", "", string(state.Claimed), uptimeAnnotation(3600))
 	c := newClient(t, s, sb, pod)
 
@@ -671,7 +671,7 @@ func TestPodReconcileUptimeCountsOncePerPod_spec_4_6(t *testing.T) {
 func TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := claimedSandbox(ns, "pod-young-uptime")
+	sb := claimedAgentPod(ns, "pod-young-uptime")
 	pod := managedPod(ns, "pod-young-uptime", "", string(state.Claimed), uptimeAnnotation(3600))
 	c := newClient(t, s, sb, pod)
 
@@ -684,7 +684,7 @@ func TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6(t *testing.T) {
 	}
 	res := reconcilePod(t, r, "pod-young-uptime")
 
-	if got := getSandbox(t, c, "pod-young-uptime").Status.Phase; got != string(state.Claimed) {
+	if got := getAgentPod(t, c, "pod-young-uptime").Status.Phase; got != string(state.Claimed) {
 		t.Fatalf("sandbox phase=%q for a pod inside its uptime window, want %q", got, state.Claimed)
 	}
 	if count != 0 {
@@ -704,7 +704,7 @@ func TestPodReconcileUptimeRequeuesInsideWindow_spec_4_6(t *testing.T) {
 func TestPodReconcileUptimeNoCapNoDrain_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	sb := claimedSandbox(ns, "pod-nocap")
+	sb := claimedAgentPod(ns, "pod-nocap")
 	pod := managedPod(ns, "pod-nocap", "", string(state.Claimed), nil) // no uptime annotation
 	c := newClient(t, s, sb, pod)
 
@@ -717,7 +717,7 @@ func TestPodReconcileUptimeNoCapNoDrain_spec_4_6(t *testing.T) {
 	}
 	reconcilePod(t, r, "pod-nocap")
 
-	if got := getSandbox(t, c, "pod-nocap").Status.Phase; got != string(state.Claimed) {
+	if got := getAgentPod(t, c, "pod-nocap").Status.Phase; got != string(state.Claimed) {
 		t.Fatalf("sandbox phase=%q for a no-cap pod, want %q (never drained for uptime)", got, state.Claimed)
 	}
 	if count != 0 {
@@ -738,7 +738,7 @@ func TestPodReconcileUptimePrecedesDrainRequest_spec_4_6(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
 	now := time.Now()
-	sb := claimedSandbox(ns, "pod-bothcaps")
+	sb := claimedAgentPod(ns, "pod-bothcaps")
 	ann := uptimeAnnotation(3600)
 	ann[lennyv1.AnnotationDrainRequest] = now.Format(time.RFC3339Nano)
 	pod := managedPod(ns, "pod-bothcaps", "", string(state.Claimed), ann)
@@ -753,7 +753,7 @@ func TestPodReconcileUptimePrecedesDrainRequest_spec_4_6(t *testing.T) {
 	}
 	reconcilePod(t, r, "pod-bothcaps")
 
-	if got := getSandbox(t, c, "pod-bothcaps").Status.Phase; got != string(state.Draining) {
+	if got := getAgentPod(t, c, "pod-bothcaps").Status.Phase; got != string(state.Draining) {
 		t.Fatalf("sandbox phase=%q for a both-caps pod, want %q", got, state.Draining)
 	}
 	if count != 1 {

@@ -117,7 +117,7 @@ type slotResRound struct {
 }
 
 // spec: §12.4 (Redis failure behavior), §5.2 (Slot assignment atomicity),
-// §4.6.1 (Orphaned SandboxClaim detection).
+// §4.6.1 (Orphaned PodClaim detection).
 // diagnosis: a pod's occupancy exceeded maxConcurrentSessions while the
 // replicas admitted through the §12.4 gate, through the Redis fast path, or
 // across the switch from one to the other; or the reservation records did

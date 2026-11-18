@@ -43,7 +43,7 @@ func TestStressIterationsRunUnderTheRaceDetector(t *testing.T) {
 	if !strings.HasSuffix(cmd.Path, "go") && !strings.Contains(cmd.Path, "go") {
 		t.Errorf("stress iteration runs %q, want the go tool", cmd.Path)
 	}
-	plain := buildGoTestStressCmd("^TestX$", "./pkg/sandboxclaim/...", "", 60, false)
+	plain := buildGoTestStressCmd("^TestX$", "./pkg/podclaim/...", "", 60, false)
 	if slices.Contains(plain.Args, "-race") {
 		t.Errorf("a stress budget that did not ask for the detector got argv %v", plain.Args)
 	}

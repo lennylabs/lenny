@@ -85,7 +85,7 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		mirror.OnPoolExhausted = string(sp.OnPoolExhausted)
 		mirror.MaxQueueWaitSeconds = sp.MaxQueueWaitSeconds
 		// §5.2 whole-pod scrub trigger: the deployer cleanup commands and their
-		// aggregate cap live on the poolstore sessionPolicy, not the CRD pair,
+		// aggregate cap live on the poolstore sessionPolicy, not the PodSet,
 		// so surface them on the mirror for foldPoolPolicy to copy onto
 		// PoolMatch. The recycle-path Shutdown delivers them to the adapter.
 		mirror.CleanupCommands = sp.CleanupCommands
@@ -99,7 +99,7 @@ func (m poolPolicyMirror) PoolPolicy(ctx context.Context, name string) (podsessi
 		if r := sp.Recycle; r != nil {
 			// spec: §5.2 (Recycle lifecycle) — recycle.enabled itself is
 			// gateway-enforced and poolstore-sourced for every scrub
-			// profile; the CRD pair carries it only implicitly for the
+			// profile; the PodSet carries it only implicitly for the
 			// microvm variants (a non-empty scrubProfile). Without this,
 			// a standard-profile recycling pool's pod is always retired
 			// at release (BindResult.Recycle never true), so §5.2

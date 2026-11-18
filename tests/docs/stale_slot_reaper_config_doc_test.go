@@ -11,7 +11,7 @@
 // reaper, so it must state both exclusions and must scope its recovery-time
 // bound to pods that still run other sessions.
 //
-// spec: 5.2 (Slot assignment atomicity), 4.6.1 (Orphaned SandboxClaim detection)
+// spec: 5.2 (Slot assignment atomicity), 4.6.1 (Orphaned PodClaim detection)
 
 package docs_test
 
@@ -51,7 +51,7 @@ func staleSlotReaperSection(t *testing.T) string {
 	return rest
 }
 
-// spec: 5.2 (Slot assignment atomicity), 4.6.1 (Orphaned SandboxClaim detection)
+// spec: 5.2 (Slot assignment atomicity), 4.6.1 (Orphaned PodClaim detection)
 // diagnosis: The configuration page describes the stale slot reaper as freeing
 //
 //	every failed-release slot within a fixed bound. The spec has the reaper
@@ -104,7 +104,7 @@ func redisLossRecoveryItem(t *testing.T) string {
 	return rest
 }
 
-// spec: 5.2 (Slot assignment atomicity), 4.6.1 (Orphaned SandboxClaim detection)
+// spec: 5.2 (Slot assignment atomicity), 4.6.1 (Orphaned PodClaim detection)
 // diagnosis: The disaster-recovery page states the stale slot reaper's
 //
 //	recovery bound without the condition that governs it after an outage

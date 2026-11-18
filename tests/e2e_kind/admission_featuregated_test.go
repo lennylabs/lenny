@@ -20,11 +20,11 @@
 // Two webhooks cannot have their rejection behaviour exercised on this
 // install. lenny-direct-mode-isolation enforces only in multi-tenant,
 // non-development mode; the overlay runs tenancy.mode: single with
-// global.devMode: true, so the webhook admits every SandboxTemplate.
+// global.devMode: true, so the webhook admits every PodSet.
 // lenny-data-residency-validator reads its declared regions from a
 // --storage-regions flag the chart's _webhook.tpl does not pass, and
-// the sandboxclaims CRD schema carries no dataResidencyRegion field, so
-// no SandboxClaim can reach the webhook with a non-empty region. Both
+// the podclaims CRD schema carries no dataResidencyRegion field, so
+// no PodClaim can reach the webhook with a non-empty region. Both
 // tests assert the deployed posture; their rejection half is covered
 // by the tier-2/3 component suites against the same decision logic.
 
@@ -152,9 +152,9 @@ func webhookDeploymentArgs(t *testing.T, c *kind.Cluster, deployment string) str
 
 // spec: 13.15
 // diagnosis: §4.9/§13.2 lenny-direct-mode-isolation webhook deployed
-// posture: failurePolicy: Fail, sandboxtemplates CREATE/UPDATE rule,
+// posture: failurePolicy: Fail, podsets CREATE/UPDATE rule,
 // agent-namespace selector, populated caBundle. The test also admits a
-// compliant SandboxTemplate (deliveryMode: proxy) so the webhook plane
+// compliant PodSet (deliveryMode: proxy) so the webhook plane
 // is reachable. The TESTING.md §13.15 direct/standard rejection enforces only in
 // multi-tenant mode with devMode off; the e2e overlay runs
 // tenancy.mode: single, devMode: true, so the rejection half is
@@ -169,8 +169,8 @@ func TestAdmissionDirectModeIsolation(t *testing.T) {
 	if rule.failurePolicy != "Fail" {
 		t.Errorf("%s has failurePolicy %q; §13.2 requires fail-closed (Fail)", webhook, rule.failurePolicy)
 	}
-	if !rule.coversResource("sandboxtemplates") {
-		t.Errorf("%s is scoped to resources %v; the §4.9 webhook must gate sandboxtemplates",
+	if !rule.coversResource("podsets") {
+		t.Errorf("%s is scoped to resources %v; the §4.9 webhook must gate podsets",
 			webhook, rule.resources)
 	}
 	for _, op := range []string{"CREATE", "UPDATE"} {
@@ -185,19 +185,19 @@ func TestAdmissionDirectModeIsolation(t *testing.T) {
 			"rejects every covered write", webhook)
 	}
 
-	// Positive control: a compliant SandboxTemplate (deliveryMode proxy
+	// Positive control: a compliant PodSet (deliveryMode proxy
 	// with the default spiffeBinding) must be admitted. This drives a
 	// real AdmissionReview through the webhook Service and proves the
 	// webhook plane is reachable and admits a valid template. The apply
 	// is a server-side dry-run so nothing persists, and it impersonates
 	// the PoolScalingController service account: the
-	// lenny-pool-config-validator webhook also fires on SandboxTemplate
+	// lenny-pool-config-validator webhook also fires on PodSet
 	// CREATE and admits spec writes only from that principal
 	// (Postgres-authoritative pool config), so an unimpersonated write is
 	// rejected with UNAUTHORIZED_POOL_CONFIG_WRITE before the
 	// direct-mode-isolation webhook this test exercises is reached.
 	const goodTemplate = `apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
   name: e2e-direct-mode-goodtemplate
   namespace: lenny-agents
@@ -205,13 +205,15 @@ spec:
   runtimeRef: e2e-nonexistent-runtime
   deliveryMode: proxy
   isolationProfile: sandboxed
+  minWarm: 0
+  maxWarm: 0
 `
 	out, err := dryRunApplyAsPoolScalingController(t, c, goodTemplate)
 	if err != nil {
-		t.Fatalf("API server rejected a §4.9-compliant SandboxTemplate; "+
+		t.Fatalf("API server rejected a §4.9-compliant PodSet; "+
 			"the %s webhook is over-broad or its Service is unreachable.\noutput:\n%s", webhook, out)
 	}
-	t.Logf("%s admitted a §4.9-compliant SandboxTemplate: %s", webhook, strings.TrimSpace(out))
+	t.Logf("%s admitted a §4.9-compliant PodSet: %s", webhook, strings.TrimSpace(out))
 }
 
 // spec: 13.19
@@ -264,12 +266,12 @@ func TestDrainReadinessWebhook(t *testing.T) {
 
 // spec: 13.28
 // diagnosis: §12.8/§12.9 lenny-data-residency-validator webhook
-// deployed posture: failurePolicy: Fail, sandboxclaims CREATE/UPDATE
+// deployed posture: failurePolicy: Fail, podclaims CREATE/UPDATE
 // rule, agent-namespace selector, populated caBundle. The test guards
 // against a chart change that wires --storage-regions without a
 // corresponding rejection test. The TESTING.md §13.28 region rejection cannot be
 // exercised on this install: the chart passes no --storage-regions and
-// the sandboxclaims CRD has no dataResidencyRegion field, so a
+// the podclaims CRD has no dataResidencyRegion field, so a
 // region-bearing claim is rejected by CRD decoding before the webhook.
 func TestAdmissionDataResidency(t *testing.T) {
 	c := kind.InstallLenny(t)
@@ -281,8 +283,8 @@ func TestAdmissionDataResidency(t *testing.T) {
 	if rule.failurePolicy != "Fail" {
 		t.Errorf("%s has failurePolicy %q; §12.8 requires fail-closed (Fail)", webhook, rule.failurePolicy)
 	}
-	if !rule.coversResource("sandboxclaims") {
-		t.Errorf("%s is scoped to resources %v; the chart scopes the §12.8 webhook to sandboxclaims",
+	if !rule.coversResource("podclaims") {
+		t.Errorf("%s is scoped to resources %v; the chart scopes the §12.8 webhook to podclaims",
 			webhook, rule.resources)
 	}
 	for _, op := range []string{"CREATE", "UPDATE"} {
@@ -309,7 +311,7 @@ func TestAdmissionDataResidency(t *testing.T) {
 			"the TESTING.md §13.28 data-residency rejection is now exercisable and this test must drive it.\nargs:\n%s",
 			webhook, args)
 	}
-	t.Logf("%s deployed fail-closed, scoped to sandboxclaims CREATE/UPDATE on agent namespaces; "+
+	t.Logf("%s deployed fail-closed, scoped to podclaims CREATE/UPDATE on agent namespaces; "+
 		"chart still does not wire --storage-regions so the TESTING.md §13.28 region rejection is unreachable "+
 		"and remains covered by the tier-2/3 component suites", webhook)
 }

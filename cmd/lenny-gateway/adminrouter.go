@@ -395,12 +395,12 @@ func (w *gatewayWiring) buildAdminRouter(
 		}
 		adminRouter = adminRouter.WithPoolStatusReader(lookup)
 		// spec: §17.8.2 step 3 — surface the cold-start bootstrapStatus
-		// hoursOfData / estimatedConvergenceAt from the SandboxWarmPool
+		// hoursOfData / estimatedConvergenceAt from the PodSet
 		// CRD status the PoolScalingController writes.
 		adminRouter = adminRouter.WithPoolBootstrapStatusReader(lookup)
 		// spec: §4.6.2 — populate crdGeneration /
 		// lastReconciledAt / lagSeconds / inSync on the sync-status
-		// endpoint from the SandboxTemplate annotations the
+		// endpoint from the PodSet annotations the
 		// PoolScalingController stamps. Only available with a cluster
 		// client; the Postgres-only posture leaves the reader unwired and
 		// the sync-status handler reports the Postgres-only generation.

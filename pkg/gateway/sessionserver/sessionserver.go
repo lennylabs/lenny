@@ -1111,7 +1111,7 @@ type Options struct {
 	// lapse between renewals. spec: §10.1.
 	CoordinationLeaseTTL time.Duration
 
-	// AgentNamespace is the namespace the warm pools and Sandboxes live
+	// AgentNamespace is the namespace the warm pools and AgentPods live
 	// in. Required when PodBinder is set.
 	AgentNamespace string
 

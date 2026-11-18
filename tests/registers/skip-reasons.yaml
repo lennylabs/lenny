@@ -1277,7 +1277,7 @@ sites:
       function: TestNodeDrainDuringActiveSession
       site: 2
       call: Skipf
-      reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise the TESTING.md §13.19 node-drain path.'
+      reason: 'precondition not met: no PodClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no AgentPod is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise the TESTING.md §13.19 node-drain path.'
     - path: tests/e2e_kind/stream_failure_kind_test.go
       function: TestStreamFailureConcurrentPoolDrainsAtThreshold_spec_5_2
       site: 1
@@ -1448,11 +1448,11 @@ sites:
       call: Skipf
       reason: 'precondition not met: %s webhook failurePolicy is %q, not Fail'
     - path: tests/chaos/concurrency_test.go
-      function: requireSandboxClaimGuardReachable
+      function: requirePodClaimGuardReachable
       site: 1
       call: Skipf
       reason: |-
-        not exercisable on this cluster: the lenny-sandboxclaim-guard webhook's admission call does not complete within its 5s budget. The webhook is deployed fail-closed and its configuration is verified by the e2e_kind-tier inventory test; its ServiceAccount has list/watch RBAC on sandboxclaims and the allow-admission-webhooks NetworkPolicy admits kube-apiserver egress (a labelled probe pod reaches the apiserver). The §4.6.1 guard's client.Reader List of sibling SandboxClaims nonetheless exceeds the 5s webhook timeout on this Kind cluster — the direct client's first-call API discovery latency is the likely cause. The double-claim runtime path needs that List to return inside the webhook budget.
+        not exercisable on this cluster: the lenny-podclaim-guard webhook's admission call does not complete within its 5s budget. The webhook is deployed fail-closed and its configuration is verified by the e2e_kind-tier inventory test; its ServiceAccount has list/watch RBAC on podclaims and the allow-admission-webhooks NetworkPolicy admits kube-apiserver egress (a labelled probe pod reaches the apiserver). The §4.6.1 guard's client.Reader List of sibling PodClaims nonetheless exceeds the 5s webhook timeout on this Kind cluster — the direct client's first-call API discovery latency is the likely cause. The double-claim runtime path needs that List to return inside the webhook budget.
         probe output:
         %s
     - path: tests/chaos/config_drift_test.go
@@ -1521,7 +1521,7 @@ sites:
       function: TestPodKillDuringActiveSession
       site: 2
       call: Skipf
-      reason: 'precondition not met: no SandboxClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no Sandbox is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise this path.'
+      reason: 'precondition not met: no PodClaim binding found for session %s; the e2e gateway runs without --agent-namespace so the §4.6 K8s pod binder is nil — the session is in-memory only and no AgentPod is claimed. Set --agent-namespace=lenny-agents on the gateway Deployment to exercise this path.'
     - path: tests/chaos/mcp_management_gateway_outage_test.go
       function: TestMCPManagementGatewayOwnedToolDuringGatewayOutage
       site: 1
@@ -1829,7 +1829,7 @@ sites:
         precondition not met: lenny-backup-sa is not installed in %s (%v); the §25.11 backup identity ships with the chart core inventory
         %s
     - path: tests/security/controller_rbac_test.go
-      function: TestControllerCanPatchSandboxesLiveRBAC
+      function: TestControllerCanPatchAgentPodsLiveRBAC
       site: 1
       call: Skipf
       reason: 'precondition not met: %s is not Ready; the §4.6.3 controller RBAC ships with that Deployment'

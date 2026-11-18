@@ -173,7 +173,7 @@ func TestControllerWiringOutcomePinsRegistrationGates(t *testing.T) {
 	cfg := env.RESTConfig()
 
 	// The four core controllers always register: the WarmPoolController, the
-	// Sandbox reconciler, the per-pod reconciler, and the occupancy reconciler
+	// AgentPod reconciler, the per-pod reconciler, and the occupancy reconciler
 	// (registerCoreControllers, ungated). Each flows through the builder, so the
 	// recorder counts four *controller.Controller registrations from the core
 	// step alone; the optional RuntimeReconciler adds a fifth when its gate

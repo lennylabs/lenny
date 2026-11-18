@@ -224,7 +224,7 @@ func TestPreRunningReclaimRecordsTheRelease_spec_7_1(t *testing.T) {
 				}
 			}
 			c := fake.NewClientBuilder().WithScheme(scheme).WithObjects(
-				&lennyv1.SandboxClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-a"), Namespace: "lenny-agents"}},
+				&lennyv1.PodClaim{ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("pod-a"), Namespace: "lenny-agents"}},
 			).WithInterceptorFuncs(funcs).Build()
 			srv.podBinder = &podsession.Binder{Client: c, Namespace: "lenny-agents", Credentials: &reclaimRecordingAssigner{}}
 			if !srv.terminalReclaimPreRunning(context.Background(), session.StateCreated, markerRow(t, srv)) {

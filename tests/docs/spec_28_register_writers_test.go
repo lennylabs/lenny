@@ -126,7 +126,7 @@ const (
 //
 // spec: §28.3, §12.6, §4.6.3
 const (
-	podStateWriterSetCell = "WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas " +
+	podStateWriterSetCell = "WarmPoolController for the mirrored `AgentPod` status columns, and gateway replicas " +
 		"for `sessions_served` and `scrub_failure_count`"
 
 	claimWriterSetCell = "Gateway replicas for the create, the status-subresource binding-state writes, and the " +
@@ -651,8 +651,8 @@ func assertReassignedWriterSetIsRejected(t *testing.T, entries registerTable) {
 			want:       podStateWriterSetCell,
 			reassigned: []string{
 				"WarmPoolController for `sessions_served` and `scrub_failure_count`, and gateway replicas " +
-					"for the mirrored `Sandbox` status columns",
-				"WarmPoolController for the mirrored `Sandbox` status columns, and gateway replicas " +
+					"for the mirrored `AgentPod` status columns",
+				"WarmPoolController for the mirrored `AgentPod` status columns, and gateway replicas " +
 					"for `sessions_served`, `scrub_failure_count`, and `phase`",
 			},
 		},
@@ -712,5 +712,5 @@ func assertClaimWriterSetMatchesOwnership(t *testing.T, entries registerTable) {
 	requireCellEquals(t, entries, claimRegisterEntry, "Writer set", claimWriterSetCell)
 
 	components := specSection(t, filepath.Join(repoRoot(t), "spec", "04_system-components.md"), "#### 4.6.3 ")
-	requireAllContain(t, "§4.6.3 SandboxClaim ownership row", components, []string{claimOwnershipRowSentence})
+	requireAllContain(t, "§4.6.3 PodClaim ownership row", components, []string{claimOwnershipRowSentence})
 }

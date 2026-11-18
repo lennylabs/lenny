@@ -311,14 +311,14 @@ lenny/
     "4.6.1": {
       "title": "Warm Pool Controller — Pod Lifecycle",
       "tests": [
-        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestSandboxClaimSkipLocked",
+        "tests/component/controllers/warmpool/claim_atomicity_test.go::TestPodClaimSkipLocked",
         "tests/e2e_kind/sandbox_claim_test.go::TestConcurrentClaimNoDoubleAssignment",
-        "tests/chaos/concurrent_claim_test.go::TestSandboxClaimUnder100Goroutines"
+        "tests/chaos/concurrent_claim_test.go::TestPodClaimUnder100Goroutines"
       ],
       "packages": ["pkg/controller/warmpool", "pkg/store/podregistry"],
       "schemas": ["api/crds/sandbox_claim.yaml"],
       "migrations": ["0007_sandbox_claim_lock.sql"],
-      "chart_templates": ["charts/lenny/templates/admission/sandboxclaim-guard.yaml"],
+      "chart_templates": ["charts/lenny/templates/admission/podclaim-guard.yaml"],
       "depends_on_sections": ["4.6", "12.3", "13.2"],
       "blocked_until_phase": "3.5"
     }
@@ -380,7 +380,7 @@ Every component-and-higher test must carry a `// diagnosis:` comment immediately
 // diagnosis: ClaimSandbox returned a row that was already claimed.
 //            Likely missing transaction isolation in pkg/controller/warmpool/claim.go,
 //            or SELECT ... FOR UPDATE SKIP LOCKED is wrapping the wrong query.
-func TestSandboxClaimSkipLocked(t *testing.T) { ... }
+func TestPodClaimSkipLocked(t *testing.T) { ... }
 ```
 
 Diagnosis strings are not stack traces. They explain the most common cause of the most-likely failure mode. The author of the test owns the diagnosis.
@@ -654,7 +654,7 @@ groups:
         - tier: security
           subset: tenant-isolation,tls,admission
         - tier: chaos
-          subset: core              # pod-kill, sandbox-claim-race, redis-down
+          subset: core              # pod-kill, pod-claim-race, redis-down
         - tier: conformance
           subset: bundled-runtimes
         - tier: docs
@@ -981,7 +981,7 @@ The structure package carries the gates of the channel-naming and line-citation 
 - State machines. Every state machine in the platform has table-driven transition tests with full coverage of valid and invalid transitions.
   - Session state machine (created → finalizing → ready → starting → running → completed/failed/cancelled/expired, with the suspended and resume_pending intermediates).
   - Pod state machine (pod-warm, SDK-warm, claimed, running, draining, terminated, failed).
-  - SandboxClaim state machine (pending, granted, fenced, released, expired).
+  - PodClaim state machine (pending, granted, fenced, released, expired).
   - TaskRecord state machine (submitted, running, completed, failed, cancelled, expired, input_required).
   - Lease-extension state machine including cool-off and rejection flag.
   - Pool upgrade state machine (scaling, expanding, draining, contracting, complete) with pause/resume/rollback.
@@ -1198,7 +1198,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 | Suite | Coverage |
 |:------|:---------|
 | warm_pool | Pool scaling to `minWarm`; scale-up on claim; scale-down on idle; PDB respected during drain |
-| sandbox_claim | Optimistic locking under concurrent goroutines; zero double-claims; `lenny-sandboxclaim-guard` webhook fences stale claims |
+| sandbox_claim | Optimistic locking under concurrent goroutines; zero double-claims; `lenny-podclaim-guard` webhook fences stale claims |
 | pod_lifecycle | Claim → assign credentials → workspace materialize → prompt → checkpoint → release; pod returns to pool |
 | node_drain | `kubectl drain` triggers preStop checkpoint; session resumes on new pod; workspace intact |
 | admission_policy | Controller-generated pod specs pass PSS admission for each RuntimeClass. Violations are rejected with the documented error codes |
@@ -1208,7 +1208,7 @@ EventBus publishes CloudEvents v1.0.2 messages. The suite asserts every document
 | mtls_enforcement | Gateway ↔ pod gRPC over mTLS; plain text rejected; cert auto-renewal at 2/3 lifetime |
 | label_immutability | `lenny-label-immutability` webhook prevents post-creation label mutation; non-WarmPoolController creator setting `lenny.dev/managed: "true"` is rejected |
 | sandbox_finalizer | Delete sandbox with active session blocked by finalizer; checkpoint completes; finalizer removed; pod deleted |
-| orphan_claim_gc | Gateway crash after SandboxClaim creation; controller detects orphan and cleans up |
+| orphan_claim_gc | Gateway crash after PodClaim creation; controller detects orphan and cleans up |
 | drain_readiness_webhook | MinIO unhealthy; `lenny-drain-readiness` webhook blocks pod eviction; forced drain falls back to minimal state |
 | tenant_namespace_isolation | Tenant A pods cannot reach tenant B namespace (NetworkPolicy validated end-to-end) |
 | pool_upgrade | `lenny-ctl admin pools upgrade start` drives the state machine through expanding, draining, contracting, complete; pause/resume/rollback work |
@@ -1303,7 +1303,7 @@ The load_local tier runs on every PR.
 
 #### 12.7.b Load and SLO, Kind (`load_kind`)
 
-**Scope.** Cases that require Kind. Real `kubelet` pod-startup latency under concurrent SandboxClaim CREATE, real `kube-scheduler` placement under affinity and topology spread, real chart rollout under traffic, real `cert-manager` and webhook TLS rotation under load, real NetworkPolicy enforcement count, per-RuntimeClass startup-latency comparison (runc against gVisor).
+**Scope.** Cases that require Kind. Real `kubelet` pod-startup latency under concurrent PodClaim CREATE, real `kube-scheduler` placement under affinity and topology spread, real chart rollout under traffic, real `cert-manager` and webhook TLS rotation under load, real NetworkPolicy enforcement count, per-RuntimeClass startup-latency comparison (runc against gVisor).
 
 **Tooling.** `k6` is the primary load generator. `tests/load_kind/scenarios/<name>/main.js` holds the scenario scripts; the Go wrapper port-forwards the gateway, invokes k6, and diffs the result against `tests/load_kind/baselines/<scenario>.json`.
 
@@ -1316,7 +1316,7 @@ The load_local tier runs on every PR.
 | delegation_fanout | Single root with N=50 concurrent children, depth=10 | Tree completes within 30 seconds; budget enforcement correct |
 | credential_rotation_under_load | 200 concurrent sessions, rotate provider credentials | Rotation propagation P95 < 5 seconds; in-flight requests succeed |
 | checkpoint_duration | Workspaces at 10MB, 100MB, 500MB | ≤ 100MB checkpoint P95 < 2s with cooperative quiescence overhead included |
-| pod_claim_latency | 100 concurrent claims | P99 < 100ms cache-warm; SandboxClaim CAS under 50ms |
+| pod_claim_latency | 100 concurrent claims | P99 < 100ms cache-warm; PodClaim CAS under 50ms |
 | postgres_write_burst | Quota-flush burst pattern at Tier 3 | Sustained IOPS within `postgres.writeCeilingIops`; burst within 3× ceiling |
 | playground_revocation | 1000 active playground sessions; tenant-wide revoke | P99 propagation ≤ 500ms |
 | audit_lock | 1000 audit-event writes/sec at single-tenant burst | `pg_advisory_xact_lock` P95 < 50ms |
@@ -1352,7 +1352,7 @@ The cloud-scale envelope (100+ concurrent claims, 50-child fan-out, 500 streamin
 - Credential failures: emergency revocation during active session, rotation failure, deny-list propagation under Redis outage, credential pool exhaustion.
 - Delegation failures: child crash mid-task, parent crash during await_children, budget exhaustion, lease-extension cool-off persistence across restart.
 - Compliance failures: erasure job failure mid-sequence, legal-hold override flow, T3/T4 SLA breach, audit-chain gap detection.
-- Concurrency: SandboxClaim race under 100+ goroutines, double-claim verification (ADR-007), elicitation deadlock detection, deadlock detection across delegation depth.
+- Concurrency: PodClaim race under 100+ goroutines, double-claim verification (ADR-007), elicitation deadlock detection, deadlock detection across delegation depth.
 - Time: gateway clock drift, certificate expiry advance.
 - Configuration: pool config drift, NetworkPolicy drift, schema migration failure (dirty flag), CRD upgrade with immutable field changes.
 
@@ -1388,7 +1388,7 @@ Every documented admission rejection is verified:
 - `POD_SPEC_CRED_GROUP_OVERBROAD`: non-adapter, non-agent container declaring `lenny-cred-readers`.
 - `EPHEMERAL_CONTAINER_CRED_UID_FORBIDDEN`: ephemeral container with adapter or agent UID or `lenny-cred-readers` GID.
 - `lenny-label-immutability`: post-creation label mutation, non-WarmPoolController creator setting `lenny.dev/managed: "true"`.
-- `lenny-sandboxclaim-guard`: double claim attempt.
+- `lenny-podclaim-guard`: double claim attempt.
 - `lenny-pool-config-validator`: pool-config violations (tiered-cap, grace-budget, checkpoint-barrier-ack-timeout).
 - `lenny-direct-mode-isolation`: `tenancy.mode: multi` plus `deliveryMode: direct` + `isolationProfile: standard`, and `deliveryMode: proxy` + `spiffeBinding: disabled`.
 - `lenny-drain-readiness`: pod eviction during MinIO outage.
@@ -1701,7 +1701,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 - `tests/spec-map.json` and `tests/change-graph.json` seeded with the spec's table of contents and an initial change-graph entry per planned package.
 - `tests/groups.yaml` with `pr`, `pr-fast`, `nightly`, `pre-release`, and per-phase placeholder groups.
 - `scripts/setup-dev.sh`, `scripts/preflight.sh`, `scripts/setup-cluster.sh`.
-- ADR-007 (SandboxClaim optimistic locking) authored. ADR-008 (license) committed. LICENSE file at repo root.
+- ADR-007 (PodClaim optimistic locking) authored. ADR-008 (license) committed. LICENSE file at repo root.
 - `tests/testinfra/timectl/` and `tests/testinfra/randctl/`.
 - The static tier is partially live: license header check, markdown link check, ADR catalog cross-check, basic golangci-lint.
 - The docs tier is partially live: link check, code-block syntax check.
@@ -1711,7 +1711,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.1 Phase 1 — Core types and wire contracts
 
-**Spec/18 components.** Core types (`Runtime`, `SandboxTemplate`, etc.). Wire-contract artifacts under `schemas/` (`lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, `workspaceplan-v1.json`).
+**Spec/18 components.** Core types (`Runtime`, `PodSet`, etc.). Wire-contract artifacts under `schemas/` (`lenny-adapter.proto`, `lenny-adapter-jsonl.schema.json`, `messagepart.schema.json`, `workspaceplan-v1.json`).
 
 **Test infrastructure to land.**
 - Proto and JSON Schema compilation in the static tier.
@@ -1813,12 +1813,12 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 
 ### 13.7 Phase 3.5 — Admission policies + `lenny-ops` first deploy
 
-**Spec/18 components.** Default-deny NetworkPolicy. gVisor RuntimeClass validation. Admission webhooks (`lenny-label-immutability`, `lenny-sandboxclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, `lenny-ephemeral-container-cred-guard`). PoolScalingController admission-denied integration test. mTLS end-to-end verification. Mandatory `lenny-ops` first deploy.
+**Spec/18 components.** Default-deny NetworkPolicy. gVisor RuntimeClass validation. Admission webhooks (`lenny-label-immutability`, `lenny-podclaim-guard`, `lenny-pool-config-validator`, `lenny-crd-conversion`, `lenny-ephemeral-container-cred-guard`). PoolScalingController admission-denied integration test. mTLS end-to-end verification. Mandatory `lenny-ops` first deploy.
 
 **Test infrastructure delivered in Phase 3.5.**
-- `pkg/admission/sandboxclaim_guard` is the pure-decision logic for the `lenny-sandboxclaim-guard` webhook from §4.6.1 (ADR-007). The guard enforces per-pod claim uniqueness at CREATE only: CREATE rejects when a non-terminal `SandboxClaim` already exists for the same `Sandbox`. The webhook does not gate PATCH/PUT; the per-pod claim spec is immutable after CREATE and binding-state transitions are `SandboxClaim.status`-subresource writes serialized by the §4.6.1 `resourceVersion`-precondition mechanism. The CREATE rejection message matches the spec verbatim.
+- `pkg/admission/podclaim_guard` is the pure-decision logic for the `lenny-podclaim-guard` webhook from §4.6.1 (ADR-007). The guard enforces per-pod claim uniqueness at CREATE only: CREATE rejects when a non-terminal `PodClaim` already exists for the same `AgentPod`. The webhook does not gate PATCH/PUT; the per-pod claim spec is immutable after CREATE and binding-state transitions are `PodClaim.status`-subresource writes serialized by the §4.6.1 `resourceVersion`-precondition mechanism. The CREATE rejection message matches the spec verbatim.
 - `pkg/admission/label_immutability` is the pure-decision logic for the `lenny-label-immutability` webhook from §17.2 item 5 / §5.2 NET-003. The three immutable agent-pod labels (`lenny.dev/managed`, `lenny.dev/delivery-mode`, `lenny.dev/egress-profile`) reject any mutation; `lenny.dev/tenant-id` allows `unset → {tenant_id}` only for the gateway ServiceAccount and `{tenant_id} → unassigned` only for the WarmPoolController ServiceAccount.
-- `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `SandboxTemplate`, `SandboxWarmPool` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `Sandbox`, and `SandboxClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
+- `pkg/admission/ownership` encodes the §4.6.3 CRD field-ownership matrix as a Go-callable validator. The matrix covers `PodSet` (with the `status.sdkWarmCircuitBreaker.*` carve-out for the PoolScalingController), `AgentPod`, and `PodClaim`. `Validate(controller, crd, fieldPath)` reports cross-controller writes as `*OwnershipError`.
 
 **Test infrastructure deferred to later phases.**
 - The webhook binaries that wrap each decision package with a `k8s.io/api/admission/v1` AdmissionReview HTTP handler are deferred to the K8s-integration phase. The handlers are thin shims over the decision packages above; they need the controller-runtime stack and a cert-manager-issued serving certificate.
@@ -1843,7 +1843,7 @@ The phases are deliberately fine-grained to match spec/18. They number through P
 **Test infrastructure deferred to later phases.**
 - `tests/integration/session_lifecycle_test.go` (`create → upload → attach → complete` against the compose stack with real Postgres + MinIO) is deferred. It needs the workspace materialization, the upload handler, and the gateway-to-pod attach path; the contract tests above cover the state-machine surface against the in-memory backend.
 - The integration profile (`docker compose --profile default up` bringing up gateway, controller-sim, stores) is deferred to the K8s-integration phase. The fixtures it composes do not exist yet.
-- `tests/component/gateway_subsystems/session_orchestrator_test.go` (orchestrator-in-isolation against an envtest API server with the pod-claim path wired in) is deferred. The minimal gateway's transitions short-circuit pod claim; the real orchestrator binary that ships in a later phase drives the WarmPoolController and asserts the resulting `Sandbox` state.
+- `tests/component/gateway_subsystems/session_orchestrator_test.go` (orchestrator-in-isolation against an envtest API server with the pod-claim path wired in) is deferred. The minimal gateway's transitions short-circuit pod claim; the real orchestrator binary that ships in a later phase drives the WarmPoolController and asserts the resulting `AgentPod` state.
 - The OpenAPI document served at `GET /openapi.yaml` is deferred. The minimal gateway has no `/openapi.yaml` route; the production gateway will surface it.
 - The upload pipeline, the derive / replay flows, message injection, the elicitation / tool-approval endpoints, and the §11.6 admission controller wiring are deferred to their respective phases.
 
@@ -2388,7 +2388,7 @@ Above every test function:
 // diagnosis: ClaimSandbox returned a row already claimed by another goroutine.
 //            Likely missing transaction isolation in pkg/controller/warmpool/claim.go,
 //            or SELECT ... FOR UPDATE SKIP LOCKED applied to the wrong query.
-func TestSandboxClaimSkipLocked(t *testing.T) { ... }
+func TestPodClaimSkipLocked(t *testing.T) { ... }
 ```
 
 - `spec:` is mandatory on every test in the component tier and the tiers after it. It lists every spec section the test encodes.
@@ -2523,7 +2523,7 @@ Each fuzz target runs with a small corpus per PR and a longer corpus nightly. Cr
 
 ### 19.3 Mutation
 
-`gremlins` runs weekly on `main` with the release gate (`.claude/rules/test-coverage.md`, "Gates"), on the unit tier of the critical packages: `pkg/sandboxclaim` (claims), `pkg/admission`, and `pkg/credential`. The run is `lenny-test mutation --pkg <path>` for each package. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests, and a surviving mutant is resolved by a stronger test or a justified suppression.
+`gremlins` runs weekly on `main` with the release gate (`.claude/rules/test-coverage.md`, "Gates"), on the unit tier of the critical packages: `pkg/podclaim` (claims), `pkg/admission`, and `pkg/credential`. The run is `lenny-test mutation --pkg <path>` for each package. It reports a mutation score per package and gates nothing. A score that falls is a reason to review that package's tests, and a surviving mutant is resolved by a stronger test or a justified suppression.
 
 ---
 
@@ -2852,7 +2852,7 @@ The infrastructure ships with quality metrics that go-live gates enforce.
 
 - Unit-tier coverage on new code: 80%, a floor a reviewer may waive for wiring code, naming the code waived (`.claude/rules/test-coverage.md`).
 - Repository coverage: tracked but not gated. Refactoring is not penalized.
-- Mutation score on the critical packages `pkg/sandboxclaim`, `pkg/admission`, and `pkg/credential`: reported per package by the weekly mutation run of the release gate (§19.3). It gates nothing.
+- Mutation score on the critical packages `pkg/podclaim`, `pkg/admission`, and `pkg/credential`: reported per package by the weekly mutation run of the release gate (§19.3). It gates nothing.
 
 ### 22.2 Spec coverage
 

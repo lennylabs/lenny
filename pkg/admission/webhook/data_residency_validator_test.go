@@ -87,7 +87,7 @@ func TestDataResidencyValidatorAdmitsUnconstrainedResource(t *testing.T) {
 	resp := dec(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "d3",
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Kind: "SandboxClaim"},
+		Kind:      metav1.GroupVersionKind{Kind: "PodClaim"},
 		Object:    residencyResourceRaw(t, "claim-1", "", ""),
 	})
 	if !resp.Allowed {
@@ -96,7 +96,7 @@ func TestDataResidencyValidatorAdmitsUnconstrainedResource(t *testing.T) {
 }
 
 func TestDataResidencyValidatorInheritsTenantRegion(t *testing.T) {
-	// An environment-scoped resource (SandboxClaim) with no region of
+	// An environment-scoped resource (PodClaim) with no region of
 	// its own inherits the tenant region resolved by the resolver.
 	dec := webhook.DataResidencyValidator(
 		[]string{"eu-west-1"}, stubResolver{region: "eu-west-1"},
@@ -104,7 +104,7 @@ func TestDataResidencyValidatorInheritsTenantRegion(t *testing.T) {
 	resp := dec(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "d4",
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Kind: "SandboxClaim"},
+		Kind:      metav1.GroupVersionKind{Kind: "PodClaim"},
 		Object:    residencyResourceRaw(t, "claim-1", "", "acme"),
 	})
 	if !resp.Allowed {
@@ -113,7 +113,7 @@ func TestDataResidencyValidatorInheritsTenantRegion(t *testing.T) {
 }
 
 func TestDataResidencyValidatorRejectsEnvironmentRegionDivergence(t *testing.T) {
-	// A SandboxClaim that declares a region differing from its tenant's
+	// A PodClaim that declares a region differing from its tenant's
 	// region is rejected per §12.8 inheritance.
 	dec := webhook.DataResidencyValidator(
 		[]string{"eu-west-1", "us-east-1"}, stubResolver{region: "eu-west-1"},
@@ -121,7 +121,7 @@ func TestDataResidencyValidatorRejectsEnvironmentRegionDivergence(t *testing.T) 
 	resp := dec(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "d5",
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Kind: "SandboxClaim"},
+		Kind:      metav1.GroupVersionKind{Kind: "PodClaim"},
 		Object:    residencyResourceRaw(t, "claim-1", "us-east-1", "acme"),
 	})
 	if resp.Allowed {
@@ -142,7 +142,7 @@ func TestDataResidencyValidatorFailsClosedOnResolverError(t *testing.T) {
 	resp := dec(context.Background(), &admissionv1.AdmissionRequest{
 		UID:       "d6",
 		Operation: admissionv1.Create,
-		Kind:      metav1.GroupVersionKind{Kind: "SandboxClaim"},
+		Kind:      metav1.GroupVersionKind{Kind: "PodClaim"},
 		Object:    residencyResourceRaw(t, "claim-1", "", "acme"),
 	})
 	if resp.Allowed {

@@ -99,7 +99,7 @@ type sessionLifecycleMetrics struct {
 	// fail. The WarmPoolController emits the warm-up error types
 	// (image_pull_error, resource_quota_exceeded, node_pressure) with the
 	// pool and runtime_class labels from its own registry
-	// (pkg/controller/sandbox). Both halves carry the same §16.1 label set
+	// (pkg/controller/agentpod). Both halves carry the same §16.1 label set
 	// (F-16.1.9). F-7.5.9.
 	// spec: §16.1, §7.5.
 	warmpoolWarmupFailure *prometheus.CounterVec

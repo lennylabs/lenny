@@ -105,8 +105,8 @@ func (s *Server) handleInterrupt(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// spec: §7.2 / §8.8 — the Suspended session-condition fact lives on the
-	// Postgres session row, not on Sandbox.status.conditions (the gateway is
-	// not a Sandbox.status writer, §4.6.3). Stamp SuspendedAt/SuspendedReason
+	// Postgres session row, not on AgentPod.status.conditions (the gateway is
+	// not an AgentPod.status writer, §4.6.3). Stamp SuspendedAt/SuspendedReason
 	// in the same transaction that advances the row to `suspended` so the
 	// fact and the state never disagree. The reason distinguishes an
 	// acknowledged interrupt from a forced (timeout) one. F-6.2.12.

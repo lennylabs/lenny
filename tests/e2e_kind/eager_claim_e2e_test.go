@@ -9,12 +9,12 @@
 // These cover the cluster behaviors no in-process tier can reproduce:
 //
 //   - Pool exhaustion surfaces at /create: once every idle pod in a finite
-//     pool carries a per-pod SandboxClaim, a fresh create fails fast with a
+//     pool carries a per-pod PodClaim, a fresh create fails fast with a
 //     retryable 503 before the client uploads.
 //   - /finalize is the preparation barrier: it claims-then-materializes the
 //     workspace and reaches ready against a real warm pod.
 //   - Pod AND lease release on the watchdog's CREATED_TIMEOUT write and on
-//     /terminate of a finalizing/ready session: the per-pod SandboxClaim is deleted (the pod
+//     /terminate of a finalizing/ready session: the per-pod PodClaim is deleted (the pod
 //     returns to the pool) AND the credential lease's active-session counter
 //     is decremented (the lease row leaves the §4.9 lease store), so the
 //     reclaim does not leak the lease.
@@ -36,7 +36,7 @@ import (
 )
 
 // eagerAgentNS is the namespace the warm-pool agent pods and their per-pod
-// SandboxClaims live in.
+// PodClaims live in.
 const eagerAgentNS = "lenny-agents"
 
 // eagerEchoRuntime is the reference sidecar echo runtime the e2e agent
@@ -61,14 +61,14 @@ func eagerTenant() t5Role {
 	return t5Role{tenant: "acme", roles: "", user: "alice@acme.com"}
 }
 
-// claimCount returns the number of per-pod SandboxClaims in the agent
+// claimCount returns the number of per-pod PodClaims in the agent
 // namespace, the count of pods currently claimed out of the warm pools.
 func claimCount(t *testing.T, c *kind.Cluster) int {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", eagerAgentNS, "get", "sandboxclaim",
+	out, err := c.KubectlOut(t, "-n", eagerAgentNS, "get", "podclaim",
 		"-o", "jsonpath={range .items[*]}{.metadata.name}{\"\\n\"}{end}")
 	if err != nil {
-		t.Fatalf("list sandboxclaims: %v\n%s", err, out)
+		t.Fatalf("list podclaims: %v\n%s", err, out)
 	}
 	n := 0
 	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
@@ -79,11 +79,11 @@ func claimCount(t *testing.T, c *kind.Cluster) int {
 	return n
 }
 
-// claimExistsForPod reports whether the per-pod SandboxClaim claim-<pod>
+// claimExistsForPod reports whether the per-pod PodClaim claim-<pod>
 // exists in the agent namespace.
 func claimExistsForPod(t *testing.T, c *kind.Cluster, pod string) bool {
 	t.Helper()
-	out, err := c.KubectlOut(t, "-n", eagerAgentNS, "get", "sandboxclaim",
+	out, err := c.KubectlOut(t, "-n", eagerAgentNS, "get", "podclaim",
 		"claim-"+pod, "-o", "jsonpath={.metadata.name}", "--ignore-not-found")
 	if err != nil {
 		return false
@@ -92,7 +92,7 @@ func claimExistsForPod(t *testing.T, c *kind.Cluster, pod string) bool {
 }
 
 // idlePodsInPool returns the names of the pool's agent pods that carry no
-// per-pod SandboxClaim, the pods a fresh create can still claim. Counting the
+// per-pod PodClaim, the pods a fresh create can still claim. Counting the
 // whole managed workload instead would count every pool's pods, and a create
 // loop sized by that count runs long enough for the target pool to refill.
 func idlePodsInPool(t *testing.T, c *kind.Cluster, pods []kind.AgentPod, pool string) []string {
@@ -379,7 +379,7 @@ func TestEagerClaimFinalizeMaterializesAgainstWarmPod(t *testing.T) {
 // CREATED_TIMEOUT, or ended that way and still stranded its claimed warm pod.
 // The create claims a pod, the watchdog is the one writer of the created-state
 // deadline, and the post-terminal hook's pre-running reclaim deletes the
-// per-pod SandboxClaim to return the pod to the pool. A deleted row (404) or an
+// per-pod PodClaim to return the pod to the pool. A deleted row (404) or an
 // `expired` row means a second writer for the same deadline is back. A claim
 // that survives the reclaim window means the pool leaks a pod for every
 // abandoned create.
@@ -429,7 +429,7 @@ func TestEagerClaimCreatedExpiryReleasesPod(t *testing.T) {
 // revokes the lease), 7.1 (lease release on teardown), 4.6 (durable binding)
 // diagnosis: a failure means terminating a pre-running session that holds a
 // claimed pod and a finalize-assigned lease leaks one or both. The reclaim
-// must delete the per-pod SandboxClaim (return the pod) AND remove the
+// must delete the per-pod PodClaim (return the pod) AND remove the
 // session's credential lease from the §4.9 store (decrement the active-session
 // counter), so neither the warm pod nor the credential slot leaks. If the
 // claim survives or the lease row remains, the pre-running terminate reclaim
@@ -474,7 +474,7 @@ func TestEagerClaimTerminateReadySessionReleasesPodAndLease(t *testing.T) {
 		t.Fatalf("terminate ready session: status %d, want 200; body=%s", res.statusCode, res.body)
 	}
 
-	// The per-pod SandboxClaim is deleted: the pod returned to the pool.
+	// The per-pod PodClaim is deleted: the pod returned to the pool.
 	releaseDeadline := time.Now().Add(2 * time.Minute)
 	for {
 		if got := claimCount(t, c); got <= beforeClaims {

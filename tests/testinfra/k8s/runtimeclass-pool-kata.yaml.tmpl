@@ -27,21 +27,13 @@ spec:
     preConnect: true
 ---
 apiVersion: lenny.dev/v1alpha1
-kind: SandboxTemplate
+kind: PodSet
 metadata:
-  name: load-preconnect-template-kata
+  name: load-preconnect-pool-kata
   namespace: lenny-agents
 spec:
   runtimeRef: load-preconnect-runtime-kata
   isolationProfile: microvm
   executionMode: session
----
-apiVersion: lenny.dev/v1alpha1
-kind: SandboxWarmPool
-metadata:
-  name: load-preconnect-pool-kata
-  namespace: lenny-agents
-spec:
-  templateRef: load-preconnect-template-kata
   minWarm: ${LOAD_SESSION_MIN}
   maxWarm: ${LOAD_SESSION_MAX}

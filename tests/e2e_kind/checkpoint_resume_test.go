@@ -15,7 +15,7 @@
 // eviction, or a direct pod delete) and drive the gateway's Checkpoint
 // RPC against that pod's adapter within the termination grace period,
 // the same way the adapter's own preStop hook
-// (pkg/controller/sandbox/podspec/podspec.go preStopDrainHook) states
+// (pkg/controller/agentpod/podspec/podspec.go preStopDrainHook) states
 // it exists to protect: "keeps an in-flight gateway Checkpoint RPC from
 // being SIGKILLed at the grace deadline". As of this writing,
 // checkpoint.TriggerEviction (pkg/checkpoint/checkpoint.go) is defined

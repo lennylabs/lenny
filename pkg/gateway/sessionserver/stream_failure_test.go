@@ -350,7 +350,7 @@ func TestStreamFailureCoordinationCheckKeepsOwnBinding_spec_10_1_5(t *testing.T)
 	t.Run("binding replaced after the row read", func(t *testing.T) {
 		f := newStreamFixture(t)
 		f.seedAt(t, "sess-race", session.StateRunning, 2, 1)
-		fresh := &podsession.BindResult{SessionID: "sess-race", TenantID: "acme", SandboxName: "pod-x", CoordinationGeneration: 2}
+		fresh := &podsession.BindResult{SessionID: "sess-race", TenantID: "acme", AgentPodName: "pod-x", CoordinationGeneration: 2}
 		f.srv.store = &getHookStore{hookStore: f.store, afterGet: func() { f.registry.Put(fresh) }}
 
 		f.srv.ReportAttachStreamFailure("acme", "sess-race", "pod-x", heartbeatEnd)

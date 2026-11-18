@@ -918,11 +918,11 @@ tests:
 
   # spec: §4.6.3 (gateway ServiceAccount RBAC grants) — the §4.6.3
   # pod-status ownership decomposition makes the WarmPoolController the
-  # sole writer of Sandbox.status. The gateway therefore holds
-  # create/get/delete on SandboxClaim, get/patch on sandboxclaims/status
-  # for the binding-state write, read-only get/list on the Sandbox main
-  # resource (no patch, no watch), and no sandboxes/status grant at all.
-  - it: grants SandboxClaim create+delete and the sandboxclaims/status binding-state write
+  # sole writer of AgentPod.status. The gateway therefore holds
+  # create/get/delete on PodClaim, get/patch on podclaims/status
+  # for the binding-state write, read-only get/list on the AgentPod main
+  # resource (no patch, no watch), and no agentpods/status grant at all.
+  - it: grants PodClaim create+delete and the podclaims/status binding-state write
     documentSelector:
       path: kind
       value: ClusterRole
@@ -931,28 +931,28 @@ tests:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxclaims"]
+            resources: ["podclaims"]
             verbs: ["get", "create", "delete"]
       - contains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxclaims/status"]
+            resources: ["podclaims/status"]
             verbs: ["get", "patch"]
-      # The gateway holds no list/watch on SandboxClaim (§4.6.3 / §5.2).
+      # The gateway holds no list/watch on PodClaim (§4.6.3 / §5.2).
       # Intra-pod capacity is gated by the Redis slot counter with a
       # Postgres GetActiveSlotsByPod fallback during a Redis outage.
       - notContains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxclaims"]
+            resources: ["podclaims"]
             verbs: ["get", "list", "watch", "create", "delete"]
       - contains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxes"]
+            resources: ["agentpods"]
             verbs: ["get", "list"]
       - contains:
           path: rules
@@ -960,22 +960,22 @@ tests:
             apiGroups: [""]
             resources: ["pods"]
             verbs: ["get", "list", "watch", "patch"]
-      # The gateway holds no sandboxes/status grant: Sandbox.status is
+      # The gateway holds no agentpods/status grant: AgentPod.status is
       # written solely by the WarmPoolController (§4.6.3).
       - notContains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxes/status"]
+            resources: ["agentpods/status"]
             verbs: ["get", "update", "patch"]
-      # The gateway holds no patch/watch on the Sandbox main resource
+      # The gateway holds no patch/watch on the AgentPod main resource
       # (§4.6.3): the tenant pin is a Pod label, the lenny.dev/state
       # label is a WarmPoolController projection.
       - notContains:
           path: rules
           content:
             apiGroups: ["lenny.dev"]
-            resources: ["sandboxes"]
+            resources: ["agentpods"]
             verbs: ["get", "list", "watch", "patch"]
 
   # spec: §4.6.1 (reserved hold TTL) — gateway.claimHoldTTLSeconds is the

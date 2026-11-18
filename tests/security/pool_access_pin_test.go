@@ -76,14 +76,13 @@ func poolAccessCluster(t *testing.T) client.Client {
 		t.Fatalf("create namespace: %v", err)
 	}
 	objs := []client.Object{
-		&lennyv1.SandboxWarmPool{
+		&lennyv1.PodSet{
 			ObjectMeta: metav1.ObjectMeta{Name: "echo-pool", Namespace: poolAccessNS},
-			Spec:       lennyv1.SandboxWarmPoolSpec{TemplateRef: "echo-tmpl", MinWarm: 1, MaxWarm: 5},
-		},
-		&lennyv1.SandboxTemplate{
-			ObjectMeta: metav1.ObjectMeta{Name: "echo-tmpl", Namespace: poolAccessNS},
-			Spec: lennyv1.SandboxTemplateSpec{
-				RuntimeRef: "echo", IsolationProfile: string(isolation.ProfileSandboxed),
+			Spec: lennyv1.PodSetSpec{
+				RuntimeRef:       "echo",
+				IsolationProfile: string(isolation.ProfileSandboxed),
+				MinWarm:          1,
+				MaxWarm:          5,
 			},
 		},
 	}

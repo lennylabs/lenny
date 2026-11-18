@@ -22,7 +22,7 @@ tests:
       - hasDocuments:
           count: 5
 
-  - it: scopes the fail-closed ValidatingWebhookConfiguration to sandboxtemplates
+  - it: scopes the fail-closed ValidatingWebhookConfiguration to podsets
     set:
       features.llmProxy: false
     documentIndex: 4
@@ -34,7 +34,7 @@ tests:
           value: Fail
       - equal:
           path: webhooks[0].rules[0].resources[0]
-          value: sandboxtemplates
+          value: podsets
 
   - it: runs the webhook binary with the tenancy-mode and dev-mode flags
     set:

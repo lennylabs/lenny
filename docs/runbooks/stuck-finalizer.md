@@ -8,9 +8,9 @@ triggers:
 components:
   - controllers
 symptoms:
-  - "Sandbox in Terminating state past the configured alert threshold"
+  - "AgentPod in Terminating state past the configured alert threshold"
   - "warm pool does not replenish"
-  - "kubectl get sandbox shows stuck resources"
+  - "kubectl get agentpod shows stuck resources"
 tags:
   - finalizer
   - cleanup
@@ -27,13 +27,13 @@ related:
 
 # stuck-finalizer
 
-A `Sandbox` resource is stuck in `Terminating` because its `lenny.dev/session-cleanup` finalizer has not been removed. This blocks pod deletion and, by extension, warm pool replenishment.
+A `AgentPod` resource is stuck in `Terminating` because its `lenny.dev/session-cleanup` finalizer has not been removed. This blocks pod deletion and, by extension, warm pool replenishment.
 
 ## Trigger
 
-- `FinalizerStuck` alert — Sandbox in `Terminating` past the configured alert threshold.
+- `FinalizerStuck` alert — AgentPod in `Terminating` past the configured alert threshold.
 - Warm pool does not replenish to `minWarm`.
-- `kubectl get sandbox -A` lists stuck Terminating resources.
+- `kubectl get agentpod -A` lists stuck Terminating resources.
 
 Exact alert thresholds are deployer-configurable — see [Metrics Reference](../reference/metrics.html#alert-rules).
 
@@ -43,18 +43,18 @@ Exact alert thresholds are deployer-configurable — see [Metrics Reference](../
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandbox -A --field-selector=metadata.deletionTimestamp!='' \
+kubectl get agentpod -A --field-selector=metadata.deletionTimestamp!='' \
   | grep Terminating
 ```
 
 Record the resource name and namespace for the next steps.
 
-### Step 2 — Check for an active SandboxClaim
+### Step 2 — Check for an active PodClaim
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandboxclaim -A -o json | \
-  jq '.items[] | select(.spec.sandboxRef == "<sandbox-name>")'
+kubectl get podclaim -A -o json | \
+  jq '.items[] | select(.spec.agentPodRef == "<sandbox-name>")'
 ```
 
 If a claim exists, the session is still logically active. **Do not remove the finalizer yet** — resolve the claim first.
@@ -94,7 +94,7 @@ Common root causes surface here: leader-election gap during pod termination, API
 
 Proceed only if ALL of these are true:
 
-- Step 2 found no active SandboxClaim.
+- Step 2 found no active PodClaim.
 - Step 3 shows session in a terminal state OR a recent checkpoint exists.
 - Step 4 shows artifacts present in object storage (or the session was intentionally ephemeral).
 
@@ -112,7 +112,7 @@ Kubernetes completes pod deletion immediately.
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl get sandbox <sandbox-name> -n <namespace>
+kubectl get agentpod <sandbox-name> -n <namespace>
 # Expected: Error from server (NotFound)
 ```
 

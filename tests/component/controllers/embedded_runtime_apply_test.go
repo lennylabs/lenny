@@ -32,9 +32,9 @@ const customRuntimeImage = "ghcr.io/lennylabs/runtime-my-agent@sha256:" +
 // TestEmbeddedRuntimeApplyWarmsPod_spec_17_4 exercises the §17.4 runtime-apply
 // verb against a real kube-apiserver: with no Postgres and no
 // PoolScalingController, applying an arbitrary (non-echo) runtime's Runtime,
-// SandboxTemplate, and SandboxWarmPool CRD set materializes the SandboxWarmPool
+// PodSet CRD set materializes the PodSet
 // the gateway's ResolvePool lists, and the unconditionally-registered
-// WarmPoolController reconciles the pool to a warm Sandbox when the `runc`
+// WarmPoolController reconciles the pool to a warm AgentPod when the `runc`
 // RuntimeClass the `standard` isolation profile resolves to is present. This is
 // the runtime-agnostic counterpart of the echo direct-apply test: it proves the
 // no-Postgres pool-materialization path works for any registered runtime, the
@@ -42,23 +42,23 @@ const customRuntimeImage = "ghcr.io/lennylabs/runtime-my-agent@sha256:" +
 //
 // The verb's input is a minimal Runtime carrying only name, image,
 // integrationLevel, and deploymentModel: sidecar (the walkthrough default), so
-// the test also covers that the verb derives the SandboxTemplate/SandboxWarmPool
-// pair and defaults the §5.1 Runtime fields the Sandbox controller resolves by.
+// the test also covers that the verb derives the PodSet
+// pair and defaults the §5.1 Runtime fields the AgentPod controller resolves by.
 //
 // The negative leg pins the precondition: with the `runc` RuntimeClass absent
-// the pool stays Degraded and no Sandbox is created (decision.Create = 0), so
+// the pool stays Degraded and no AgentPod is created (decision.Create = 0), so
 // the dev profile's runtimeClasses.create=true is load-bearing for a custom
 // runtime exactly as it is for echo.
 //
 // diagnosis: a failure means the runtime-apply verb does not materialize a
-// usable pool for a custom runtime. Either the SandboxWarmPool CRD apply did
+// usable pool for a custom runtime. Either the PodSet CRD apply did
 // not create the CRD the gateway's ResolvePool lists (so §4.7 placement stays
-// inert for the runtime), or the WarmPoolController did not warm a Sandbox with
+// inert for the runtime), or the WarmPoolController did not warm an AgentPod with
 // the `runc` RuntimeClass present (the pool stayed Degraded and decision.Create
 // was suppressed), so the runtime-agnostic deliverable is broken.
 //
 // spec: §17.4 (the runtime-apply verb materializes the CRD set without a
-// PoolScalingController), §5.2 (ResolvePool lists the applied SandboxWarmPool),
+// PoolScalingController), §5.2 (ResolvePool lists the applied PodSet),
 // §4.6.2 (direct pool materialization), §5.3 (standard→runc RuntimeClass gate).
 func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	env := sharedEnv.Start(t)
@@ -73,7 +73,7 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	}
 	ctx := context.Background()
 
-	// The verb writes the pool pair into the agent namespace it fixes
+	// The verb writes the PodSet into the agent namespace it fixes
 	// (`lenny-agents`), so this test claims that namespace on the shared
 	// control plane rather than working in a namespace of its own. The
 	// Runtime is cluster-scoped, so its name is unique to the test.
@@ -85,7 +85,7 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	claimRuntimeClasses(t, c, "runc")
 
 	// The verb's input: a minimal sidecar-model Runtime, the §17.4 walkthrough
-	// default. The verb derives the SandboxTemplate/SandboxWarmPool from it and
+	// default. The verb derives the PodSet from it and
 	// defaults the omitted §5.1 fields.
 	runtimeName := clusterName(t, "Runtime", "my-agent")
 	rt := &lennyv1.Runtime{
@@ -101,7 +101,7 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 		t.Fatalf("runtime apply: %v", err)
 	}
 
-	// The cluster-scoped Runtime CR the Sandbox controller resolves by name is
+	// The cluster-scoped Runtime CR the AgentPod controller resolves by name is
 	// created, with the §5.1 defaults the verb stamps.
 	var cr lennyv1.Runtime
 	if err := c.Get(ctx, client.ObjectKey{Name: runtimeName}, &cr); err != nil {
@@ -120,21 +120,17 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	poolName := stack.RuntimePoolName(runtimeName)
 	key := client.ObjectKey{Namespace: ns, Name: poolName}
 
-	// The SandboxWarmPool CRD the gateway's ResolvePool lists is created
+	// The PodSet CRD the gateway's ResolvePool lists is created
 	// without Postgres, with minWarm = maxWarm = 1 for the single-pod hot pool.
-	var pool lennyv1.SandboxWarmPool
+	var pool lennyv1.PodSet
 	if err := c.Get(ctx, key, &pool); err != nil {
-		t.Fatalf("get applied SandboxWarmPool: %v", err)
+		t.Fatalf("get applied PodSet: %v", err)
 	}
 	if pool.Spec.MinWarm != 1 || pool.Spec.MaxWarm != 1 {
 		t.Errorf("applied pool minWarm/maxWarm = %d/%d, want 1/1", pool.Spec.MinWarm, pool.Spec.MaxWarm)
 	}
-	var tmpl lennyv1.SandboxTemplate
-	if err := c.Get(ctx, key, &tmpl); err != nil {
-		t.Fatalf("get applied SandboxTemplate: %v", err)
-	}
-	if tmpl.Spec.RuntimeRef != runtimeName {
-		t.Errorf("applied template runtimeRef = %q, want %q", tmpl.Spec.RuntimeRef, runtimeName)
+	if pool.Spec.RuntimeRef != runtimeName {
+		t.Errorf("applied PodSet runtimeRef = %q, want %q", pool.Spec.RuntimeRef, runtimeName)
 	}
 
 	// The gateway resolves the runtime to the applied pool by name, the
@@ -155,13 +151,13 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	}
 	// Count only the pools derived from this test's Runtime: an earlier
 	// iteration under go test -count left its own pool in the namespace.
-	var pools lennyv1.SandboxWarmPoolList
+	var pools lennyv1.PodSetList
 	if err := c.List(ctx, &pools, client.InNamespace(ns)); err != nil {
 		t.Fatalf("list warm pools after re-apply: %v", err)
 	}
 	var ours int
 	for _, p := range pools.Items {
-		if strings.Contains(p.Name, runtimeName) || strings.Contains(p.Spec.TemplateRef, runtimeName) {
+		if strings.Contains(p.Name, runtimeName) || strings.Contains(p.Spec.RuntimeRef, runtimeName) {
 			ours++
 		}
 	}
@@ -181,19 +177,19 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	if _, err := wpr.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatalf("WarmPoolController Reconcile (no RuntimeClass): %v", err)
 	}
-	var sandboxes lennyv1.SandboxList
-	if err := c.List(ctx, &sandboxes, client.InNamespace(ns),
+	var agentPods lennyv1.AgentPodList
+	if err := c.List(ctx, &agentPods, client.InNamespace(ns),
 		client.MatchingLabels{warmpool.LabelPool: poolName}); err != nil {
 		t.Fatalf("list sandboxes (no RuntimeClass): %v", err)
 	}
-	if len(sandboxes.Items) != 0 {
+	if len(agentPods.Items) != 0 {
 		t.Fatalf("WarmPoolController created %d sandboxes with the runc RuntimeClass absent, want 0 (Degraded suppresses creation)",
-			len(sandboxes.Items))
+			len(agentPods.Items))
 	}
 
 	// ----- Positive leg: with the runc RuntimeClass -----
 	// Install the `runc` RuntimeClass the `standard` isolation profile resolves
-	// to. The WarmPoolController now warms exactly one Sandbox for the
+	// to. The WarmPoolController now warms exactly one AgentPod for the
 	// minWarm = 1 pool, so the pool no longer stays Degraded with
 	// decision.Create = 0.
 	mustCreate(t, ctx, c, &nodev1.RuntimeClass{
@@ -203,15 +199,15 @@ func TestEmbeddedRuntimeApplyWarmsPod_spec_17_4(t *testing.T) {
 	if _, err := wpr.Reconcile(ctx, ctrl.Request{NamespacedName: key}); err != nil {
 		t.Fatalf("WarmPoolController Reconcile (with RuntimeClass): %v", err)
 	}
-	if err := c.List(ctx, &sandboxes, client.InNamespace(ns),
+	if err := c.List(ctx, &agentPods, client.InNamespace(ns),
 		client.MatchingLabels{warmpool.LabelPool: poolName}); err != nil {
 		t.Fatalf("list sandboxes (with RuntimeClass): %v", err)
 	}
-	if len(sandboxes.Items) != 1 {
+	if len(agentPods.Items) != 1 {
 		t.Fatalf("WarmPoolController created %d sandboxes with the runc RuntimeClass present, want exactly 1 (single-pod hot pool)",
-			len(sandboxes.Items))
+			len(agentPods.Items))
 	}
-	if sandboxes.Items[0].Spec.RuntimeRef != runtimeName {
-		t.Errorf("warmed sandbox runtimeRef = %q, want %q", sandboxes.Items[0].Spec.RuntimeRef, runtimeName)
+	if agentPods.Items[0].Spec.RuntimeRef != runtimeName {
+		t.Errorf("warmed sandbox runtimeRef = %q, want %q", agentPods.Items[0].Spec.RuntimeRef, runtimeName)
 	}
 }

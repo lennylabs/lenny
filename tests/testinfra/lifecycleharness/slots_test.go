@@ -142,7 +142,7 @@ func TestSlotSetViolations_spec_5_2(t *testing.T) {
 }
 
 // spec: §5.2 (Slot assignment atomicity), §6.2 (leaked slot semantics),
-// §4.6.1 (Orphaned SandboxClaim detection)
+// §4.6.1 (Orphaned PodClaim detection)
 //
 // On a concurrent-workspace pool a leaked: member, or a counted member whose
 // release no replica performed, keeps the shared claim bound after the pod's
@@ -240,7 +240,7 @@ func TestPoolPolicyStoreRegistersAnExclusivePoolThatKeepsItsRuntime_spec_5_2(t *
 	}
 }
 
-// spec: §7.1 (Post-terminal window), §4.6.1 (Orphaned SandboxClaim
+// spec: §7.1 (Post-terminal window), §4.6.1 (Orphaned PodClaim
 // detection), §5.2 (Slot assignment atomicity)
 //
 // The checker's held pods follow the §7.1 holder predicate on the harness

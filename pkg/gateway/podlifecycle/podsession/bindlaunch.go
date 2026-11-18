@@ -13,7 +13,7 @@ import (
 )
 
 // Launch runs the §4.4 start-time launch against the prepared pod. It
-// reconnects to req.SandboxName from the persisted binding, then either
+// reconnects to req.AgentPodName from the persisted binding, then either
 // starts the runtime from cold (StartSession, for a pod-warm or demoted
 // pod) or points the pre-connected SDK at the finalized workspace
 // (ConfigureWorkspace, for a still-SDK-warm pod), and verifies the §5.1
@@ -46,17 +46,17 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		// (Credential Leasing Service).
 		if req.attemptScoped {
 			b.releaseAttemptCredentials(req.mintedLeaseIDs)
-			b.releaseClaimAfterFailure(ctx, req.SandboxName, req.SessionID, err)
+			b.releaseClaimAfterFailure(ctx, req.AgentPodName, req.SessionID, err)
 			return nil, err
 		}
 		// Launch runs only on an exclusive pool, so the reclaim deletes the
 		// claim by name rather than releasing a slot.
-		if rerr := b.ReclaimClaimed(ctx, req.SandboxName, req.SessionID, false); rerr != nil {
-			log.Printf("podsession: reclaim claimed pod %s after Launch reconnect failure for session %s: %v", req.SandboxName, req.SessionID, rerr)
+		if rerr := b.ReclaimClaimed(ctx, req.AgentPodName, req.SessionID, false); rerr != nil {
+			log.Printf("podsession: reclaim claimed pod %s after Launch reconnect failure for session %s: %v", req.AgentPodName, req.SessionID, rerr)
 		}
 		return nil, err
 	}
-	sandboxName := sb.Name
+	agentPodName := sb.Name
 	// A launch failure reclaims the pod and the lease assigned at Prepare:
 	// by Launch the finalize block has always assigned the lease, so the
 	// reclaim revokes it (Gap 2). spec: §7.1 step 23 (lease release).
@@ -89,7 +89,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	if req.PreConnect && !req.Demoted {
 		if err := cl.ConfigureWorkspace(ctx, req.SessionID, slotlayout.SessionCurrentDir(neg.WorkspaceBase, req.SessionID), req.ExperimentContext, req.TracingContext); err != nil {
 			reclaim(err)
-			return nil, fmt.Errorf("podsession: configure SDK-warm workspace on pod %s: %w", sandboxName, err)
+			return nil, fmt.Errorf("podsession: configure SDK-warm workspace on pod %s: %w", agentPodName, err)
 		}
 	} else if err := cl.StartSession(ctx, adapterclient.StartSessionParams{
 		SessionID:          req.SessionID,
@@ -100,7 +100,7 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 		MinPlatformVersion: req.MinPlatformVersion,
 	}); err != nil {
 		reclaim(err)
-		return nil, fmt.Errorf("podsession: start session on pod %s: %w", sandboxName, err)
+		return nil, fmt.Errorf("podsession: start session on pod %s: %w", agentPodName, err)
 	}
 	// spec: §5.1 — the runtime has now booted, so the adapter
 	// has had its first lifecycle_capabilities/lifecycle_support exchange.
@@ -120,11 +120,11 @@ func (b *Binder) Launch(ctx context.Context, req BindRequest) (*BindResult, erro
 	t.AgentSessionStart = time.Since(phaseStart)
 
 	return &BindResult{
-		SessionID:   req.SessionID,
-		TenantID:    req.TenantID,
-		SandboxName: sandboxName,
-		PodIP:       sb.Status.PodIP,
-		Recycle:     req.Recycle,
+		SessionID:    req.SessionID,
+		TenantID:     req.TenantID,
+		AgentPodName: agentPodName,
+		PodIP:        sb.Status.PodIP,
+		Recycle:      req.Recycle,
 		// spec: §5.2 (whole-pod scrub trigger) — carry the pool's scrub
 		// parameters resolved at bind time so the recycle-path Shutdown
 		// delivers them to the adapter without re-resolving the pool.

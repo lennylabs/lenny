@@ -34,11 +34,11 @@ import (
 // credReadersGID is the lenny-cred-readers GID the §13.1 cross-UID
 // credential-delivery path requires on the pod-level fsGroup. The
 // lenny-webhook binary passes podspec.CredReadersGID (the Go constant
-// in pkg/controller/sandbox/podspec), so the validator and the
+// in pkg/controller/agentpod/podspec), so the validator and the
 // controller stay aligned on a single source of truth. Spec §13.1
 // leaves the specific GID to the implementation (the spec mandates
 // only "distinct non-root identities"); the constant value is
-// documented in pkg/controller/sandbox/podspec/podspec.go.
+// documented in pkg/controller/agentpod/podspec/podspec.go.
 //
 // rcPolicy carries the §17.2 RuntimeClass-aware relaxations (the
 // gVisor and Kata RuntimeClass names); the binary passes the names from
@@ -70,7 +70,7 @@ func PodSecurity(adapterUID, agentUID, credReadersGID int64, credVolumeName, sup
 	}
 }
 
-// Agent-pod credential-container names. The Sandbox podspec builder
+// Agent-pod credential-container names. The AgentPod podspec builder
 // names the §4.7 adapter container "adapter" and the agent runtime
 // container "runtime"; §13.1 permits only those two to mount the
 // credential volume or declare the lenny-cred-readers GID in

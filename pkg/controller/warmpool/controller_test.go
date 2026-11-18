@@ -47,31 +47,21 @@ func newScheme(t *testing.T) *runtime.Scheme {
 // rather than a cross-manager conflict.
 func applyStatus(ctx context.Context, c client.Client, obj client.Object) error {
 	switch v := obj.(type) {
-	case *lennyv1.SandboxWarmPool:
-		patch := &lennyv1.SandboxWarmPool{
+	case *lennyv1.PodSet:
+		patch := &lennyv1.PodSet{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "SandboxWarmPool",
+				Kind:       "PodSet",
 			},
 			ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
 		}
 		patch.Status = v.Status
 		return c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
-	case *lennyv1.SandboxTemplate:
-		patch := &lennyv1.SandboxTemplate{
+	case *lennyv1.AgentPod:
+		patch := &lennyv1.AgentPod{
 			TypeMeta: metav1.TypeMeta{
 				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "SandboxTemplate",
-			},
-			ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
-		}
-		patch.Status = v.Status
-		return c.Status().Patch(ctx, patch, client.Apply, client.FieldOwner(string(ownership.WarmPoolController)))
-	case *lennyv1.Sandbox:
-		patch := &lennyv1.Sandbox{
-			TypeMeta: metav1.TypeMeta{
-				APIVersion: lennyv1.GroupVersion.String(),
-				Kind:       "Sandbox",
+				Kind:       "AgentPod",
 			},
 			ObjectMeta: metav1.ObjectMeta{Name: v.Name, Namespace: v.Namespace},
 		}
@@ -117,40 +107,30 @@ func newClient(t *testing.T, s *runtime.Scheme, objs ...client.Object) client.Wi
 		// rejects status on Create, so we set it via a follow-up
 		// Status().Update.
 		var (
-			wpStatus    lennyv1.SandboxWarmPoolStatus
-			tmplStatus  lennyv1.SandboxTemplateStatus
-			sbStatus    lennyv1.SandboxStatus
+			psStatus    lennyv1.PodSetStatus
+			sbStatus    lennyv1.AgentPodStatus
 			updateAfter func()
 		)
 		switch v := o.(type) {
-		case *lennyv1.SandboxWarmPool:
-			wpStatus = v.Status
-			v.Status = lennyv1.SandboxWarmPoolStatus{}
+		case *lennyv1.PodSet:
+			psStatus = v.Status
+			v.Status = lennyv1.PodSetStatus{}
 			updateAfter = func() {
-				v.Status = wpStatus
+				v.Status = psStatus
 				if err := applyStatus(ctx, c, v); err != nil {
-					t.Fatalf("set status SandboxWarmPool %s: %v", v.Name, err)
+					t.Fatalf("set status PodSet %s: %v", v.Name, err)
 				}
 			}
-		case *lennyv1.SandboxTemplate:
-			tmplStatus = v.Status
-			v.Status = lennyv1.SandboxTemplateStatus{}
-			updateAfter = func() {
-				v.Status = tmplStatus
-				if err := applyStatus(ctx, c, v); err != nil {
-					t.Fatalf("set status SandboxTemplate %s: %v", v.Name, err)
-				}
-			}
-		case *lennyv1.Sandbox:
+		case *lennyv1.AgentPod:
 			sbStatus = v.Status
-			v.Status = lennyv1.SandboxStatus{}
+			v.Status = lennyv1.AgentPodStatus{}
 			updateAfter = func() {
 				if sbStatus.Phase == "" {
 					return
 				}
 				v.Status = sbStatus
 				if err := applyStatus(ctx, c, v); err != nil {
-					t.Fatalf("set status Sandbox %s: %v", v.Name, err)
+					t.Fatalf("set status AgentPod %s: %v", v.Name, err)
 				}
 			}
 		}
@@ -175,36 +155,29 @@ func seedsClusterScoped(objs []client.Object) bool {
 	return false
 }
 
-func template(ns string) *lennyv1.SandboxTemplate {
-	return &lennyv1.SandboxTemplate{
-		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: ns},
-		Spec: lennyv1.SandboxTemplateSpec{
+// pool returns the test pool's PodSet, which carries the pod settings the
+// controller copies onto each AgentPod and the warm targets it fills to.
+func pool(ns string, minWarm, maxWarm int32) *lennyv1.PodSet {
+	return &lennyv1.PodSet{
+		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: ns, Generation: 1},
+		Spec: lennyv1.PodSetSpec{
 			RuntimeRef:       "claude-code",
 			IsolationProfile: "sandboxed",
 			DeliveryMode:     "proxy",
+			MinWarm:          minWarm,
+			MaxWarm:          maxWarm,
 		},
 	}
 }
 
-func pool(ns string, minWarm, maxWarm int32) *lennyv1.SandboxWarmPool {
-	return &lennyv1.SandboxWarmPool{
-		ObjectMeta: metav1.ObjectMeta{Name: testPool, Namespace: ns, Generation: 1},
-		Spec: lennyv1.SandboxWarmPoolSpec{
-			TemplateRef: testPool,
-			MinWarm:     minWarm,
-			MaxWarm:     maxWarm,
-		},
-	}
-}
-
-func idleSandbox(ns, name string) *lennyv1.Sandbox {
-	return &lennyv1.Sandbox{
+func idleAgentPod(ns, name string) *lennyv1.AgentPod {
+	return &lennyv1.AgentPod{
 		ObjectMeta: metav1.ObjectMeta{
 			Name:      name,
 			Namespace: ns,
 			Labels:    map[string]string{warmpool.LabelPool: testPool},
 		},
-		Status: lennyv1.SandboxStatus{Phase: "idle"},
+		Status: lennyv1.AgentPodStatus{Phase: "idle"},
 	}
 }
 
@@ -243,10 +216,10 @@ func reconcileRequest(ns string) ctrl.Request {
 // reconcile and client calls.
 func testContext() context.Context { return context.Background() }
 
-func poolSandboxes(t *testing.T, c client.Client) []lennyv1.Sandbox {
+func poolAgentPods(t *testing.T, c client.Client) []lennyv1.AgentPod {
 	t.Helper()
 	ns := testNamespace(t)
-	var l lennyv1.SandboxList
+	var l lennyv1.AgentPodList
 	if err := c.List(context.Background(), &l,
 		client.InNamespace(ns),
 		client.MatchingLabels{warmpool.LabelPool: testPool}); err != nil {
@@ -255,10 +228,10 @@ func poolSandboxes(t *testing.T, c client.Client) []lennyv1.Sandbox {
 	return l.Items
 }
 
-func getPool(t *testing.T, c client.Client) lennyv1.SandboxWarmPool {
+func getPool(t *testing.T, c client.Client) lennyv1.PodSet {
 	t.Helper()
 	ns := testNamespace(t)
-	var p lennyv1.SandboxWarmPool
+	var p lennyv1.PodSet
 	if err := c.Get(context.Background(),
 		client.ObjectKey{Namespace: ns, Name: testPool}, &p); err != nil {
 		t.Fatalf("get pool: %v", err)
@@ -266,40 +239,29 @@ func getPool(t *testing.T, c client.Client) lennyv1.SandboxWarmPool {
 	return p
 }
 
-func getTemplate(t *testing.T, c client.Client) lennyv1.SandboxTemplate {
-	t.Helper()
-	ns := testNamespace(t)
-	var tm lennyv1.SandboxTemplate
-	if err := c.Get(context.Background(),
-		client.ObjectKey{Namespace: ns, Name: testPool}, &tm); err != nil {
-		t.Fatalf("get template: %v", err)
-	}
-	return tm
-}
-
-func warmingUpCondition(t *testing.T, tm lennyv1.SandboxTemplate) metav1.Condition {
+func warmingUpCondition(t *testing.T, tm lennyv1.PodSet) metav1.Condition {
 	t.Helper()
 	for _, c := range tm.Status.Conditions {
 		if c.Type == "PoolWarmingUp" {
 			return c
 		}
 	}
-	t.Fatalf("template carries no PoolWarmingUp condition; conditions = %+v", tm.Status.Conditions)
+	t.Fatalf("PodSet carries no PoolWarmingUp condition; conditions = %+v", tm.Status.Conditions)
 	return metav1.Condition{}
 }
 
 func TestReconcileCreatesUpToMinWarm(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 
 	reconcile(t, c, s)
 
-	sandboxes := poolSandboxes(t, c)
-	if len(sandboxes) != 3 {
-		t.Fatalf("created %d sandboxes, want 3", len(sandboxes))
+	agentPods := poolAgentPods(t, c)
+	if len(agentPods) != 3 {
+		t.Fatalf("created %d agentpods, want 3", len(agentPods))
 	}
-	for _, sb := range sandboxes {
+	for _, sb := range agentPods {
 		if sb.Labels[warmpool.LabelPool] != testPool {
 			t.Errorf("sandbox %s missing pool label", sb.Name)
 		}
@@ -309,16 +271,16 @@ func TestReconcileCreatesUpToMinWarm(t *testing.T) {
 		if sb.Spec.RuntimeRef != "claude-code" {
 			t.Errorf("sandbox %s runtimeRef = %q, want claude-code", sb.Name, sb.Spec.RuntimeRef)
 		}
-		if sb.Spec.PoolRef != testPool {
-			t.Errorf("sandbox %s poolRef = %q, want %q", sb.Name, sb.Spec.PoolRef, testPool)
+		if sb.Spec.PodSetRef != testPool {
+			t.Errorf("sandbox %s poolRef = %q, want %q", sb.Name, sb.Spec.PodSetRef, testPool)
 		}
 		if sb.Spec.IsolationProfile != "sandboxed" {
 			t.Errorf("sandbox %s isolationProfile = %q, want sandboxed", sb.Name, sb.Spec.IsolationProfile)
 		}
 		if len(sb.OwnerReferences) != 1 ||
-			sb.OwnerReferences[0].Kind != "SandboxWarmPool" ||
+			sb.OwnerReferences[0].Kind != "PodSet" ||
 			sb.OwnerReferences[0].Name != testPool {
-			t.Errorf("sandbox %s owner references = %+v, want one SandboxWarmPool/%s", sb.Name, sb.OwnerReferences, testPool)
+			t.Errorf("sandbox %s owner references = %+v, want one PodSet/%s", sb.Name, sb.OwnerReferences, testPool)
 		}
 	}
 
@@ -334,13 +296,13 @@ func TestReconcileCreatesUpToMinWarm(t *testing.T) {
 func TestReconcileAtTargetCreatesNothing(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10),
-		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"))
+	c := newClient(t, s, pool(ns, 3, 10),
+		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"), idleAgentPod(ns, "sb-c"))
 
 	reconcile(t, c, s)
 
-	if got := len(poolSandboxes(t, c)); got != 3 {
-		t.Fatalf("have %d sandboxes, want 3 (no new pods)", got)
+	if got := len(poolAgentPods(t, c)); got != 3 {
+		t.Fatalf("have %d agentpods, want 3 (no new pods)", got)
 	}
 	p := getPool(t, c)
 	if p.Status.WarmCount != 3 || p.Status.ReadyCount != 3 {
@@ -351,12 +313,12 @@ func TestReconcileAtTargetCreatesNothing(t *testing.T) {
 func TestReconcileBelowTargetCreatesGap(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10), idleSandbox(ns, "sb-a"))
+	c := newClient(t, s, pool(ns, 3, 10), idleAgentPod(ns, "sb-a"))
 
 	reconcile(t, c, s)
 
-	if got := len(poolSandboxes(t, c)); got != 3 {
-		t.Fatalf("have %d sandboxes, want 3 (1 existing + 2 created)", got)
+	if got := len(poolAgentPods(t, c)); got != 3 {
+		t.Fatalf("have %d agentpods, want 3 (1 existing + 2 created)", got)
 	}
 	p := getPool(t, c)
 	if p.Status.WarmCount != 3 || p.Status.ReadyCount != 1 {
@@ -367,18 +329,18 @@ func TestReconcileBelowTargetCreatesGap(t *testing.T) {
 func TestReconcileOverTargetDrainsExcess(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 2, 10),
-		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"),
-		idleSandbox(ns, "sb-d"), idleSandbox(ns, "sb-e"))
+	c := newClient(t, s, pool(ns, 2, 10),
+		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"), idleAgentPod(ns, "sb-c"),
+		idleAgentPod(ns, "sb-d"), idleAgentPod(ns, "sb-e"))
 
 	reconcile(t, c, s)
 
-	sandboxes := poolSandboxes(t, c)
-	if len(sandboxes) != 5 {
-		t.Fatalf("have %d sandboxes, want 5 (drain does not delete)", len(sandboxes))
+	agentPods := poolAgentPods(t, c)
+	if len(agentPods) != 5 {
+		t.Fatalf("have %d agentpods, want 5 (drain does not delete)", len(agentPods))
 	}
 	draining, idle := 0, 0
-	for _, sb := range sandboxes {
+	for _, sb := range agentPods {
 		switch sb.Status.Phase {
 		case "draining":
 			draining++
@@ -408,9 +370,9 @@ func TestReconcileReservedPodsAreOccupiedAndEmitGauge(t *testing.T) {
 	// Two idle (claimable) pods plus two reserved-hold pods. The reserved
 	// pods are occupied: they must not count toward warm/ready inventory,
 	// so the pool is below its minWarm of 3 and creates one replacement.
-	c := newClient(t, s, template(ns), pool(ns, 3, 10),
-		idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"),
-		reservedSandbox(ns, "sb-r1"), reservedSandbox(ns, "sb-r2"))
+	c := newClient(t, s, pool(ns, 3, 10),
+		idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"),
+		reservedAgentPod(ns, "sb-r1"), reservedAgentPod(ns, "sb-r2"))
 
 	warmpool.ForgetReservedPodsForTest(testPool)
 	t.Cleanup(func() { warmpool.ForgetReservedPodsForTest(testPool) })
@@ -420,8 +382,8 @@ func TestReconcileReservedPodsAreOccupiedAndEmitGauge(t *testing.T) {
 	// Reserved pods are excluded from idle inventory, so the two reserved
 	// pods do not count toward minWarm and the controller creates the
 	// one-pod gap (2 idle observed below the floor of 3).
-	if got := len(poolSandboxes(t, c)); got != 5 {
-		t.Fatalf("have %d sandboxes, want 5 (2 idle + 2 reserved + 1 created)", got)
+	if got := len(poolAgentPods(t, c)); got != 5 {
+		t.Fatalf("have %d agentpods, want 5 (2 idle + 2 reserved + 1 created)", got)
 	}
 	// Post-action warm count is the two idle pods plus the one just-created
 	// (warming) pod; ready is the two claimable idle pods. The two reserved
@@ -442,29 +404,12 @@ func TestReconcileReservedPodsAreOccupiedAndEmitGauge(t *testing.T) {
 func TestReconcileMaxWarmCapsCreation(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 10, 4))
+	c := newClient(t, s, pool(ns, 10, 4))
 
 	reconcile(t, c, s)
 
-	if got := len(poolSandboxes(t, c)); got != 4 {
-		t.Fatalf("created %d sandboxes, want 4 (maxWarm cap)", got)
-	}
-}
-
-func TestReconcileMissingTemplateErrors(t *testing.T) {
-	ns := testNamespace(t)
-	s := newScheme(t)
-	c := newClient(t, s, pool(ns, 3, 10)) // no SandboxTemplate
-
-	r := &warmpool.Reconciler{Client: c, Scheme: s}
-	_, err := r.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: client.ObjectKey{Namespace: ns, Name: testPool},
-	})
-	if err == nil {
-		t.Fatal("Reconcile with a missing SandboxTemplate should error")
-	}
-	if got := len(poolSandboxes(t, c)); got != 0 {
-		t.Errorf("created %d sandboxes despite the missing template, want 0", got)
+	if got := len(poolAgentPods(t, c)); got != 4 {
+		t.Fatalf("created %d agentpods, want 4 (maxWarm cap)", got)
 	}
 }
 
@@ -489,11 +434,11 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 	t.Run("provisioning while fresh pods warm", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(ns), pool(ns, 3, 10))
+		c := newClient(t, s, pool(ns, 3, 10))
 
 		reconcile(t, c, s)
 
-		cond := warmingUpCondition(t, getTemplate(t, c))
+		cond := warmingUpCondition(t, getPool(t, c))
 		if cond.Status != metav1.ConditionTrue || cond.Reason != "Provisioning" {
 			t.Errorf("condition = %s/%s, want True/Provisioning", cond.Status, cond.Reason)
 		}
@@ -502,12 +447,12 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 	t.Run("available once idle pods exist", func(t *testing.T) {
 		ns := testNamespace(t)
 		s := newScheme(t)
-		c := newClient(t, s, template(ns), pool(ns, 3, 10),
-			idleSandbox(ns, "sb-a"), idleSandbox(ns, "sb-b"), idleSandbox(ns, "sb-c"))
+		c := newClient(t, s, pool(ns, 3, 10),
+			idleAgentPod(ns, "sb-a"), idleAgentPod(ns, "sb-b"), idleAgentPod(ns, "sb-c"))
 
 		reconcile(t, c, s)
 
-		cond := warmingUpCondition(t, getTemplate(t, c))
+		cond := warmingUpCondition(t, getPool(t, c))
 		if cond.Status != metav1.ConditionFalse || cond.Reason != "Available" {
 			t.Errorf("condition = %s/%s, want False/Available", cond.Status, cond.Reason)
 		}
@@ -518,14 +463,14 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 		s := newScheme(t)
 		// minWarm 3 with maxWarm 0: the ceiling caps creation at zero,
 		// leaving the hot pool with no idle and no warming pods.
-		c := newClient(t, s, template(ns), pool(ns, 3, 0))
+		c := newClient(t, s, pool(ns, 3, 0))
 
 		reconcile(t, c, s)
 
-		if got := len(poolSandboxes(t, c)); got != 0 {
-			t.Fatalf("created %d sandboxes, want 0 (maxWarm 0 caps creation)", got)
+		if got := len(poolAgentPods(t, c)); got != 0 {
+			t.Fatalf("created %d agentpods, want 0 (maxWarm 0 caps creation)", got)
 		}
-		cond := warmingUpCondition(t, getTemplate(t, c))
+		cond := warmingUpCondition(t, getPool(t, c))
 		if cond.Status != metav1.ConditionFalse || cond.Reason != "Drained" {
 			t.Errorf("condition = %s/%s, want False/Drained", cond.Status, cond.Reason)
 		}
@@ -535,12 +480,12 @@ func TestReconcileSetsPoolWarmingUpCondition(t *testing.T) {
 func TestReconcileIsIdempotent(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	c := newClient(t, s, template(ns), pool(ns, 3, 10))
+	c := newClient(t, s, pool(ns, 3, 10))
 
 	reconcile(t, c, s)
-	first := len(poolSandboxes(t, c))
+	first := len(poolAgentPods(t, c))
 	reconcile(t, c, s)
-	second := len(poolSandboxes(t, c))
+	second := len(poolAgentPods(t, c))
 
 	if first != 3 || second != 3 {
 		t.Errorf("sandbox count drifted across reconciles: first=%d second=%d, want 3/3", first, second)
@@ -549,26 +494,26 @@ func TestReconcileIsIdempotent(t *testing.T) {
 
 // spec: 12.9.8
 // diagnosis: the egress-capture annotation lives on the
-// SandboxTemplate; the WarmPoolController propagates it to every
-// Sandbox it creates so the Sandbox reconciler can read it on
-// createPod. Other template annotations stay on the template.
+// PodSet; the WarmPoolController propagates it to every
+// AgentPod it creates so the AgentPod reconciler can read it on
+// createPod. Other PodSet annotations stay on the PodSet.
 func TestReconcilePropagatesEgressCaptureAnnotation(t *testing.T) {
 	ns := testNamespace(t)
 	s := newScheme(t)
-	tmpl := template(ns)
+	tmpl := pool(ns, 1, 1)
 	tmpl.Annotations = map[string]string{
 		"lenny.dev/test-egress-capture-upstream": "api.openai.com:443",
 		"lenny.dev/unrelated":                    "ignore-me",
 	}
-	c := newClient(t, s, tmpl, pool(ns, 1, 1))
+	c := newClient(t, s, tmpl)
 
 	reconcile(t, c, s)
 
-	sandboxes := poolSandboxes(t, c)
-	if len(sandboxes) != 1 {
-		t.Fatalf("created %d sandboxes, want 1", len(sandboxes))
+	agentPods := poolAgentPods(t, c)
+	if len(agentPods) != 1 {
+		t.Fatalf("created %d agentpods, want 1", len(agentPods))
 	}
-	got := sandboxes[0].Annotations
+	got := agentPods[0].Annotations
 	if got["lenny.dev/test-egress-capture-upstream"] != "api.openai.com:443" {
 		t.Errorf("sandbox annotations = %v, want egress-capture upstream propagated", got)
 	}

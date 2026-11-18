@@ -43,7 +43,7 @@ func warmupBaselineForAlert(cfg PoolConfig) float64 {
 // fires when P95 of lenny_warmpool_pod_startup_duration_seconds exceeds
 // 2× this gauge, so the threshold tracks the operator-configured
 // per-pool baseline rather than a single hard-coded value. The
-// PoolScalingController owns the SandboxWarmPool spec, so it is the
+// PoolScalingController owns the PodSet spec, so it is the
 // emit point that keeps the alert threshold in lock-step with the
 // configured baseline. spec: §16.5.
 var poolWarmupBaselineSeconds = func() *prometheus.GaugeVec {

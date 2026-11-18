@@ -233,7 +233,7 @@ func heldBind(reg *podsession.Registry, dial func() *adapterclient.Client, sessi
 // heldBindOn publishes a slot binding for sessionID over cl, on the sandbox
 // heldExecutor seeds for it.
 func heldBindOn(reg *podsession.Registry, cl *adapterclient.Client, sessionID string) {
-	reg.Put(&podsession.BindResult{SessionID: sessionID, TenantID: "acme", SandboxName: "sbx-" + sessionID, SlotID: "slot-" + sessionID, Adapter: cl})
+	reg.Put(&podsession.BindResult{SessionID: sessionID, TenantID: "acme", AgentPodName: "sbx-" + sessionID, SlotID: "slot-" + sessionID, Adapter: cl})
 }
 
 // heldExecutor returns a pod executor over reg whose binder releases the

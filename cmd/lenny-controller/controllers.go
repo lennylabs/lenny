@@ -5,27 +5,27 @@ package main
 import (
 	"log"
 
+	"github.com/lennylabs/lenny/pkg/controller/agentpod"
 	"github.com/lennylabs/lenny/pkg/controller/cidrdrift"
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox"
 	"github.com/lennylabs/lenny/pkg/controller/statusdedup"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 )
 
 // registerCoreControllers registers the §4.6.1 controllers that run in every
 // lenny-controller posture regardless of the Postgres/Redis/namespace flags:
-// the WarmPoolController, the Sandbox-to-Pod reconciler, the per-pod
+// the WarmPoolController, the AgentPod-to-Pod reconciler, the per-pod
 // certificate/schedulability reconciler, and the claim-driven occupancy
 // projection. Each shares the manager and the bounded work-queue factory; the
 // WarmPoolController additionally carries the §16.6 ops emitter and the
 // agent_pod_state mirror (when --postgres-dsn supplied one).
 //
-// spec: §4.6.1 — the WarmPoolController reconciles each SandboxWarmPool toward
-// its minWarm/maxWarm target, the Sandbox reconciler materializes each Sandbox
+// spec: §4.6.1 — the WarmPoolController reconciles each PodSet toward
+// its minWarm/maxWarm target, the AgentPod reconciler materializes each AgentPod
 // into a backing Pod, the per-pod reconciler drives idle-pod cert expiry and
 // host-schedulability, and the occupancy reconciler projects the occupied
-// Sandbox phases from per-pod SandboxClaim binding state.
+// AgentPod phases from per-pod PodClaim binding state.
 func (w *controllerWiring) registerCoreControllers() {
 	f := w.f
 	mgr := w.mgr
@@ -33,7 +33,7 @@ func (w *controllerWiring) registerCoreControllers() {
 	warmPool := &warmpool.Reconciler{
 		Client: mgr.GetClient(),
 		// §5.2 pinned idle inventory: the uncached reader confirms a cached
-		// SandboxClaim NotFound before an idle pod counts as pinned.
+		// PodClaim NotFound before an idle pod counts as pinned.
 		APIReader: mgr.GetAPIReader(),
 		Scheme:    mgr.GetScheme(),
 		Events:    w.opsEmitter,
@@ -57,7 +57,7 @@ func (w *controllerWiring) registerCoreControllers() {
 		log.Fatalf("lenny-controller: set up WarmPoolController: %v", err)
 	}
 
-	if err := (&sandbox.Reconciler{
+	if err := (&agentpod.Reconciler{
 		Client:                  mgr.GetClient(),
 		Scheme:                  mgr.GetScheme(),
 		AdapterImage:            f.adapterImage,
@@ -90,7 +90,7 @@ func (w *controllerWiring) registerCoreControllers() {
 		SupervisorImage: f.supervisorImage,
 		SuperviseTiming: f.superviseTiming,
 	}).SetupWithManager(mgr); err != nil {
-		log.Fatalf("lenny-controller: set up Sandbox reconciler: %v", err)
+		log.Fatalf("lenny-controller: set up AgentPod reconciler: %v", err)
 	}
 
 	// §4.6.1 per-pod reconciler: the WarmPoolController is the sole
@@ -119,12 +119,12 @@ func (w *controllerWiring) registerCoreControllers() {
 	}
 
 	// §4.6.1 claim-driven occupancy projection: the WarmPoolController is the
-	// sole writer of the coarse Sandbox.status.phase and projects the
+	// sole writer of the coarse AgentPod.status.phase and projects the
 	// occupied phases (claimed, reserved, the recycle sdk_connecting re-warm
 	// leg, and the claim-DELETE return to idle or draining) as a
-	// level-triggered function of the per-pod SandboxClaim binding state. It
-	// watches Sandboxes and SandboxClaims (mapping each claim to its owning
-	// Sandbox) so a gateway binding-state transition re-projects the pod
+	// level-triggered function of the per-pod PodClaim binding state. It
+	// watches AgentPods and PodClaims (mapping each claim to its owning
+	// AgentPod) so a gateway binding-state transition re-projects the pod
 	// phase within one reconcile cycle.
 	if err := (&warmpool.OccupancyReconciler{
 		Client:                  mgr.GetClient(),
@@ -172,7 +172,7 @@ func (w *controllerWiring) registerOptionalControllers() {
 // The §4.6.2 PoolScalingController is not registered here. It runs as its own
 // workload (cmd/lenny-pool-scaling-controller) under its own ServiceAccount and
 // leader-election lease, because the §4.6.3 pool-config-validator admits the
-// derived SandboxTemplate and SandboxWarmPool spec writes only from the PSC
+// derived PodSet spec writes only from the PSC
 // ServiceAccount. A second in-process copy here would run as soon as
 // --agent-namespaces is set and contend with the dedicated workload.
 //

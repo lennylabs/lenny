@@ -79,7 +79,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// replica was lost) is forced to `failed`/orphan_pod_terminated so it
 	// stops holding quota. When a pool's mirror is stale (lag > 60s) or
 	// carries no row for the bound pod, the reconciler falls back to a
-	// direct Sandbox read. Active only when the Postgres mirror is wired.
+	// direct AgentPod read. Active only when the Postgres mirror is wired.
 	// §10.1.4 runs the reconciler on the gateway leader only, so it is
 	// built here and stored on the wiring; startLeaderElectedSweeps
 	// registers it on the §12.5 gateway-leader gate, which starts it on
@@ -92,9 +92,9 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			Clock:    clockinject.Now,
 		}
 		if w.clusterClient != nil && *agentNamespace != "" {
-			orphanSessionOpts.Fallback = sandboxPhaseReader{
-				mgr: &podlifecycle.AgentSandboxPodLifecycleManager{
-					AgentSandboxPoolReader: podlifecycle.AgentSandboxPoolReader{
+			orphanSessionOpts.Fallback = agentPodPhaseReader{
+				mgr: &podlifecycle.CRDPodLifecycleManager{
+					CRDPoolReader: podlifecycle.CRDPoolReader{
 						Client:    w.clusterClient,
 						Namespace: *agentNamespace,
 					},

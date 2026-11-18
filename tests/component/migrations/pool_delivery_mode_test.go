@@ -14,7 +14,8 @@ import (
 // spec: §4.9 (cross-tenant credential-delivery combinations)
 // diagnosis: migration 0177 did not add the delivery_mode, spiffe_binding,
 // allow_direct_mode_standard_isolation, and
-// allow_proxy_mode_spiffe_binding_disabled columns to sandbox_warm_pools
+// allow_proxy_mode_spiffe_binding_disabled columns to the pool-record table
+// (sandbox_warm_pools then, pools after 0198)
 // with the correct NOT NULL/DEFAULT, or its .down.sql did not drop them.
 // The two text fields carry the pool-definition credential-delivery
 // combination the pool-registration and admission layers inspect and
@@ -32,13 +33,13 @@ func TestProdMigration0177PoolDeliveryModeColumns(t *testing.T) {
 
 	// The two text combination fields: NOT NULL, default '' (inherit).
 	for _, col := range []string{"delivery_mode", "spiffe_binding"} {
-		mustHaveColumn(t, ctx, pg, "sandbox_warm_pools", col)
-		if got := columnType(t, ctx, pg, "sandbox_warm_pools", col); got != "text" {
-			t.Errorf("sandbox_warm_pools.%s type: got %q, want text", col, got)
+		mustHaveColumn(t, ctx, pg, "pools", col)
+		if got := columnType(t, ctx, pg, "pools", col); got != "text" {
+			t.Errorf("pools.%s type: got %q, want text", col, got)
 		}
-		mustBeNotNull(t, ctx, pg, "sandbox_warm_pools", col)
-		if def := columnDefault(t, ctx, pg, "sandbox_warm_pools", col); def != "''::text" {
-			t.Errorf("sandbox_warm_pools.%s default: got %q, want ''::text (inherit)", col, def)
+		mustBeNotNull(t, ctx, pg, "pools", col)
+		if def := columnDefault(t, ctx, pg, "pools", col); def != "''::text" {
+			t.Errorf("pools.%s default: got %q, want ''::text (inherit)", col, def)
 		}
 	}
 
@@ -48,13 +49,13 @@ func TestProdMigration0177PoolDeliveryModeColumns(t *testing.T) {
 		"allow_direct_mode_standard_isolation",
 		"allow_proxy_mode_spiffe_binding_disabled",
 	} {
-		mustHaveColumn(t, ctx, pg, "sandbox_warm_pools", col)
-		if got := columnType(t, ctx, pg, "sandbox_warm_pools", col); got != "boolean" {
-			t.Errorf("sandbox_warm_pools.%s type: got %q, want boolean", col, got)
+		mustHaveColumn(t, ctx, pg, "pools", col)
+		if got := columnType(t, ctx, pg, "pools", col); got != "boolean" {
+			t.Errorf("pools.%s type: got %q, want boolean", col, got)
 		}
-		mustBeNotNull(t, ctx, pg, "sandbox_warm_pools", col)
-		if def := columnDefault(t, ctx, pg, "sandbox_warm_pools", col); def != "false" {
-			t.Errorf("sandbox_warm_pools.%s default: got %q, want false (fail closed)", col, def)
+		mustBeNotNull(t, ctx, pg, "pools", col)
+		if def := columnDefault(t, ctx, pg, "pools", col); def != "false" {
+			t.Errorf("pools.%s default: got %q, want false (fail closed)", col, def)
 		}
 	}
 
@@ -65,7 +66,7 @@ func TestProdMigration0177PoolDeliveryModeColumns(t *testing.T) {
 		"allow_direct_mode_standard_isolation",
 		"allow_proxy_mode_spiffe_binding_disabled",
 	} {
-		mustNotHaveColumn(t, ctx, pg, "sandbox_warm_pools", col)
+		mustNotHaveColumn(t, ctx, pg, "pools", col)
 	}
 }
 

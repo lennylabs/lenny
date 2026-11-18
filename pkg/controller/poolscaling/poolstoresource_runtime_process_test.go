@@ -24,7 +24,7 @@ func (l listedRows) List(context.Context, poolstore.ListFilter) ([]poolstore.Poo
 }
 
 // TestSessionPolicyToCRDMirrorsRuntimeProcess pins the PoolScalingController
-// mirror of recycle.runtimeProcess onto SandboxTemplate
+// mirror of recycle.runtimeProcess onto PodSet
 // spec.sessionPolicy.recycle.runtimeProcess: each value passes through, a
 // row that sets only the lifetime still yields a recycle block (the block
 // was nil for such a row before the lifetime was mirrored, so the
@@ -63,7 +63,7 @@ func TestSessionPolicyToCRDMirrorsRuntimeProcess(t *testing.T) {
 		if err != nil || len(configs) != 1 {
 			t.Fatalf("%s: ListPoolConfigs = %d configs, %v", tc.name, len(configs), err)
 		}
-		sp := configs[0].Template.SessionPolicy
+		sp := configs[0].Settings.SessionPolicy
 		if (sp != nil && sp.Recycle != nil) != tc.wantBlock {
 			t.Fatalf("%s: recycle block present = %v, want %v", tc.name, sp != nil, tc.wantBlock)
 		}

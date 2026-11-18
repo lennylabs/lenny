@@ -44,7 +44,7 @@ import (
 	utilyaml "k8s.io/apimachinery/pkg/util/yaml"
 
 	"github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/controller/sandbox/podspec"
+	"github.com/lennylabs/lenny/pkg/controller/agentpod/podspec"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -196,48 +196,48 @@ type PlatformImages map[string]string
 // container image other than the one platform names, sorted by name.
 // When both differ the runtime image is reported. A pod is idle
 // only when its lenny.dev/state label is idle, it carries no deletion
-// timestamp, and the Sandbox that owns it reports the §6.2 idle phase; a
+// timestamp, and the AgentPod that owns it reports the §6.2 idle phase; a
 // claimed, reserved, draining, or warming pod is never returned. A pod
 // whose Runtime CR no longer exists, or that has no runtime container, is
 // left alone because there is no current image to compare against.
-func StaleIdlePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList, platform PlatformImages) []StalePod {
-	return stalePods(pods, runtimes, sandboxes, platform, func(p *corev1.Pod, phase string) bool {
+func StaleIdlePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, agentPods *v1alpha1.AgentPodList, platform PlatformImages) []StalePod {
+	return stalePods(pods, runtimes, agentPods, platform, func(p *corev1.Pod, phase string) bool {
 		return p.Labels[state.LabelState] == state.CoarseIdle && phase == string(state.Idle)
 	})
 }
 
-// StaleWarmingPods returns the pods whose owning Sandbox is in the §6.2
+// StaleWarmingPods returns the pods whose owning AgentPod is in the §6.2
 // warming phase and whose runtime container runs an image other than the
 // one their Runtime CR names, or whose platform-injected container runs an
 // image other than the one platform names, sorted by name. Such a pod was created from
 // the Runtime CR before the install applied the new image. It is not
 // deleted while it warms; the script waits for it to reach idle and then
 // rolls it with the idle pods.
-func StaleWarmingPods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList, platform PlatformImages) []StalePod {
-	return stalePods(pods, runtimes, sandboxes, platform, func(_ *corev1.Pod, phase string) bool {
+func StaleWarmingPods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, agentPods *v1alpha1.AgentPodList, platform PlatformImages) []StalePod {
+	return stalePods(pods, runtimes, agentPods, platform, func(_ *corev1.Pod, phase string) bool {
 		return phase == string(state.Warming)
 	})
 }
 
 // stalePods returns the pods that carry no deletion timestamp, whose
-// owning Sandbox phase satisfies match, and whose runtime image differs
+// owning AgentPod phase satisfies match, and whose runtime image differs
 // from their Runtime CR's image or whose platform-injected container image
 // differs from platform, sorted by name.
-func stalePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *v1alpha1.SandboxList,
-	platform PlatformImages, match func(p *corev1.Pod, sandboxPhase string) bool,
+func stalePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, agentPods *v1alpha1.AgentPodList,
+	platform PlatformImages, match func(p *corev1.Pod, agentPodPhase string) bool,
 ) []StalePod {
 	want := make(map[string]string, len(runtimes.Items))
 	for _, rt := range runtimes.Items {
 		want[rt.Name] = rt.Spec.Image
 	}
-	phase := make(map[string]string, len(sandboxes.Items))
-	for _, sb := range sandboxes.Items {
+	phase := make(map[string]string, len(agentPods.Items))
+	for _, sb := range agentPods.Items {
 		phase[sb.Name] = sb.Status.Phase
 	}
 	var out []StalePod
 	for i := range pods.Items {
 		p := &pods.Items[i]
-		sb, owned := owningSandbox(p)
+		sb, owned := owningAgentPod(p)
 		if !owned || p.DeletionTimestamp != nil || !match(p, phase[sb]) {
 			continue
 		}
@@ -265,12 +265,12 @@ func stalePods(pods *corev1.PodList, runtimes *v1alpha1.RuntimeList, sandboxes *
 	return out
 }
 
-// owningSandbox returns the name of the Sandbox that controls the pod.
-// The pod state label lags the Sandbox phase by one reconcile, so the
+// owningAgentPod returns the name of the AgentPod that controls the pod.
+// The pod state label lags the AgentPod phase by one reconcile, so the
 // idle selection reads both.
-func owningSandbox(p *corev1.Pod) (string, bool) {
+func owningAgentPod(p *corev1.Pod) (string, bool) {
 	for _, ref := range p.OwnerReferences {
-		if ref.Kind == "Sandbox" && ref.Controller != nil && *ref.Controller {
+		if ref.Kind == "AgentPod" && ref.Controller != nil && *ref.Controller {
 			return ref.Name, true
 		}
 	}

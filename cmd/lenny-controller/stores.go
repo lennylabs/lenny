@@ -40,7 +40,7 @@ func (w *controllerWiring) buildStores() {
 	w.agentNamespaces = splitNamespaces(f.agentNSList)
 
 	// The §4.6.1 agent_pod_state mirror is durable under --postgres-dsn:
-	// the WarmPoolController writes the Postgres-side copy of Sandbox
+	// the WarmPoolController writes the Postgres-side copy of AgentPod
 	// status that the gateway's fallback claim path reads. When the flag
 	// is empty the mirror store is left nil and the controller skips
 	// mirroring.
@@ -77,7 +77,7 @@ func (w *controllerWiring) buildStores() {
 // newSessionLookup builds the §4.6.1 orphan-claim session lookup over the
 // Postgres session store, with the §7.1 post-terminal cap set to the orphan
 // timeout the GC loop applies for claimOrphanTimeout.
-// spec: §4.6.1 (Orphaned SandboxClaim detection), §7.1 (Post-terminal window).
+// spec: §4.6.1 (Orphaned PodClaim detection), §7.1 (Post-terminal window).
 func newSessionLookup(pool *pgxpool.Pool, claimOrphanTimeout time.Duration) *sessionActiveLookup {
 	window := warmpool.ResolveClaimOrphanTimeout(claimOrphanTimeout)
 	return &sessionActiveLookup{store: sessionstorepg.New(pool, sessionstorepg.WithPostTerminalCap(window))}

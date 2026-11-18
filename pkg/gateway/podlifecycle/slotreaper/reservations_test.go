@@ -30,7 +30,7 @@ func (f *fakeReclaimer) ReclaimSlotReservations(ctx context.Context, cutoff time
 	return f.n, f.err
 }
 
-// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
+// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned PodClaim
 // detection).
 //
 // Each pass reclaims the abandoned slot reservation records once, with the
@@ -81,7 +81,7 @@ func TestReaperReclaimsAbandonedReservations_spec_12_4(t *testing.T) {
 	}
 }
 
-// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned SandboxClaim
+// spec: §12.4 (Redis failure behavior), §4.6.1 (Orphaned PodClaim
 // detection).
 //
 // The reclaim runs under a deadline, so a stalled delete cannot hold the

@@ -5,11 +5,11 @@
 // Component coverage for the release of a pod claim when a binder call
 // fails after the claim.
 //
-// A binder call claims a warm pod by creating its per-pod SandboxClaim, runs
+// A binder call claims a warm pod by creating its per-pod PodClaim, runs
 // the caller's post-claim hook, and then dials the pod's adapter for the
 // version handshake. When the hook fails, or the handshake fails, the call
 // returns an error and no session holds the pod, so the binder deletes the
-// claim before it returns. The outcome is the SandboxClaim object in the
+// claim before it returns. The outcome is the PodClaim object in the
 // kube-apiserver, so the cases run against a real one: each asserts the
 // binder issued exactly one delete for the claim and that no claim is left
 // for the orphan-claim GC to collect.
@@ -54,7 +54,7 @@ const (
 )
 
 // claimFixture is one idle pod in a real kube-apiserver and a binder whose
-// SandboxClaim deletes are counted.
+// PodClaim deletes are counted.
 type claimFixture struct {
 	kube    client.WithWatch
 	binder  *podsession.Binder
@@ -69,7 +69,7 @@ func newClaimFixture(t *testing.T, dial func(string) (*adapterclient.Client, err
 	deletes := &atomic.Int32{}
 	counted := interceptor.NewClient(kube, interceptor.Funcs{
 		Delete: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.DeleteOption) error {
-			if _, ok := obj.(*lennyv1.SandboxClaim); ok && obj.GetName() == podclaim.ClaimName(claimPod) {
+			if _, ok := obj.(*lennyv1.PodClaim); ok && obj.GetName() == podclaim.ClaimName(claimPod) {
 				deletes.Add(1)
 			}
 			return c.Delete(ctx, obj, opts...)
@@ -88,13 +88,13 @@ func newClaimFixture(t *testing.T, dial func(string) (*adapterclient.Client, err
 	}
 }
 
-// claimCount lists the SandboxClaims in the namespace, which is every claim
+// claimCount lists the PodClaims in the namespace, which is every claim
 // the binder could have left behind.
 func (f *claimFixture) claimCount(t *testing.T) int {
 	t.Helper()
-	var claims lennyv1.SandboxClaimList
+	var claims lennyv1.PodClaimList
 	if err := f.kube.List(context.Background(), &claims, client.InNamespace(claimNS)); err != nil {
-		t.Fatalf("list SandboxClaims: %v", err)
+		t.Fatalf("list PodClaims: %v", err)
 	}
 	return len(claims.Items)
 }
@@ -104,10 +104,10 @@ func (f *claimFixture) claimCount(t *testing.T) int {
 func (f *claimFixture) assertReleasedOnce(t *testing.T) {
 	t.Helper()
 	if got := f.deletes.Load(); got != 1 {
-		t.Errorf("SandboxClaim deletes = %d, want exactly 1", got)
+		t.Errorf("PodClaim deletes = %d, want exactly 1", got)
 	}
 	if got := f.claimCount(t); got != 0 {
-		t.Errorf("SandboxClaims left = %d, want 0 (a leaked claim holds the pod until the orphan-claim GC)", got)
+		t.Errorf("PodClaims left = %d, want 0 (a leaked claim holds the pod until the orphan-claim GC)", got)
 	}
 }
 
@@ -182,7 +182,7 @@ func binderCalls() []binderCall {
 
 // spec: 7.3 (Retry and Resume), 4.6.1 (Warm Pool Controller (Pod Lifecycle))
 // diagnosis: a binder call that failed after its claim did not delete the
-// SandboxClaim exactly once. A claim left in the apiserver holds a warm pod
+// PodClaim exactly once. A claim left in the apiserver holds a warm pod
 // for the orphan-claim GC window per failed attempt, which a retrying restore
 // multiplies until the pool is exhausted. A second delete means two paths
 // release the same claim, and on a recycled pod the second can remove a
@@ -207,7 +207,7 @@ func TestPostClaimFailureDeletesTheClaimOnce_spec_7_3(t *testing.T) {
 	}
 }
 
-// claimKubeClient starts an envtest kube-apiserver holding one idle Sandbox
+// claimKubeClient starts an envtest kube-apiserver holding one idle AgentPod
 // in the pool. The apiserver is private to the test process, so no state
 // survives a killed run.
 func claimKubeClient(t *testing.T) client.WithWatch {
@@ -230,27 +230,27 @@ func claimKubeClient(t *testing.T) client.WithWatch {
 	}); err != nil && !apierrors.IsAlreadyExists(err) {
 		t.Fatalf("create namespace: %v", err)
 	}
-	if err := c.Create(ctx, &lennyv1.Sandbox{ObjectMeta: metav1.ObjectMeta{
+	if err := c.Create(ctx, &lennyv1.AgentPod{ObjectMeta: metav1.ObjectMeta{
 		Name:      claimPod,
 		Namespace: claimNS,
 		Labels:    map[string]string{warmpool.LabelPool: claimPool},
 	}}); err != nil {
-		t.Fatalf("create Sandbox: %v", err)
+		t.Fatalf("create AgentPod: %v", err)
 	}
 	// §4.6.3 field ownership: the WarmPoolController owns the phase and
 	// the pod address, so the seed is applied under its field manager.
 	u := &unstructured.Unstructured{}
 	u.SetAPIVersion(lennyv1.GroupVersion.String())
-	u.SetKind("Sandbox")
+	u.SetKind("AgentPod")
 	u.SetName(claimPod)
 	u.SetNamespace(claimNS)
 	if err := unstructured.SetNestedField(u.Object,
 		map[string]interface{}{"phase": "idle", "podIP": "10.244.2.5"}, "status"); err != nil {
-		t.Fatalf("build Sandbox status seed: %v", err)
+		t.Fatalf("build AgentPod status seed: %v", err)
 	}
 	if err := c.Status().Patch(ctx, u, client.Apply,
 		client.FieldOwner(string(ownership.WarmPoolController))); err != nil {
-		t.Fatalf("seed Sandbox status: %v", err)
+		t.Fatalf("seed AgentPod status: %v", err)
 	}
 	return c
 }
