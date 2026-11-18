@@ -37,7 +37,7 @@ Trials 2 and 3 are trials 1 and 2 of the second run's records.
 ## Steps
 
 ### 0157.S1 The journey tier and three pilot journeys
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0155.S1]
 
