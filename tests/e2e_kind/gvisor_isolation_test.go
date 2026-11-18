@@ -5,10 +5,11 @@
 // e2e_kind Kind test for the §5.3 sandboxed isolation profile. The
 // cluster.yaml worker labelled lenny.dev/pool=sandbox-gvisor carries a
 // real gVisor (runsc) install: tests/testinfra/kind/install-gvisor.sh
-// installs the runsc + containerd-shim-runsc-v1 binaries onto that
-// node and applies the gvisor RuntimeClass before install.sh's
-// Postgres-authoritative gvisor-echo-pool (isolationProfile:
-// sandboxed) seeds its warm pod, so this test exercises a genuinely
+// installs runsc, containerd-shim-runsc-v1, and gvisor-bin/ from the
+// checksum-verified release archive onto that node and applies the
+// gvisor RuntimeClass before install.sh's Postgres-authoritative
+// gvisor-echo-pool (isolationProfile: sandboxed) seeds its warm pod,
+// so this test exercises a genuinely
 // gVisor-sandboxed agent pod rather than a RuntimeClass-name assertion
 // alone.
 //
