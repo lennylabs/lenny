@@ -785,6 +785,7 @@ func (d *uploadDriver) onSummary(s *adapterv1.CheckpointSummary) (string, int64,
 	confirmedBytes := d.confirmedBytes
 	confirmedCount := d.confirmedCount
 	prefixCount := d.prefixCount
+	prefixBytes := d.prefixBytes
 	d.mu.Unlock()
 	if aborted {
 		return d.terminalAbort(reason)
@@ -800,6 +801,9 @@ func (d *uploadDriver) onSummary(s *adapterv1.CheckpointSummary) (string, int64,
 	}
 	total := s.GetTotalBytes()
 	if d.c.Manifests != nil {
+		if err := d.flushPrefix(d.ctx, prefixCount, prefixBytes); err != nil {
+			return "", 0, fmt.Errorf("checkpointer: flush confirmed chunks: %w", err)
+		}
 		if err := d.c.Manifests.Finalise(d.ctx, d.tenantID, d.checkpointID,
 			false, partialmanifeststore.ReasonComplete); err != nil {
 			return "", 0, fmt.Errorf("checkpointer: finalise complete: %w", err)
@@ -937,6 +941,9 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 		d.abortReason = reason
 	}
 	confirmed := d.confirmedBytes
+	confirmedCount := d.confirmedCount
+	prefixCount := d.prefixCount
+	prefixBytes := d.prefixBytes
 	d.mu.Unlock()
 	// Commit the durable finalisation, reservation release, and chunk sweep
 	// on a context detached from the attempt's already-cancelled or
@@ -952,6 +959,10 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// left active for the resume path or a downstream reclaimer.
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(d.ctx), cleanupTimeout)
 	defer cancel()
+	// The flush is best-effort here: the abort arm still finalises the row and
+	// releases the reservation when it fails, and the abort's own error path
+	// takes precedence over a counter correction.
+	_ = d.flushPrefix(ctx, prefixCount, prefixBytes)
 	if err := c.Manifests.Finalise(ctx, d.tenantID, d.checkpointID, true, reason); err != nil {
 		return fmt.Errorf("checkpointer: finalise partial (%s): %w", reason, err)
 	}
@@ -989,7 +1000,7 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 	// a stream_truncated / superseded / quota_exceeded abort does not leave an
 	// emptied active partial row for the resume selector to pick.
 	// spec: §4.4 "Checkpoint abort cleanup"; §4.4.
-	if reason != partialmanifeststore.ReasonTimeout && c.ChunkCatalog != nil && c.ChunkObjects != nil && d.prefix != "" {
+	if abortSweepsChunks(reason, prefixCount, confirmedCount) && c.ChunkCatalog != nil && c.ChunkObjects != nil && d.prefix != "" {
 		if err := releaseChunkObjectsUnderPrefix(ctx, c.ChunkCatalog, c.ChunkObjects,
 			d.chunkPrefixURI(), d.prefix, c.tombstoneRetention(), d.onOrphanedObject); err == nil {
 			_ = finaliseReclaimedManifest(ctx, c.Manifests, c.ChunkObjects,
@@ -1002,6 +1013,37 @@ func (d *uploadDriver) finaliseAbort(reason string) error {
 		}
 	}
 	return nil
+}
+
+// flushPrefix re-issues the manifest counter update for the contiguous
+// confirmed run of count chunks totalling bytes, ahead of a Finalise. Each
+// confirm writes the run as it grows, but that write is best-effort, so a
+// failed write would otherwise leave the finalised row behind the chunks the
+// attempt confirmed. When the earlier write landed, the monotonic chunk_count
+// guard makes this one a no-op. A run of zero chunks writes nothing.
+//
+// spec: §10.1.7 (preStop Hook Drain)
+func (d *uploadDriver) flushPrefix(ctx context.Context, count int, bytes int64) error {
+	if count == 0 {
+		return nil
+	}
+	return d.c.Manifests.ConfirmChunk(ctx, d.tenantID, d.checkpointID, count-1, bytes)
+}
+
+// abortSweepsChunks reports whether an abort arm releases the attempt's chunk
+// objects. Every arm other than a deadline fire releases them, because no
+// resume consumes its row. A deadline fire keeps its row and chunks for the
+// resume path, except when the confirmed run is empty although chunks past
+// index 0 confirmed: Finalise soft-deletes that zero-chunk row, so no resume
+// and no backstop selects it, and without this sweep those chunks would stay
+// in the object store with live catalog rows still charged to the tenant.
+//
+// spec: §10.1.7 (preStop Hook Drain), §4.4.2 (Checkpoint Atomicity and Partial Manifests), §12.5 (Artifact Store)
+func abortSweepsChunks(reason string, prefixCount, confirmedCount int) bool {
+	if reason != partialmanifeststore.ReasonTimeout {
+		return true
+	}
+	return prefixCount == 0 && confirmedCount > 0
 }
 
 // onOrphanedObject stamps the §4.4

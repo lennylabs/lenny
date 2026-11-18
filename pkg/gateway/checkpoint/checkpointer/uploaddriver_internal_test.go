@@ -5,8 +5,10 @@ package checkpointer
 import (
 	"context"
 	"errors"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
@@ -252,4 +254,223 @@ func TestSummaryOverContiguousConfirmsFinalisesComplete(t *testing.T) {
 	if got.Partial || got.ChunkCount != 2 || got.WorkspaceBytesUploaded != 12 {
 		t.Errorf("row partial=%v chunk_count=%d bytes=%d, want complete 2/12", got.Partial, got.ChunkCount, got.WorkspaceBytesUploaded)
 	}
+}
+
+// discardStream is a checkpoint stream whose Send drops every frame, so a
+// confirm that latches an abort can send the adapter its CheckpointAbort in a
+// test with no adapter on the other end. Every other method is unused.
+type discardStream struct {
+	adapterv1.Adapter_CheckpointClient
+}
+
+func (discardStream) Send(*adapterv1.CheckpointRequest) error { return nil }
+
+// adjustRecorder is a StorageQuota that records every Adjust delta.
+type adjustRecorder struct {
+	mu     sync.Mutex
+	deltas []int64
+}
+
+func (q *adjustRecorder) Reserve(context.Context, string, int64, int64) (int64, error) {
+	return 0, nil
+}
+
+func (q *adjustRecorder) Adjust(_ context.Context, _ string, delta int64) error {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	q.deltas = append(q.deltas, delta)
+	return nil
+}
+
+// sweepSpy is the chunk catalog and object store an abort sweep runs
+// against. It holds one object per seeded chunk index under the attempt's
+// prefix and records the catalog rows it soft-deletes.
+type sweepSpy struct {
+	mu          sync.Mutex
+	objects     []blobstore.URI
+	softDeleted []string
+}
+
+func (s *sweepSpy) seed(d *uploadDriver, indices ...uint32) {
+	for _, idx := range indices {
+		s.objects = append(s.objects, d.chunkURI(idx))
+	}
+}
+
+func (s *sweepSpy) ListByPrefix(_ context.Context, u blobstore.URI) ([]blobstore.BlobInfo, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var out []blobstore.BlobInfo
+	for _, o := range s.objects {
+		if o.TenantID == u.TenantID && o.SessionID == u.SessionID && strings.HasPrefix(o.PartID, u.PartID) {
+			out = append(out, blobstore.BlobInfo{URI: o})
+		}
+	}
+	return out, nil
+}
+
+func (s *sweepSpy) HardDeleteObject(u blobstore.URI) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kept := s.objects[:0]
+	for _, o := range s.objects {
+		if o.PartID != u.PartID {
+			kept = append(kept, o)
+		}
+	}
+	s.objects = kept
+	return nil
+}
+
+func (s *sweepSpy) SoftDeleteRow(_ context.Context, uri string, _ time.Duration) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.softDeleted = append(s.softDeleted, uri)
+	return nil
+}
+
+func (s *sweepSpy) state() (remaining, softDeleted int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.objects), len(s.softDeleted)
+}
+
+// flakyConfirm is a manifest store whose first failConfirms ConfirmChunk
+// calls fail, standing in for a lost counter write.
+type flakyConfirm struct {
+	*partialmanifeststore.MemoryStore
+	mu           sync.Mutex
+	failConfirms int
+}
+
+func (f *flakyConfirm) ConfirmChunk(ctx context.Context, tenantID, checkpointID string, n int, uploaded int64) error {
+	f.mu.Lock()
+	fail := f.failConfirms > 0
+	if fail {
+		f.failConfirms--
+	}
+	f.mu.Unlock()
+	if fail {
+		return errors.New("flakyConfirm: write lost")
+	}
+	return f.MemoryStore.ConfirmChunk(ctx, tenantID, checkpointID, n, uploaded)
+}
+
+// spec: §10.1.7 (preStop Hook Drain), §4.4.2 (Checkpoint Atomicity and Partial Manifests), §12.5 (Artifact Store)
+// A deadline fire whose confirmed run is empty, although chunks 1 and 2
+// confirmed, sweeps those chunks, because Finalise soft-deletes the
+// zero-chunk row and no resume or backstop would reclaim them. A deadline fire
+// with a non-empty run keeps its chunks for the resume path.
+// diagnosis: a failure here means a timed-out attempt whose chunk 0 never
+// confirmed leaves its later chunks in the object store with live catalog rows
+// charged to the tenant and no row that selects them, or that a resumable
+// timeout row lost its chunks.
+func TestTimeoutWithEmptyConfirmedRunSweepsConfirmedChunks(t *testing.T) {
+	t.Run("empty run sweeps", func(t *testing.T) {
+		d, store := confirmHarness(t, &gatedStat{sizes: map[uint32]int64{1: 6, 2: 7}})
+		spy := &sweepSpy{}
+		spy.seed(d, 1, 2)
+		d.c.ChunkCatalog, d.c.ChunkObjects = spy, spy
+		confirm(d, 1)
+		confirm(d, 2)
+		if err := d.finaliseAbort(partialmanifeststore.ReasonTimeout); err != nil {
+			t.Fatalf("finaliseAbort: %v", err)
+		}
+		if remaining, softDeleted := spy.state(); remaining != 0 || softDeleted != 2 {
+			t.Errorf("after the sweep: %d object(s) remain and %d catalog row(s) soft-deleted, want 0 and 2", remaining, softDeleted)
+		}
+		if got := manifestRow(t, store); got.DeletedAt.IsZero() || got.ManifestReason != partialmanifeststore.ReasonTimeout {
+			t.Errorf("row deleted_at=%v reason=%q, want soft-deleted timeout", got.DeletedAt, got.ManifestReason)
+		}
+	})
+	t.Run("non-empty run is retained", func(t *testing.T) {
+		d, store := confirmHarness(t, &gatedStat{sizes: map[uint32]int64{0: 5, 2: 7}})
+		spy := &sweepSpy{}
+		spy.seed(d, 0, 2)
+		d.c.ChunkCatalog, d.c.ChunkObjects = spy, spy
+		confirm(d, 0)
+		confirm(d, 2)
+		if err := d.finaliseAbort(partialmanifeststore.ReasonTimeout); err != nil {
+			t.Fatalf("finaliseAbort: %v", err)
+		}
+		if remaining, softDeleted := spy.state(); remaining != 2 || softDeleted != 0 {
+			t.Errorf("%d object(s) remain and %d catalog row(s) soft-deleted, want both chunks retained for the resume path", remaining, softDeleted)
+		}
+		if got := manifestRow(t, store); !got.DeletedAt.IsZero() || got.ChunkCount != 1 || got.WorkspaceBytesUploaded != 5 {
+			t.Errorf("row deleted_at=%v chunk_count=%d bytes=%d, want active 1/5", got.DeletedAt, got.ChunkCount, got.WorkspaceBytesUploaded)
+		}
+	})
+}
+
+// spec: §11.2 (Budgets and Quotas), §10.1.7 (preStop Hook Drain)
+// When chunk 0's Stat fails and chunk 1 confirms, the abort releases the
+// reservation less chunk 1's confirmed size, which its catalog row already
+// carries, while the row stays at zero chunks and finalises partial
+// stream_truncated.
+// diagnosis: a failure here means reconciliation keys on the persisted
+// contiguous run rather than on every confirmed chunk, so a chunk past a gap
+// is released from the reservation while its catalog row still charges it,
+// or the abort finalises with the wrong disposition.
+func TestAbortReconcilesEveryConfirmedChunkNotOnlyTheRun(t *testing.T) {
+	d, store := confirmHarness(t, &gatedStat{sizes: map[uint32]int64{1: 11}})
+	quota := &adjustRecorder{}
+	d.c.Quota = quota
+	d.stream = discardStream{}
+	d.reservedBytes, d.quotaCap, d.quotaCapSet = 100, 100, true
+	confirm(d, 0)
+	confirm(d, 1)
+	if _, _, err := d.terminalAbort(partialmanifeststore.ReasonStreamTruncated); err == nil {
+		t.Fatal("terminalAbort returned no error")
+	}
+	quota.mu.Lock()
+	deltas := append([]int64(nil), quota.deltas...)
+	quota.mu.Unlock()
+	if len(deltas) != 1 || deltas[0] != -(100-11) {
+		t.Errorf("Adjust deltas = %v, want [%d]", deltas, -(100 - 11))
+	}
+	got := manifestRow(t, store)
+	if got.ChunkCount != 0 || got.WorkspaceBytesUploaded != 0 {
+		t.Errorf("row chunk_count=%d bytes=%d, want 0/0", got.ChunkCount, got.WorkspaceBytesUploaded)
+	}
+	if !got.Partial || got.ManifestReason != partialmanifeststore.ReasonStreamTruncated {
+		t.Errorf("row partial=%v reason=%q, want partial stream_truncated", got.Partial, got.ManifestReason)
+	}
+}
+
+// spec: §10.1.7 (preStop Hook Drain)
+// A confirm whose counter write is lost is corrected by the flush each
+// terminal arm issues before Finalise, on the complete arm and on an abort
+// arm alike.
+// diagnosis: a failure here means a lost per-confirm counter write leaves the
+// finalised row behind the chunks the attempt confirmed, so the resume
+// threshold and the backstop's reservation release read a short count.
+func TestFinaliseFlushesTheConfirmedRunAfterALostWrite(t *testing.T) {
+	newFlaky := func(t *testing.T) (*uploadDriver, *partialmanifeststore.MemoryStore) {
+		t.Helper()
+		d, store := confirmHarness(t, &gatedStat{sizes: map[uint32]int64{0: 9}})
+		d.c.Manifests = &flakyConfirm{MemoryStore: store, failConfirms: 1}
+		confirm(d, 0)
+		if got := manifestRow(t, store); got.ChunkCount != 0 {
+			t.Fatalf("precondition: the first counter write landed (chunk_count=%d)", got.ChunkCount)
+		}
+		return d, store
+	}
+	t.Run("complete arm", func(t *testing.T) {
+		d, store := newFlaky(t)
+		if _, _, err := d.onSummary(&adapterv1.CheckpointSummary{ChunkCount: 1, TotalBytes: 9}); err != nil {
+			t.Fatalf("onSummary: %v", err)
+		}
+		if got := manifestRow(t, store); got.Partial || got.ChunkCount != 1 || got.WorkspaceBytesUploaded != 9 {
+			t.Errorf("row partial=%v chunk_count=%d bytes=%d, want complete 1/9", got.Partial, got.ChunkCount, got.WorkspaceBytesUploaded)
+		}
+	})
+	t.Run("abort arm", func(t *testing.T) {
+		d, store := newFlaky(t)
+		if err := d.finaliseAbort(partialmanifeststore.ReasonTimeout); err != nil {
+			t.Fatalf("finaliseAbort: %v", err)
+		}
+		if got := manifestRow(t, store); !got.DeletedAt.IsZero() || got.ChunkCount != 1 || got.WorkspaceBytesUploaded != 9 {
+			t.Errorf("row deleted_at=%v chunk_count=%d bytes=%d, want active 1/9", got.DeletedAt, got.ChunkCount, got.WorkspaceBytesUploaded)
+		}
+	})
 }
