@@ -8,6 +8,7 @@ import (
 	"math/rand/v2"
 	"strings"
 	"testing"
+	"time"
 )
 
 // These tests exercise contributor tooling and carry no spec annotation.
@@ -73,6 +74,10 @@ func TestRedactorRemovesAJWTTheHarnessNeverSaw(t *testing.T) {
 		"split by a raw newline":         {"value:\n" + wrapAt(tok, 80, "\n") + "\nnext line", tok},
 		"a header with white space":      {"jwt " + pretty + " end", pretty},
 		"in a URL query":                 {"https://gateway/callback?state=1&id_token=" + tok + "&x=y", tok},
+		"split soon after it starts":     {"Token: " + tok[:12] + "\n" + tok[12:] + "\n", tok},
+		"escaped split soon after start": {`{"content":"Token: ` + tok[:20] + `\n` + tok[20:] + `"}`, tok},
+		"after a long base64url line":    {`{"stdout":"` + strings.Repeat("Ab_-", 75) + `\n` + tok + `"}`, tok},
+		"glued to a long base64url run":  {strings.Repeat("Ab_-", 75) + tok, tok},
 	}
 	r := NewRedactor()
 	for name, tc := range cases {
@@ -88,6 +93,8 @@ func TestRedactorRemovesTheBase64OfACredential(t *testing.T) {
 	b64 := base64.StdEncoding.EncodeToString([]byte(tok))
 	kubeconfig := base64.StdEncoding.EncodeToString([]byte("users:\n- name: admin\n  user:\n    token: opaque-value-1234567890\n"))
 	pem := base64.StdEncoding.EncodeToString([]byte("-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASC\n-----END PRIVATE KEY-----\n"))
+	keyBody := "MIIEowIBAAKCAQEAw1x2y3z4ABCDEFGHIJKLMNOPQRSTUVWX"
+	truncatedPEM := base64.StdEncoding.EncodeToString([]byte("-----BEGIN RSA PRIVATE KEY-----\n" + keyBody + "\n"))
 	cases := map[string]struct{ in, secret string }{
 		"Secret data in YAML":             {"apiVersion: v1\nkind: Secret\ndata:\n  admin: " + b64 + "\ntype: Opaque\n", b64},
 		"Secret data in escaped JSON":     {`{"content":"{\n  \"data\": {\n    \"value\": \"` + b64 + `\"\n  }\n}"}`, b64},
@@ -98,6 +105,8 @@ func TestRedactorRemovesTheBase64OfACredential(t *testing.T) {
 		"encoded twice":                   {"v: " + base64.StdEncoding.EncodeToString([]byte(b64)), base64.StdEncoding.EncodeToString([]byte(b64))},
 		"a kubeconfig":                    {"config: " + kubeconfig, kubeconfig},
 		"a private key":                   {"tls.key: " + pem, pem},
+		"a truncated private key":         {"v: " + truncatedPEM, truncatedPEM},
+		"a private key cut short":         {`{"stdout":"-----BEGIN RSA PRIVATE KEY-----\n` + keyBody + `\n` + keyBody + `"}`, keyBody},
 	}
 	r := NewRedactor()
 	for name, tc := range cases {
@@ -112,6 +121,7 @@ func TestRedactorRemovesBearerTokensInAuthorizationHeaders(t *testing.T) {
 		`{"headers":{\"authorization\": \"bearer opaque0123456789abcdef\"}}`:                     `{"headers":{\"authorization\": \"bearer ` + Redacted + `\"}}`,
 		`lenny-ctl --token opaque0123456789abcdef me`:                                            `lenny-ctl --token ` + Redacted + ` me`,
 		`lenny-ctl --token=opaque0123456789abcdef me`:                                            `lenny-ctl --token=` + Redacted + ` me`,
+		`client --bearer=opaque0123456789abcdef me`:                                              `client --bearer=` + Redacted + ` me`,
 		`curl -H "Authorization: Bearer $ADMIN_TOKEN" https://gw (a variable, not a credential)`: `curl -H "Authorization: Bearer $ADMIN_TOKEN" https://gw (a variable, not a credential)`,
 	}
 	r := NewRedactor()
@@ -183,6 +193,26 @@ func TestRedactByFormLeavesShortAndMalformedCandidates(t *testing.T) {
 	} {
 		if got := string(redactByForm([]byte(in), formDepth)); got != in {
 			t.Errorf("redactByForm(%q) = %q", in, got)
+		}
+	}
+}
+
+// A line the agent's output can carry, such as a long chain of dotted
+// segments with no JWT header, costs one pass, so it cannot stall the
+// transcript writer, which runs inside the loop that reads the agent's
+// output.
+func TestRedactorScansLongDottedChainsInLinearTime(t *testing.T) {
+	tok := testJWT(t, testJWTHeader)
+	for name, line := range map[string]string{
+		"no header":  strings.Repeat("ab.", 400_000),
+		"tokens":     strings.Repeat(tok+".", 2000),
+		"near-miss":  strings.Repeat("eyJA", 100_000) + ".x.y",
+		"base64 run": strings.Repeat("eyJhbGci", 150_000),
+	} {
+		start := time.Now()
+		_ = NewRedactor().String(line)
+		if d := time.Since(start); d > 5*time.Second {
+			t.Errorf("%s: redacting %d bytes took %s", name, len(line), d)
 		}
 	}
 }

@@ -20,15 +20,20 @@ import (
 //   - a base64 string (standard or URL alphabet) whose decoding holds a
 //     credential by form, which is how a Kubernetes Secret's data shows a
 //     token, a kubeconfig, or a private key;
-//   - the secretPatterns in redact.go: a bearer token, a kubeconfig or
-//     Secret key, a token variable, a private key, and an Anthropic
-//     credential such as the Claude OAuth token.
+//   - the secretPatterns in redact.go: a bearer token, the value of a
+//     --token flag, a kubeconfig or Secret key, a token variable, a
+//     private key (a truncated one included), and an Anthropic credential
+//     such as the Claude OAuth token.
 //
 // The scenarios' placeholder keys (sk-ant-journey-<nonce>) match none of
-// these forms and stay in the records, because the postconditions and the
-// reviewer look for them. Long base64 strings that decode to no
+// these forms and stay in the records, so the reviewer can follow how the
+// agent handled the key; one under a token key or after "Bearer" is still
+// removed by that pattern. Long base64 strings that decode to no
 // credential, such as the signatures of the agent's thinking blocks, stay
 // as well.
+//
+// The search does not cover a token split by a line break that indents
+// the next line, a third layer of base64, or hex encoding.
 
 // formDepth is how many layers of base64 encoding Redact looks through,
 // so the base64 of a Secret holding a base64-encoded kubeconfig is still
@@ -40,18 +45,14 @@ const formDepth = 2
 // forms recognise.
 const minEncodedLen = 20
 
-// minWrapLen is the shortest run of token characters that a line break
-// is taken to wrap rather than end. The base64 command wraps at 76
-// characters and PEM at 64, and a terminal wraps a long token at its
-// width, so a run this long followed by a line break and more token
-// characters is read as one value.
+// minWrapLen is the number of token characters, counted on both sides of
+// a line break, at which the break is taken to wrap a value rather than
+// end one. The base64 command wraps at 76 characters and PEM at 64, and a
+// terminal wraps a long token at its width. A line joined this way can
+// put the last word of the line before a credential inside its
+// redaction; clipping the span at the break instead would leave the tail
+// of a wrapped token in clear.
 const minWrapLen = 40
-
-// maxHeaderSkip bounds how far into a base64url run the JWT search looks
-// for the header's first character. Text that runs into a token without a
-// separator, such as a JSON escape (\neyJ...) or the bytes a misaligned
-// base64 decoding yields, puts a short prefix before the header.
-const maxHeaderSkip = 256
 
 var encodedRun = regexp.MustCompile(`[A-Za-z0-9+/_-]{20,}={0,2}`)
 
@@ -99,17 +100,30 @@ func jwtSpans(text []byte) [][2]int {
 			continue
 		}
 		e := a + urlRunLen(text[a:])
-		if end, ok := jwtTail(text, e); ok {
+		// The header is checked before the tail, so a long dotted chain
+		// with no header costs one pass rather than one pass per segment.
+		if e < len(text) && text[e] == '.' {
 			if start := headerStart(text[a:e]); start >= 0 {
-				spans = append(spans, [2]int{a + start, end})
-				a = end
-				continue
+				if end, ok := jwtTail(text, e); ok {
+					spans = append(spans, [2]int{a + start, end})
+					a = end
+					continue
+				}
 			}
 		}
 		a = e
 	}
 	return spans
 }
+
+// maxHeaderLen bounds the encoded length of a JWT header the search
+// recognises. A header with an x5c certificate chain runs to a few
+// kilobytes.
+const maxHeaderLen = 16 << 10
+
+// maxExtraSegments is how many dotted segments past the signature a token
+// can carry: an encrypted token (JWE) has five segments in all.
+const maxExtraSegments = 2
 
 // jwtTail checks that a header ending at e is followed by a payload and a
 // signature segment, and returns where the token ends.
@@ -122,22 +136,37 @@ func jwtTail(text []byte, e int) (int, bool) {
 		return 0, false
 	}
 	end := p + 1 + urlRunLen(text[p+1:])
-	for end+1 < len(text) && text[end] == '.' && isURLByte(text[end+1]) {
+	for i := 0; i < maxExtraSegments && end+1 < len(text) && text[end] == '.' && isURLByte(text[end+1]); i++ {
 		end += 1 + urlRunLen(text[end+1:])
 	}
 	return end, true
 }
 
 // headerStart returns the offset in run at which a JWT header begins, or
-// -1. A header is a JSON object, so its encoding starts with "ey" (an
-// opening brace and a quote) or "ew" (a brace and white space).
+// -1. Text can run into a token without a separator, such as a JSON
+// escape (\neyJ...), a line that unwrap joined to it, or the bytes a
+// misaligned base64 decoding yields, so every offset is tried. A header
+// is a JSON object, so the first three bytes it decodes to are an opening
+// brace and a quote or white space; that cheap check runs before the
+// whole segment is decoded. The header runs from its offset to the end
+// of run, so only the last maxHeaderLen characters are tried.
 func headerStart(run []byte) int {
-	for k := 0; k+1 < len(run) && k <= maxHeaderSkip; k++ {
-		if run[k] == 'e' && (run[k+1] == 'y' || run[k+1] == 'w') && isJWTHeader(run[k:]) {
+	for k := max(0, len(run)-maxHeaderLen); k+4 <= len(run); k++ {
+		if run[k] == 'e' && opensJSONObject(run[k:k+4]) && isJWTHeader(run[k:]) {
 			return k
 		}
 	}
 	return -1
+}
+
+// opensJSONObject reports whether four base64url characters decode to an
+// opening brace followed by a quote or white space.
+func opensJSONObject(quad []byte) bool {
+	var raw [3]byte
+	if _, err := base64.RawURLEncoding.Decode(raw[:], quad); err != nil {
+		return false
+	}
+	return raw[0] == '{' && (raw[1] == '"' || raw[1] == ' ' || raw[1] == '\n' || raw[1] == '\r' || raw[1] == '\t')
 }
 
 func isJWTHeader(seg []byte) bool {
@@ -196,15 +225,15 @@ func decodeLenient(s []byte) ([]byte, bool) {
 // unwrap returns b with each wrapping line break removed, and the offset
 // in b of each byte of the result. A wrapping line break is a newline,
 // raw or JSON-escaped (\n, \r\n, or the doubly escaped \\n of JSON inside
-// a JSON string), that follows at least minWrapLen token characters and
-// precedes another. When b holds no wrapping break, unwrap returns b and
+// a JSON string), that sits between token characters as wraps states.
+// When b holds no wrapping break, unwrap returns b and
 // a nil offset table.
 func unwrap(b []byte) ([]byte, []int) {
 	var text []byte
 	var at []int
 	piece := 0
 	for i := 0; i < len(b); {
-		if n := lineBreakLen(b[i:]); n > 0 && piece >= minWrapLen && i+n < len(b) && isTokenByte(b[i+n]) {
+		if n := lineBreakLen(b[i:]); n > 0 && wraps(piece, b[i+n:]) {
 			if at == nil {
 				text, at = make([]byte, 0, len(b)), make([]int, 0, len(b))
 				for j := 0; j < i; j++ {
@@ -229,6 +258,23 @@ func unwrap(b []byte) ([]byte, []int) {
 		return b, nil
 	}
 	return text, at
+}
+
+// wraps reports whether a line break after a run of piece token
+// characters, followed by next, splits one value: both sides hold token
+// characters and together they hold at least minWrapLen. A terminal that
+// wraps a token begun late on a line leaves a short run before the break
+// and a long one after it.
+func wraps(piece int, next []byte) bool {
+	if piece == 0 || len(next) == 0 || !isTokenByte(next[0]) {
+		return false
+	}
+	need := minWrapLen - piece
+	n := 0
+	for n < need && n < len(next) && isTokenByte(next[n]) {
+		n++
+	}
+	return n >= need
 }
 
 // lineBreakLen returns the length of the newline at the start of b: a raw

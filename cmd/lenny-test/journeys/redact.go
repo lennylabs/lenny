@@ -22,30 +22,32 @@ const minSecretLen = 8
 // secretPatterns match secrets by their form wherever they appear, in
 // plain text or inside the JSON strings of a stream-json transcript: a
 // bearer token (which covers an Authorization header and a --bearer
-// flag), the value of a --token flag, a kubeconfig's token, client key,
-// and client certificate, the token key of a Secret's data, the token
-// variables the agent receives, a private key, and an Anthropic
-// credential (an OAuth token, sk-ant-oat01-..., or an API key,
-// sk-ant-api03-...). The Anthropic form needs letters and then digits
-// before the second hyphen, so a scenario's placeholder key,
-// sk-ant-journey-<nonce>, does not match it.
+// flag in either spelling), the value of a --token flag, a kubeconfig's
+// token, client key, and client certificate, the token key of a Secret's
+// data, the token variables the agent receives, a private key, from its
+// BEGIN line to its END line or, when output was cut short, to the end
+// of its base64 body, and an Anthropic credential (an OAuth token,
+// sk-ant-oat01-..., or an API key, sk-ant-api03-...). The Anthropic form
+// needs letters and then digits before the second hyphen, so a
+// scenario's placeholder key, sk-ant-journey-<nonce>, does not match it.
 var secretPatterns = []struct {
 	re   *regexp.Regexp
 	with string
 }{
-	{regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
+	{regexp.MustCompile(`(?i)(bearer[\s=]+)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
 	{regexp.MustCompile(`(--token[= ](?:\\?["'])?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
 	{regexp.MustCompile(`((?:client-key-data|client-certificate-data|token)(?:\\"|")?\s*:\s*(?:\\"|")?)[A-Za-z0-9._~+/=-]{8,}`), "${1}" + Redacted},
 	{regexp.MustCompile(`((?:LENNY_API_TOKEN|CLAUDE_CODE_OAUTH_TOKEN)=)\S+`), "${1}" + Redacted},
 	{regexp.MustCompile(`(?s)-----BEGIN [A-Z ]*PRIVATE KEY-----.*?-----END [A-Z ]*PRIVATE KEY-----`), Redacted},
+	{regexp.MustCompile(`-----BEGIN [A-Z ]*PRIVATE KEY-----(?:[A-Za-z0-9+/=\s]|\\+[rnt])*`), Redacted},
 	{regexp.MustCompile(`sk-ant-[a-z]+[0-9]+-[A-Za-z0-9_-]{20,}`), Redacted},
 }
 
 // Redactor removes secrets from what the harness writes to a record:
 // every exact value it was given, the base64 encoding of each, and every
 // credential recognised by its form (redact_forms.go). Every record file
-// is written through its methods in record.go, so no record reaches the
-// disk unredacted.
+// is written through its methods in record.go, and SweepRecords checks
+// the written records again at the end of a run.
 type Redactor struct {
 	values []string
 }

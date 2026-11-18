@@ -149,7 +149,21 @@ func (r *Runner) Run(ctx context.Context, scenarios []*Scenario) (*RunSummary, e
 	if err := r.writeSummary(sum); err != nil {
 		return sum, errors.Join(runErr, err)
 	}
-	return sum, runErr
+	return sum, errors.Join(runErr, r.sweepRecords())
+}
+
+// sweepRecords reads the run's records back and redacts any that still
+// holds a credential form. Such a record was written outside the record
+// writers, so the run reports it as an error.
+func (r *Runner) sweepRecords() error {
+	rewritten, err := SweepRecords(NewRedactor(r.Secrets...), filepath.Join(r.ResultsDir, r.RunID))
+	if err != nil {
+		return fmt.Errorf("check the records: %w", err)
+	}
+	if len(rewritten) > 0 {
+		return fmt.Errorf("records held credentials after they were written and were redacted again: %v", rewritten)
+	}
+	return nil
 }
 
 func (r *Runner) runAll(ctx context.Context, scenarios []*Scenario, sum *RunSummary) error {

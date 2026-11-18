@@ -9,6 +9,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"os"
 	"path/filepath"
 	"sort"
@@ -50,6 +51,68 @@ func TestRecordStreamRedactsATokenSplitAcrossWrites(t *testing.T) {
 	}
 }
 
+func TestRecordStreamHoldsALineThatATokenWrapsOnto(t *testing.T) {
+	tok := testJWT(t, testJWTHeader)
+	var buf strings.Builder
+	s := &recordStream{f: nopCloser{&buf}, red: NewRedactor()}
+	for _, chunk := range []string{"first line}\nminted " + tok[:70] + "\n", tok[70:] + "\n(last)\n"} {
+		if _, err := s.Write([]byte(chunk)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := s.Close(); err != nil {
+		t.Fatal(err)
+	}
+	assertRemoved(t, "a token wrapped across two writes", buf.String(), tok)
+	if !strings.HasPrefix(buf.String(), "first line}\n") || !strings.HasSuffix(buf.String(), "\n(last)\n") {
+		t.Errorf("the lines around the token changed: %q", buf.String())
+	}
+	if got := flushPoint([]byte("a}\r\nb")); got != 3 {
+		t.Errorf("flushPoint after a CRLF line = %d, want 3", got)
+	}
+	if got := flushPoint([]byte("abc\ndef\n")); got != -1 {
+		t.Errorf("flushPoint with every line ending in a token character = %d, want -1", got)
+	}
+}
+
+type nopCloser struct{ w io.Writer }
+
+func (n nopCloser) Write(p []byte) (int, error) { return n.w.Write(p) }
+func (n nopCloser) Close() error                { return nil }
+
+func TestSweepRecordsRedactsARecordWrittenAroundTheWriters(t *testing.T) {
+	tok := testJWT(t, testJWTHeader)
+	dir := t.TempDir()
+	clean, leaked := filepath.Join(dir, "clean.log"), filepath.Join(dir, "sub", "leaked.log")
+	if err := os.MkdirAll(filepath.Dir(leaked), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(clean, []byte("nothing secret\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(leaked, []byte("kind export logs: "+tok+"\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	rewritten, err := SweepRecords(NewRedactor(), dir)
+	if err != nil || len(rewritten) != 1 || rewritten[0] != leaked {
+		t.Fatalf("SweepRecords = %v, %v; want only %s", rewritten, err, leaked)
+	}
+	b, err := os.ReadFile(leaked)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertRemoved(t, "the swept record", string(b), tok)
+	if fi, err := os.Stat(leaked); err != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("the swept record's mode: %v, %v; want 0600", fi, err)
+	}
+	if again, err := SweepRecords(NewRedactor(), dir); err != nil || len(again) != 0 {
+		t.Errorf("a second sweep rewrote %v, %v; redaction is not idempotent", again, err)
+	}
+	if _, err := SweepRecords(NewRedactor(), filepath.Join(dir, "missing")); err == nil {
+		t.Error("sweeping a missing path succeeded")
+	}
+}
+
 type failingFile struct{ writeErr, closeErr error }
 
 func (f failingFile) Write(p []byte) (int, error) { return 0, f.writeErr }
@@ -61,7 +124,7 @@ func TestRecordStreamReportsWriteAndCloseFailures(t *testing.T) {
 	if n, err := s.Write([]byte("partial line")); err != nil || n != len("partial line") {
 		t.Fatalf("a partial line is held: %d, %v", n, err)
 	}
-	if _, err := s.Write([]byte(" ends\n")); !errors.Is(err, diskFull) {
+	if _, err := s.Write([]byte(" ends}\n")); !errors.Is(err, diskFull) {
 		t.Errorf("a failed write of a complete line returned %v", err)
 	}
 	s = &recordStream{f: failingFile{writeErr: diskFull, closeErr: closeFailed}, red: NewRedactor(), partial: []byte("tail")}
@@ -111,8 +174,12 @@ func TestRedactorWritesRecordFilesRedactedAndPrivate(t *testing.T) {
 	}
 }
 
-// fileWriters are the functions that create or write files directly.
-var fileWriters = map[string]bool{"WriteFile": true, "Create": true, "OpenFile": true, "CreateTemp": true}
+// fileWriters are the functions, by import path, that create, write, or
+// move files directly.
+var fileWriters = map[string]map[string]bool{
+	"os":        {"WriteFile": true, "Create": true, "OpenFile": true, "CreateTemp": true, "Rename": true, "Link": true, "Symlink": true, "Truncate": true},
+	"io/ioutil": {"WriteFile": true, "TempFile": true},
+}
 
 // nonRecordWriters are the functions, other than the record writers in
 // record.go, that write files directly, with what each writes. None of
@@ -132,11 +199,13 @@ var nonRecordWriters = map[string]string{
 var recordWriters = map[string]bool{"record.go:(Redactor).WriteFile": true, "record.go:(Redactor).Create": true}
 
 // TestOnlyRecordWritersCreateFiles reads the package's source and
-// cmd_journeys.go, and fails when a function outside record.go and the
-// listed non-record writers calls os.WriteFile, os.Create, os.OpenFile,
-// or os.CreateTemp, so a new record path cannot write a file without the
+// cmd_journeys.go, and fails when code outside record.go and the listed
+// non-record writers refers to a function in fileWriters, called or taken
+// as a value, under any import name, in a function or a package-level
+// declaration. A new record path then cannot write a file without the
 // redactor. It also fails when a listed writer no longer exists, so the
-// list stays exact.
+// list stays exact. A command that writes into the record directory
+// itself is outside what this test reads; SweepRecords covers it.
 func TestOnlyRecordWritersCreateFiles(t *testing.T) {
 	files, err := filepath.Glob("*.go")
 	if err != nil {
@@ -153,18 +222,18 @@ func TestOnlyRecordWritersCreateFiles(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		imports := importNames(f)
 		for _, decl := range f.Decls {
-			fn, ok := decl.(*ast.FuncDecl)
-			if !ok || fn.Body == nil {
-				continue
+			key := filepath.Base(path) + ":package-level"
+			if fn, ok := decl.(*ast.FuncDecl); ok {
+				key = filepath.Base(path) + ":" + funcName(fn)
 			}
-			key := filepath.Base(path) + ":" + funcName(fn)
-			ast.Inspect(fn.Body, func(n ast.Node) bool {
-				if call, ok := n.(*ast.CallExpr); ok && isOSFileWrite(call) {
+			ast.Inspect(decl, func(n ast.Node) bool {
+				if sel, ok := n.(*ast.SelectorExpr); ok && isFileWriter(sel, imports) {
 					seen[key] = true
 					if !recordWriters[key] && nonRecordWriters[key] == "" {
-						t.Errorf("%s writes a file at %s outside the record writers in record.go; write a record through the Redactor, or list a non-record file in nonRecordWriters",
-							key, fset.Position(call.Pos()))
+						t.Errorf("%s refers to a file writer at %s outside the record writers in record.go; write a record through the Redactor, or list a non-record file in nonRecordWriters",
+							key, fset.Position(sel.Pos()))
 					}
 				}
 				return true
@@ -202,13 +271,48 @@ func funcName(fn *ast.FuncDecl) string {
 	return fn.Name.Name
 }
 
-func isOSFileWrite(call *ast.CallExpr) bool {
-	sel, ok := call.Fun.(*ast.SelectorExpr)
-	if !ok {
-		return false
+// importNames maps the name each import is used under in f to its path.
+func importNames(f *ast.File) map[string]string {
+	names := map[string]string{}
+	for _, imp := range f.Imports {
+		path := strings.Trim(imp.Path.Value, `"`)
+		name := filepath.Base(path)
+		if imp.Name != nil {
+			name = imp.Name.Name
+		}
+		names[name] = path
 	}
+	return names
+}
+
+func isFileWriter(sel *ast.SelectorExpr, imports map[string]string) bool {
 	pkg, ok := sel.X.(*ast.Ident)
-	return ok && pkg.Name == "os" && fileWriters[sel.Sel.Name]
+	return ok && fileWriters[imports[pkg.Name]][sel.Sel.Name]
+}
+
+func TestFileWriterCheckSeesAliasesValuesAndPackageLevelCode(t *testing.T) {
+	src := `package x
+import stdos "os"
+var save = func() { _ = stdos.WriteFile("r", nil, 0) }
+func move() { m := stdos.Rename; _ = m }
+func clean() { _ = stdos.Remove("r") }
+`
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "x.go", src, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	imports := importNames(f)
+	var found []string
+	ast.Inspect(f, func(n ast.Node) bool {
+		if sel, ok := n.(*ast.SelectorExpr); ok && isFileWriter(sel, imports) {
+			found = append(found, sel.Sel.Name)
+		}
+		return true
+	})
+	if strings.Join(found, ",") != "WriteFile,Rename" {
+		t.Errorf("the check found %v, want WriteFile and Rename", found)
+	}
 }
 
 // TestRunnerRecordsHoldNoCredentialTheHarnessNeverSaw runs a trial whose

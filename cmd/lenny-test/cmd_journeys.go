@@ -5,8 +5,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -255,13 +257,12 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 	if err != nil {
 		return journeysFail(err)
 	}
-	defer transcript.Close()
 	stderrPath := filepath.Join(resultsDir, "probe-"+runID+".stderr.log")
 	stderr, err := red.Create(stderrPath)
 	if err != nil {
+		_ = transcript.Close()
 		return journeysFail(err)
 	}
-	defer stderr.Close()
 	home, _ := os.UserHomeDir()
 	target := journeys.NewKindTarget(root, runID)(filepath.Join(scratch, "probe", "target"))
 	rep, code, probeErr := journeys.RunProbe(ctx, agentCfg, journeys.ProbeInput{
@@ -269,6 +270,12 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 		HostContexts: journeys.HostContexts(filepath.Join(home, ".kube", "config")),
 		Transcript:   transcript, Stderr: stderr, Redactor: red, Log: os.Stdout,
 	}, ledger)
+	// Closing writes each stream's held last line, so a failure there
+	// leaves a record incomplete and fails the probe run.
+	if err := closeProbeRecords(red, transcript, stderr, transcriptPath, stderrPath); err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test: journeys: probe records: %v\n", err)
+		code = 2
+	}
 	out, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(out))
 	fmt.Printf("Transcript: %s\nAgent standard error: %s\n", transcriptPath, stderrPath)
@@ -279,6 +286,22 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 		fmt.Fprintf(os.Stderr, "lenny-test: journeys: probe: %v\n", probeErr)
 	}
 	return code
+}
+
+// closeProbeRecords closes the probe's record streams and reads the
+// records back, as a run's records are (journeys.SweepRecords).
+func closeProbeRecords(red *journeys.Redactor, transcript, stderr io.Closer, paths ...string) error {
+	if err := errors.Join(transcript.Close(), stderr.Close()); err != nil {
+		return err
+	}
+	rewritten, err := journeys.SweepRecords(red, paths...)
+	if err != nil {
+		return err
+	}
+	if len(rewritten) > 0 {
+		return fmt.Errorf("records held credentials after they were written and were redacted again: %v", rewritten)
+	}
+	return nil
 }
 
 func printJourneysDryRun(selected []*journeys.Scenario, agentCfg journeys.AgentConfig, f journeysFlags) int {
