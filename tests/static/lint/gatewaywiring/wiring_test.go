@@ -114,7 +114,7 @@ func loadFixture(t *testing.T, main string) *Program {
 			t.Fatal(err)
 		}
 	}
-	prog, err := Load(dir, "./cmd/lenny-gateway")
+	prog, err := LoadProgram(dir, "./cmd/lenny-gateway")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -244,7 +244,7 @@ func TestRegisterParsingRefusesUnknownKeys(t *testing.T) {
 
 // TestLoadRefusesAPackageOutsideAModule checks the loader's error path.
 func TestLoadRefusesAPackageOutsideAModule(t *testing.T) {
-	if _, err := Load(t.TempDir(), "./..."); err == nil {
-		t.Error("Load succeeded outside a module")
+	if _, err := LoadProgram(t.TempDir(), "./..."); err == nil {
+		t.Error("LoadProgram succeeded outside a module")
 	}
 }

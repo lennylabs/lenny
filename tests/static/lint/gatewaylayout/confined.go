@@ -12,11 +12,9 @@ type Confinement struct {
 	APIFront bool
 }
 
-// Confined lists the confined subtrees: the credential store, the
-// credential lease store, the authentication middleware, quota, policy, and
-// the tenant store. Each is listed at its directory today and at the
-// concern directory the move manifest gives it, so the rule holds before
-// and after the step that moves it.
+// Confined lists the subtrees GW-R2 names. Each is listed at its directory
+// today and at the concern directory the move manifest gives it, so the
+// rule holds before and after the step that moves it.
 var Confined = []Confinement{
 	{Path: "pkg/gateway/credentials/credentialstore"},
 	{Path: "pkg/credential/credentialstore"},

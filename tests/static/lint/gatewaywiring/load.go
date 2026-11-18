@@ -37,10 +37,10 @@ type listed struct {
 	Module     *struct{ Path string }
 }
 
-// Load lists the package at pattern in the module rooted at dir with its
+// LoadProgram lists the package at pattern in the module rooted at dir with its
 // dependencies' export data, parses its non-test files, and type-checks
 // them. It needs a module whose packages compile.
-func Load(dir, pattern string) (*Program, error) {
+func LoadProgram(dir, pattern string) (*Program, error) {
 	out, err := goCommand(dir, "list", "-e", "-export", "-deps", "-json=ImportPath,Dir,Export,GoFiles,Module", pattern)
 	if err != nil {
 		return nil, err

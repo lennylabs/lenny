@@ -39,7 +39,7 @@ func TestGatewayWiringCrossesOnlyThroughTheSeam(t *testing.T) {
 	if err != nil {
 		t.Fatalf("load the gateway wiring register: %v", err)
 	}
-	prog, err := gatewaywiring.Load(root, "./cmd/lenny-gateway")
+	prog, err := gatewaywiring.LoadProgram(root, "./cmd/lenny-gateway")
 	if err != nil {
 		t.Fatalf("load cmd/lenny-gateway: %v", err)
 	}
