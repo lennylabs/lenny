@@ -72,7 +72,7 @@ func forceTerminateRecord(ctx context.Context, f ForceTerminator, tenantID, sess
 		return seam.Session{}, "", false, err
 	}
 	rec := seamSessionOf(row)
-	rec.Stored = row
+	rec.Stored = &row
 	return rec, state.State(prev), transitioned, nil
 }
 

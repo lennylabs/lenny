@@ -25,7 +25,7 @@ import (
 // row records no reference.
 func Record(row sessionstore.Session) seam.Session {
 	rec := seam.Session{
-		Stored:          row,
+		Stored:          &row,
 		ID:              row.ID,
 		TenantID:        row.TenantID,
 		UserID:          row.UserID,
@@ -55,8 +55,8 @@ func Record(row sessionstore.Session) seam.Session {
 // another session or tenant than the record is ignored, so the row returned
 // is always the session the record names.
 func Row(rec seam.Session) sessionstore.Session {
-	if row, ok := rec.Stored.(sessionstore.Session); ok && row.ID == rec.ID && row.TenantID == rec.TenantID {
-		return row
+	if rec.Stored != nil && rec.Stored.ID == rec.ID && rec.Stored.TenantID == rec.TenantID {
+		return *rec.Stored
 	}
 	row := sessionstore.Session{
 		ID:              rec.ID,

@@ -36,7 +36,7 @@ import (
 // row in its Stored field.
 func storedSession(row sessionstore.Session) seam.Session {
 	out := seamSessionOf(row)
-	out.Stored = row
+	out.Stored = &row
 	return out
 }
 
@@ -55,11 +55,10 @@ func rowOf(s seam.Session) sessionstore.Session {
 // the core acts on the session the record's fields name (decision 52 of
 // change 0117).
 func storedRow(rec seam.Session) (sessionstore.Session, bool) {
-	row, ok := rec.Stored.(sessionstore.Session)
-	if !ok || row.ID != rec.ID || row.TenantID != rec.TenantID {
+	if rec.Stored == nil || rec.Stored.ID != rec.ID || rec.Stored.TenantID != rec.TenantID {
 		return sessionstore.Session{}, false
 	}
-	return row, true
+	return *rec.Stored, true
 }
 
 // sentinelError is a core error that also matches a seam sentinel under

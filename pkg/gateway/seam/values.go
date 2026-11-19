@@ -6,6 +6,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -30,9 +31,9 @@ type Session struct {
 	// than reading the session again. The core returns the row its logic
 	// produced in the same field, and the seam reads that row back. A row
 	// whose identifier or tenant differs from the record's is ignored. It is
-	// nil when the caller holds no row, and it is typed once the session
-	// store's package leaves the gateway.
-	Stored any
+	// nil when the caller holds no row. Each side sets it to a copy of its
+	// own row and reads the row through it without writing through it.
+	Stored *sessionstore.Session
 	// DelegationDepth is the session's depth in its delegation tree, zero
 	// for a tree root.
 	DelegationDepth int

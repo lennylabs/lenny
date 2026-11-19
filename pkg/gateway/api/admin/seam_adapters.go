@@ -163,7 +163,7 @@ func seamRecord(row sessionstore.Session) seam.Session {
 		RuntimeRef:      row.RuntimeRef,
 		Pool:            row.PoolRef,
 		State:           state.State(row.State),
-		Stored:          row,
+		Stored:          &row,
 		PodAssignment:   row.PodAssignment,
 		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,
