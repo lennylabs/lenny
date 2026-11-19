@@ -1956,6 +1956,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-LastTenantKMSProbe",
+      "anchor": "gwseam-lasttenantkmsprobe",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ListTenants",
       "anchor": "gwseam-listtenants",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2008,6 +2013,16 @@
     {
       "id": "GWSEAM-PendingInputWaits",
       "anchor": "gwseam-pendinginputwaits",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ProbeTenantKMS",
+      "anchor": "gwseam-probetenantkms",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-PropagateTokenRevocation",
+      "anchor": "gwseam-propagatetokenrevocation",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -2101,6 +2116,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ResolveConnectorSecret",
+      "anchor": "gwseam-resolveconnectorsecret",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ResolveEnvironments",
       "anchor": "gwseam-resolveenvironments",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2138,6 +2158,16 @@
     {
       "id": "GWSEAM-ReturnBudget",
       "anchor": "gwseam-returnbudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RevokePoolCredentials",
+      "anchor": "gwseam-revokepoolcredentials",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RevokeUserLeases",
+      "anchor": "gwseam-revokeuserleases",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {

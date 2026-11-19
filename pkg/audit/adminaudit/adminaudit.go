@@ -118,12 +118,14 @@ func NewLogSink(appender audit.Appender, clock func() time.Time) *ChainSink {
 // typically "platform") land on the platform chain; tenant-admin
 // actions land on the tenant's chain. An append failure is logged —
 // the Sink contract is fire-and-forget.
+//
+// spec: §11.7 (Audit Logging)
 func (s *ChainSink) EmitAdminEvent(ctx context.Context, event Event) {
 	tenant := event.ActorTenantID
 	if tenant == "" {
 		tenant = "platform"
 	}
-	// spec: §11.7 — operation_id and caller_kind are
+	// §11.7: operation_id and caller_kind are
 	// optional correlation fields the OCSF translator projects onto
 	// metadata.correlation_uid and actor.user.type. Prefer the values
 	// the emitter set explicitly; fall back to the request context so
@@ -134,7 +136,7 @@ func (s *ChainSink) EmitAdminEvent(ctx context.Context, event Event) {
 	if operationID == "" {
 		operationID = corr.From(ctx).OperationID
 	}
-	// spec: §15.1 — X-Lenny-Agent-Name is propagated to audit
+	// §15.1: X-Lenny-Agent-Name is propagated to audit
 	// records. Prefer the value the emitter set; fall back to the
 	// request context so direct EmitAdminEvent callers still carry it.
 	// F-15.1.10.
@@ -163,7 +165,7 @@ func (s *ChainSink) EmitAdminEvent(ctx context.Context, event Event) {
 	if callerKind != "" {
 		fields["caller_kind"] = callerKind
 	}
-	// spec: §11.7 — a row about another tenant carries that tenant as
+	// §11.7: a row about another tenant carries that tenant as
 	// the top-level target_tenant_id, the only key the cross-tenant
 	// residency gate reads.
 	if event.TargetTenantID != "" {

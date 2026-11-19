@@ -22,8 +22,6 @@ import (
 // AdminTokenReclaimer is the leader-gated sweep that durably revokes an
 // orphaned predecessor admin token left by a crash between the admin
 // token Secret patch and the revocation.
-//
-// spec: §13.3 (Token Revocation), §17.6 (Initial admin credential)
 type AdminTokenReclaimer struct {
 	recl *reclaimer.Reclaimer
 }
