@@ -22,6 +22,8 @@
 
 The removal (CR-1), including the D7 refusals, the successor pointers, and the records. CA-0 (0123.S1) lands before it or with it.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-ResolveConnectorSecret`, through which the admin connector routes resolve a connector's client secret, with `connectorsecret` and those routes.
+
 ### 0124.S2 Identity assertion
 - status: Planned
 - aliases: [CR-B, CR-2]

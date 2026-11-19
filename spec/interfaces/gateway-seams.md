@@ -731,6 +731,65 @@ requirements: [GW-R1]
 summary: Releases the pods of a user's sessions in a tenant, and returns the count of pods released and the sessions whose release failed.
 ```
 
+## Operations served by the session core to the API front for credentials and keys
+
+The session core serves these operations. The API front's admin handlers call them, because the revocation propagators, the credential lease stores, the tenant key lifecycle, and the connector secret resolver stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2). Each operation acts on the confined package and returns only the outcome the handler reports.
+
+<a id="gwseam-propagatetokenrevocation"></a>
+
+```lenny-def
+kind: operation
+name: PropagateTokenRevocation
+method: Go method
+path: seam.TokenRevocations
+requirements: [GW-R1]
+summary: Revokes a bearer token identifier in the revocation cache of every replica, after the API front recorded the revocation in the issued-token index.
+```
+
+<a id="gwseam-revokepoolcredentials"></a>
+
+```lenny-def
+kind: operation
+name: RevokePoolCredentials
+method: Go method
+path: seam.PoolCredentialRevocations
+requirements: [GW-R1]
+summary: Revokes the leases of the named credentials of a pool and denies those credentials on every replica, and returns the count of leases revoked.
+```
+
+<a id="gwseam-revokeuserleases"></a>
+
+```lenny-def
+kind: operation
+name: RevokeUserLeases
+method: Go method
+path: seam.UserLeaseRevocations
+requirements: [GW-R1]
+summary: Returns to their pools the credential leases that a user's named sessions hold, and returns the count of leases returned.
+```
+
+<a id="gwseam-probetenantkms"></a>
+
+```lenny-def
+kind: operation
+name: ProbeTenantKMS
+method: Go method
+path: seam.TenantKeys
+requirements: [GW-R1]
+summary: Reports whether the tenant's key for a workspace tier is available in the key management service, which the admin API checks before it accepts the tier.
+```
+
+<a id="gwseam-resolveconnectorsecret"></a>
+
+```lenny-def
+kind: operation
+name: ResolveConnectorSecret
+method: Go method
+path: seam.ConnectorSecrets
+requirements: [GW-R1]
+summary: Resolves a connector's client secret reference to the secret's value.
+```
+
 ## Operations served by the session core to the upload handler
 
 The upload handler verifies a client's upload token, holds an upload's size against its tenant's storage quota, and records the upload audit event through the session core, because the upload token, quota, tenant, and audit packages stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2).
@@ -1329,7 +1388,8 @@ The platform tools seam registers its memory write and delete routes and its too
 ## Crossings without an operation
 
 - Each part emits its metrics into the gateway's metric registry. A seam registers its own metric collectors on the registry, because a seam holds no value of a replica-level part. The session core and the replica-level parts register their own collectors or emit through a metrics interface they declare, which the gateway's metric set satisfies. Neither form is an operation of the seam interface.
-- The API front reads pool status through the session core's pool status reader, and authenticates service-account tokens through the platform tools seam's token verifier. Neither is an operation of the seam interface: each is domain logic that belongs in a concern package outside the gateway.
+- The API front reads pool status through the pool status reader of `pkg/runtime/poolstatus`, and authenticates service-account tokens through the token verifier of `pkg/auth/satoken`, which the platform tools seam's lease-control server also uses. Neither is an operation of the seam interface: each is domain logic in a concern package outside the gateway.
+- The API front writes the admin audit events through the chain sink of `pkg/audit/adminaudit`, which the other parts also hold for the platform events they record. The sink is domain logic in the audit concern, so handing it to a part is not an operation of the seam interface.
 
 ## Compatibility
 
