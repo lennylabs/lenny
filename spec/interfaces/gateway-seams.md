@@ -447,6 +447,20 @@ requirements: [GW-R1]
 summary: Returns a context that carries the principal of a session's agent caller, for a platform tool call that the session's pod made or that another replica forwarded on its behalf.
 ```
 
+The platform tools seam's client routes, the tool-use and elicitation resolutions, apply the session core's user lifecycle check to the user a request runs as through this operation.
+
+<a id="gwseam-admitactivecaller"></a>
+
+```lenny-def
+kind: operation
+name: AdmitActiveCaller
+method: Go method
+path: seam.ActiveCallers
+returns: [Refusal]
+requirements: [GW-R1]
+summary: Checks that the user the request in the context runs as may act, and returns a refusal with the USER_INVALIDATED or ERASURE_IN_PROGRESS code, its message naming the refused action, and its details, for an invalidated user or one with a pending erasure; a caller with no registered user is admitted.
+```
+
 ## Operations served by the session core to the platform tools seam for policy, credentials, and tenants
 
 The session core serves these operations. The platform tools seam calls them, because the interceptor chain, the caller check, the VCS credential pools, the tenant store, environment access, and the rate limiter stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2). The platform tools seam imports the delegation policy store itself, because it evaluates delegation policies.
@@ -1080,7 +1094,6 @@ requirements: [GW-R1]
 summary: Holds a runtime's tool call until the session's user approves or denies it, and returns the decision; the session core's executor calls it.
 ```
 
-
 ## Operations served by the platform tools seam to the metering proxy and the API front
 
 <a id="gwseam-extendforbudget"></a>
@@ -1310,6 +1323,8 @@ A route names the access check the API front applies before the handler runs, th
 No route takes a default check: a zero or unknown access check is refused at registration.
 
 The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself.
+
+The platform tools seam registers its memory write and delete routes and its tool-use and elicitation resolution routes with manage access to the session the path names, and its memory query and delegation tree read routes with read access to it.
 
 ## Crossings without an operation
 
