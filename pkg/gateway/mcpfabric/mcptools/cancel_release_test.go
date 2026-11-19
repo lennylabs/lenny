@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
@@ -72,7 +73,7 @@ func TestCancelChildDrainsCancelledRuntimes_spec_11_3_1(t *testing.T) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          exec,
+		Executor:          toolseam.Executor(exec),
 		Terminal:          hook,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },
@@ -162,7 +163,7 @@ func TestCancelChildListsPrimaryPerLevel_spec_12_8(t *testing.T) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          exec,
+		Executor:          toolseam.Executor(exec),
 		Terminal:          hook,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },

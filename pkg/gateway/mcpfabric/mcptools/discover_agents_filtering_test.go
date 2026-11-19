@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -39,7 +40,7 @@ func newMCPFiltered(t *testing.T) (*mcp.Server, runtimestore.Store, environments
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             memstore.New(),
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Environments:      envs,
 		Tenants:           tenants,
@@ -400,7 +401,7 @@ func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimes
 		SessionAccess:              ownerprincipal.ToolAccess{},
 		DevTenantFallback:          true,
 		Store:                      memstore.New(),
-		Executor:                   executor.NewEchoExecutor(),
+		Executor:                   toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:                   runtimes,
 		Environments:               envs,
 		Tenants:                    tenants,

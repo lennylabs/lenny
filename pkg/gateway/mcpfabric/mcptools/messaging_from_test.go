@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -55,7 +56,7 @@ func newMCPCapturingFrom(t *testing.T) (*mcp.Server, sessionstore.Store, *fromCa
 		SessionAccess:         ownerprincipal.ToolAccess{},
 		DevTenantFallback:     true,
 		Store:                 store,
-		Executor:              exec,
+		Executor:              toolseam.Executor(exec),
 		InputWaits:            inputwait.NewRegistry(),
 		Clock:                 func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:                func() string { return "sess_mcp" },

@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
@@ -24,6 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // ownershipFixture is an MCP server whose session-naming tools are all
@@ -43,25 +45,34 @@ const (
 	bobSubject     = "bob@acme.com"
 )
 
-func newOwnershipFixture(t *testing.T, svc mcptools.SessionService) ownershipFixture {
+// toolSessions is the session core's side of the client API and of the
+// ownership rule, which one double serves in these fixtures.
+type toolSessions interface {
+	seam.ClientAPI
+	seam.SessionAccess
+}
+
+func newOwnershipFixture(t *testing.T, svc toolSessions) ownershipFixture {
 	t.Helper()
-	return newOwnershipFixtureWith(t, func(sessionstore.Store) mcptools.SessionService { return svc }, nil)
+	return newOwnershipFixtureWith(t, func(sessionstore.Store) toolSessions { return svc }, nil)
 }
 
 // newOwnershipFixtureWith builds the fixture with the session service
 // svcFor returns over the fixture's store, and applies mod to the
 // dependencies before registration.
-func newOwnershipFixtureWith(t *testing.T, svcFor func(sessionstore.Store) mcptools.SessionService, mod func(*mcptools.Deps)) ownershipFixture {
+func newOwnershipFixtureWith(t *testing.T, svcFor func(sessionstore.Store) toolSessions, mod func(*mcptools.Deps)) ownershipFixture {
 	t.Helper()
 	store := memstore.New()
+	svc := svcFor(store)
 	interactions := interactionstore.NewMemory()
 	memory := memorystore.NewInMemory(0, nil)
 	srv := mcp.NewServer()
 	deps := mcptools.Deps{
-		SessionService:      svcFor(store),
+		SessionService:      svc,
+		SessionAccess:       svc,
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimestore.NewMemory(),
 		Events:              sessionevents.NewBus(0),
 		InputWaits:          inputwait.NewRegistry(),
@@ -171,7 +182,7 @@ var sessionNamingCalls = []struct{ tool, args string }{
 func TestSessionNamingToolsAnswerNonOwnerAsMissing_spec_10_2(t *testing.T) {
 	for _, c := range sessionNamingCalls {
 		t.Run(c.tool, func(t *testing.T) {
-			f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+			f := newOwnershipFixture(t, ownerprincipal.ToolAccess{})
 			foreign := f.dispatchAs(t, bobSubject, c.tool, strings.Replace(c.args, "%s", aliceSession, 1))
 			missing := f.dispatchAs(t, bobSubject, c.tool, strings.Replace(c.args, "%s", missingSession, 1))
 			if foreign == nil || missing == nil {
@@ -206,7 +217,7 @@ func TestSessionNamingToolsRefuseEmptySubject_spec_10_2(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.tool, func(t *testing.T) {
-			f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+			f := newOwnershipFixture(t, ownerprincipal.ToolAccess{})
 			te := f.dispatchAs(t, "", c.tool, c.args)
 			if te == nil || te.Code != "UNAUTHORIZED" {
 				t.Fatalf("error = %v, want UNAUTHORIZED", te)
@@ -221,7 +232,7 @@ func TestSessionNamingToolsRefuseEmptySubject_spec_10_2(t *testing.T) {
 //
 // spec: §10.2 (Session ownership) rules 5 and 7; §27.6
 func TestCancelSessionBestEffortLeavesForeignSessionRunning_spec_10_2(t *testing.T) {
-	f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+	f := newOwnershipFixture(t, ownerprincipal.ToolAccess{})
 	if te := f.dispatchAs(t, bobSubject, "lenny/cancel_session",
 		`{"sessionId":"sess_alice","reason":"playground_client_closed"}`); te != nil {
 		t.Fatalf("best-effort cancel refused: %v", te)
@@ -238,7 +249,7 @@ func TestCancelSessionBestEffortLeavesForeignSessionRunning_spec_10_2(t *testing
 //
 // spec: §10.2 (Session ownership) rules 5 and 7; §7.2
 func TestSendMessageForeignSenderAnswersAsMissingSender_spec_10_2(t *testing.T) {
-	f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+	f := newOwnershipFixture(t, ownerprincipal.ToolAccess{})
 	foreign := f.dispatchAs(t, bobSubject, "lenny/send_message", `{"to":"sess_bob","message":"hi","fromSessionId":"sess_alice"}`)
 	missing := f.dispatchAs(t, bobSubject, "lenny/send_message", `{"to":"sess_bob","message":"hi","fromSessionId":"sess_nope"}`)
 	if foreign == nil || missing == nil || foreign.Code != missing.Code || foreign.Code != "SCOPE_DENIED" {
@@ -268,7 +279,7 @@ func TestSessionNamingToolsFailClosedWithoutSessionService_spec_10_2(t *testing.
 // spec: §9.2 (respond_to_elicitation authorization); §10.2 (Session
 // ownership) rule 5
 func TestElicitationResolutionOwnershipPrecedesTripleCheck_spec_9_2(t *testing.T) {
-	f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+	f := newOwnershipFixture(t, ownerprincipal.ToolAccess{})
 	if te := f.dispatchAs(t, ownerprincipal.Alice, "lenny/respond_to_elicitation",
 		`{"sessionId":"sess_bob","elicitationId":"elic_x","response":"ok"}`); te == nil || te.Code != "RESOURCE_NOT_FOUND" {
 		t.Fatalf("foreign session: error = %v, want RESOURCE_NOT_FOUND", te)
@@ -296,17 +307,17 @@ func TestElicitationResolutionOwnershipPrecedesTripleCheck_spec_9_2(t *testing.T
 // spec: §8.3 (Delegation Policy and Lease); §10.2 (Session ownership) rule 7
 func TestDiscoverAgentsRefusesWhenPolicySessionCannotBeResolved_spec_8_3(t *testing.T) {
 	mods := map[string]struct {
-		svc mcptools.SessionService
+		svc toolSessions
 		mod func(*mcptools.Deps)
 	}{
 		"nil session service": {svc: nil},
-		"nil store": {svc: ownerprincipal.SessionAccess{}, mod: func(d *mcptools.Deps) {
+		"nil store": {svc: ownerprincipal.ToolAccess{}, mod: func(d *mcptools.Deps) {
 			d.Store = nil
 		}},
 	}
 	for name, m := range mods {
 		t.Run(name, func(t *testing.T) {
-			f := newOwnershipFixtureWith(t, func(sessionstore.Store) mcptools.SessionService { return m.svc }, m.mod)
+			f := newOwnershipFixtureWith(t, func(sessionstore.Store) toolSessions { return m.svc }, m.mod)
 			te := f.dispatchAs(t, ownerprincipal.Alice, "lenny/discover_agents", `{"sessionId":"sess_alice"}`)
 			if te == nil || te.Code != "RESOURCE_NOT_FOUND" {
 				t.Fatalf("error = %v, want RESOURCE_NOT_FOUND", te)

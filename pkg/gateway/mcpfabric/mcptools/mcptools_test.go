@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -49,7 +50,7 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Events:            sessionevents.NewBus(0),
 		InputWaits:        inputwait.NewRegistry(),
@@ -57,7 +58,7 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
-		SessionCreator: newSessionCreator(store, "sess_mcp"),
+		SessionCreator: newSessionCreator(store, "sess_mcp").ToolsSeam(),
 		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:         func() string { return "sess_mcp" },
 		TenantID:       "acme",
@@ -77,7 +78,7 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:          reg,
 		RequestInputTimeout: timeout,
 		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -103,7 +104,7 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Events:              bus,
 		InputWaits:          reg,
@@ -210,7 +211,7 @@ func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioneve
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Events:            bus,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },
@@ -338,7 +339,7 @@ func newMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Server, sessi
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Interceptors:      chain,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },
@@ -1395,7 +1396,7 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:          reg,
 		Runtimes:            runtimes,
 		RequestInputTimeout: 40 * time.Millisecond,

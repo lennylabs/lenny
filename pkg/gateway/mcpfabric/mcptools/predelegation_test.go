@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
@@ -63,7 +64,7 @@ func newMCPForDelegate(t *testing.T, exec executor.Executor, chain *interceptor.
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          exec,
+		Executor:          toolseam.Executor(exec),
 		Interceptors:      chain,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
@@ -217,7 +218,7 @@ func TestDelegateTaskPreDelegationRejectAudits(t *testing.T) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          newRecordingExecutor(),
+		Executor:          toolseam.Executor(newRecordingExecutor()),
 		Interceptors:      chain,
 		PolicyAudit:       policy.NewAuditSink(app, nil),
 		Delegation: delegation.NewService(store, delegation.Options{

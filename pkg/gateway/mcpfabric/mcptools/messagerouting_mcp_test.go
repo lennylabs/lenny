@@ -10,7 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -48,9 +50,9 @@ func newMCPRouting(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioninbox
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:        inputwait.NewRegistry(),
-		Messaging:         coord,
+		Messaging:         toolseam.Messaging(coord),
 		Delivery:          &dlqDelivery{coord: coord},
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "msg_fixed" },
@@ -149,7 +151,7 @@ func TestSendMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6(
 // spec: 7.2 (Message delivery routing — seven paths, path 6)
 func TestSendMessageRouting_SuspendedHoldTerminalNoResume_spec_7_2_path6(t *testing.T) {
 	srv, store, _, _, del := newMCPRoutingDelivery(t, nil)
-	del.outcome = sessionserver.HoldTerminal
+	del.outcome = seam.HoldTerminal
 	mkSession(t, store, "sess_sus", session.StateSuspended, "")
 
 	resp := call(t, srv.Handler(), "lenny/send_message", `{"to":"sess_sus","message":"later"}`)
@@ -495,7 +497,7 @@ func TestSendMessageRouting_InboxUnavailable_spec_7_2(t *testing.T) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "msg_fixed" },
 		TenantID:          "acme",
@@ -628,7 +630,7 @@ func TestSendMessageSealedFallbackAtCapIsHeld_spec_11_1(t *testing.T) {
 // spec: 29.3 (Interactive message send) Forwarding rules 5 and 6, 7.2
 // (Message delivery routing — seven paths, path 6)
 func TestSendMessageRouting_HeldDeliveryPreemptedTakesTheNotDeliveredOutcome_spec_29_3(t *testing.T) {
-	preempted := fmt.Errorf("deliver held: %w", sessionserver.ErrHeldDeliveryPreempted)
+	preempted := fmt.Errorf("deliver held: %w", seam.ErrHeldDeliveryPreempted)
 	t.Run("no inReplyTo is held and answered queued", func(t *testing.T) {
 		exec := &countingExecutor{}
 		srv, store, _, dlq, del := newMCPRoutingDelivery(t, exec)

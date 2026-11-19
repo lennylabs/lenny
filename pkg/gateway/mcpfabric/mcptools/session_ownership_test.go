@@ -37,7 +37,7 @@ var readToolNames = map[string]bool{
 // serverSessionService returns a builder for a *sessionserver.Server over
 // the fixture's store, with acme's session-reader custom role registered,
 // so the tools decide through the production ownership predicate.
-func serverSessionService(t *testing.T) func(sessionstore.Store) mcptools.SessionService {
+func serverSessionService(t *testing.T) func(sessionstore.Store) toolSessions {
 	t.Helper()
 	roles := customrolestore.NewMemory()
 	if err := roles.Create(context.Background(), customrolestore.CustomRole{
@@ -48,10 +48,10 @@ func serverSessionService(t *testing.T) func(sessionstore.Store) mcptools.Sessio
 	}); err != nil {
 		t.Fatalf("seed custom role: %v", err)
 	}
-	return func(store sessionstore.Store) mcptools.SessionService {
+	return func(store sessionstore.Store) toolSessions {
 		srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, CustomRoles: roles})
 		t.Cleanup(srv.Close)
-		return srv
+		return srv.ToolsSeam()
 	}
 }
 
@@ -250,7 +250,7 @@ func TestMemoryWriteOnForeignSessionWritesNothing_spec_10_2(t *testing.T) {
 //
 // spec: §10.2 (Session ownership) rule 1; §15.2 (MCP API)
 func TestCreateToolSchemasCarryNoOwner_spec_10_2(t *testing.T) {
-	f := newOwnershipFixture(t, ownerprincipal.SessionAccess{})
+	f := newOwnershipFixture(t, ownerprincipal.ToolAccess{})
 	seen := map[string]bool{}
 	for _, tool := range f.srv.Catalog() {
 		if tool.Name != "lenny/create_session" && tool.Name != "lenny/create_and_start_session" {

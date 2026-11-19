@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -49,7 +50,7 @@ func newFencedDelegateMCP(t *testing.T, tenants *tenantstore.Memory, users users
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Users:             users,
 		Tenants:           tenants,
@@ -187,7 +188,7 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
-		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimes,
+		Store:             store, Executor: toolseam.Executor(executor.NewEchoExecutor()), Runtimes: runtimes,
 		Users: users, Tenants: gateTenants,
 		Delegation: delegation.NewService(store, delegation.Options{IDFunc: func() string { return "sess_child" }}),
 		IDFunc:     func() string { return "sess_mcp" }, TenantID: "acme",
@@ -230,11 +231,11 @@ func TestCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
-		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimestore.NewMemory(),
+		Store:             store, Executor: toolseam.Executor(executor.NewEchoExecutor()), Runtimes: runtimestore.NewMemory(),
 		IDFunc: func() string { return "sess_new" }, TenantID: "acme",
 		SessionCreator: sessionserver.New(store, sessionserver.Options{
 			IDFunc: func() string { return "sess_new" }, Tenants: tenants, Users: users,
-		}),
+		}).ToolsSeam(),
 	})
 	resp := callWithPrincipal(t, srv.Handler(), authmw.Principal{Subject: ownerprincipal.Alice, TenantID: "acme"},
 		"lenny/create_session", `{"runtimeRef":"claude-code"}`)

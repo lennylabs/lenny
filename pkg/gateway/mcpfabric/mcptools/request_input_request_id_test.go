@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -87,7 +88,7 @@ func TestRequestInputGeneratesDistinctRequestIDs_spec_15_4(t *testing.T) {
 		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:          reg,
 		RequestInputTimeout: 5 * time.Second,
 		TenantID:            "acme",

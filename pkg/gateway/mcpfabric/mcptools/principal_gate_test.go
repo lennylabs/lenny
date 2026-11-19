@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -32,10 +33,10 @@ func gateServer(devFallback bool) (*mcp.Server, sessionstore.Store) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: devFallback,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_gate" },
-		SessionCreator:    newSessionCreator(store, "sess_gate"),
+		SessionCreator:    newSessionCreator(store, "sess_gate").ToolsSeam(),
 		TenantID:          "default",
 	})
 	return srv, store

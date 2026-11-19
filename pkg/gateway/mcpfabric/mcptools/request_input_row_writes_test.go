@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
@@ -99,7 +100,7 @@ func newInputRig(t *testing.T, st session.State, timeout time.Duration) *inputRi
 		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               r.store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Events:              r.bus,
 		InputWaits:          r.reg,
 		RequestInputTimeout: timeout,

@@ -9,7 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
@@ -31,22 +34,45 @@ import (
 // sentinel-to-tool-code mapping the handler applies and that the handler builds
 // the taskHandle from the returned post-materialization state.
 type fakeChildMaterializer struct {
+	seam.ChildSessions
 	state session.State
 	err   error
 	calls []string
 }
 
-func (f *fakeChildMaterializer) MaterializeDelegatedChild(_ context.Context, _, childID string) (session.State, error) {
+// MaterializeChild records the child and answers the configured state and
+// error, with the session server's typed failures matched to the seam's
+// errors as the session core matches them.
+func (f *fakeChildMaterializer) MaterializeChild(_ context.Context, _, childID string) (state.State, error) {
 	f.calls = append(f.calls, childID)
-	return f.state, f.err
+	var credAssign *podsession.CredentialAssignmentError
+	var warming *podsession.PoolWarmingError
+	switch {
+	case errors.As(f.err, &credAssign):
+		return state.State(f.state), seamError{seam.ErrChildCredentialAssignment, f.err.Error(), f.err}
+	case errors.As(f.err, &warming):
+		return state.State(f.state), seamError{seam.ErrPoolWarming, warming.Error(), f.err}
+	}
+	return state.State(f.state), f.err
 }
+
+// seamError is a core error that also matches a seam sentinel, with the
+// core's message, as the session core returns it.
+type seamError struct {
+	sentinel error
+	msg      string
+	err      error
+}
+
+func (e seamError) Error() string   { return e.msg }
+func (e seamError) Unwrap() []error { return []error{e.sentinel, e.err} }
 
 // newDelegateMaterializeMCP builds a same-environment delegation MCP server
 // with the §8.2 ChildMaterializer seam wired to the supplied double (nil leaves
 // the seam unset) and a running parent session. The delegation service issues
 // child ids of "sess_child". The §8.3 credential pre-check is left unwired so
 // the handler reaches the materialization step for every admitted child.
-func newDelegateMaterializeMCP(t *testing.T, materializer mcptools.ChildMaterializer) (*mcp.Server, sessionstore.Store) {
+func newDelegateMaterializeMCP(t *testing.T, materializer seam.ChildSessions) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	runtimes := runtimestore.NewMemory()
@@ -56,7 +82,7 @@ func newDelegateMaterializeMCP(t *testing.T, materializer mcptools.ChildMaterial
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		ChildMaterializer: materializer,
 		Delegation: delegation.NewService(store, delegation.Options{

@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // spec: §10.6 — defaultDelegationPolicy is the
@@ -73,7 +74,7 @@ func envPolicyHarness(t *testing.T, parentRuntimeRef, envName, envDefaultPolicy 
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Delegation:        svc,
 		Environments:      envs,

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -115,7 +116,7 @@ func TestDelegateTaskParentEndedBeforeInsertAnswersParentRevoked_spec_8_2(t *tes
 				SessionAccess:     ownerprincipal.ToolAccess{},
 				DevTenantFallback: true,
 				Store:             store,
-				Executor:          executor.NewEchoExecutor(),
+				Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 				Runtimes:          runtimes,
 				ChildMaterializer: pods,
 				Delegation: delegation.NewService(store, delegation.Options{

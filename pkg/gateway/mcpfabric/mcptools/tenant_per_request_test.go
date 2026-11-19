@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -52,10 +53,10 @@ func TestCreateSessionStampsPrincipalTenant_spec_15_2_1335(t *testing.T) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_x" },
-		SessionCreator:    newSessionCreator(store, "sess_x"),
+		SessionCreator:    newSessionCreator(store, "sess_x").ToolsSeam(),
 		// Register-time fallback is "fallback" — the unique sentinel
 		// proves the production handler does NOT use it when an
 		// authenticated principal is on the request context.
@@ -95,10 +96,10 @@ func TestCreateSessionFallsBackWhenPrincipalHasNoTenant_spec_15_2_1335(t *testin
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_x" },
-		SessionCreator:    newSessionCreator(store, "sess_x"),
+		SessionCreator:    newSessionCreator(store, "sess_x").ToolsSeam(),
 		TenantID:          "fallback",
 	})
 
@@ -125,12 +126,12 @@ func TestTenantsAreIsolatedBetweenPrincipals_spec_15_2_1335(t *testing.T) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		// Unique ids per call so the two sessions do not collide on the
 		// store layer.
 		IDFunc:         newSequentialIDFunc("sess", 1),
-		SessionCreator: sessionserver.New(store, sessionserver.Options{IDFunc: newSequentialIDFunc("sess", 1)}),
+		SessionCreator: sessionserver.New(store, sessionserver.Options{IDFunc: newSequentialIDFunc("sess", 1)}).ToolsSeam(),
 		TenantID:       "default",
 	})
 
