@@ -38,13 +38,14 @@ func TestTerminalWriterSeamsAreWiredToTheSessionServer_spec_7_2(t *testing.T) {
 		{"adminrouter.go", "beginTerminal: sessionSrv.BeginTerminal", "ForceTerminate's claim"},
 		{"adminrouter.go", "onTerminal: sessionSrv.OnSessionTerminal", "ForceTerminate's funnel"},
 		{"main.go", "w.budgetTerminator.beginTerminal = sessionSrv.BeginTerminal", "the budget terminator's claim"},
-		{"reconciler_workers.go", "end := w.sessionSrv.BeginTerminal(sessionID)", "the deadlock closure's claim"},
+		{"reconciler_workers.go", "deadlock.TerminalFail(w.sessions, w.sessionSrv.ToolsSeam(), w.inputWaits, time.Now)", "the deadlock writer's claim and funnel"},
+		{"reconciler_workers.go", "Terminal: seamrow.TerminalHook(w.sessionSrv.ToolsSeam()),", "the orphan-cleanup sweep's Terminal"},
 	} {
 		if !strings.Contains(read(tc.file), tc.want) {
 			t.Errorf("%s: %s is not wired (%q missing)", tc.file, tc.seam, tc.want)
 		}
 	}
-	if n := strings.Count(read("reconciler_workers.go"), "Terminal: w.sessionSrv,"); n != 2 {
-		t.Errorf("reconciler_workers.go wires Terminal to the session server %d times, want 2 (orphan cleanup and orphan session)", n)
+	if n := strings.Count(read("reconciler_workers.go"), "Terminal: w.sessionSrv,"); n != 1 {
+		t.Errorf("reconciler_workers.go wires Terminal to the session server %d times, want 1 (orphan session)", n)
 	}
 }
