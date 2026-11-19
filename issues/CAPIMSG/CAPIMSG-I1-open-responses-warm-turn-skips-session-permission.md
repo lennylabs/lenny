@@ -1,9 +1,10 @@
 ---
 id: CAPIMSG-I1
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0138.S6
 ---
 
 # A warm Open Responses continuation delivers a turn without the `manage_own_sessions` check
