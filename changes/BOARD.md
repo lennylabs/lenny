@@ -8,7 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 4 |
+| Building | 1 |
+| Ready | 3 |
 | Waiting on decisions | 40 |
 | Blocked | 134 |
 | Landed | 8 |
@@ -28,9 +29,9 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0117.S8](0117-gateway-package-layout/steps.md#0117s8-api-front-and-the-shared-api-conventions-497-import-sites) | API front and the shared API conventions (497 import sites) | Building |  |
 | [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Ready |  |
 | [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Ready |  |
-| [0117.S8](0117-gateway-package-layout/steps.md#0117s8-api-front-and-the-shared-api-conventions-497-import-sites) | API front and the shared API conventions (497 import sites) | Ready |  |
 | [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Ready |  |
 | [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Blocked | 0117.S8 |
 | [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Landed |  |
