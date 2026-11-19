@@ -5,7 +5,6 @@ package mcp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"net/http"
 
 	"nhooyr.io/websocket"
@@ -73,28 +72,15 @@ func (s *Server) startWSAttach(parent context.Context, conn *websocket.Conn, r *
 		return nil
 	}
 
-	tenant := ""
-	if s.attach.TenantFromRequest != nil {
-		tenant = s.attach.TenantFromRequest(r)
-	}
+	tenant := s.attach.tenant(r)
 
 	// Authorize before any event frame is written so a missing or foreign
 	// session surfaces as a normal JSON-RPC error rather than a half-open
 	// stream, the same contract the SSE leg enforces. spec: §7.2 isolation.
-	if s.attach.Authorize != nil {
-		if err := s.attach.Authorize(parent, tenant, in.SessionID); err != nil {
-			code, msg, details := "RESOURCE_NOT_FOUND", err.Error(), map[string]any(nil)
-			var te *ToolError
-			if errors.As(err, &te) {
-				if te.Code != "" {
-					code = te.Code
-				}
-				msg = te.Msg
-				details = te.Details
-			}
-			s.writeWSError(parent, conn, req.ID, errInvalidParams, code, msg, details, redact)
-			return nil
-		}
+	if err := s.attach.authorize(parent, tenant, in.SessionID); err != nil {
+		code, msg, details := attachRefusal(err)
+		s.writeWSError(parent, conn, req.ID, errInvalidParams, code, msg, details, redact)
+		return nil
 	}
 
 	afterSeq := in.ResumeFromSeq

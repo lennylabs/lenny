@@ -45,7 +45,8 @@ func newMCPWithRuntimes(t *testing.T) (*mcp.Server, sessionstore.Store, runtimes
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -72,7 +73,8 @@ func newMCPForInput(t *testing.T, timeout time.Duration) (*mcp.Server, sessionst
 	reg := inputwait.NewRegistry()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
@@ -97,7 +99,8 @@ func newMCPForInputWithRuntimes(t *testing.T, timeout time.Duration) (*mcp.Serve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),
@@ -129,7 +132,8 @@ func newMCPForArchiveHook(t *testing.T) (*mcp.Server, sessionstore.Store, treear
 	hook := newHookTerminal(nil)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		TreeArchive:       archive,
@@ -149,7 +153,8 @@ func newMCPForElicitation(t *testing.T, timeout time.Duration) (*mcp.Server, ses
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:     ownerprincipal.SessionAccess{},
+		SessionService:     ownerprincipal.ToolAccess{},
+		SessionAccess:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,
@@ -201,7 +206,8 @@ func newMCPForOutput(t *testing.T) (*mcp.Server, sessionstore.Store, *sessioneve
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -328,7 +334,8 @@ func newMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Server, sessi
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -1011,7 +1018,8 @@ func TestRequestInputPublishesElicitationRequestEvent_spec_7_2(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
@@ -1383,7 +1391,8 @@ func TestRequestInputPerRuntimeTimeoutOverride(t *testing.T) {
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),

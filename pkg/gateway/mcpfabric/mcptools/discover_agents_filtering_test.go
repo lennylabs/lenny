@@ -35,7 +35,8 @@ func newMCPFiltered(t *testing.T) (*mcp.Server, runtimestore.Store, environments
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             memstore.New(),
 		Executor:          executor.NewEchoExecutor(),
@@ -395,7 +396,8 @@ func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimes
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:             ownerprincipal.SessionAccess{},
+		SessionService:             ownerprincipal.ToolAccess{},
+		SessionAccess:              ownerprincipal.ToolAccess{},
 		DevTenantFallback:          true,
 		Store:                      memstore.New(),
 		Executor:                   executor.NewEchoExecutor(),

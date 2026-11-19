@@ -49,7 +49,8 @@ func newMCPWithCreator(t *testing.T, creator mcptools.SessionCreator) *mcp.Serve
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             memstore.New(),
 		SessionCreator:    creator,
@@ -153,7 +154,8 @@ func TestCreateSessionWithoutCreatorFailsClosed_spec_10_2(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

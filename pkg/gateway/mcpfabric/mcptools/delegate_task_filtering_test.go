@@ -35,7 +35,8 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -109,7 +110,8 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -192,7 +194,8 @@ func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Runtimes:          runtimes,
@@ -250,7 +253,8 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	audit := &fakeDelegationAuditor{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

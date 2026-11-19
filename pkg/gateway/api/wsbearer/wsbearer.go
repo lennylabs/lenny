@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package mcp
+package wsbearer
 
 import (
 	"net/http"
@@ -21,7 +21,7 @@ import (
 // prefix inside the Sec-WebSocket-Protocol header.
 const bearerSubprotocolPrefix = "lenny.bearer."
 
-// WebSocketBearerCarrier returns a middleware that promotes the §27.3.1
+// Carrier returns a middleware that promotes the §27.3.1
 // `Sec-WebSocket-Protocol: lenny.bearer.<token>` carrier to a standard
 // `Authorization: Bearer <token>` header and strips the credential entry
 // from the sub-protocol header before any downstream handler runs.
@@ -35,7 +35,7 @@ const bearerSubprotocolPrefix = "lenny.bearer."
 // gateway validates the bearer "exactly as it would for any non-playground
 // MCP client"). When the caller already presented an Authorization header
 // (the non-browser upgrade path), the carrier does not overwrite it.
-func WebSocketBearerCarrier(next http.Handler) http.Handler {
+func Carrier(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		header := r.Header.Get("Sec-WebSocket-Protocol")
 		if header == "" || !strings.Contains(header, bearerSubprotocolPrefix) {

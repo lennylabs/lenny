@@ -116,7 +116,8 @@ func newMCPForDelegateVis(t *testing.T) (*mcp.Server, sessionstore.Store) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

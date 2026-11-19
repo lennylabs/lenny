@@ -16,7 +16,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -911,16 +913,22 @@ func TestDelegatePermissiveModeSkipsAttribution(t *testing.T) {
 // fakeExperimentRouter is a delegation.ExperimentRouter test double:
 // the routing closure is provided per-test so behaviour can be set.
 type fakeExperimentRouter struct {
+	seam.ChildSessions
 	calls int
 	route func(row *sessionstore.Session) error
 }
 
-func (f *fakeExperimentRouter) ApplyExperimentRouting(_ context.Context, row *sessionstore.Session) error {
+// ApplyExperimentRouting routes the stored row the child's session record
+// carries, as the session core does, and returns the routed row in it.
+func (f *fakeExperimentRouter) ApplyExperimentRouting(_ context.Context, child *seam.Session) error {
 	f.calls++
-	if f.route != nil {
-		return f.route(row)
+	if f.route == nil {
+		return nil
 	}
-	return nil
+	row := toolsession.Row(*child)
+	err := f.route(&row)
+	*child = toolsession.Record(row)
+	return err
 }
 
 // spec: §8.2 / §10.7 — under `independent` propagation the

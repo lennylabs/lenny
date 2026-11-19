@@ -305,7 +305,8 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 	multiTurnSeed(t, store, "sess-mcp", session.StateRunning)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          e,

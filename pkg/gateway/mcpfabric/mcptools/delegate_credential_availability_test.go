@@ -78,7 +78,8 @@ func newDelegateCredAvailMCP(t *testing.T, checker mcptools.CredentialAvailabili
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -224,7 +225,8 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -455,7 +457,8 @@ func TestDelegateTaskParentLookupErrorFailsClosed_spec_8_3(t *testing.T) {
 	wrapped := newGetErrStore(base, "sess_parent", errors.New("store unavailable"))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             wrapped,
 		Executor:          executor.NewEchoExecutor(),
@@ -506,7 +509,8 @@ func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T
 	wrapped := newGetErrStore(base, "sess_parent", errors.New("store unavailable"))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             wrapped,
 		Executor:          executor.NewEchoExecutor(),
@@ -557,7 +561,8 @@ func TestDelegateTaskNilStoreFailsClosedOnOwnership_spec_10_2(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             nil,
 		Executor:          executor.NewEchoExecutor(),

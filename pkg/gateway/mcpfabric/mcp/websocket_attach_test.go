@@ -13,22 +13,27 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
 func attachTS() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 
 // attachWiredServer builds a §4.1 WebSocket MCP server whose §15.2 attach
-// channel is wired to bus under tenant "acme". The optional authorize gate
-// lets a test exercise the §7.2 authorization rejection path.
-func attachWiredServer(bus *sessionevents.Bus, authorize func(ctx context.Context, tenantID, sessionID string) error) *mcp.Server {
+// channel is wired to bus under tenant "acme". An optional session lookup
+// turns the attach gate on, so a test can exercise the §7.2 authorization
+// rejection path.
+func attachWiredServer(bus *sessionevents.Bus, sessions seam.Sessions) *mcp.Server {
 	srv := mcp.NewServer()
-	srv.SetAttach(mcp.AttachConfig{
-		Events:            bus,
-		TenantFromRequest: func(*http.Request) string { return "acme" },
-		Authorize:         authorize,
-		Now:               attachTS,
-	})
+	cfg := mcp.AttachConfig{
+		Events:  bus,
+		Callers: fixedCaller{TenantID: "acme", Subject: "alice@acme.com"},
+		Now:     attachTS,
+	}
+	if sessions != nil {
+		cfg.Sessions, cfg.Access = sessions, grantAccess(true)
+	}
+	srv.SetAttach(cfg)
 	return srv
 }
 
@@ -149,10 +154,7 @@ func TestWebSocketAttachGapDetected_spec_15_2(t *testing.T) {
 // connection stays usable for a corrected next frame.
 func TestWebSocketAttachAuthorizeRejection_spec_7_2(t *testing.T) {
 	bus := sessionevents.NewBus(16)
-	authorize := func(_ context.Context, _, sessionID string) error {
-		return mcp.NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
-	}
-	ctx, conn, _, teardown := dialTestServer(t, attachWiredServer(bus, authorize))
+	ctx, conn, _, teardown := dialTestServer(t, attachWiredServer(bus, lookupSessions{err: seam.ErrSessionNotFound}))
 	defer teardown()
 
 	sendAttach(t, ctx, conn, "ghost", 0)
@@ -231,11 +233,9 @@ func TestWebSocketAttachMissingSessionID(t *testing.T) {
 func TestWebSocketAttachRedactsPlaygroundEgress_spec_27_9_251(t *testing.T) {
 	bus := sessionevents.NewBus(16)
 	srv := attachWiredServer(bus, nil)
-	srv.SetWebSocketAuth(func(r *http.Request) (mcp.WSPrincipal, bool) {
-		return mcp.WSPrincipal{Tenant: "acme", JTI: "j1", Origin: r.Header.Get("X-Test-Origin")}, true
-	}, nil, 0)
+	srv.SetWebSocketAuth(headerOriginCaller{}, nil, 0)
 
-	httpSrv := httptest.NewServer(srv.WebSocketHandler())
+	httpSrv := httptest.NewServer(withTestOrigin(srv.WebSocketHandler()))
 	defer httpSrv.Close()
 	wsURL := strings.Replace(httpSrv.URL, "http://", "ws://", 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

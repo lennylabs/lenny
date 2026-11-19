@@ -26,11 +26,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
+	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
 // HolderForwardDialBound bounds the TCP dial and the TLS handshake of one
@@ -572,7 +573,7 @@ const maxForwardedToolResponse = 16 << 20
 // ForwardToolCall forwards a tools/call of tool with arguments on row to the
 // session's coordinating replica when a §29.3 row of kind requires it, and
 // returns the coordinator's result or error as the calling handler's own. It
-// writes nothing. The returned error is nil or a *mcp.ToolError:
+// writes nothing. The returned error is nil or a *seam.Refusal:
 //
 //  1. ForwardLocal, and ForwardNotDelivered for a message HoldsUndelivered
 //     admits, return a zero result and a nil error; the caller runs its
@@ -589,49 +590,48 @@ const maxForwardedToolResponse = 16 << 20
 //
 // spec: §29.3 (Interactive message send) Forwarding rule 2, §15.2 (MCP API),
 // §15.2.1 (REST/MCP consistency contract)
-func (s *Server) ForwardToolCall(ctx context.Context, row sessionstore.Session, kind ForwardKind, tool string, arguments json.RawMessage) (mcp.ToolResult, ForwardOutcome, error) {
+func (s *Server) ForwardToolCall(ctx context.Context, row sessionstore.Session, kind ForwardKind, tool string, arguments json.RawMessage) (seam.ToolResult, ForwardOutcome, error) {
 	addr, outcome := s.forwardTarget(ctx, row, kind)
 	switch {
 	case outcome == ForwardLocal:
-		return mcp.ToolResult{}, ForwardLocal, nil
+		return seam.ToolResult{}, ForwardLocal, nil
 	case outcome == ForwardNotDelivered && HoldsUndelivered(row, kind):
-		return mcp.ToolResult{}, ForwardNotDelivered, nil
+		return seam.ToolResult{}, ForwardNotDelivered, nil
 	case outcome != forwardDial:
-		return mcp.ToolResult{}, outcome, RefuseToolForward(ctx, row)
+		return seam.ToolResult{}, outcome, RefuseToolForward(ctx, row)
 	}
 	req, err := newToolForwardRequest(ctx, addr, tool, arguments)
 	if err != nil {
-		return mcp.ToolResult{}, ForwardNotDelivered, RefuseToolForward(ctx, row)
+		return seam.ToolResult{}, ForwardNotDelivered, RefuseToolForward(ctx, row)
 	}
 	resp, outcome := s.sendForward(req)
 	if outcome != ForwardDelivered {
 		if outcome == ForwardNotDelivered && HoldsUndelivered(row, kind) {
-			return mcp.ToolResult{}, ForwardNotDelivered, nil
+			return seam.ToolResult{}, ForwardNotDelivered, nil
 		}
-		return mcp.ToolResult{}, outcome, RefuseToolForward(ctx, row)
+		return seam.ToolResult{}, outcome, RefuseToolForward(ctx, row)
 	}
 	defer func() { _ = resp.Body.Close() }()
 	result, te, ok := decodeToolForwardResponse(ctx, resp)
 	if !ok {
-		return mcp.ToolResult{}, ForwardUnknown, RefuseToolForward(ctx, row)
+		return seam.ToolResult{}, ForwardUnknown, RefuseToolForward(ctx, row)
 	}
 	if te != nil {
-		return mcp.ToolResult{}, ForwardDelivered, te
+		return seam.ToolResult{}, ForwardDelivered, te
 	}
 	return result, ForwardDelivered, nil
 }
 
-// RefuseToolForward returns the TARGET_NOT_READY tool error carrying
+// RefuseToolForward returns the TARGET_NOT_READY refusal carrying
 // currentState and keeps the refusal out of the §11.5 idempotency cache. The
-// MCP message path also returns it for a message carrying inReplyTo that a
-// replica which lost the lease mid-delivery did not deliver.
+// platform tools seam's message path returns the same refusal for a message
+// carrying inReplyTo that a replica which lost the lease mid-delivery did not
+// deliver.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 6 and 7
 func RefuseToolForward(ctx context.Context, row sessionstore.Session) error {
 	idemmw.DoNotStore(ctx)
-	return mcp.NewToolError("TARGET_NOT_READY",
-		"the session's coordinating gateway replica could not be reached; retry the tool call",
-		map[string]any{"currentState": string(row.State)})
+	return seam.TargetNotReady(state.State(row.State))
 }
 
 // toolForwardBody is the tools/call request a forwarded tool call posts.
@@ -670,26 +670,26 @@ func newToolForwardRequest(ctx context.Context, addr, tool string, arguments jso
 // decodeToolForwardResponse decodes the coordinator's response to a
 // forwarded tool call under ForwardToolCall's rules 3 to 5. ok is false when
 // none of them decodes the response.
-func decodeToolForwardResponse(ctx context.Context, resp *http.Response) (mcp.ToolResult, *mcp.ToolError, bool) {
+func decodeToolForwardResponse(ctx context.Context, resp *http.Response) (seam.ToolResult, *seam.Refusal, bool) {
 	if resp.Header.Get(forwardNoStoreHeader) != "" {
 		idemmw.DoNotStore(ctx)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxForwardedToolResponse))
 	if err != nil {
-		return mcp.ToolResult{}, nil, false
+		return seam.ToolResult{}, nil, false
 	}
 	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
-		result, te, derr := mcp.DecodeToolCallResponse(body)
+		result, refusal, derr := seam.DecodeToolCallResponse(body)
 		if derr != nil {
-			return mcp.ToolResult{}, nil, false
+			return seam.ToolResult{}, nil, false
 		}
-		return result, te, true
+		return result, refusal, true
 	}
 	var env errorEnvelope
 	if err := json.Unmarshal(body, &env); err != nil || env.Error.Code == "" {
-		return mcp.ToolResult{}, nil, false
+		return seam.ToolResult{}, nil, false
 	}
-	return mcp.ToolResult{}, mcp.NewToolError(env.Error.Code, env.Error.Message, env.Error.Details), true
+	return seam.ToolResult{}, &seam.Refusal{Code: env.Error.Code, Message: env.Error.Message, Details: env.Error.Details}, true
 }
 
 // NewHolderForwardClient builds the shared CH-HOLDERFORWARD client. It

@@ -37,6 +37,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // The supported MCP protocol versions, the negotiation rules, and the
@@ -591,60 +592,37 @@ func (s *Server) WriteLennyError(w http.ResponseWriter, id json.RawMessage, json
 // spec: §15.2.1 (REST/MCP consistency contract) rule 3, §29.3 (Interactive
 // message send) Forwarding rule 2
 func DecodeToolCallResponse(body []byte) (ToolResult, *ToolError, error) {
-	var resp struct {
-		JSONRPC string          `json:"jsonrpc"`
-		Result  json.RawMessage `json:"result"`
-		Error   *struct {
-			Message string          `json:"message"`
-			Data    json.RawMessage `json:"data"`
-		} `json:"error"`
+	res, refusal, err := seam.DecodeToolCallResponse(body)
+	if err != nil {
+		return ToolResult{}, nil, err
 	}
-	if err := json.Unmarshal(body, &resp); err != nil {
-		return ToolResult{}, nil, fmt.Errorf("decode tools/call response: %w", err)
+	if refusal != nil {
+		return ToolResult{}, RefusalError(refusal), nil
 	}
-	if resp.JSONRPC != "2.0" {
-		return ToolResult{}, nil, fmt.Errorf("decode tools/call response: jsonrpc is %q, want \"2.0\"", resp.JSONRPC)
+	result, err := FromSeamResult(res)
+	if err != nil {
+		return ToolResult{}, nil, err
 	}
-	if resp.Error != nil {
-		te, err := decodeLennyError(resp.Error.Data)
-		if err != nil {
-			return ToolResult{}, nil, fmt.Errorf("decode tools/call error data: %w", err)
-		}
-		return ToolResult{}, te, nil
-	}
-	if len(resp.Result) == 0 {
-		return ToolResult{}, nil, errors.New("decode tools/call response: no result and no error")
-	}
-	var result ToolResult
-	if err := json.Unmarshal(resp.Result, &result); err != nil {
-		return ToolResult{}, nil, fmt.Errorf("decode tools/call result: %w", err)
-	}
-	if !result.IsError {
-		return result, nil, nil
-	}
-	for _, block := range result.Content {
-		if block.Type == LennyErrorContentType {
-			te, err := decodeLennyError(json.RawMessage(block.Text))
-			if err != nil {
-				return ToolResult{}, nil, fmt.Errorf("decode tools/call lenny/error block: %w", err)
-			}
-			return ToolResult{}, te, nil
-		}
-	}
-	return ToolResult{}, nil, errors.New("decode tools/call result: isError result carries no lenny/error block")
+	return result, nil, nil
 }
 
-// decodeLennyError decodes a §15.2.1 lenny error envelope into a ToolError.
-// An envelope with no code is not one.
-func decodeLennyError(raw json.RawMessage) (*ToolError, error) {
-	var env LennyErrorDetail
-	if err := json.Unmarshal(raw, &env); err != nil {
-		return nil, err
+// FromSeamResult returns the tool result a seam tool result carries: its
+// encoded content blocks, decoded, and its error flag.
+func FromSeamResult(r seam.ToolResult) (ToolResult, error) {
+	out := ToolResult{IsError: r.IsError}
+	if len(r.Content) == 0 || string(r.Content) == "null" {
+		return out, nil
 	}
-	if env.Code == "" {
-		return nil, errors.New("lenny error envelope has no code")
+	if err := json.Unmarshal(r.Content, &out.Content); err != nil {
+		return ToolResult{}, fmt.Errorf("decode tool result content: %w", err)
 	}
-	return NewToolError(env.Code, env.Message, env.Details), nil
+	return out, nil
+}
+
+// RefusalError returns the tool error that reports a seam refusal: its
+// client API error code, message, and details.
+func RefusalError(r *seam.Refusal) *ToolError {
+	return NewToolError(r.Code, r.Message, r.Details)
 }
 
 // internalError is kept for callers that need to signal a transport

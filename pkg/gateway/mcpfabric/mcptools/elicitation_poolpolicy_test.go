@@ -35,7 +35,8 @@ func newMCPWithPools(t *testing.T, pools poolstore.Store, timeout time.Duration)
 		timeout = 2 * time.Second
 	}
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:     ownerprincipal.SessionAccess{},
+		SessionService:     ownerprincipal.ToolAccess{},
+		SessionAccess:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:  true,
 		Store:              store,
 		Interactions:       interactions,

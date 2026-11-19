@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 )
 
@@ -62,19 +63,88 @@ type AttachConfig struct {
 	// Events is the §15.1 session event bus the stream replays from and
 	// tails. Required to enable streaming.
 	Events SessionEventSource
-	// TenantFromRequest resolves the caller's tenant from the upgraded
-	// request so the bus enforces the §7.2 tenant binding. A nil resolver
-	// streams under the empty tenant (the legacy untenanted bus path).
-	TenantFromRequest func(*http.Request) string
-	// Authorize, when set, gates the attach before any SSE byte is
-	// written: it returns a *ToolError (e.g. RESOURCE_NOT_FOUND) when the
-	// session does not exist or is not visible to the caller's tenant.
-	// Production wires the §4.2 session-store Get. A nil Authorize relies
-	// on the bus tenant binding alone. spec: §7.2 tenant isolation.
-	Authorize func(ctx context.Context, tenantID, sessionID string) error
+	// Callers resolves the caller of the upgraded request,
+	// GWSEAM-RequestCaller, whose tenant the stream runs under so the bus
+	// enforces the tenant binding. A nil Callers streams under the empty
+	// tenant (the untenanted bus path).
+	Callers seam.CallerIdentity
+	// Sessions and Access, when both are set, gate the attach before any
+	// SSE byte is written, through GWSEAM-LookupSession and
+	// GWSEAM-SessionAccessible: a caller with no subject, a request whose
+	// tenant did not resolve, a session that does not exist, and a session
+	// the caller may not read are refused. With either unset the attach
+	// relies on the bus tenant binding alone.
+	Sessions seam.Sessions
+	Access   seam.SessionAccess
 	// Now supplies the clock for event timestamps on the wire. A nil Now
 	// defaults to time.Now.
 	Now func() time.Time
+}
+
+// attachRefusal returns the lenny error code, message, and details of an
+// attach the gate refused: a *ToolError's own, and RESOURCE_NOT_FOUND with
+// the error's text for any other error.
+func attachRefusal(err error) (code, msg string, details map[string]any) {
+	code, msg = "RESOURCE_NOT_FOUND", err.Error()
+	var te *ToolError
+	if errors.As(err, &te) {
+		if te.Code != "" {
+			code = te.Code
+		}
+		msg = te.Msg
+		details = te.Details
+	}
+	return code, msg, details
+}
+
+// tenant returns the tenant of the caller the request carries, or the
+// empty tenant when no caller resolves.
+func (c AttachConfig) tenant(r *http.Request) string {
+	if c.Callers == nil {
+		return ""
+	}
+	if p, ok := c.Callers.RequestCaller(r.Context()); ok {
+		return p.TenantID
+	}
+	return ""
+}
+
+// authorize gates an attach to a session in a tenant. A caller with no
+// subject is refused before any read, and a session the caller may not
+// read answers exactly as a missing one, so the refusal does not reveal
+// that the session exists.
+//
+// spec: GWSEAM-LookupSession, GWSEAM-SessionAccessible; §10.2 (Session
+// ownership) rules 3 and 7
+func (c AttachConfig) authorize(ctx context.Context, tenantID, sessionID string) error {
+	if c.Sessions == nil || c.Access == nil {
+		return nil
+	}
+	var p seam.Caller
+	ok := false
+	if c.Callers != nil {
+		p, ok = c.Callers.RequestCaller(ctx)
+	}
+	if !ok || p.Subject == "" {
+		return NewToolError("UNAUTHORIZED",
+			"attach_session requires an authenticated principal subject",
+			map[string]any{"reason": "principal_subject_required"})
+	}
+	if tenantID == "" {
+		return NewToolError("UNAUTHORIZED",
+			"attach_session: tenant could not be resolved; auth chain must precede MCP dispatch", nil)
+	}
+	sess, err := c.Sessions.LookupSession(ctx, tenantID, sessionID)
+	if err != nil {
+		if errors.Is(err, seam.ErrSessionNotFound) {
+			return NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
+		}
+		return NewToolError("INTERNAL_ERROR", err.Error(), nil)
+	}
+	if !c.Access.SessionAccessible(ctx, sess, seam.SessionRead) {
+		return NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
+	}
+	return nil
 }
 
 func (c AttachConfig) now() time.Time {
@@ -140,28 +210,15 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 		return
 	}
 
-	tenant := ""
-	if s.attach.TenantFromRequest != nil {
-		tenant = s.attach.TenantFromRequest(r)
-	}
+	tenant := s.attach.tenant(r)
 
 	// Authorize before any SSE byte is written so a missing or foreign
 	// session surfaces as a normal JSON-RPC error (the client never sees
 	// a half-open event stream). spec: §7.2 tenant isolation.
-	if s.attach.Authorize != nil {
-		if err := s.attach.Authorize(r.Context(), tenant, in.SessionID); err != nil {
-			code, msg, details := "RESOURCE_NOT_FOUND", err.Error(), map[string]any(nil)
-			var te *ToolError
-			if errors.As(err, &te) {
-				if te.Code != "" {
-					code = te.Code
-				}
-				msg = te.Msg
-				details = te.Details
-			}
-			s.WriteLennyError(w, req.ID, errInvalidParams, code, msg, details)
-			return
-		}
+	if err := s.attach.authorize(r.Context(), tenant, in.SessionID); err != nil {
+		code, msg, details := attachRefusal(err)
+		s.WriteLennyError(w, req.ID, errInvalidParams, code, msg, details)
+		return
 	}
 
 	if _, ok := w.(http.Flusher); !ok {

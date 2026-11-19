@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package mcp_test
+package wsbearer_test
 
 import (
 	"net/http"
@@ -8,11 +8,11 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
 )
 
 // spec: §27.3.1 — the sub-protocol carrier ferries the bearer as
-// `lenny.mcp.v1, lenny.bearer.<token>`. WebSocketBearerCarrier promotes the
+// `lenny.mcp.v1, lenny.bearer.<token>`. Carrier promotes the
 // token to `Authorization: Bearer` and strips the credential entry,
 // leaving only the negotiable sub-protocol so the upgrader can echo it.
 func TestWebSocketBearerCarrierPromotesAndRedacts(t *testing.T) {
@@ -25,7 +25,7 @@ func TestWebSocketBearerCarrierPromotesAndRedacts(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/mcp/v1/ws", nil)
 	req.Header.Set("Sec-WebSocket-Protocol", "lenny.mcp.v1, lenny.bearer.eyJabc.def.ghi")
 
-	mcp.WebSocketBearerCarrier(next).ServeHTTP(rr, req)
+	wsbearer.Carrier(next).ServeHTTP(rr, req)
 
 	if gotAuth != "Bearer eyJabc.def.ghi" {
 		t.Errorf("Authorization = %q, want Bearer eyJabc.def.ghi", gotAuth)
@@ -54,7 +54,7 @@ func TestWebSocketBearerCarrierNoOpWithoutCarrier(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer already-set")
 	req.Header.Set("Sec-WebSocket-Protocol", "lenny.mcp.v1")
 
-	mcp.WebSocketBearerCarrier(next).ServeHTTP(rr, req)
+	wsbearer.Carrier(next).ServeHTTP(rr, req)
 
 	if gotAuth != "Bearer already-set" {
 		t.Errorf("Authorization = %q, want unchanged", gotAuth)
@@ -79,7 +79,7 @@ func TestWebSocketBearerCarrierDoesNotOverwriteAuthorization(t *testing.T) {
 	req.Header.Set("Authorization", "Bearer header-token")
 	req.Header.Set("Sec-WebSocket-Protocol", "lenny.mcp.v1, lenny.bearer.carrier-token")
 
-	mcp.WebSocketBearerCarrier(next).ServeHTTP(rr, req)
+	wsbearer.Carrier(next).ServeHTTP(rr, req)
 
 	if gotAuth != "Bearer header-token" {
 		t.Errorf("Authorization = %q, want the pre-existing header-token", gotAuth)
@@ -103,7 +103,7 @@ func TestWebSocketBearerCarrierOnlyBearerEntry(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/mcp/v1/ws", nil)
 	req.Header.Set("Sec-WebSocket-Protocol", "lenny.bearer.solo-token")
 
-	mcp.WebSocketBearerCarrier(next).ServeHTTP(rr, req)
+	wsbearer.Carrier(next).ServeHTTP(rr, req)
 
 	if present {
 		t.Errorf("Sec-WebSocket-Protocol header should be removed when only the bearer entry was present")

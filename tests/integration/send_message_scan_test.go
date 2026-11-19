@@ -146,7 +146,8 @@ func newScanTestbed(t *testing.T, handler stubinterceptor.Handler, maxInputSize 
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             sessions,
 		Executor:          executor.NewEchoExecutor(),

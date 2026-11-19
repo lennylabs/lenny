@@ -95,7 +95,8 @@ func newInputRig(t *testing.T, st session.State, timeout time.Duration) *inputRi
 	}
 	r.srv = mcp.NewServer()
 	mcptools.Register(r.srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               r.store,
 		Executor:            executor.NewEchoExecutor(),

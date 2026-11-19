@@ -60,22 +60,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
@@ -192,7 +190,7 @@ func errCallerUnauthorized() *mcp.ToolError {
 // from the store, or from the primary when primary is true. A row the
 // caller may not read (act == false) or act on (act == true) returns
 // sessionstore.ErrNotFound, so the handler answers exactly as for a
-// missing session. A nil SessionService or a nil Store grants nothing.
+// missing session. A nil SessionAccess or a nil Store grants nothing.
 //
 // spec: §10.2 (Session ownership) rules 3 and 7
 func lookupCallerSession(ctx context.Context, deps Deps, tenant, id string, act, primary bool) (sessionstore.Session, error) {
@@ -217,7 +215,11 @@ func lookupCallerSession(ctx context.Context, deps Deps, tenant, id string, act,
 	if err != nil {
 		return sessionstore.Session{}, err
 	}
-	if deps.SessionService == nil || !deps.SessionService.SessionAccessible(ctx, row, act) {
+	action := seam.SessionRead
+	if act {
+		action = seam.SessionManage
+	}
+	if deps.SessionAccess == nil || !deps.SessionAccess.SessionAccessible(ctx, toolsession.Record(row), action) {
 		return sessionstore.Session{}, sessionstore.ErrNotFound
 	}
 	return row, nil
@@ -349,84 +351,32 @@ type TreeCycleEvent struct {
 	Source        string
 }
 
-// SessionCreator is the §15.2.1 rule-1 shared session-creation service.
-// *sessionserver.Server implements it. When wired, lenny/create_session
-// admits a session through exactly the same §15.1 gates the REST
-// POST /v1/sessions handler runs (active-user, quota, concurrency,
-// admission-rate, policy chain, environment access, runtime / isolation /
-// workspace-plan validation) and mints the §7.1 uploadToken, so an
-// MCP-created session is not a path around tenant quotas and policy
-// interception and lands in the same `created` state with the same
-// envelope the REST surface returns.
-//
-// A nil SessionCreator fails lenny/create_session closed with
-// INTERNAL_ERROR and writes no row, because the service layer is the only
-// create path that binds the owner from the principal (§10.2 Session
-// ownership rule 1).
-//
-// spec: §15.2.1 rule 1. F-15.2.4.
-type SessionCreator interface {
-	CreateSessionService(ctx context.Context, tenantID string, req sessionserver.CreateSessionRequest) (sessionserver.CreateSessionResponse, *sessionserver.ServiceError)
-}
+// defaultMaxRetries is the retry budget a session whose retry policy sets
+// no maxRetries resolves to when no deployer cap applies. It mirrors the
+// session core's default; the tools resolve the budget through
+// GWSEAM-EffectiveMaxRetries whenever the core is wired, and the constant
+// serves only a registration with no core.
+const defaultMaxRetries = 2
 
-// CredentialAvailabilityChecker runs the §8.3 delegation-time pre-claim
-// credential-availability check for a prospective delegated child before a
-// warm pod is allocated. *sessionserver.Server implements it (modeled on
-// the SessionCreator precedent above, so mcptools depends on the interface
-// rather than importing the concrete server and creating a cycle). The
-// check reuses the §4.9 pre-claim engine and returns a typed sentinel the
-// delegate handler maps to CREDENTIAL_POOL_EXHAUSTED / USER_CREDENTIAL_NOT_FOUND.
-// It claims no pod and reserves no lease.
-//
-// spec: §8.3; §4.9
-type CredentialAvailabilityChecker interface {
-	CheckDelegationCredentialAvailability(ctx context.Context, q sessionserver.DelegationCredentialQuery) error
-}
-
-// ChildMaterializer runs the §8.2 delegation steps that follow admission for a
-// delegated child that Service.Delegate committed in session.StateCreated with
-// a stamped WorkspacePlan and no PodAssignment: it claims the warm pod, assigns
-// the credential lease, streams the stamped WorkspacePlan through the §6.3
-// binder, launches, and transitions the child to running. It returns the
-// child's post-materialization state so the delegate handler builds the
-// taskHandle from the live transitioned state rather than the pre-materialization
-// StateCreated snapshot, and it fails closed on any failure, returning the same
-// typed credential sentinels the §8.3 pre-check maps so the handler surfaces the
-// canonical MCP tool codes. *sessionserver.Server implements it via
-// MaterializeDelegatedChild (modeled on the CredentialAvailabilityChecker
-// precedent above, so mcptools depends on the interface rather than importing
-// the concrete server and creating a cycle).
-//
-// spec: §8.2
-type ChildMaterializer interface {
-	MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error)
-}
-
-// RetryBudget resolves the effective §7.3 retry budget for a session
-// row: the per-session retryPolicy.maxRetries, else the deployer cap,
-// else the §7.3 default. *sessionserver.Server implements it.
+// maxRetriesFor resolves row's effective retry budget through the session
+// core's GWSEAM-EffectiveMaxRetries, falling back to the cap-free
+// resolution when no core is wired.
 // spec: §8.8 (TaskRecord and TaskResult Schema); §7.3.
-type RetryBudget interface {
-	EffectiveMaxRetries(row sessionstore.Session) int
-}
-
-// maxRetriesFor resolves row's effective retry budget through b, falling
-// back to the cap-free resolution when no resolver is wired.
-func maxRetriesFor(b RetryBudget, row sessionstore.Session) int {
+func maxRetriesFor(b seam.ChildSessions, row sessionstore.Session) int {
 	if b == nil {
-		return sessionserver.EffectiveMaxRetriesForRow(row, session.RetryPolicyCaps{})
+		if row.RetryPolicy != nil && row.RetryPolicy.MaxRetries > 0 {
+			return row.RetryPolicy.MaxRetries
+		}
+		return defaultMaxRetries
 	}
-	return b.EffectiveMaxRetries(row)
+	return b.EffectiveMaxRetries(toolsession.Record(row))
 }
 
-// HolderForwarder forwards a tool call on a session to the session's
-// coordinating replica when a §29.3 forwarding row requires it, and returns
-// the coordinator's result or error as the calling handler's own.
-// *sessionserver.Server implements it through ForwardToolCall.
-//
-// spec: §29.3 (Interactive message send) Forwarding rule 2, §15.2 (MCP API)
-type HolderForwarder interface {
-	ForwardToolCall(ctx context.Context, row sessionstore.Session, kind sessionserver.ForwardKind, tool string, arguments json.RawMessage) (mcp.ToolResult, sessionserver.ForwardOutcome, error)
+// forwarded reports whether the tool call the context carries arrived from
+// another replica on the forward listener, through GWSEAM-Forwarded. With
+// no forwarding wired no call was forwarded.
+func forwarded(ctx context.Context, f seam.Forwarding) bool {
+	return f != nil && f.Forwarded(ctx)
 }
 
 // Deps carries the gateway services the MCP tools dispatch to.
@@ -434,57 +384,58 @@ type Deps struct {
 	// HolderForward forwards lenny/send_message and lenny/cancel_session to
 	// the session's coordinating replica. Nil makes each site run its local
 	// path, which the in-process harnesses that wire one replica rely on.
-	// Production wires *sessionserver.Server. spec: §29.3 Forwarding.
-	HolderForward HolderForwarder
+	// Production wires the session core's side of the platform tools seam
+	// (GWSEAM-ForwardToolCall, GWSEAM-Forwarded, GWSEAM-HoldsUndelivered).
+	HolderForward seam.Forwarding
 
 	// Store is the §4.2 session store.
 	Store sessionstore.Store
 
-	// SessionCreator is the §15.2.1 rule-1 shared session-creation
-	// service. When set, lenny/create_session routes through it so the
-	// MCP and REST surfaces run identical validation and return identical
-	// envelopes. A nil creator refuses every create. spec: §15.2.1 rule 1;
-	// §10.2 (Session ownership). F-15.2.4.
-	SessionCreator SessionCreator
+	// SessionCreator is the shared session-creation service, through
+	// GWSEAM-CreateSession. When set, lenny/create_session routes through it
+	// so the MCP and REST surfaces run identical validation and return
+	// identical envelopes. A nil creator refuses every create, because the
+	// service layer is the only create path that binds the owner from the
+	// principal.
+	SessionCreator seam.ChildSessions
 
-	// SessionService is the §15.2.1 rule-1 shared service layer the
-	// overlapping client-facing lifecycle/read tools dispatch through
-	// (create_and_start_session, start_session, finalize_workspace,
-	// terminate_session, resume_session, get_session_status, list_sessions,
-	// get_session_logs, list_artifacts, get_token_usage, download_artifact,
-	// upload_files). When nil those tools are not registered (the minimal
-	// in-process gateway / unit suite). Production wires *sessionserver.Server,
-	// so the MCP surface runs the identical REST route, validation, and
-	// response shaping. spec: §15.2; §15.2.1 rule 1. F-15.2.3.
-	//
-	// Its SessionAccessible is also the §10.2 ownership predicate every tool
-	// that names a session from its arguments applies to that session's row.
-	// A nil SessionService grants no session access, so those tools answer
-	// every named session as missing. spec: §10.2 (Session ownership).
-	SessionService SessionService
+	// SessionService is the shared service layer the overlapping
+	// client-facing lifecycle/read tools dispatch through, through
+	// GWSEAM-InvokeClientAPI (create_and_start_session, start_session,
+	// finalize_workspace, terminate_session, resume_session,
+	// get_session_status, list_sessions, get_session_logs, list_artifacts,
+	// get_token_usage, download_artifact, upload_files). When nil those
+	// tools are not registered (the minimal in-process gateway / unit
+	// suite), so the MCP surface runs the identical REST route, validation,
+	// and response shaping or none at all.
+	SessionService seam.ClientAPI
 
-	// CredAvailability runs the §8.3 delegation-time pre-claim
-	// credential-availability check before lenny/delegate_task allocates a
-	// warm pod. When set, the delegate handler gates inherit / independent
-	// delegations on it and rejects with CREDENTIAL_POOL_EXHAUSTED before
-	// pod allocation. Optional — a nil checker skips the gate (the minimal
-	// in-process gateway and the mcptools unit suite leave it nil).
-	// Production wires *sessionserver.Server. spec: §8.3; §4.9.
-	CredAvailability CredentialAvailabilityChecker
+	// SessionAccess is the ownership rule, GWSEAM-SessionAccessible, that
+	// every tool naming a session from its arguments applies to that
+	// session's row. A nil SessionAccess grants no session access, so
+	// those tools answer every named session as missing.
+	SessionAccess seam.SessionAccess
 
-	// ChildMaterializer runs the §8.2 steps after admission for the
-	// StateCreated child lenny/delegate_task commits: claim the warm pod,
-	// assign the credential lease, stream the workspace, launch, and
-	// transition the child to running so the returned handle is a running
-	// child the parent can interact with. When set, the delegate handler
-	// drives the admitted child through it before delivering task input.
-	// Optional — a nil materializer leaves the child in StateCreated (the
+	// CredAvailability runs the delegation-time pre-claim
+	// credential-availability check, GWSEAM-CheckChildCredentials, before
+	// lenny/delegate_task allocates a warm pod. When set, the delegate
+	// handler gates inherit / independent delegations on it and rejects
+	// with CREDENTIAL_POOL_EXHAUSTED before pod allocation. Optional: a nil
+	// checker skips the gate (the minimal in-process gateway and the
+	// mcptools unit suite leave it nil).
+	CredAvailability seam.ChildSessions
+
+	// ChildMaterializer runs the steps after admission for the StateCreated
+	// child lenny/delegate_task commits, through GWSEAM-MaterializeChild:
+	// claim the warm pod, assign the credential lease, stream the
+	// workspace, launch, and transition the child to running so the
+	// returned handle is a running child the parent can interact with.
+	// Optional: a nil materializer leaves the child in StateCreated (the
 	// minimal in-process gateway and the mcptools unit suite leave it nil).
-	// Production wires *sessionserver.Server. spec: §8.2.
-	ChildMaterializer ChildMaterializer
+	ChildMaterializer seam.ChildSessions
 
-	// Executor routes messages to runtimes.
-	Executor executor.Executor
+	// Executor delivers messages to runtimes, through GWSEAM-SendMessages.
+	Executor seam.MessageDelivery
 
 	// Delegation is the §8 delegation service. Optional — when nil,
 	// the lenny/delegate_task tool is not registered.
@@ -597,9 +548,7 @@ type Deps struct {
 	// watchdog does not reap it while it actively waits for children. A
 	// nil stamper disables the reset (the parent then relies on its
 	// agent-output activity and the maxSessionAge backstop). F-11.3.7.
-	ActivityStamper interface {
-		Stamp(tenantID, sessionID string)
-	}
+	ActivityStamper seam.Activity
 
 	// TreeArchive is the §8.10 session_tree_archive. Optional — when
 	// non-nil, lenny/cancel_child archives each cancelled child's
@@ -619,7 +568,7 @@ type Deps struct {
 	// Optional: nil resolves the budget without deployer caps (the row's
 	// retryPolicy.maxRetries, else the §7.3 default).
 	// spec: §8.8 (TaskRecord and TaskResult Schema); §7.3.
-	RetryBudget RetryBudget
+	RetryBudget seam.ChildSessions
 
 	// DeadlockTracker records the §8.8 await edges (which session awaits
 	// which children) so the subtree deadlock detector can decide whether
@@ -734,7 +683,7 @@ type Deps struct {
 	// `queued` delivery receipt per the §7.2 paths 3/5/6/7. A nil
 	// coordinator (no Redis) surfaces inbox_unavailable for those
 	// paths. The same coordinator backs the REST handler. spec: §7.2. F-7.2.5.
-	Messaging *sessioninbox.Coordinator
+	Messaging seam.MessageDelivery
 
 	// Clock + IDFunc match the session server's construction; pass
 	// nil for production defaults.
@@ -781,7 +730,7 @@ type Deps struct {
 	// terminal events, and releases the pod as every other terminal writer
 	// does. Nil records the Terminated fact alone. spec: §7.2 (Interactive
 	// Session Model), §15.1 (REST API).
-	Terminal Terminal
+	Terminal seam.Terminals
 
 	// Delivery is the session server's delivery of held messages and resume
 	// of suspended sessions. lenny/send_message takes the session's
@@ -792,7 +741,7 @@ type Deps struct {
 	// delivers no held message and answers a held or resume decision with
 	// error and inbox_unavailable. spec: §7.2 (Message delivery routing —
 	// seven paths, path 6).
-	Delivery SessionDelivery
+	Delivery seam.MessageDelivery
 
 	// PrimaryReadTimeout bounds every sessionstore.ReadPrimary call the
 	// tools make: the lenny/send_message classification read and its
@@ -801,36 +750,6 @@ type Deps struct {
 	// non-positive value selects sessionstore.DefaultPrimaryReadTimeout.
 	// spec: §12.3 (Postgres HA Requirements).
 	PrimaryReadTimeout time.Duration
-}
-
-// SessionDelivery is the session server's delivery seam the message tools
-// consume. *sessionserver.Server satisfies it.
-//
-//   - LockDelivery takes the session's per-replica delivery lock, honoring
-//     ctx, and returns its release. The lock is not reentrant.
-//   - HoldMessage holds a message in the session's DLQ and re-reads the
-//     primary row, answering queued, dropped, or terminal.
-//   - HoldUndeliveredForward holds a message whose forward to the
-//     session's coordinating replica was not delivered, with the TTL of
-//     the dead-letter table's recovering-state row, answering as
-//     HoldMessage does.
-//   - DeliverHeld delivers the held messages of a session its caller found
-//     `running` with the lock held, reading no row.
-//   - ResumeSuspended resumes a `suspended` session a message is held for;
-//     it takes the lock itself, so the caller must not hold it.
-//   - AdmitResume runs the resume admission check on a `suspended` row
-//     before its message is held: nil, a *sessionserver.CapRefusal, or a
-//     lookup or count error.
-//
-// spec: §7.2 (Message delivery routing — seven paths, path 6), §11.1
-// (Resume admission), §29.3 (Interactive message send) Forwarding rule 6
-type SessionDelivery interface {
-	LockDelivery(ctx context.Context, sessionID string) (func(), error)
-	HoldMessage(ctx context.Context, tenantID, sessionID string, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
-	HoldUndeliveredForward(ctx context.Context, row sessionstore.Session, msg sessioninbox.Message) (sessionserver.HoldOutcome, session.State, error)
-	DeliverHeld(ctx context.Context, row sessionstore.Session) error
-	ResumeSuspended(ctx context.Context, row sessionstore.Session) error
-	AdmitResume(ctx context.Context, row sessionstore.Session) error
 }
 
 // VCSLeaseAuditor records a §4.9.2 VCS credential lease the
@@ -945,7 +864,7 @@ func Register(srv *mcp.Server, deps Deps) {
 	// interceptor chain over every tool result before it reaches the
 	// agent. A nil chain leaves the hook unset. spec: §4.8.
 	if ri := buildPreToolResultInterceptor(deps, tenant); ri != nil {
-		srv.SetResultInterceptor(skipForwardedResults(ri))
+		srv.SetResultInterceptor(skipForwardedResults(ri, deps.HolderForward))
 	}
 
 	// env carries the prologue values resolved above to each per-family
@@ -1271,7 +1190,7 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 // non-nil rejection Result when the chain REJECTs; the caller surfaces
 // the rejection to the agent or client. A nil chain or a malformed
 // MODIFY payload leaves the parts unchanged. spec: §4.8.
-func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []executor.MessagePart) ([]executor.MessagePart, *interceptor.Result) {
+func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []seam.MessagePart) ([]seam.MessagePart, *interceptor.Result) {
 	if deps.Interceptors == nil {
 		return parts, nil
 	}
@@ -1290,7 +1209,7 @@ func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID stri
 		recordChainRejection(ctx, deps, tenant, sessionID, interceptor.PhasePostAgentOutput, res)
 		return parts, &res
 	case interceptor.ActionModify:
-		var modified []executor.MessagePart
+		var modified []seam.MessagePart
 		if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
 			return parts, nil
 		}
@@ -1501,8 +1420,8 @@ type discoveredRuntime struct {
 // lenny/delegate_task platform tool, and interrupt signalling, and
 // sessions persist for resumption, so every capability flag is set. §9.1
 // requires the list_runtimes response to embed this block.
-func mcpAdapterCapabilities() adapter.Capabilities {
-	return adapter.Capabilities{
+func mcpAdapterCapabilities() adapterCapabilities {
+	return adapterCapabilities{
 		PathPrefix:                "/mcp",
 		Protocol:                  "mcp",
 		SupportsSessionContinuity: true,
@@ -1683,7 +1602,7 @@ func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, s
 // so the result does not reveal whether that session exists. A caller with
 // no principal subject receives UNAUTHORIZED, and a store failure other
 // than a miss is returned.
-// A deployment wired with no session store or session service cannot
+// A deployment wired with no session store or session access cannot
 // resolve the policy, so it refuses rather than dropping the filter,
 // because a delegation policy only restricts (§8.3).
 //
@@ -2148,7 +2067,7 @@ type childOutcome struct {
 // gone — a child that settled and was reclaimed, or whose pod failed
 // while its resumed parent re-awaits it.
 func resolveChild(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
-	budget RetryBudget, tenant, childID string,
+	budget seam.ChildSessions, tenant, childID string,
 ) (childOutcome, error) {
 	row, err := store.Get(ctx, tenant, childID)
 	if err == nil {
@@ -2257,7 +2176,7 @@ func collectInputRequired(reg *inputwait.Registry, childIDs []string) []inputReq
 // from the §8.10 archive. F-8.8.12.
 // spec: §8.8
 func collectChildResults(ctx context.Context, store sessionstore.Store, archive treearchive.Store, usage *resultrollup.Builder,
-	budget RetryBudget, tenant string, childIDs []string, mode string,
+	budget seam.ChildSessions, tenant string, childIDs []string, mode string,
 ) ([]sessionrecord.Result, bool, error) {
 	type settled struct {
 		at     time.Time
@@ -2411,14 +2330,6 @@ func isDescendant(child sessionstore.Session, parentID string, all []sessionstor
 	return false
 }
 
-// Terminal is the terminal-writer seam the cancel tools consume:
-// *sessionserver.Server satisfies it. spec: §7.2 (Interactive Session Model).
-type Terminal interface {
-	BeginTerminal(sessionID string) (end func())
-	AfterTerminalWrite(ctx context.Context, fromState session.State, sess sessionstore.Session,
-		signals func(context.Context, sessionstore.Session)) sessionstore.Session
-}
-
 // cancelSubtree cancels the subtree rooted at child, honouring each
 // non-terminal descendant's §8.10 `cascadeOnFailure` policy. The root
 // (the explicit `cancel_child` target) is always cancelled per the
@@ -2452,7 +2363,7 @@ type Terminal interface {
 // modes); §7.2 (Interactive Session Model); §12.8 (Lifecycle fence and
 // drain). F-8.5.19.
 func cancelSubtree(ctx context.Context, store sessionstore.Store, tenant string,
-	child sessionstore.Session, terminal Terminal,
+	child sessionstore.Session, terminal seam.Terminals,
 	signals func(context.Context, sessionstore.Session), now func() time.Time,
 ) ([]string, error) {
 	var cancelled []string
@@ -2516,7 +2427,7 @@ func nextCascadeLevel(parents []string, byParent map[string][]sessionstore.Sessi
 // applied. A locked row that is already terminal is not applied. On a write
 // that applied, the post-terminal hook and the claim's end run on a
 // goroutine on a detached context.
-func cancelNode(ctx context.Context, store sessionstore.Store, tenant, id string, terminal Terminal,
+func cancelNode(ctx context.Context, store sessionstore.Store, tenant, id string, terminal seam.Terminals,
 	signals func(context.Context, sessionstore.Session), now func() time.Time,
 ) (bool, error) {
 	end := func() {}
@@ -2549,7 +2460,7 @@ func cancelNode(ctx context.Context, store sessionstore.Store, tenant, id string
 	hctx := context.WithoutCancel(ctx)
 	go func() {
 		defer end()
-		terminal.AfterTerminalWrite(hctx, from, updated, signals)
+		afterTerminalWrite(hctx, terminal, from, updated, signals)
 	}()
 	return true, nil
 }
@@ -2632,11 +2543,11 @@ func textResult(s string) mcp.ToolResult {
 // empty. The `output` field mirrors the executor's text output parts so
 // the runtime's reply travels in the same JSON envelope as the receipt.
 // spec: §15.4; F-7.2.10.
-func buildSendMessageReceipt(messageID, resolvedRequestID string, out []executor.MessagePart, now time.Time) string {
+func buildSendMessageReceipt(messageID, resolvedRequestID string, out []seam.MessagePart, now time.Time) string {
 	envelope := struct {
 		DeliveryReceipt session.DeliveryReceipt `json:"deliveryReceipt"`
 		Resolved        string                  `json:"resolved,omitempty"`
-		Output          []executor.MessagePart  `json:"output,omitempty"`
+		Output          []seam.MessagePart      `json:"output,omitempty"`
 	}{
 		DeliveryReceipt: session.DeliveryReceipt{
 			MessageID:   messageID,
@@ -2695,9 +2606,9 @@ func elicitationOrGen(id string, gen func() string) string {
 //
 // spec: §29.3 (Interactive message send) Forwarding rule 4, §4.8 (Gateway
 // Policy Engine)
-func skipForwardedResults(ri mcp.ResultInterceptor) mcp.ResultInterceptor {
+func skipForwardedResults(ri mcp.ResultInterceptor, f seam.Forwarding) mcp.ResultInterceptor {
 	return func(ctx context.Context, callID, name string, result mcp.ToolResult) (mcp.ToolResult, error) {
-		if sessionserver.Forwarded(ctx) {
+		if forwarded(ctx, f) {
 			return result, nil
 		}
 		return ri(ctx, callID, name, result)

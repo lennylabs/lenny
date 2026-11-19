@@ -163,7 +163,8 @@ func (e *wsdOutageEnv) delegateServer(t *testing.T, runtimes runtimestore.Store)
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             e.sessions,
 		Executor:          executor.NewEchoExecutor(),

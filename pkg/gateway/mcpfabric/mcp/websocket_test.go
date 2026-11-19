@@ -22,7 +22,7 @@ import (
 // callers can defer close on both.
 func dialTestServer(t *testing.T, srv *mcp.Server) (context.Context, *websocket.Conn, *httptest.Server, func()) {
 	t.Helper()
-	httpSrv := httptest.NewServer(srv.WebSocketHandler())
+	httpSrv := httptest.NewServer(withTestOrigin(srv.WebSocketHandler()))
 	wsURL := strings.Replace(httpSrv.URL, "http://", "ws://", 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	conn, _, err := websocket.Dial(ctx, wsURL, nil)
@@ -134,7 +134,7 @@ func TestWebSocketToolsListReturnsRegisteredTools(t *testing.T) {
 // connection as playground-origin (or not).
 func dialWithOrigin(t *testing.T, srv *mcp.Server, origin string) (context.Context, *websocket.Conn, func()) {
 	t.Helper()
-	httpSrv := httptest.NewServer(srv.WebSocketHandler())
+	httpSrv := httptest.NewServer(withTestOrigin(srv.WebSocketHandler()))
 	wsURL := strings.Replace(httpSrv.URL, "http://", "ws://", 1)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	conn, _, err := websocket.Dial(ctx, wsURL, &websocket.DialOptions{
@@ -160,9 +160,7 @@ func dialWithOrigin(t *testing.T, srv *mcp.Server, origin string) (context.Conte
 func playgroundOriginServer(t *testing.T) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
-	srv.SetWebSocketAuth(func(r *http.Request) (mcp.WSPrincipal, bool) {
-		return mcp.WSPrincipal{Tenant: "acme", JTI: "j1", Origin: r.Header.Get("X-Test-Origin")}, true
-	}, nil, 0)
+	srv.SetWebSocketAuth(headerOriginCaller{}, nil, 0)
 	srv.RegisterTool(mcp.Tool{
 		Name:        "lenny/connect",
 		Description: "connect a credential",

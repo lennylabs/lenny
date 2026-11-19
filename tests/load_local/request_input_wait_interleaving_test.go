@@ -41,7 +41,8 @@ type waitConn struct {
 func newWaitConn(name string, store sessionstore.Store, ids *atomic.Int64) *waitConn {
 	c := &waitConn{name: name, reg: inputwait.NewRegistry(), srv: mcp.NewServer(), gen: inputwaitrecovery.NewGeneration()}
 	mcptools.Register(c.srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Executor:            executor.NewEchoExecutor(),

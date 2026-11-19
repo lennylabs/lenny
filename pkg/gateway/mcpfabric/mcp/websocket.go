@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"nhooyr.io/websocket"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // §4.1 / §15.2 streamable MCP transport — the WebSocket alternative to
@@ -43,7 +45,7 @@ const wsMaxMessageBytes = 1 << 20
 // the upgrade send `Sec-WebSocket-Protocol: lenny.mcp.v1, lenny.bearer.<token>`;
 // the gateway selects and echoes `lenny.mcp.v1` so the browser's
 // WebSocket negotiation completes. The credential entry is stripped from
-// the request before this handler runs (see WebSocketBearerCarrier).
+// the request before this handler runs (see the API front's wsbearer.Carrier).
 const wsSubprotocol = "lenny.mcp.v1"
 
 // wsCloseBearerRevoked is the §27 Failure-modes WebSocket close code the gateway sends when an origin=playground bearer is
@@ -64,40 +66,37 @@ const playgroundOriginClaim = "playground"
 // store reads.
 const defaultWSRevPollInterval = 2 * time.Second
 
-// WSPrincipal carries the per-connection identity the §27.5 revocation
-// watch needs: the tenant and JWT id to key the revocation lookup, plus
-// the §27.3 origin claim so only playground bearers are watched.
-type WSPrincipal struct {
-	Tenant string
-	JTI    string
-	Origin string
-}
-
-// RevocationChecker reports whether a playground-origin bearer has been
-// revoked. The signature matches the auth middleware's
-// PlaygroundRevocationChecker so the gateway passes the same value to
-// both. spec: §27.6; §27.3.1.
-type RevocationChecker interface {
-	IsBearerRevoked(ctx context.Context, tenant, jti string) (bool, error)
-}
-
-// wsAuthConfig is the §27.5 WebSocket revocation-watch wiring.
+// wsAuthConfig is the §27.5 WebSocket revocation-watch wiring: the caller
+// identity the watch keys on (the tenant and JWT id of the revocation
+// lookup, and the §27.3 origin claim so only playground bearers are
+// watched) and the playground's bearer revocations.
 type wsAuthConfig struct {
-	principal    func(*http.Request) (WSPrincipal, bool)
-	revocations  RevocationChecker
+	callers      seam.CallerIdentity
+	revocations  seam.BearerRevocations
 	pollInterval time.Duration
 }
 
-// SetWebSocketAuth installs the §27.5 revocation watch. extract derives
-// the connection principal from the upgraded request (the gateway reads
-// it from the auth-middleware context); rev is the §27.6 playground
-// revocation checker. When both are non-nil and the connection carries an
-// origin=playground bearer, the WebSocket transport polls rev every
-// pollInterval and closes the connection with code 4401 once the bearer
-// is revoked. A non-positive pollInterval selects the package default.
-// Passing a nil extract or rev leaves the watch off. spec: §27.3.1; §27.5.
-func (s *Server) SetWebSocketAuth(extract func(*http.Request) (WSPrincipal, bool), rev RevocationChecker, pollInterval time.Duration) {
-	s.wsAuth = wsAuthConfig{principal: extract, revocations: rev, pollInterval: pollInterval}
+// principal returns the caller of the upgraded request, through
+// GWSEAM-RequestCaller. The bool is false when no caller identity is wired
+// or the request carries no caller.
+func (c wsAuthConfig) principal(r *http.Request) (seam.Caller, bool) {
+	if c.callers == nil {
+		return seam.Caller{}, false
+	}
+	return c.callers.RequestCaller(r.Context())
+}
+
+// SetWebSocketAuth installs the §27.5 revocation watch. callers resolves
+// the connection's caller from the upgraded request (the API front's
+// authentication recorded it); rev is the §27.6 playground revocation
+// check, GWSEAM-IsBearerRevoked. When both are non-nil and the connection
+// carries an origin=playground bearer, the WebSocket transport polls rev
+// every pollInterval and closes the connection with code 4401 once the
+// bearer is revoked. A non-positive pollInterval selects the package
+// default. Passing a nil callers or rev leaves the watch off. spec:
+// §27.3.1; §27.5.
+func (s *Server) SetWebSocketAuth(callers seam.CallerIdentity, rev seam.BearerRevocations, pollInterval time.Duration) {
+	s.wsAuth = wsAuthConfig{callers: callers, revocations: rev, pollInterval: pollInterval}
 }
 
 // WebSocketHandler returns the http.Handler that serves the §4.1
@@ -236,7 +235,7 @@ func (s *Server) handleWebSocket(w http.ResponseWriter, r *http.Request) {
 // gate is off and frames pass through; no playground bearer can reach the
 // handler in that configuration. spec: §27.3 origin claim; §27.9.
 func (s *Server) playgroundEgress(r *http.Request) bool {
-	if s.wsAuth.principal == nil {
+	if s.wsAuth.callers == nil {
 		return false
 	}
 	p, ok := s.wsAuth.principal(r)
@@ -254,7 +253,7 @@ func (s *Server) playgroundEgress(r *http.Request) bool {
 // check already ran in the auth middleware); the next tick retries.
 // spec: §27.3.1; §27.5; §27.6.
 func (s *Server) startRevocationWatch(ctx context.Context, conn *websocket.Conn, r *http.Request) {
-	if s.wsAuth.principal == nil || s.wsAuth.revocations == nil {
+	if s.wsAuth.callers == nil || s.wsAuth.revocations == nil {
 		return
 	}
 	p, ok := s.wsAuth.principal(r)
@@ -273,7 +272,7 @@ func (s *Server) startRevocationWatch(ctx context.Context, conn *websocket.Conn,
 			case <-ctx.Done():
 				return
 			case <-ticker.C:
-				revoked, err := s.wsAuth.revocations.IsBearerRevoked(ctx, p.Tenant, p.JTI)
+				revoked, err := s.wsAuth.revocations.IsBearerRevoked(ctx, p.TenantID, p.JTI)
 				if err != nil {
 					continue
 				}

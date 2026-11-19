@@ -4,7 +4,6 @@ package mcp_test
 
 import (
 	"context"
-	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
@@ -50,9 +49,7 @@ func TestWebSocketEchoesSubprotocol(t *testing.T) {
 // expiry.
 func TestWebSocketRevocationClosesWith4401(t *testing.T) {
 	srv := mcp.NewServer()
-	srv.SetWebSocketAuth(func(_ *http.Request) (mcp.WSPrincipal, bool) {
-		return mcp.WSPrincipal{Tenant: "acme", JTI: "jti-1", Origin: "playground"}, true
-	}, fakeRevChecker{revoked: true}, 10*time.Millisecond)
+	srv.SetWebSocketAuth(fixedCaller{TenantID: "acme", JTI: "jti-1", Origin: "playground"}, fakeRevChecker{revoked: true}, 10*time.Millisecond)
 
 	ctx, conn, _, teardown := dialTestServer(t, srv)
 	defer teardown()
@@ -74,9 +71,7 @@ func TestWebSocketRevocationClosesWith4401(t *testing.T) {
 // the connection.
 func TestWebSocketRevocationWatchSkipsNonPlayground(t *testing.T) {
 	srv := mcp.NewServer()
-	srv.SetWebSocketAuth(func(_ *http.Request) (mcp.WSPrincipal, bool) {
-		return mcp.WSPrincipal{Tenant: "acme", JTI: "jti-1", Origin: ""}, true
-	}, fakeRevChecker{revoked: true}, 10*time.Millisecond)
+	srv.SetWebSocketAuth(fixedCaller{TenantID: "acme", JTI: "jti-1", Origin: ""}, fakeRevChecker{revoked: true}, 10*time.Millisecond)
 
 	ctx, conn, _, teardown := dialTestServer(t, srv)
 	defer teardown()
@@ -94,9 +89,7 @@ func TestWebSocketRevocationWatchSkipsNonPlayground(t *testing.T) {
 // keeps serving frames; the watch does not close a live bearer.
 func TestWebSocketRevocationWatchKeepsAliveWhenNotRevoked(t *testing.T) {
 	srv := mcp.NewServer()
-	srv.SetWebSocketAuth(func(_ *http.Request) (mcp.WSPrincipal, bool) {
-		return mcp.WSPrincipal{Tenant: "acme", JTI: "jti-1", Origin: "playground"}, true
-	}, fakeRevChecker{revoked: false}, 10*time.Millisecond)
+	srv.SetWebSocketAuth(fixedCaller{TenantID: "acme", JTI: "jti-1", Origin: "playground"}, fakeRevChecker{revoked: false}, 10*time.Millisecond)
 
 	ctx, conn, _, teardown := dialTestServer(t, srv)
 	defer teardown()

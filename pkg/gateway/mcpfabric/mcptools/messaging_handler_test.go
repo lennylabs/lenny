@@ -27,7 +27,8 @@ func newMCPMessaging(t *testing.T, def, max session.MessagingScope, limits mcpto
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:        ownerprincipal.SessionAccess{},
+		SessionService:        ownerprincipal.ToolAccess{},
+		SessionAccess:         ownerprincipal.ToolAccess{},
 		DevTenantFallback:     true,
 		Store:                 store,
 		Executor:              executor.NewEchoExecutor(),
@@ -144,7 +145,8 @@ func TestSendMessageCrossTenantDenied_spec_7_2_268(t *testing.T) {
 	store := &foreignTenantStore{Store: memstore.New(), foreignID: "sess_foreign"}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

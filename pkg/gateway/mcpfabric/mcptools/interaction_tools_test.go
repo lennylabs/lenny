@@ -150,7 +150,8 @@ func TestRequestElicitationDropRecordsMetric(t *testing.T) {
 	rec := &fakeElicitationMetrics{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:            ownerprincipal.SessionAccess{},
+		SessionService:            ownerprincipal.ToolAccess{},
+		SessionAccess:             ownerprincipal.ToolAccess{},
 		DevTenantFallback:         true,
 		Store:                     store,
 		Interactions:              interactions,
@@ -184,7 +185,8 @@ func TestRequestElicitationSuppressedAtDepth(t *testing.T) {
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:             ownerprincipal.SessionAccess{},
+		SessionService:             ownerprincipal.ToolAccess{},
+		SessionAccess:              ownerprincipal.ToolAccess{},
 		DevTenantFallback:          true,
 		Store:                      store,
 		Interactions:               interactions,
@@ -221,7 +223,8 @@ func TestRequestElicitationNotSuppressedBelowDepth(t *testing.T) {
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:             ownerprincipal.SessionAccess{},
+		SessionService:             ownerprincipal.ToolAccess{},
+		SessionAccess:              ownerprincipal.ToolAccess{},
 		DevTenantFallback:          true,
 		Store:                      store,
 		Interactions:               interactions,
@@ -284,7 +287,8 @@ func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:     ownerprincipal.SessionAccess{},
+		SessionService:     ownerprincipal.ToolAccess{},
+		SessionAccess:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:  true,
 		Store:              store,
 		Events:             bus,

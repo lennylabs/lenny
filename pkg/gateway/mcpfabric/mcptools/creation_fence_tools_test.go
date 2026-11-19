@@ -45,7 +45,8 @@ func newFencedDelegateMCP(t *testing.T, tenants *tenantstore.Memory, users users
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
@@ -183,7 +184,8 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimes,
 		Users: users, Tenants: gateTenants,
@@ -225,7 +227,8 @@ func TestCreateSessionMapsFenceRefusal_spec_12_8(t *testing.T) {
 	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store, Executor: executor.NewEchoExecutor(), Runtimes: runtimestore.NewMemory(),
 		IDFunc: func() string { return "sess_new" }, TenantID: "acme",
@@ -255,7 +258,8 @@ func newResolutionMCP(t *testing.T, users userstore.Store) (*mcp.Server, interac
 	interactions := interactionstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store, Interactions: interactions, Users: users,
 		ElicitationTimeout: 5 * time.Second, IDFunc: func() string { return "elic_gen" }, TenantID: "acme",

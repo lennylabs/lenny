@@ -133,7 +133,8 @@ func newPlatformTracingServer(t *testing.T) (http.Handler, sessionstore.Store) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		TenantID:          platformTracingTenant,

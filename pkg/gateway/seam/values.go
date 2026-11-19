@@ -23,6 +23,13 @@ type Session struct {
 	State           state.State
 	// LastSeq is the sequence number of the session's last event.
 	LastSeq uint64
+	// Stored is the row of the session store a seam read or wrote and
+	// hands back to the session core unchanged, so that an operation that
+	// runs the core's logic on that row reads the row the caller acted on
+	// rather than reading the session again. The seam never reads it, and
+	// it is nil when the caller holds no row. It is typed once the session
+	// store's package leaves the gateway.
+	Stored any
 }
 
 // SessionAction is the access a caller asks for on a session.

@@ -68,7 +68,8 @@ func TestCancelChildDrainsCancelledRuntimes_spec_11_3_1(t *testing.T) {
 	hook := newHookTerminal(exec)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
@@ -157,7 +158,8 @@ func TestCancelChildListsPrimaryPerLevel_spec_12_8(t *testing.T) {
 	hook := newHookTerminal(exec)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
@@ -209,7 +211,8 @@ func TestCancelChildPrimaryListingErrorFailsTheCall_spec_12_8(t *testing.T) {
 	store := &primaryListingStore{Store: memstore.New(), primaryErr: errors.New("primary unreachable")}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
@@ -328,7 +331,8 @@ func TestCancelChildUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10(t *t
 		hook := newHookTerminal(nil)
 		srv := mcp.NewServer()
 		mcptools.Register(srv, mcptools.Deps{
-			SessionService:    ownerprincipal.SessionAccess{},
+			SessionService:    ownerprincipal.ToolAccess{},
+			SessionAccess:     ownerprincipal.ToolAccess{},
 			DevTenantFallback: true,
 			Store:             faults,
 			Terminal:          hook,

@@ -228,7 +228,8 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 	}
 	surface := mcp.NewServer()
 	mcptools.Register(surface, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             st.sessions,
 		Executor:          executor.NewEchoExecutor(),

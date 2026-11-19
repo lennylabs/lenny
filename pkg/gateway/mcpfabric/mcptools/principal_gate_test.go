@@ -28,7 +28,8 @@ func gateServer(devFallback bool) (*mcp.Server, sessionstore.Store) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: devFallback,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

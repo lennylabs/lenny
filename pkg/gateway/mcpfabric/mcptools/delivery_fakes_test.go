@@ -153,7 +153,8 @@ func newMCPRoutingDeliveryWith(t *testing.T, exec executor.Executor, mutate func
 	}
 	del := &dlqDelivery{coord: coord}
 	deps := mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
