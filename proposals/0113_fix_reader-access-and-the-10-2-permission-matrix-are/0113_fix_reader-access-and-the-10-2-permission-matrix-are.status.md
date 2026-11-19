@@ -17,6 +17,6 @@ implemented-by:
 
 Recorded 2026-11-01.
 
-The spec review loop ran six rounds and did not converge. The loop ran two full-pool sweeps. The rounds fixed twelve findings. Findings the loop had not closed when it stopped remain open, and the review log records them. The spec review loop has not settled the questions it was reviewing.
+The spec review loop ran three rounds and did not converge. The loop ran one full-pool sweep. The rounds fixed two findings. Findings the loop had not closed when it stopped remain open, and the review log records them. The spec review loop has not settled the questions it was reviewing.
 
 The non-spec review loop did not run.

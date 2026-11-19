@@ -253,3 +253,11 @@ OPEN: rule 8's connector wording: I read "only the tools the card names" as plat
 ### [spec.3.review-single-source.1]
 FACT: the sentences "Pods never hold connector OAuth tokens" (Edit (h)), "Connector tokens never transit through pods" (Edit (j)), and "Pod never receives ... connector OAuth tokens" (Edit (k)) are in-place narrowings of three sentences already in spec/, so no new copy is staged by SPEC-8. EVIDENCE: spec-changes.md Edits (h), (j), (k).
 FACT: spec/15_external-api-surface.md **Per-kind MCP wire projection.** still says each frame carries `SeqNum` as the SSE `id:` line. That is the Streamable HTTP half only, so it neither copies nor contradicts SPEC-9 Edit (a), and SPEC-9 needs no edit there. EVIDENCE: spec/15_external-api-surface.md:1454, 1479.
+
+### [f1.out-of-scope-defects]
+
+DECISION: marker:spec-1:- **the playground `oidc` path drops the role claim.** stays out of scope (`out-of-scope-stands`). Updated its row in the summary's `## Defects in the shipped tree that this proposal does not stage` with the file:line sites and the refusal under rule 4; no fix or decision is staged. EVIDENCE: pkg/gateway/mcpfabric/playground/oidc.go:23, pkg/gateway/mcpfabric/playground/token.go:135.
+
+### [f1.other-proposals]
+
+DECISION: marker:0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz:3. warm condition 4 (`impact-row`). Replaced the 0110 row in the summary's `## Impacts on other proposals` with the full list of what this staging retires and what stays, and added the implemented date to its status. No other summary sentence asserts 0110's validity. EVIDENCE: proposals/0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz/0110_fix_session-owner-authorization-plan-10-2-session-owner-authoriz.status.md:12, 0110 non-spec-changes.md:121, 130, 131, and 199, 0110 spec-changes.md:21, spec/10_gateway-internals.md:325.
