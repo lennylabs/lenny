@@ -8,7 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 3 |
+| Building | 1 |
+| Ready | 2 |
 | Waiting on decisions | 40 |
 | Blocked | 132 |
 | Landed | 13 |
@@ -53,8 +54,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0161.S1](0161-create-permission-and-admission/steps.md#0161s1-create-permission-and-admission-gates-on-every-creation-surface) | Create permission and admission gates on every creation surface | Building |  |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Ready |  |
-| [0161.S1](0161-create-permission-and-admission/steps.md#0161s1-create-permission-and-admission-gates-on-every-creation-surface) | Create permission and admission gates on every creation surface | Ready |  |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Waiting on decisions | 0118 is `Draft` |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0119.S2](0119-agent-runtimes-only/steps.md#0119s2-removal-of-service-mode) | Removal of service mode | Waiting on decisions | 0119 is `Draft` |
@@ -271,4 +272,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
-| [0161](0161-create-permission-and-admission/change.md) | Session creation applies the create permission and the admission gates on every surface | `Decided` | 0 of 1 | 0 |
+| [0161](0161-create-permission-and-admission/change.md) | Session creation applies the create permission and the admission gates on every surface | `In progress` | 0 of 1 | 0 |
