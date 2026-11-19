@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // failingTenants is a tenant store whose Get fails with a non-not-found

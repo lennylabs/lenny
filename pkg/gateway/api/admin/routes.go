@@ -6,8 +6,8 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
 )
 
 // Handler builds the §15.1 admin mux. It constructs the ServeMux,

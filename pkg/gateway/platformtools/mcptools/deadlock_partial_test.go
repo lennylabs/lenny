@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // TestAwaitChildrenYieldsDeadlockDetectedPartial_spec_8_8_985 verifies

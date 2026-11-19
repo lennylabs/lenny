@@ -8,7 +8,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

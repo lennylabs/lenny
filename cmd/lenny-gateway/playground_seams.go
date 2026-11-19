@@ -5,7 +5,7 @@ package main
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // playgroundTenantRegistry adapts a tenantstore.Store into the

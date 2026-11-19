@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treerecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // RecoveryConfig configures the bottom-up tree recovery.

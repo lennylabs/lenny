@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // errSnapshotCopierUnwired reports a gateway that cannot copy or restore the

@@ -26,11 +26,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // dialRealAdapter starts a real adapter.Server (which actually materializes

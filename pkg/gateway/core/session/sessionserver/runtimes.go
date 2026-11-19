@@ -10,10 +10,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/envaccess"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
 )
 
 // modelsAdapterCapabilities resolves the §9.1 rule on the dual-mounted /v1/models

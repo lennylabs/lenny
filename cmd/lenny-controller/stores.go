@@ -15,9 +15,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
-	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	runtimepg "github.com/lennylabs/lenny/pkg/runtime/runtimestore/pgstore"
+	sessionstorepg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 )
 
 // buildStores constructs the §4.6.1 Postgres-backed stores, the §16.6 / §25.5

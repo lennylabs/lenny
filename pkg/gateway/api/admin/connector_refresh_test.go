@@ -13,9 +13,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // fakeRefresher records its call and replays a canned result or error.

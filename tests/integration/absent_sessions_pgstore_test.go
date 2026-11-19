@@ -15,8 +15,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 )
 
 // spec: 11.2 (budget enforcement), 10.1.1 (replica-local state), 12.8 (Compliance Interfaces)

@@ -16,16 +16,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §10.6 environment scoping of lenny/delegate_task targets.

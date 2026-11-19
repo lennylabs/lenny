@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // countingKMSProbe records every T4 availability probe it is asked to run.

@@ -68,15 +68,11 @@ var Confined = []Confinement{
 	{Path: "pkg/policy/interceptor", APIFront: true},
 	{Path: "pkg/policy/ratelimit", APIFront: true},
 	{Path: "pkg/policy"},
-	{Path: "pkg/gateway/environment/tenantstore", APIFront: true, Playground: true},
 	{Path: "pkg/tenancy/tenantstore", APIFront: true, Playground: true},
 	// The authorization predicates.
 	{Path: "pkg/auth/callercheck"},
-	{Path: "pkg/gateway/environment/envaccess"},
 	{Path: "pkg/tenancy/envaccess"},
-	{Path: "pkg/gateway/environment/tenantaccessstore", APIFront: true},
 	{Path: "pkg/tenancy/tenantaccessstore", APIFront: true},
-	{Path: "pkg/gateway/environment/customrolestore", APIFront: true},
 	{Path: "pkg/tenancy/customrolestore", APIFront: true},
 	{Path: "pkg/delegation/delegationpolicystore", APIFront: true, PlatformTools: true},
 }

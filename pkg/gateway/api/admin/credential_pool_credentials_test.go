@@ -11,7 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §15.1 / §24.5 rows 3-5 — per-credential

@@ -21,7 +21,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // Node is one session of a seeded delegation tree. Depth 0 is the root.

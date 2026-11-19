@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 

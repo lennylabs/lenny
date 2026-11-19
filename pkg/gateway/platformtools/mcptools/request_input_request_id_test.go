@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // TestRequestInputIgnoresCallerRequestID_spec_15_4 pins that the gateway

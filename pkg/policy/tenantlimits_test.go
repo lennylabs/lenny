@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §11.2 — per-tenant token-quota reset period.

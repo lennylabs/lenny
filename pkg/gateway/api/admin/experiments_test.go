@@ -18,8 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §10.7 / §15.1 experiment admin CRUD.

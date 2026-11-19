@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // treeConfig describes one test tree: the root lease values the tree's

@@ -24,7 +24,7 @@ package stores_test
 import "testing"
 
 // TestSessionStoreContract is implemented in sessionstore_test.go,
-// which exercises the Postgres-backed pkg/gateway/sessionstore/pgstore
+// which exercises the Postgres-backed pkg/session/sessionstore/pgstore
 // against a real container.
 
 // TestLeaseStoreContract — the Redis lease primitives are implemented

@@ -10,7 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 

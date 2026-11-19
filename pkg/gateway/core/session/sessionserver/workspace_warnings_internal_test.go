@@ -10,9 +10,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

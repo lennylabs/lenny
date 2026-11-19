@@ -8,7 +8,7 @@
 // the state-machine precondition table, the §15.1 error envelope.
 //
 // The test harness uses the in-memory session store from
-// pkg/gateway/sessionstore/memstore. When the Postgres-backed store
+// pkg/session/sessionstore/memstore. When the Postgres-backed store
 // ships, these tests run unchanged against the production handler
 // (the handler is store-agnostic).
 
@@ -25,9 +25,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"

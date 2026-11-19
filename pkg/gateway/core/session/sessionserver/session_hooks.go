@@ -21,7 +21,7 @@ type Sealer interface {
 // SessionLogHook is the §4.4 close-hook the gateway invokes
 // on every transition to a terminal state. Implementations persist
 // the session log bytes they are handed best-effort.
-// The default production wiring lives in pkg/gateway/sessionlogstore
+// The default production wiring lives in pkg/session/sessionlogstore
 // (CloseHook.OnSessionTerminal).
 //
 // spec: §4.4 — "Session logs".

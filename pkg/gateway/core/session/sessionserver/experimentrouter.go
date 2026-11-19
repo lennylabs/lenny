@@ -18,8 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/ofrep"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // externalEvalResult is one §10.7 external-targeting evaluation outcome,

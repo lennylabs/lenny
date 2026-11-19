@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // recordingAudit captures admin audit events so tests can verify

@@ -12,9 +12,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // newDeploymentAdminServer wires a Router with a real in-memory audit

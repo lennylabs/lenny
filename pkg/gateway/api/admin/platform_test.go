@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 func TestPlatformVersion(t *testing.T) {

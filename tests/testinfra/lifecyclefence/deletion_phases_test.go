@@ -11,7 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // recordingTB captures the errors a check reports, so a test can assert

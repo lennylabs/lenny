@@ -7,8 +7,8 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // CreateSessionRequest is the §15.1 POST /v1/sessions body. Each

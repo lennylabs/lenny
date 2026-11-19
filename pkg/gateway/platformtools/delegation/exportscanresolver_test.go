@@ -12,10 +12,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/export"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // scanInterceptor is a minimal interceptor.Interceptor for the export-scan

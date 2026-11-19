@@ -34,9 +34,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )

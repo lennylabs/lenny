@@ -7,8 +7,8 @@ import (
 	"errors"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // TenantStoreLimits resolves the §11.2 hierarchical token budget from

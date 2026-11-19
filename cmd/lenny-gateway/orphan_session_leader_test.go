@@ -16,8 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // liveMirror reports every pod running in pool-a with a 42-second lag, so

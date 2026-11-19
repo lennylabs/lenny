@@ -6,9 +6,9 @@ import (
 	"context"
 
 	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/quota/quotastore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // *quotastore.Counter satisfies the read and restore seams directly.

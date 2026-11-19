@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // fakeHWMReader records the root id it was asked about and returns a

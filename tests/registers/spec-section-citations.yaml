@@ -157,6 +157,8 @@ packages:
       count: 71
     - package: pkg/audit/auditstore/auditbatch
       count: 7
+    - package: pkg/audit/deploymentconfigstore
+      count: 3
     - package: pkg/audit/integrity
       count: 45
     - package: pkg/audit/jcs
@@ -199,6 +201,10 @@ packages:
       count: 1
     - package: pkg/billing/correctionstore/pgstore
       count: 4
+    - package: pkg/billing/sessionusage
+      count: 2
+    - package: pkg/billing/sessionusage/pgstore
+      count: 6
     - package: pkg/billing/usagestore
       count: 1
     - package: pkg/billing/usagestore/pgstore
@@ -473,36 +479,8 @@ packages:
       count: 8
     - package: pkg/gateway/drain/prestop
       count: 47
-    - package: pkg/gateway/environment/customrolestore
-      count: 7
-    - package: pkg/gateway/environment/customrolestore/pgstore
-      count: 5
-    - package: pkg/gateway/environment/deploymentconfigstore
-      count: 3
-    - package: pkg/gateway/environment/envaccess
-      count: 1
-    - package: pkg/gateway/environment/environmentstore
-      count: 18
-    - package: pkg/gateway/environment/environmentstore/pgstore
-      count: 2
-    - package: pkg/gateway/environment/tenantaccessstore
-      count: 1
-    - package: pkg/gateway/environment/tenantaccessstore/pgstore
-      count: 2
-    - package: pkg/gateway/environment/tenantstore
-      count: 24
-    - package: pkg/gateway/environment/tenantstore/pgstore
-      count: 8
-    - package: pkg/gateway/environment/transcriptstore
-      count: 15
-    - package: pkg/gateway/environment/transcriptstore/pgstore
-      count: 7
     - package: pkg/gateway/environment/translator
       count: 224
-    - package: pkg/gateway/environment/userstore
-      count: 29
-    - package: pkg/gateway/environment/userstore/pgstore
-      count: 9
     - package: pkg/gateway/experiment/evalstore
       count: 9
     - package: pkg/gateway/experiment/evalstore/pgstore
@@ -617,30 +595,10 @@ packages:
       count: 7
     - package: pkg/gateway/seam/subsystem
       count: 33
-    - package: pkg/gateway/session/interactionstore
-      count: 12
-    - package: pkg/gateway/session/interactionstore/pgstore
-      count: 3
     - package: pkg/gateway/session/memorystore
       count: 13
     - package: pkg/gateway/session/memorystore/memorystoretest
       count: 2
-    - package: pkg/gateway/session/sessioncheckpointmeta
-      count: 5
-    - package: pkg/gateway/session/sessioncheckpointmeta/pgstore
-      count: 2
-    - package: pkg/gateway/session/sessionlogstore
-      count: 23
-    - package: pkg/gateway/session/sessionstore
-      count: 156
-    - package: pkg/gateway/session/sessionstore/memstore
-      count: 130
-    - package: pkg/gateway/session/sessionstore/pgstore
-      count: 126
-    - package: pkg/gateway/session/sessionusage
-      count: 2
-    - package: pkg/gateway/session/sessionusage/pgstore
-      count: 6
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/streamproxy
@@ -885,8 +843,28 @@ packages:
       count: 5
     - package: pkg/schemamigrate
       count: 7
+    - package: pkg/session/interactionstore
+      count: 12
+    - package: pkg/session/interactionstore/pgstore
+      count: 3
+    - package: pkg/session/sessioncheckpointmeta
+      count: 5
+    - package: pkg/session/sessioncheckpointmeta/pgstore
+      count: 2
+    - package: pkg/session/sessionlogstore
+      count: 23
+    - package: pkg/session/sessionstore
+      count: 156
+    - package: pkg/session/sessionstore/memstore
+      count: 130
+    - package: pkg/session/sessionstore/pgstore
+      count: 126
     - package: pkg/session/state
       count: 14
+    - package: pkg/session/transcriptstore
+      count: 15
+    - package: pkg/session/transcriptstore/pgstore
+      count: 7
     - package: pkg/sessionrecord
       count: 37
     - package: pkg/spiffeid
@@ -931,6 +909,28 @@ packages:
       count: 36
     - package: pkg/supervisorselftest
       count: 5
+    - package: pkg/tenancy/customrolestore
+      count: 7
+    - package: pkg/tenancy/customrolestore/pgstore
+      count: 5
+    - package: pkg/tenancy/envaccess
+      count: 1
+    - package: pkg/tenancy/environmentstore
+      count: 18
+    - package: pkg/tenancy/environmentstore/pgstore
+      count: 2
+    - package: pkg/tenancy/tenantaccessstore
+      count: 1
+    - package: pkg/tenancy/tenantaccessstore/pgstore
+      count: 2
+    - package: pkg/tenancy/tenantstore
+      count: 24
+    - package: pkg/tenancy/tenantstore/pgstore
+      count: 8
+    - package: pkg/tenancy/userstore
+      count: 29
+    - package: pkg/tenancy/userstore/pgstore
+      count: 9
     - package: pkg/tenantkms
       count: 7
     - package: pkg/tierpromotion

@@ -69,11 +69,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
 	dlease "github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )
 

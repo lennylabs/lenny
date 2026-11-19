@@ -78,7 +78,7 @@ type TenantLimits struct {
 
 // TenantLimitLookup resolves the §11.2 hierarchical token budget for a
 // tenant. The gateway backs it with the tenant registry
-// (pkg/gateway/environment/tenantstore).
+// (pkg/tenancy/tenantstore).
 type TenantLimitLookup interface {
 	// LookupLimits returns the resolved limits for tenantID. A lookup
 	// for an unknown tenant returns ErrTenantNotFound so the evaluator

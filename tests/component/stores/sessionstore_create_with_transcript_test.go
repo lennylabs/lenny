@@ -12,11 +12,11 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/transcriptstore"
+	transcriptpg "github.com/lennylabs/lenny/pkg/session/transcriptstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // TestSessionStoreCreateWithTranscript_spec_12_8 pins the replay transcript

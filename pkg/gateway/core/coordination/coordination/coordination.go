@@ -31,7 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordlease"
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // errHandoffRefused signals that the locked session row no longer matches the

@@ -25,10 +25,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/adminops"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

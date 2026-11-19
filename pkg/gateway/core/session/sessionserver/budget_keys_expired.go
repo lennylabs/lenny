@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // reasonBudgetKeysExpired is the FailureReason the §8.3 tree cleanup stamps

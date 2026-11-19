@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // fakeQuotaReconciler is a test double for the §12.4 reconciliation seam.

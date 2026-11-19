@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // failSession marks a delegation node failed. Its caller is §8.10 tree

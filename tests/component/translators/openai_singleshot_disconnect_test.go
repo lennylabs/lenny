@@ -34,9 +34,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // ssSilentRuntime is an adapter.RuntimeProcess that never answers a

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §10.2 custom-role registry, exercising the
-// Postgres-backed pkg/gateway/customrolestore/pgstore against a real
+// Postgres-backed pkg/tenancy/customrolestore/pgstore against a real
 // container with the production migrations applied. Covers CRUD, the
 // sentinel errors, the §10.2 structural validation, cross-tenant
 // isolation, the SELECT ... FOR UPDATE mutate path with
@@ -17,13 +17,13 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
-	customrolepg "github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
+	customrolepg "github.com/lennylabs/lenny/pkg/tenancy/customrolestore/pgstore"
 )
 
 // spec: 10.2
 // diagnosis: the Postgres-backed custom-role registry in
-// pkg/gateway/customrolestore/pgstore did not behave as specified.
+// pkg/tenancy/customrolestore/pgstore did not behave as specified.
 // Create and Get must round-trip a custom role including its
 // permission set, validation must reject duplicates, malformed and
 // built-in-colliding names, and permissions that exceed the

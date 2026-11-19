@@ -19,10 +19,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // unbindingExecutor unbinds a session from the pod registry on Release, as

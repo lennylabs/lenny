@@ -39,11 +39,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 var errFlapOutage = errors.New("injected flapping store fault")

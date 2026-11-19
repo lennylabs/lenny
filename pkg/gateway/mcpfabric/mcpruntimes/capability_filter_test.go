@@ -10,10 +10,10 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes"
 	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
 )
 
 // executionRuntime is a type:mcp runtime tagged category:execution with

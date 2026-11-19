@@ -12,9 +12,9 @@ import (
 	"time"
 
 	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionmem "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionmem "github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // callLog is one ordered record of the calls the Phase 3 revoker makes

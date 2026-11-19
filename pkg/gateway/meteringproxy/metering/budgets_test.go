@@ -10,7 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // expiryRecorder records the sessions the enforcer expires.

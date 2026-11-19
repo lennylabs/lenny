@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // DriveResumeAndWait drives one resume attempt for the row, as the watchdog's

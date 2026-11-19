@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §6 / §9.2 pending-interaction registry,
-// exercising the Postgres-backed pkg/gateway/interactionstore/pgstore
+// exercising the Postgres-backed pkg/session/interactionstore/pgstore
 // against a real container with the production migrations applied.
 // Covers the put/get round-trip including the jsonb detail and
 // response documents, the sentinel errors, the §15.1
@@ -17,8 +17,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	interactionpg "github.com/lennylabs/lenny/pkg/session/interactionstore/pgstore"
 )
 
 // interactionSeed records a pending interaction directed at userID and
@@ -34,7 +34,7 @@ func interactionSeed(t *testing.T, ctx context.Context, s interactionstore.Store
 
 // spec: 9.2
 // diagnosis: the Postgres-backed pending-interaction registry in
-// pkg/gateway/interactionstore/pgstore did not behave as specified —
+// pkg/session/interactionstore/pgstore did not behave as specified —
 // the Put/Get/Resolve round-trip, the §15.1 authorization-triple
 // scoping, ErrAlreadyResolved on double resolution, CountElicitations,
 // or the §11.4 DismissByUser / §12.8 DeleteByUser adapters.

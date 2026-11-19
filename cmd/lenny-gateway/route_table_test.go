@@ -23,18 +23,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // The route table guard of change 0117 (gateway package layout), step

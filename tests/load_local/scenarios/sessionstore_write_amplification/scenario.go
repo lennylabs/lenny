@@ -3,7 +3,7 @@
 //go:build load_local
 
 // Package sessionstore_write_amplification observes the write rate
-// pkg/gateway/sessionstore in-memory backend produces under N
+// pkg/session/sessionstore in-memory backend produces under N
 // concurrent SetStatus calls across many sessions. The §15.1
 // invariant: SetStatus is idempotent on the same status value and
 // does not amplify writes when callers repeat the same transition.

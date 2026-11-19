@@ -9,8 +9,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/elicitation"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // elicitationIntegrityResponse is the §15.1

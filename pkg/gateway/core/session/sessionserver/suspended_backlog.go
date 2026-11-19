@@ -12,7 +12,7 @@ import (
 
 	"golang.org/x/sync/errgroup"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // HoldsPod is the watchdog's BacklogResumer pod check: it reports whether

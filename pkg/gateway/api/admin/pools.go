@@ -16,12 +16,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/elicitation"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/egress"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
 )
 
 // ReconciliationResumer clears the PoolScalingController's in-memory

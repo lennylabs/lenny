@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	sessionstorepg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 )
 
 // TestPodHasActiveSessionUsesSlotHolders_spec_4_6_1 pins the orphan GC's

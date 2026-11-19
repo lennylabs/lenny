@@ -23,8 +23,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
 )
 

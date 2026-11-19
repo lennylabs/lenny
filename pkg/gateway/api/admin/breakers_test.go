@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 func newBreakerAdmin(t *testing.T) (*admin.Router, *breakerstore.Memory, *recordingAudit) {

@@ -7,7 +7,7 @@ package sessionserver
 import (
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // ForwardToHolder exposes forwardToHolder to the tier-3 CH-HOLDERFORWARD

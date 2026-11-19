@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // heartbeatEnd is the status the adapter ends a session's stream with when

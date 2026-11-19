@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // assignErr wraps cause as a restore's credential assignment failure, as

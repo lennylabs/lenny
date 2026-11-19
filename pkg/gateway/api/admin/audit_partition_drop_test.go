@@ -13,7 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // fakeDropper records the §16.4 force-drop call so the handler's

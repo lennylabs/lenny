@@ -23,9 +23,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/storerouter"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 func (w *gatewayWiring) buildBillingPipeline(

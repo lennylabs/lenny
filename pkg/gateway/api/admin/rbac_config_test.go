@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §10.6 / §15.1 GET|PUT /v1/admin/tenants/{id}/rbac-config.

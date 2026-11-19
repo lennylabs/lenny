@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // fakeMigrationManager is a test double for the §15.1 schema-migration

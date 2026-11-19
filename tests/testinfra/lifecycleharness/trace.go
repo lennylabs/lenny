@@ -10,7 +10,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // FaultKind is one kind of fault the harness injects at a trace index.

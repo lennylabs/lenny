@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // eventUserRoleAssigned / eventUserRoleRemoved are the §15.1 platform-managed role-assignment audit event types. The admin

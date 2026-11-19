@@ -10,9 +10,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/callercheck"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // requireActiveUser enforces §11.4 user invalidation and the §12.8

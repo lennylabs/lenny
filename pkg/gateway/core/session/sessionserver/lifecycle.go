@@ -12,9 +12,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // DefaultArtifactRetention is the §7.1 default artifact

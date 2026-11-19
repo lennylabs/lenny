@@ -19,10 +19,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // spec: §7.2 / §8.8 — `running → suspended` on interrupt_request +

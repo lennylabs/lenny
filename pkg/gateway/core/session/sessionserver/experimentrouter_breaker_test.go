@@ -14,8 +14,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // spec: §10.7 (SCL-023) — once the per-tenant targeting

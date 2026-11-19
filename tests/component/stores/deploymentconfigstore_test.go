@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §16.7 deployment_config_state baseline. Exercises
-// pkg/gateway/deploymentconfigstore/pgstore against a real Postgres
+// pkg/audit/deploymentconfigstore/pgstore against a real Postgres
 // container with the production migrations (including 0163) applied:
 // the not-found-before-first-Put contract, the Get/Put round-trip, the
 // singleton upsert (a second Put overwrites the same row rather than
@@ -15,8 +15,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
-	deploymentconfigpg "github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore"
+	deploymentconfigpg "github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

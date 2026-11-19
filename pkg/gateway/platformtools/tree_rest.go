@@ -30,7 +30,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // TreeNode is one node in the §8 delegation task tree. The wire field

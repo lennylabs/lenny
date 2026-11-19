@@ -45,10 +45,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // countingPresigner mints grant URLs against a cpStore and counts how many

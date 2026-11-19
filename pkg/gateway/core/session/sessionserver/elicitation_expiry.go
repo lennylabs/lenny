@@ -7,7 +7,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // elicitationExpiryTimeout bounds the delete of a session's raised

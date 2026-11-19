@@ -19,13 +19,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // billingFixture is an in-memory billing ledger and stream wired into a

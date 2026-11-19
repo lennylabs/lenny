@@ -19,8 +19,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 

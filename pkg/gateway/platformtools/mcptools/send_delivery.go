@@ -15,8 +15,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )

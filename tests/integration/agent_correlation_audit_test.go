@@ -33,8 +33,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/api/correlation"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: 25.1 (agent identity and correlation), 11.7 (audit chain / OCSF)

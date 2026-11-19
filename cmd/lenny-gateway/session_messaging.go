@@ -20,12 +20,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	interactionpg "github.com/lennylabs/lenny/pkg/session/interactionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

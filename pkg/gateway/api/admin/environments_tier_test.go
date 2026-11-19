@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // newEnvironmentAdminWithTenant wires the environment admin endpoints

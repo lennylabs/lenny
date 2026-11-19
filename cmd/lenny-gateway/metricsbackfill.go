@@ -13,7 +13,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordfence"
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/dualstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
@@ -21,6 +20,7 @@ import (
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/storerouter"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 

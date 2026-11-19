@@ -9,13 +9,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/export"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // reserveStore wraps a session store so a test can inject the error each

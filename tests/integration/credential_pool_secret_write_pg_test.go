@@ -34,7 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/credential/credentialpoolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 const pgSecretNS = "lenny-credentials"

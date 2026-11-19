@@ -19,9 +19,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/tenancy/userstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"

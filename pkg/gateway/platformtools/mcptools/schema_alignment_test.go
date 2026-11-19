@@ -18,11 +18,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // toolListedSchema returns the InputSchema the MCP `tools/list` method

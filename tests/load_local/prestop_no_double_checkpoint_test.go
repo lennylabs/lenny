@@ -29,7 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
+	"github.com/lennylabs/lenny/pkg/session/sessioncheckpointmeta"
 )
 
 // drainCheckpointer is the single in-process checkpointer both the barrier

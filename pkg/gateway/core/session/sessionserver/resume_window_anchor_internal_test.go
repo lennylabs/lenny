@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // spec: §6.2 (Pod State Machine), §7.3 (Resume driver)

@@ -5,7 +5,7 @@ package admin
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // TestNewRouter_ThreadsTenancyMode pins that the platform tenancy.mode

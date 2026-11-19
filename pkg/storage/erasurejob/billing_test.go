@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §12.8 tenant-controlled billing erasure.

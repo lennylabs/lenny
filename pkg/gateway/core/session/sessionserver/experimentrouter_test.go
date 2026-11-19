@@ -14,9 +14,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/experiment"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §10.7 ExperimentRouter — variant assignment at session creation.

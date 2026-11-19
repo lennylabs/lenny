@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
+	"github.com/lennylabs/lenny/pkg/session/sessioncheckpointmeta"
 )
 
 // slotDrainCheckpointer models the adapter side of a concurrent

@@ -10,9 +10,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // fixedClock returns a deterministic clock for job timestamps.

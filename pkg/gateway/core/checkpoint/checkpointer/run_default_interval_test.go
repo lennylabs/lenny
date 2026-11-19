@@ -12,8 +12,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // steppedClock is the injected Checkpointer.Now. The test moves it and Run

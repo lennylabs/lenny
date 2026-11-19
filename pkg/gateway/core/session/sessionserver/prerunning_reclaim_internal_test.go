@@ -28,8 +28,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 const reclaimPod = "pod-a"

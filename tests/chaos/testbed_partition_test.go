@@ -52,10 +52,10 @@ import (
 	dlease "github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/proxylease"
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )

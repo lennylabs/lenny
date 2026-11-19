@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // spec: 8.3 (Delegation Policy and Lease, Delegation Lease: "Credential pool identity in multi-hop `inherit` chains")

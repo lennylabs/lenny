@@ -15,8 +15,8 @@ import (
 	"errors"
 
 	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
 )
 
 // CandidateType is the §8.3 candidate type a connector is evaluated

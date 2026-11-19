@@ -17,7 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // isDeriveFailureRow reports whether row is a §7.1 derive-failure audit

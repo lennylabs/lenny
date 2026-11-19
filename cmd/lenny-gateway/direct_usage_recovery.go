@@ -10,10 +10,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint"
 	"github.com/lennylabs/lenny/pkg/quota/quotastore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // directUsageRecoveryReader is the gateway-side §11.2 crash-recovery

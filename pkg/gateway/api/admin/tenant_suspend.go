@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // eventTenantSuspended / eventTenantResumed are the §15.1 tenant

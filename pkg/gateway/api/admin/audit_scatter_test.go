@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // fakeScatterReader is an in-test §25.9 cross-tenant scatter-gather

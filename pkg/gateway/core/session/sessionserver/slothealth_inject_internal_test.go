@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slothealth"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // TestNewHonorsInjectedSlotHealth verifies New wires the §5.2 fail/leak

@@ -13,7 +13,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // fullRevokeAs runs a full_revoke of subject in acme as the given caller

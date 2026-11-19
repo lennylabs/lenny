@@ -8,7 +8,7 @@ import (
 	"sort"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // reattachedChild is the §7.1 ReattachedChild schema carried in the
