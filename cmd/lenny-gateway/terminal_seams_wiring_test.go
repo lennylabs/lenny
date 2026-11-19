@@ -32,7 +32,7 @@ func TestTerminalWriterSeamsAreWiredToTheSessionServer_spec_7_2(t *testing.T) {
 	for _, tc := range []struct {
 		file, want, seam string
 	}{
-		{"mcpsurface.go", "Terminal: sessionSrv,", "the MCP tools' Terminal"},
+		{"mcpsurface.go", "Terminal: toolsSeam,", "the MCP tools' Terminal"},
 		{"controlserver.go", "WithTerminalHook(sessionSrv)", "the watchdog's terminal hook"},
 		{"adminrouter.go", "WithRevokeHook(sessionSrv)", "the full_revoke revoke hook"},
 		{"adminrouter.go", "beginTerminal: sessionSrv.BeginTerminal", "ForceTerminate's claim"},

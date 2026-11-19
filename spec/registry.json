@@ -1866,6 +1866,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-HandleBudgetKeysExpired",
+      "anchor": "gwseam-handlebudgetkeysexpired",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-HandleRoute",
       "anchor": "gwseam-handleroute",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2021,6 +2026,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-RequestCaller",
+      "anchor": "gwseam-requestcaller",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-RequestTenant",
       "anchor": "gwseam-requesttenant",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2071,8 +2081,18 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-RouteMessage",
+      "anchor": "gwseam-routemessage",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-SendMessages",
       "anchor": "gwseam-sendmessages",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-SessionAccessible",
+      "anchor": "gwseam-sessionaccessible",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
