@@ -399,18 +399,18 @@ func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimes
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:             ownerprincipal.ToolAccess{},
-		DevTenantFallback:          true,
-		Store:                      memstore.New(),
-		Executor:                   toolseam.Executor(executor.NewEchoExecutor()),
-		Runtimes:                   runtimes,
-		Environments:               envs,
-		Tenants:                    toolops.NewTenants(tenants, nil, nil),
-		EnvironmentResolver:        toolops.NewEnvironments(envs, tenants, defaultPolicy),
-		Clock:                      func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:                     func() string { return "sess_mcp" },
-		TenantID:                   "acme",
-		SessionAccess:              ownerprincipal.ToolAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		DevTenantFallback:   true,
+		Store:               memstore.New(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
+		Runtimes:            runtimes,
+		Environments:        envs,
+		Tenants:             toolops.NewTenants(tenants, nil, nil),
+		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, defaultPolicy),
+		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:              func() string { return "sess_mcp" },
+		TenantID:            "acme",
+		SessionAccess:       ownerprincipal.ToolAccess{},
 	})
 	return srv, runtimes, envs, tenants
 }

@@ -11,10 +11,10 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // recordingExpiry captures message_expired emissions for assertion.
@@ -135,14 +135,14 @@ func TestEmitTerminalLifecycleNoMessagingIsSafe(t *testing.T) {
 func TestBusEmitterPublishesInboxCleared_spec_7_2_284(t *testing.T) {
 	bus := sessionevents.NewBus(16)
 	em := NewBusEmitter(bus, msgTestClock)
-	sub, err := bus.SubscribeForTenant("acme", "tgt", 0, 8)
+	sub, err := bus.Subscribe("acme", "tgt", 0, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer sub.Close()
 	em.InboxCleared("acme", "tgt", sessioninbox.NewInboxClearedEvent("tgt", 3, msgTestClock()))
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != sessioninbox.EventInboxCleared {
 			t.Fatalf("event type = %q, want inbox_cleared", ev.Type)
 		}
@@ -156,7 +156,7 @@ func TestBusEmitterPublishesInboxCleared_spec_7_2_284(t *testing.T) {
 func TestBusEmitterPublishesMessageExpired_spec_15_4_1(t *testing.T) {
 	bus := sessionevents.NewBus(16)
 	em := NewBusEmitter(bus, msgTestClock)
-	sub, err := bus.SubscribeForTenant("acme", "snd", 0, 8)
+	sub, err := bus.Subscribe("acme", "snd", 0, 8)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -164,7 +164,7 @@ func TestBusEmitterPublishesMessageExpired_spec_15_4_1(t *testing.T) {
 	em.MessageExpired("acme", "snd",
 		sessioninbox.NewMessageExpiredEvent("msg_1", "tgt", sessioninbox.ReasonTargetTerminated, msgTestClock()))
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != sessioninbox.EventMessageExpired {
 			t.Fatalf("event type = %q, want message_expired", ev.Type)
 		}

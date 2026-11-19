@@ -44,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	erasurepg "github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/sqlitestore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // buildStores constructs the §4.2/§4.4/§4.5 persistence surfaces, the §12.3
@@ -58,7 +59,7 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 store
 // router; §4.9 credentials; §15.1 pod placement.
-func (w *gatewayWiring) buildStores() {
+func (w *gatewayWiring) buildStores(sessionEventFlags *sessionevents.Flags) {
 	// checkpointRetention is constructed by the §4.4/§12.5 retention step
 	// and consumed by the §15.1 pod-lifecycle checkpointer through an
 	// explicit return. It is also recorded on the accumulator because the
@@ -76,7 +77,7 @@ func (w *gatewayWiring) buildStores() {
 	w.buildTokenSigningStores(w.tenants)
 	w.buildExecutorAndCredentials()
 	w.buildPodLifecycle(checkpointRetention)
-	w.buildSessionMessaging()
+	w.buildSessionMessaging(sessionEventFlags)
 }
 
 // buildPersistenceStores constructs the §4.2 session and metadata stores

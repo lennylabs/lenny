@@ -1226,7 +1226,7 @@ name: Subscribe
 method: Go method
 path: seam.Events
 requirements: [GW-R1]
-summary: Opens a subscription to a session's stream in a tenant from after a sequence number, and returns the channel of events and the function that closes the subscription.
+summary: Opens a subscription to a session's stream in a tenant from after a sequence number, and returns the retained events after that sequence number, the channel of later events, and the function that closes the subscription; a tenant other than the one the session's first tenant-scoped publish on the serving replica bound it to is refused, and an empty tenant subscribes without a tenant scope.
 ```
 
 <a id="gwseam-oldestretainedseq"></a>

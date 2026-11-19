@@ -46,11 +46,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/tests/contract/sdks/harness"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 )
 
 // tsHelperBuild memoizes the one-time TypeScript SDK install+build so
@@ -275,6 +277,7 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 	// consumes.
 	bus := sessionevents.NewBus(64)
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Events: bus})
+	streamwire.Attach(t, srv, streamproxy.Options{Events: bus})
 
 	// disconnector severs the SDK's first SSE connection mid-stream so
 	// the reconnect path is exercised. It is defined in
@@ -289,7 +292,7 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 
 	const total = 6
 	publish := func(seq int) {
-		bus.Publish(sessionID, "response", `{"n":`+strconv.Itoa(seq)+`}`, time.Now())
+		bus.Publish("", sessionID, "response", `{"n":`+strconv.Itoa(seq)+`}`, time.Now())
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

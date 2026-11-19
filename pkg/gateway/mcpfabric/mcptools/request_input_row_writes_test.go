@@ -21,9 +21,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // updateFault selects how faultStore answers one Update; the zero value
@@ -175,7 +175,7 @@ func (r *inputRig) statusChanges() []string {
 // row's tenant: the bus refuses a subscription for another tenant.
 func (r *inputRig) assertTenantFrozen(t *testing.T) {
 	t.Helper()
-	if _, err := r.bus.SubscribeForTenant("globex", rowSessionID, 0, 1); !errors.Is(err, sessionevents.ErrTenantMismatch) {
+	if _, err := r.bus.Subscribe("globex", rowSessionID, 0, 1); !errors.Is(err, sessionevents.ErrTenantMismatch) {
 		t.Errorf("subscribe as another tenant = %v, want ErrTenantMismatch (status_change published under the row tenant)", err)
 	}
 }

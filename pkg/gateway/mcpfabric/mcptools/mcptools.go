@@ -63,7 +63,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
@@ -525,9 +524,10 @@ type Deps struct {
 	// *delegation.Service. spec: §4.8; §8.3. F-4.8.17.
 	CooldownChecker InterceptorCooldownChecker
 
-	// Events is the §15.1 session event bus. Optional — when nil, the
-	// lenny/output tool is not registered.
-	Events *sessionevents.Bus
+	// Events is the §15.1 session event bus, which the stream proxy
+	// serves through GWSEAM-Publish. Optional — when nil, the lenny/output
+	// tool is not registered.
+	Events seam.Events
 
 	// InputWaits is the §8.5 lenny/request_input pending-call registry.
 	// Optional — when nil, lenny/request_input is not registered.
@@ -823,6 +823,8 @@ type ElicitationLifecycleRecorder interface {
 
 // Register installs the §8.5 tools onto the MCP server.
 func Register(srv *mcp.Server, deps Deps) {
+	// A typed nil bus leaves the event tools off, as a nil one does.
+	deps.Events = seam.EventsOrNil(deps.Events)
 	clock := deps.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }

@@ -708,7 +708,7 @@ func (s *Server) subtreeTokens(ctx context.Context, sess sessionstore.Session) (
 	if s.treeRollups == nil {
 		return 0, errSubtreeTokensUnwired
 	}
-	return s.treeRollups.SubtreeTokens(ctx, seamSession(sess))
+	return s.treeRollups.SubtreeTokens(ctx, seamSessionOf(sess))
 }
 
 // awaitUsageQuiescence waits until terminatedAt plus the usage quiescence
@@ -837,7 +837,7 @@ func (s *Server) emitChildFailed(ctx context.Context, sess sessionstore.Session)
 	if err != nil {
 		return
 	}
-	s.events.PublishForTenant(sess.TenantID, sess.ParentSessionID, "child_failed", string(data), s.clock())
+	s.events.Publish(sess.TenantID, sess.ParentSessionID, "child_failed", string(data), s.clock())
 }
 
 // cascadeToChildren applies the §8.10 cascadeOnFailure policy when
@@ -964,7 +964,7 @@ func (s *Server) detachExceedsOrphanCap(ctx context.Context, tenantID string) bo
 	tree := make(map[string]seam.Session, len(all))
 	records := make([]seam.Session, len(all))
 	for i, r := range all {
-		records[i] = seamSession(r)
+		records[i] = seamSessionOf(r)
 		tree[r.ID] = records[i]
 	}
 	orphans := 0
@@ -1078,8 +1078,8 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 		res.Error = taskErrorForSession(sess, s.EffectiveMaxRetries(sess))
 	}
 	if s.treeRollups != nil {
-		res.Usage = s.treeRollups.NodeUsage(ctx, seamSession(sess))
-		res.TreeUsage = s.treeRollups.TreeUsage(ctx, seamSession(sess), res.Usage)
+		res.Usage = s.treeRollups.NodeUsage(ctx, seamSessionOf(sess))
+		res.TreeUsage = s.treeRollups.TreeUsage(ctx, seamSessionOf(sess), res.Usage)
 	}
 	return res
 }

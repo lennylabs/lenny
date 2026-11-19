@@ -469,6 +469,7 @@ func (w *gatewayWiring) buildSessionServer(
 		CallbackDispatcher: callbackDispatcher,
 	})
 	attachUploadHandler(srv, w.podBinder, w.blobs, w.runtimes, uploadSubsystem, uploadMetrics, uploadFlags)
+	attachStreamProxy(srv, w.eventBus)
 	return srv
 }
 

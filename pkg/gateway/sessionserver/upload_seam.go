@@ -10,14 +10,11 @@ import (
 	"net/http"
 	"strconv"
 
-	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
-	"github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -27,7 +24,9 @@ import (
 // storage quota, and the upload audit event. It also serves the request
 // identity operation, which the session server's request plumbing holds
 // until the API front holds it. The composition root hands it to the
-// upload handler through the seam interfaces.
+// upload handler through the seam interfaces. The session lookup, the
+// authorization, and the request identity run in the Server methods that
+// StreamSeam shares.
 type UploadSeam struct {
 	s *Server
 }
@@ -45,87 +44,14 @@ func (s *Server) SetUploadWindows(u seam.UploadWindows) {
 	s.uploads = u
 }
 
-// seamSession returns the session record that crosses the seam interface
-// for a stored session. The record's pool is the row's pool reference, or
-// its pool name when the row records no reference.
-func seamSession(row sessionstore.Session) seam.Session {
-	var lastSeq uint64
-	if row.LastSeq > 0 {
-		lastSeq = uint64(row.LastSeq)
-	}
-	pool := row.PoolRef
-	if pool == "" {
-		pool = row.Pool
-	}
-	return seam.Session{
-		ID:              row.ID,
-		TenantID:        row.TenantID,
-		UserID:          row.UserID,
-		ParentSessionID: row.ParentSessionID,
-		RootSessionID:   row.RootSessionID,
-		RuntimeRef:      row.RuntimeRef,
-		Pool:            pool,
-		State:           state.State(row.State),
-		LastSeq:         lastSeq,
-		DelegationDepth: int(row.DelegationDepth),
-		PodAssignment:   row.PodAssignment,
-		CreatedAt:       row.CreatedAt,
-		UpdatedAt:       row.UpdatedAt,
-		TerminatedAt:    row.TerminatedAt,
-	}
-}
-
-// LookupSession returns the session record of a session in a tenant, or an
-// error that matches seam.ErrSessionNotFound for a session the store does
-// not hold. Any other store error is returned as it came.
-//
-// spec: GWSEAM-LookupSession
+// LookupSession is GWSEAM-LookupSession for the upload handler.
 func (u *UploadSeam) LookupSession(ctx context.Context, tenantID, sessionID string) (seam.Session, error) {
-	row, err := u.s.store.Get(ctx, tenantID, sessionID)
-	if errors.Is(err, sessionstore.ErrNotFound) {
-		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
-	}
-	if err != nil {
-		return seam.Session{}, err
-	}
-	return seamSession(row), nil
+	return u.s.lookupSeamSession(ctx, tenantID, sessionID)
 }
 
-// AuthorizeSession applies the checks a session route's wrappers apply, in
-// their order: the §10.2 permission gate for the action, which refuses with
-// seam.ErrForbidden; the principal subject, whose absence is
-// seam.ErrUnauthenticated; and the ownership rule, under which a session
-// the caller may not read or act on answers seam.ErrSessionNotFound, as a
-// missing session does.
-//
-// spec: GWSEAM-AuthorizeSession; §10.2 (Session ownership) rules 3, 5, 6,
-// and 7.
+// AuthorizeSession is GWSEAM-AuthorizeSession for the upload handler.
 func (u *UploadSeam) AuthorizeSession(ctx context.Context, tenantID, sessionID string, action seam.SessionAction) (seam.Session, error) {
-	perm, act := auth.PermReadOwnSessions, false
-	switch action {
-	case seam.SessionRead:
-	case seam.SessionManage:
-		perm, act = auth.PermManageOwnSessions, true
-	default:
-		return seam.Session{}, fmt.Errorf("session action %d: %w", action, seam.ErrForbidden)
-	}
-	if !u.s.permissionGranted(ctx, perm) {
-		return seam.Session{}, fmt.Errorf("permission %s: %w", perm, seam.ErrForbidden)
-	}
-	if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
-		return seam.Session{}, seam.ErrUnauthenticated
-	}
-	row, err := u.s.accessRow(ctx, tenantID, sessionID)
-	if errors.Is(err, sessionstore.ErrNotFound) {
-		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
-	}
-	if err != nil {
-		return seam.Session{}, err
-	}
-	if !u.s.SessionAccessible(ctx, row, act) {
-		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
-	}
-	return seamSession(row), nil
+	return u.s.authorizeSeamSession(ctx, tenantID, sessionID, action)
 }
 
 // forwardKinds maps the seam's forward kinds to the core's forwarding rows.
@@ -331,12 +257,9 @@ func (u *UploadSeam) AuditUpload(ctx context.Context, ev seam.UploadAuditEvent) 
 	})
 }
 
-// RequestTenant returns the tenant the request runs as, as the session
-// routes resolve it.
-//
-// spec: GWSEAM-RequestTenant
+// RequestTenant is GWSEAM-RequestTenant for the upload handler.
 func (u *UploadSeam) RequestTenant(r *http.Request) string {
-	return u.s.resolveTenant(r)
+	return u.s.requestSeamTenant(r)
 }
 
 // verifyUploadToken verifies the `X-Lenny-Upload-Token` header of a request

@@ -60,7 +60,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
@@ -95,7 +94,9 @@ type Server struct {
 	// catalog is not wired (in-memory / dev posture); the artifactRefs
 	// array then materializes empty. spec: §8.8. F-8.8.2.
 	artifacts artifactcatalog.Store
-	events    *sessionevents.Bus
+	// events is the stream proxy's session event bus, reached through
+	// the seam interface's event operations.
+	events seam.Events
 	// activityStamper records §6.2 qualifying agent
 	// activity (agent_output / tool_use events) onto the session's
 	// last_agent_activity_at so the §11.3 idle watchdog does not reap an
@@ -889,11 +890,10 @@ type Options struct {
 	// spec: §8.8. F-8.8.2.
 	Artifacts artifactcatalog.Store
 
-	// Events is the §15.1 session event bus backing the SSE stream.
-	// When nil, `GET /v1/sessions/{id}/events` returns
-	// `503 EVENT_STREAM_UNAVAILABLE` and message injection skips
-	// event publication.
-	Events *sessionevents.Bus
+	// Events is the §15.1 session event bus backing the SSE stream,
+	// which the stream proxy serves through the seam interface. When nil,
+	// the session core publishes no events.
+	Events seam.Events
 
 	// ActivityStamper records §6.2 qualifying agent
 	// activity onto the session's last_agent_activity_at so the §11.3
@@ -1659,7 +1659,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		experimentReporter:         opts.ExperimentRejections,
 		stickyCache:                opts.StickyCache,
 		externalProviders:          opts.ExternalProviders,
-		events:                     opts.Events,
+		events:                     seam.EventsOrNil(opts.Events),
 		dualStore:                  opts.DualStore,
 		messaging:                  opts.Messaging,
 		interactions:               opts.Interactions,

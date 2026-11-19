@@ -35,7 +35,7 @@ import (
 // storedSession returns the session record of a stored row, carrying the
 // row in its Stored field.
 func storedSession(row sessionstore.Session) seam.Session {
-	out := seamSession(row)
+	out := seamSessionOf(row)
 	out.Stored = row
 	return out
 }
@@ -68,19 +68,19 @@ func withSentinel(sentinel error, msg string, err error) error {
 	return &sentinelError{sentinel: sentinel, msg: msg, err: err}
 }
 
-// LookupSession is GWSEAM-LookupSession, served as the upload handler's.
+// LookupSession is GWSEAM-LookupSession, served by the Server method the seams share.
 //
 // spec: GWSEAM-LookupSession
 func (t ToolsSeam) LookupSession(ctx context.Context, tenantID, sessionID string) (seam.Session, error) {
-	return t.s.UploadSeam().LookupSession(ctx, tenantID, sessionID)
+	return t.s.lookupSeamSession(ctx, tenantID, sessionID)
 }
 
-// AuthorizeSession is GWSEAM-AuthorizeSession, served as the upload
-// handler's.
+// AuthorizeSession is GWSEAM-AuthorizeSession, served by the Server method
+// the seams share.
 //
 // spec: GWSEAM-AuthorizeSession
 func (t ToolsSeam) AuthorizeSession(ctx context.Context, tenantID, sessionID string, action seam.SessionAction) (seam.Session, error) {
-	return t.s.UploadSeam().AuthorizeSession(ctx, tenantID, sessionID, action)
+	return t.s.authorizeSeamSession(ctx, tenantID, sessionID, action)
 }
 
 // SessionAccessible applies the §10.2 ownership rule to a session record

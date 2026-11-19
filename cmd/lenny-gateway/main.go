@@ -103,7 +103,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// block so it runs at process shutdown; the §17.4 SQLite flush-loop cancel
 	// stays a synchronous call in runServers (gated on sqliteDB, before
 	// sqliteDB.Close), matching the original timing exactly. F-17.4.2.
-	w.buildStores()
+	w.buildStores(parts.sessionEvents)
 	// §10.3 NET-072 CH-HOLDERFORWARD client and listener TLS, built before
 	// the session server that takes the client.
 	w.buildHolderForwardTransport()
