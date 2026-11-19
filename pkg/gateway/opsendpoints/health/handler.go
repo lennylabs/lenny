@@ -4,6 +4,7 @@ package health
 
 import (
 	"encoding/json"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"net/http"
 )
 
@@ -88,4 +89,23 @@ func Handler(agg *Aggregator, poolResolver PoolHealthResolver) http.Handler {
 		_ = json.NewEncoder(w).Encode(comp)
 	})
 	return mux
+}
+
+// RegisterRoutes registers the platform health API of agg and poolResolver
+// on the client listener at /v1/admin/health and under it, for any method,
+// because Handler dispatches by method itself. The API front applies no
+// check of its own; the request pipeline authenticates the admin API.
+//
+// spec: GWSEAM-RegisterRoutes
+func RegisterRoutes(routes seam.Routes, agg *Aggregator, poolResolver PoolHealthResolver) error {
+	h := Handler(agg, poolResolver)
+	for _, p := range []string{"/v1/admin/health", "/v1/admin/health/"} {
+		if err := routes.HandleRoute(seam.Route{
+			Listener: seam.ListenerClient, Method: seam.MethodAny, Pattern: p,
+			Access: seam.AccessHandler, Handler: h,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

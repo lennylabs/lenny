@@ -70,7 +70,7 @@ runGateway:
       w.tenantErasersAfterSessions
     w.newTenantSessionTerminator
   w.buildHTTPSurface
-    w.adminRouter.Handler
+    w.adminRouter.RegisterRoutes
     w.connectors.List
     w.pools.Get
     w.concernRedis.For
@@ -92,6 +92,7 @@ runGateway:
     w.Write
   w.buildHolderForwardServer
     w.responsesHandler.Handler
+    w.apiRoutes.Handler
   w.buildLLMProxy
     w.gwMetrics.Registerer
   w.buildControlServer
@@ -106,7 +107,7 @@ runGateway:
   defer w.watchdogCancel
   w.watchdogCancel
   w.startBackgroundWorkers
-    w.mux.Handle
+    w.apiRoutes.HandleRoute
     go w.wd.Run
     w.wd.Run
     go w.uploadRotator.Run

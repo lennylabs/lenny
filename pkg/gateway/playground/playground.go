@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 )
 
@@ -463,4 +464,26 @@ func (h *Handler) readyGate(inner http.Handler) http.Handler {
 			"the playground dev tenant has not been seeded yet; the lenny-bootstrap Job is still running",
 			map[string]any{"devTenantId": h.cfg.DevTenantID})
 	})
+}
+
+// RegisterRoutes registers the playground's routes on the client listener:
+// the /playground route family and the bearer mint. Each is served for any
+// method, because PlaygroundRoutes and TokenRoutes dispatch by method
+// themselves, and each takes no check by the API front, because the
+// playground authenticates its own requests (§27.3.1).
+//
+// spec: GWSEAM-RegisterRoutes
+func (h *Handler) RegisterRoutes(routes seam.Routes) error {
+	pages, token := h.PlaygroundRoutes(), h.TokenRoutes()
+	for _, r := range []seam.Route{
+		{Pattern: "/playground", Handler: pages},
+		{Pattern: "/playground/", Handler: pages},
+		{Pattern: "/v1/playground/token", Handler: token},
+	} {
+		r.Listener, r.Method, r.Access = seam.ListenerClient, seam.MethodAny, seam.AccessHandler
+		if err := routes.HandleRoute(r); err != nil {
+			return err
+		}
+	}
+	return nil
 }

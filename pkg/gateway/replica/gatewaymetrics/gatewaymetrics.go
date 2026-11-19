@@ -12,6 +12,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // Metrics holds the registered §16.1 gateway metric vectors. The vectors are
@@ -2148,4 +2149,15 @@ func (m *Metrics) AddInflightRequests(delta int64) {
 // lenny_gateway_request_queue_depth gauge (§4.1 SCL-026).
 func (m *Metrics) InflightRequests() int {
 	return int(atomic.LoadInt64(&m.inflight))
+}
+
+// RegisterRoutes registers the Prometheus scrape endpoint on the internal
+// listener, with no check by the API front.
+//
+// spec: GWSEAM-RegisterRoutes
+func (m *Metrics) RegisterRoutes(routes seam.Routes) error {
+	return routes.HandleRoute(seam.Route{
+		Listener: seam.ListenerInternal, Method: http.MethodGet, Pattern: "/metrics",
+		Access: seam.AccessHandler, Handler: m.Handler(),
+	})
 }

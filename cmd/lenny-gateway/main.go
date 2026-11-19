@@ -229,7 +229,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 		w.quotaFailOpenAccum, revProp,
 	)
 
-	// §15.1 REST mux and HTTP server. Records w.mux and w.httpSrv.
+	// §15.1 REST routes and HTTP server. Records w.httpSrv.
 	w.buildHTTPSurface(
 		parts.playground,
 		gwMetrics, sessionSrv, w.openaiHandler, w.responsesHandler, w.credServer,
@@ -237,9 +237,9 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
 		w.siemHealthChecker, resolvedNoEnvPolicy,
 	)
-	// §29.3 Forwarding — the CH-HOLDERFORWARD listener over the session mux
-	// and /mcp handler, behind the REST listener's auth options.
-	w.buildHolderForwardServer(sessionSrv, mcpSrv)
+	// §29.3 Forwarding — the CH-HOLDERFORWARD listener over the forward
+	// listener's routes, behind the REST listener's auth options.
+	w.buildHolderForwardServer()
 
 	// §4.9 LLM Proxy subsystem (a named §4.1 extraction target).
 	llmProxySrv := w.buildLLMProxy(parts.llmProxy, parts.metering, policyChain,

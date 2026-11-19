@@ -84,9 +84,7 @@ forward  listener  /v1/sessions
 forward  listener  /v1/sessions/
 forward  listener  POST /v1/responses
 forward  session   DELETE /v1/sessions/{id}
-forward  session   DELETE /v1/sessions/{id}/memory/{memoryId} [session-manage]
 forward  session   GET /internal/runtimes/{name}/meta/{key}
-forward  session   GET /v1/blobs/{ref...} [tenant]
 forward  session   GET /v1/metering/events
 forward  session   GET /v1/models
 forward  session   GET /v1/pools
@@ -95,13 +93,9 @@ forward  session   GET /v1/runtimes/{name}/meta/{key}
 forward  session   GET /v1/sessions
 forward  session   GET /v1/sessions/{id}
 forward  session   GET /v1/sessions/{id}/artifacts
-forward  session   GET /v1/sessions/{id}/events [session-read]
-forward  session   GET /v1/sessions/{id}/logs [session-read]
-forward  session   GET /v1/sessions/{id}/memory [session-read]
 forward  session   GET /v1/sessions/{id}/messages
 forward  session   GET /v1/sessions/{id}/setup-output
 forward  session   GET /v1/sessions/{id}/transcript
-forward  session   GET /v1/sessions/{id}/tree [session-read]
 forward  session   GET /v1/sessions/{id}/usage
 forward  session   GET /v1/sessions/{id}/webhook-events
 forward  session   GET /v1/sessions/{id}/workspace
@@ -110,20 +104,13 @@ forward  session   POST /v1/environments/{name}/sessions
 forward  session   POST /v1/sessions
 forward  session   POST /v1/sessions/start
 forward  session   POST /v1/sessions/{id}/derive
-forward  session   POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss [session-manage]
-forward  session   POST /v1/sessions/{id}/elicitations/{elicitationId}/respond [session-manage]
 forward  session   POST /v1/sessions/{id}/eval
 forward  session   POST /v1/sessions/{id}/extend-retention
 forward  session   POST /v1/sessions/{id}/finalize
 forward  session   POST /v1/sessions/{id}/interrupt
-forward  session   POST /v1/sessions/{id}/memory [session-manage]
 forward  session   POST /v1/sessions/{id}/messages
 forward  session   POST /v1/sessions/{id}/replay
 forward  session   POST /v1/sessions/{id}/resume
 forward  session   POST /v1/sessions/{id}/start
 forward  session   POST /v1/sessions/{id}/terminate
-forward  session   POST /v1/sessions/{id}/tool-use/{toolCallId}/approve [session-manage]
-forward  session   POST /v1/sessions/{id}/tool-use/{toolCallId}/deny [session-manage]
-forward  session   POST /v1/sessions/{id}/upload [session-manage]
-forward  session   POST /v1/sessions/{id}/upload-archive [session-manage]
 forward  session   POST /v1/sessions/{id}/upload-to-session [session-manage]

@@ -5,13 +5,14 @@ package sessionserver
 import (
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 )
 
 // attachUploads attaches an upload handler built from opts to srv, as the
 // composition root attaches it: every seam field of opts takes srv's own
-// side of the operation, the handler registers its routes with
-// srv, and srv closes upload windows through it. The internal tests use it
+// side of the operation, the handler registers its routes through the API
+// front route table srv mounts, and srv closes upload windows through it. The internal tests use it
 // rather than tests/testinfra/uploadwire, which imports this package. It is
 // test wiring and carries no specification annotation.
 func attachUploads(t *testing.T, srv *Server, opts uploadhandler.Options) *uploadhandler.Handler {
@@ -23,7 +24,12 @@ func attachUploads(t *testing.T, srv *Server, opts uploadhandler.Options) *uploa
 	if err != nil {
 		t.Fatalf("build the upload handler: %v", err)
 	}
-	if err := up.RegisterRoutes(srv); err != nil {
+	table, ok := srv.RouteTable().(*routetable.Table)
+	if !ok {
+		table = routetable.New()
+		srv.SetRouteTable(table)
+	}
+	if err := up.RegisterRoutes(table); err != nil {
 		t.Fatalf("register the upload routes: %v", err)
 	}
 	srv.SetUploadWindows(up)

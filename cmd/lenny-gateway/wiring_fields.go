@@ -75,6 +75,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore/cachingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
@@ -358,10 +359,13 @@ type gatewayWiringFields struct {
 	eventBusRetranscriber       *eventbus.Retranscriber
 	failOpenReplicas            *failopen.ReplicaCount
 	inputWaits                  *inputwait.Registry
-	kmsProbeLifecycle           *tenantkms.Lifecycle
-	mtlsDenyProp                *mtlsdenylistprop.Propagator
-	mux                         *http.ServeMux
-	podBinder                   *podsession.Binder
+	// apiRoutes is the API front's route table, through which every part
+	// registers its HTTP routes and from which the REST and forward
+	// listeners serve them.
+	apiRoutes         *routetable.Table
+	kmsProbeLifecycle *tenantkms.Lifecycle
+	mtlsDenyProp      *mtlsdenylistprop.Propagator
+	podBinder         *podsession.Binder
 	// slotCounter is the §5.2 slot set shared by every concurrent-mode
 	// reservation and release; its §12.4 recovery probe runs on
 	// watchdogCtx, and the leader-run stale-slot reaper reads and removes

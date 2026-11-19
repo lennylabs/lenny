@@ -650,14 +650,12 @@ type Server struct {
 	// server serves.
 	uploads seam.UploadWindows
 
-	// partRoutes are the routes other parts registered through HandleRoute,
-	// which Handler mounts behind the access check each names. routesMu
-	// guards them and routesServed, which Handler sets so a route
-	// registered after the server began serving is refused rather than
-	// silently left unmounted.
-	routesMu     sync.Mutex
-	partRoutes   []seam.Route
-	routesServed bool
+	// routeTable is the API front's route table, from which Handler and
+	// ForwardHandler read the routes other parts registered for the request
+	// pipeline the session server holds until the API front holds it. Nil
+	// when no part registers routes. SetRouteTable sets it before the
+	// server serves.
+	routeTable seam.RouteTable
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active

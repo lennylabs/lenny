@@ -630,3 +630,26 @@ func RefusalError(r *seam.Refusal) *ToolError {
 // so tool handlers can distinguish the two when richer error
 // mapping lands.
 var _ = errInternal
+
+// RegisterRoutes registers the MCP transports the composition root does
+// not mount through the adapter registry: the WebSocket transport and the
+// environment-scoped endpoint on the client listener, and the MCP endpoint
+// on the forward listener, on which another replica forwards a platform
+// tool call to the session's holder replica. Each takes no route check by
+// the API front: the listener's request pipeline authenticates the request,
+// and the MCP server applies its own checks to each call.
+//
+// spec: GWSEAM-RegisterRoutes
+func (s *Server) RegisterRoutes(routes seam.Routes) error {
+	for _, r := range []seam.Route{
+		{Listener: seam.ListenerClient, Method: seam.MethodAny, Pattern: "/mcp/v1/ws", Handler: s.WebSocketHandler()},
+		{Listener: seam.ListenerClient, Method: http.MethodPost, Pattern: "/mcp/environments/{name}", Handler: s.EnvironmentHandler()},
+		{Listener: seam.ListenerForward, Method: seam.MethodAny, Pattern: "/mcp", Handler: s.Handler()},
+	} {
+		r.Access = seam.AccessHandler
+		if err := routes.HandleRoute(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}

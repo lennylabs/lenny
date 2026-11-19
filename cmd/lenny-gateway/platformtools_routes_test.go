@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -41,7 +42,9 @@ var platformToolsRoutes = []struct {
 func TestAttachToolRoutesMountsEveryPlatformToolsRoute(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	attachToolRoutes(srv, store, nil, toolapproval.NewRegistry(), nil, nil)
+	table := routetable.New()
+	srv.SetRouteTable(table)
+	attachToolRoutes(srv, table, store, nil, toolapproval.NewRegistry(), nil, nil)
 	h := srv.Handler()
 	for _, rt := range platformToolsRoutes {
 		t.Run(rt.method+" "+rt.path, func(t *testing.T) {

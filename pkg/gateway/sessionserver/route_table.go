@@ -7,6 +7,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // Handler returns the http.Handler that routes the §15.1 session
@@ -22,15 +23,26 @@ import (
 // requireSessionAccess then applies the §10.2 Session ownership rule.
 // See rbac_gate.go.
 func (s *Server) Handler() http.Handler {
-	return s.requireTenant(s.routeMux().ServeMux)
+	return s.requireTenant(s.routeMux(seam.ListenerClient).ServeMux)
 }
 
-// RoutePatterns returns the pattern of every route the session handler
-// mounts, in the order it mounts them, with the access check of each route
-// another part registered. The composition root's route table test reads
-// it. Calling it closes registration as Handler does.
-func (s *Server) RoutePatterns() []string {
-	return s.routeMux().patterns
+// ForwardHandler returns the http.Handler the CH-HOLDERFORWARD listener
+// serves on the session paths: the session endpoints, as Handler serves
+// them, and of the routes other parts registered, only those registered on
+// the forward listener, so the listener carries only the routes another
+// replica forwards.
+//
+// spec: GWSEAM-HandleRoute
+func (s *Server) ForwardHandler() http.Handler {
+	return s.requireTenant(s.routeMux(seam.ListenerForward).ServeMux)
+}
+
+// RoutePatterns returns the pattern of every route the session handler of
+// listener l mounts, in the order it mounts them, with the access check of
+// each route another part registered. The composition root's route table
+// test reads it. Calling it closes registration on l as Handler does.
+func (s *Server) RoutePatterns(l seam.Listener) []string {
+	return s.routeMux(l).patterns
 }
 
 // recordingMux is the session handler's mux, which records the pattern of
@@ -46,9 +58,9 @@ func (m *recordingMux) HandleFunc(pattern string, handler func(http.ResponseWrit
 	m.ServeMux.HandleFunc(pattern, handler)
 }
 
-// routeMux builds the session handler's mux: the session routes and the
-// routes other parts registered.
-func (s *Server) routeMux() *recordingMux {
+// routeMux builds the session handler's mux for listener l: the session
+// routes and the routes other parts registered on l.
+func (s *Server) routeMux(l seam.Listener) *recordingMux {
 	mux := &recordingMux{ServeMux: http.NewServeMux()}
 	manage := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireSessionPermission(auth.PermManageOwnSessions, next)
@@ -115,11 +127,11 @@ func (s *Server) routeMux() *recordingMux {
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", readID(s.handleWorkspace))
 	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", readID(s.handleSetupOutput))
 	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", readID(s.handleWebhookEvents))
-	// The routes other parts registered through HandleRoute, such as the
-	// upload handler's, the stream proxy's, and the platform tools seam's
-	// memory, interaction resolution, and tree routes, mount on the same
-	// mux behind the access check each names.
-	s.mountPartRoutes(mux)
+	// The routes other parts registered on l through the API front, such
+	// as the upload handler's, the stream proxy's, and the platform tools
+	// seam's memory, interaction resolution, and tree routes, mount on the
+	// same mux behind the access check each names.
+	s.mountPartRoutes(mux, l)
 	// spec: §10.2 — a tenant-scoped route runs only for a request whose
 	// tenant resolves from its principal (or, under --dev-mode, from the
 	// dev header). F-10.2.21. Handler wraps the mux in that check.

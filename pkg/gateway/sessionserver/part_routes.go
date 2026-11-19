@@ -3,7 +3,6 @@
 package sessionserver
 
 import (
-	"fmt"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -12,53 +11,64 @@ import (
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
-// HandleRoute registers a route of another gateway part, such as the upload
-// handler, on the session server's mux, behind the access check the route
-// names. The session server serves the route registration interface while
-// it holds the request pipeline that the API front takes over, and the
-// handler it builds is the one the client and forward listeners serve.
+// SetRouteTable sets the API front's route table, from which the session
+// handlers read the routes other parts registered with an access check the
+// request pipeline applies. The session server holds that pipeline until
+// the API front holds it. Call it before Handler, ForwardHandler, or
+// RegisterRoutes.
+func (s *Server) SetRouteTable(t seam.RouteTable) {
+	s.routeTable = t
+}
+
+// RouteTable returns the route table SetRouteTable set, or nil.
+func (s *Server) RouteTable() seam.RouteTable {
+	return s.routeTable
+}
+
+// RegisterRoutes registers the session handlers on the API front: the
+// session, blob, runtime, and model paths on the client listener, the
+// internal runtime metadata path on the internal listener, and the session
+// paths on the forward listener. Each takes no check by the API front,
+// because the handler applies the tenant check itself and mounts each part
+// route behind the check it names. Each path is a prefix served for any
+// method, which the handler's own mux dispatches. It builds the handlers,
+// so every part's routes register before it runs.
 //
-// It refuses a route that Route.Validate refuses, a route on a listener
-// other than the client listener, a route whose access check leaves
-// authentication to its handler, because every route of this mux runs
-// behind its tenant check, a route that repeats a registered method and
-// pattern, and any route once Handler has built the mux, so no route is
-// silently left unmounted.
-//
-// spec: GWSEAM-HandleRoute
-func (s *Server) HandleRoute(r seam.Route) error {
-	if err := r.Validate(); err != nil {
-		return err
-	}
-	if r.Listener != seam.ListenerClient {
-		return fmt.Errorf("%w: %s %s: the session server serves only the client listener", seam.ErrInvalidRoute, r.Method, r.Pattern)
-	}
-	if r.Access == seam.AccessHandler {
-		return fmt.Errorf("%w: %s %s: every session server route runs behind its tenant check", seam.ErrInvalidRoute, r.Method, r.Pattern)
-	}
-	s.routesMu.Lock()
-	defer s.routesMu.Unlock()
-	if s.routesServed {
-		return fmt.Errorf("%w: %s %s: registered after the session server began serving", seam.ErrInvalidRoute, r.Method, r.Pattern)
-	}
-	for _, have := range s.partRoutes {
-		if have.Method == r.Method && have.Pattern == r.Pattern {
-			return fmt.Errorf("%w: %s %s is already registered", seam.ErrInvalidRoute, r.Method, r.Pattern)
+// spec: GWSEAM-RegisterRoutes
+func (s *Server) RegisterRoutes(routes seam.Routes) error {
+	client, forward := s.Handler(), s.ForwardHandler()
+	for _, r := range []seam.Route{
+		{Listener: seam.ListenerClient, Pattern: "/v1/sessions", Handler: client},
+		{Listener: seam.ListenerClient, Pattern: "/v1/sessions/", Handler: client},
+		{Listener: seam.ListenerClient, Pattern: "/v1/blobs/", Handler: client},
+		// §9.1 / §15.1 runtime discovery and the model list. The session
+		// handler serves GET /v1/runtimes, /v1/runtimes/{name}/meta/{key},
+		// and /v1/models, each identity-filtered by §10.6 environment
+		// access, and the §5.1 internal metadata fetch.
+		{Listener: seam.ListenerClient, Pattern: "/v1/runtimes", Handler: client},
+		{Listener: seam.ListenerClient, Pattern: "/v1/runtimes/", Handler: client},
+		{Listener: seam.ListenerClient, Pattern: "/v1/models", Handler: client},
+		{Listener: seam.ListenerInternal, Pattern: "/internal/runtimes/", Handler: client},
+		{Listener: seam.ListenerForward, Pattern: "/v1/sessions", Handler: forward},
+		{Listener: seam.ListenerForward, Pattern: "/v1/sessions/", Handler: forward},
+	} {
+		r.Method, r.Access = seam.MethodAny, seam.AccessHandler
+		if err := routes.HandleRoute(r); err != nil {
+			return err
 		}
 	}
-	s.partRoutes = append(s.partRoutes, r)
 	return nil
 }
 
-// mountPartRoutes mounts the routes HandleRoute registered on mux, each
-// behind its access check, and closes registration.
-func (s *Server) mountPartRoutes(mux *recordingMux) {
-	s.routesMu.Lock()
-	s.routesServed = true
-	routes := append([]seam.Route(nil), s.partRoutes...)
-	s.routesMu.Unlock()
-	for _, r := range routes {
-		mux.HandleFunc(r.Method+" "+r.Pattern, s.routeAccess(r.Access, r.Handler.ServeHTTP))
+// mountPartRoutes mounts on mux, each behind its access check, the routes
+// other parts registered on listener l for the request pipeline, and closes
+// their registration on l.
+func (s *Server) mountPartRoutes(mux *recordingMux, l seam.Listener) {
+	if s.routeTable == nil {
+		return
+	}
+	for _, r := range s.routeTable.ListenerRoutes(l) {
+		mux.HandleFunc(r.MuxPattern(), s.routeAccess(r.Access, r.Handler.ServeHTTP))
 		mux.patterns[len(mux.patterns)-1] += " [" + accessName(r.Access) + "]"
 	}
 }

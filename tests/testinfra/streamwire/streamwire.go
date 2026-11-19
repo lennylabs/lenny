@@ -16,13 +16,15 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
-// Attach builds a stream proxy from opts and registers its routes with srv,
-// before srv serves. Each seam field of opts left nil is filled with srv's
-// own side of the operation, as the composition root fills all of them, so
-// a test sets Events, the bus the session server publishes on, and only the
-// fields it replaces with a fake. It fails the test on a wiring error.
+// Attach builds a stream proxy from opts and registers its routes through
+// the API front route table srv mounts, before srv serves. Each seam field
+// of opts left nil is filled with srv's own side of the operation, as the
+// composition root fills all of them, so a test sets Events, the bus the
+// session server publishes on, and only the fields it replaces with a fake.
+// It fails the test on a wiring error.
 func Attach(t testing.TB, srv *sessionserver.Server, opts streamproxy.Options) *streamproxy.Handler {
 	t.Helper()
 	core := srv.StreamSeam()
@@ -39,7 +41,7 @@ func Attach(t testing.TB, srv *sessionserver.Server, opts streamproxy.Options) *
 	if err != nil {
 		t.Fatalf("streamwire: build the stream proxy: %v", err)
 	}
-	if err := streams.RegisterRoutes(srv); err != nil {
+	if err := streams.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatalf("streamwire: register the stream routes: %v", err)
 	}
 	return streams

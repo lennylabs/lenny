@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // recordingRoutes records the routes a part registers and refuses the
@@ -129,7 +130,7 @@ func TestStreamsAnswerAStoreFailureAsAnInternalError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.RegisterRoutes(srv); err != nil {
+	if err := h.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatal(err)
 	}
 	ts := httptest.NewServer(asOwner(srv.Handler()))
@@ -172,7 +173,7 @@ func TestStreamsTreatANilBusPointerAsNoBus(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.RegisterRoutes(srv); err != nil {
+	if err := h.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatal(err)
 	}
 	handler := asOwner(srv.Handler())

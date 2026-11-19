@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -28,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -46,31 +48,30 @@ import (
 // TestGatewayRouteTableIsFixed builds the REST listener and the
 // CH-HOLDERFORWARD listener with the composition root's own build steps,
 // over in-memory stores, and compares every pattern each listener's muxes
-// mount against the golden file. Each line names the listener, the mux
-// (the listener's own, or the session handler's that the listener mounts
+// mount against the golden file, which was generated from main's wiring
+// before 0117.S8 moved route registration. Each line names the listener
+// (rest for the server of the client and internal listeners, forward for
+// CH-HOLDERFORWARD), the mux (the listener's own, which the API front's
+// route table holds, or the session handler's that the listener mounts
 // under the session paths), and the pattern, with the access check of each
-// route another part registered with the session handler. The playground,
+// route another part registered for the session handler. The playground,
 // the token service proxy, and the forced-drain audit endpoint are enabled,
 // so each conditional route is in the table. The concurrent-stateless
 // ingress, which the background workers mount only with a cluster client,
 // is not.
 func TestGatewayRouteTableIsFixed(t *testing.T) {
-	w, sessionSrv, mcpSrv := routeTableWiring(t)
+	w, sessionSrv := routeTableWiring(t)
 	var b strings.Builder
-	for _, p := range servedPatterns(t, w.mux) {
+	for _, p := range servedPatterns(t, w.apiRoutes.Handler(seam.ListenerClient)) {
 		b.WriteString("rest  listener  " + p + "\n")
 	}
-	for _, p := range sortedCopy(sessionSrv.RoutePatterns()) {
+	for _, p := range sortedCopy(sessionSrv.RoutePatterns(seam.ListenerClient)) {
 		b.WriteString("rest  session   " + p + "\n")
 	}
-	forward, ok := holderForwardInner(sessionSrv.Handler(), mcpSrv.Handler(), w.responsesHandler.Handler()).(*http.ServeMux)
-	if !ok {
-		t.Fatal("holderForwardInner returned no *http.ServeMux")
-	}
-	for _, p := range servedPatterns(t, forward) {
+	for _, p := range servedPatterns(t, w.apiRoutes.Handler(seam.ListenerForward)) {
 		b.WriteString("forward  listener  " + p + "\n")
 	}
-	for _, p := range sortedCopy(sessionSrv.RoutePatterns()) {
+	for _, p := range sortedCopy(sessionSrv.RoutePatterns(seam.ListenerForward)) {
 		b.WriteString("forward  session   " + p + "\n")
 	}
 	compareGolden(t, filepath.Join("testdata", "route-table.golden"), b.String())
@@ -79,7 +80,7 @@ func TestGatewayRouteTableIsFixed(t *testing.T) {
 // routeTableWiring runs the composition root's session server and HTTP
 // surface build steps over in-memory stores and stub handlers, with the
 // conditional routes enabled.
-func routeTableWiring(t *testing.T) (*gatewayWiring, *sessionserver.Server, *mcp.Server) {
+func routeTableWiring(t *testing.T) (*gatewayWiring, *sessionserver.Server) {
 	t.Helper()
 	saved := flag.CommandLine
 	t.Cleanup(func() { flag.CommandLine = saved })
@@ -118,23 +119,26 @@ func routeTableWiring(t *testing.T) (*gatewayWiring, *sessionserver.Server, *mcp
 	w.responsesHandler = &translator.OpenResponsesHandler{}
 
 	sessionSrv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	w.apiRoutes = routetable.New()
+	sessionSrv.SetRouteTable(w.apiRoutes)
 	uploadMetrics, err := uploadhandler.NewUploadMetrics(gwMetrics.Registerer())
 	if err != nil {
 		t.Fatal(err)
 	}
-	attachUploadHandler(sessionSrv, nil, blobstore.NewMemoryStore(nil), w.runtimes, &subsystem.Subsystem{}, uploadMetrics, parts.uploads)
-	attachStreamProxy(sessionSrv, sessionevents.NewBus(0))
-	attachToolRoutes(sessionSrv, store, nil, toolapproval.NewRegistry(), nil, nil)
+	attachUploadHandler(sessionSrv, w.apiRoutes, nil, blobstore.NewMemoryStore(nil), w.runtimes, &subsystem.Subsystem{}, uploadMetrics, parts.uploads)
+	attachStreamProxy(sessionSrv, w.apiRoutes, sessionevents.NewBus(0))
+	attachToolRoutes(sessionSrv, w.apiRoutes, store, nil, toolapproval.NewRegistry(), nil, nil)
 
 	mcpSrv := mcp.NewServer()
 	w.buildHTTPSurface(parts.playground, gwMetrics, sessionSrv,
 		&translator.OpenAIChatHandler{}, w.responsesHandler, credentialserver.New(nil),
 		mcpSrv, nil, nil, discardAppender{}, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, "")
-	if w.mux == nil {
-		t.Fatal("buildHTTPSurface recorded no mux")
+	w.buildHolderForwardServer()
+	if w.httpSrv == nil || w.holderForwardSrv == nil {
+		t.Fatal("the build steps recorded no REST or forward server")
 	}
-	return w, sessionSrv, mcpSrv
+	return w, sessionSrv
 }
 
 // servedPatterns returns, sorted, the pattern of every route registered on

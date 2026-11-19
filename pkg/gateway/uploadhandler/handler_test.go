@@ -118,7 +118,9 @@ func newFakeHandler(t *testing.T, core *fakeCore, opts uploadhandler.Options) (*
 	}
 	mux := http.NewServeMux()
 	for _, r := range rec.routes {
-		mux.Handle(r.Method+" "+r.Pattern, r.Handler)
+		if r.Listener == seam.ListenerClient {
+			mux.Handle(r.MuxPattern(), r.Handler)
+		}
 	}
 	return h, mux
 }
@@ -151,7 +153,8 @@ func TestNewRefusesOptionsWithoutARequiredOperation(t *testing.T) {
 // TestRegisterRoutesDeclaresEachRouteWithItsAccessCheck checks the routes
 // the upload handler registers: the three upload routes behind manage
 // access to the path's session and the blob read behind the tenant check,
-// all on the client listener, and that a refused route stops the
+// all on the client listener, the mid-session upload also on the forward
+// listener (decision 34 of change 0117), and that a refused route stops the
 // registration with the refusal.
 //
 // spec: GWSEAM-RegisterRoutes
@@ -165,19 +168,24 @@ func TestRegisterRoutesDeclaresEachRouteWithItsAccessCheck(t *testing.T) {
 	if err := h.RegisterRoutes(rec); err != nil {
 		t.Fatal(err)
 	}
-	want := map[string]seam.RouteAccess{
-		"POST /v1/sessions/{id}/upload":            seam.AccessSessionManage,
-		"POST /v1/sessions/{id}/upload-archive":    seam.AccessSessionManage,
-		"POST /v1/sessions/{id}/upload-to-session": seam.AccessSessionManage,
-		"GET /v1/blobs/{ref...}":                   seam.AccessTenant,
+	type key struct {
+		listener seam.Listener
+		route    string
+	}
+	want := map[key]seam.RouteAccess{
+		{seam.ListenerClient, "POST /v1/sessions/{id}/upload"}:             seam.AccessSessionManage,
+		{seam.ListenerClient, "POST /v1/sessions/{id}/upload-archive"}:     seam.AccessSessionManage,
+		{seam.ListenerClient, "POST /v1/sessions/{id}/upload-to-session"}:  seam.AccessSessionManage,
+		{seam.ListenerForward, "POST /v1/sessions/{id}/upload-to-session"}: seam.AccessSessionManage,
+		{seam.ListenerClient, "GET /v1/blobs/{ref...}"}:                    seam.AccessTenant,
 	}
 	if len(rec.routes) != len(want) {
 		t.Fatalf("registered %d routes, want %d", len(rec.routes), len(want))
 	}
 	for _, r := range rec.routes {
-		key := r.Method + " " + r.Pattern
-		if access, ok := want[key]; !ok || r.Access != access || r.Listener != seam.ListenerClient || r.Validate() != nil {
-			t.Errorf("route %s: access %d, listener %d, valid %v", key, r.Access, r.Listener, r.Validate())
+		k := key{r.Listener, r.MuxPattern()}
+		if access, ok := want[k]; !ok || r.Access != access || r.Validate() != nil {
+			t.Errorf("route %v: access %d, valid %v", k, r.Access, r.Validate())
 		}
 	}
 
@@ -358,7 +366,9 @@ func TestMidSessionUploadMapsTheCoresAnswers(t *testing.T) {
 	}
 	bare := http.NewServeMux()
 	for _, r := range rec.routes {
-		bare.Handle(r.Method+" "+r.Pattern, r.Handler)
+		if r.Listener == seam.ListenerClient {
+			bare.Handle(r.MuxPattern(), r.Handler)
+		}
 	}
 	if rr := post(bare); rr.Code != http.StatusConflict {
 		t.Errorf("no workspace write operation: %d, want 409", rr.Code)

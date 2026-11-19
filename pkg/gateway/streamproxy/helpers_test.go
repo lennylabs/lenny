@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // testOwner is the subject the tests in this package authenticate as when a
@@ -50,7 +51,7 @@ func newStreamServer(t *testing.T, store sessionstore.Store, opts sessionserver.
 	if err != nil {
 		t.Fatalf("streamproxy.New: %v", err)
 	}
-	if err := streams.RegisterRoutes(srv); err != nil {
+	if err := streams.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatalf("RegisterRoutes: %v", err)
 	}
 	return srv

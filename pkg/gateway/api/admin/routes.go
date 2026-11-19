@@ -7,6 +7,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // Handler builds the §15.1 admin mux. It constructs the ServeMux,
@@ -810,4 +811,17 @@ func (r *Router) registerMeRoutes(mux *http.ServeMux) {
 	// what operations it is permitted to invoke.
 	mux.HandleFunc("GET /v1/admin/me", r.handleMe)
 	mux.HandleFunc("GET /v1/admin/me/authorized-tools", r.handleAuthorizedTools)
+}
+
+// RegisterRoutes registers the admin router on the client listener under
+// /v1/admin/, for any method, because Handler dispatches by method itself.
+// The API front applies no route check of its own; the request pipeline
+// authenticates the admin API and each admin route applies its permission.
+//
+// spec: GWSEAM-RegisterRoutes
+func (r *Router) RegisterRoutes(routes seam.Routes) error {
+	return routes.HandleRoute(seam.Route{
+		Listener: seam.ListenerClient, Method: seam.MethodAny, Pattern: "/v1/admin/",
+		Access: seam.AccessHandler, Handler: r.Handler(),
+	})
 }
