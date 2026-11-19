@@ -4,8 +4,9 @@ package health
 
 import (
 	"encoding/json"
-	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"net/http"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // Handler returns the §25.3 Platform Health API http.Handler over
