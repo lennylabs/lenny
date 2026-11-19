@@ -160,7 +160,7 @@ packages:
     - package: pkg/audit/siem
       count: 16
     - package: pkg/auth/authmw
-      count: 82
+      count: 84
     - package: pkg/auth/callercheck
       count: 14
     - package: pkg/auth/introspection
@@ -291,6 +291,8 @@ packages:
       count: 18
     - package: pkg/gateway/api/deprecation
       count: 5
+    - package: pkg/gateway/api/pipeline
+      count: 12
     - package: pkg/gateway/api/ratelimit
       count: 49
     - package: pkg/gateway/api/recover
@@ -678,7 +680,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 2951
+      count: 2954
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
