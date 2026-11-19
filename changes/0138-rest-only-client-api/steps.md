@@ -20,6 +20,7 @@
 - aliases: [RO-A, RO-2, R1, R2, R3, R4, R5, R7, R8, R12, R13, R14, R15, R16, R17, R19]
 - lanes: [specification, code, documentation]
 - depends-on: [0135.S5, 0146.S1, 0122.S1, 0120.S1]
+- closes: [APICONV-I1]
 
 The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, and R19, R13's download origin, the event stream's rules moved from §15.2 with its close at expiry and revocation, and their tests. It needs MD-E's events, SL's routes, CT-A, and AM-A, so that the message and conversation members exist.
 
@@ -69,7 +70,7 @@ The conformance kit, the umbrella chart's dependencies and routes, and the creat
 - aliases: [RO-F, RO-11]
 - lanes: [specification, code, documentation]
 - depends-on: [0138.S4, 0138.S5]
-- closes: [F-15.1.80, F-15.1.81, F-15.1.82, F-15.1.83, F-15.2.27, F-15.2.28, F-15.2.30, F-15.2.31]
+- closes: [F-15.1.80, F-15.1.81, F-15.1.82, F-15.1.83, F-15.2.27, F-15.2.28, F-15.2.30, F-15.2.31, CAPIMSG-I1]
 
 The removal of "RO-11" from the specification, the code, the chart, and the documentation, and the BUILD-GAPS closures. It needs 0138.S5 for the MCP adapter, so that a default deployment serves MCP throughout.
 

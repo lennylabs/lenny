@@ -6,7 +6,7 @@
 - status: Planned
 - aliases: [SD-1]
 - lanes: [specification, code, documentation]
-- closes: [F-15.1.76, F-15.1.77, F-15.1.78, F-7.3.36]
+- closes: [F-15.1.76, F-15.1.77, F-15.1.78, F-7.3.36, CAPISES-I3]
 
 Everything above.
 

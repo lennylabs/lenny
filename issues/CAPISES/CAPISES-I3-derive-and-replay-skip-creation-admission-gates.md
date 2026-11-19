@@ -1,9 +1,10 @@
 ---
 id: CAPISES-I3
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0144.S1
 ---
 
 # Derive and replay create a session without the admission gates that session creation runs

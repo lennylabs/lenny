@@ -1,9 +1,10 @@
 ---
 id: APICONV-I1
-status: open
+status: planned
 kind: spec-defect
 severity: low
 requirements: []
+change: 0138.S1
 ---
 
 # Idempotency keys are scoped per tenant, so a caller can replay another caller's cached response
