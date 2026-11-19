@@ -126,3 +126,10 @@
   - the step entry's list of unbuilt work.
 
   [`digests/0117.S8.md`](digests/0117.S8.md) records them.
+- 2026-11-19, build. 0117.S8 items 1 to 3 of what the first part left built on `change/0117.S8-api-front`, with open decisions 64 to 67 raised and their recommendations built:
+  - a guard test pins the REST and forward listeners' route table against a golden file generated from `main`'s wiring;
+  - the seam page's "Route registration" states the internal listener, a route per listener, a route for any method, and `GWSEAM-ListenerRoutes`;
+  - `pkg/gateway/api/routetable` serves the route registration interface, the session server's interim `HandleRoute` is retired, and every route of the REST and forward listeners registers through the table, the forward listener serving only the routes registered on it (decision 34);
+  - the flags only the API front reads move into the API front's packages (decision 7).
+
+  Not yet built: the split of `sessionserver`'s pipeline files. [`digests/0117.S8.md`](digests/0117.S8.md) records the build.
