@@ -1996,6 +1996,16 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-RecordPodRetirement",
+      "anchor": "gwseam-recordpodretirement",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RecordScrubFailure",
+      "anchor": "gwseam-recordscrubfailure",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-RecoverTree",
       "anchor": "gwseam-recovertree",
       "file": "spec/interfaces/gateway-seams.md"

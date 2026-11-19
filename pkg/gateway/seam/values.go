@@ -4,6 +4,7 @@ package seam
 
 import (
 	"errors"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
@@ -23,6 +24,18 @@ type Session struct {
 	State           state.State
 	// LastSeq is the sequence number of the session's last event.
 	LastSeq uint64
+	// DelegationDepth is the session's depth in its delegation tree, zero
+	// for a tree root.
+	DelegationDepth int
+	// PodAssignment names the pod the session is bound to, empty when it
+	// holds none.
+	PodAssignment string
+	// CreatedAt, UpdatedAt, and TerminatedAt are the times the session was
+	// created, last written, and moved to a terminal state; TerminatedAt is
+	// zero for a session that is not terminal.
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+	TerminatedAt time.Time
 }
 
 // SessionAction is the access a caller asks for on a session.
