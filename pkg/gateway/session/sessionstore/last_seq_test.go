@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 func seededStore(t *testing.T) *memstore.Store {
@@ -73,7 +73,7 @@ func TestLastSeqCounterSeedsASecondReplicaBus_spec_7_3(t *testing.T) {
 		counter := sessionstore.LastSeqCounter{Sessions: st}
 		holder := sessionevents.NewBus(16).WithLastSeqPersister(counter).WithLastSeqLoader(counter)
 		waiter := sessionevents.NewBus(16).WithLastSeqPersister(counter).WithLastSeqLoader(counter)
-		first := holder.PublishForTenant("acme", "s1", "status_change", `{"state":"running"}`, windowNow)
+		first := holder.Publish("acme", "s1", "status_change", `{"state":"running"}`, windowNow)
 		deadline := time.Now().Add(5 * time.Second)
 		for {
 			row, err := st.Get(ctx, "acme", "s1")
@@ -85,7 +85,7 @@ func TestLastSeqCounterSeedsASecondReplicaBus_spec_7_3(t *testing.T) {
 			}
 			time.Sleep(5 * time.Millisecond)
 		}
-		next := waiter.PublishForTenant("acme", "s1", "status_change", `{"state":"input_required"}`, windowNow)
+		next := waiter.Publish("acme", "s1", "status_change", `{"state":"input_required"}`, windowNow)
 		if next.Seq != first.Seq+1 {
 			t.Fatalf("second replica's first seq = %d, want %d", next.Seq, first.Seq+1)
 		}

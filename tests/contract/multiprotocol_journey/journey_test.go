@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -37,10 +38,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/tests/testinfra/matrix"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
@@ -83,6 +85,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Clock:           clock,
 		IDFunc:          func() string { return idSeed },
 	})
+	streamwire.Attach(t, restHandler, streamproxy.Options{Events: bus, Clock: clock})
 	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 

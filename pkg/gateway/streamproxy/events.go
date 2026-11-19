@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package streamproxy
 
 import (
 	"context"
@@ -12,9 +12,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // eventSortField is the sort key for the JSON list view of the events
@@ -86,44 +86,44 @@ func wantsJSONEvents(r *http.Request) bool {
 //
 // 404 RESOURCE_NOT_FOUND when the session does not exist or belongs
 // to another tenant.
-func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
-	if s.events == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "EVENT_STREAM_UNAVAILABLE",
+func (h *Handler) handleEvents(w http.ResponseWriter, r *http.Request) {
+	if h.events == nil {
+		errorclassify.WriteError(w, http.StatusServiceUnavailable, "EVENT_STREAM_UNAVAILABLE",
 			"gateway has no event bus configured", nil)
 		return
 	}
-	tenantID := s.resolveTenant(r)
+	tenantID := h.identity.RequestTenant(r)
 	id := r.PathValue("id")
-	row, err := s.store.Get(r.Context(), tenantID, id)
+	row, err := h.sessions.LookupSession(r.Context(), tenantID, id)
 	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		if errors.Is(err, seam.ErrSessionNotFound) {
+			errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		errorclassify.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 
 	// JSON list view — §15.1 canonical envelope over the
 	// retained backlog; no SSE keep-alive, no live tail.
 	if wantsJSONEvents(r) {
-		s.serveEventsJSON(w, r, tenantID, id)
+		h.serveEventsJSON(w, r, tenantID, id)
 		return
 	}
 
 	flusher, ok := w.(http.Flusher)
 	if !ok {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+		errorclassify.WriteError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
 			"response writer does not support streaming", nil)
 		return
 	}
 
 	afterSeq := resumeCursor(r)
 	// §7.2 defense-in-depth: the bus enforces the tenant binding even
-	// if a future caller drops the store.Get precheck above.
-	sub, err := s.events.SubscribeForTenant(tenantID, id, afterSeq, 64)
+	// if a future caller drops the session lookup above.
+	sub, err := h.events.Subscribe(tenantID, id, afterSeq, 64)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 		return
 	}
 	defer sub.Close()
@@ -143,8 +143,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// `children_reattached` frame *before* any gap_detected marker so the
 	// client re-establishes session state (the §7.2 STR-007 single-
 	// coordinator / post-handoff reconnect symmetry). F-7.2.13, F-10.4.2.
-	if s.isCoordinatorHandoffReattach(row, afterSeq, sub.Backlog) {
-		s.synthesizeHandoffReattach(r.Context(), w, row, afterSeq)
+	if h.isCoordinatorHandoffReattach(row, afterSeq, sub.Backlog) {
+		h.synthesizeHandoffReattach(r.Context(), w, row, afterSeq)
 	}
 
 	// spec: §7.2
@@ -154,8 +154,8 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 	// render a data-loss warning. Cursor=0 is the fresh-connect path and
 	// is never a gap.
 	if afterSeq > 0 {
-		if oldestSeq, ok := s.events.OldestRetainedSeq(id); ok && oldestSeq > afterSeq+1 {
-			writeGapMarkers(w, afterSeq, oldestSeq, s.clock())
+		if oldestSeq, ok := h.events.OldestRetainedSeq(id); ok && oldestSeq > afterSeq+1 {
+			writeGapMarkers(w, afterSeq, oldestSeq, h.now())
 		}
 	}
 
@@ -172,7 +172,7 @@ func (s *Server) handleEvents(w http.ResponseWriter, r *http.Request) {
 		select {
 		case <-ctx.Done():
 			return
-		case ev, open := <-sub.Events():
+		case ev, open := <-sub.Events:
 			if !open {
 				return
 			}
@@ -200,7 +200,7 @@ func resumeCursor(r *http.Request) uint64 {
 }
 
 // writeSSEEvent writes one event as an SSE frame.
-func writeSSEEvent(w http.ResponseWriter, ev sessionevents.Event) {
+func writeSSEEvent(w http.ResponseWriter, ev seam.Event) {
 	fmt.Fprintf(w, "id: %d\n", ev.Seq)
 	fmt.Fprintf(w, "event: %s\n", ev.Type)
 	fmt.Fprintf(w, "data: %s\n\n", ev.Data)
@@ -243,11 +243,11 @@ func writeSyntheticSSE(w http.ResponseWriter, eventType string, data []byte) {
 // serve the full relayed backlog, so the client lost nothing and the
 // reconnect needs no recovery frames; emitting them would be spurious.
 // spec: §10.4. F-7.2.13, F-10.4.2.
-func (s *Server) isCoordinatorHandoffReattach(row sessionstore.Session, afterSeq uint64, backlog []sessionevents.Event) bool {
-	if s.events == nil || afterSeq == 0 || row.LastSeq <= 0 {
+func (h *Handler) isCoordinatorHandoffReattach(row seam.Session, afterSeq uint64, backlog []seam.Event) bool {
+	if h.events == nil || afterSeq == 0 || row.LastSeq == 0 {
 		return false
 	}
-	if _, hasLocal := s.events.OldestRetainedSeq(row.ID); hasLocal {
+	if _, hasLocal := h.events.OldestRetainedSeq(row.ID); hasLocal {
 		return false
 	}
 	if len(backlog) > 0 && backlog[0].Seq == afterSeq+1 {
@@ -284,13 +284,13 @@ func (s *Server) isCoordinatorHandoffReattach(row sessionstore.Session, afterSeq
 // reconstructible events"); §7.2, which defines the session.resumed,
 // status_change, and children_reattached events on the interactive
 // stream. F-7.2.13, F-10.4.2.
-func (s *Server) synthesizeHandoffReattach(ctx context.Context, w http.ResponseWriter, row sessionstore.Session, afterSeq uint64) {
-	if frame, ok := s.handoffResumedFrame(); ok {
+func (h *Handler) synthesizeHandoffReattach(ctx context.Context, w http.ResponseWriter, row seam.Session, afterSeq uint64) {
+	if frame, ok := h.frames.ResumedFrame(); ok {
 		writeSyntheticSSE(w, "session.resumed", frame)
 	}
 	stateFrame, _ := json.Marshal(map[string]any{"state": string(row.State)})
 	writeSyntheticSSE(w, "status_change", stateFrame)
-	if children, ok := s.buildHandoffChildrenReattached(ctx, row.TenantID, row.ID, afterSeq); ok {
+	if children, ok := h.frames.ChildrenReattachedFrame(ctx, row.TenantID, row.ID, afterSeq); ok {
 		writeSyntheticSSE(w, "children_reattached", children)
 	}
 }
@@ -352,78 +352,6 @@ func writeGapMarkers(w http.ResponseWriter, afterSeq, oldestSeq uint64, now time
 	fmt.Fprintf(w, "data: %s\n\n", cbBytes)
 }
 
-// publishEvent is the gateway-side helper that publishes a session
-// event when the event bus is wired. eventData is marshalled to
-// JSON; a marshalling failure publishes an empty object. The tenant id
-// is recorded on the bus so SubscribeForTenant enforces the §7.2
-// tenant-isolation predicate. A non-empty tenant id is the production
-// contract; tests may pass "" for the legacy untenanted code path.
-func (s *Server) publishEvent(tenantID, sessionID, eventType string, payload any) {
-	// spec: §6.2 — the agent_output / tool_use events the
-	// adapter surfaces (published here as `response`, `response_degraded`,
-	// and `tool_use*`) are qualifying activity that resets the §11.3
-	// `maxIdleTime` clock so a streaming session is not reaped as idle.
-	// Inbound, lifecycle, and warning events (status_change,
-	// message_delivered, workspace_plan_warning, session.resumed,
-	// session_complete) are not agent activity and do not stamp. F-11.3.7.
-	if s.activityStamper != nil && isAgentActivityEvent(eventType) {
-		s.activityStamper.Stamp(tenantID, sessionID)
-	}
-	if s.events == nil {
-		return
-	}
-	data, err := json.Marshal(payload)
-	if err != nil {
-		data = []byte("{}")
-	}
-	if tenantID == "" {
-		s.events.Publish(sessionID, eventType, string(data), s.clock())
-		return
-	}
-	s.events.PublishForTenant(tenantID, sessionID, eventType, string(data), s.clock())
-}
-
-// isAgentActivityEvent reports whether a published session event type is a
-// §6.2 qualifying agent activity (agent_output or tool_use
-// from the adapter). The gateway publishes agent output as `response` /
-// `response_degraded` and tool calls under the `tool_use` prefix. F-11.3.7.
-func isAgentActivityEvent(eventType string) bool {
-	switch eventType {
-	case "response", "response_degraded", "agent_output":
-		return true
-	}
-	return strings.HasPrefix(eventType, "tool_use")
-}
-
-// recordTTFTOnce observes the §6.3 / §16.1 TTFT
-// histogram the first time row receives an agent-originated streaming
-// event (the gateway's `response` event type). T0 is the session's
-// `CreatedAt` (the POST /v1/sessions admission instant per §15.1).
-// Subsequent events for the same session are no-ops so the histogram
-// only counts each session once. spec: §6.3, §16.1.
-func (s *Server) recordTTFTOnce(row sessionstore.Session, eventType string) {
-	if s.observeTimeToFirstToken == nil {
-		return
-	}
-	if eventType != "response" {
-		return
-	}
-	if _, loaded := s.firstTokenObserved.LoadOrStore(row.ID, struct{}{}); loaded {
-		return
-	}
-	runtimeClass, ok := s.runtimeClassOf(row.IsolationProfile)
-	if !ok {
-		// A row with no resolved isolation profile would mislabel the
-		// histogram; skip rather than emit an empty runtime_class.
-		return
-	}
-	seconds := s.clock().Sub(row.CreatedAt).Seconds()
-	if seconds < 0 {
-		seconds = 0
-	}
-	s.observeTimeToFirstToken(row.PoolRef, runtimeClass, string(row.IsolationProfile), seconds)
-}
-
 // serveEventsJSON renders the §15.1 canonical envelope
 // `{items, cursor, hasMore}` over the backlog the serving replica
 // reads: its in-memory replay buffer merged with the history of the
@@ -432,11 +360,11 @@ func (s *Server) recordTTFTOnce(row sessionstore.Session, eventType string) {
 // `?cursor=` (canonical) or `?afterSeq=` (legacy) advance the
 // pagination, `?limit=` clamps to [1, 200], and the envelope is the
 // same shape as every other §15.1 list endpoint. F-15.1.23.
-func (s *Server) serveEventsJSON(w http.ResponseWriter, r *http.Request, tenantID, id string) {
+func (h *Handler) serveEventsJSON(w http.ResponseWriter, r *http.Request, tenantID, id string) {
 	params, ferr := pagination.ParseRequest(r,
-		[]string{eventSortField}, eventsDefaultSort, s.clock())
+		[]string{eventSortField}, eventsDefaultSort, h.now())
 	if ferr != nil {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr.Message, ferr.Details())
+		errorclassify.WriteError(w, http.StatusBadRequest, "VALIDATION_ERROR", ferr.Message, ferr.Details())
 		return
 	}
 	afterSeq := uint64(0)
@@ -450,13 +378,13 @@ func (s *Server) serveEventsJSON(w http.ResponseWriter, r *http.Request, tenantI
 		}
 	}
 
-	// SubscribeForTenant + Close reads the retained backlog under the
+	// Subscribe + Close reads the retained backlog under the
 	// same §7.2 tenant-binding check the SSE path uses, so a foreign
 	// session cannot reach the JSON envelope even if the per-handler
-	// store.Get pre-check is bypassed by a future refactor.
-	sub, err := s.events.SubscribeForTenant(tenantID, id, afterSeq, 1)
+	// session lookup is bypassed by a future refactor.
+	sub, err := h.events.Subscribe(tenantID, id, afterSeq, 1)
 	if err != nil {
-		s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+		errorclassify.WriteError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 		return
 	}
 	hist := sub.Backlog
@@ -482,7 +410,7 @@ func (s *Server) serveEventsJSON(w http.ResponseWriter, r *http.Request, tenantI
 	if hasMore && len(envelope.Items) > 0 {
 		last := envelope.Items[len(envelope.Items)-1]
 		seqStr := strconv.FormatUint(last.Seq, 10)
-		envelope.Cursor = pagination.MintCursor(params.Sort, seqStr, seqStr, s.clock())
+		envelope.Cursor = pagination.MintCursor(params.Sort, seqStr, seqStr, h.now())
 	}
 
 	w.Header().Set("Content-Type", "application/json")

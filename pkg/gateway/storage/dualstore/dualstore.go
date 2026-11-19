@@ -34,6 +34,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // DefaultMaxUnavailable is the §10.1 item 4 `dualStoreUnavailableMaxSeconds`
@@ -73,13 +75,6 @@ type GaugeSetter interface {
 	SetDualStoreUnavailable(unavailable bool)
 }
 
-// Broadcaster pushes a platform-level SSE event to every active client
-// stream. sessionevents.Bus satisfies it via Broadcast. The return value
-// is the number of streams reached (used only for the structured log).
-type Broadcaster interface {
-	Broadcast(eventType, data string, now time.Time) int
-}
-
 // Monitor is the §10.1 per-replica dual-store degraded-mode state machine.
 type Monitor struct {
 	// PostgresProbe and RedisProbe report each store's reachability. A
@@ -89,9 +84,10 @@ type Monitor struct {
 	// Gauge receives the lenny_dual_store_unavailable transitions. Nil
 	// disables the gauge; the state machine still runs.
 	Gauge GaugeSetter
-	// Streams receives the PLATFORM_DEGRADED broadcast on detection. Nil
-	// disables the broadcast.
-	Streams Broadcaster
+	// Streams receives the PLATFORM_DEGRADED broadcast on detection through
+	// GWSEAM-Broadcast, which the stream proxy serves; the count of streams
+	// reached feeds only the structured log. Nil disables the broadcast.
+	Streams seam.Events
 	// MaxUnavailable is the per-replica dualStoreUnavailableMaxSeconds
 	// countdown. Zero falls back to DefaultMaxUnavailable.
 	MaxUnavailable time.Duration
@@ -178,8 +174,8 @@ func (m *Monitor) tick(ctx context.Context) {
 			m.Gauge.SetDualStoreUnavailable(true)
 		}
 		reached := 0
-		if m.Streams != nil {
-			reached = m.Streams.Broadcast(PlatformDegradedEventType, PlatformDegradedData, now)
+		if streams := seam.EventsOrNil(m.Streams); streams != nil {
+			reached = streams.Broadcast(PlatformDegradedEventType, PlatformDegradedData, now)
 		}
 		m.logf("dualstore: Postgres and Redis both unreachable; entering §10.1 degraded mode (PLATFORM_DEGRADED broadcast to %d stream(s), reason=%s)", reached, degradedReason)
 		return

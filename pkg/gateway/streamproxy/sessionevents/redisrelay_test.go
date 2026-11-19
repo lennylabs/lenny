@@ -10,7 +10,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // spec: §4.4 — durable event cursors across replicas.
@@ -108,7 +108,7 @@ func TestBusWithRelayPublishFanout(t *testing.T) {
 	bus := sessionevents.NewBus(0).WithRedisRelay(relay)
 
 	now := time.Now().UTC()
-	bus.Publish("sess-X", "message_delivered", `{"k":"v"}`, now)
+	bus.Publish("", "sess-X", "message_delivered", `{"k":"v"}`, now)
 
 	// The other replica reads via the relay directly.
 	got, err := relay.History(context.Background(), "sess-X", 0)
@@ -138,15 +138,15 @@ func TestBusSubscribeMergesCrossReplicaHistory(t *testing.T) {
 	// Sibling replica publishes via its own Bus + same relay.
 	publisher := sessionevents.NewBus(0).WithRedisRelay(relay)
 	now := time.Now().UTC()
-	publisher.Publish("sess-2", "type-a", `{"i":1}`, now)
-	publisher.Publish("sess-2", "type-b", `{"i":2}`, now)
+	publisher.Publish("", "sess-2", "type-a", `{"i":1}`, now)
+	publisher.Publish("", "sess-2", "type-b", `{"i":2}`, now)
 
 	// This replica has its own Bus with no local history for sess-2
 	// (the publishes happened on the other replica). Subscribe with
 	// afterSeq=0 should still produce the backlog from the cross-
 	// replica relay.
 	reader := sessionevents.NewBus(0).WithRedisRelay(relay)
-	sub := reader.Subscribe("sess-2", 0, 4)
+	sub, _ := reader.Subscribe("", "sess-2", 0, 4)
 	defer sub.Close()
 	if len(sub.Backlog) != 2 {
 		t.Fatalf("Backlog merged size = %d, want 2 (cross-replica history)", len(sub.Backlog))
@@ -165,10 +165,10 @@ func TestBusSubscribePrefersLocalEntryOnSeqCollision(t *testing.T) {
 	bus := sessionevents.NewBus(0).WithRedisRelay(relay)
 
 	now := time.Now().UTC()
-	bus.Publish("sess-3", "local-type", `{"src":"local"}`, now)
+	bus.Publish("", "sess-3", "local-type", `{"src":"local"}`, now)
 	// The publish fans out to Redis; subscribe should not double-
 	// count the event.
-	sub := bus.Subscribe("sess-3", 0, 4)
+	sub, _ := bus.Subscribe("", "sess-3", 0, 4)
 	defer sub.Close()
 	if len(sub.Backlog) != 1 {
 		t.Fatalf("Backlog dedup size = %d, want 1", len(sub.Backlog))
@@ -183,11 +183,11 @@ func TestBusSubscribePrefersLocalEntryOnSeqCollision(t *testing.T) {
 func TestBusWithoutRelayKeepsExistingBehaviour(t *testing.T) {
 	bus := sessionevents.NewBus(0) // no relay
 	now := time.Now().UTC()
-	ev := bus.Publish("sess-4", "type-x", "{}", now)
+	ev := bus.Publish("", "sess-4", "type-x", "{}", now)
 	if ev.Seq != 1 {
 		t.Errorf("Seq = %d, want 1", ev.Seq)
 	}
-	sub := bus.Subscribe("sess-4", 0, 4)
+	sub, _ := bus.Subscribe("", "sess-4", 0, 4)
 	defer sub.Close()
 	if len(sub.Backlog) != 1 {
 		t.Errorf("Backlog len = %d, want 1", len(sub.Backlog))

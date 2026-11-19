@@ -21,11 +21,11 @@ import (
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 
@@ -39,7 +39,7 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §7.2/§7.3 messaging; §8.10 tree
 // archive; §8.2 tree budget; §9.2 interactions; §9.4 memory; §10.7 evals.
-func (w *gatewayWiring) buildSessionMessaging() {
+func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.Flags) {
 	f := w.f
 	evalAggregationRefreshSeconds := f.evalAggregationRefreshSeconds
 	memoryEnabled := f.memoryEnabled
@@ -47,7 +47,6 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	messagingDurableInbox := f.messagingDurableInbox
 	messagingMaxDLQSize := f.messagingMaxDLQSize
 	messagingMaxInboxSize := f.messagingMaxInboxSize
-	sessionEventReplayBufferDepth := f.sessionEventReplayBufferDepth
 	toolApprovalTimeout := f.toolApprovalTimeout
 	treeArchiveCacheEntries := f.treeArchiveCacheEntries
 
@@ -60,9 +59,13 @@ func (w *gatewayWiring) buildSessionMessaging() {
 	sessions := w.sessions
 	exec := w.exec
 
-	// spec: §10.4 — replay buffer depth is operator-tunable
-	// via gateway.sessionEventReplayBufferDepth. F-10.4.5.
-	eventBus := sessionevents.NewBus(*sessionEventReplayBufferDepth)
+	// The §10.4 replay buffer depth is operator-tunable via
+	// gateway.sessionEventReplayBufferDepth, within the accepted range the
+	// stream proxy's flag set checks. F-10.4.5.
+	if err := sessionEventFlags.Validate(); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
+	eventBus := sessionevents.NewBus(*sessionEventFlags.ReplayBufferDepth)
 	// §4.4 / §12.4 (lenny:events: relay row): when Redis is
 	// wired, attach the cross-replica relay so a client reconnecting via
 	// Last-Event-ID to a different replica sees prior events (the §15.1

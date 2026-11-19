@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // decodeFrame unmarshals a projected wire frame into a generic map so a

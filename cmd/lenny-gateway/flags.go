@@ -43,6 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/quota"
@@ -327,7 +328,6 @@ type gatewayFlags struct {
 	adminTokenSecretName                          *string
 	adminTokenTenant                              *string
 	adminTokenReclaimIntervalSeconds              *int
-	sessionEventReplayBufferDepth                 *int
 	memoryMaxPerUser                              *int
 	memoryEnabled                                 *bool
 	memoryRecordCountInterval                     *time.Duration
@@ -362,26 +362,28 @@ type gatewayFlags struct {
 // many build steps and the closures they hand to parts read, so that none
 // of them holds a part's flag values.
 type partFlags struct {
-	playground *playground.Flags
-	tlsProbe   *tlsprobe.Flags
-	pdbWatcher *pdbwatcher.Flags
-	leader     *gatewayleader.Flags
-	llmProxy   *llmproxy.Flags
-	metering   *metering.Flags
-	uploads    *uploadhandler.Flags
+	sessionEvents *sessionevents.Flags
+	playground    *playground.Flags
+	tlsProbe      *tlsprobe.Flags
+	pdbWatcher    *pdbwatcher.Flags
+	leader        *gatewayleader.Flags
+	llmProxy      *llmproxy.Flags
+	metering      *metering.Flags
+	uploads       *uploadhandler.Flags
 }
 
 // registerPartFlags registers the parts' flags on the process-wide flag set.
 // It runs before parseFlags parses the set.
 func registerPartFlags() *partFlags {
 	return &partFlags{
-		playground: playground.RegisterFlags(flag.CommandLine),
-		tlsProbe:   tlsprobe.RegisterFlags(flag.CommandLine),
-		pdbWatcher: pdbwatcher.RegisterFlags(flag.CommandLine),
-		leader:     gatewayleader.RegisterFlags(flag.CommandLine),
-		llmProxy:   llmproxy.RegisterFlags(flag.CommandLine),
-		metering:   metering.RegisterFlags(flag.CommandLine),
-		uploads:    uploadhandler.RegisterFlags(flag.CommandLine),
+		sessionEvents: sessionevents.RegisterFlags(flag.CommandLine),
+		playground:    playground.RegisterFlags(flag.CommandLine),
+		tlsProbe:      tlsprobe.RegisterFlags(flag.CommandLine),
+		pdbWatcher:    pdbwatcher.RegisterFlags(flag.CommandLine),
+		leader:        gatewayleader.RegisterFlags(flag.CommandLine),
+		llmProxy:      llmproxy.RegisterFlags(flag.CommandLine),
+		metering:      metering.RegisterFlags(flag.CommandLine),
+		uploads:       uploadhandler.RegisterFlags(flag.CommandLine),
 	}
 }
 
@@ -1263,12 +1265,6 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§17.6 tenant the initial lenny-admin user and token are scoped to. Override via LENNY_ADMIN_TOKEN_TENANT.")
 	f.adminTokenReclaimIntervalSeconds = flag.Int("admin-token-reclaim-interval-seconds", envInt("LENNY_ADMIN_TOKEN_RECLAIM_INTERVAL_SECONDS", 300),
 		"§13.3 cadence in seconds of the leader-gated admin-token reclaimer sweep, which durably revokes a lenny-admin-token predecessor orphaned by a crash between the Secret patch and the in-request revoke (default 300 / 5 minutes). A non-positive value falls back to the default. This bounds the residual crash-window exposure of a superseded admin credential. Override via LENNY_ADMIN_TOKEN_RECLAIM_INTERVAL_SECONDS.")
-	// spec: §10.4 — operator-tunable SSE replay-buffer depth.
-	// Default 512 events matches the §10.4 reconnect-window assumption
-	// (60s at 10 events/s). The 64..4096 envelope is the spec-mandated
-	// range. F-10.4.5.
-	f.sessionEventReplayBufferDepth = flag.Int("session-event-replay-buffer-depth", envInt("LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH", 512),
-		"§10.4 per-session SSE replay buffer depth (events). Default 512 matches the §10.4 60s reconnect window at 10 events/s; accepted range 64..4096. Override via LENNY_SESSION_EVENT_REPLAY_BUFFER_DEPTH.")
 	// spec: §9.4 — `memory.maxMemoriesPerUser` (default
 	// 10,000) bounds the per-user record count; a Write that exceeds
 	// it evicts the oldest by created_at. F-9.4.5.

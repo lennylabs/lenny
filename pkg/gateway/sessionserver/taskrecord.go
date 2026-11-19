@@ -65,8 +65,8 @@ func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) 
 	// rollup (null until every descendant settles) when the Builder is
 	// wired. F-8.8.3.
 	if s.treeRollups != nil {
-		rec.Usage = s.treeRollups.NodeUsage(ctx, seamSession(row))
-		rec.TreeUsage = s.treeRollups.TreeUsage(ctx, seamSession(row), rec.Usage)
+		rec.Usage = s.treeRollups.NodeUsage(ctx, seamSessionOf(row))
+		rec.TreeUsage = s.treeRollups.TreeUsage(ctx, seamSessionOf(row), rec.Usage)
 	}
 	return rec
 }

@@ -972,7 +972,7 @@ func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		data, _ := json.Marshal(struct {
 			Output []json.RawMessage `json:"output"`
 		}{Output: parts})
-		deps.Events.Publish(row.ID, "agent_output", string(data), clock())
+		deps.Events.Publish("", row.ID, "agent_output", string(data), clock())
 		return textResult(fmt.Sprintf(`{"emitted":%d}`, len(parts))), nil
 	})
 }
@@ -1103,7 +1103,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				payload.Metadata = map[string]any{"maxInputRounds": 1}
 			}
 			data, _ := json.Marshal(payload)
-			deps.Events.Publish(sessionID, "elicitation_request", string(data), clock())
+			deps.Events.Publish("", sessionID, "elicitation_request", string(data), clock())
 		}
 		// Block in the §7.2 input_required sub-state until a peer
 		// resolves the request, an external Cancel closes the
@@ -1159,7 +1159,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					RequestID: requestID,
 					ExpiredAt: expiredAt,
 				})
-				deps.Events.Publish(row.ParentSessionID, "request_input_expired", string(evt), clock())
+				deps.Events.Publish("", row.ParentSessionID, "request_input_expired", string(evt), clock())
 			}
 			return mcp.ToolResult{}, mcp.NewToolError("REQUEST_INPUT_TIMEOUT",
 				fmt.Sprintf("REQUEST_INPUT_TIMEOUT: no input arrived for %s within %s (expiredAt=%s)", requestID, callTimeout, expiredAt),
@@ -1497,7 +1497,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 				DelegationDepth: prov.DelegationDepth,
 				OriginRuntime:   prov.OriginRuntime,
 			})
-			deps.Events.Publish(resolverSessionID, "elicitation_request", string(data), clock())
+			deps.Events.Publish("", resolverSessionID, "elicitation_request", string(data), clock())
 		}
 		// Block until the chain resolver resolves the elicitation or
 		// the §9.1 maxElicitationWait timeout fires.

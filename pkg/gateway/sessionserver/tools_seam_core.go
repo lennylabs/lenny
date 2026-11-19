@@ -58,9 +58,9 @@ func (t ToolsSeam) OnSessionTerminal(ctx context.Context, from state.State, s se
 func (t ToolsSeam) AfterTerminalWrite(ctx context.Context, from state.State, s seam.Session, signals func(context.Context, seam.Session)) seam.Session {
 	var rowSignals func(context.Context, sessionstore.Session)
 	if signals != nil {
-		rowSignals = func(ctx context.Context, row sessionstore.Session) { signals(ctx, seamSession(row)) }
+		rowSignals = func(ctx context.Context, row sessionstore.Session) { signals(ctx, seamSessionOf(row)) }
 	}
-	return seamSession(t.s.AfterTerminalWrite(ctx, session.State(from), t.s.terminalRow(ctx, s), rowSignals))
+	return seamSessionOf(t.s.AfterTerminalWrite(ctx, session.State(from), t.s.terminalRow(ctx, s), rowSignals))
 }
 
 // terminalRow reads back from the primary the row a seam's terminal write
@@ -116,7 +116,7 @@ func (t ToolsSeam) ListTree(ctx context.Context, tenantID, rootSessionID string)
 	}
 	out := make([]seam.Session, len(rows))
 	for i, row := range rows {
-		out[i] = seamSession(row)
+		out[i] = seamSessionOf(row)
 	}
 	return out, nil
 }

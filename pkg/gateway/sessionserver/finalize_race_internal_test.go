@@ -14,9 +14,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // seedState creates one row in the given state for the helper tests.

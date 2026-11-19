@@ -100,7 +100,7 @@ func (s *Server) startWSAttach(parent context.Context, conn *websocket.Conn, r *
 	afterSeq := in.ResumeFromSeq
 	// §7.2 defense-in-depth: the bus enforces the tenant binding even when
 	// the Authorize precheck above is unwired.
-	sub, err := s.attach.Events.SubscribeForTenant(tenant, in.SessionID, afterSeq, wsAttachBuffer)
+	sub, err := s.attach.Events.Subscribe(tenant, in.SessionID, afterSeq, wsAttachBuffer)
 	if err != nil {
 		s.writeWSError(parent, conn, req.ID, errInvalidParams, "RESOURCE_NOT_FOUND", "session not found", nil, redact)
 		return nil
@@ -141,7 +141,7 @@ func (s *Server) startWSAttach(parent context.Context, conn *websocket.Conn, r *
 			select {
 			case <-ctx.Done():
 				return
-			case ev, open := <-sub.Events():
+			case ev, open := <-sub.Events:
 				if !open {
 					return
 				}

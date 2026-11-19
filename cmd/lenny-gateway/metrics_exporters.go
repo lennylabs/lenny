@@ -14,8 +14,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // exportStorageQuotaMetrics refreshes the §16.1 per-tenant

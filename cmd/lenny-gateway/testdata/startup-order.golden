@@ -96,7 +96,6 @@ runGateway:
   w.buildLLMProxy
     w.gwMetrics.Registerer
   w.buildControlServer
-    w.eventBus.Publish
     w.scrubReportServiceWired
     w.runtimeClassOverrides
     w.sessionBudgetEnforcer.SetExtendOnExhaustion

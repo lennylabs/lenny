@@ -30,13 +30,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 const (
@@ -79,7 +80,7 @@ func TestToolUseRequestedAddressesSessionOnly_spec_7_2(t *testing.T) {
 	// The bus subscription observes the producer's payload verbatim; the
 	// MCP attach below observes the consumer's projection of that same
 	// event.
-	sub, err := bus.SubscribeForTenant(approvalTenant, approvalSession, 0, 16)
+	sub, err := bus.Subscribe(approvalTenant, approvalSession, 0, 16)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -109,10 +110,10 @@ func TestToolUseRequestedAddressesSessionOnly_spec_7_2(t *testing.T) {
 
 // assertPublishedPayload pins the producer half: the §7.2 event data
 // decodes to exactly {tool_call_id, tool, args}.
-func assertPublishedPayload(t *testing.T, sub *sessionevents.Subscription) {
+func assertPublishedPayload(t *testing.T, sub seam.Subscription) {
 	t.Helper()
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != "tool_use_requested" {
 			t.Fatalf("event type = %q, want tool_use_requested", ev.Type)
 		}

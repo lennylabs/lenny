@@ -20,9 +20,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // mkUserSession seeds a session that carries a user id so the §9.2
@@ -435,7 +435,7 @@ func TestElicitationStampsProvenanceOnEvent_spec_9_2_F_9_2_6(t *testing.T) {
 
 	// Subscribe to the resolver session before raising so the live
 	// elicitation_request event is delivered to this subscriber.
-	sub := bus.Subscribe("sess_root", 0, 16)
+	sub, _ := bus.Subscribe("", "sess_root", 0, 16)
 	defer sub.Close()
 
 	h := srv.Handler()
@@ -446,7 +446,7 @@ func TestElicitationStampsProvenanceOnEvent_spec_9_2_F_9_2_6(t *testing.T) {
 
 	var ev sessionevents.Event
 	select {
-	case ev = <-sub.Events():
+	case ev = <-sub.Events:
 	case <-time.After(2 * time.Second):
 		t.Fatal("no elicitation_request event published to the resolver session")
 	}
