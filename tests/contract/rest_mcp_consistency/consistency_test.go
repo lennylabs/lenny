@@ -25,6 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -32,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 
 // newConsistencyServers stands up REST and MCP servers that share a
@@ -44,7 +46,8 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 	exec := executor.NewEchoExecutor()
 	mem := memorystore.NewInMemory(0, nil)
 
-	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	toolwire.Attach(t, rest, platformtools.Options{Store: store, Memory: mem})
 	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 

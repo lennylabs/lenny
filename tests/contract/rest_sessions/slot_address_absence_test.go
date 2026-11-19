@@ -124,7 +124,7 @@ func TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1(t *testing.T) {
 	defer sub.Close()
 
 	now := func() time.Time { return time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC) }
-	gate := sessionserver.NewToolApprovalGate(store, inter, bus, platformtools.NewToolApprovals(waits), now, 250*time.Millisecond)
+	gate := platformtools.NewToolApprovalGate(store, inter, bus, platformtools.NewToolApprovals(waits), now, 250*time.Millisecond)
 
 	done := make(chan struct{})
 	go func() {

@@ -3,11 +3,15 @@
 package sessionserver
 
 import (
+	"context"
 	"errors"
+	"fmt"
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -81,36 +85,57 @@ func (s *Server) requireCreatingBearerAllowed(w http.ResponseWriter, r *http.Req
 // spec: §11.4 (User Invalidation), §12.8 (Processing restriction during
 // erasure (GDPR Article 18)).
 func (s *Server) requireActiveUserForAction(w http.ResponseWriter, r *http.Request, action string) bool {
+	err := s.activeUserRefusal(r.Context(), action)
+	if err == nil {
+		return true
+	}
+	if ref, ok := seam.IsRefusal(err); ok {
+		s.writeError(w, http.StatusForbidden, ref.Code, ref.Message, ref.Details)
+		return false
+	}
+	s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	return false
+}
+
+// activeUserRefusal is the body of the caller check: nil for a caller that
+// may act or carries no registered user, a *seam.Refusal with the code
+// USER_INVALIDATED or ERASURE_IN_PROGRESS for one that may not, and an
+// error naming the failed check when the user row cannot be read. The
+// session routes write it through requireActiveUserForAction, and
+// GWSEAM-AdmitActiveCaller returns it to the platform tools seam's routes.
+// spec: §11.4 (User Invalidation), §12.8 (Processing restriction during
+// erasure (GDPR Article 18)).
+func (s *Server) activeUserRefusal(ctx context.Context, action string) error {
 	if s.users == nil {
-		return true
+		return nil
 	}
-	principal, ok := getPrincipal(r)
+	principal, ok := authmw.FromContext(ctx)
 	if !ok || principal.Subject == "" {
-		return true
+		return nil
 	}
-	user, err := s.users.Get(r.Context(), principal.TenantID, principal.Subject)
+	user, err := s.users.Get(ctx, principal.TenantID, principal.Subject)
 	if errors.Is(err, userstore.ErrNotFound) {
-		return true
+		return nil
 	}
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"user-invalidation check failed: "+err.Error(), nil)
-		return false
+		return fmt.Errorf("user-invalidation check failed: %w", err)
 	}
 	if !user.IsActive() {
-		s.writeError(w, http.StatusForbidden, "USER_INVALIDATED",
-			"the authenticated user has been invalidated and "+action, nil)
-		return false
+		return &seam.Refusal{
+			Code:    "USER_INVALIDATED",
+			Message: "the authenticated user has been invalidated and " + action,
+		}
 	}
 	// §12.8 / GDPR Article 18: a user with a pending erasure request is
 	// blocked from the action until the job completes.
 	if user.ProcessingRestricted {
-		s.writeError(w, http.StatusForbidden, "ERASURE_IN_PROGRESS",
-			"the authenticated user has a pending erasure request and "+action+" until erasure completes",
-			map[string]any{"userId": principal.Subject, "jobId": user.ErasureJobID})
-		return false
+		return &seam.Refusal{
+			Code:    "ERASURE_IN_PROGRESS",
+			Message: "the authenticated user has a pending erasure request and " + action + " until erasure completes",
+			Details: map[string]any{"userId": principal.Subject, "jobId": user.ErasureJobID},
+		}
 	}
-	return true
+	return nil
 }
 
 // requireCreationAllowed is the early creation gate of the §12.8 creation

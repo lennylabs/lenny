@@ -194,7 +194,6 @@ func (w *gatewayWiring) buildSessionServer(
 		DualStore:                  dsMonitor,
 		Messaging:                  w.messagingCoord,
 		Interactions:               w.interactions,
-		ToolApprovalWaits:          platformtools.NewToolApprovals(w.toolApprovalWaits),
 		Evals:                      w.evals,
 		Experiments:                w.experiments,
 		Pools:                      w.pools,
@@ -334,17 +333,6 @@ func (w *gatewayWiring) buildSessionServer(
 		// §7.1 / §16.6 — session lifecycle audit events to the §11.7
 		// hash-chained log, written under the session's tenant.
 		LifecycleAuditSink: sessionLifecycleAuditor{appender: auditAppender},
-		// §7.2 / §11.7 / §16.7 — interaction-resolution
-		// audit events (tool-use approve/deny, elicitation
-		// respond/dismiss) to the §11.7 hash-chained log, written under
-		// the session's tenant. F-7.2.8.
-		InteractionAuditSink: interactionResolutionAuditor{appender: auditAppender},
-		// §8.9 / §11.7 / §16.1 — tree-walker defensive cycle
-		// observer for REST /v1/sessions/{id}/tree. Emits the
-		// delegation.tree_cycle_detected audit row + increments the
-		// lenny_delegation_tree_cycle_detected_total counter when the
-		// walker hits a repeated node. F-8.9.10.
-		TreeCycleObserver: sessionserverTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
 		// §7.2 — shared inputwait registry so REST inReplyTo
 		// resolves the same pending `lenny/request_input` MCP registers.
 		// F-7.2.14.
@@ -470,6 +458,17 @@ func (w *gatewayWiring) buildSessionServer(
 	})
 	attachUploadHandler(srv, w.podBinder, w.blobs, w.runtimes, uploadSubsystem, uploadMetrics, uploadFlags)
 	attachStreamProxy(srv, w.eventBus)
+	// The platform tools seam's packages register their own metric
+	// collectors on the gateway's metric registry (decision 21 of change
+	// 0117). The seam's client routes take its tree cycle counter, and the
+	// MCP surface, the control server, and the reconciler workers read the
+	// sets they emit through back from the accumulator.
+	ptMetrics, ptMetricsErr := newPlatformToolsMetrics(gwMetrics.Registerer())
+	if ptMetricsErr != nil {
+		log.Fatalf("lenny-gateway: platform tools metrics: %v", ptMetricsErr)
+	}
+	w.platformToolsMetrics = ptMetrics
+	attachToolRoutes(srv, w.sessions, w.interactions, w.toolApprovalWaits, auditAppender, ptMetrics.tools)
 	return srv
 }
 

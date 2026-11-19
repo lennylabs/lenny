@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
@@ -149,7 +150,7 @@ func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev se
 }
 
 // interactionResolutionAuditor adapts the gateway audit appender to
-// the sessionserver.InteractionAuditSink interface. It writes the
+// the platformtools.InteractionAuditSink interface. It writes the
 // §7.2 / §11.7 / §16.7 tool-use approve/deny and elicitation
 // respond/dismiss events to the hash-chained audit log under the
 // session's own tenant partition. The tenant is taken from the
@@ -160,7 +161,7 @@ type interactionResolutionAuditor struct {
 	appender audit.Appender
 }
 
-func (a interactionResolutionAuditor) EmitInteractionResolution(ctx context.Context, ev sessionserver.InteractionResolutionEvent) {
+func (a interactionResolutionAuditor) EmitInteractionResolution(ctx context.Context, ev platformtools.InteractionResolutionEvent) {
 	if a.appender == nil {
 		return
 	}

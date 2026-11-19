@@ -694,7 +694,7 @@ func TestOffHolderInteractionResolutionWakesTheCoordinator_spec_29_3(t *testing.
 		t.Run("tool-use "+verdict.path, func(t *testing.T) {
 			h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
 			id := h.StartSession(coordinator)
-			gate := sessionserver.NewToolApprovalGate(h.Store, h.Interactions, nil, platformtools.NewToolApprovals(toolapproval.NewRegistry()), h.Clock.Now, 0)
+			gate := platformtools.NewToolApprovalGate(h.Store, h.Interactions, nil, platformtools.NewToolApprovals(toolapproval.NewRegistry()), h.Clock.Now, 0)
 			done := make(chan outcome, 1)
 			go func() {
 				d, err := gate.AwaitApproval(context.Background(), lifecycleharness.Tenant, id, executor.PendingToolCall{ID: "call-1", Name: "shell"})

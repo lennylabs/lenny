@@ -163,7 +163,7 @@ func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.F
 	// never blocks on approval). F-7.2.9, F-7.2.18.
 	toolApprovalWaits := toolapproval.NewRegistry()
 	if pe, ok := exec.(*executor.PodExecutor); ok {
-		pe.SetApprovalGate(sessionserver.NewToolApprovalGate(
+		pe.SetApprovalGate(platformtools.NewToolApprovalGate(
 			sessions, interactions, eventBus, platformtools.NewToolApprovals(toolApprovalWaits), clockinject.Now, *toolApprovalTimeout,
 		))
 	}

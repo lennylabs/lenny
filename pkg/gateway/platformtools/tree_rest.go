@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package platformtools
 
 // §4.2 task-record design clarification:
 //
@@ -29,31 +29,9 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
-
-// TreeCycleObserver is invoked when a §8.9 tree walker hits a cycle
-// in the §8.2 ParentSessionID lineage. The §8.2 cycle detector
-// prevents cycles at delegation time, so a non-zero call rate
-// signals a corrupted persistent store (e.g., a §8.10 recovery
-// write that re-parented a node into a cycle). The walker truncates
-// the cycle in the returned tree; the observer surfaces the
-// corruption to operators via the §11.7 audit log + §16.1
-// `lenny_delegation_tree_cycle_detected_total` counter so it does
-// not silently disappear. The source field is `rest` for the
-// /v1/sessions/{id}/tree handler. spec: §8.9; F-8.9.10.
-type TreeCycleObserver interface {
-	OnTreeCycle(ctx context.Context, ev TreeCycleEvent)
-}
-
-// TreeCycleEvent is the §8.9 tree-cycle audit/metric payload. The
-// fields mirror the §11.7 audit row the gateway writes.
-type TreeCycleEvent struct {
-	TenantID      string
-	RootSessionID string
-	CycleNodeID   string
-	Source        string
-}
 
 // TreeNode is one node in the §8 delegation task tree. The wire field
 // is `taskId` per §8.5 — "Each node includes `taskId`, `state`,
@@ -96,17 +74,17 @@ type TreeResponse struct {
 //
 // Returns 404 RESOURCE_NOT_FOUND when the session does not exist or
 // belongs to another tenant.
-func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
-	tenantID := s.resolveTenant(r)
+func (h *Handler) handleTree(w http.ResponseWriter, r *http.Request) {
+	tenantID := h.identity.RequestTenant(r)
 	id := r.PathValue("id")
 
-	caller, err := s.store.Get(r.Context(), tenantID, id)
+	caller, err := h.store.Get(r.Context(), tenantID, id)
 	if err != nil {
 		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			h.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
 			return
 		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 
@@ -119,9 +97,9 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 	if rootSessionID == "" {
 		rootSessionID = caller.ID
 	}
-	all, err := s.store.ListByRoot(r.Context(), tenantID, rootSessionID)
+	all, err := h.store.ListByRoot(r.Context(), tenantID, rootSessionID)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 	childrenByParent := map[string][]sessionstore.Session{}
@@ -139,7 +117,7 @@ func (s *Server) handleTree(w http.ResponseWriter, r *http.Request) {
 		ctx:           r.Context(),
 		tenantID:      tenantID,
 		rootSessionID: caller.ID,
-		observer:      s.treeCycleObserver,
+		observer:      h.treeCycles,
 		allowed:       allowed,
 	}
 	node := buildTreeNode(ctx, respRoot, childrenByParent, &count, map[string]bool{})
@@ -155,7 +133,7 @@ type treeWalkContext struct {
 	ctx           context.Context
 	tenantID      string
 	rootSessionID string
-	observer      TreeCycleObserver
+	observer      mcptools.TreeCycleObserver
 	// allowed, when non-nil, restricts the §8.5 treeVisibility-scoped
 	// walk to exactly its member session IDs; a nil set means "no
 	// restriction" (the `full` visibility case). F-8.5.2 / F-8.9.2.
@@ -180,7 +158,7 @@ func buildTreeNode(wctx treeWalkContext, sess sessionstore.Session, childrenByPa
 	}
 	if seen[sess.ID] {
 		if wctx.observer != nil {
-			wctx.observer.OnTreeCycle(wctx.ctx, TreeCycleEvent{
+			wctx.observer.OnTreeCycle(wctx.ctx, mcptools.TreeCycleEvent{
 				TenantID:      wctx.tenantID,
 				RootSessionID: wctx.rootSessionID,
 				CycleNodeID:   sess.ID,

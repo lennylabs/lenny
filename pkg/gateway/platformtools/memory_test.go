@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package platformtools_test
 
 import (
 	"bytes"
@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -29,7 +30,7 @@ func memoryServer(t *testing.T, seed ...sessionstore.Session) (http.Handler, mem
 		}
 	}
 	mem := memorystore.NewInMemory(0, nil)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
+	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{Memory: mem})
 	return asOwner(srv.Handler()), mem
 }
 
@@ -41,8 +42,8 @@ func memorySession(id, user string) sessionstore.Session {
 // the session's (tenant, user) scope and returns the stored shape)
 func TestMemoryWriteIngestsRecords(t *testing.T) {
 	h, store := memoryServer(t, memorySession("sess_1", testOwner))
-	body, _ := json.Marshal(sessionserver.MemoryRequest{
-		Memories: []sessionserver.MemoryItem{
+	body, _ := json.Marshal(platformtools.MemoryRequest{
+		Memories: []platformtools.MemoryItem{
 			{Content: "kubectl is the cluster CLI"},
 			{Content: "lenny up brings up the embedded stack", AgentType: "claude-code"},
 		},
@@ -53,7 +54,7 @@ func TestMemoryWriteIngestsRecords(t *testing.T) {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("memory write: status %d, body %s", rr.Code, rr.Body.String())
 	}
-	var resp sessionserver.MemoryQueryResponse
+	var resp platformtools.MemoryQueryResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil {
 		t.Fatalf("decode: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestMemoryQueryFiltersAndLimits(t *testing.T) {
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, body %s", rr.Code, rr.Body.String())
 	}
-	var resp sessionserver.MemoryQueryResponse
+	var resp platformtools.MemoryQueryResponse
 	_ = json.Unmarshal(rr.Body.Bytes(), &resp)
 	if len(resp.Memories) != 2 {
 		t.Errorf("q=kubectl returned %d, want 2", len(resp.Memories))
@@ -207,7 +208,7 @@ func TestMemoryDeleteRemovesRecord(t *testing.T) {
 func TestMemoryEndpointsUnavailableWhenStoreNil(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), memorySession("sess_x", testOwner))
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Memory wired
+	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{}) // no Memory wired
 	h := asOwner(srv.Handler())
 
 	cases := []struct {

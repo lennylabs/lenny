@@ -67,9 +67,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/replay", manageID(s.handleReplay))
 	mux.HandleFunc("POST /v1/sessions/{id}/extend-retention", manageID(s.handleExtendRetention))
 	mux.HandleFunc("POST /v1/sessions/{id}/eval", evalWrite(s.handleEval))
-	mux.HandleFunc("POST /v1/sessions/{id}/memory", manageID(s.handleMemoryWrite))
-	mux.HandleFunc("GET /v1/sessions/{id}/memory", readID(s.handleMemoryQuery))
-	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manageID(s.handleMemoryDelete))
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", manageID(s.handleMessages))
 	// spec: §15.1 — the §15.4 MessageDAG list over the durable
 	// session_messages store, the read side of the message endpoint. Shares
@@ -77,7 +74,6 @@ func (s *Server) Handler() http.Handler {
 	// stable id, derived `from`, and delivery state. F-15.1.3.
 	mux.HandleFunc("GET /v1/sessions/{id}/messages", readID(s.handleMessagesList))
 	mux.HandleFunc("GET /v1/sessions/{id}/transcript", readID(s.handleTranscript))
-	mux.HandleFunc("GET /v1/sessions/{id}/tree", readID(s.handleTree))
 	mux.HandleFunc("GET /v1/usage", s.handleUsage)
 	mux.HandleFunc("GET /v1/metering/events", s.handleMeteringEvents)
 	// spec: §15.1 — per-session artifact listing (the §15.2
@@ -92,14 +88,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/sessions/{id}/workspace", readID(s.handleWorkspace))
 	mux.HandleFunc("GET /v1/sessions/{id}/setup-output", readID(s.handleSetupOutput))
 	mux.HandleFunc("GET /v1/sessions/{id}/webhook-events", readID(s.handleWebhookEvents))
-	// spec: §15.1 path-parameter casing — camelCase route templates.
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/approve", manageID(s.handleToolUseApprove))
-	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", manageID(s.handleToolUseDeny))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manageID(s.handleElicitationRespond))
-	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manageID(s.handleElicitationDismiss))
 	// The routes other parts registered through HandleRoute, such as the
-	// upload handler's and the stream proxy's, mount on the same mux
-	// behind the access check each names.
+	// upload handler's, the stream proxy's, and the platform tools seam's
+	// memory, interaction resolution, and tree routes, mount on the same
+	// mux behind the access check each names.
 	s.mountPartRoutes(mux)
 	// spec: §10.2 — a tenant-scoped route runs only for a request whose
 	// tenant resolves from its principal (or, under --dev-mode, from the

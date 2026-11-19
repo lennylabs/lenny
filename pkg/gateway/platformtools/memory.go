@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package platformtools
 
 import (
 	"encoding/json"
@@ -9,8 +9,8 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
 // MemoryRequest is the §9.4 POST /v1/sessions/{id}/memory body. The
@@ -50,15 +50,15 @@ type MemoryQueryResponse struct {
 
 // handleMemoryWrite implements POST /v1/sessions/{id}/memory — the
 // REST counterpart to the §9.4 `lenny/memory_write` MCP tool.
-func (s *Server) handleMemoryWrite(w http.ResponseWriter, r *http.Request) {
-	if s.memory == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "MEMORY_UNAVAILABLE",
+func (h *Handler) handleMemoryWrite(w http.ResponseWriter, r *http.Request) {
+	if h.memory == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "MEMORY_UNAVAILABLE",
 			"the §9.4 memory store is not configured", nil)
 		return
 	}
-	tenantID := s.resolveTenant(r)
+	tenantID := h.identity.RequestTenant(r)
 	id := r.PathValue("id")
-	sess, ok := s.loadSessionForMemory(w, r, tenantID, id)
+	sess, ok := h.loadSessionForMemory(w, r, tenantID, id)
 	if !ok {
 		return
 	}
@@ -67,18 +67,18 @@ func (s *Server) handleMemoryWrite(w http.ResponseWriter, r *http.Request) {
 	body := jsonReader(w, r)
 	defer body.Close()
 	if err := json.NewDecoder(body).Decode(&req); err != nil {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
+		h.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "request body is not valid JSON", nil)
 		return
 	}
 	if len(req.Memories) == 0 {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+		h.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 			"memories must contain at least one record",
 			map[string]any{"field": "memories"})
 		return
 	}
 	for i, m := range req.Memories {
 		if m.Content == "" {
-			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			h.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"every memory record requires a non-empty content field",
 				map[string]any{"field": "memories", "index": i})
 			return
@@ -91,7 +91,7 @@ func (s *Server) handleMemoryWrite(w http.ResponseWriter, r *http.Request) {
 		SessionID: id,
 	}
 	if scope.UserID == "" {
-		s.writeError(w, http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
+		h.writeError(w, http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
 			"the session has no user id; memory writes require a user-scoped session", nil)
 		return
 	}
@@ -104,17 +104,17 @@ func (s *Server) handleMemoryWrite(w http.ResponseWriter, r *http.Request) {
 			Metadata:  m.Metadata,
 		}
 	}
-	if err := s.memory.Write(r.Context(), scope, records); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	if err := h.memory.Write(r.Context(), scope, records); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 
 	// Read back the freshest records for the response. The §9.4 store
 	// returns them newest-first; the §9.4 limit cap is the number of
 	// records the caller just wrote.
-	stored, err := s.memory.List(r.Context(), scope, memorystore.MemoryFilter{Limit: len(records)})
+	stored, err := h.memory.List(r.Context(), scope, memorystore.MemoryFilter{Limit: len(records)})
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -126,15 +126,15 @@ func (s *Server) handleMemoryWrite(w http.ResponseWriter, r *http.Request) {
 // REST counterpart to the §9.4 `lenny/memory_query` MCP tool. The
 // `q` query string filters by content substring, `limit` caps the
 // row count, and the response sorts newest-first.
-func (s *Server) handleMemoryQuery(w http.ResponseWriter, r *http.Request) {
-	if s.memory == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "MEMORY_UNAVAILABLE",
+func (h *Handler) handleMemoryQuery(w http.ResponseWriter, r *http.Request) {
+	if h.memory == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "MEMORY_UNAVAILABLE",
 			"the §9.4 memory store is not configured", nil)
 		return
 	}
-	tenantID := s.resolveTenant(r)
+	tenantID := h.identity.RequestTenant(r)
 	id := r.PathValue("id")
-	sess, ok := s.loadSessionForMemory(w, r, tenantID, id)
+	sess, ok := h.loadSessionForMemory(w, r, tenantID, id)
 	if !ok {
 		return
 	}
@@ -144,7 +144,7 @@ func (s *Server) handleMemoryQuery(w http.ResponseWriter, r *http.Request) {
 		SessionID: id,
 	}
 	if scope.UserID == "" {
-		s.writeError(w, http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
+		h.writeError(w, http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
 			"the session has no user id; memory reads require a user-scoped session", nil)
 		return
 	}
@@ -153,16 +153,16 @@ func (s *Server) handleMemoryQuery(w http.ResponseWriter, r *http.Request) {
 	if raw := r.URL.Query().Get("limit"); raw != "" {
 		v, err := strconv.Atoi(raw)
 		if err != nil || v < 0 {
-			s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
+			h.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR",
 				"limit must be a non-negative integer",
 				map[string]any{"field": "limit"})
 			return
 		}
 		limit = v
 	}
-	matches, err := s.memory.Query(r.Context(), scope, query, limit)
+	matches, err := h.memory.Query(r.Context(), scope, query, limit)
 	if err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 	w.Header().Set("Content-Type", "application/json")
@@ -170,20 +170,20 @@ func (s *Server) handleMemoryQuery(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleMemoryDelete implements DELETE /v1/sessions/{id}/memory/{memoryId}.
-func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
-	if s.memory == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "MEMORY_UNAVAILABLE",
+func (h *Handler) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
+	if h.memory == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "MEMORY_UNAVAILABLE",
 			"the §9.4 memory store is not configured", nil)
 		return
 	}
-	tenantID := s.resolveTenant(r)
+	tenantID := h.identity.RequestTenant(r)
 	id := r.PathValue("id")
 	memoryID := r.PathValue("memoryId")
 	if memoryID == "" {
-		s.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "memoryId is required", nil)
+		h.writeError(w, http.StatusBadRequest, "VALIDATION_ERROR", "memoryId is required", nil)
 		return
 	}
-	sess, ok := s.loadSessionForMemory(w, r, tenantID, id)
+	sess, ok := h.loadSessionForMemory(w, r, tenantID, id)
 	if !ok {
 		return
 	}
@@ -193,30 +193,30 @@ func (s *Server) handleMemoryDelete(w http.ResponseWriter, r *http.Request) {
 		SessionID: id,
 	}
 	if scope.UserID == "" {
-		s.writeError(w, http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
+		h.writeError(w, http.StatusUnprocessableEntity, "SESSION_NOT_USER_SCOPED",
 			"the session has no user id; memory deletes require a user-scoped session", nil)
 		return
 	}
-	if err := s.memory.Delete(r.Context(), scope, []string{memoryID}); err != nil {
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	if err := h.memory.Delete(r.Context(), scope, []string{memoryID}); err != nil {
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
 	}
 	w.WriteHeader(http.StatusNoContent)
 }
 
-// loadSessionForMemory resolves the URL session id under the
-// request's tenant and writes the §15.1 RESOURCE_NOT_FOUND envelope
-// when the session does not exist. Returns ok=false when an error
+// loadSessionForMemory resolves the URL session id under the request's
+// tenant through GWSEAM-LookupSession and writes the RESOURCE_NOT_FOUND
+// envelope when the session does not exist. Returns ok=false when an error
 // was already written to w.
-func (s *Server) loadSessionForMemory(w http.ResponseWriter, r *http.Request, tenantID, id string) (sessionstore.Session, bool) {
-	sess, err := s.store.Get(r.Context(), tenantID, id)
+func (h *Handler) loadSessionForMemory(w http.ResponseWriter, r *http.Request, tenantID, id string) (seam.Session, bool) {
+	sess, err := h.sessions.LookupSession(r.Context(), tenantID, id)
 	if err != nil {
-		if errors.Is(err, sessionstore.ErrNotFound) {
-			s.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
-			return sessionstore.Session{}, false
+		if errors.Is(err, seam.ErrSessionNotFound) {
+			h.writeError(w, http.StatusNotFound, "RESOURCE_NOT_FOUND", "session not found", nil)
+			return seam.Session{}, false
 		}
-		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-		return sessionstore.Session{}, false
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return seam.Session{}, false
 	}
 	return sess, true
 }

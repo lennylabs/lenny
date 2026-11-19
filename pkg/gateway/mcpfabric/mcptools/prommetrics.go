@@ -3,6 +3,7 @@
 package mcptools
 
 import (
+	"context"
 	"fmt"
 	"time"
 
@@ -28,12 +29,14 @@ type PromMetrics struct {
 	timeout    prometheus.Counter
 	suppressed prometheus.Counter
 	roundtrip  prometheus.Observer
+	treeCycle  *prometheus.CounterVec
 }
 
 var (
 	_ ElicitationDropRecorder      = (*PromMetrics)(nil)
 	_ ElicitationLifecycleRecorder = (*PromMetrics)(nil)
 	_ ElicitationTamperRecorder    = (*PromMetrics)(nil)
+	_ TreeCycleObserver            = (*PromMetrics)(nil)
 )
 
 // NewPromMetrics builds the elicitation metric set and registers it on
@@ -90,7 +93,17 @@ func NewPromMetrics(reg prometheus.Registerer) (*PromMetrics, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, c := range []prometheus.Collector{dropped, tamper, pending, timeout, suppressed, roundtrip} {
+	// §16.1 / §8.9: the tree walkers' defensive cycle hits. The REST tree
+	// read and the platform tools' tree walks both count here, by the
+	// source that walked the tree (`rest` or `mcp`).
+	treeCycle, err := metrics.NewCounter(prometheus.CounterOpts{
+		Name: "lenny_delegation_tree_cycle_detected_total",
+		Help: "Tree walker hit a cycle in the §8.2 ParentSessionID lineage (corrupt store).",
+	}, []string{"tenant_id", "source"})
+	if err != nil {
+		return nil, err
+	}
+	for _, c := range []prometheus.Collector{dropped, tamper, pending, timeout, suppressed, roundtrip, treeCycle} {
 		if err := reg.Register(c); err != nil {
 			return nil, fmt.Errorf("register elicitation metric: %w", err)
 		}
@@ -102,6 +115,7 @@ func NewPromMetrics(reg prometheus.Registerer) (*PromMetrics, error) {
 		timeout:    timeout.WithLabelValues(),
 		suppressed: suppressed.WithLabelValues(),
 		roundtrip:  roundtrip.WithLabelValues(),
+		treeCycle:  treeCycle,
 	}, nil
 }
 
@@ -162,4 +176,15 @@ func (m *PromMetrics) ObserveElicitationRoundtrip(d time.Duration) {
 		return
 	}
 	m.roundtrip.Observe(d.Seconds())
+}
+
+// OnTreeCycle counts a cycle a tree walker met in the ParentSessionID
+// lineage, by tenant and by the source that walked the tree. The walker
+// truncates the cycle itself; the counter is the signal that the store
+// holds a corrupt lineage. spec: §8.9; F-8.9.10.
+func (m *PromMetrics) OnTreeCycle(_ context.Context, ev TreeCycleEvent) {
+	if m == nil {
+		return
+	}
+	m.treeCycle.WithLabelValues(ev.TenantID, ev.Source).Inc()
 }

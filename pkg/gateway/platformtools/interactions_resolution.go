@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package platformtools
 
 import (
 	"encoding/json"
@@ -23,9 +23,9 @@ type interactionResolution struct {
 // interaction-resolution endpoints. It validates the
 // `(session_id, user_id, interaction_id)` authorization triple and
 // applies the resolution.
-func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res interactionResolution) {
-	if s.interactions == nil {
-		s.writeError(w, http.StatusServiceUnavailable, "INTERACTIONS_UNAVAILABLE",
+func (h *Handler) resolveInteraction(w http.ResponseWriter, r *http.Request, res interactionResolution) {
+	if h.interactions == nil {
+		h.writeError(w, http.StatusServiceUnavailable, "INTERACTIONS_UNAVAILABLE",
 			"gateway has no interaction store configured", nil)
 		return
 	}
@@ -34,18 +34,18 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 	// when lenny/delegate_task runs under a §11.2 delegation policy) and
 	// the elicitation responses are the in-code form of those pending
 	// approvals; a disabled or revoked user may not resolve them.
-	if !s.requireActiveUserForAction(w, r, "cannot resolve interactions") {
+	if !h.admitActiveCaller(w, r, "cannot resolve interactions") {
 		return
 	}
-	tenantID := s.resolveTenant(r)
+	tenantID := h.identity.RequestTenant(r)
 	sessionID := r.PathValue("id")
 
 	// The §15.1 triple is (session_id, user_id, interaction_id). The
 	// user_id is the authenticated caller. Resolution against a
 	// session whose user differs returns 404 so the existence of
 	// another user's interactions never leaks.
-	principal, _ := getPrincipal(r)
-	userID := principal.Subject
+	caller, _ := h.callers.RequestCaller(r.Context())
+	userID := caller.Subject
 
 	// spec: §15.1 path-parameter casing — camelCase route templates.
 	var interactionID string
@@ -55,7 +55,7 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 		interactionID = r.PathValue("elicitationId")
 	}
 
-	out, err := s.interactions.Resolve(r.Context(), tenantID, sessionID, userID, interactionID,
+	out, err := h.interactions.Resolve(r.Context(), tenantID, sessionID, userID, interactionID,
 		func(in *interactionstore.Interaction) error {
 			if in.Kind != res.kind {
 				// A toolCallId used on an elicitation endpoint (or
@@ -74,12 +74,12 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 			if res.kind == interactionstore.KindElicitation {
 				code = "ELICITATION_NOT_FOUND"
 			}
-			s.writeError(w, http.StatusNotFound, code, "interaction not found", nil)
+			h.writeError(w, http.StatusNotFound, code, "interaction not found", nil)
 		case errors.Is(err, interactionstore.ErrAlreadyResolved):
-			s.writeError(w, http.StatusConflict, "INTERACTION_ALREADY_RESOLVED",
+			h.writeError(w, http.StatusConflict, "INTERACTION_ALREADY_RESOLVED",
 				"interaction has already been resolved", nil)
 		default:
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+			h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		}
 		return
 	}
@@ -91,8 +91,8 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 	// tool_result error). A missing waiter (no executor on this replica is
 	// blocked, or the non-pod posture) is ignored: the phase update above
 	// is the authoritative record. F-7.2.18.
-	if res.kind == interactionstore.KindToolUse && s.toolApprovalWaits != nil {
-		_ = s.toolApprovalWaits.ResolveApproval(sessionID, interactionID, seam.ApprovalDecision{
+	if res.kind == interactionstore.KindToolUse && h.approvals != nil {
+		_ = h.approvals.ResolveApproval(sessionID, interactionID, seam.ApprovalDecision{
 			Approved: res.phase == interactionstore.PhaseApproved,
 			Reason:   res.reason,
 		})
@@ -102,9 +102,9 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 	// writes a §11.7 hash-chained audit row so the post-incident
 	// reconstruction can show who approved or denied what. Best-effort:
 	// a nil sink or appender error never fails the resolution. F-7.2.8.
-	if s.interactionAudit != nil {
+	if h.audit != nil {
 		if eventType, ok := interactionResolutionAuditType(res.kind, res.phase); ok {
-			s.interactionAudit.EmitInteractionResolution(r.Context(), InteractionResolutionEvent{
+			h.audit.EmitInteractionResolution(r.Context(), InteractionResolutionEvent{
 				EventType:     eventType,
 				TenantID:      tenantID,
 				SessionID:     sessionID,
@@ -141,4 +141,23 @@ func interactionResolutionAuditType(kind interactionstore.Kind, phase interactio
 	default:
 		return "", false
 	}
+}
+
+// admitActiveCaller applies the user lifecycle check through
+// GWSEAM-AdmitActiveCaller and writes its refusal: 403 with the refusal's
+// code, message, and details, or 500 INTERNAL_ERROR when the user cannot
+// be read. It returns true when the caller may act.
+//
+// spec: GWSEAM-AdmitActiveCaller
+func (h *Handler) admitActiveCaller(w http.ResponseWriter, r *http.Request, action string) bool {
+	err := h.active.AdmitActiveCaller(r.Context(), action)
+	if err == nil {
+		return true
+	}
+	if ref, ok := seam.IsRefusal(err); ok {
+		h.writeError(w, http.StatusForbidden, ref.Code, ref.Message, ref.Details)
+		return false
+	}
+	h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	return false
 }

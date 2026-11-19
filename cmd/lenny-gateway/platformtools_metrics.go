@@ -22,7 +22,7 @@ import (
 type platformToolsMetrics struct {
 	delegation           *delegation.PromMetrics
 	deadlock             *deadlock.PromMetrics
-	elicitation          *mcptools.PromMetrics
+	tools                *mcptools.PromMetrics
 	leaseExtension       *leasecontrol.PromMetrics
 	orphanCleanup        *orphancleanup.PromMetrics
 	budgetReconstruction *delegationbudget.PromMetrics
@@ -42,7 +42,7 @@ func newPlatformToolsMetrics(reg prometheus.Registerer) (platformToolsMetrics, e
 	if m.deadlock, err = deadlock.NewPromMetrics(reg); err != nil {
 		return platformToolsMetrics{}, err
 	}
-	if m.elicitation, err = mcptools.NewPromMetrics(reg); err != nil {
+	if m.tools, err = mcptools.NewPromMetrics(reg); err != nil {
 		return platformToolsMetrics{}, err
 	}
 	if m.leaseExtension, err = leasecontrol.NewPromMetrics(reg); err != nil {

@@ -19,9 +19,11 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 
 // mountedRoute is one mux.HandleFunc call in Handler(): its pattern and the
@@ -148,6 +150,7 @@ func newOwnershipMatrixServer(t *testing.T, multiTenant bool) (*sessionserver.Se
 		CustomRoles:     accessRoles(t),
 		Evals:           evalstore.NewMemory(0, nil),
 	})
+	toolwire.Attach(t, srv, platformtools.Options{Store: store})
 	t.Cleanup(srv.Close)
 	return srv, store
 }

@@ -15,9 +15,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 
 // ownershipWireServer serves the session surface behind the auth
@@ -34,6 +36,7 @@ func ownershipWireServer(t *testing.T) *httptest.Server {
 		t.Fatalf("seed: %v", err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	toolwire.Attach(t, srv, platformtools.Options{Store: store})
 	ts := httptest.NewServer(authmw.Wrap(srv.Handler(), authmw.Options{
 		AllowDevHeaders: true, DevHeaderNamesTenant: true, AllowDevRoles: true,
 	}))

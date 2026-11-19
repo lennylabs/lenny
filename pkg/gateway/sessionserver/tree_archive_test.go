@@ -51,7 +51,7 @@ func childrenReattached(bus *sessionevents.Bus, sessionID string) *sessionevents
 
 // spec: §8.10 — a child session reaching a terminal state is archived
 // to the session_tree_archive so a resumed parent can replay it. The
-// seedTreeSession helper (tree_test.go) creates a running session.
+// seedTreeSession helper (tree_seed_test.go) creates a running session.
 
 // seedCascadeSession inserts a running session carrying an explicit
 // §8.10 cascadeOnFailure policy.

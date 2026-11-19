@@ -4,7 +4,6 @@ package sessionserver_test
 
 import (
 	"net/http"
-	"strings"
 	"testing"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
@@ -61,11 +60,18 @@ func TestEverySessionRouteIsOwnershipWrapped_spec_10_2(t *testing.T) {
 // authorization).
 func TestRouteSpecificLookupsAnswerAfterOwnership_spec_10_2(t *testing.T) {
 	bob := accessCaller{"bob/user", principalOf(accessBob, pkgauth.RoleUser)}
-	for _, route := range ownedSessionRoutes(t) {
+	// The platform tools seam registers these routes through the route
+	// registration interface rather than the session server's route table.
+	for _, route := range []mountedRoute{
+		{pattern: "POST /v1/sessions/{id}/memory", wrapper: "manageID"},
+		{pattern: "GET /v1/sessions/{id}/memory", wrapper: "readID"},
+		{pattern: "DELETE /v1/sessions/{id}/memory/{memoryId}", wrapper: "manageID"},
+		{pattern: "POST /v1/sessions/{id}/tool-use/{toolCallId}/approve", wrapper: "manageID"},
+		{pattern: "POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", wrapper: "manageID"},
+		{pattern: "POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", wrapper: "manageID"},
+		{pattern: "POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", wrapper: "manageID"},
+	} {
 		p := route.pattern
-		if !strings.Contains(p, "/tool-use/") && !strings.Contains(p, "/elicitations/") && !strings.Contains(p, "/memory") {
-			continue
-		}
 		for _, sess := range []string{"sess_alice", "sess_missing"} {
 			t.Run(p+"/"+sess, func(t *testing.T) {
 				h, _ := ownershipMatrixServer(t, false)
