@@ -54,7 +54,7 @@ The import sites in each title are counted over the packages the step moves, as 
 `session/sessionevents` to `pkg/gateway/streamproxy`, and `sessionserver`'s `events.go` and `logs.go` with their tests to a new package there. Every publisher, in the core and in the platform tools seam, reaches the event bus through the publish operation of the seam interface. The event bus serves the seam's event operations itself, and the platform tools seam's attach stream, the dual-store monitor's broadcast, and the eviction bridge reach it through them too. The event and log streams reach the core through the session lookup, the handoff frame operations, and `GWSEAM-RequestTenant`, which 0117.S5 also adds, and register their routes through the session server's interim route registration, as 0117.S5 arranges it. `GWSEAM-Subscribe` returns the retained events with the live channel, which the attach stream and the event and log streams replay before they tail. The replay buffer depth flag moves into the bus's package (decision 7).
 
 ### 0117.S7 Platform tools seam (428 import sites)
-- status: Building
+- status: Landed
 - lanes: [specification, code]
 - depends-on: [0117.S6, 0137.S5, 0155.S1]
 
