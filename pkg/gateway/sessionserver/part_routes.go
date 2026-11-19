@@ -52,14 +52,35 @@ func (s *Server) HandleRoute(r seam.Route) error {
 
 // mountPartRoutes mounts the routes HandleRoute registered on mux, each
 // behind its access check, and closes registration.
-func (s *Server) mountPartRoutes(mux *http.ServeMux) {
+func (s *Server) mountPartRoutes(mux *recordingMux) {
 	s.routesMu.Lock()
 	s.routesServed = true
 	routes := append([]seam.Route(nil), s.partRoutes...)
 	s.routesMu.Unlock()
 	for _, r := range routes {
 		mux.HandleFunc(r.Method+" "+r.Pattern, s.routeAccess(r.Access, r.Handler.ServeHTTP))
+		mux.patterns[len(mux.patterns)-1] += " [" + accessName(r.Access) + "]"
 	}
+}
+
+// accessName names a route access check in the session handler's route
+// patterns.
+func accessName(a seam.RouteAccess) string {
+	switch a {
+	case seam.AccessTenant:
+		return "tenant"
+	case seam.AccessSessionRead:
+		return "session-read"
+	case seam.AccessSessionManage:
+		return "session-manage"
+	case seam.AccessSessionEval:
+		return "session-eval"
+	case seam.AccessUsageView:
+		return "usage-view"
+	case seam.AccessHandler:
+		return "handler"
+	}
+	return "unknown"
 }
 
 // routeAccess wraps a part's handler in the session route wrapper of its

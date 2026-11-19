@@ -22,7 +22,34 @@ import (
 // requireSessionAccess then applies the §10.2 Session ownership rule.
 // See rbac_gate.go.
 func (s *Server) Handler() http.Handler {
-	mux := http.NewServeMux()
+	return s.requireTenant(s.routeMux().ServeMux)
+}
+
+// RoutePatterns returns the pattern of every route the session handler
+// mounts, in the order it mounts them, with the access check of each route
+// another part registered. The composition root's route table test reads
+// it. Calling it closes registration as Handler does.
+func (s *Server) RoutePatterns() []string {
+	return s.routeMux().patterns
+}
+
+// recordingMux is the session handler's mux, which records the pattern of
+// each route it mounts.
+type recordingMux struct {
+	*http.ServeMux
+	patterns []string
+}
+
+// HandleFunc mounts handler on pattern and records the pattern.
+func (m *recordingMux) HandleFunc(pattern string, handler func(http.ResponseWriter, *http.Request)) {
+	m.patterns = append(m.patterns, pattern)
+	m.ServeMux.HandleFunc(pattern, handler)
+}
+
+// routeMux builds the session handler's mux: the session routes and the
+// routes other parts registered.
+func (s *Server) routeMux() *recordingMux {
+	mux := &recordingMux{ServeMux: http.NewServeMux()}
 	manage := func(next http.HandlerFunc) http.HandlerFunc {
 		return s.requireSessionPermission(auth.PermManageOwnSessions, next)
 	}
@@ -95,8 +122,8 @@ func (s *Server) Handler() http.Handler {
 	s.mountPartRoutes(mux)
 	// spec: §10.2 — a tenant-scoped route runs only for a request whose
 	// tenant resolves from its principal (or, under --dev-mode, from the
-	// dev header). F-10.2.21.
-	return s.requireTenant(mux)
+	// dev header). F-10.2.21. Handler wraps the mux in that check.
+	return mux
 }
 
 // readSessionRoute wraps a /v1/sessions/{id} read route: the
