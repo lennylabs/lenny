@@ -308,7 +308,16 @@ func TestRequestElicitationPublishesElicitationRequestEvent_spec_7_2(t *testing.
 	}()
 	waitElicitation(t, interactions, "sess_e", "elic_x")
 
-	hist := bus.History("sess_e", 0)
+	// The tool stores the elicitation before it publishes the event, so the
+	// history is read after the event lands rather than right after the store
+	// write the wait above observes.
+	var hist []sessionevents.Event
+	for deadline := time.Now().Add(5 * time.Second); ; {
+		if hist = bus.History("sess_e", 0); len(hist) >= 1 || time.Now().After(deadline) {
+			break
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 	if len(hist) != 1 {
 		t.Fatalf("event history has %d events, want 1: %+v", len(hist), hist)
 	}
