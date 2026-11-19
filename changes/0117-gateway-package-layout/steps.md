@@ -126,8 +126,10 @@ Runs before v1 closes, after the member changes that remove packages listed in t
 Each move step, 0117.S3 to 0117.S13, settles the names of the packages it moves under decision 6, in the same step: a package whose name does not fit its component page or concern is renamed there, with its importers, and none is left for a final pass.
 
 ### 0117.S14 Session row package
-- status: Planned
+- status: Landed
 - lanes: [code]
 - depends-on: [0117.S12]
 
 Decision 102. The session row, `sessionstore.Session`, and the types it holds move to a package of their own under `pkg/session` that imports no tenancy or credential package, and `sessionstore` declares a type alias for each moved type, so the files that import the session store stay unchanged. `seam.Session.Stored` is typed with the row package, so `pkg/gateway/seam` no longer imports `sessionstore`, and the parts that import the seam interface no longer link `pkg/tenancy` or `pkg/credential` through it. A test pins that the seam interface's dependencies include neither. The step changes no behavior and runs outside milestone M2, after it.
+
+As built: the row package is `pkg/session/sessionrow` (decision 6). It declares `Session` and the types it holds, transitively, with the methods `DelegationLease.IsZero` and `ExperimentContext.Enrollment`, which move with their types, and the projections `NodeAttributes` and `FailureHistory`; it imports `pkg/api/v1/session` and `pkg/sandbox/isolation` only. `sessionstore` keeps its constants, `Store`, `ListFilter`, the errors, and the functions over rows, and declares an alias for each moved type in `row.go`, so no importer changes. `seam.Session.Stored` is `*sessionrow.Session`, and a unit test in `pkg/gateway/seam` pins that the seam interface's dependency closure holds no package under `pkg/tenancy` or `pkg/credential` and not the session store. The section citations the row carries move from the `sessionstore` entry of `tests/registers/spec-section-citations.yaml` to a new `sessionrow` entry. No specification page, documentation page, layout or wiring register row, or manifest line changes.

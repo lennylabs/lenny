@@ -6,7 +6,7 @@ import (
 	"errors"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionrow"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -33,7 +33,7 @@ type Session struct {
 	// whose identifier or tenant differs from the record's is ignored. It is
 	// nil when the caller holds no row. Each side sets it to a copy of its
 	// own row and reads the row through it without writing through it.
-	Stored *sessionstore.Session
+	Stored *sessionrow.Session
 	// DelegationDepth is the session's depth in its delegation tree, zero
 	// for a tree root.
 	DelegationDepth int
