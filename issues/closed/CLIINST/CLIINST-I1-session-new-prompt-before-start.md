@@ -1,10 +1,12 @@
 ---
 id: CLIINST-I1
-status: planned
+status: closed
 kind: spec-defect
 severity: high
 requirements: []
 change: 0160.S1
+closed: fixed
+closed-by: 0160.S1
 ---
 
 # `lenny session new` with a prompt never starts the session

@@ -7,7 +7,7 @@ The `end-user-first-session` persona journey of change 0157 runs `lenny session 
 ## Steps
 
 ### 0160.S1 Start the session before delivering the prompt
-- status: Building
+- status: Landed
 - lanes: [specification, code, documentation]
 - closes: [CLIINST-I1]
 

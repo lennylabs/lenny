@@ -1,6 +1,6 @@
 # lenny session new starts the session before the prompt
 
-Status: `In progress`, revision 2, 2026-11-19.
+Status: `Implemented`, revision 2, 2026-11-19.
 
 ## Problem
 
