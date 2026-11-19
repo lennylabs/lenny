@@ -25,9 +25,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
@@ -98,10 +101,10 @@ func TestBudgetKeysExpiredConcurrentDetectionsEndTheTreeOnce_spec_8_3(t *testing
 		reserver, mr := orphanfixture.NewMiniReserver(t)
 		returns := orphanfixture.NewReturnCounter(reserver)
 		srv := sessionserver.New(writes, sessionserver.Options{
-			DevTenantHeader: true, TreeArchive: archive, OpsEmitter: rec,
+			DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive), OpsEmitter: rec,
 			IncDelegationBudgetKeysExpired: rec.inc,
-			TreeBudgetReturner:             returns,
-			TaskUsage:                      resultrollup.New(writes, sessionusage.NewMemory(), archive, nil),
+			TreeBudgets:                    treeseam.Budgets{Returner: returns},
+			TreeRollups:                    platformtools.NewTreeRollups(resultrollup.New(writes, sessionusage.NewMemory(), archive, nil)),
 			UsageQuiescenceTimer:           orphanfixture.FiredTimer,
 		})
 		orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme", RuntimeRef: "echo", PoolRef: "pool-a"}, nodes)

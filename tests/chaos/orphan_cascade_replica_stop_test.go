@@ -19,10 +19,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -112,8 +114,8 @@ func TestOrphanCleanupCompletesStoppedReplicaCascade_spec_8_10(t *testing.T) {
 	root := nodes[0].ID
 
 	storeA := &stoppingStore{Store: writes, root: root, stopAfter: 3}
-	replicaA := sessionserver.New(storeA, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
-	replicaB := sessionserver.New(writes, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+	replicaA := sessionserver.New(storeA, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
+	replicaB := sessionserver.New(writes, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 
 	// Replica A cancels the root and runs its terminal pipeline, whose
 	// cascade stops when the replica does.

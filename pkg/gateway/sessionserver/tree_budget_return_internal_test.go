@@ -10,10 +10,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
@@ -311,9 +314,9 @@ func newRTFixture(t *testing.T, o rtOpts) *rtFixture {
 	opts := Options{
 		DevTenantHeader:                true,
 		Clock:                          f.clock.Now,
-		TreeBudgetReturner:             f.ret,
-		TreeArchive:                    f.archive,
-		TaskUsage:                      resultrollup.New(f.store, f.tokens, f.archive, f.clock.Now),
+		TreeBudgets:                    treeseam.Budgets{Returner: f.ret},
+		TreeArchive:                    platformtools.NewTreeArchive(f.archive),
+		TreeRollups:                    platformtools.NewTreeRollups(resultrollup.New(f.store, f.tokens, f.archive, f.clock.Now)),
 		UsageQuiescenceTimeout:         quiescence,
 		UsageQuiescenceTimer:           f.timer.after,
 		Executor:                       f.exec,
@@ -769,7 +772,7 @@ func TestBudgetReturnContextEndDuringWait_spec_8_3(t *testing.T) {
 		t.Errorf("forgets = %d, want 1", n)
 	}
 	next := New(f.store, Options{
-		DevTenantHeader: true, TreeBudgetReturner: f.ret, TreeArchive: f.archive,
+		DevTenantHeader: true, TreeBudgets: treeseam.Budgets{Returner: f.ret}, TreeArchive: platformtools.NewTreeArchive(f.archive),
 		UsageQuiescenceTimer: newRTTimer(true).after,
 	})
 	defer next.Close()

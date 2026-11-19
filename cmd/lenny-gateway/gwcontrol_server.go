@@ -14,10 +14,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
@@ -47,7 +47,7 @@ import (
 // F-8.6.4 / F-15.3.1.
 //
 // metrics may be nil for the no-metrics test path; in production the
-// gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
+// leasecontrol.PromMetrics set implements leasecontrol.MetricEmitter so
 // every extension decision drives the §16
 // `lenny_delegation_lease_extension_total` counter. F-8.6.13.
 //
@@ -60,7 +60,7 @@ import (
 // handshake with no gRPC frame and emits the spec's `pod_identity_mismatch`
 // log. trustDomain empty leaves CA-only verification in place (the
 // local-development path). F-10.3.1 / F-10.3.7 / F-10.3.13.
-func newGatewayControlServer(addr string, budgets *leasecontrol.StoreBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter ratelimit.Counter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker, inputWaits inputWaitRecoveryDeps) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
+func newGatewayControlServer(addr string, budgets *leasecontrol.StoreBudgetSource, metrics leasecontrol.MetricEmitter, auditor leasecontrol.Auditor, elicitor leasecontrol.Elicitor, autoCounter seam.RateCounter, defaultAutoMaxPerMin int, platformTools leasecontrol.PlatformToolService, connectorTools leasecontrol.ConnectorToolService, scrubReports leasecontrol.ScrubReportService, replicaID, tlsCert, tlsKey, clientCA, trustDomain, saTokenAudience string, saTokenVerifier leasecontrol.TokenVerifier, denyList spiffe.DenyChecker, inputWaits inputWaitRecoveryDeps) (*grpc.Server, net.Listener, *leasecontrol.Service, error) {
 	if addr == "" {
 		return nil, nil, nil, nil
 	}

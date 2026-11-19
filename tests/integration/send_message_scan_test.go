@@ -28,16 +28,18 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -146,12 +148,14 @@ func newScanTestbed(t *testing.T, handler stubinterceptor.Handler, maxInputSize 
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		Callers:           toolops.Callers{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             sessions,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		ContentPolicies:   svc,
 		Clock:             clock,
 		TenantID:          scanTenant,

@@ -20,11 +20,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
@@ -35,7 +37,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
@@ -48,6 +49,7 @@ import (
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
@@ -443,17 +445,12 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// §27.5 — wire the same revocation check into the MCP WebSocket
 		// transport so an origin=playground bearer revoked mid-stream
 		// (logout / idle / admin / user.invalidated) closes the in-flight
-		// connection with WebSocket code 4401. The principal is read from
-		// the auth-middleware context the upgrade request already carries;
-		// non-playground bearers (no origin claim) are not watched.
-		// F-27.5.4.
-		mcpSrv.SetWebSocketAuth(func(r *http.Request) (mcp.WSPrincipal, bool) {
-			p, ok := authmw.FromContext(r.Context())
-			if !ok {
-				return mcp.WSPrincipal{}, false
-			}
-			return mcp.WSPrincipal{Tenant: p.TenantID, JTI: p.JTI, Origin: p.Origin}, true
-		}, pg, 0)
+		// connection with WebSocket code 4401. The caller is read through
+		// GWSEAM-RequestCaller from the auth-middleware context the upgrade
+		// request already carries, and the revocation is checked through
+		// GWSEAM-IsBearerRevoked; non-playground bearers (no origin claim)
+		// are not watched. F-27.5.4.
+		mcpSrv.SetWebSocketAuth(toolops.Callers{}, pg, 0)
 		// §11.4 / §27.6 — drive the §11.4 user-invalidation
 		// fan-out into the playground revocation primitive so an OIDC
 		// principal invalidation revokes the user's playground sessions.
@@ -952,7 +949,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// logged or emitted in audit traces and is validated on the standard
 	// bearer path. It is a no-op for every request without a
 	// `lenny.bearer.` carrier. F-27.3.4 / F-27.5.2.
-	handler = mcp.WebSocketBearerCarrier(handler)
+	handler = wsbearer.Carrier(handler)
 
 	httpSrv := &http.Server{
 		Addr:              *addr,

@@ -13,8 +13,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -68,7 +69,9 @@ func TestStreamSeamLookupCarriesTheSessionRecordAndReportsAMissingSession(t *tes
 		ID: "sess-stream", TenantID: "acme", UserID: "bob@acme.com", ParentSessionID: "sess-parent",
 		RootSessionID: "sess-root", RuntimeRef: "rt", Pool: "pool-a", State: "running", LastSeq: 7,
 	}
-	if got != want {
+	// The record also carries the row's creation and update times.
+	want.CreatedAt, want.UpdatedAt = got.CreatedAt, got.UpdatedAt
+	if got != want || got.CreatedAt.IsZero() {
 		t.Errorf("record = %+v, want %+v", got, want)
 	}
 	if _, err := core.LookupSession(context.Background(), "acme", "sess-none"); !errors.Is(err, seam.ErrSessionNotFound) {
@@ -224,7 +227,7 @@ func TestStreamSeamChildrenReattachedFrameListsMissedAndActiveChildren(t *testin
 	}); err != nil {
 		t.Fatal(err)
 	}
-	core := sessionserver.New(store, sessionserver.Options{TreeArchive: archive}).StreamSeam()
+	core := sessionserver.New(store, sessionserver.Options{TreeArchive: platformtools.NewTreeArchive(archive)}).StreamSeam()
 
 	if frame, ok := core.ChildrenReattachedFrame(ctx, "acme", "sess-lonely", 0); ok {
 		t.Errorf("a session with no children got frame %s", frame)

@@ -299,12 +299,6 @@ packages:
   - package: pkg/gateway/externalapi/pagination
     part: domain
     step: 0117.S8
-  - package: pkg/gateway/gatewaycontrol/inputwaitrecovery
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/gatewaycontrol/platformtools
-    part: platform-tools
-    step: 0117.S7
   - package: pkg/gateway/llmproxy/credrouter
     part: removed
     removed-by: '0133'
@@ -317,76 +311,16 @@ packages:
   - package: pkg/gateway/llmproxy/semanticcache/redisstore
     part: removed
     removed-by: '0132'
-  - package: pkg/gateway/mcpfabric/delegation
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegation/export
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegation/exportwire
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegation/fileexport
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationbudget
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationbudget/pgstore
-    part: platform-tools
-    step: 0117.S7
   - package: pkg/gateway/mcpfabric/delegationpolicystore
     part: domain
     step: 0117.S9
   - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
     part: domain
     step: 0117.S9
-  - package: pkg/gateway/mcpfabric/delegationtree/deadlock
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/orphancleanup
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/resultrollup
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/treearchive
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/treebudget
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/delegationtree/treerecovery
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/elicitationfloor
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/mcp
-    part: platform-tools
-    step: 0117.S7
   - package: pkg/gateway/mcpfabric/mcpruntimes
     part: removed
     removed-by: '0119'
   - package: pkg/gateway/mcpfabric/mcpschemagen
-    part: removed
-    removed-by: '0138'
-  - package: pkg/gateway/mcpfabric/mcptools
-    part: platform-tools
-    step: 0117.S7
-  - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
     part: removed
     removed-by: '0138'
   - package: pkg/gateway/middleware/auth
@@ -563,9 +497,6 @@ packages:
   - package: pkg/gateway/session/executor
     part: core
     step: 0117.S11
-  - package: pkg/gateway/session/inputwait
-    part: platform-tools
-    step: 0117.S7
   - package: pkg/gateway/session/interactionstore
     part: domain
     step: 0117.S12
@@ -632,9 +563,6 @@ packages:
   - package: pkg/gateway/session/tokenanomaly
     part: removed
     removed-by: '0133'
-  - package: pkg/gateway/session/toolapproval
-    part: platform-tools
-    step: 0117.S7
   - package: pkg/gateway/sessionserver
     part: core
     step: 0117.S11
@@ -730,90 +658,10 @@ imports:
     to: pkg/gateway/session/executor
     rule: outside-imports
     step: 0117.S11
-  - from: pkg/gateway/mcpfabric/delegation/exportwire
-    to: pkg/gateway/podlifecycle/podsession
-    rule: seam-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/delegation/exportwire
-    to: pkg/gateway/runtime/adapterclient
-    rule: seam-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/podlifecycle/podsession
-    rule: seam-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/runtime/adapter
-    rule: seam-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/session/executor
-    rule: seam-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/session/messagerouting
-    rule: seam-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/session/sessioninbox
-    rule: seam-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/sessionserver
-    rule: seam-imports
-    step: 0117.S7
   - from: pkg/gateway/quota/quotacheckpoint
     to: pkg/gateway/externalapi/admin
     rule: outside-imports
     step: 0117.S8
-  - from: pkg/gateway/runtime/watchdog
-    to: pkg/gateway/mcpfabric/delegationtree/treearchive
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/session/recycle
-    to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/gatewaycontrol/platformtools
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/mcpfabric/delegationtree/resultrollup
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/mcpfabric/delegationtree/treearchive
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/mcpfabric/delegationtree/treebudget
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/mcpfabric/delegationtree/treerecovery
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/mcpfabric/mcp
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/session/inputwait
-    rule: core-imports
-    step: 0117.S7
-  - from: pkg/gateway/sessionserver
-    to: pkg/gateway/session/toolapproval
-    rule: core-imports
-    step: 0117.S7
   - from: pkg/podlifecycle
     to: pkg/gateway/podlifecycle/podclaim
     rule: outside-imports
@@ -822,71 +670,3 @@ imports:
     to: pkg/gateway/podlifecycle/podclaim
     rule: outside-imports
     step: 0117.S11
-  - from: pkg/gateway/gatewaycontrol/platformtools
-    to: pkg/gateway/middleware/auth
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/delegation
-    to: pkg/gateway/policy/interceptor
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/delegation/export
-    to: pkg/gateway/policy/interceptor
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    to: pkg/gateway/policy/ratelimit
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/environment/tenantstore
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/middleware/auth
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/policy/interceptor
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/policy/policy
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/policy/ratelimit
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/delegation
-    to: pkg/gateway/mcpfabric/delegationpolicystore
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/callercheck
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/credentials/credassign
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/credentials/credentialpoolstore
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/environment/envaccess
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/llmproxy/credrouter
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/mcpfabric/delegationpolicystore
-    rule: confined-imports
-    step: 0117.S7
-  - from: pkg/gateway/mcpfabric/mcptools
-    to: pkg/gateway/provisioning/vcscred
-    rule: confined-imports
-    step: 0117.S7

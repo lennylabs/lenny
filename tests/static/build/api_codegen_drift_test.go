@@ -46,9 +46,9 @@ var apiGenerators = []apiGenerator{
 	},
 	{
 		name:    "genmcpschemas",
-		pkg:     "./pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas",
-		output:  "pkg/gateway/mcpfabric/mcptools/generated_schemas.go",
-		workRel: "pkg/gateway/mcpfabric/mcptools",
+		pkg:     "./pkg/gateway/platformtools/mcptools/internal/genmcpschemas",
+		output:  "pkg/gateway/platformtools/mcptools/generated_schemas.go",
+		workRel: "pkg/gateway/platformtools/mcptools",
 	},
 }
 

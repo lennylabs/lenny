@@ -21,7 +21,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -47,7 +49,7 @@ func TestCascadeAndTwoSweepersEndEachSessionOnce_spec_8_10(t *testing.T) {
 		nodes := orphanfixture.RandomTree(rng, newID, maxDepth, 3)
 		writes := orphanfixture.NewWriteCounter(memstore.New())
 		archive := orphanfixture.NewArchiveCounter()
-		srv := sessionserver.New(writes, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+		srv := sessionserver.New(writes, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 		orphanfixture.Seed(t, writes, sessionstore.Session{TenantID: "acme", RuntimeRef: "echo"}, nodes)
 		ctx := context.Background()
 

@@ -9,14 +9,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// BudgetKeyRearmer re-arms the TTL of the delegation budget keys of the tree
-// rooted at rootSessionID: the tree-wide keys and the per-parent keys of each
-// parent in parentIDs. *treebudget.Reserver satisfies it.
-// spec: §8.3 (Delegation Policy and Lease)
-type BudgetKeyRearmer interface {
-	RearmTree(ctx context.Context, rootSessionID string, parentIDs []string) error
-}
-
 // rearmBudgetKeys re-arms the delegation budget keys of the tree row belongs
 // to, after a committed transition into or out of `suspended`, so a
 // suspended session's keys outlive its suspended lifetime. The tree root is
@@ -28,7 +20,7 @@ type BudgetKeyRearmer interface {
 //
 // spec: §8.3 (Delegation Policy and Lease)
 func (s *Server) rearmBudgetKeys(ctx context.Context, row sessionstore.Session) {
-	if s.budgetRearmer == nil {
+	if s.treeBudgets == nil {
 		return
 	}
 	root := row.RootSessionID
@@ -45,7 +37,7 @@ func (s *Server) rearmBudgetKeys(ctx context.Context, row sessionstore.Session) 
 	if len(parents) == 0 {
 		return
 	}
-	if err := s.budgetRearmer.RearmTree(ctx, root, parents); err != nil {
+	if err := s.treeBudgets.RearmBudget(ctx, root, parents); err != nil {
 		slog.Warn("sessionserver: re-arm the delegation budget keys",
 			"session_id", row.ID, "error", err)
 	}

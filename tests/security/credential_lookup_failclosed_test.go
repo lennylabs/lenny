@@ -41,12 +41,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -57,6 +58,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 const (
@@ -270,12 +272,14 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 	t.Run("delegated child during a tenant-store outage", func(t *testing.T) {
 		mcpSrv := mcp.NewServer()
 		mcptools.Register(mcpSrv, mcptools.Deps{
-			SessionService:    ownerprincipal.SessionAccess{},
+			Callers:           toolops.Callers{},
+			SessionService:    ownerprincipal.ToolAccess{},
+			SessionAccess:     ownerprincipal.ToolAccess{},
 			DevTenantFallback: true,
 			Store:             store,
-			Executor:          executor.NewEchoExecutor(),
+			Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 			Runtimes:          memRuntimes,
-			ChildMaterializer: srv,
+			ChildMaterializer: srv.ToolsSeam(),
 			Delegation: delegation.NewService(store, delegation.Options{
 				IDFunc:   denyLeakageIDCounter("sess-outage-child-"),
 				Runtimes: memRuntimes,

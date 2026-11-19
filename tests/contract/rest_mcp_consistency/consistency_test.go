@@ -22,14 +22,18 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 
 // newConsistencyServers stands up REST and MCP servers that share a
@@ -42,26 +46,29 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 	exec := executor.NewEchoExecutor()
 	mem := memorystore.NewInMemory(0, nil)
 
-	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Memory: mem})
+	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	toolwire.Attach(t, rest, platformtools.Options{Store: store, Memory: mem})
 	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		// spec: §15.2.1 rule 1 — wire the shared §15.1 service
 		// so lenny/create_session runs the same gates and returns the same
 		// envelope as REST POST /v1/sessions. F-15.2.4.
-		SessionCreator: rest,
+		SessionCreator: rest.ToolsSeam(),
 		// spec: §15.2.1 rule 1 — the shared service layer the
 		// overlapping client-facing lifecycle/read tools (start_session,
 		// terminate_session, get_session_status, list_sessions,
 		// list_artifacts) dispatch through, so the RegisterAdapterUnderTest
 		// state-transition and pagination matrix entries run the identical
 		// REST route on the MCP surface. F-15.2.3 / F-15.2.5.
-		SessionService: rest,
-		Executor:       exec,
+		SessionService: rest.ToolsSeam(),
+		SessionAccess:  rest.ToolsSeam(),
+		Executor:       toolseam.Executor(exec),
 		Memory:         mem,
 		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:         func() string { return "sess_mcp_consistency" },

@@ -478,8 +478,10 @@ func TestParseRegisterRefusesMalformedYAML(t *testing.T) {
 // front imports the authentication middleware and the stores and packages
 // its admin handlers read, and nothing else confined; the web playground
 // imports the JWT package, the issued-token store, and the tenant store,
-// and nothing else confined; and every other part imports none, before and
-// after the confined package moves to its concern directory.
+// and nothing else confined; the platform tools seam imports the
+// delegation policy store, and nothing else confined; and every other part
+// imports none, before and after the confined package moves to its concern
+// directory.
 // spec: GW-R2
 func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 	assertClean(t, check(t, base(), Register{}))
@@ -491,6 +493,7 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
 		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/externalapi/admintoken", "pkg/gateway/pki/carotation", "pkg/connectoroauth", "pkg/gateway/serviceidentity"),
 		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/gateway/storage/issuedtokenstore", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
+		pkg("pkg/gateway/platformtools/delegation", "pkg/gateway/mcpfabric/delegationpolicystore", "pkg/gateway/mcpfabric/delegationpolicystore/pgstore", "pkg/delegation/delegationpolicystore"),
 		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),
 		pkg("pkg/gateway/billing/usage", "pkg/gateway/quota/quotastore"),
@@ -593,6 +596,18 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		{
 			"a seam imports an authorization predicate", pkg("pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"),
 			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"},
+		},
+		{
+			"another seam imports the delegation policy store", pkg("pkg/gateway/streamproxy/d", "pkg/delegation/delegationpolicystore"),
+			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/d", "pkg/delegation/delegationpolicystore"},
+		},
+		{
+			"the platform tools seam imports the interceptor chain", pkg("pkg/gateway/platformtools/i", "pkg/gateway/policy/interceptor"),
+			Violation{RuleConfinedImports, "pkg/gateway/platformtools/i", "pkg/gateway/policy/interceptor"},
+		},
+		{
+			"the platform tools seam imports the tenant store", pkg("pkg/gateway/platformtools/t", "pkg/tenancy/tenantstore"),
+			Violation{RuleConfinedImports, "pkg/gateway/platformtools/t", "pkg/tenancy/tenantstore"},
 		},
 	}
 	for _, tc := range cases {

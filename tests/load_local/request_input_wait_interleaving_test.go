@@ -16,13 +16,15 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
@@ -41,10 +43,12 @@ type waitConn struct {
 func newWaitConn(name string, store sessionstore.Store, ids *atomic.Int64) *waitConn {
 	c := &waitConn{name: name, reg: inputwait.NewRegistry(), srv: mcp.NewServer(), gen: inputwaitrecovery.NewGeneration()}
 	mcptools.Register(c.srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		Callers:             toolops.Callers{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:          c.reg,
 		RequestInputTimeout: time.Minute,
 		IDFunc:              func() string { return fmt.Sprintf("%s-%d", name, ids.Add(1)) },

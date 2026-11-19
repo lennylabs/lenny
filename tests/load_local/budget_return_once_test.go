@@ -22,8 +22,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
@@ -59,9 +62,9 @@ func runReturnOnceRound(t *testing.T, rng *rand.Rand, round int) {
 	reserver, _ := orphanfixture.NewMiniReserver(t)
 	returns := orphanfixture.NewReturnCounter(reserver)
 	srv := sessionserver.New(writes, sessionserver.Options{
-		DevTenantHeader: true, TreeArchive: archive,
-		TreeBudgetReturner:   returns,
-		TaskUsage:            resultrollup.New(writes, sessionusage.NewMemory(), archive, nil),
+		DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive),
+		TreeBudgets:          treeseam.Budgets{Returner: returns},
+		TreeRollups:          platformtools.NewTreeRollups(resultrollup.New(writes, sessionusage.NewMemory(), archive, nil)),
 		UsageQuiescenceTimer: orphanfixture.FiredTimer,
 	})
 	defer srv.Close()

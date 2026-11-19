@@ -90,9 +90,9 @@ var producers = []Producer{
 		Outputs: []string{"pkg/proto/"},
 	},
 	{
-		Command: "go generate ./pkg/gateway/mcpfabric/mcptools/...",
+		Command: "go generate ./pkg/gateway/platformtools/mcptools/...",
 		Source:  "pkg/gateway/externalapi/openapi/openapi.json",
-		Outputs: []string{"pkg/gateway/mcpfabric/mcptools/generated_schemas.go"},
+		Outputs: []string{"pkg/gateway/platformtools/mcptools/generated_schemas.go"},
 	},
 	{
 		Command: "go run ./cmd/lenny-chart-schema-gen",

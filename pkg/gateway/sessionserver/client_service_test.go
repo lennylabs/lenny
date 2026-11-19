@@ -10,12 +10,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -239,7 +241,7 @@ func TestSessionUsageTreeAggregated_spec_15_1_676(t *testing.T) {
 		_, _ = billing.Append(ctx, e)
 	}
 
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Billing: billing, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Billing: billing, TreeArchive: platformtools.NewTreeArchive(archive)})
 	h := asOwner(srv.Handler())
 
 	type usageRep struct {

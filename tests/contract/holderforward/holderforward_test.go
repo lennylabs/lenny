@@ -30,9 +30,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -152,7 +151,8 @@ func runningRow() sessionstore.Session {
 // what the coordinator received.
 func (f *fixture) forward(t *testing.T, ctx context.Context) (wireRequest, authmw.Principal) {
 	t.Helper()
-	res, out, err := f.serving.ForwardToolCall(ctx, runningRow(), sessionserver.ForwardKindTerminate, "lenny/target", json.RawMessage(`{"reason":"done"}`))
+	raw, out, err := f.serving.ForwardToolCall(ctx, runningRow(), sessionserver.ForwardKindTerminate, "lenny/target", json.RawMessage(`{"reason":"done"}`))
+	res, _ := mcp.FromSeamResult(raw)
 	if err != nil || out != sessionserver.ForwardDelivered || len(res.Content) != 1 || res.Content[0].Text != "terminated" {
 		t.Fatalf("ForwardToolCall = %+v, %v, %v; want the coordinator's result delivered", res, out, err)
 	}
@@ -202,12 +202,12 @@ func TestForwardedToolCallFromAnMCPClientCarriesTheCredential_spec_28_5_4(t *tes
 // diagnosis: a forwarded platform tool call no longer names its calling
 // session in X-Lenny-Calling-Session, carries a credential it has none of,
 // or the coordinator's listener no longer installs the principal
-// platformtools.Bridge.CallPlatformTool installs. Read setForwardIdentity in
+// GWSEAM-AttachCallingSession installs. Read setForwardIdentity in
 // pkg/gateway/sessionserver/holder_forward.go and the calling-session branch
 // of NewHolderForwardHandler in holder_forward_listener.go.
 func TestForwardedPlatformToolCallCarriesTheCallingSession_spec_28_5_4(t *testing.T) {
 	f := newFixture(t)
-	ctx, err := platformtools.WithSessionPrincipal(context.Background(), f.sessions, "sess-parent")
+	ctx, err := sessionserver.WithSessionPrincipal(context.Background(), f.sessions, "sess-parent")
 	if err != nil {
 		t.Fatalf("WithSessionPrincipal: %v", err)
 	}

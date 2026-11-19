@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -147,7 +149,7 @@ func TestRearmBudgetKeys_spec_8_3(t *testing.T) {
 		}
 	}
 	rearm := &recordingRearmer{}
-	s := New(store, Options{DevTenantHeader: true, BudgetKeyRearmer: rearm})
+	s := New(store, Options{DevTenantHeader: true, TreeBudgets: treeseam.Budgets{Rearmer: rearm}})
 	defer s.Close()
 	g1, _ := store.Get(context.Background(), "acme", "g1")
 	s.rearmBudgetKeys(context.Background(), g1)

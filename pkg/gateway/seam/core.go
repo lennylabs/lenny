@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
@@ -92,7 +93,9 @@ type ChildSessions interface {
 }
 
 // Terminals is the terminal pipeline of the session core, which a seam or
-// the API front runs after its own terminal write.
+// the API front runs after its own terminal write. The API front's
+// force-terminate is an interface of its own, ForceTerminations, so a seam
+// holds only the pipeline.
 type Terminals interface {
 	// BeginTerminal is GWSEAM-BeginTerminal. The caller calls the returned
 	// function when its terminal work ends, so shutdown waits for it.
@@ -106,10 +109,24 @@ type Terminals interface {
 	// caller's own terminal signals inside the pipeline; the result is the
 	// session record after the pipeline.
 	AfterTerminalWrite(ctx context.Context, from state.State, s Session, signals func(context.Context, Session)) Session
+}
 
+// ForceTerminations is served by the session core to the API front: the
+// operator's force-terminate of a session.
+type ForceTerminations interface {
 	// ForceTerminate is GWSEAM-ForceTerminate. It reports the session
 	// after the write, the state it left, and whether this call moved it.
 	ForceTerminate(ctx context.Context, tenantID, sessionID string) (s Session, previous state.State, transitioned bool, err error)
+}
+
+// CallingSessions is served by the session core to the platform tools
+// seam's bridge of the platform tool calls a session's pod makes over
+// LNK-GWCONTROL. The core's forward listener resolves a forwarded tool
+// call's calling session the same way.
+type CallingSessions interface {
+	// AttachCallingSession is GWSEAM-AttachCallingSession. It returns
+	// ErrSessionNotFound for an unknown calling session.
+	AttachCallingSession(ctx context.Context, sessionID string) (context.Context, error)
 }
 
 // Revocations is served by the session core to the API front: the session
@@ -247,7 +264,29 @@ type MessageDelivery interface {
 	// AdmitResume checks a resume against the tenant's limits and returns
 	// a *CapRefusal when a limit refuses it.
 	AdmitResume(ctx context.Context, s Session) error
+
+	// RouteMessage is GWSEAM-RouteMessage. inputRequired reports that the
+	// session waits for input although its state does not say so.
+	RouteMessage(st state.State, inputRequired bool) MessageRoute
 }
+
+// MessageRoute names how the session core delivers a message one session
+// sends another.
+type MessageRoute int
+
+// The message routes.
+const (
+	// RouteDeliver delivers the message now, after the held messages.
+	RouteDeliver MessageRoute = iota + 1
+	// RouteInbox places the message in the session's inbox.
+	RouteInbox
+	// RouteHold holds the message for later delivery.
+	RouteHold
+	// RouteTerminal refuses the message because the session is terminal.
+	RouteTerminal
+	// RouteResume holds the message and resumes the suspended session.
+	RouteResume
+)
 
 // Message is one message SendMessages delivers.
 type Message struct {
@@ -265,13 +304,14 @@ type Response struct {
 	Annotations map[string]any
 }
 
-// MessagePart is one part of a Response.
+// MessagePart is one part of a Response, with the JSON names of an output
+// part of the client API.
 type MessagePart struct {
-	Type          string
-	Text          string
-	Ref           string
-	SchemaVersion int
-	Annotations   map[string]any
+	Type          string         `json:"type"`
+	Text          string         `json:"text,omitempty"`
+	Ref           string         `json:"ref,omitempty"`
+	SchemaVersion int            `json:"schemaVersion,omitempty"`
+	Annotations   map[string]any `json:"annotations,omitempty"`
 }
 
 // InboxMessage is a message held in a session's inbox or held for later
@@ -280,7 +320,7 @@ type InboxMessage struct {
 	MessageID       string
 	SenderSessionID string
 	Payload         []byte
-	EnqueuedAtUnix  int64
+	EnqueuedAt      time.Time
 }
 
 // HoldOutcome is the result of holding a message.
@@ -345,6 +385,14 @@ type PodRecycle interface {
 
 	// RetirePod retires a pod.
 	RetirePod(ctx context.Context, podID string, r PodRetirement) error
+
+	// RecordScrubFailure is GWSEAM-RecordScrubFailure. count is the pod's
+	// cumulative count of failed scrubs after this one.
+	RecordScrubFailure(podID, pool, runtimeClass string, count int)
+
+	// RecordPodRetirement is GWSEAM-RecordPodRetirement. reason is a
+	// retirement reason of the pod scrub contract.
+	RecordPodRetirement(reason, pool, runtimeClass string)
 }
 
 // PodRecyclePolicy is what InspectForRecycle returns for one pod. The

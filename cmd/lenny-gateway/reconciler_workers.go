@@ -4,19 +4,18 @@ package main
 
 import (
 	"context"
-	"errors"
 	"log"
 	"time"
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
-	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingcheckpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
-	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget"
+	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/session/orphansession"
@@ -43,7 +42,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	maxDeadlockWaitSeconds := f.maxDeadlockWaitSeconds
 	quotaSyncIntervalSeconds := f.quotaSyncIntervalSeconds
 	// ----- §8.10 orphan-cleanup job -----
-	orphanSweeper := orphancleanup.New(w.sessions, tenantsLister{w.tenants}, orphancleanup.Options{
+	orphanSweeper := orphancleanup.New(w.sessions, toolTenants(w.tenants, w.users), orphancleanup.Options{
 		Archive: w.treeArchive,
 		Clock:   clockinject.Now,
 		// spec: §8.10 — operator-tunable cascade timeout. The
@@ -51,14 +50,15 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 		// persist past its root's terminal state. F-8.10.9.
 		CascadeTimeout: time.Duration(*delegationCascadeTimeoutSeconds) * time.Second,
 		// F-5.2.26: same terminal pipeline as the watchdog so an orphan
-		// terminated by background sweep also releases its slot/pod.
-		Terminal: w.sessionSrv,
+		// terminated by background sweep also releases its slot/pod. The
+		// sweep reaches the session core's pipeline through the seam.
+		Terminal: seamrow.TerminalHook(w.sessionSrv.ToolsSeam()),
 		// spec: §8.10; §16.1 —
 		// publish the cleanup-runs counter, the cumulative terminated
 		// counter, the fleet-wide active gauge, and the per-tenant active
 		// gauge so the §16.5 OrphanTasksPerTenantHigh alert evaluates.
 		// F-8.10.7.
-		Metrics: w.gwMetrics,
+		Metrics: w.platformToolsMetrics.orphanCleanup,
 	})
 	go orphanSweeper.Run(w.watchdogCtx, func(terminated int, err error) {
 		if err != nil {
@@ -118,7 +118,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	// when the timeout is zero. spec: §8.8. F-8.8.6.
 	if w.deadlockManager != nil {
 		deadlockDetector := deadlock.NewDetector(w.deadlockManager, w.deadlockTracker, w.inputWaits,
-			deadlockNodeLookup(w.sessions), w.deadlockFail)
+			deadlockNodeLookup(w.sessions), w.deadlockFailFunc())
 		go deadlockDetector.Run(w.watchdogCtx, 10*time.Second)
 		log.Printf("lenny-gateway: §8.8 subtree deadlock detector enabled (maxDeadlockWaitSeconds=%d)",
 			*maxDeadlockWaitSeconds)
@@ -182,11 +182,11 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			// F-12.4.30.
 			Probe:           concernRedisProbe(w.concernRedis, storerouter.RedisConcernDelegation),
 			Counters:        delegationbudget.CounterAdapter{Reserver: w.treeBudgetConcrete},
-			Trees:           delegationbudget.SessionTreeLister{Sessions: w.sessions, Tenants: (tenantsLister{w.tenants}).ListTenants},
+			Trees:           delegationbudget.SessionTreeLister{Sessions: w.sessions, Tenants: toolTenants(w.tenants, w.users)},
 			Store:           delegationbudgetpg.New(w.pgPool),
 			Live:            delegationbudget.SessionEnumerator{Sessions: w.sessions},
 			Marker:          delegationbudget.SessionUnrecoverableMarker{Sessions: w.sessions},
-			Metrics:         w.gwMetrics,
+			Metrics:         w.platformToolsMetrics.budgetReconstruction,
 			Interval:        time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
 			NodeMemoryBytes: *delegationNodeMemoryFootprintBytes,
 			Now:             clockinject.Now,
@@ -261,67 +261,12 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	}
 }
 
-// deadlockFail is the §8.8 DEADLOCK_TIMEOUT writer the subtree deadlock
-// detector calls for each deepest blocked task of a timed-out subtree. It
-// reports whether the write applied, so the detector records the §16.1
-// `timeout` resolution only after an applied write.
-//
-// The mutator re-checks, under the row lock, the live input-wait registry
-// the detector's snapshot read: a task whose wait was answered or
-// cancelled after the snapshot is no longer blocked, so the write is
-// refused with ErrSuperseded. The check reads the registry rather than the
-// row state, because a wait served on the gateway-edge MCP endpoint leaves
-// the row running, and a state check would never fail such a task. A wait
-// resolved after the check and before the write commits is still failed;
-// that window is the mutator's duration.
-//
-// spec: §8.8 (Subtree deadlock detection), §16.1; §7.2 (terminal writes
-// run through the claim and the locked-row write)
-func (w *gatewayWiring) deadlockFail(ctx context.Context, tenantID, sessionID string) bool {
-	// spec: §7.2 — a funnel terminal writer: the claim opens before the
-	// write, the write applies only over a non-terminal locked row and
-	// records the Terminated fact, and the terminal pipeline runs exactly
-	// when it applied.
-	end := w.sessionSrv.BeginTerminal(sessionID)
-	defer end()
-	var fromState session.State
-	now := time.Now()
-	updated, err := w.sessions.Update(ctx, tenantID, sessionID, func(s *sessionstore.Session) error {
-		if session.IsTerminal(s.State) || !w.waitStillPending(sessionID) {
-			return sessionstore.ErrSuperseded
-		}
-		fromState = s.State
-		s.State = session.StateFailed
-		s.FailureClass = session.FailureClassRuntime
-		s.FailureReason = string(session.FailureDeadlockTimeout)
-		sessionstore.MarkTerminated(s, fromState, now)
-		return nil
-	})
-	if errors.Is(err, sessionstore.ErrSuperseded) {
-		return false
-	}
-	if err != nil {
-		log.Printf("lenny-gateway: §8.8 deadlock-timeout fail %s: %v", sessionID, err)
-		return false
-	}
-	// spec: §4.6 — a deadlock-timeout fails a blocked running session, so
-	// fromState routes its teardown through the §6.2 executor recycle path
-	// rather than the pre-running reclaim.
-	w.sessionSrv.OnSessionTerminal(ctx, fromState, updated)
-	return true
-}
-
-// waitStillPending reports whether sessionID still holds a pending
-// request_input wait in this replica's live registry. With no registry
-// wired no wait can be pending, so the deadlock write fails closed to no
-// write.
-//
-// spec: §8.8 (Subtree deadlock detection)
-func (w *gatewayWiring) waitStillPending(sessionID string) bool {
-	if w.inputWaits == nil {
-		return false
-	}
-	return len(w.inputWaits.PendingDetailsForSession(sessionID)) > 0
+// deadlockFailFunc returns the §8.8 detector's DEADLOCK_TIMEOUT writer: the
+// platform tools seam's funnel terminal writer, which reaches the session
+// core's terminal pipeline through the seam and checks this replica's live
+// request_input registry inside the locked write.
+func (w *gatewayWiring) deadlockFailFunc() deadlock.FailFunc {
+	return deadlock.TerminalFail(w.sessions, w.sessionSrv.ToolsSeam(), w.inputWaits, time.Now)
 }
 
 // deadlockNodeLookup reads the §8.8 detector's view of a session from its

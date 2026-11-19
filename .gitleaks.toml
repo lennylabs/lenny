@@ -218,7 +218,7 @@ regexes = ['''^AAECAwQFBgcICQoLDA0ODxAREhMUFRYXGBkaGxwdHh8=$''']
 # Findings (generic-api-key):
 #   pkg/gateway/podlifecycle/podsession/binder_test.go:2690
 #     0123456789abcdef, the hex alphabet the test trims a token against.
-#   pkg/gateway/mcpfabric/mcp/playground_redact_internal_test.go:20
+#   pkg/gateway/platformtools/mcp/playground_redact_internal_test.go:20
 #     sk-live-abc123, an input the redaction test expects to be redacted.
 #   tests/integration/ops_mcp_scope_live_bearer_test.go:154
 #     tier4-scope-probe-secret-material, a signing secret the test

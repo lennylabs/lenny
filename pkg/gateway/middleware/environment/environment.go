@@ -131,6 +131,16 @@ func (r Resolution) FilterRuntimes(runtimes []runtimestore.Runtime) []runtimesto
 	return envaccess.AuthorizedRuntimes(r.Caller, r.AllEnvironments, runtimes, r.Policy)
 }
 
+// CrossEnvironmentReachable reports whether target is reachable from the
+// environment named callerEnvironment through a bilateral
+// cross-environment delegation declaration among the tenant's
+// environments, so a part that reads the Resolution evaluates the
+// declaration through the same envaccess code path the filters use. It
+// reports false when the environment is not one of the tenant's.
+func (r Resolution) CrossEnvironmentReachable(callerEnvironment string, target runtimestore.Runtime) bool {
+	return envaccess.CrossEnvironmentReachable(callerEnvironment, target, r.AllEnvironments)
+}
+
 // FilterConnectors narrows connectors to the §10.6 transparent-filtering
 // view: the union of connectors the caller's environment membership
 // authorizes through each environment's connectorSelector. §10.6 scopes

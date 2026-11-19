@@ -24,10 +24,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -39,7 +40,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
@@ -54,7 +54,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotabudget"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
@@ -100,18 +100,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
@@ -125,7 +126,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -331,6 +331,11 @@ type gatewayWiringFields struct {
 	delegationPolicies delegationpolicystore.Store
 	interceptors       interceptorstore.Store
 	deploymentConfig   deploymentconfigstore.Store
+	// platformToolsMetrics holds the metric sets the platform tools seam's
+	// packages register on the gateway's metric registry. buildMCPSurface
+	// builds it; the control server and the reconciler workers read the
+	// lease-extension, orphan-cleanup, and budget-reconstruction sets back.
+	platformToolsMetrics platformToolsMetrics
 	// §4.8 policy interceptor chain outputs. buildPolicyChain constructs the
 	// chain, the §8.3 maxInputSize resolver holder, the policy audit sink,
 	// and the §11.2 quota counter and tenant-limits resolver; the session
@@ -465,7 +470,6 @@ type gatewayWiringFields struct {
 	expectedAuds      []string
 	experiments       experimentstore.Store
 	holdCoordinator   *recycle.HoldCoordinator
-	hwmReader         sessionserver.DelegationHighWatermarkReader
 	inProcessAssign   *credassign.Service
 	interactions      interactionstore.Store
 	jwtKeySet         *jwt.KeySet

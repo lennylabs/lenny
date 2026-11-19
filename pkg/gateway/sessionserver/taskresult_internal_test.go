@@ -8,11 +8,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
@@ -164,7 +166,7 @@ func TestArchiveSettledChildPreservesSchemaVersion_spec_8_8_11(t *testing.T) {
 		t.Fatalf("seed root: %v", err)
 	}
 	archive := treearchive.NewMemory()
-	srv := New(store, Options{DevTenantHeader: true, Clock: taskResultClock, TreeArchive: archive})
+	srv := New(store, Options{DevTenantHeader: true, Clock: taskResultClock, TreeArchive: platformtools.NewTreeArchive(archive)})
 
 	// A prior writer recorded this node at schema version 7.
 	prior, _ := json.Marshal(sessionrecord.Result{SchemaVersion: 7, TaskID: "sess_c", State: "completed"})
@@ -228,7 +230,7 @@ func TestMaterializeTaskResultStampsUsage_spec_8_8_3(t *testing.T) {
 	}
 
 	builder := resultrollup.New(store, tokens, archive, func() time.Time { return terminal })
-	srv := New(store, Options{DevTenantHeader: true, Clock: taskResultClock, TreeArchive: archive, TaskUsage: builder})
+	srv := New(store, Options{DevTenantHeader: true, Clock: taskResultClock, TreeArchive: platformtools.NewTreeArchive(archive), TreeRollups: platformtools.NewTreeRollups(builder)})
 
 	res := srv.materializeTaskResult(ctx, sess, 0)
 	if res.Usage == nil {

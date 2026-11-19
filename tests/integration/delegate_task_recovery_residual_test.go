@@ -13,7 +13,7 @@
 // duplicate on the recovery path, because it is wired only on the
 // client-facing edge /mcp surface; the intra-pod platform-tool dispatch
 // (mcp.Server.DispatchTool) a restored parent re-issues delegate_task
-// over omits the §11.5 hook (pkg/gateway/mcpfabric/mcp/mcp.go
+// over omits the §11.5 hook (pkg/gateway/platformtools/mcp/mcp.go
 // DispatchTool). This test pins both halves of that boundary:
 //
 //   - Intra-pod residual: two delegate_task calls through DispatchTool
@@ -30,7 +30,7 @@
 //
 // The intra-pod case runs in-process against the real
 // mcp.Server + delegation.Service wiring (mirroring
-// pkg/gateway/mcpfabric/mcptools/delegate_integration_test.go), the same
+// pkg/gateway/platformtools/mcptools/delegate_integration_test.go), the same
 // handler the §9.1 intra-pod platform MCP server reaches over
 // GatewayControl.CallPlatformTool. The mitigation case runs against the
 // real cmd/lenny-gateway binary on the compose stack with Postgres and
@@ -53,9 +53,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -133,12 +134,14 @@ func testIntraPodResidual(t *testing.T) {
 	srv := mcp.NewServer()
 	// Deliberately do NOT call srv.SetIdempotency: the intra-pod
 	// DispatchTool entry point never runs the §11.5 hook even when it is
-	// configured (pkg/gateway/mcpfabric/mcp/mcp.go DispatchTool), and the
+	// configured (pkg/gateway/platformtools/mcp/mcp.go DispatchTool), and the
 	// production intra-pod platform MCP server reaches DispatchTool over
 	// GatewayControl.CallPlatformTool. Leaving it unset mirrors that
 	// intra-pod surface directly.
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		Callers:           toolops.Callers{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Delegation:        svc,

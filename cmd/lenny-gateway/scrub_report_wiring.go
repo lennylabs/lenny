@@ -8,7 +8,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
@@ -89,7 +89,9 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 	if err != nil {
 		return nil, fmt.Errorf("build claim disposition driver: %w", err)
 	}
-	reporter, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+	// The scrub report service of the platform tools seam reaches these
+	// recycle seams through the session core's pod recycle operations.
+	podRecycle, err := recycle.NewPodRecycle(recycle.PodRecycleParts{
 		Counters:       recycle.NewRecycleCounterStore(counters),
 		Ledger:         ledger,
 		SessionRetirer: sessionRetirer,
@@ -97,6 +99,10 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 		Driver:         driver,
 		Metrics:        recycle.NewRetirementMetrics(metrics),
 	})
+	if err != nil {
+		return nil, fmt.Errorf("build pod recycle operations: %w", err)
+	}
+	reporter, err := leasecontrol.NewScrubReporterForRecycle(podRecycle)
 	if err != nil {
 		return nil, fmt.Errorf("build scrub reporter: %w", err)
 	}

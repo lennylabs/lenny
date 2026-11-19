@@ -49,7 +49,7 @@ github.com/lennylabs/lenny/pkg/gateway/session/sessionevents	github.com/lennylab
 
 # 0117.S7
 github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery	github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery	0117.S7
-github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools	github.com/lennylabs/lenny/pkg/gateway/platformtools/platformtools	0117.S7
+github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools	github.com/lennylabs/lenny/pkg/gateway/platformtools/toolbridge	0117.S7
 github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation	github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation	0117.S7
 github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget	github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget	0117.S7
 github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock	github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock	0117.S7

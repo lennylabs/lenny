@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1536
+      count: 1527
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -230,7 +230,7 @@ packages:
     - package: pkg/delegation/cycle
       count: 3
     - package: pkg/delegation/lease
-      count: 22
+      count: 23
     - package: pkg/delegation/recovery
       count: 7
     - package: pkg/deployenv
@@ -257,6 +257,8 @@ packages:
       count: 10
     - package: pkg/gateway/api/requestmetrics
       count: 6
+    - package: pkg/gateway/api/wsbearer
+      count: 4
     - package: pkg/gateway/audit/auditretention
       count: 12
     - package: pkg/gateway/audit/auditscope
@@ -435,10 +437,10 @@ packages:
       count: 3
     - package: pkg/gateway/externalapi/pagination
       count: 3
-    - package: pkg/gateway/gatewaycontrol/inputwaitrecovery
+    - package: pkg/gateway/platformtools/inputwaitrecovery
       count: 38
-    - package: pkg/gateway/gatewaycontrol/platformtools
-      count: 9
+    - package: pkg/gateway/platformtools/toolbridge
+      count: 4
     - package: pkg/gateway/llmproxy/credrouter
       count: 19
     - package: pkg/gateway/llmproxy/proxycache
@@ -447,60 +449,60 @@ packages:
       count: 2
     - package: pkg/gateway/llmproxy/semanticcache/redisstore
       count: 4
-    - package: pkg/gateway/mcpfabric/delegation
-      count: 173
-    - package: pkg/gateway/mcpfabric/delegation/export
+    - package: pkg/gateway/platformtools/delegation
+      count: 168
+    - package: pkg/gateway/platformtools/delegation/export
       count: 5
-    - package: pkg/gateway/mcpfabric/delegation/exportwire
+    - package: pkg/gateway/platformtools/delegation/exportwire
       count: 2
-    - package: pkg/gateway/mcpfabric/delegation/fileexport
+    - package: pkg/gateway/platformtools/delegation/fileexport
       count: 5
-    - package: pkg/gateway/mcpfabric/delegationbudget
-      count: 22
-    - package: pkg/gateway/mcpfabric/delegationbudget/pgstore
+    - package: pkg/gateway/platformtools/delegationbudget
+      count: 24
+    - package: pkg/gateway/platformtools/delegationbudget/pgstore
       count: 3
     - package: pkg/gateway/mcpfabric/delegationpolicystore
       count: 14
     - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
       count: 3
-    - package: pkg/gateway/mcpfabric/delegationtree/deadlock
-      count: 27
-    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-      count: 257
-    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg
+    - package: pkg/gateway/platformtools/deadlock
+      count: 31
+    - package: pkg/gateway/platformtools/leasecontrol
+      count: 259
+    - package: pkg/gateway/platformtools/leasecontrol/denialpg
       count: 4
-    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
+    - package: pkg/gateway/platformtools/leasecontrol/leaseelicit
       count: 13
-    - package: pkg/gateway/mcpfabric/delegationtree/orphancleanup
-      count: 50
-    - package: pkg/gateway/mcpfabric/delegationtree/resultrollup
+    - package: pkg/gateway/platformtools/orphancleanup
+      count: 52
+    - package: pkg/gateway/platformtools/resultrollup
       count: 12
-    - package: pkg/gateway/mcpfabric/delegationtree/treearchive
+    - package: pkg/gateway/platformtools/treearchive
       count: 16
-    - package: pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore
+    - package: pkg/gateway/platformtools/treearchive/pgstore
       count: 7
-    - package: pkg/gateway/mcpfabric/delegationtree/treebudget
-      count: 61
-    - package: pkg/gateway/mcpfabric/delegationtree/treerecovery
-      count: 14
-    - package: pkg/gateway/mcpfabric/elicitationfloor
+    - package: pkg/gateway/platformtools/treebudget
+      count: 60
+    - package: pkg/gateway/platformtools/treerecovery
+      count: 16
+    - package: pkg/gateway/platformtools/elicitationfloor
       count: 8
-    - package: pkg/gateway/mcpfabric/mcp
-      count: 126
+    - package: pkg/gateway/platformtools/mcp
+      count: 123
     - package: pkg/gateway/mcpfabric/mcpruntimes
       count: 18
     - package: pkg/gateway/mcpfabric/mcpschemagen
       count: 11
-    - package: pkg/gateway/mcpfabric/mcptools
-      count: 678
-    - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
+    - package: pkg/gateway/platformtools/mcptools
+      count: 671
+    - package: pkg/gateway/platformtools/mcptools/internal/genmcpschemas
       count: 1
     - package: pkg/gateway/meteringproxy/llmproxy
       count: 71
     - package: pkg/gateway/meteringproxy/metering
       count: 53
     - package: pkg/gateway/meteringproxy/sessionbudget
-      count: 27
+      count: 28
     - package: pkg/gateway/middleware/auth
       count: 82
     - package: pkg/gateway/middleware/circuitbreaker
@@ -514,7 +516,7 @@ packages:
     - package: pkg/gateway/middleware/deprecation
       count: 5
     - package: pkg/gateway/middleware/environment
-      count: 1
+      count: 2
     - package: pkg/gateway/middleware/idempotency
       count: 49
     - package: pkg/gateway/middleware/ratelimit
@@ -533,6 +535,8 @@ packages:
       count: 1
     - package: pkg/gateway/pki/carotationstore/pgstore
       count: 1
+    - package: pkg/gateway/platformtools
+      count: 53
     - package: pkg/gateway/playground
       count: 95
     - package: pkg/gateway/podlifecycle/bindrelease
@@ -580,7 +584,7 @@ packages:
     - package: pkg/gateway/replica/gatewayleader
       count: 4
     - package: pkg/gateway/replica/gatewaymetrics
-      count: 228
+      count: 196
     - package: pkg/gateway/replica/pdbwatcher
       count: 7
     - package: pkg/gateway/replica/tlsprobe
@@ -627,7 +631,7 @@ packages:
       count: 22
     - package: pkg/gateway/session/executor
       count: 150
-    - package: pkg/gateway/session/inputwait
+    - package: pkg/gateway/platformtools/inputwait
       count: 11
     - package: pkg/gateway/session/interactionstore
       count: 12
@@ -672,7 +676,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3021
+      count: 2968
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
@@ -883,6 +887,8 @@ packages:
       count: 27
     - package: pkg/quota
       count: 12
+    - package: pkg/ratewindow
+      count: 2
     - package: pkg/recommendations/rules
       count: 3
     - package: pkg/redisconn

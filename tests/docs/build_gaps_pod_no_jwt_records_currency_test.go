@@ -36,8 +36,8 @@ const podNoJWTProposal = "proposals/0104_fix_two-gaps-leave-lenny-s-session-scop
 
 // Tree paths the records describe.
 const (
-	childTokenPackageDir  = "pkg/gateway/mcpfabric/delegation/childtoken"
-	delegationServiceFile = "pkg/gateway/mcpfabric/delegation/service.go"
+	childTokenPackageDir  = "pkg/gateway/platformtools/delegation/childtoken"
+	delegationServiceFile = "pkg/gateway/platformtools/delegation/service.go"
 )
 
 // diagnosis: F-10.2.25 or F-8.2.31 was reopened, lost its proposal 0104

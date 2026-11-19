@@ -92,8 +92,21 @@ type BearerRevocations interface {
 	IsBearerRevoked(ctx context.Context, tenantID, jti string) (bool, error)
 }
 
-// DelegationTree is served by the platform tools seam to the session core.
+// DelegationTree is served by the platform tools seam to the session core:
+// every operation on a delegation tree. A caller holds the narrower
+// interface it needs, so a gateway that does not wire one of them, such as
+// the tree budgets without Redis, leaves that interface nil.
 type DelegationTree interface {
+	TreeBudgets
+	TreeArchive
+	TreeRollups
+	TreeOrphans
+	TreeRecovery
+}
+
+// TreeBudgets is the part of DelegationTree that holds a tree's budget
+// counters.
+type TreeBudgets interface {
 	// ReturnBudget returns the budget a node held to its tree.
 	ReturnBudget(ctx context.Context, r BudgetReturn) error
 
@@ -104,7 +117,11 @@ type DelegationTree interface {
 	// ObserveHighWatermark returns the highest count of parallel children
 	// a tree reached, or found false.
 	ObserveHighWatermark(ctx context.Context, rootSessionID string) (value int64, found bool, err error)
+}
 
+// TreeArchive is the part of DelegationTree that holds the archive of a
+// tree's settled nodes.
+type TreeArchive interface {
 	// ArchiveNode records a settled node in the tree archive.
 	ArchiveNode(ctx context.Context, n ArchivedNode) error
 
@@ -114,7 +131,11 @@ type DelegationTree interface {
 	// ArchivedNodeFor returns the archived node of one session, or
 	// ErrSessionNotFound.
 	ArchivedNodeFor(ctx context.Context, tenantID, nodeSessionID string) (ArchivedNode, error)
+}
 
+// TreeRollups is the part of DelegationTree that rolls up the usage of a
+// tree's nodes.
+type TreeRollups interface {
 	// NodeUsage returns the usage of one node.
 	NodeUsage(ctx context.Context, node Session) *sessionrecord.Usage
 
@@ -125,11 +146,19 @@ type DelegationTree interface {
 	// SubtreeTokens returns the tokens a session's live and archived
 	// descendants used.
 	SubtreeTokens(ctx context.Context, node Session) (int64, error)
+}
 
+// TreeOrphans is the part of DelegationTree that classifies orphaned
+// nodes.
+type TreeOrphans interface {
 	// Orphaned reports whether a session's chain of ancestors, among the
 	// records of tree keyed by session identifier, is terminal or broken.
 	Orphaned(node Session, tree map[string]Session) bool
+}
 
+// TreeRecovery is the part of DelegationTree that recovers a tree after
+// its coordinator was lost.
+type TreeRecovery interface {
 	// RecoverTree is GWSEAM-RecoverTree. nodes is the session core's side
 	// of the recovery.
 	RecoverTree(ctx context.Context, tenantID, rootSessionID string, nodes TreeNodes) (TreeRecoverySummary, error)
@@ -199,7 +228,11 @@ type ToolApprovals interface {
 
 	// ResolveApproval delivers a decision on an approval wait.
 	ResolveApproval(sessionID, toolCallID string, d ApprovalDecision) error
+}
 
+// ToolApprovalGate is served by the platform tools seam to the session
+// core's executor: the hold of a runtime's tool call until its approval.
+type ToolApprovalGate interface {
 	// AwaitApproval is GWSEAM-AwaitApproval. It blocks until the decision
 	// arrives or ctx ends.
 	AwaitApproval(ctx context.Context, tenantID, sessionID string, call PendingToolCall) (ApprovalDecision, error)
@@ -216,14 +249,6 @@ type PendingToolCall struct {
 type ApprovalDecision struct {
 	Approved bool
 	Reason   string
-}
-
-// CallingSessions is served by the platform tools seam to the session
-// core's forward listener.
-type CallingSessions interface {
-	// AttachCallingSession is GWSEAM-AttachCallingSession. It returns
-	// ErrSessionNotFound for an unknown calling session.
-	AttachCallingSession(ctx context.Context, sessionID string) (context.Context, error)
 }
 
 // Events is served by the stream proxy to the session core and every seam.

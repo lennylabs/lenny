@@ -23,12 +23,14 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -43,6 +45,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	// them; with no bus the streams answer EVENT_STREAM_UNAVAILABLE.
 	uploadwire.Attach(t, srv, uploadhandler.Options{})
 	streamwire.Attach(t, srv, streamproxy.Options{})
+	toolwire.Attach(t, srv, platformtools.Options{Store: store})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts

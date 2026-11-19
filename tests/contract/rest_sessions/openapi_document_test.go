@@ -26,6 +26,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
@@ -33,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -103,7 +105,7 @@ const lineCitationSpecimenFile = "testdata/line-citation-specimen.txt"
 // copy their descriptions out of the document verbatim, so a citation
 // left in the document reaches an MCP client through them.
 var generatedMCPToolSchemaFiles = []string{
-	"pkg/gateway/mcpfabric/mcptools/generated_schemas.go",
+	"pkg/gateway/platformtools/mcptools/generated_schemas.go",
 	"pkg/ops/mcp/generated_tools.go",
 }
 
@@ -246,12 +248,15 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 	// than newTestServer's, which sits behind the test owner-principal
 	// layer. The session server wraps its mux in the §10.2 tenant gate,
 	// which exposes the mux through Mux().
-	// The upload handler registers the upload and blob routes, and the
-	// stream proxy the event and log stream routes, on the same mux,
+	// The upload handler registers the upload and blob routes, the stream
+	// proxy the event and log stream routes, and the platform tools seam the
+	// memory, interaction resolution, and tree routes, on the same mux,
 	// attached as the gateway attaches them.
-	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
+	store := memstore.New()
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	uploadwire.Attach(t, srv, uploadhandler.Options{})
 	streamwire.Attach(t, srv, streamproxy.Options{})
+	toolwire.Attach(t, srv, platformtools.Options{Store: store})
 	sess := srv.Handler()
 	h := sess
 	if u, ok := h.(interface{ Mux() *http.ServeMux }); ok {

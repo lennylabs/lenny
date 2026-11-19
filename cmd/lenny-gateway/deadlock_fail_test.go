@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -125,7 +125,7 @@ func TestDeadlockFailRefusesAnsweredWaitInEveryState_spec_8_8(t *testing.T) {
 				t.Fatalf("resolve: %v", err)
 			}
 			w := deadlockFailWiring(t, store, waits)
-			if w.deadlockFail(context.Background(), "acme", "c") {
+			if w.deadlockFailFunc()(context.Background(), "acme", "c") {
 				t.Fatal("deadlockFail = true for an answered wait, want false")
 			}
 			if got, reason := rowState(t, store, "c"); got != st || reason != "" {
@@ -149,7 +149,7 @@ func TestDeadlockFailRefusesTerminalRowAndUnwiredRegistry_spec_8_8(t *testing.T)
 		if _, err := waits.Register("c", "r1", nil); err != nil {
 			t.Fatalf("register: %v", err)
 		}
-		if deadlockFailWiring(t, store, waits).deadlockFail(context.Background(), "acme", "c") {
+		if deadlockFailWiring(t, store, waits).deadlockFailFunc()(context.Background(), "acme", "c") {
 			t.Fatal("deadlockFail = true over a terminal row, want false")
 		}
 		if got, _ := rowState(t, store, "c"); got != session.StateCompleted {
@@ -159,7 +159,7 @@ func TestDeadlockFailRefusesTerminalRowAndUnwiredRegistry_spec_8_8(t *testing.T)
 	t.Run("no registry", func(t *testing.T) {
 		store := memstore.New()
 		seedInState(t, store, "c", session.StateRunning)
-		if deadlockFailWiring(t, store, nil).deadlockFail(context.Background(), "acme", "c") {
+		if deadlockFailWiring(t, store, nil).deadlockFailFunc()(context.Background(), "acme", "c") {
 			t.Fatal("deadlockFail = true with no registry wired, want false")
 		}
 		if got, _ := rowState(t, store, "c"); got != session.StateRunning {
@@ -185,7 +185,7 @@ func TestDeadlockFailStoreErrorReturnsFalseAndLogs_spec_8_8(t *testing.T) {
 	prev := log.Writer()
 	log.SetOutput(&buf)
 	t.Cleanup(func() { log.SetOutput(prev) })
-	if deadlockFailWiring(t, store, waits).deadlockFail(context.Background(), "acme", "c") {
+	if deadlockFailWiring(t, store, waits).deadlockFailFunc()(context.Background(), "acme", "c") {
 		t.Fatal("deadlockFail = true on a store error, want false")
 	}
 	if out := buf.String(); !strings.Contains(out, "deadlock-timeout fail c") || !strings.Contains(out, "connection reset") {
@@ -235,7 +235,7 @@ var deadlockBase = time.Date(2026, 10, 29, 12, 0, 0, 0, time.UTC)
 //
 // spec: §8.8 (Subtree deadlock detection), §16.1 (Metrics)
 func TestDeadlockTimeoutFailsEdgeServedWaitOnRunningRow_spec_8_8(t *testing.T) {
-	sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFail })
+	sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFailFunc() })
 	ctx := context.Background()
 	sc.det.RunOnce(ctx, deadlockBase)
 	sc.det.RunOnce(ctx, deadlockBase.Add(125*time.Second))
@@ -267,7 +267,7 @@ func TestDeadlockTimeoutSkipsWaitAnsweredAfterSnapshot_spec_8_8(t *testing.T) {
 	sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc {
 		return func(ctx context.Context, tenantID, id string) bool {
 			_ = w.inputWaits.Resolve(id, "r1", "answer")
-			return w.deadlockFail(ctx, tenantID, id)
+			return w.deadlockFailFunc()(ctx, tenantID, id)
 		}
 	})
 	ctx := context.Background()
@@ -316,7 +316,7 @@ func TestDeadlockClearanceResolutionCarriesRootPool_spec_16_1(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFail })
+			sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFailFunc() })
 			ctx := context.Background()
 			sc.det.RunOnce(ctx, deadlockBase)
 			tc.clear(t, sc)
@@ -348,7 +348,7 @@ func TestDeadlockClearanceResolutionCarriesRootPool_spec_16_1(t *testing.T) {
 //
 // spec: §8.8 (Subtree deadlock detection), §16.1
 func TestDeadlockTimeoutStoreErrorRedetects_spec_8_8(t *testing.T) {
-	sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFail })
+	sc := newDeadlockScenario(t, func(w *gatewayWiring) deadlock.FailFunc { return w.deadlockFailFunc() })
 	var buf bytes.Buffer
 	prev := log.Writer()
 	log.SetOutput(&buf)
@@ -417,7 +417,7 @@ func TestDeadlockFailNeverFailsWaitResolvedBeforeMutator_spec_8_8(t *testing.T) 
 		go func() {
 			defer wg.Done()
 			time.Sleep(failDelay)
-			applied = w.deadlockFail(context.Background(), "acme", "c")
+			applied = w.deadlockFailFunc()(context.Background(), "acme", "c")
 		}()
 		wg.Wait()
 		if applied && resolvedAtMutate.Load() {

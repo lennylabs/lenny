@@ -14,17 +14,19 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -89,7 +91,7 @@ func newSiteRig(t *testing.T, m *gatewaypki.Material, coordinatorAddr string, ro
 		ReplicaID:              "gw-a.00@127.0.0.1:1",
 		HolderForwardClient:    testForwardClient(t, m, 2*time.Second),
 		Executor:               r.exec,
-		InputWaits:             r.waits,
+		InputWaits:             platformtools.NewInputWaits(r.waits),
 		Runtimes:               runtimes,
 		Clock:                  func() time.Time { return r.now },
 		Messaging: sessioninbox.NewCoordinator(sessioninbox.Config{

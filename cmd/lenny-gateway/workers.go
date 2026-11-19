@@ -12,7 +12,7 @@ import (
 	replicationpgstore "github.com/lennylabs/lenny/pkg/blobstore/replication/pgstore"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"

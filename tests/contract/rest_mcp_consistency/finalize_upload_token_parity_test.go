@@ -13,8 +13,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -39,10 +40,12 @@ func newUploadTokenServers(t *testing.T) (*httptest.Server, *httptest.Server, se
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
-		SessionCreator:    rest,
-		SessionService:    rest,
+		SessionCreator:    rest.ToolsSeam(),
+		SessionService:    rest.ToolsSeam(),
+		SessionAccess:     rest.ToolsSeam(),
 		Clock:             func() time.Time { return time.Now().UTC() },
 		TenantID:          "acme",
 	})
@@ -95,7 +98,7 @@ func postFinalizeToken(t *testing.T, restURL, id, token string) (int, []byte) {
 // error code than REST for the same token, or a correct token did not
 // finalize the session on either surface. Inspect handleFinalize's
 // verifyUploadToken call in pkg/gateway/sessionserver/finalize_handler.go
-// and extractFinalizeArgs in pkg/gateway/mcpfabric/mcptools/client_tools.go.
+// and extractFinalizeArgs in pkg/gateway/platformtools/mcptools/client_tools.go.
 func TestFinalizeUploadTokenRESTMCPParity_spec_7_4(t *testing.T) {
 	cases := []struct {
 		name     string

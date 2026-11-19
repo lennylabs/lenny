@@ -64,9 +64,9 @@ func (s *Server) buildTaskRecord(ctx context.Context, row sessionstore.Session) 
 	// spec: §8.8 — stamp the per-task usage and the subtree
 	// rollup (null until every descendant settles) when the Builder is
 	// wired. F-8.8.3.
-	if s.taskUsage != nil {
-		rec.Usage = s.taskUsage.Usage(ctx, row)
-		rec.TreeUsage = s.taskUsage.TreeUsage(ctx, row, rec.Usage)
+	if s.treeRollups != nil {
+		rec.Usage = s.treeRollups.NodeUsage(ctx, seamSessionOf(row))
+		rec.TreeUsage = s.treeRollups.TreeUsage(ctx, seamSessionOf(row), rec.Usage)
 	}
 	return rec
 }

@@ -49,7 +49,7 @@ var delegationTreeFiledDefects = []string{"F-4.2.17", "F-4.5.21", "F-8.8.22", "F
 
 // Tree paths whose deleted symbols the records describe as deleted.
 const (
-	treeRecoveryOrchestratorFile = "pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery.go"
+	treeRecoveryOrchestratorFile = "pkg/gateway/platformtools/treerecovery/treerecovery.go"
 	sessionTerminalFile          = "pkg/gateway/sessionserver/session_terminal.go"
 )
 

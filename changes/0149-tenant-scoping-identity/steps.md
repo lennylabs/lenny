@@ -10,6 +10,8 @@
 
 The fields, the formulas, enforcement in the gateway, the decision service, the Token Service, and the mirror, the refusal rules including the post-chain checks on the final row, the binding host validator, the delete guard for references, shadow policy evaluation, and the read filters.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ResolveEnvironments`, through which the platform tools seam resolves the caller's environments, with the scoping fields and their enforcement.
+
 It needs 0127.S1, 0127.S2, 0127.S3, 0127.S4, and 0127.S9 for the objects it scopes, the resolver, and the git inputs, and 0149.S3 for a dependable session environment. Its mirror steps need [0127.S5](../0127-egress-and-git/steps.md#steps) (EG-5) for pool selection and the fill request. Its route step needs [0127.S6](../0127-egress-and-git/steps.md#steps) (EG-6) for the upstreams routes name. Its read filters step needs [0127.S8](../0127-egress-and-git/steps.md#steps) (EG-8) and the envelope field in [0127.S10](../0127-egress-and-git/steps.md#steps) (EG-10) for the reads it extends.
 
 Its post-chain step, shared with 0149.S3, depends on the interceptor contract proposal of [`0141-runtime-routing`](../0141-runtime-routing/steps.md#steps), 0141.S1, which lands [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract), and whichever of the two lands second moves the checks to the post-chain point, at which the environment rules run on the final row. Until 0141.S1 lands, the rules run after the experiment rewrite, as "A session's environment" under TS-1 states.
@@ -24,6 +26,8 @@ The guardrails of [SO-2](../0142-security-oversight/change.md#so-2-tenant-securi
 
 The specification statement, the broker contract, the deployment protected resource metadata route, the claim allowlist, RSA and token size bounds, the IdP role boundary, the operator tenant and the chart's refusal of `auth.platformAdminTenant: platform`, the playground-origin `subject_token` refusal, claim names, and the §15.1 listing of `/v1/admin/users`.
 
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-RequestCaller`, the caller identity the API front answers for the platform tools seam, with the identity model.
+
 It has no dependency. It can land at any point, and it should land early because it closes a High defect. The claim allowlist lands early, because a stored format, a registered URI, or a shipped enforcement point would otherwise need rework.
 
 ### 0149.S3 Session environment context
@@ -34,6 +38,8 @@ It has no dependency. It can land at any point, and it should land early because
 - closes: [F-8.2.34 (part), F-8.2.35, F-8.3.12, F-9.1.13, F-10.6.15, F-10.6.16, F-10.6.17, F-10.6.18, F-10.6.19, F-10.6.20, F-10.6.23, F-10.6.24]
 
 Derive and delegation propagation, the session-based delegation gate, cross-environment sharing with its opt-ins, the check, no second crossing, both environments on records, the client delegation limits with one reading of `maxDepth` and a stored value on every root creator, depth from the parent's row, the calling-session parent rule, the Bridge allow-list, and `DELEGATION_DISABLED`, groups on exchanged tokens, the active-session delete guard, the transparent create check, and the naming correction. It closes F-8.2.34 apart from `delegationPolicyRef`. It closes F-10.6.17 with its rules running at the post-chain point of [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract).
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ResolveEnvironments` with the session-based delegation gate and cross-environment sharing.
 
 Its evidence field step needs the envelope field in [0127.S10](../0127-egress-and-git/steps.md#steps) (EG-10) to put both environments on `credential.mint` and evidence. The rest of the step has no dependency and can land at any point.
 
@@ -46,6 +52,8 @@ Its guardrail case depends on [SO-2](../0142-security-oversight/change.md#so-2-t
 - closes: [F-11.4.19, F-11.4.20, F-11.4.21, F-10.6.21 (part), F-10.6.22 (part)]
 
 Upsert on invalidate, holds per caller class, refusal at authentication including deleted rows, the impersonation cascade on disables, reinstate as the only reversal, ordering, the permission, and `identityProvider` hardening. It also closes the read half of F-10.6.21 and the address check of F-10.6.22.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-DelegatorRefusal`, the creation fence's refusal of a delegated child that the platform tools seam reads, and `GWSEAM-AdmitActiveCaller`, the user lifecycle check the platform tools seam's tool-use and elicitation resolutions apply, with the holds per caller class and the refusal at authentication.
 
 It has no dependency. 0149.S2's contract refers to it, and either order works. Holds land early, because a stored format, a registered URI, or a shipped enforcement point would otherwise need rework.
 

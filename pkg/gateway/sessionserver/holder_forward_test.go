@@ -24,12 +24,13 @@ import (
 	"nhooyr.io/websocket"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -473,7 +474,7 @@ func TestForwardToolCallReturnsTheCoordinatorsResult_spec_29_3(t *testing.T) {
 
 	t.Run("a result is returned as delivered", func(t *testing.T) {
 		res, out, err := s.ForwardToolCall(userCtx, forwardRow(), ForwardKindTerminate, "lenny/ok", json.RawMessage(`{"a":1}`))
-		if err != nil || out != ForwardDelivered || len(res.Content) != 1 || res.Content[0].Text != `done {"a":1}` {
+		if err != nil || out != ForwardDelivered || forwardedText(t, res) != `done {"a":1}` {
 			t.Fatalf("ForwardToolCall = %+v, %v, %v; want the coordinator's result", res, out, err)
 		}
 	})
@@ -540,7 +541,7 @@ func TestForwardToolCallMapsListenerRefusalsAndUndecodableBodies_spec_29_3(t *te
 // assertToolError checks the outcome and the tool error code.
 func assertToolError(t *testing.T, out, wantOut ForwardOutcome, err error, code string) {
 	t.Helper()
-	var te *mcp.ToolError
+	var te *seam.Refusal
 	if out != wantOut || !errors.As(err, &te) || te.Code != code {
 		t.Fatalf("ForwardToolCall = %v, %v; want %v with tool error %s", out, err, wantOut, code)
 	}
@@ -1007,7 +1008,7 @@ func nonHolderCoordinator(t *testing.T, m *gatewaypki.Material, row sessionstore
 	mcpSrv := mcp.NewServer()
 	mcpSrv.RegisterTool(mcp.Tool{Name: "lenny/target"}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		res, _, err := coordinator.ForwardToolCall(ctx, row, ForwardKindResume, "lenny/target", args)
-		return res, err
+		return mcpAnswer(res, err)
 	})
 	rest := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		coordinator.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
@@ -1032,7 +1033,7 @@ func newServingSurface(s *Server, row sessionstore.Session) *servingSurface {
 	mcpSrv.RegisterTool(mcp.Tool{Name: "lenny/forwarded"}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		ss.calls.Add(1)
 		res, _, err := s.ForwardToolCall(ctx, row, ForwardKindResume, "lenny/target", args)
-		return res, err
+		return mcpAnswer(res, err)
 	})
 	mux := http.NewServeMux()
 	mux.Handle("/mcp", asOwner(mcpSrv.Handler()))
@@ -1166,7 +1167,7 @@ func toolForwardingServer(s *Server, row sessionstore.Session, credential string
 	mcpSrv := mcp.NewServer()
 	mcpSrv.RegisterTool(mcp.Tool{Name: "lenny/forwarded"}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		res, _, err := s.ForwardToolCall(ctx, row, ForwardKindTerminate, "lenny/target", args)
-		return res, err
+		return mcpAnswer(res, err)
 	})
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		ctx := authmw.WithCredential(r.Context(), authmw.Credential{Authorization: "Bearer " + credential})
@@ -1339,7 +1340,7 @@ func credentialServingSurface(s *Server, verifier jwt.Verifier) http.Handler {
 		if out == ForwardLocal {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "local"}}}, nil
 		}
-		return res, err
+		return mcpAnswer(res, err)
 	})
 	mux := http.NewServeMux()
 	mux.Handle("/v1/sessions/", rest)
@@ -1831,7 +1832,7 @@ func TestForwardToolCallRefusesAnUnholdableUndeliveredMessage_spec_29_3(t *testi
 				}
 				return
 			}
-			var te *mcp.ToolError
+			var te *seam.Refusal
 			if !errors.As(err, &te) || te.Code != "TARGET_NOT_READY" || te.Details["currentState"] != string(state) {
 				t.Errorf("err = %v, want TARGET_NOT_READY with currentState %q", err, state)
 			}

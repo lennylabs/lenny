@@ -17,8 +17,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
-	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget"
+	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

@@ -25,7 +25,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -114,7 +114,7 @@ func TestGeneratedMCPSchemasOmitMaxSessionRetries(t *testing.T) {
 	}
 	// The lenny-ops tool inventory is generated source; its schemas are
 	// literals in the committed file.
-	for _, rel := range []string{"pkg/ops/mcp/generated_tools.go", "pkg/gateway/mcpfabric/mcptools/generated_schemas.go"} {
+	for _, rel := range []string{"pkg/ops/mcp/generated_tools.go", "pkg/gateway/platformtools/mcptools/generated_schemas.go"} {
 		src, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), rel))
 		if err != nil {
 			t.Fatalf("read %s: %v", rel, err)

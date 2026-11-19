@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -22,20 +24,21 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -51,6 +54,8 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -539,8 +544,9 @@ func (h *Harness) AddReplica(name string) *Replica {
 		MaxResuming:                MaxResuming,
 		SuspensionCheckpointer:     h.Checkpoints,
 		Interactions:               h.Interactions,
-		TreeRecoveryMetrics:        h.TreeMetrics,
-		InputWaits:                 r.InputWaits,
+		TreeRecovery:               platformtools.NewTreeRecovery(platformtools.RecoveryConfig{Metrics: h.TreeMetrics}),
+		TreeOrphans:                platformtools.TreeOrphans{},
+		InputWaits:                 platformtools.NewInputWaits(r.InputWaits),
 		Pools:                      h.poolRegistry(),
 		WorkspaceSealMaxDuration:   SealWindow,
 		StreamFailureReportTimeout: ReleaseAllowance,
@@ -563,6 +569,9 @@ func (h *Harness) AddReplica(name string) *Replica {
 	// The stream proxy serves the session event and log streams, attached
 	// as the gateway attaches it.
 	streamwire.Attach(h.T, r.Server, streamproxy.Options{Events: opts.Events, Clock: opts.Clock})
+	// The platform tools seam serves the memory, interaction resolution,
+	// and tree routes, attached as the gateway attaches them.
+	toolwire.Attach(h.T, r.Server, platformtools.Options{Store: h.Store, Interactions: h.Interactions})
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
 	exec.SetStreamFailureHandler(r.Server.ReportAttachStreamFailure)
@@ -601,20 +610,22 @@ func (h *Harness) AddReplica(name string) *Replica {
 // replicaMCPDeps is the dependency set of the replica's MCP surface.
 func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
 	return mcptools.Deps{
+		Callers:            toolops.Callers{},
 		DevTenantFallback:  true,
-		HolderForward:      r.Server,
+		HolderForward:      r.Server.ToolsSeam(),
 		Store:              h.Store,
-		Terminal:           r.Server,
-		SessionService:     r.Server,
-		Delivery:           r.Server,
-		Executor:           r.Executor,
+		Terminal:           r.Server.ToolsSeam(),
+		SessionService:     r.Server.ToolsSeam(),
+		SessionAccess:      r.Server.ToolsSeam(),
+		Delivery:           r.Server.ToolsSeam(),
+		Executor:           toolseam.Executor(r.Executor),
 		InputWaits:         r.InputWaits,
-		Messaging:          h.Messaging,
+		Messaging:          toolseam.Messaging(h.Messaging),
 		Interactions:       h.Interactions,
 		Clock:              h.Clock.Now,
 		TenantID:           Tenant,
 		MessagingRateLimit: h.msgLimit,
-		Interceptors:       h.interceptors,
+		Interceptors:       toolops.NewInterception(h.interceptors, nil),
 	}
 }
 

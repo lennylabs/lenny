@@ -47,9 +47,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -61,6 +62,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/mcpcreate"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // newMCPGateway brings up the §15.2 gateway MCP server in process. It
@@ -80,9 +82,10 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 	store := memstore.New()
 	sessions := sessionserver.New(store, sessionserver.Options{})
 	mcptools.Register(srv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		// spec: §15.2.1 rule 1; §10.2 (Session ownership) — create_session
 		// runs through the shared §15.1 create-and-start service, which
 		// binds the owner from the caller's principal and leaves the
@@ -90,7 +93,8 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 		SessionCreator: mcpcreate.StartingCreator{Srv: sessions},
 		// spec: §10.2 (Session ownership) — lenny/send_message checks the
 		// caller against the session's owner through the shared service.
-		SessionService: sessions,
+		SessionService: sessions.ToolsSeam(),
+		SessionAccess:  sessions.ToolsSeam(),
 		TenantID:       "acme",
 	})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))

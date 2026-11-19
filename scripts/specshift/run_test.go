@@ -4565,7 +4565,7 @@ func TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier(t *testing.T)
 		target  string
 	}{
 		{"served JSON values", "pkg/gateway/externalapi/openapi/openapi.json"},
-		{"served tool definitions", "pkg/gateway/mcpfabric/mcptools/mcptools.go"},
+		{"served tool definitions", "pkg/gateway/platformtools/mcptools/mcptools.go"},
 		{"generated chart schema descriptions", "pkg/chart/values/values.go"},
 	} {
 		t.Run(tc.dialect, func(t *testing.T) {
@@ -4664,7 +4664,7 @@ func TestLinePassLeavesTheServedTextAStrippedCitationIntroduced(t *testing.T) {
 // standing tie to the section it named)
 func TestLinePassReadsAServedToolSchemaTieFromItsWholeAuthoringSource(t *testing.T) {
 	t.Parallel()
-	const target = "pkg/gateway/mcpfabric/mcptools/mcptools.go"
+	const target = "pkg/gateway/platformtools/mcptools/mcptools.go"
 	before := readFixtureFile(t, filepath.Join(fixtureLinePass, "tree", target))
 	cited := citation.Find(before)
 	if len(cited) == 0 {
@@ -4715,7 +4715,7 @@ func TestLinePassReadsAServedToolSchemaTieFromItsWholeAuthoringSource(t *testing
 // replaced by the anchor of the section it names)
 func TestLinePassConvertsAnMCPErrorMessageOutsideAToolSchema(t *testing.T) {
 	t.Parallel()
-	const target = "pkg/gateway/mcpfabric/mcptools/mcptools.go"
+	const target = "pkg/gateway/platformtools/mcptools/mcptools.go"
 	root := lineTree(t, "tree")
 	applyLinePass(t, root, "tree.yaml")
 	assertConverted(t, root, target)
@@ -5263,7 +5263,7 @@ func TestTheServedArtifactsAreWritableCarriersOfTheTrackedTree(t *testing.T) {
 	want := []string{
 		"pkg/chart/values/values.go",
 		"pkg/gateway/externalapi/openapi/openapi.json",
-		"pkg/gateway/mcpfabric/mcptools/mcptools.go",
+		"pkg/gateway/platformtools/mcptools/mcptools.go",
 	}
 	if !sameStrings(served, want) {
 		t.Fatalf("the served client artifacts are %v, want %v", served, want)

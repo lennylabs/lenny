@@ -24,13 +24,15 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // newUnionServers stands up REST and MCP servers sharing a session store
@@ -49,12 +51,14 @@ func newUnionServers(t *testing.T) (restURL, mcpURL string, store sessionstore.S
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		// spec: §10.2 (Session ownership) — lenny/send_message checks the
 		// caller against the target's owner through the shared service.
-		SessionService: rest,
-		Executor:       exec,
+		SessionService: rest.ToolsSeam(),
+		SessionAccess:  rest.ToolsSeam(),
+		Executor:       toolseam.Executor(exec),
 		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:         func() string { return "sess_union_mcp" },
 		TenantID:       "acme",

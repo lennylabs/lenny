@@ -31,10 +31,14 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -80,11 +84,11 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		DevTenantHeader: true,
 		Executor:        exec,
 		Events:          bus,
-		Memory:          mem,
 		Clock:           clock,
 		IDFunc:          func() string { return idSeed },
 	})
 	streamwire.Attach(t, restHandler, streamproxy.Options{Events: bus, Clock: clock})
+	toolwire.Attach(t, restHandler, platformtools.Options{Store: store, Memory: mem})
 	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
@@ -95,21 +99,18 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	// §15.2.1 rule-1 service layer produces on the REST-proxied tools
 	// (create_and_start_session, terminate_session).
 	mcpSrv.SetAttach(mcp.AttachConfig{
-		Events: bus,
-		TenantFromRequest: func(r *http.Request) string {
-			if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-				return v
-			}
-			return journeyTenant
-		},
-		Now: clock,
+		Events:  bus,
+		Callers: toolseam.TenantCaller(journeyTenant),
+		Now:     clock,
 	})
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
-		SessionCreator:    restHandler,
-		SessionService:    restHandler,
-		Executor:          exec,
+		SessionCreator:    restHandler.ToolsSeam(),
+		SessionService:    restHandler.ToolsSeam(),
+		SessionAccess:     restHandler.ToolsSeam(),
+		Executor:          toolseam.Executor(exec),
 		Memory:            mem,
 		Events:            bus,
 		Clock:             clock,

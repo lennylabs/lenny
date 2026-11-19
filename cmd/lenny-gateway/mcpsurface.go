@@ -3,41 +3,39 @@
 package main
 
 import (
-	"context"
-	"errors"
-	"net/http"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/elicitation"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
 	deploymentconfigpg "github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/exportwire"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	delegationpolicypg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/export"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/exportwire"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	interceptorpg "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
@@ -71,6 +69,10 @@ func (w *gatewayWiring) buildMCPSurface(
 	elicitationFloorProvider *elicitationfloor.Provider,
 ) {
 	f := w.f
+	// The session core's side of the platform tools seam serves every
+	// operation the MCP tools, the delegation service, and the attach
+	// stream call on the core (GWSEAM).
+	toolsSeam := sessionSrv.ToolsSeam()
 	delegationMaxActiveChildrenPerUser := f.delegationMaxActiveChildrenPerUser
 	gatewayAllowSelfRecursion := f.gatewayAllowSelfRecursion
 	delegationDefaultMaxDepth := f.delegationDefaultMaxDepth
@@ -102,7 +104,9 @@ func (w *gatewayWiring) buildMCPSurface(
 	if w.pgPool != nil {
 		interceptors = interceptorpg.New(w.pgPool)
 	}
-	interceptorCooldownResolver := interceptorstore.NewCooldownResolver(interceptors)
+	// The session core serves the weakening cooldowns of the registry to
+	// the platform tools seam (GWSEAM-FailOpenCooldown).
+	interceptorCooldowns := toolops.NewCooldowns(interceptors)
 	// §16.7 deployment-transition audit baseline: the durable last-applied
 	// Helm deployment-scope config the post-upgrade reconciliation endpoint
 	// diffs each render against to emit the gateway.*/platform.*/deployment.*
@@ -123,7 +127,7 @@ func (w *gatewayWiring) buildMCPSurface(
 	var exportMaterializer delegation.ExportMaterializer
 	if w.podRegistry != nil {
 		exportMaterializer = export.NewMaterializer(
-			exportwire.NewPodExporter(w.podRegistry),
+			exportwire.NewPodExporter(toolsSeam),
 			exportwire.NewBlobSink(w.blobs, 0),
 			mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
 		)
@@ -139,7 +143,7 @@ func (w *gatewayWiring) buildMCPSurface(
 	// _duration_seconds metrics. A scanExportedFiles: true policy whose
 	// interceptorRef names no registered interceptor still fails closed
 	// with EXPORT_FILE_SCAN_UNAVAILABLE. F-13.5.5.
-	exportScanResolver := delegation.NewChainExportScanResolver(
+	exportScans := toolops.NewExportScans(
 		policyChain,
 		policy.NewExportScanObserver(auditAppender, gwMetrics, nil).WithBilling(w.billingEmitter),
 	)
@@ -148,19 +152,19 @@ func (w *gatewayWiring) buildMCPSurface(
 	// revocation propagator (below) share the one cache instance.
 	revCache := revocation.NewCache()
 	delegationSvc := delegation.NewService(w.sessions, delegation.Options{
-		Experiments:             w.experiments,
-		Runtimes:                w.runtimes,
-		Policies:                delegationPolicies,
-		Clock:                   clockinject.Now,
-		ExportMaterializer:      exportMaterializer,
-		ExportScanChainResolver: exportScanResolver,
-		TreeBudgetReserver:      w.treeBudgetReserver,
+		Experiments:        w.experiments,
+		Runtimes:           w.runtimes,
+		Policies:           delegationPolicies,
+		Clock:              clockinject.Now,
+		ExportMaterializer: exportMaterializer,
+		ExportScans:        exportScans,
+		TreeBudgetReserver: w.treeBudgetReserver,
 		// §8.3 / §8.6 — the reservation's token cap adds the tree's
 		// cumulative extension grant from the delegation_tree_budget row,
 		// and a reservation detection runs the BUDGET_KEYS_EXPIRED tree
 		// cleanup on the session server.
 		TreeGrants:        treeGrantReader{denials: w.leaseDenials},
-		BudgetKeysExpired: sessionSrv,
+		BudgetKeysExpired: toolsSeam,
 		// §11.1 — per-user active-delegated-children admission cap.
 		// Zero leaves the scope unlimited. F-11.1.4.
 		MaxActiveChildrenPerUser: *delegationMaxActiveChildrenPerUser,
@@ -174,12 +178,12 @@ func (w *gatewayWiring) buildMCPSurface(
 		// §4.8 / §8.3 SEC-013 — reject delegate_task whose
 		// effective interceptorRef names an interceptor inside the
 		// fail-closed → fail-open weakening cooldown. F-4.8.17.
-		InterceptorCooldown: interceptorCooldownResolver,
+		InterceptorCooldown: interceptorCooldowns,
 		// §8.2 / §16.1: the delegation service emits
 		// `lenny_delegation_depth` and
-		// `lenny_delegation_would_have_blocked_total` through the
-		// gateway metrics registry.
-		Metrics: gwMetrics,
+		// `lenny_delegation_would_have_blocked_total` through its own
+		// metric set on the gateway metrics registry.
+		Metrics: w.platformToolsMetrics.delegation,
 		// spec: §11.7 / §16.7 — wire the §11.7 audit sink so
 		// the service emits `delegation.spawned`,
 		// `delegation.self_recursion_allowed`, and `delegation.cycle_warning`.
@@ -190,7 +194,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		// the top-level session-creation path uses. Wired as a
 		// pointer to *sessionserver.Server, which implements
 		// delegation.ExperimentRouter via ApplyExperimentRouting.
-		ExperimentRouter: sessionSrv,
+		ExperimentRouter: toolsSeam,
 		// spec: §12.8 (Lifecycle fence and drain) — the undo of a
 		// refused or failed delegation deletes its export objects through
 		// the blob store's per-session deletion. A store without it leaves
@@ -212,49 +216,55 @@ func (w *gatewayWiring) buildMCPSurface(
 	deadlockTracker := deadlock.NewAwaitTracker()
 	var deadlockManager *deadlock.Manager
 	if *maxDeadlockWaitSeconds > 0 {
-		deadlockManager = deadlock.NewManager(time.Duration(*maxDeadlockWaitSeconds)*time.Second, gwMetrics)
+		deadlockManager = deadlock.NewManager(time.Duration(*maxDeadlockWaitSeconds)*time.Second, w.platformToolsMetrics.deadlock)
 	}
+	// The tenant facts the platform tools read, which the session core
+	// serves from the tenant and user stores (GWSEAM-DelegatorRefusal and
+	// its neighbours).
+	tools := toolTenants(w.tenants, w.users)
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store: w.sessions,
 		// spec: §15.2.1 rule 1 — route lenny/create_session
 		// through the gateway's shared §15.1 session-creation service so
 		// the MCP surface runs the same admission gates and returns the
 		// same envelope the REST POST /v1/sessions handler does. F-15.2.4.
-		SessionCreator: sessionSrv,
+		SessionCreator: toolsSeam,
 		// spec: §15.2 — route the overlapping client-facing
 		// lifecycle/read tools through the same shared service layer so the
 		// MCP surface runs the identical REST routes and validation. F-15.2.3.
-		SessionService: sessionSrv,
+		SessionService: toolsSeam,
+		SessionAccess:  toolsSeam,
 		// spec: §29.3 Forwarding — lenny/send_message and
 		// lenny/cancel_session forward to the session's coordinating replica
 		// through the same session server's ForwardToolCall.
-		HolderForward: sessionSrv,
+		HolderForward: toolsSeam,
 		// spec: §8.3 — run the delegation-time pre-claim credential
 		// availability check through the same session server that owns the
 		// §4.9 engine, so lenny/delegate_task rejects an exhausted pool with
 		// CREDENTIAL_POOL_EXHAUSTED before allocating a warm pod.
-		CredAvailability: sessionSrv,
+		CredAvailability: toolsSeam,
 		// spec: §8.2 — materialize the admitted StateCreated
 		// child synchronously within lenny/delegate_task: claim its warm
 		// pod, assign the credential lease, stream the stamped
 		// WorkspacePlan, launch, and transition it to running so the
 		// returned handle is a running child the parent can interact with.
 		// Wired to the same *sessionserver.Server that owns the §4.9 engine.
-		ChildMaterializer:          sessionSrv,
-		Executor:                   w.exec,
-		DeadlockTracker:            deadlockTracker,
-		Deadlocks:                  deadlockManager,
-		Delegation:                 delegationSvc,
-		Users:                      w.users,
-		CallerCheck:                sessionCallerCheck(w.pgPool, w.auditValidator),
-		Runtimes:                   w.runtimes,
-		CapabilityOverrides:        w.capOverrides,
-		Environments:               environments,
-		Tenants:                    w.tenants,
-		Pools:                      w.pools,
-		Audit:                      mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
-		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
-		Interceptors:               policyChain,
+		ChildMaterializer:   toolsSeam,
+		Executor:            toolsDelivery(toolsSeam, w.exec != nil),
+		DeadlockTracker:     deadlockTracker,
+		Deadlocks:           deadlockManager,
+		Delegation:          delegationSvc,
+		Users:               w.users,
+		CallerCheck:         toolops.NewCallerCheck(sessionCallerCheck(w.pgPool, w.auditValidator)),
+		Callers:             toolops.Callers{},
+		Runtimes:            w.runtimes,
+		CapabilityOverrides: w.capOverrides,
+		Environments:        environments,
+		EnvironmentResolver: toolops.NewEnvironments(environments, w.tenants, resolvedNoEnvPolicy),
+		Tenants:             tools,
+		Pools:               w.pools,
+		Audit:               mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
+		Interceptors:        toolops.NewInterception(policyChain, policyAuditSink),
 		// spec: §8.3 / §4.8 / §13.5
 		// mitigations 2-3 — lenny/delegate_task and lenny/send_message
 		// resolve the effective contentPolicy.interceptorRef and run only
@@ -266,45 +276,44 @@ func (w *gatewayWiring) buildMCPSurface(
 		// interceptor fail-policy weakening cooldown, mirroring the
 		// delegate_task gate inside the delegation Service. F-4.8.17.
 		CooldownChecker: delegationSvc,
-		PolicyAudit:     policyAuditSink,
 		Events:          w.eventBus,
 		InputWaits:      inputWaits,
 		// spec: §6.2 — keep a parent blocked in await_children
 		// non-idle so the §11.3 watchdog does not reap it while it waits
 		// on slow children. F-11.3.7.
-		ActivityStamper: activityStamper,
+		ActivityStamper: proxyActivityStamper(activityStamper),
 		TreeArchive:     w.treeArchive,
 		TaskUsage:       taskUsageBuilder,
 		// spec: §8.8 (TaskRecord and TaskResult Schema) — resolve
 		// retriesExhausted against the deployer retry caps the session
 		// server's failure path enforces.
-		RetryBudget: sessionSrv,
+		RetryBudget: toolsSeam,
 		// spec: §7.2 (Interactive Session Model) — the cancel tools open
 		// the session server's terminal claim and run its post-terminal
 		// hook, so an MCP cancel seals, drains, emits the terminal events,
 		// and releases the pod as every other terminal writer does.
-		Terminal: sessionSrv,
+		Terminal: toolsSeam,
 		// spec: §7.2 (Message delivery routing — seven paths, path 6) —
 		// lenny/send_message and lenny/delegate_task take the session
 		// server's delivery lock, deliver held messages, hold a message to a
 		// suspended or recovering target, and resume a suspended one.
-		Delivery:           sessionSrv,
+		Delivery:           toolsSeam,
 		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 		Interactions:       w.interactions,
 		Memory:             w.memories,
-		ElicitationMetrics: gwMetrics,
+		ElicitationMetrics: w.platformToolsMetrics.tools,
 		// spec: §16.1; §16.5. F-9.2.14 — the
 		// §9.2 dispatcher emits admit/terminal lifecycle samples that
 		// drive the ElicitationBacklogHigh alert and the operator
 		// roundtrip / timeout / suppressed dashboards.
-		ElicitationLifecycleMetrics: gwMetrics,
+		ElicitationLifecycleMetrics: w.platformToolsMetrics.tools,
 		// spec: §16.1; §9.2 — the §9.2 chain walker
 		// reports a content-tamper detection through this recorder, which
 		// increments lenny_elicitation_content_tamper_detected_total
 		// {origin_pod, tampering_pod, enforcement_mode}. Without it the
 		// dispatcher's tamper branch is a no-op and the §16.5
 		// ElicitationContentTamperDetected alert can never fire. F-9.2.4.
-		ElicitationTamperMetrics: gwMetrics,
+		ElicitationTamperMetrics: w.platformToolsMetrics.tools,
 		// spec: §9.2 — resolve the per-tenant effective
 		// content-integrity enforcement mode (max of the platform floor
 		// and the tenant stored mode) on the elicitation dispatch path so
@@ -312,13 +321,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		// off skips the integrity check, detect-only records a divergence
 		// but forwards as received, enforce drops the divergent forward.
 		// A lookup error fails safe to the enforce default. F-9.2.2.
-		ElicitationModeResolver: func(ctx context.Context, tenantID string) elicitation.EnforcementMode {
-			stored := ""
-			if t, err := w.tenants.Get(ctx, tenantID); err == nil {
-				stored = t.ElicitationContentIntegrity
-			}
-			return elicitation.ResolveEffectiveWithDefaults(elicitationFloorProvider.Floor(), stored)
-		},
+		ElicitationModeResolver: mcptools.TenantElicitationModes(elicitationFloorProvider.Floor, tools),
 		// spec: §9.2 / §16.1 / §15.2 — Deps.TenantID is the
 		// fallback for transports without an authenticated principal
 		// (tests, the dev-headers path). Every production handler
@@ -344,18 +347,18 @@ func (w *gatewayWiring) buildMCPSurface(
 			MaxPerSession:       *messagingMaxPerSession,
 			MaxInboundPerMinute: *messagingMaxInboundPerMinute,
 		},
-		MessagingRateCounter: w.rateLimiter,
+		MessagingRateCounter: toolops.NewRateCounter(w.rateLimiter),
 		// §7.2 paths 3/5/6/7 — the same inbox + DLQ coordinator the REST
 		// handler uses, so lenny/send_message buffers a message to a
 		// non-running target instead of forcing it onto the executor.
 		// F-7.2.5.
-		Messaging: w.messagingCoord,
+		Messaging: toolsDelivery(toolsSeam, w.messagingCoord != nil),
 		Clock:     clockinject.Now,
 		// §8.9 / §11.7 / §16.1 — same tree-walker cycle
 		// observer the REST /tree handler uses, so the audit row +
 		// counter fire regardless of which surface walked the tree.
 		// F-8.9.10.
-		TreeCycleObserver: mcpToolsTreeCycleObserver{emitter: treeCycleEmitter{metrics: gwMetrics}},
+		TreeCycleObserver: w.platformToolsMetrics.tools,
 		// spec: §26.2; §4.9 — the in-pod git-credential helper
 		// (git-credential-lenny) reaches lenny/vcs_token over the §9.1
 		// platform MCP socket to mint a short-lived VCS token from the
@@ -363,7 +366,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		// vcscred.Resolver the §14 gateway-side gitClone path uses. The
 		// §4.9.2 credential.leased audit row binds each minted token to
 		// the originating session id. F-26.2.5.
-		VCSCreds:        vcsCreds,
+		VCSCreds:        toolops.NewVCSTokens(vcsCreds),
 		VCSLeaseAuditor: mcpVCSLeaseAuditor{appender: auditAppender, billing: w.billingEmitter},
 	})
 
@@ -373,47 +376,18 @@ func (w *gatewayWiring) buildMCPSurface(
 	// stream (sourced from the same §15.1 event bus the REST
 	// GET /v1/sessions/{id}/events path tails). Tenant is the
 	// authenticated principal's so the bus enforces the §7.2 binding; the
-	// Authorize gate runs the §4.2 session-store Get and the §10.2
-	// ownership predicate before any SSE byte is written, so a missing
+	// attach gate runs the session lookup and the ownership rule of the
+	// session core (GWSEAM) before any SSE byte is written, so a missing
 	// session, a foreign tenant's session, and a session the caller may
 	// not read all surface as a normal JSON-RPC RESOURCE_NOT_FOUND rather
 	// than a half-open stream.
 	// F-15.2.2, F-9.1.7.
 	mcpSrv.SetAttach(mcp.AttachConfig{
-		Events: w.eventBus,
-		TenantFromRequest: func(r *http.Request) string {
-			if p, ok := authmw.FromContext(r.Context()); ok && p.TenantID != "" {
-				return p.TenantID
-			}
-			return ""
-		},
-		Authorize: func(ctx context.Context, tenantID, sessionID string) error {
-			// spec: §10.2 (Session ownership) rules 3 and 7 — a caller
-			// with no principal subject is refused before any read, and a
-			// session the caller may not read answers exactly as a missing
-			// one, before any SSE byte is written.
-			if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
-				return mcp.NewToolError("UNAUTHORIZED",
-					"attach_session requires an authenticated principal subject",
-					map[string]any{"reason": "principal_subject_required"})
-			}
-			if tenantID == "" {
-				return mcp.NewToolError("UNAUTHORIZED",
-					"attach_session: tenant could not be resolved; auth chain must precede MCP dispatch", nil)
-			}
-			row, err := w.sessions.Get(ctx, tenantID, sessionID)
-			if err != nil {
-				if errors.Is(err, sessionstore.ErrNotFound) {
-					return mcp.NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
-				}
-				return mcp.NewToolError("INTERNAL_ERROR", err.Error(), nil)
-			}
-			if !sessionSrv.SessionAccessible(ctx, row, false) {
-				return mcp.NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
-			}
-			return nil
-		},
-		Now: clockinject.Now,
+		Events:   w.eventBus,
+		Callers:  toolops.Callers{},
+		Sessions: toolsSeam,
+		Access:   toolsSeam,
+		Now:      clockinject.Now,
 	})
 
 	w.delegationPolicies = delegationPolicies
@@ -435,4 +409,23 @@ func delegationSessionObjects(blobs blobstore.Store) delegation.SessionObjectDel
 		return d
 	}
 	return nil
+}
+
+// toolsDelivery returns the session core's message delivery operations when
+// the dependency they run on is wired, and an untyped nil otherwise, so the
+// platform tools answer as they do with no executor or no messaging
+// coordinator.
+func toolsDelivery(t sessionserver.ToolsSeam, wired bool) seam.MessageDelivery {
+	if !wired {
+		return nil
+	}
+	return t
+}
+
+// toolTenants returns the tenant operations the session core serves to the
+// platform tools seam over the tenant and user stores: the tenant facts its
+// tools read and the tenant listing its sweeps visit, which is the listing
+// the gateway's other background workers read.
+func toolTenants(tenants tenantstore.Store, users userstore.Store) toolops.Tenants {
+	return toolops.NewTenants(tenants, users, tenantsLister{tenants}.ListTenants)
 }

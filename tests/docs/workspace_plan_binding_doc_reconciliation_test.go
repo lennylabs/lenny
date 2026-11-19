@@ -32,11 +32,11 @@ var openAPIDocumentPath = []string{"pkg", "gateway", "externalapi", "openapi", "
 
 // mcpClientToolsSourcePath holds the hand-written input schemas of the
 // per-session MCP tools the MCP API page documents.
-var mcpClientToolsSourcePath = []string{"pkg", "gateway", "mcpfabric", "mcptools", "client_tools.go"}
+var mcpClientToolsSourcePath = []string{"pkg", "gateway", "platformtools", "mcptools", "client_tools.go"}
 
 // mcpGeneratedSchemasSourcePath holds the MCP tool input schemas generated from
 // the OpenAPI document.
-var mcpGeneratedSchemasSourcePath = []string{"pkg", "gateway", "mcpfabric", "mcptools", "generated_schemas.go"}
+var mcpGeneratedSchemasSourcePath = []string{"pkg", "gateway", "platformtools", "mcptools", "generated_schemas.go"}
 
 // planBindRejectionTokens are the plan-bind rejections a finalize request
 // can return for its plan. Every page that documents the finalize body

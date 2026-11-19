@@ -27,12 +27,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
@@ -68,8 +69,8 @@ func TestCrossReplicaStoreWakesBlockedApproval(t *testing.T) {
 	// different replica.
 	inter := interactionstore.NewMemory()
 	store := memstore.New()
-	gate := sessionserver.NewToolApprovalGate(
-		store, inter, sessionevents.NewBus(64), toolapproval.NewRegistry(),
+	gate := platformtools.NewToolApprovalGate(
+		store, inter, sessionevents.NewBus(64), platformtools.NewToolApprovals(toolapproval.NewRegistry()),
 		time.Now, approvalTimeout,
 	)
 

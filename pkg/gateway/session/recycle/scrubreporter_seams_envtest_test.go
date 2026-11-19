@@ -15,7 +15,6 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -350,7 +349,7 @@ func TestClaimDispositionRetireReleased_spec_3_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", leasecontrol.PodLifetime{}, ""); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", recycle.PodLifetime{}, ""); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
@@ -375,7 +374,7 @@ func TestClaimDispositionRetireFailed_spec_3_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", leasecontrol.PodLifetime{}, "shred timed out"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", recycle.PodLifetime{}, "shred timed out"); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Failed) {
@@ -522,7 +521,7 @@ func TestClaimDispositionRetireCordonDrainUnderWarnStampsScrubWarning_spec_6_39(
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", false, true, "host_unschedulable", leasecontrol.PodLifetime{}, ""); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", false, true, "host_unschedulable", recycle.PodLifetime{}, ""); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
@@ -555,7 +554,7 @@ func TestClaimDispositionRetireLimitLeavesNoMarker_spec_3_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewClaimDispositionDriver: %v", err)
 	}
-	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", leasecontrol.PodLifetime{}, ""); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", false, false, "session_count_limit", recycle.PodLifetime{}, ""); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	if got := getClaim(t, c, name); got.Status.Phase != string(claimstate.Released) {
@@ -708,7 +707,7 @@ func deleteClaim(t *testing.T, c client.Client, podID string) {
 // newDispositionDriver builds a claim disposition driver against the envtest
 // client with a fixed clock, the common construction the gone-claim tests
 // share.
-func newDispositionDriver(t *testing.T, c client.Client) leasecontrol.ClaimDispositionDriver {
+func newDispositionDriver(t *testing.T, c client.Client) recycle.ClaimDispositionDriver {
 	t.Helper()
 	ns := testNamespace(t)
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
@@ -789,7 +788,7 @@ func TestClaimDispositionRetireClaimGoneAgainstApiserver_spec_3_4(t *testing.T) 
 	seedRecyclingClaim(t, c, "pod-1")
 	deleteClaim(t, c, "pod-1")
 	d := newDispositionDriver(t, c)
-	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", leasecontrol.PodLifetime{}, "shred timed out"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", recycle.PodLifetime{}, "shred timed out"); err != nil {
 		t.Fatalf("Retire with gone claim: err = %v, want nil (no-op)", err)
 	}
 }

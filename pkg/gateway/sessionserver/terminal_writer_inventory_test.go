@@ -52,16 +52,16 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/runtime/watchdog/suspended.go", "expireSuspendedIfDue", "expireSuspendedIfDue"},
 	{"pkg/gateway/runtime/watchdog/watchdog.go", "expireMaxAge", "expireMaxAge"},
 	{"pkg/gateway/session/orphansession/orphansession.go", "failOrphan", "failOrphan"},
-	{"pkg/gateway/mcpfabric/delegationtree/orphancleanup/orphancleanup.go", "endOrphan", "endOrphan"},
-	{"pkg/gateway/mcpfabric/mcptools/mcptools.go", "cancelNode", "cancelNode"},
-	{"pkg/gateway/mcpfabric/mcptools/mcptools_register.go", "cancelSession", "cancelSession"},
+	{"pkg/gateway/platformtools/orphancleanup/orphancleanup.go", "endOrphan", "endOrphan"},
+	{"pkg/gateway/platformtools/mcptools/mcptools.go", "cancelNode", "cancelNode"},
+	{"pkg/gateway/platformtools/mcptools/mcptools_register.go", "cancelSession", "cancelSession"},
 	{"pkg/gateway/externalapi/admin/users.go", "cancelForRevoke", "cancelForRevoke"},
 	{"pkg/gateway/environment/translator/openai_chat.go", "handleCreateCompletion", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "serveCold", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "endHeldSession", "endHeldSession"},
 	{"cmd/lenny-gateway/session_admin.go", "ForceTerminate", "ForceTerminate"},
 	{"cmd/lenny-gateway/session_budget.go", "terminate", "ExpireSession"},
-	{"cmd/lenny-gateway/reconciler_workers.go", "deadlockFail", "deadlockFail"},
+	{"pkg/gateway/platformtools/deadlock/terminal_fail.go", "TerminalFail", "TerminalFail"},
 }
 
 // terminalValueBuilders are functions that build a session value carrying a

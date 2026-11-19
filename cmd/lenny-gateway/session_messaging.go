@@ -11,10 +11,12 @@ import (
 	evalpg "github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	experimentpg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
+	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
@@ -22,7 +24,6 @@ import (
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/storerouter"
@@ -128,13 +129,6 @@ func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.F
 	// is not configured the reserver stays nil and only the static
 	// ValidateChildSlice ceiling is enforced. F-8.2.18 / F-8.2.12 / F-8.2.13.
 	var treeBudgetReserver delegation.TreeBudgetReserver
-	// hwmReader is the concrete *treebudget.Reserver kept alongside the
-	// interface so the §8.3 high-watermark read (not part of the
-	// narrow Reserve/Return interfaces) is reachable from the
-	// sessionserver. Nil when Redis is not configured, which leaves the
-	// nil interface genuinely nil so the typed-nil-in-interface trap is
-	// avoided. F-8.9.6.
-	var hwmReader sessionserver.DelegationHighWatermarkReader
 	// treeBudgetConcrete keeps the concrete *treebudget.Reserver so the
 	// §11.2 delegation-budget checkpoint/reconstruction reconciler can
 	// call Snapshot/Restore (not part of the narrow Reserve/Return
@@ -148,7 +142,6 @@ func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.F
 		r := treebudget.New(concernRedis.For(storerouter.RedisConcernDelegation),
 			time.Duration(*w.f.delegationBudgetKeyTTLSeconds)*time.Second)
 		treeBudgetReserver = r
-		hwmReader = r
 		treeBudgetConcrete = r
 	}
 	// One §9.2 interaction store shared by the sessionserver (which
@@ -170,8 +163,8 @@ func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.F
 	// never blocks on approval). F-7.2.9, F-7.2.18.
 	toolApprovalWaits := toolapproval.NewRegistry()
 	if pe, ok := exec.(*executor.PodExecutor); ok {
-		pe.SetApprovalGate(sessionserver.NewToolApprovalGate(
-			sessions, interactions, eventBus, toolApprovalWaits, clockinject.Now, *toolApprovalTimeout,
+		pe.SetApprovalGate(platformtools.NewToolApprovalGate(
+			sessions, interactions, eventBus, platformtools.NewToolApprovals(toolApprovalWaits), clockinject.Now, *toolApprovalTimeout,
 		))
 	}
 	var evals evalstore.Store = evalstore.NewMemory(0, nil)
@@ -233,7 +226,6 @@ func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.F
 	w.messagingCoord = messagingCoord
 	w.treeArchive = treeArchive
 	w.treeBudgetReserver = treeBudgetReserver
-	w.hwmReader = hwmReader
 	w.treeBudgetConcrete = treeBudgetConcrete
 	w.interactions = interactions
 	w.toolApprovalWaits = toolApprovalWaits

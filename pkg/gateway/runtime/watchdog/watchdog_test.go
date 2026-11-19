@@ -9,7 +9,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -440,7 +441,7 @@ func TestTickArchivesForcedFailedChild(t *testing.T) {
 	// A child session stuck in `created` past its pre-running budget.
 	seedChildRow(t, store, "sess_child", "sess_parent", session.StateCreated, stale)
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
-		WithTreeArchive(archive)
+		WithTreeArchive(platformtools.NewTreeArchive(archive))
 
 	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)
@@ -465,7 +466,7 @@ func TestTickArchivesExpiredChild(t *testing.T) {
 	// A child session waiting in awaiting_client_action past the deadline.
 	seedChildRow(t, store, "sess_child", "sess_parent", session.StateAwaitingClientAction, stale)
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
-		WithTreeArchive(archive)
+		WithTreeArchive(platformtools.NewTreeArchive(archive))
 
 	if _, err := w.Tick(context.Background(), stale.Add(2*time.Hour)); err != nil {
 		t.Fatalf("Tick: %v", err)
@@ -585,7 +586,7 @@ func TestTickDoesNotArchiveAForcedRootSession(t *testing.T) {
 	// A root session (no parent) stuck in `created`.
 	seedRow(t, store, "sess_root", "acme", session.StateCreated, stale)
 	w := watchdog.New(store, watchdog.StaticTenants{"acme"}, watchdog.Config{}, nil).
-		WithTreeArchive(archive)
+		WithTreeArchive(platformtools.NewTreeArchive(archive))
 
 	if _, err := w.Tick(context.Background(), stale.Add(310*time.Second)); err != nil {
 		t.Fatalf("Tick: %v", err)

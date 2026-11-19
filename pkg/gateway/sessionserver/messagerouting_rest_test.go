@@ -9,13 +9,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -139,7 +141,7 @@ func TestMessageRouting_SuspendedResumesAndDelivers_spec_7_2_path6(t *testing.T)
 // spec: 7.2 (Message delivery routing — seven paths, path 6)
 func TestMessageRouting_SuspendedWithPendingInputWaitResumes_spec_7_2_path6(t *testing.T) {
 	waits := inputwait.NewRegistry()
-	srv, store, inbox, _ := newRoutingServerWith(t, func(o *sessionserver.Options) { o.InputWaits = waits })
+	srv, store, inbox, _ := newRoutingServerWith(t, func(o *sessionserver.Options) { o.InputWaits = platformtools.NewInputWaits(waits) })
 	seedSessionState(t, store, "sess_sus", session.StateSuspended)
 	if _, err := waits.Register("sess_sus", "req_blocked", nil); err != nil {
 		t.Fatalf("Register: %v", err)
