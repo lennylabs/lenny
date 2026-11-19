@@ -7,65 +7,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 )
-
-func TestRecordElicitationDropExposesCounter(t *testing.T) {
-	m, err := gatewaymetrics.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	m.RecordElicitationDrop("budget_exceeded")
-	m.RecordElicitationDrop("budget_exceeded")
-
-	rr := httptest.NewRecorder()
-	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status: %d", rr.Code)
-	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "lenny_elicitation_dropped_total") {
-		t.Fatalf("/metrics output missing lenny_elicitation_dropped_total:\n%s", body)
-	}
-	if !strings.Contains(body, `lenny_elicitation_dropped_total{reason="budget_exceeded"} 2`) {
-		t.Errorf("/metrics output missing the budget_exceeded count of 2:\n%s", body)
-	}
-}
-
-func TestRecordElicitationContentTamperDetectedExposesCounter(t *testing.T) {
-	m, err := gatewaymetrics.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	m.RecordElicitationContentTamperDetected("pod-origin", "pod-middle", "enforce")
-	m.RecordElicitationContentTamperDetected("pod-origin", "pod-middle", "enforce")
-	m.RecordElicitationContentTamperDetected("pod-origin", "pod-middle", "detect-only")
-
-	rr := httptest.NewRecorder()
-	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status: %d", rr.Code)
-	}
-	body := rr.Body.String()
-	if !strings.Contains(body, "lenny_elicitation_content_tamper_detected_total") {
-		t.Fatalf("/metrics output missing lenny_elicitation_content_tamper_detected_total:\n%s", body)
-	}
-	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="enforce",origin_pod="pod-origin",tampering_pod="pod-middle"} 2`) {
-		t.Errorf("/metrics output missing enforce-mode count of 2 with origin_pod/tampering_pod labels:\n%s", body)
-	}
-	if !strings.Contains(body, `lenny_elicitation_content_tamper_detected_total{enforcement_mode="detect-only",origin_pod="pod-origin",tampering_pod="pod-middle"} 1`) {
-		t.Errorf("/metrics output missing detect-only count of 1 with origin_pod/tampering_pod labels:\n%s", body)
-	}
-	// §16.1 cardinality: tenant_id must NOT be a label on this
-	// metric — the bounded labels are origin_pod and tampering_pod only.
-	for _, line := range strings.Split(body, "\n") {
-		if strings.HasPrefix(line, "lenny_elicitation_content_tamper_detected_total{") && strings.Contains(line, "tenant_id") {
-			t.Errorf("tamper counter must not carry a tenant_id label (§16.1): %s", line)
-		}
-	}
-}
 
 // spec: §16.5 — the weakened-mode gauge is the standing
 // ElicitationContentIntegrityWeakened alert numerator. It is exposed
@@ -88,58 +32,6 @@ func TestSetElicitationIntegrityWeakenedExposesGauge(t *testing.T) {
 	if !strings.Contains(body, "lenny_elicitation_content_integrity_effective_mode_weaker_than_enforce 0") {
 		t.Errorf("/metrics output missing weakened gauge value of 0 after resolve:\n%s", body)
 	}
-}
-
-// TestElicitationLifecycleMetricsExposeCounters proves the §16.1 elicitation lifecycle metrics are registered and
-// observable on /metrics: the in-flight gauge, the timeout counter,
-// the suppressed counter, and the round-trip histogram. F-9.2.14.
-//
-// spec: §16.1; §16.5 ElicitationBacklogHigh
-// alert.
-func TestElicitationLifecycleMetricsExposeCounters_spec_16_1_F_9_2_14(t *testing.T) {
-	m, err := gatewaymetrics.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	// One admit, three drops, one round-trip observation.
-	m.IncElicitationPending()
-	m.IncElicitationPending()
-	m.DecElicitationPending() // net pending = 1
-	m.IncElicitationTimeout()
-	m.IncElicitationTimeout()
-	m.IncElicitationSuppressed()
-	m.ObserveElicitationRoundtrip(45 * time.Second)
-
-	rr := httptest.NewRecorder()
-	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	if rr.Code != http.StatusOK {
-		t.Fatalf("status: %d", rr.Code)
-	}
-	body := rr.Body.String()
-
-	for _, want := range []string{
-		"lenny_elicitation_pending 1",
-		"lenny_elicitation_timeout_total 2",
-		"lenny_elicitation_suppressed_total 1",
-		// Histogram count and sum lines.
-		"lenny_elicitation_roundtrip_seconds_count 1",
-		"lenny_elicitation_roundtrip_seconds_sum 45",
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
-		}
-	}
-}
-
-// TestElicitationLifecycleMetricsNilSafe proves the helpers are
-// nil-safe so an absent metrics dependency does not panic. F-9.2.14.
-func TestElicitationLifecycleMetricsNilSafe_spec_16_1_F_9_2_14(t *testing.T) {
-	var m *gatewaymetrics.Metrics // nil
-	m.IncElicitationPending()
-	m.DecElicitationPending()
-	m.IncElicitationTimeout()
-	m.IncElicitationSuppressed()
-	m.ObserveElicitationRoundtrip(1 * time.Second)
 }
 
 func TestRecordExperimentIsolationRejectionExposesCounter(t *testing.T) {
@@ -426,41 +318,6 @@ func TestSlotRehydrationCounterNilSafe(t *testing.T) {
 	m.IncSlotRehydration("sbx-1", "pool") // must not panic
 }
 
-// spec: §16 — lenny_delegation_lease_extension_total is the §8.6
-// per-decision counter labelled by tenant_id and outcome
-// (approved/capped/denied). F-8.6.13.
-func TestDelegationLeaseExtensionCounter_spec_16_line_66(t *testing.T) {
-	m, err := gatewaymetrics.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	m.IncDelegationLeaseExtension("acme", "approved")
-	m.IncDelegationLeaseExtension("acme", "approved")
-	m.IncDelegationLeaseExtension("acme", "denied")
-	m.IncDelegationLeaseExtension("globex", "capped")
-
-	rr := httptest.NewRecorder()
-	m.Handler().ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
-	body := rr.Body.String()
-
-	for _, want := range []string{
-		`lenny_delegation_lease_extension_total{outcome="approved",tenant_id="acme"} 2`,
-		`lenny_delegation_lease_extension_total{outcome="denied",tenant_id="acme"} 1`,
-		`lenny_delegation_lease_extension_total{outcome="capped",tenant_id="globex"} 1`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("/metrics output missing %q\n---\n%s", want, body)
-		}
-	}
-}
-
-// A nil *Metrics is a no-op for the delegation lease-extension counter so
-// the leasecontrol path works even when metrics are unwired. F-8.6.13.
-func TestDelegationLeaseExtensionCounterNilSafe(t *testing.T) {
-	var m *gatewaymetrics.Metrics
-	m.IncDelegationLeaseExtension("acme", "approved") // must not panic
-}
-
 // spec: §4.9 — lenny_credential_preclaim_mismatch_total is a
 // per-(pool,provider) counter of races where the pre-claim availability
 // check passed but the lease assignment failed.
@@ -674,52 +531,10 @@ func TestIncWarmpoolClaimNilSafe_spec_6_3_F_6_3_6(t *testing.T) {
 	m.IncWarmpoolClaim("pool-a", "runc") // must not panic
 }
 
-// spec: §8.2 / §16.1 — lenny_delegation_depth histogram
-// observation labelled by `pool`.
-func TestObserveDelegationDepth_spec_8_2(t *testing.T) {
-	m, err := gatewaymetrics.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	m.ObserveDelegationDepth("pool-a", 3)
-	m.ObserveDelegationDepth("pool-a", 1)
-	body := scrapeMetrics(t, m)
-	if !strings.Contains(body, `lenny_delegation_depth_count{pool="pool-a"} 2`) {
-		t.Errorf("expected lenny_delegation_depth_count for pool-a = 2, body=%q", body)
-	}
-	if !strings.Contains(body, `lenny_delegation_depth_sum{pool="pool-a"} 4`) {
-		t.Errorf("expected lenny_delegation_depth_sum for pool-a = 4, body=%q", body)
-	}
-}
-
-// spec: §8.2 / §16.1 —
-// lenny_delegation_would_have_blocked_total carries (pool, tenant_id,
-// layer, mode) labels.
-func TestIncDelegationWouldHaveBlocked_spec_8_2(t *testing.T) {
-	m, err := gatewaymetrics.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "platform", "enforce")
-	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "runtime", "warn")
-	body := scrapeMetrics(t, m)
-	for _, want := range []string{
-		`lenny_delegation_would_have_blocked_total{layer="platform",mode="enforce",pool="pool-a",tenant_id="acme"} 1`,
-		`lenny_delegation_would_have_blocked_total{layer="runtime",mode="warn",pool="pool-a",tenant_id="acme"} 1`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("expected %q in /metrics, body=%q", want, body)
-		}
-	}
-}
-
 // spec: §8.2 / §16.1 — nil receivers are no-ops (caller-side guard).
 func TestDelegationMetricsNilSafe_spec_8_2(t *testing.T) {
 	var m *gatewaymetrics.Metrics
-	// Must not panic.
-	m.ObserveDelegationDepth("pool-a", 1)
-	m.IncDelegationWouldHaveBlocked("pool-a", "acme", "policy", "enforce")
-	// F-8.9.10 nil-safe coverage.
+	// Must not panic. F-8.9.10 nil-safe coverage.
 	m.IncDelegationTreeCycleDetected("acme", "rest")
 }
 

@@ -47,7 +47,7 @@ import (
 // F-8.6.4 / F-15.3.1.
 //
 // metrics may be nil for the no-metrics test path; in production the
-// gatewaymetrics.Metrics implements leasecontrol.MetricEmitter so
+// leasecontrol.PromMetrics set implements leasecontrol.MetricEmitter so
 // every extension decision drives the §16
 // `lenny_delegation_lease_extension_total` counter. F-8.6.13.
 //

@@ -448,7 +448,7 @@ type Service struct {
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
-// every ExtendLease decision. *gatewaymetrics.Metrics satisfies it.
+// every ExtendLease decision. PromMetrics satisfies it.
 // The interface keeps the leasecontrol package free of a direct
 // gatewaymetrics dependency (which would create an import cycle once
 // gatewaymetrics consumes leasecontrol types). spec: §16;

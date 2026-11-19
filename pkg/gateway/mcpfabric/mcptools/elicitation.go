@@ -122,7 +122,7 @@ type elicitationDispatcher struct {
 // ElicitationTamperRecorder is the metric-emission hook the gateway
 // wires into the elicitation dispatcher so the §9.2 chain walker
 // reports tamper detections without depending on the gateway's
-// metrics package directly. *gatewaymetrics.Metrics satisfies it.
+// metrics package directly. PromMetrics satisfies it.
 // originPod is the pod that legitimately originated the elicitation;
 // tamperingPod is the forwarding pod whose re-emission diverged;
 // enforcementMode is the §9.2 effective mode that was in force at the

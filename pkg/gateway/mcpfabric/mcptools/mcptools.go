@@ -668,7 +668,7 @@ type Deps struct {
 	// ElicitationTamperMetrics, when set, receives a §9.2 / §16.5
 	// content-tamper-detected notification each time the chain walk
 	// catches a forwarding hop that mutated the elicitation payload.
-	// *gatewaymetrics.Metrics satisfies the
+	// PromMetrics satisfies the
 	// ElicitationTamperRecorder interface.
 	ElicitationTamperMetrics ElicitationTamperRecorder
 
@@ -883,14 +883,14 @@ const (
 )
 
 // ElicitationDropRecorder records a §9.1 elicitation drop for the
-// lenny_elicitation_dropped_total counter. pkg/gateway/gatewaymetrics
+// lenny_elicitation_dropped_total counter. PromMetrics
 // satisfies it.
 type ElicitationDropRecorder interface {
 	RecordElicitationDrop(reason string)
 }
 
 // ElicitationLifecycleRecorder hooks the §16.1 admit/terminal metric
-// sites the elicitation handler instruments. *gatewaymetrics.Metrics
+// sites the elicitation handler instruments. PromMetrics
 // satisfies it. spec: §16.1 — pending gauge, timeout /
 // suppressed counters, roundtrip histogram. F-9.2.14.
 type ElicitationLifecycleRecorder interface {

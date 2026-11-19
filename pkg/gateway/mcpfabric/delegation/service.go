@@ -175,7 +175,7 @@ type Result struct {
 }
 
 // MetricsRecorder receives §8.2 delegation admission and cycle-gate
-// observations. *gatewaymetrics.Metrics implements it. A nil recorder
+// observations. PromMetrics implements it. A nil recorder
 // makes Delegate skip metric emission.
 type MetricsRecorder interface {
 	ObserveDelegationDepth(pool string, depth int)
