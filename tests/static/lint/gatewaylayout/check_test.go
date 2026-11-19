@@ -240,10 +240,10 @@ func TestPackagesInTransitAreImportableAndDomainPackagesStayOutside(t *testing.T
 func TestARegisterRowOverridesTheDirectoryOfAMisplacedPackage(t *testing.T) {
 	pkgs := append(
 		base(),
-		pkg("pkg/gateway/core/subsystem"),
-		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/core/subsystem"),
+		pkg("pkg/gateway/core/breaker"),
+		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/core/breaker"),
 	)
-	reg := Register{Packages: []PackageRow{{Package: "pkg/gateway/core/subsystem", Part: "seam-interface", Step: "0117.S4"}}}
+	reg := Register{Packages: []PackageRow{{Package: "pkg/gateway/core/breaker", Part: "seam-interface", Step: "0117.S4"}}}
 	res := check(t, pkgs, reg)
 	if res.Failed() {
 		t.Fatalf("a registered misplaced package failed: unregistered %v, stale %v, malformed %v", res.Unregistered, res.Stale, res.Malformed)
@@ -252,7 +252,7 @@ func TestARegisterRowOverridesTheDirectoryOfAMisplacedPackage(t *testing.T) {
 		t.Fatalf("violations = %v, want the one placement violation", res.Violations)
 	}
 	assertOnly(t, check(t, pkgs, Register{}),
-		Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/core/subsystem"})
+		Violation{RuleSeamImports, "pkg/gateway/meteringproxy/llm", "pkg/gateway/core/breaker"})
 }
 
 // TestMalformedRegisterRowsFail checks the validation of the register.
@@ -400,7 +400,7 @@ func TestRatchetAcceptsDeletionsAndMovesAndRefusesNewRows(t *testing.T) {
 	base := Register{Version: 1, Packages: []PackageRow{
 		{Package: "pkg/gateway/llmproxy/llmproxy", Part: "metering-proxy", Step: "0117.S3"},
 		{Package: "pkg/gateway/session/sessionevents", Part: "stream-proxy", Step: "0117.S6"},
-		{Package: "pkg/gateway/core/semver", Part: PartDomain, Step: "0117.S4"},
+		{Package: "pkg/gateway/core/versions", Part: PartDomain, Step: "0117.S4"},
 	}, Imports: []ImportRow{
 		{From: "pkg/gateway/mcpfabric/mcp", To: "pkg/gateway/session/sessionevents", Rule: RuleSeamImports, Step: "0117.S6"},
 		{From: "pkg/gateway/sessionserver", To: "pkg/gateway/mcpfabric/mcp", Rule: RuleCoreImports, Step: "0117.S7"},
@@ -476,9 +476,10 @@ func TestParseRegisterRefusesMalformedYAML(t *testing.T) {
 // core, the metering proxy, the composition root, packages outside the
 // gateway, and packages in transit import every confined package; the API
 // front imports the authentication middleware and the stores and packages
-// its admin handlers read, and nothing else confined; and every other part
-// imports none, before and after the confined package moves to its concern
-// directory.
+// its admin handlers read, and nothing else confined; the web playground
+// imports the JWT package, the issued-token store, and the tenant store,
+// and nothing else confined; and every other part imports none, before and
+// after the confined package moves to its concern directory.
 // spec: GW-R2
 func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 	assertClean(t, check(t, base(), Register{}))
@@ -489,6 +490,7 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
 		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/externalapi/admintoken", "pkg/gateway/pki/carotation", "pkg/connectoroauth", "pkg/gateway/serviceidentity"),
+		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/gateway/storage/issuedtokenstore", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
 		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),
 		pkg("pkg/gateway/billing/usage", "pkg/gateway/quota/quotastore"),
@@ -571,6 +573,22 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		{
 			"a replica-level part imports the mTLS deny list", pkg("pkg/gateway/replica/m", "pkg/mtls/denylist"),
 			Violation{RuleConfinedImports, "pkg/gateway/replica/m", "pkg/mtls/denylist"},
+		},
+		{
+			"the playground imports quota", pkg("pkg/gateway/playground/q", "pkg/gateway/quota/quotastore"),
+			Violation{RuleConfinedImports, "pkg/gateway/playground/q", "pkg/gateway/quota/quotastore"},
+		},
+		{
+			"the playground imports token introspection", pkg("pkg/gateway/playground/i", "pkg/auth/introspection"),
+			Violation{RuleConfinedImports, "pkg/gateway/playground/i", "pkg/auth/introspection"},
+		},
+		{
+			"another replica-level part imports the JWT package", pkg("pkg/gateway/replica/j", "pkg/auth/jwt"),
+			Violation{RuleConfinedImports, "pkg/gateway/replica/j", "pkg/auth/jwt"},
+		},
+		{
+			"a replica-level part imports the issued-token store", pkg("pkg/gateway/drain/t", "pkg/storage/issuedtokenstore"),
+			Violation{RuleConfinedImports, "pkg/gateway/drain/t", "pkg/storage/issuedtokenstore"},
 		},
 		{
 			"a seam imports an authorization predicate", pkg("pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"),

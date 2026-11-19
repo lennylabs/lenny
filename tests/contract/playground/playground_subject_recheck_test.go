@@ -14,7 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
@@ -33,7 +33,7 @@ func (impersonationRows) Get(_ context.Context, tenantID, jti string) (issuedtok
 // 401 LENNY_PLAYGROUND_BEARER_TYPE_REJECTED response with
 // details.subjectTyp carrying the subject's typ. The playground mint does
 // not apply §13.3 step (1a) to the pasted subject; inspect
-// admitSubjectRow in pkg/gateway/mcpfabric/playground/token.go.
+// admitSubjectRow in pkg/gateway/playground/token.go.
 func TestAPIKeyModeRejectsImpersonationSubject_spec_10_2(t *testing.T) {
 	signer := devSigner()
 	pasted, err := signer.Sign(jwt.Claims{

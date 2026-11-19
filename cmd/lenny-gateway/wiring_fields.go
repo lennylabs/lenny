@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
@@ -20,12 +21,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -81,7 +83,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
-	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
@@ -107,10 +108,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
@@ -119,9 +119,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
@@ -164,8 +166,12 @@ type gatewayWiringFields struct {
 	sqliteFlushCancel   context.CancelFunc
 	experimentProviders *experimentprovider.Cache
 	gwMetrics           *gatewaymetrics.Metrics
-	opsEmitter          events.EventEmitter
-	replica             string
+	// meteringMetrics is the metering proxy's own metric set, registered on
+	// the gateway's registry, so the metering proxy holds no value of the
+	// replica's gateway metrics.
+	meteringMetrics *llmproxy.PromMetrics
+	opsEmitter      events.EventEmitter
+	replica         string
 	// coordHolder is the §10.1.1 Replica address holder value every
 	// REG-COORDLEASE and REG-COORDMIRROR consumer receives: the session
 	// server, the coordination Sweeper, the barrier mirror lister, the
@@ -294,7 +300,7 @@ type gatewayWiringFields struct {
 	// (startBackgroundWorkers) reads to launch the periodic sweepers,
 	// samplers, reconcilers, and propagator subscribers.
 	adminRouter     *admin.Router
-	auditAppender   policy.AuditAppender
+	auditAppender   audit.Appender
 	auditPruner     *auditretention.Pruner
 	billing         billingstore.Store
 	billingEmitter  *billingfanout.Emitter

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
@@ -14,7 +15,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 )
 
 // mcpDelegationAuditor adapts the gateway audit sink to the
@@ -62,7 +62,7 @@ func (a mcpDelegationAuditor) EmitDelegationEvent(ctx context.Context, eventType
 // the admin-audit catalog the EmitAdminEvent path validates against).
 // The token is never recorded. spec: §26.2; §4.9.2. F-26.2.5.
 type mcpVCSLeaseAuditor struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 	// billing tees the §11.2.1 credential.leased event into the per-tenant
 	// billing stream alongside the §4.9.2 audit row. Nil disables the tee.
 	// F-11.2.1.

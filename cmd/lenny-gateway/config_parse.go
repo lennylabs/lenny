@@ -21,35 +21,6 @@ func splitCSV(raw string) []string {
 	return out
 }
 
-// parseKeyValueCSV splits a comma-separated key=value flag value into
-// a map. Trimmed empty entries and entries without `=` are skipped.
-// An empty input yields a nil map. The §27.2
-// playground.sessionLabels flag uses this encoding so a Helm value
-// like `{origin: playground, env: stage}` renders to
-// `--playground-session-labels=origin=playground,env=stage`.
-func parseKeyValueCSV(raw string) map[string]string {
-	var out map[string]string
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		k, v, ok := strings.Cut(part, "=")
-		if !ok {
-			continue
-		}
-		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
-		if k == "" {
-			continue
-		}
-		if out == nil {
-			out = make(map[string]string)
-		}
-		out[k] = v
-	}
-	return out
-}
-
 // boolStr renders a bool as the lowercase string the §25.3
 // platform-config endpoint surfaces.
 func boolStr(b bool) string {

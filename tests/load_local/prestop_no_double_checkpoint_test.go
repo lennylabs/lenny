@@ -28,7 +28,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop"
+	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 )
 

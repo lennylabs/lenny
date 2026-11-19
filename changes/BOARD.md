@@ -8,10 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 6 |
+| Ready | 5 |
 | Waiting on decisions | 40 |
 | Blocked | 136 |
-| Landed | 4 |
+| Landed | 5 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -30,7 +30,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | :-- | :-- | :-- |
 | [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Ready |  |
 | [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Ready |  |
-| [0117.S4](0117-gateway-package-layout/steps.md#0117s4-seam-model-replica-level-parts-and-the-playground-108-import-sites) | Seam model, replica-level parts, and the playground (108 import sites) | Ready |  |
 | [0117.S5](0117-gateway-package-layout/steps.md#0117s5-upload-handler-split) | Upload handler split | Ready |  |
 | [0117.S6](0117-gateway-package-layout/steps.md#0117s6-stream-proxy-split-69-import-sites) | Stream proxy split (69 import sites) | Ready |  |
 | [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Ready |  |
@@ -40,6 +39,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Landed |  |
 | [0117.S2](0117-gateway-package-layout/steps.md#0117s2-the-seam-interface-package-the-layout-gate-and-the-move-driver) | The seam interface package, the layout gate, and the move driver | Landed |  |
 | [0117.S3](0117-gateway-package-layout/steps.md#0117s3-metering-proxy-51-import-sites) | Metering proxy (51 import sites) | Landed |  |
+| [0117.S4](0117-gateway-package-layout/steps.md#0117s4-seam-model-replica-level-parts-and-the-playground-108-import-sites) | Seam model, replica-level parts, and the playground (108 import sites) | Landed |  |
 
 ### M3+: Areas, one milestone each, ordered once 0115 lands
 
@@ -231,7 +231,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
-| [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `In progress` | 3 of 13 | 0 |
+| [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `In progress` | 4 of 13 | 0 |
 | [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 28 |
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 1 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 0 |

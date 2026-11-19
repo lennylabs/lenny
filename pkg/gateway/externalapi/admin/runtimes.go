@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/semver"
+	"github.com/lennylabs/lenny/pkg/common/semver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"

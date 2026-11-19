@@ -10,7 +10,7 @@ import "testing"
 func TestClassifierGivesTheRegisterPartOrTheDirectoryPart(t *testing.T) {
 	reg := Register{Version: 1, Packages: []PackageRow{
 		{Package: "pkg/gateway/sessionserver", Part: "core", Step: "0117.S11"},
-		{Package: "pkg/gateway/core/semver", Part: PartDomain, Step: "0117.S4"},
+		{Package: "pkg/gateway/core/versions", Part: PartDomain, Step: "0117.S4"},
 	}}
 	cl := NewClassifier(Layout, reg)
 	cases := []struct {
@@ -20,7 +20,7 @@ func TestClassifierGivesTheRegisterPartOrTheDirectoryPart(t *testing.T) {
 		isPart bool
 	}{
 		{"pkg/gateway/sessionserver", "core", KindCore, true},
-		{"pkg/gateway/core/semver", PartDomain, KindDomain, false},
+		{"pkg/gateway/core/versions", PartDomain, KindDomain, false},
 		{"pkg/gateway/streamproxy/bus", "stream-proxy", KindSeam, true},
 		{"pkg/gateway/unknown/x", "", KindUnplaced, false},
 		{"cmd/lenny-gateway", "", KindCompositionRoot, false},

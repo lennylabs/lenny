@@ -13,9 +13,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
-	"github.com/lennylabs/lenny/pkg/gateway/deployment/devmode"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
-	"github.com/lennylabs/lenny/pkg/gateway/pki/tlsprobe"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/devmode"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/tlsprobe"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -42,7 +42,7 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §10.3 config validation / TLS probe;
 // §17.4 dev-mode gate; §16.3 tracing; §16.5 SLO warning.
-func (w *gatewayWiring) buildStartupGates() {
+func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags) {
 	f := w.f
 	elicitationFloor := f.elicitationFloor
 	devMode := f.devMode
@@ -52,11 +52,11 @@ func (w *gatewayWiring) buildStartupGates() {
 	oidcIssuerURL := f.oidcIssuerURL
 	oidcClientID := f.oidcClientID
 	maxSessionAgeSeconds := f.maxSessionAgeSeconds
-	startupProbeRedisAddr := f.startupProbeRedisAddr
-	startupProbePgBouncerAddr := f.startupProbePgBouncerAddr
-	startupProbeCA := f.startupProbeCA
-	startupProbeCert := f.startupProbeCert
-	startupProbeKey := f.startupProbeKey
+	startupProbeRedisAddr := probe.RedisAddr
+	startupProbePgBouncerAddr := probe.PgBouncerAddr
+	startupProbeCA := probe.CA
+	startupProbeCert := probe.Cert
+	startupProbeKey := probe.Key
 	poolerMode := f.poolerMode
 	delegationMaxLevelRecoverySeconds := f.delegationMaxLevelRecoverySeconds
 	delegationMaxTreeRecoverySeconds := f.delegationMaxTreeRecoverySeconds

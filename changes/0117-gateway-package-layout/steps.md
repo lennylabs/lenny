@@ -33,11 +33,11 @@ The import sites in each title are counted over the packages the step moves, as 
 `llmproxy/llmproxy` and `session/sessionbudget` to `pkg/gateway/meteringproxy`. The removed `llmproxy` packages of 0132 and 0133 stay where they are. 0133.S2 then edits the proxy at its new path. The seam interface page gains `GWSEAM-ExpireSession` and `GWSEAM-RotateCredential`, served by the session core to the metering proxy (decision 20, settled by the owner on 2026-11-18,), and the metering proxy's budget operations split into one interface per caller. The usage recorder leaves `cmd/lenny-gateway` for a new package, `pkg/gateway/meteringproxy/metering`, with the per-session budget state the proxy serves through the seam interface, and the proxy's flags and route registration move into `llmproxy` (decision 7).
 
 ### 0117.S4 Seam model, replica-level parts, and the playground (108 import sites)
-- status: Planned
+- status: Landed
 - lanes: [specification, code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
-`core/subsystem` and `metrics/extractionthreshold` to `pkg/gateway/seam`; `core/semver` to `pkg/common`; the drain, scaling, ops endpoint, and replica packages of "SP-1"; and `mcpfabric/playground` to `pkg/gateway/playground`. §4.0 takes the new path of `operability/health`. The tier-0 tests that name these paths take the new ones.
+`core/subsystem` and `metrics/extractionthreshold` to `pkg/gateway/seam`; `core/semver` to `pkg/common`; the drain, scaling, ops endpoint, and replica packages of "SP-1"; and `mcpfabric/playground` to `pkg/gateway/playground`. §4.0 takes the new path of `operability/health`. The tier-0 tests that name these paths take the new ones. The step routes the crossings its moves leave: the seam model gates the Token Service read through `Subsystem.Admit` and receives no Token Service value; the request-metrics middleware moves to the API front as `pkg/gateway/api/requestmetrics`; the audit appender moves from the policy package to `pkg/audit`; the T4 KMS probe runs from the session core's `pkg/gateway/core/leaderjobs`; the metering proxy registers its own metric collectors; and GW-R2 allows the playground the packages its token mint reads (decisions 21 to 25). The flags only the playground, the startup TLS probe, the disruption budget watcher, and the leader election read move into those packages under decision 7.
 
 ### 0117.S5 Upload handler split
 - status: Planned

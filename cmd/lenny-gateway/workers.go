@@ -11,12 +11,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	replicationpgstore "github.com/lennylabs/lenny/pkg/blobstore/replication/pgstore"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/pdbwatcher"
-	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gcpause"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/scaling/gcpause"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -30,7 +31,7 @@ import (
 // and the listeners. It produces no value the later steps consume.
 //
 // spec: §4.1 — gateway background subsystems; §10.1 / §11.2 / §12.5 sweeps.
-func (w *gatewayWiring) startBackgroundWorkers() {
+func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *gatewayleader.Flags) {
 	f := w.f
 	agentNamespace := f.agentNamespace
 	artifactReplicationConfig := f.artifactReplicationConfig
@@ -39,7 +40,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 	elicitationFloorReconcileSeconds := f.elicitationFloorReconcileSeconds
 	evalAggregationRefreshSeconds := f.evalAggregationRefreshSeconds
 	gatewayNamespace := f.gatewayNamespace
-	gatewayPDBName := f.gatewayPDBName
+	gatewayPDBName := pdb.PDBName
 	gatewayServiceName := f.gatewayServiceName
 	memoryRecordCountInterval := f.memoryRecordCountInterval
 	minioAccessKey := f.minioAccessKey
@@ -208,7 +209,7 @@ func (w *gatewayWiring) startBackgroundWorkers() {
 		w.adminRouter = w.adminRouter.WithArtifactReplication(replCtrl)
 	}
 
-	w.startLeaderElectedSweeps()
+	w.startLeaderElectedSweeps(leader)
 
 	w.startBillingAndSecurityWorkers()
 	// ----- §16.1 metrics export -----

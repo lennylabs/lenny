@@ -119,9 +119,9 @@ func (w *gatewayWiring) buildLLMProxy(
 		controller: proxyFlags.FallbackController(),
 		rotator:    proxyFallbackRotator{assign: w.credAssign, registry: w.podRegistry},
 		audit:      proxyFallbackAudit{sink: auditSink},
-		metrics:    w.gwMetrics,
+		metrics:    w.meteringMetrics,
 	}
-	return newLLMProxyServer(*proxyFlags.Addr, llmTranslators, w.llmLeases, w.credCache, w.credDeny, policyChain, llmCache, w.gwMetrics, llmProxyUsage, sessionBudgetEnforcer, llmFallbackDeps, proxyActivityStamper(activityStamper))
+	return newLLMProxyServer(*proxyFlags.Addr, llmTranslators, w.llmLeases, w.credCache, w.credDeny, policyChain, llmCache, w.meteringMetrics, llmProxyUsage, sessionBudgetEnforcer, llmFallbackDeps, proxyActivityStamper(activityStamper))
 }
 
 // buildStores constructs the §4.2/§4.4/§4.5 persistence layer and the

@@ -7,7 +7,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tokenservice/promemit"
@@ -46,7 +45,7 @@ func (w *tokenServiceWiring) buildStores() {
 		// The /v1/oauth/token success path falls through to
 		// IssuedTokenStore.Record + Auditor.Append (no Postgres tx).
 		chains := audit.NewChainSet()
-		w.auditor = policy.NewChainSetAppender(chains, nil)
+		w.auditor = audit.NewChainSetAppender(chains, nil)
 		return
 	}
 

@@ -13,7 +13,7 @@
 // It differs from circuitbreaker_test.go in the same package, which
 // covers the §11.6 operator-managed, Redis-backed breakers. This file
 // covers the §4.1 per-subsystem in-memory breakers wired through
-// pkg/gateway/core/subsystem and pkg/gateway/sessionserver/upload.go.
+// pkg/gateway/seam/subsystem and pkg/gateway/sessionserver/upload.go.
 
 package rest_circuitbreaker_test
 
@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"

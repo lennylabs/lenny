@@ -14,8 +14,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
 	"github.com/lennylabs/lenny/pkg/alerting/inproceval"
 	"github.com/lennylabs/lenny/pkg/alerting/rules"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 

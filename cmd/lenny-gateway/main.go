@@ -94,7 +94,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// argument. spec: §4.1.
 
 	// §10.3/§17.4/§16.3/§16.5 startup gates and process-wide providers.
-	w.buildStartupGates()
+	w.buildStartupGates(parts.tlsProbe)
 	elicitationFloorProvider := w.elicitationFloorProvider
 	resolvedNoEnvPolicy := w.resolvedNoEnvPolicy
 
@@ -231,6 +231,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 
 	// §15.1 REST mux and HTTP server. Records w.mux and w.httpSrv.
 	w.buildHTTPSurface(
+		parts.playground,
 		gwMetrics, sessionSrv, w.openaiHandler, w.responsesHandler, w.credServer,
 		mcpSrv, policyChain, auditSink, auditAppender, opsEmitter, environments,
 		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
@@ -278,7 +279,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// background-worker step (it reads w.sessionSrv and the recorded
 	// propagators to drive the periodic sweepers).
 	w.sessionSrv = sessionSrv
-	w.startBackgroundWorkers()
+	w.startBackgroundWorkers(parts.pdbWatcher, parts.leader)
 
 	// §17 — record the LLM proxy server, then hand off to runServers (the
 	// §25.13 alert tracker, the signal handler, and the run-and-shutdown loop).

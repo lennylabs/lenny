@@ -11,7 +11,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
@@ -29,7 +28,7 @@ type llmFallbackWiring struct {
 // newLLMProxyServer builds the §4.9 LLM proxy handler over the composition
 // root's stores and the dependencies buildLLMProxy wires, and returns the
 // proxy's server on addr, or nil when addr is empty.
-func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, gwMetrics *gatewaymetrics.Metrics, usage llmproxy.UsageRecorder, budgetGate llmproxy.BudgetGate, fallback llmFallbackWiring, activity seam.Activity) *http.Server {
+func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, leases credleasestore.LeaseStore, creds *credcache.Cache, denyList *denylist.DenyList, chain *interceptor.Chain, cache llmproxy.ProxyCache, metrics *llmproxy.PromMetrics, usage llmproxy.UsageRecorder, budgetGate llmproxy.BudgetGate, fallback llmFallbackWiring, activity seam.Activity) *http.Server {
 	if addr == "" {
 		return nil
 	}
@@ -49,7 +48,7 @@ func newLLMProxyServer(addr string, translators llmproxy.TranslatorRegistry, lea
 		BudgetGate: budgetGate,
 		// §16.1: active connections, translation
 		// duration, and translation errors on the gateway registry.
-		Metrics: gwMetrics,
+		Metrics: metrics,
 		// spec: §4.9 — the credentialPolicy Fallback Flow.
 		Fallback:        fallback.controller,
 		FallbackRotator: fallback.rotator,

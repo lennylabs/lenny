@@ -10,6 +10,7 @@ import (
 	"time"
 
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorauthz"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
@@ -19,8 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
@@ -52,7 +52,7 @@ import (
 func (w *gatewayWiring) buildControlServer(
 	gwMetrics *gatewaymetrics.Metrics,
 	mcpSrv *mcp.Server,
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	slotHealth *slothealth.Tracker,
 	mtlsDeny *mtlsdenylist.DenyList,
 	connectorAuthorizer *connectorauthz.Authorizer,

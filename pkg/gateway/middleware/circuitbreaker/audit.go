@@ -39,9 +39,9 @@ const CacheStaleAfter = 5 * time.Second
 const auditSamplingWindow = 10 * time.Second
 
 // AuditAppender commits an `admission.circuit_breaker_rejected` row to a
-// tenant's §11.7 hash chain. The signature matches the policy package's
-// audit appender so the gateway passes the same backend (durable
-// Postgres or in-memory) without an adapter.
+// tenant's §11.7 hash chain. The signature matches pkg/audit's Appender,
+// so the gateway passes the same backend (durable Postgres or in-memory)
+// without an adapter.
 type AuditAppender interface {
 	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
 }

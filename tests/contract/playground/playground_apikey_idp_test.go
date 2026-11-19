@@ -13,7 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
