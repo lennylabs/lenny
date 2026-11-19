@@ -43,7 +43,7 @@ func TestSessionOrchestrator(t *testing.T) {
 //
 // spec: 12.2.3
 // diagnosis: pkg/upload archive validators are pure functions and
-// pkg/gateway/sessionserver/upload.go implements the single-blob
+// pkg/gateway/uploadhandler/upload.go implements the single-blob
 // upload handler, but the §15.1 POST /v1/sessions/{id}/upload-archive
 // HTTP handler is not yet wired into sessionserver (the package
 // comment marks it as a later commit) and the §7.4 gitClone executor
@@ -52,7 +52,7 @@ func TestSessionOrchestrator(t *testing.T) {
 // have no HTTP entry point.
 func TestFileFabric(t *testing.T) {
 	t.Log("TESTING.md §12.2.3 File Fabric coverage map:")
-	t.Log("- single-blob upload: pkg/gateway/sessionserver/upload.go handler " +
+	t.Log("- single-blob upload: pkg/gateway/uploadhandler/upload.go handler " +
 		"plus its unit suite and the tier-3 REST contract test in " +
 		"tests/contract/rest_sessions/unexercised_endpoints_test.go.")
 	t.Log("- archive validation primitives: pkg/upload archive validators " +

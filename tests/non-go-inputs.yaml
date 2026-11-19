@@ -130,7 +130,7 @@ inputs:
       - tests/testinfra/chaos
       - tests/testinfra/kind/imagetag
       - pkg/alerting/rules
-      - pkg/gateway/operability/health
+      - pkg/gateway/opsendpoints/health
     reason: >-
       The platform image copies the runbooks for the e2e_kind runbook index
       test; the runbook component test, the chaos helper's runbook map, the alert

@@ -112,14 +112,14 @@ func TestStreamingReconnect(t *testing.T) {
 
 // TESTING.md §13.15 — LLM Proxy.
 // §4.9 LLM Proxy + native Anthropic translator — built and covered by:
-//   - pkg/gateway/llmproxy/llmproxy.AnthropicDirectTranslator (translator.go,
+//   - pkg/gateway/meteringproxy/llmproxy.AnthropicDirectTranslator (translator.go,
 //     translator_test.go)
 //   - component test against the anthropic corpus
 //     (tests/component/translators/anthropic_translator_test.go)
 //   - component wire-shape pinning against the canonical fixture
 //     corpus (tests/component/translators/... covers both the
 //     anthropic_direct and openai_direct request/response shapes)
-//   - pkg/gateway/llmproxy/llmproxy/handler_test.go covers the live SSE relay
+//   - pkg/gateway/meteringproxy/llmproxy/handler_test.go covers the live SSE relay
 //     against a mock Anthropic backend.
 //
 // Live calls against api.anthropic.com are a release-pipeline smoke
@@ -128,7 +128,7 @@ func TestStreamingReconnect(t *testing.T) {
 // diagnosis: §13 phase-gate scaffold — composite surface is exercised by tier-2 stores + contract tests; this scaffold documents the composition.
 func TestLLMProxyAnthropic(t *testing.T) {
 	t.Logf("§4.9: anthropic_direct translator covered by tier-2 corpus, tier-3 envelope, " +
-		"and pkg/gateway/llmproxy/llmproxy handler_test mock relay. Live api.anthropic.com calls " +
+		"and pkg/gateway/meteringproxy/llmproxy handler_test mock relay. Live api.anthropic.com calls " +
 		"are a release smoke test.")
 }
 

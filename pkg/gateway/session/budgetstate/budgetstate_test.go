@@ -16,8 +16,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/budgetstate"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
@@ -44,7 +44,17 @@ func (c *fakeClock) advance(d time.Duration) {
 // exhaust a budget.
 type noopTerminator struct{}
 
-func (noopTerminator) TerminateSession(string, string) {}
+func (noopTerminator) ExpireSession(string, string) {}
+
+// funcBudgets adapts a tracked-ids function and a forget function to the
+// seam.BudgetTracking the sweep reads.
+type funcBudgets struct {
+	tracked func() []string
+	forget  func(string)
+}
+
+func (f funcBudgets) TrackedBudgetSessions() []string { return f.tracked() }
+func (f funcBudgets) ForgetBudget(id string)          { f.forget(id) }
 
 // replica is one gateway replica's per-session budget state: an enforcer
 // and the sweep over the shared session store.
@@ -59,8 +69,7 @@ func newReplica(sessions budgetstate.Sessions, clock *fakeClock, logger *slog.Lo
 		enforcer: enf,
 		sweep: budgetstate.New(budgetstate.Config{
 			Sessions: sessions,
-			Tracked:  enf.TrackedSessions,
-			Forget:   enf.Forget,
+			Budgets:  funcBudgets{tracked: enf.TrackedSessions, forget: enf.Forget},
 			Interval: time.Minute,
 			Now:      clock.Now,
 			Logger:   logger,
@@ -352,7 +361,7 @@ func TestSweepStoreErrorRetainsEveryEntryOfTheBatch_spec_11_2(t *testing.T) {
 	rec.err = nil
 	rec.failBatch = func(batch []string) bool { return contains(batch, first) }
 	r.sweep = budgetstate.New(budgetstate.Config{
-		Sessions: rec, Tracked: r.enforcer.TrackedSessions, Forget: r.enforcer.Forget,
+		Sessions: rec, Budgets: funcBudgets{tracked: r.enforcer.TrackedSessions, forget: r.enforcer.Forget},
 		Interval: time.Minute, BatchSize: 1, Now: clock.Now, Logger: logger,
 	})
 	if got := r.sweep.Pass(context.Background()); got != 2 {
@@ -377,8 +386,7 @@ func TestSweepForgetsOnlyIdsOfTheBatch_spec_11_2(t *testing.T) {
 	var forgotten []string
 	sweep := budgetstate.New(budgetstate.Config{
 		Sessions: rec,
-		Tracked:  func() []string { return []string{live} },
-		Forget:   func(id string) { forgotten = append(forgotten, id) },
+		Budgets:  funcBudgets{tracked: func() []string { return []string{live} }, forget: func(id string) { forgotten = append(forgotten, id) }},
 		Now:      clock.Now,
 	})
 	if got := sweep.Pass(context.Background()); got != 0 || len(forgotten) != 0 {
@@ -395,8 +403,7 @@ func TestSweepEmptyTrackedAndUnion_spec_11_2(t *testing.T) {
 	rec := &recordingSessions{inner: memstore.New()}
 	sweep := budgetstate.New(budgetstate.Config{
 		Sessions: rec,
-		Tracked:  func() []string { return nil },
-		Forget:   func(string) { t.Fatal("forget called with nothing tracked") },
+		Budgets:  funcBudgets{tracked: func() []string { return nil }, forget: func(string) { t.Fatal("forget called with nothing tracked") }},
 	})
 	if got := sweep.Pass(context.Background()); got != 0 || len(rec.staleSizes) != 0 {
 		t.Fatalf("empty pass = %d with %d reads, want 0 and none", got, len(rec.staleSizes))
@@ -411,8 +418,7 @@ func TestSweepEmptyTrackedAndUnion_spec_11_2(t *testing.T) {
 	cancel()
 	sweep = budgetstate.New(budgetstate.Config{
 		Sessions: rec,
-		Tracked:  func() []string { return []string{uuid.NewString()} },
-		Forget:   func(string) { t.Fatal("forget called on a cancelled pass") },
+		Budgets:  funcBudgets{tracked: func() []string { return []string{uuid.NewString()} }, forget: func(string) { t.Fatal("forget called on a cancelled pass") }},
 	})
 	if got := sweep.Pass(ctx); got != 0 || len(rec.staleSizes) != 0 {
 		t.Fatalf("cancelled pass = %d with %d reads, want 0 and none", got, len(rec.staleSizes))
@@ -429,8 +435,7 @@ func TestSweepRunTicksAndStops_spec_11_2(t *testing.T) {
 	forgot := make(chan string, 16)
 	sweep := budgetstate.New(budgetstate.Config{
 		Sessions: store,
-		Tracked:  func() []string { return []string{id} },
-		Forget:   func(s string) { forgot <- s },
+		Budgets:  funcBudgets{tracked: func() []string { return []string{id} }, forget: func(s string) { forgot <- s }},
 		Interval: 5 * time.Millisecond,
 	})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -453,7 +458,7 @@ func TestSweepRunTicksAndStops_spec_11_2(t *testing.T) {
 
 	var nilSweep *budgetstate.Sweep
 	nilSweep.Run(context.Background())
-	budgetstate.New(budgetstate.Config{Sessions: store, Tracked: func() []string { return nil }, Forget: func(string) {}}).Run(context.Background())
+	budgetstate.New(budgetstate.Config{Sessions: store, Budgets: funcBudgets{tracked: func() []string { return nil }, forget: func(string) {}}}).Run(context.Background())
 }
 
 func equalInts(a, b []int) bool {

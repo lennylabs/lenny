@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -20,14 +20,15 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/gitref"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
@@ -35,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -70,10 +72,11 @@ func (w *gatewayWiring) buildSessionServer(
 	quotaCheckpointSvc *quotacheckpoint.Service,
 	policyChain *interceptor.Chain,
 	policyAuditSink *policy.AuditSink,
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	inputWaits *inputwait.Registry,
 	uploadSubsystem *subsystem.Subsystem,
-	uploadMetrics *sessionserver.PromUploadMetrics,
+	uploadMetrics *uploadhandler.PromUploadMetrics,
+	uploadFlags *uploadhandler.Flags,
 	slotHealth *slothealth.Tracker,
 	callbackValidator *sessioncallback.Validator,
 	callbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error),
@@ -99,10 +102,6 @@ func (w *gatewayWiring) buildSessionServer(
 	persistDeriveFailureRows := f.persistDeriveFailureRows
 	sessionArtifactRetentionSeconds := f.sessionArtifactRetentionSeconds
 	workspaceSealMaxDurationSeconds := f.workspaceSealMaxDurationSeconds
-	uploadMaxConcurrentPerSession := f.uploadMaxConcurrentPerSession
-	uploadMaxConcurrentGlobal := f.uploadMaxConcurrentGlobal
-	uploadMaxBytesPerSession := f.uploadMaxBytesPerSession
-	midSessionUploadEnabled := f.midSessionUploadEnabled
 	retryMaxRetries := f.retryMaxRetries
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	envVarBlocklistCSV := f.envVarBlocklistCSV
@@ -151,7 +150,7 @@ func (w *gatewayWiring) buildSessionServer(
 		// unbounded. The composed forget also clears the §8.6 recorder's
 		// accumulated grant delta and the anomaly detector's accumulator; the
 		// per-replica budget state sweep calls the same forget.
-		BudgetForget: w.forgetBudgetState,
+		BudgetTracking: w.meteringBudgets,
 		// spec: §8.10 — operator-tunable per-tenant orphan cap.
 		// The default (100) flows through the constructor when the flag
 		// is unset; an override surfaces both on the sessionserver
@@ -384,15 +383,6 @@ func (w *gatewayWiring) buildSessionServer(
 		// circuit-breaker open/closed gauge.
 		SetExperimentTargetingCircuitOpen: gwMetrics.SetExperimentTargetingCircuitOpen,
 		Clock:                             clockinject.Now,
-		UploadSubsystem:                   uploadSubsystem,
-		UploadMetrics:                     uploadMetrics,
-		// spec: §11.1 — concurrent-upload + per-session
-		// upload-size admission caps. F-11.1.5, F-11.1.6.
-		MaxConcurrentUploadsPerSession: *uploadMaxConcurrentPerSession,
-		MaxConcurrentUploadsGlobal:     *uploadMaxConcurrentGlobal,
-		MaxUploadBytesPerSession:       *uploadMaxBytesPerSession,
-		// spec: §7.4 — mid-session upload deployer policy. F-7.4.6.
-		MidSessionUploadEnabled: *midSessionUploadEnabled,
 		// §4.9 — the pre-claim availability check race metric.
 		PreclaimMismatch: gwMetrics.IncCredentialPreclaimMismatch,
 		// §5.2 — the shared fail/leak tracker so the slot-bind-failure path and
@@ -466,6 +456,7 @@ func (w *gatewayWiring) buildSessionServer(
 		CallbackSeal:       callbackSeal,
 		CallbackDispatcher: callbackDispatcher,
 	})
+	attachUploadHandler(srv, w.podBinder, w.blobs, w.runtimes, uploadSubsystem, uploadMetrics, uploadFlags)
 	attachStreamProxy(srv, w.eventBus)
 	return srv
 }

@@ -10,6 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
@@ -20,12 +21,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -37,10 +39,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 
@@ -82,7 +84,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
-	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
@@ -106,10 +107,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
@@ -118,11 +120,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -164,8 +167,12 @@ type gatewayWiringFields struct {
 	sqliteFlushCancel   context.CancelFunc
 	experimentProviders *experimentprovider.Cache
 	gwMetrics           *gatewaymetrics.Metrics
-	opsEmitter          events.EventEmitter
-	replica             string
+	// meteringMetrics is the metering proxy's own metric set, registered on
+	// the gateway's registry, so the metering proxy holds no value of the
+	// replica's gateway metrics.
+	meteringMetrics *llmproxy.PromMetrics
+	opsEmitter      events.EventEmitter
+	replica         string
 	// coordHolder is the §10.1.1 Replica address holder value every
 	// REG-COORDLEASE and REG-COORDMIRROR consumer receives: the session
 	// server, the coordination Sweeper, the barrier mirror lister, the
@@ -242,7 +249,7 @@ type gatewayWiringFields struct {
 	// registrars, the §6.2 activity stamper, and the §5.2/§6.2 slot-health
 	// tracker; buildSessionServer, the MCP fabric, the admin router, and the
 	// background workers read them back.
-	uploadMetrics         *sessionserver.PromUploadMetrics
+	uploadMetrics         *uploadhandler.PromUploadMetrics
 	sessionStickyCache    sessionserver.StickyCache
 	adminStickyFlusher    admin.StickyFlusher
 	erasureSticky         *experimentsticky.RedisCache
@@ -251,17 +258,17 @@ type gatewayWiringFields struct {
 	callbackDispatcher    *sessioncallback.Dispatcher
 	budgetTerminator      *budgetSessionTerminator
 	sessionBudgetEnforcer *sessionbudget.Enforcer
-	// proxyUsageRec is the §4.9 usage recorder buildLLMProxy constructs. It
-	// is recorded here so buildControlServer can wire it as the §8.6
-	// leasecontrol SessionReclaimer: the recorder accumulates each granted
-	// token delta and raises the enforcer budget, keeping the raise alive
-	// across the next Enforcer.Record (proposal 0023 S3/S4). Nil when no
-	// usagestore is wired (the recorder is nil), in which case exhaustion
-	// keeps the §11.2 terminate-immediately posture.
-	proxyUsageRec *proxyUsageRecorder
-	// tokenAnomaly is the §11.2 direct-mode anomaly detector buildLLMProxy
-	// constructs. The budget state sweep reads the sessions it tracks.
-	tokenAnomaly *tokenanomaly.Detector
+	// meteringBudgets is the metering proxy's per-session budget state:
+	// the enforcer, and the usage recorder and anomaly detector
+	// buildLLMProxy attaches. The session server's terminal pipeline and
+	// the budget state sweep reach it, and the §8.6 leasecontrol episode
+	// fan-out raises or ends a detached session's budget through it, all
+	// through seam.BudgetTracking and seam.BudgetResolutions.
+	meteringBudgets *metering.Budgets
+	// proxyUsageRec is the §4.9 usage recorder buildLLMProxy constructs,
+	// which the direct-mode usage loop also feeds. Nil when no usagestore is
+	// wired.
+	proxyUsageRec *metering.Recorder
 	// budgetStateSweep reclaims per-session budget state for sessions that
 	// ended on another replica or were erased. buildSessionServer constructs
 	// it and startBackgroundWorkers runs it. spec: §11.2, §10.1.1.
@@ -294,7 +301,7 @@ type gatewayWiringFields struct {
 	// (startBackgroundWorkers) reads to launch the periodic sweepers,
 	// samplers, reconcilers, and propagator subscribers.
 	adminRouter     *admin.Router
-	auditAppender   policy.AuditAppender
+	auditAppender   audit.Appender
 	auditPruner     *auditretention.Pruner
 	billing         billingstore.Store
 	billingEmitter  *billingfanout.Emitter

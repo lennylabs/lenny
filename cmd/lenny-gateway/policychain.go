@@ -6,6 +6,7 @@ import (
 	"log"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -32,7 +33,7 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §4.8 policy engine; §11.2 / §12.4 quota.
 func (w *gatewayWiring) buildPolicyChain(
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	auditValidator *auditscope.Validator,
 ) {
 	f := w.f

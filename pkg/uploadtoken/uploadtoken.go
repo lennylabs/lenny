@@ -44,7 +44,7 @@
 //     log and any operator-side observability surface never see the
 //     raw token.
 //
-// Callers in the gateway (`pkg/gateway/sessionserver/upload.go` and
+// Callers in the gateway (`pkg/gateway/uploadhandler/upload.go` and
 // friends) preserve this boundary: a verify failure logs the digest
 // and the §15.1 error code, never the raw token bytes.
 //

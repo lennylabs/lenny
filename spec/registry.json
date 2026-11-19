@@ -1696,6 +1696,11 @@
   ],
   "operations": [
     {
+      "id": "GWSEAM-AdjustStorage",
+      "anchor": "gwseam-adjuststorage",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-AdmitResume",
       "anchor": "gwseam-admitresume",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1733,6 +1738,11 @@
     {
       "id": "GWSEAM-AttachCallingSession",
       "anchor": "gwseam-attachcallingsession",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-AuditUpload",
+      "anchor": "gwseam-auditupload",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -1803,6 +1813,11 @@
     {
       "id": "GWSEAM-EnqueueInbox",
       "anchor": "gwseam-enqueueinbox",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ExpireSession",
+      "anchor": "gwseam-expiresession",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -2011,6 +2026,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ReserveStorage",
+      "anchor": "gwseam-reservestorage",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ResolveApproval",
       "anchor": "gwseam-resolveapproval",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2043,6 +2063,11 @@
     {
       "id": "GWSEAM-ReturnBudget",
       "anchor": "gwseam-returnbudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RotateCredential",
+      "anchor": "gwseam-rotatecredential",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -2093,6 +2118,11 @@
     {
       "id": "GWSEAM-TreeUsage",
       "anchor": "gwseam-treeusage",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-VerifyUploadToken",
+      "anchor": "gwseam-verifyuploadtoken",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {

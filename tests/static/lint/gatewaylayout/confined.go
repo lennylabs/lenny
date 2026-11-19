@@ -12,6 +12,9 @@ type Confinement struct {
 	// authentication middleware its request pipeline runs, and the stores
 	// and packages its admin handlers read.
 	APIFront bool
+	// Playground marks a subtree the web playground may import: the
+	// packages its token mint reads.
+	Playground bool
 	// Exact matches the directory alone rather than its subtree, as for the
 	// shared credential package, which the API front may import while the
 	// packages under it stay confined.
@@ -41,13 +44,13 @@ var Confined = []Confinement{
 	{Path: "pkg/workspaceplan/vcscred"},
 	{Path: "pkg/gateway/llmproxy/credrouter"},
 	// The token and key packages.
-	{Path: "pkg/auth/jwt", APIFront: true},
+	{Path: "pkg/auth/jwt", APIFront: true, Playground: true},
 	{Path: "pkg/auth/introspection"},
 	{Path: "pkg/tokensvcproxy"},
 	{Path: "pkg/gateway/externalapi/admintoken", APIFront: true},
 	{Path: "pkg/gateway/api/admintoken", APIFront: true},
-	{Path: "pkg/gateway/storage/issuedtokenstore", APIFront: true},
-	{Path: "pkg/storage/issuedtokenstore", APIFront: true},
+	{Path: "pkg/gateway/storage/issuedtokenstore", APIFront: true, Playground: true},
+	{Path: "pkg/storage/issuedtokenstore", APIFront: true, Playground: true},
 	{Path: "pkg/uploadtoken"},
 	{Path: "pkg/webhooksig"},
 	{Path: "pkg/connectoroauth", APIFront: true},
@@ -75,8 +78,8 @@ var Confined = []Confinement{
 	{Path: "pkg/policy/ratelimit", APIFront: true},
 	{Path: "pkg/gateway/policy"},
 	{Path: "pkg/policy"},
-	{Path: "pkg/gateway/environment/tenantstore", APIFront: true},
-	{Path: "pkg/tenancy/tenantstore", APIFront: true},
+	{Path: "pkg/gateway/environment/tenantstore", APIFront: true, Playground: true},
+	{Path: "pkg/tenancy/tenantstore", APIFront: true, Playground: true},
 	// The authorization predicates.
 	{Path: "pkg/gateway/callercheck"},
 	{Path: "pkg/auth/callercheck"},
@@ -94,8 +97,9 @@ var Confined = []Confinement{
 // and part to the repository-relative path to breaks the confinement rule.
 // Only a gateway part is held to it: the session core, the metering proxy,
 // and the composition root import every confined package, the API front
-// imports the subtrees marked for it, and every other part imports none. A
-// package in transit or outside the gateway is not held to it.
+// and the web playground import the subtrees marked for each, and every
+// other part imports none. A package in transit or outside the gateway is
+// not held to it.
 func confinedImport(kind Kind, part, to string, confined []Confinement) bool {
 	var hit *Confinement
 	for i := range confined {
@@ -108,8 +112,10 @@ func confinedImport(kind Kind, part, to string, confined []Confinement) bool {
 		return false
 	}
 	switch kind {
-	case KindSeamInterface, KindReplica:
+	case KindSeamInterface:
 		return true
+	case KindReplica:
+		return part != PartPlayground || !hit.Playground
 	case KindSeam:
 		return part != "metering-proxy"
 	case KindAPIFront:

@@ -12,7 +12,7 @@ import (
 	"github.com/minio/minio-go/v7/pkg/tags"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness"
+	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 )
 
 // spec: §4.5 / §12.5 — the MinIO-backed blob store's pure mapping and

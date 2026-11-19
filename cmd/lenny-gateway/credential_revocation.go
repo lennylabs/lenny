@@ -123,7 +123,7 @@ type directModeRevocationRotator struct {
 	markRevoked func(poolID, credentialID string)
 	// rotate mints a replacement lease from nextPool and pushes it to the
 	// lease's pod via the §4.7 RotateCredentials RPC under the given
-	// trigger. proxyFallbackRotator.Rotate satisfies it.
+	// trigger. proxyFallbackRotator.rotateLease satisfies it.
 	rotate func(faulted credential.Lease, nextPool string, trigger credential.RotationTrigger)
 	// dispatch runs one per-lease rotate. The default runs each in its own
 	// goroutine so a slow RotateCredentials RPC does not block the

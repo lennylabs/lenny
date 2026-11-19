@@ -268,7 +268,7 @@ var _ quotacheckpoint.PodUsageReader = (*directUsageRecoveryReader)(nil)
 
 // sessionStoreSubjectResolver resolves a session's user id from the
 // SessionStore for the crash-recovery per-user window attribution. It reuses
-// the same Get(tenantID, sessionID) lookup the proxyUsageRecorder uses to
+// the same Get(tenantID, sessionID) lookup the metering.Recorder uses to
 // resolve a proxied session's user, so the recovery fold lands the
 // pod-reported total in the same per-user window steady-state usage records.
 type sessionStoreSubjectResolver struct {

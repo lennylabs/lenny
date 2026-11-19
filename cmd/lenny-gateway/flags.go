@@ -17,16 +17,22 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorsecret"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
+	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/pdbwatcher"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/tlsprobe"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
@@ -38,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
@@ -97,11 +104,6 @@ type gatewayFlags struct {
 	redisCachePubSubURL                           *string
 	redisSessionDataURL                           *string
 	redisDelegationURL                            *string
-	startupProbeRedisAddr                         *string
-	startupProbePgBouncerAddr                     *string
-	startupProbeCA                                *string
-	startupProbeCert                              *string
-	startupProbeKey                               *string
 	coordInterval                                 *time.Duration
 	barrierAckTimeoutSeconds                      *int
 	dualStoreMaxSeconds                           *int
@@ -128,10 +130,6 @@ type gatewayFlags struct {
 	evalRLPerSessionPerMin                        *int
 	evalRLPerTenantPerMin                         *int
 	evalAggregationRefreshSeconds                 *int
-	uploadMaxConcurrentPerSession                 *int
-	uploadMaxConcurrentGlobal                     *int
-	uploadMaxBytesPerSession                      *int64
-	midSessionUploadEnabled                       *bool
 	rlFailOpenMaxSeconds                          *int
 	quotaUserFailOpenFraction                     *float64
 	quotaPerReplicaHardCap                        *int64
@@ -238,7 +236,6 @@ type gatewayFlags struct {
 	leaseDefaultApproval                          *string
 	leaseCoolOffSec                               *int
 	leaseRejectionCoolOffSec                      *int
-	proxyExtensionWaitTimeout                     *time.Duration
 	tokenAnomalyZeroWindow                        *int
 	tokenAnomalyImplausibleRatio                  *float64
 	directUsagePollIntervalSeconds                *int
@@ -247,19 +244,8 @@ type gatewayFlags struct {
 	saTokenAudience                               *string
 	adminSATokenAudience                          *string
 	platformAdminServiceAccounts                  *string
-	llmProxyAddr                                  *string
 	llmProxyPublicURL                             *string
 	llmSemanticCache                              *bool
-	credentialFallbackMaxRotations                *int
-	credentialFallbackCooldownSeconds             *int
-	anthropicVersion                              *string
-	openaiBaseURL                                 *string
-	openaiOrg                                     *string
-	bedrockRegion                                 *string
-	vertexRegion                                  *string
-	vertexProject                                 *string
-	azureEndpoint                                 *string
-	azureAPIVersion                               *string
 	objectStorageProvider                         *string
 	objectStorageBucket                           *string
 	objectStorageRegion                           *string
@@ -277,7 +263,6 @@ type gatewayFlags struct {
 	persistDeriveFailureRows                      *bool
 	gcCycleIntervalSeconds                        *int
 	gcTombstoneRetentionSeconds                   *int
-	gatewayLeaderElection                         *bool
 	t4KmsProbeIntervalSeconds                     *int
 	t4KmsProbeRateLimit                           *float64
 	maxCreatedStateTimeoutSeconds                 *int
@@ -331,22 +316,12 @@ type gatewayFlags struct {
 	eventBusMaxRetryAttempts                      *int
 	eventBusDuplicateInjectionFactor              *int
 	eventBusDropAlertThreshold                    *int
-	playgroundEnabled                             *bool
-	playgroundAuthMode                            *string
-	playgroundDevTenantID                         *string
-	playgroundAllowedRuntimes                     *string
-	playgroundMaxSessionMinutes                   *int
-	playgroundMaxIdleTimeSeconds                  *int
-	playgroundOIDCSessionTTL                      *int
 	capabilityTokenTTL                            *int
-	playgroundGatewayHost                         *string
-	playgroundSessionLabels                       *string
 	maxSessionsPerReplica                         *int
 	minReplicas                                   *int
 	streamCeiling                                 *int
 	kmsSignQuotaPerSecond                         *int
 	gatewayNamespace                              *string
-	gatewayPDBName                                *string
 	gatewayServiceName                            *string
 	adminTokenDisabled                            *bool
 	adminTokenNamespace                           *string
@@ -388,6 +363,13 @@ type gatewayFlags struct {
 // of them holds a part's flag values.
 type partFlags struct {
 	sessionEvents *sessionevents.Flags
+	playground    *playground.Flags
+	tlsProbe      *tlsprobe.Flags
+	pdbWatcher    *pdbwatcher.Flags
+	leader        *gatewayleader.Flags
+	llmProxy      *llmproxy.Flags
+	metering      *metering.Flags
+	uploads       *uploadhandler.Flags
 }
 
 // registerPartFlags registers the parts' flags on the process-wide flag set.
@@ -395,6 +377,13 @@ type partFlags struct {
 func registerPartFlags() *partFlags {
 	return &partFlags{
 		sessionEvents: sessionevents.RegisterFlags(flag.CommandLine),
+		playground:    playground.RegisterFlags(flag.CommandLine),
+		tlsProbe:      tlsprobe.RegisterFlags(flag.CommandLine),
+		pdbWatcher:    pdbwatcher.RegisterFlags(flag.CommandLine),
+		leader:        gatewayleader.RegisterFlags(flag.CommandLine),
+		llmProxy:      llmproxy.RegisterFlags(flag.CommandLine),
+		metering:      metering.RegisterFlags(flag.CommandLine),
+		uploads:       uploadhandler.RegisterFlags(flag.CommandLine),
 	}
 }
 
@@ -570,22 +559,6 @@ func (f *gatewayFlags) registerCoreFlags() {
 		"§12.4 dedicated Redis URL for the Session-data concern (durable inbox, DLQ). Empty uses the base Redis client. Override via LENNY_REDIS_SESSION_DATA_URL.")
 	f.redisDelegationURL = flag.String("redis-delegation-url", os.Getenv("LENNY_REDIS_DELEGATION_URL"),
 		"§12.4 dedicated Redis URL for the Delegation concern (tree budget keys {root_session_id}:dlg:*). Empty uses the base Redis client. Override via LENNY_REDIS_DELEGATION_URL.")
-	// spec: §10.3 — gateway startup TLS probe. When an endpoint
-	// host:port is set the gateway verifies a TLS handshake succeeds and a
-	// plaintext connection is refused before it becomes ready, converting a
-	// misconfigured backend (wrong port, missing cert) into a startup
-	// failure. Empty disables the probe for that backend (dev / in-memory).
-	// F-10.3.15.
-	f.startupProbeRedisAddr = flag.String("startup-tls-probe-redis-addr", os.Getenv("LENNY_STARTUP_TLS_PROBE_REDIS_ADDR"),
-		"§10.3 host:port of the Redis TLS listener the startup probe checks (TLS handshake must succeed; plaintext must be refused). Empty disables the Redis leg. Override via LENNY_STARTUP_TLS_PROBE_REDIS_ADDR. F-10.3.15.")
-	f.startupProbePgBouncerAddr = flag.String("startup-tls-probe-pgbouncer-addr", os.Getenv("LENNY_STARTUP_TLS_PROBE_PGBOUNCER_ADDR"),
-		"§10.3 host:port of the PgBouncer TLS listener the startup probe checks. Empty disables the PgBouncer leg. Override via LENNY_STARTUP_TLS_PROBE_PGBOUNCER_ADDR. F-10.3.15.")
-	f.startupProbeCA = flag.String("startup-tls-probe-ca", os.Getenv("LENNY_STARTUP_TLS_PROBE_CA"),
-		"§10.3 CA bundle that verifies the Redis/PgBouncer server certificates during the startup TLS probe. Empty uses the system trust store. Override via LENNY_STARTUP_TLS_PROBE_CA. F-10.3.15.")
-	f.startupProbeCert = flag.String("startup-tls-probe-cert", os.Getenv("LENNY_STARTUP_TLS_PROBE_CERT"),
-		"§10.3 client certificate presented during the startup TLS probe (Redis tls-auth-clients requires one). Empty presents no client certificate. Override via LENNY_STARTUP_TLS_PROBE_CERT. F-10.3.15.")
-	f.startupProbeKey = flag.String("startup-tls-probe-key", os.Getenv("LENNY_STARTUP_TLS_PROBE_KEY"),
-		"§10.3 private key for --startup-tls-probe-cert. Override via LENNY_STARTUP_TLS_PROBE_KEY. F-10.3.15.")
 	f.coordInterval = flag.Duration("coordination-interval", 15*time.Second,
 		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
 	f.barrierAckTimeoutSeconds = flag.Int("checkpoint-barrier-ack-timeout-seconds",
@@ -677,22 +650,6 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.evalAggregationRefreshSeconds = flag.Int("eval-aggregation-refresh-seconds",
 		envInt("LENNY_EVAL_AGGREGATION_REFRESH_SECONDS", 0),
 		"§10.7 evalAggregationRefreshSeconds: when 0 (default), the lenny_eval_aggregates materialized view exists but is unused and the §10.7 results API aggregates on read from eval_results. When positive, the gateway routes unfiltered results queries to the matview and schedules REFRESH MATERIALIZED VIEW CONCURRENTLY at this interval. Requires Postgres. Override via LENNY_EVAL_AGGREGATION_REFRESH_SECONDS. F-10.7.12.")
-	// spec: §11.1 — concurrent-upload and per-session
-	// upload-size admission caps, distinct from the §4.1 upload-handler
-	// back-pressure semaphore. Zero leaves each scope unlimited; operators
-	// opt in. F-11.1.5, F-11.1.6.
-	f.uploadMaxConcurrentPerSession = flag.Int("upload-max-concurrent-per-session",
-		envInt("LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION", 0),
-		"§11.1 per-session concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.")
-	f.uploadMaxConcurrentGlobal = flag.Int("upload-max-concurrent-global",
-		envInt("LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL", 0),
-		"§11.1 global (per-replica) concurrent-upload admission cap. Excess in-flight uploads across all sessions are rejected with 429 RATE_LIMITED. Zero disables the global concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL. F-11.1.5.")
-	f.uploadMaxBytesPerSession = flag.Int64("upload-max-bytes-per-session",
-		envInt64("LENNY_UPLOAD_MAX_BYTES_PER_SESSION", 0),
-		"§11.1 per-session cumulative upload-size cap (bytes). The sum of all uploads in a session is rejected with 429 QUOTA_EXCEEDED past this value; the per-file cap is the separate 64 MiB body ceiling. Zero disables the per-session size cap. Override via LENNY_UPLOAD_MAX_BYTES_PER_SESSION. F-11.1.6.")
-	f.midSessionUploadEnabled = flag.Bool("mid-session-upload",
-		envFlag("LENNY_MID_SESSION_UPLOAD"),
-		"§7.4 deployer policy: admit uploads into an already-running session (POST /v1/sessions/{id}/upload-to-session) when the bound runtime also declares capabilities.midSessionUpload. Off by default; override via LENNY_MID_SESSION_UPLOAD. F-7.4.6.")
 	// spec: §11.3 — rateLimitFailOpenMaxSeconds, operator-tunable.
 	// Once a fail-open episode (counter-error window) has run past this
 	// cap, the middleware switches to fail-closed and rejects requests
@@ -992,8 +949,6 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§8.6 deployment-default coolOffSeconds: the post-approval window during which further extensions auto-grant without re-elicitation. Zero applies the spec default (5s). F-15.3.5.")
 	f.leaseRejectionCoolOffSec = flag.Int("lease-extension-rejection-cooloff-seconds", 0,
 		"§8.6 deployment-default rejectionCoolOffSeconds: after a denial, the requesting subtree's extensions auto-reject for this long. Zero applies the spec default (300s). F-15.3.5.")
-	f.proxyExtensionWaitTimeout = flag.Duration("proxy-extension-wait-timeout", envDuration("LENNY_PROXY_EXTENSION_WAIT_TIMEOUT", defaultProxyExtensionWaitTimeout),
-		"§8.6 proxyExtensionWaitTimeout: how long the gateway LLM Proxy waits in-path for a budget-exhaustion lease extension to resolve before falling through to a recover-on-next-request BUDGET_EXHAUSTED. A fast auto or quick-approval extension resolves within this window and is transparent; a slower elicitation continues out-of-band. §8.6 does not fix this value; it is operator-tunable. Default 5s. Override via LENNY_PROXY_EXTENSION_WAIT_TIMEOUT.")
 	f.tokenAnomalyZeroWindow = flag.Int("token-anomaly-zero-window", envInt("LENNY_TOKEN_ANOMALY_ZERO_WINDOW", tokenanomaly.DefaultZeroTokenWindow),
 		"§11.2 direct-mode token-usage integrity: the count of consecutive zero-token direct-mode ReportUsage pulls a session must exceed before the gateway raises lenny_gateway_token_usage_anomaly_total{reason=\"zero_delta\"}. A non-zero pull resets the run. §11.2 fixes the default at greater than 3; a non-positive value falls back to the default so the primary under-reporting signal is never disabled. Override via LENNY_TOKEN_ANOMALY_ZERO_WINDOW.")
 	f.tokenAnomalyImplausibleRatio = flag.Float64("token-anomaly-implausible-ratio", envFloat("LENNY_TOKEN_ANOMALY_IMPLAUSIBLE_RATIO", tokenanomaly.DefaultImplausiblySmallRatio),
@@ -1010,39 +965,10 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§25.4 comma-separated fully-qualified ServiceAccount usernames (system:serviceaccount:<namespace>:<name>) granted the §10.2 platform-admin role on the admin API. The chart lists lenny-ops-sa here so the §25.5 Redis-down gateway-buffer fan-out reaches the buffer endpoint. An account absent from this list is not admitted, whatever token it presents; empty grants no service account anything.")
 	f.saTokenAudience = flag.String("sa-token-audience", os.Getenv("LENNY_SA_TOKEN_AUDIENCE"),
 		"§10.3 deployment-specific projected-SA-token audience (global.saTokenAudience, formatted lenny-gateway-<cluster-name>). When set, the §8.6 GatewayControl listener validates the audience claim of the projected SA token presented as the authorization bearer header on every pod→gateway request and rejects a token whose aud claim does not include this value (cross-deployment replay protection, the SA-token layer of the §10.3 defense-in-depth chain). Empty disables the SA-token audience check (local development only).")
-	f.llmProxyAddr = flag.String("llm-proxy-addr", os.Getenv("LENNY_LLM_PROXY_ADDR"),
-		"§4.9 LLM reverse-proxy listen address (host:port, e.g. :8443). When set, the gateway serves the proxy for proxy-mode agent pods on this address. Empty disables the LLM proxy listener.")
 	f.llmProxyPublicURL = flag.String("llm-proxy-public-url", os.Getenv("LENNY_LLM_PROXY_PUBLIC_URL"),
 		"§4.9 public HTTPS URL agent pods dial to reach the LLM reverse proxy (e.g. https://lenny-proxy.svc:8443). Required for the §4.9 Pre-Authorized Credential Flow's user-source delivery: a user-registered credential is fronted through the proxy in proxy mode, so the gateway writes this URL into the pod's proxy-mode lease. Empty disables user-source credential resolution (sessions fall through to pool per the credentialPolicy fallback).")
 	f.llmSemanticCache = flag.Bool("llm-semantic-cache", os.Getenv("LENNY_LLM_SEMANTIC_CACHE") == "1",
 		"§4.9 enable the in-process semantic cache on the LLM proxy path. Caching stays disabled by default and is opt-in per pool via the pool's cachePolicy; this flag provisions the in-memory backend the per-pool policy draws on. The Redis-backed backend is wired separately.")
-	f.credentialFallbackMaxRotations = flag.Int("credential-fallback-max-rotations", envInt("LENNY_CREDENTIAL_FALLBACK_MAX_ROTATIONS", 3),
-		"§4.9 credentialPolicy fallback.maxRotationsPerSession: the rotation budget shared across all providers in a session before the fallback chain is exhausted and the session terminates with CREDENTIAL_FALLBACK_EXHAUSTED. The spec default is 3; operator-tunable. Override via LENNY_CREDENTIAL_FALLBACK_MAX_ROTATIONS.")
-	f.credentialFallbackCooldownSeconds = flag.Int("credential-fallback-cooldown-seconds", envInt("LENNY_CREDENTIAL_FALLBACK_COOLDOWN_SECONDS", 60),
-		"§4.9 credentialPolicy fallback.cooldownOnRateLimit: seconds a faulted credential pool is held on cooldown before the fallback chain selects it again. The spec default is 60s; operator-tunable. Override via LENNY_CREDENTIAL_FALLBACK_COOLDOWN_SECONDS.")
-	f.anthropicVersion = flag.String("anthropic-version", os.Getenv("LENNY_ANTHROPIC_VERSION"),
-		"default anthropic-version header the §4.9 LLM proxy injects when a request omits it. Empty rejects a request that omits the header.")
-	// §4.9: the proxy dispatches each lease to the
-	// translator for its resolved provider. anthropic_direct and
-	// openai_direct carry safe global defaults and are always
-	// registered. aws_bedrock, vertex_ai, and azure_openai need
-	// per-deployment region/project/endpoint config, so each registers
-	// only when its config flag is set; a lease for an unconfigured
-	// provider is rejected with UPSTREAM_PROVIDER_UNSUPPORTED.
-	f.openaiBaseURL = flag.String("llm-openai-base-url", os.Getenv("LENNY_LLM_OPENAI_BASE_URL"),
-		"§4.9 openai_direct upstream base URL the LLM proxy targets. Empty selects https://api.openai.com.")
-	f.openaiOrg = flag.String("llm-openai-organization", os.Getenv("LENNY_LLM_OPENAI_ORGANIZATION"),
-		"§4.9 optional OpenAI-Organization header the LLM proxy adds to openai_direct requests.")
-	f.bedrockRegion = flag.String("llm-bedrock-region", os.Getenv("LENNY_LLM_BEDROCK_REGION"),
-		"§4.9 AWS region for the aws_bedrock translator (e.g. us-east-1). Empty leaves aws_bedrock out of the proxy translator registry.")
-	f.vertexRegion = flag.String("llm-vertex-region", os.Getenv("LENNY_LLM_VERTEX_REGION"),
-		"§4.9 Vertex AI region for the vertex_ai translator (e.g. us-east5). Required with --llm-vertex-project to register vertex_ai.")
-	f.vertexProject = flag.String("llm-vertex-project", os.Getenv("LENNY_LLM_VERTEX_PROJECT"),
-		"§4.9 GCP project id for the vertex_ai translator. Required with --llm-vertex-region to register vertex_ai.")
-	f.azureEndpoint = flag.String("llm-azure-endpoint", os.Getenv("LENNY_LLM_AZURE_ENDPOINT"),
-		"§4.9 Azure OpenAI resource base URL for the azure_openai translator. Required with --llm-azure-api-version to register azure_openai.")
-	f.azureAPIVersion = flag.String("llm-azure-api-version", os.Getenv("LENNY_LLM_AZURE_API_VERSION"),
-		"§4.9 Azure OpenAI api-version query value. Required with --llm-azure-endpoint to register azure_openai.")
 	// spec: §17.9.3 — the canonical objectStorage.provider selector
 	// picks the §12.5 ArtifactStore backend (minio | s3 | gcs | azure,
 	// plus the dev-only in-memory store). Empty defaults to minio: the
@@ -1109,16 +1035,6 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.gcTombstoneRetentionSeconds = flag.Int("gc-tombstone-retention-seconds",
 		envInt("LENNY_GC_TOMBSTONE_RETENTION_SECONDS", int(retentiongc.DefaultTombstoneRetention/time.Second)),
 		"§12.5 gc.tombstoneRetentionSeconds: how long a soft-deleted artifact_store row is retained before the hard-prune sweep removes it, in seconds (default 86400 / 24h). Operators may raise it without affecting GC correctness. Override via LENNY_GC_TOMBSTONE_RETENTION_SECONDS.")
-	// spec: §12.5 — the gateway-singleton background sweeps
-	// (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus
-	// retranscribe worker, legal-hold reconciler, T4 KMS probe) run under a
-	// single leader-elected `lenny-gateway-leader` Lease so exactly one
-	// gateway replica is the GC writer at a time. Default true; the lease
-	// is only used when the gateway resolves an in-cluster config, so a
-	// single-process dev gateway (or `=false`) always runs the sweeps.
-	f.gatewayLeaderElection = flag.Bool("gateway-leader-election",
-		envBool("LENNY_GATEWAY_LEADER_ELECTION", true),
-		"§12.5: when true (default), gate the gateway-singleton background sweeps (artifact GC, tombstone hard-prune, audit-retention pruner, EventBus retranscribe worker, legal-hold reconciler, T4 KMS probe) under the lenny-gateway-leader Kubernetes Lease so exactly one gateway replica runs them. Falls back to always-run when the gateway is not in-cluster. Override via LENNY_GATEWAY_LEADER_ELECTION.")
 	// spec: §12.5 (STO-021) — the leader-elected continuous T4
 	// KMS availability probe. The cadence floor (60s) and the
 	// token-bucket rate ceiling keep a large T4 fleet from bursting the
@@ -1309,29 +1225,8 @@ func (f *gatewayFlags) registerOpsFlags() {
 		"§12.6 eventBus.duplicateInjectionFactor: a test-only staging knob; the EventBus re-sends every successful publish this many times so the dedup integration test can assert no doubled side effects. 1 (the default) disables injection. Override via LENNY_EVENTBUS_DUPLICATE_INJECTION_FACTOR.")
 	f.eventBusDropAlertThreshold = flag.Int("eventbus-drop-alert-threshold", envInt("LENNY_EVENTBUS_DROP_ALERT_THRESHOLD", 10),
 		"§12.6 eventBus.dropAlertThreshold: the per-minute dropped-publish rate above which the §16.5 EventBusPublishDropped alert fires (default 10/min). Emitted at startup on the lenny_event_bus_drop_alert_threshold gauge the alert reads via scalar(...). Override via LENNY_EVENTBUS_DROP_ALERT_THRESHOLD.")
-	// §27.2 web-playground flags. These mirror the playground.* Helm
-	// values; the gateway reads them from its own configuration so the
-	// playground is gated without a separate deployment target.
-	f.playgroundEnabled = flag.Bool("playground-enabled", envFlag("LENNY_PLAYGROUND_ENABLED"),
-		"§27.2 playground.enabled: serve the web playground at /playground. When false, /playground/* returns 404. Override via LENNY_PLAYGROUND_ENABLED.")
-	f.playgroundAuthMode = flag.String("playground-auth-mode", envOr("LENNY_PLAYGROUND_AUTH_MODE", "oidc"),
-		"§27.2 playground.authMode: one of oidc, apiKey, or dev. Override via LENNY_PLAYGROUND_AUTH_MODE.")
-	f.playgroundDevTenantID = flag.String("playground-dev-tenant-id", envOr("LENNY_PLAYGROUND_DEV_TENANT_ID", "default"),
-		"§27.2 playground.devTenantId: the tenant bound to the dev HMAC JWT when playground.authMode=dev. Override via LENNY_PLAYGROUND_DEV_TENANT_ID.")
-	f.playgroundAllowedRuntimes = flag.String("playground-allowed-runtimes", envOr("LENNY_PLAYGROUND_ALLOWED_RUNTIMES", "*"),
-		"§27.2 playground.allowedRuntimes: a comma-separated glob list of runtime IDs visible in the playground runtime picker. Override via LENNY_PLAYGROUND_ALLOWED_RUNTIMES.")
-	f.playgroundMaxSessionMinutes = flag.Int("playground-max-session-minutes", envInt("LENNY_PLAYGROUND_MAX_SESSION_MINUTES", 30),
-		"§27.6 playground.maxSessionMinutes: the hard cap on a playground-initiated session's active time, which pauses while the session is `suspended`. Override via LENNY_PLAYGROUND_MAX_SESSION_MINUTES.")
-	f.playgroundMaxIdleTimeSeconds = flag.Int("playground-max-idle-time-seconds", envInt("LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS", 300),
-		"§27.2 playground.maxIdleTimeSeconds: the hard idle-timeout override for playground-initiated sessions. Override via LENNY_PLAYGROUND_MAX_IDLE_TIME_SECONDS.")
-	f.playgroundOIDCSessionTTL = flag.Int("playground-oidc-session-ttl-seconds", envInt("LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS", 3600),
-		"§27.2 playground.oidcSessionTtlSeconds: the lifetime of the server-side playground session record and cookie. Override via LENNY_PLAYGROUND_OIDC_SESSION_TTL_SECONDS.")
 	f.capabilityTokenTTL = flag.Int("capability-token-ttl-seconds", envInt("LENNY_CAPABILITY_TOKEN_TTL_SECONDS", int(jwt.DefaultCapabilityTokenTTL/time.Second)),
 		"§10.2 auth.capabilityTokenTtlSeconds: the default lifetime of the MCP bearer tokens minted by POST /v1/playground/token (bounded 120..3600; startup is fatal outside the bound). Override via LENNY_CAPABILITY_TOKEN_TTL_SECONDS.")
-	f.playgroundGatewayHost = flag.String("playground-gateway-host", os.Getenv("LENNY_PLAYGROUND_GATEWAY_HOST"),
-		"§27.7 the public gateway host the playground UI connects to over the MCP WebSocket; interpolated into the playground connect-src CSP directive. Override via LENNY_PLAYGROUND_GATEWAY_HOST.")
-	f.playgroundSessionLabels = flag.String("playground-session-labels", os.Getenv("LENNY_PLAYGROUND_SESSION_LABELS"),
-		"§27.2 playground.sessionLabels: comma-separated key=value pairs stamped on every playground session record and audit event. Empty applies the default {origin: \"playground\"}; the load-bearing origin entry is re-stamped at startup regardless of the supplied value. Override via LENNY_PLAYGROUND_SESSION_LABELS.")
 	f.maxSessionsPerReplica = flag.Int("max-sessions-per-replica", envInt("LENNY_MAX_SESSIONS_PER_REPLICA", 50),
 		"§4.1 gateway.maxSessionsPerReplica: per-replica capacity ceiling used as the denominator of the GatewaySessionBudgetNearExhaustion alert (§16.5) and the §17.8.2 SCL-036 burst-absorption minReplicas formula. Provisional Tier defaults: 50 (Tier 1), 200 (Tier 2), 400 (Tier 3). Emitted at startup on the lenny_gateway_max_sessions_per_replica gauge. Override via LENNY_MAX_SESSIONS_PER_REPLICA.")
 	// §4.1 / §16.5: scalar gauges read by the GatewayNoHealthyReplicas
@@ -1354,8 +1249,6 @@ func (f *gatewayFlags) registerOpsFlags() {
 	// F-10.4.4.
 	f.gatewayNamespace = flag.String("gateway-namespace", envOr("LENNY_GATEWAY_NAMESPACE", os.Getenv("POD_NAMESPACE")),
 		"§10.4 namespace holding the gateway PodDisruptionBudget for the periodic poller (defaults to POD_NAMESPACE). Override via LENNY_GATEWAY_NAMESPACE.")
-	f.gatewayPDBName = flag.String("gateway-pdb-name", envOr("LENNY_GATEWAY_PDB_NAME", "lenny-gateway"),
-		"§10.4 name of the gateway PodDisruptionBudget object for the periodic poller. Override via LENNY_GATEWAY_PDB_NAME.")
 	f.gatewayServiceName = flag.String("gateway-service-name", envOr("LENNY_GATEWAY_SERVICE_NAME", "lenny-gateway"),
 		"§12.4 name of the gateway Service whose Endpoints object the fail-open cached_replica_count poller reads. Override via LENNY_GATEWAY_SERVICE_NAME.")
 	// spec: §17.6 — the initial admin credential. The

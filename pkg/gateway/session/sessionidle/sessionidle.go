@@ -200,6 +200,15 @@ func (s *Stamper) Stamp(tenantID, sessionID string) {
 	go s.persist(tenantID, sessionID, now)
 }
 
+// StampActivity is GWSEAM-StampActivity: the session core serves it to the
+// metering proxy and the platform tools seam, which reach the stamper only
+// through the seam interface. It records the activity as Stamp does.
+//
+// spec: GWSEAM-StampActivity
+func (s *Stamper) StampActivity(tenantID, sessionID string) {
+	s.Stamp(tenantID, sessionID)
+}
+
 // StampAt persists at as the session's `last_agent_activity_at` through the
 // same forward-only write Stamp uses, without coalescing: the idle
 // suspension calls it with the runtime adapter's last activity, or the

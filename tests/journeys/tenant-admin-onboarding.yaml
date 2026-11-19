@@ -32,6 +32,10 @@ environment: |
   Lenny is installed and running on the cluster, and you administer the
   platform. Your admin token and the gateway's URL are in your
   environment, and your kubeconfig reaches the cluster.
+# The goal's Anthropic key is a placeholder the scenario publishes; the
+# records keep it under an apiKey or secret field.
+publicValues:
+  - sk-ant-journey-{{nonce}}
 credentials:
   - kubeconfig
   - gateway-url

@@ -8,7 +8,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 )
 
 // buildPlaygroundOIDC returns the §27.3.1 authorization-code exchanger of

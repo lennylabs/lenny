@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 )
 
 // TestSuspensionFlags_spec_6_2 pins the suspension flags: each parses with
@@ -27,6 +29,7 @@ func TestSuspensionFlags_spec_6_2(t *testing.T) {
 		f := &gatewayFlags{}
 		f.registerArtifactFlags()
 		f.registerOpsFlags()
+		playground.RegisterFlags(flag.CommandLine)
 		return f, flag.CommandLine.Parse(args)
 	}
 	type intFlag struct {

@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"sync"
 	"testing"
 
@@ -13,6 +14,7 @@ import (
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // singleCredentialPool registers a direct-delivery pool with one
@@ -158,7 +160,14 @@ func TestFallbackMintAfterTheLeaseStepIsReturnedByTheSessionRelease_spec_11_4(t 
 		t.Fatalf("lease step counted %d, want 1", n)
 	}
 	// The fallback mint lands after the enumeration.
-	proxyFallbackRotator{assign: svc}.Rotate(faulted, "claude-prod", credential.TriggerFaultRateLimited)
+	proxyFallbackRotator{assign: svc}.RotateCredential(context.Background(), seam.CredentialRotation{
+		TenantID:               faulted.TenantID,
+		SessionID:              faulted.SessionID,
+		Provider:               string(faulted.Provider),
+		CoordinationGeneration: faulted.CoordinationGeneration,
+		NextPool:               "claude-prod",
+		Trigger:                string(credential.TriggerFaultRateLimited),
+	})
 	if got := leases.LeasesBySession([]string{"s_1"}); len(got) != 1 || got[0].CoordinationGeneration != 2 {
 		t.Fatalf("fallback-minted leases = %+v, want one at generation 2", got)
 	}
@@ -169,4 +178,29 @@ func TestFallbackMintAfterTheLeaseStepIsReturnedByTheSessionRelease_spec_11_4(t 
 	if got := leases.LeasesBySession([]string{"s_1"}); len(got) != 0 {
 		t.Errorf("leases after the session release = %+v, want none", got)
 	}
+}
+
+// TestEmergencyRevocationRotateMintsUnderTheLeaseGeneration covers the
+// direct-mode rotate the emergency revocation drives through rotateLease: the
+// replacement lease is minted for the faulted lease's session, tenant, and
+// coordination generation, as the fallback's GWSEAM-RotateCredential mints it.
+//
+// spec: §4.9 (Emergency Credential Revocation), §7.3 (Credential leases on the
+// replacement pod)
+func TestEmergencyRevocationRotateMintsUnderTheLeaseGeneration(t *testing.T) {
+	svc, leases := singleCredentialPool(t)
+	faulted, err := svc.Assign("claude-prod", "s_9", "", "acme", 3)
+	if err != nil {
+		t.Fatalf("seed Assign: %v", err)
+	}
+	if err := svc.ReleaseThrough("s_9", 3); err != nil {
+		t.Fatalf("release the seed lease: %v", err)
+	}
+	proxyFallbackRotator{assign: svc}.rotateLease(faulted, "claude-prod", credential.TriggerEmergencyRevocation)
+	got := leases.LeasesBySession([]string{"s_9"})
+	if len(got) != 1 || got[0].TenantID != "acme" || got[0].CoordinationGeneration != 3 {
+		t.Fatalf("rotated leases = %+v, want one for tenant acme at generation 3", got)
+	}
+	// With no assigner the rotate mints nothing.
+	proxyFallbackRotator{}.rotateLease(faulted, "claude-prod", credential.TriggerEmergencyRevocation)
 }

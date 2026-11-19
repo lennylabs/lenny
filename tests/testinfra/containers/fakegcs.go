@@ -91,15 +91,10 @@ func StartFakeGCS(t testing.TB, opts FakeGCSOptions) *FakeGCS {
 		_ = container.Terminate(stopCtx)
 	})
 
-	host, err := container.Host(ctx)
+	publicHost, err := mappedEndpoint(ctx, container, "4443/tcp")
 	if err != nil {
-		t.Fatalf("StartFakeGCS: host: %v", err)
+		t.Fatalf("StartFakeGCS: endpoint: %v", err)
 	}
-	port, err := container.MappedPort(ctx, "4443/tcp")
-	if err != nil {
-		t.Fatalf("StartFakeGCS: port: %v", err)
-	}
-	publicHost := host + ":" + port.Port()
 	base := "http://" + publicHost
 
 	// Patch the advertised external URL so upload redirects resolve to

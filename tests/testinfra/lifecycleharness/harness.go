@@ -45,11 +45,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // Tenant is the tenant every harness session belongs to.
@@ -544,10 +546,16 @@ func (h *Harness) AddReplica(name string) *Replica {
 		WorkspaceSealMaxDuration:   SealWindow,
 		StreamFailureReportTimeout: ReleaseAllowance,
 		Runtimes:                   h.runtimes,
-		MidSessionUploadEnabled:    h.runtimes != nil,
 	}
 	h.applyObjectStore(&opts)
 	r.Server = sessionserver.New(h.Store, opts)
+	// The upload handler serves the upload routes and closes a session's
+	// upload window on finalize, attached as the gateway attaches it.
+	up := uploadhandler.Options{Blobs: opts.Blobs, MidSessionUploadEnabled: h.runtimes != nil}
+	if h.runtimes != nil {
+		up.Runtimes = h.runtimes
+	}
+	uploadwire.Attach(h.T, r.Server, up)
 	// The stream proxy serves the session event and log streams, attached
 	// as the gateway attaches it.
 	streamwire.Attach(h.T, r.Server, streamproxy.Options{Events: opts.Events, Clock: opts.Clock})

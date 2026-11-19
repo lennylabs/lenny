@@ -137,18 +137,6 @@ packages:
   - package: pkg/gateway/coordination/coordlease/pgstore
     part: core
     step: 0117.S11
-  - package: pkg/gateway/coordination/gatewayleader
-    part: replica
-    step: 0117.S4
-  - package: pkg/gateway/coordination/pdbwatcher
-    part: replica
-    step: 0117.S4
-  - package: pkg/gateway/core/semver
-    part: domain
-    step: 0117.S4
-  - package: pkg/gateway/core/subsystem
-    part: seam-interface
-    step: 0117.S4
   - package: pkg/gateway/credentials/credassign
     part: removed
     removed-by: '0133'
@@ -209,9 +197,6 @@ packages:
   - package: pkg/gateway/credentials/usercreds
     part: domain
     step: 0117.S10
-  - package: pkg/gateway/deployment/devmode
-    part: replica
-    step: 0117.S4
   - package: pkg/gateway/environment/customrolestore
     part: domain
     step: 0117.S12
@@ -323,9 +308,6 @@ packages:
   - package: pkg/gateway/llmproxy/credrouter
     part: removed
     removed-by: '0133'
-  - package: pkg/gateway/llmproxy/llmproxy
-    part: metering-proxy
-    step: 0117.S3
   - package: pkg/gateway/llmproxy/proxycache
     part: removed
     removed-by: '0132'
@@ -407,21 +389,6 @@ packages:
   - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
     part: removed
     removed-by: '0138'
-  - package: pkg/gateway/mcpfabric/playground
-    part: playground
-    step: 0117.S4
-  - package: pkg/gateway/metrics/capacityplanning
-    part: scaling
-    step: 0117.S4
-  - package: pkg/gateway/metrics/extractionthreshold
-    part: seam-interface
-    step: 0117.S4
-  - package: pkg/gateway/metrics/gatewaymetrics
-    part: replica
-    step: 0117.S4
-  - package: pkg/gateway/metrics/gcpause
-    part: scaling
-    step: 0117.S4
   - package: pkg/gateway/middleware/auth
     part: domain
     step: 0117.S8
@@ -458,12 +425,6 @@ packages:
   - package: pkg/gateway/middleware/recover
     part: api-front
     step: 0117.S8
-  - package: pkg/gateway/operability/health
-    part: ops-endpoints
-    step: 0117.S4
-  - package: pkg/gateway/operability/health/backends
-    part: ops-endpoints
-    step: 0117.S4
   - package: pkg/gateway/operability/recommendations
     part: domain
     step: 0117.S9
@@ -476,24 +437,15 @@ packages:
   - package: pkg/gateway/pki/carotationstore/pgstore
     part: domain
     step: 0117.S9
-  - package: pkg/gateway/pki/tlsprobe
-    part: replica
-    step: 0117.S4
   - package: pkg/gateway/podlifecycle/bindrelease
     part: core
     step: 0117.S11
-  - package: pkg/gateway/podlifecycle/drainreadiness
-    part: drain
-    step: 0117.S4
   - package: pkg/gateway/podlifecycle/podclaim
     part: core
     step: 0117.S11
   - package: pkg/gateway/podlifecycle/podsession
     part: core
     step: 0117.S11
-  - package: pkg/gateway/podlifecycle/prestop
-    part: drain
-    step: 0117.S4
   - package: pkg/gateway/podlifecycle/slotreaper
     part: core
     step: 0117.S11
@@ -644,9 +596,6 @@ packages:
   - package: pkg/gateway/session/sessionage
     part: core
     step: 0117.S11
-  - package: pkg/gateway/session/sessionbudget
-    part: metering-proxy
-    step: 0117.S3
   - package: pkg/gateway/session/sessioncallback
     part: core
     step: 0117.S11
@@ -941,15 +890,3 @@ imports:
     to: pkg/gateway/provisioning/vcscred
     rule: confined-imports
     step: 0117.S7
-  - from: pkg/gateway/mcpfabric/playground
-    to: pkg/auth/jwt
-    rule: confined-imports
-    step: 0117.S4
-  - from: pkg/gateway/mcpfabric/playground
-    to: pkg/gateway/storage/issuedtokenstore
-    rule: confined-imports
-    step: 0117.S4
-  - from: pkg/gateway/metrics/gatewaymetrics
-    to: pkg/auth/jwt
-    rule: confined-imports
-    step: 0117.S4

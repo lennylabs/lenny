@@ -19,7 +19,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // spec: §10.2 tenant_id validation; §7.1 single-use uploadToken;
@@ -96,6 +98,7 @@ func TestFinalizeConsumesUploadToken(t *testing.T) {
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, tracker, clock),
 		Blobs:               blobs,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 
 	// 1. Create session — captures the upload token from the response.
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})

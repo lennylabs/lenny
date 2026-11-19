@@ -7,18 +7,22 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/extractionthreshold"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/extractionthreshold"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -61,19 +65,24 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// metrics (lenny_upload_bytes_total, lenny_upload_queue_depth) that
 	// the unified per-subsystem family does not carry under their
 	// catalogued names. F-13.4.12.
-	uploadMetrics, err := sessionserver.NewUploadMetrics(gwMetrics.Registerer())
+	uploadMetrics, err := uploadhandler.NewUploadMetrics(gwMetrics.Registerer())
 	if err != nil {
 		log.Fatalf("lenny-gateway: upload metrics: %v", err)
 	}
+	meteringMetrics, err := registerMeteringMetrics(gwMetrics)
+	if err != nil {
+		log.Fatalf("lenny-gateway: metering proxy metrics: %v", err)
+	}
+	w.meteringMetrics = meteringMetrics
 	// §7.4 / §13.4 — archive extraction runs inside the
 	// gateway's §4.1 Upload Handler subsystem (never the pod). Share the
 	// same subsystem gate that bounds the upload HTTP path so a hostile
-	// archive's decompression cannot starve session attachment, and feed
-	// the §16.1 lenny_upload_extraction_aborted_total counter from the
-	// binder's extraction abort path. F-7.4.1, F-13.4.1, F-7.4.11.
+	// archive's decompression cannot starve session attachment. The
+	// binder's extraction abort path counts in the §16.1
+	// lenny_upload_extraction_aborted_total counter through the upload
+	// handler, which buildSessionServer attaches. F-7.4.1, F-13.4.1.
 	if w.podBinder != nil {
 		w.podBinder.UploadGate = uploadSubsystem
-		w.podBinder.ExtractionAbort = uploadMetrics.AddExtractionAbort
 	}
 
 	// §8.5 lenny/request_input pending-call registry. Shared across the
@@ -185,10 +194,16 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// denies and terminates immediately on exhaustion, preserving the
 	// §11.2 behavior. The proxy-mode extension trigger is injected
 	// by buildControlServer through SetExtendOnExhaustion once the
-	// leasecontrol.Service exists, and that service takes this enforcer as
-	// its episode fan-out SessionReclaimer (proposal 0023 S6).
+	// leasecontrol.Service exists, and that service raises or ends a
+	// detached session's budget through the metering proxy's budgets
+	// (proposal 0023 S6).
 	sessionBudgetEnforcer := sessionbudget.New(budgetTerminator, nil,
-		func(tenantID, _ string, _, _ int64) { gwMetrics.IncSessionBudgetExceeded(tenantID) })
+		func(tenantID, _ string, _, _ int64) { meteringMetrics.IncSessionBudgetExceeded(tenantID) })
+	// The metering proxy's per-session budget state, which the session core
+	// and the platform tools seam reach through seam.BudgetTracking and
+	// seam.BudgetResolutions.
+	// buildLLMProxy attaches the usage recorder and the anomaly detector.
+	meteringBudgets := metering.NewBudgets(sessionBudgetEnforcer)
 
 	// §8.6 lease-extension budget state, created when the GatewayControl
 	// listener is enabled via --grpc-addr. One store-backed source serves
@@ -230,8 +245,17 @@ func (w *gatewayWiring) buildSessionDeps() {
 	w.callbackDispatcher = callbackDispatcher
 	w.budgetTerminator = budgetTerminator
 	w.sessionBudgetEnforcer = sessionBudgetEnforcer
+	w.meteringBudgets = meteringBudgets
 	w.leaseDenials = leaseDenials
 	w.leaseBudgets = leaseBudgets
 	w.activityStamper = activityStamper
 	w.slotHealth = slotHealth
+}
+
+// registerMeteringMetrics registers the metering proxy's metric set on the
+// gateway's registry, whether or not the proxy listener is enabled, as the
+// gateway metrics registered those series before the metering proxy owned
+// them, so the gateway's /metrics exposes them from startup.
+func registerMeteringMetrics(gwMetrics *gatewaymetrics.Metrics) (*llmproxy.PromMetrics, error) {
+	return llmproxy.NewPromMetrics(gwMetrics.Registerer())
 }

@@ -52,8 +52,15 @@ func StartRedis(t testing.TB, opts RedisOptions) *Redis {
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        opts.Image,
 			ExposedPorts: []string{"6379/tcp"},
-			WaitingFor: wait.ForLog("Ready to accept connections").
-				WithStartupTimeout(opts.StartupTimeout),
+			// The mapped-port strategy holds the start until Docker
+			// has published 6379/tcp; mappedEndpoint retries the
+			// same race as a second guard.
+			WaitingFor: wait.ForAll(
+				wait.ForLog("Ready to accept connections").
+					WithStartupTimeout(opts.StartupTimeout),
+				wait.ForMappedPort("6379/tcp").
+					WithStartupTimeout(opts.StartupTimeout),
+			),
 		},
 		Started: true,
 	})
@@ -66,15 +73,10 @@ func StartRedis(t testing.TB, opts RedisOptions) *Redis {
 		_ = container.Terminate(stopCtx)
 	})
 
-	host, err := container.Host(ctx)
+	addr, err := mappedEndpoint(ctx, container, "6379/tcp")
 	if err != nil {
-		t.Fatalf("StartRedis: host: %v", err)
+		t.Fatalf("StartRedis: endpoint: %v", err)
 	}
-	port, err := container.MappedPort(ctx, "6379/tcp")
-	if err != nil {
-		t.Fatalf("StartRedis: port: %v", err)
-	}
-	addr := host + ":" + port.Port()
 
 	client := redis.NewClient(&redis.Options{Addr: addr})
 	if err := client.Ping(ctx).Err(); err != nil {

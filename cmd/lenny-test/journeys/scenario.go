@@ -83,6 +83,18 @@ type Scenario struct {
 	// the persona would know without the documentation, such as where
 	// the images and the data stores are.
 	Environment string `yaml:"environment"`
+	// PublicValues are placeholder credentials the scenario publishes in
+	// its goal, steps, or environment, such as the data-store passwords
+	// of the environment or the placeholder key of the goal, written as
+	// they appear there. The records keep each expanded value, compared
+	// exactly, where it is the value of a credential key such as
+	// password, which the redactor otherwise removes (redact_keys.go).
+	// Validate refuses a value the scenario's text does not contain, so
+	// the list names only text the scenario contains. It also refuses a
+	// value shorter than four characters, and a variable other than
+	// those in publicValueVars, whose values are known before the
+	// cluster exists.
+	PublicValues []string `yaml:"publicValues"`
 	// Tools are the shell commands the agent may run, a subset of
 	// AllowedCommands.
 	Tools []string `yaml:"tools"`
@@ -193,6 +205,7 @@ func (s *Scenario) Validate() error {
 	if strings.TrimSpace(s.Goal) == "" {
 		add("goal is empty")
 	}
+	errs = append(errs, s.validatePublicValues()...)
 	errs = append(errs, validateDocs(s.Docs)...)
 	errs = append(errs, validateTools(s.Tools)...)
 	if len(s.Postconditions) == 0 {
@@ -210,6 +223,36 @@ func (s *Scenario) Validate() error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// publicValueVars are the variables a public value may name: the trial's
+// nonce and the values that do not depend on the created cluster
+// (Runner.trialVars).
+var publicValueVars = map[string]bool{"nonce": true, "cluster": true, "imageTag": true, "podSubnet": true, "serviceSubnet": true, "journey": true, "chart": true}
+
+var templateVar = regexp.MustCompile(`\{\{([^{}]*)\}\}`)
+
+// minPublicValueLen matches the shortest value the redactor removes under
+// a credential key (redact_keys.go).
+const minPublicValueLen = 4
+
+func (s *Scenario) validatePublicValues() []error {
+	var errs []error
+	published := strings.Join(append([]string{s.Goal, s.Environment}, s.Steps...), "\n")
+	for _, v := range s.PublicValues {
+		switch {
+		case len(v) < minPublicValueLen:
+			errs = append(errs, fmt.Errorf("public value %q is shorter than %d characters", v, minPublicValueLen))
+		case !strings.Contains(published, v):
+			errs = append(errs, fmt.Errorf("public value %q does not appear in the goal, the steps, or the environment", v))
+		}
+		for _, m := range templateVar.FindAllStringSubmatch(v, -1) {
+			if !publicValueVars[m[1]] {
+				errs = append(errs, fmt.Errorf("public value %q names {{%s}}, whose value is not known before the cluster exists", v, m[1]))
+			}
+		}
+	}
+	return errs
 }
 
 func validateDocs(docs []string) []error {

@@ -41,8 +41,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // TestDocumentMatchesRegisteredEndpoints enforces the §15.1 OpenAPI
@@ -481,8 +483,10 @@ func registeredRouteTemplates(t *testing.T) []string {
 	// enumerates the non-admin session routes live the same way the admin and
 	// credential muxes are walked, rather than from a hand-maintained list.
 	sess := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Clock: clock})
-	// The stream proxy registers the event and log stream routes on the
-	// session server's mux, attached as the gateway attaches it.
+	// The upload handler registers the upload and blob routes, and the
+	// stream proxy the event and log stream routes, on the session server's
+	// mux, attached as the gateway attaches them.
+	uploadwire.Attach(t, sess, uploadhandler.Options{})
 	streamwire.Attach(t, sess, streamproxy.Options{})
 
 	var out []string

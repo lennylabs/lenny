@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
-// HandleRoute registers a route of another gateway part, such as the stream
-// proxy, on the session server's mux, behind the access check the route
+// HandleRoute registers a route of another gateway part, such as the upload
+// handler, on the session server's mux, behind the access check the route
 // names. The session server serves the route registration interface while
 // it holds the request pipeline that the API front takes over, and the
 // handler it builds is the one the client and forward listeners serve.
@@ -80,4 +82,10 @@ func (s *Server) routeAccess(access seam.RouteAccess, next http.HandlerFunc) htt
 	default:
 		return next
 	}
+}
+
+// sessionStateOf returns the client API state of a seam session record's
+// state. The two types spell the same states.
+func sessionStateOf(st state.State) session.State {
+	return session.State(st)
 }

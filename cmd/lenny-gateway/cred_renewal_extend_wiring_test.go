@@ -95,7 +95,7 @@ type recordingReasonTerminator struct {
 	reasons  []string
 }
 
-func (r *recordingReasonTerminator) TerminateSession(sessionID, reason string) {
+func (r *recordingReasonTerminator) ExpireSession(sessionID, reason string) {
 	r.mu.Lock()
 	r.sessions = append(r.sessions, sessionID)
 	r.reasons = append(r.reasons, reason)

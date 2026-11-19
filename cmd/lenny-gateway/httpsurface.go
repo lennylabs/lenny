@@ -13,11 +13,13 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
@@ -26,6 +28,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
+	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
+	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
@@ -33,8 +37,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
@@ -44,12 +46,11 @@ import (
 	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health/backends"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/drainreadiness"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/prestop"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry"
@@ -67,6 +68,7 @@ import (
 )
 
 func (w *gatewayWiring) buildHTTPSurface(
+	pgFlags *playground.Flags,
 	gwMetrics *gatewaymetrics.Metrics,
 	sessionSrv *sessionserver.Server,
 	openaiHandler *translator.OpenAIChatHandler,
@@ -75,7 +77,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	mcpSrv *mcp.Server,
 	policyChain *interceptor.Chain,
 	auditSink admin.AuditSink,
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	opsEmitter events.EventEmitter,
 	environments environmentstore.Store,
 	driftMonitor *driftmonitor.Monitor,
@@ -106,16 +108,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	quotaUserFailOpenFraction := f.quotaUserFailOpenFraction
 	quotaPerReplicaHardCap := f.quotaPerReplicaHardCap
 	quotaFailOpenCumulativeMaxSeconds := f.quotaFailOpenCumulativeMaxSeconds
-	playgroundEnabled := f.playgroundEnabled
-	playgroundAuthMode := f.playgroundAuthMode
-	playgroundDevTenantID := f.playgroundDevTenantID
-	playgroundAllowedRuntimes := f.playgroundAllowedRuntimes
-	playgroundSessionLabels := f.playgroundSessionLabels
-	playgroundMaxSessionMinutes := f.playgroundMaxSessionMinutes
-	playgroundMaxIdleTimeSeconds := f.playgroundMaxIdleTimeSeconds
 	capabilityTokenTTL := f.capabilityTokenTTL
-	playgroundGatewayHost := f.playgroundGatewayHost
-	playgroundOIDCSessionTTL := f.playgroundOIDCSessionTTL
 	mux := http.NewServeMux()
 	mux.Handle("/v1/sessions", sessionSrv.Handler())
 	mux.Handle("/v1/sessions/", sessionSrv.Handler())
@@ -362,20 +355,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// nil when the playground is disabled, leaving the auth hot path
 	// unchanged. F-27.6.3 / F-27.3.1.
 	var playgroundRevocations authmw.PlaygroundRevocationChecker
-	if *playgroundEnabled {
-		pgCfg := playground.Config{
-			Enabled:            true,
-			AuthMode:           playground.AuthMode(*playgroundAuthMode),
-			DevTenantID:        *playgroundDevTenantID,
-			AllowedRuntimes:    splitCSV(*playgroundAllowedRuntimes),
-			MaxSessionMinutes:  *playgroundMaxSessionMinutes,
-			MaxIdleTimeSeconds: *playgroundMaxIdleTimeSeconds,
-			OIDCSessionTTL:     time.Duration(*playgroundOIDCSessionTTL) * time.Second,
-			CapabilityTokenTTL: time.Duration(*capabilityTokenTTL) * time.Second,
-			MultiTenant:        *multiTenant,
-			GatewayHost:        *playgroundGatewayHost,
-			SessionLabels:      parseKeyValueCSV(*playgroundSessionLabels),
-		}
+	if *pgFlags.Enabled {
+		pgCfg := pgFlags.Config(time.Duration(*capabilityTokenTTL)*time.Second, *multiTenant)
 		// §27.3 dev mode is permitted only under global devMode; the
 		// chart rejects authMode=dev otherwise, and this is the
 		// backstop for a deployment that bypassed Helm-validate.
@@ -926,7 +907,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// surface in the request_total / request_duration histograms with
 	// the resulting 500 status. The route label collapses
 	// high-cardinality path segments to a stable template.
-	handler = gwMetrics.Middleware(handler, routeTemplate)
+	handler = requestmetrics.Wrap(handler, gwMetrics, routeTemplate)
 
 	// spec: §15.5 item 1 + docs/api/index.md — stamp the
 	// `X-Lenny-Deprecated-Version` response header onto every response

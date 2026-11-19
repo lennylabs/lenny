@@ -24,13 +24,13 @@ depends-on: [GW, GWSTREAM, GWUPLOAD, GWTOOLS, GWLLM, GWAPI, GWCOORD, GWCLAIM]
 
 The gateway runs as one process. Its seams (the stream proxy, the upload handler, the platform tools seam, and the metering proxy) share that process with the session core and with the parts that apply to the whole replica. This page states every call that crosses the boundary between a seam and the core, in either direction, and the interface through which each part registers its HTTP routes with the API front. Today each operation is an in-process method call. Extracting a seam into its own service puts a transport under the operations this page states, and changes none of them.
 
-The operations are grouped by the party that serves them and the parties that call them. They cover the calls a part makes by importing another part's package and the calls it makes through an interface that `cmd/lenny-gateway` satisfies with another part's value. The metering proxy calls the core to stamp session activity and to run the terminal pipeline, and calls the platform tools seam to request a budget extension; it serves the per-session budget state it enforces to both.
+The operations are grouped by the party that serves them and the parties that call them. They cover the calls a part makes by importing another part's package and the calls it makes through an interface that `cmd/lenny-gateway` satisfies with another part's value. The metering proxy calls the core to stamp session activity, to expire a session whose token budget is exhausted, and to rotate a faulted upstream credential, and calls the platform tools seam to request a budget extension. It serves the per-session budget state it enforces to both.
 
 ## Conventions
 
 - **Package.** Each operation is a method of a Go interface in the package `pkg/gateway/seam`, which imports no other package of the gateway.
 - **Identifiers.** Each operation is identified `GWSEAM-<method>`, where the method is the Go method that declares it. The `path` field of each operation's block names the Go interface that declares it. Package documentation holds the Go signatures.
-- **Context.** Every operation that reads or writes state, blocks, or reaches another replica takes the caller's context and honors its cancellation.
+- **Context.** Every operation that reads or writes state, blocks, or reaches another replica takes the caller's context and honors its cancellation. An operation that returns at once and runs its work on the serving part's own context, such as [`GWSEAM-StampActivity`](#gwseam-stampactivity) and [`GWSEAM-ExpireSession`](#gwseam-expiresession), takes no caller context.
 - **Errors.** An operation reports a failure the caller branches on as one of the errors the `returns` field of its block names. The package `pkg/gateway/seam` declares each of them. A `Refusal` carries a client API error code with its message and details. It is not transient: the caller reports it as it came and does not retry the operation. Any other error is a transient failure the caller reports as such.
 - **Authorization.** An operation trusts the identity that its caller's context carries. A seam that serves a client request resolves the caller's authorization through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession) before it reads or writes the session.
 - **Values.** The operations carry values that the package `pkg/gateway/seam` declares or that packages outside the gateway declare, and no value that a package of another part declares. A session crosses the boundary as a session record: its identifier, tenant, owning user, parent and root sessions, runtime, pool, state, and the sequence number of its last event.
@@ -69,7 +69,7 @@ summary: Resolves whether the caller in the context may read or manage a session
 kind: operation
 name: ForwardRequest
 method: Go method
-path: seam.Forwarding
+path: seam.RequestForwarding
 requirements: [GW-R1]
 summary: Delivers an HTTP request for a session to the session's holder replica, or reports that the request runs on this replica, and returns the forward outcome.
 ```
@@ -108,7 +108,7 @@ requirements: [GW-R1]
 summary: Reports whether a message whose forward to the holder replica was not delivered is held for later delivery, for a session record and a forward kind.
 ```
 
-The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded.
+The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded. The upload handler forwards a mid-session upload with the upload kind. [`GWSEAM-ForwardRequest`](#gwseam-forwardrequest) is declared on an interface of its own, `seam.RequestForwarding`, which the seams that serve HTTP requests hold, apart from the operations through which the platform tools seam forwards a tool call.
 
 ## Operations served by the session core to the platform tools seam
 
@@ -378,7 +378,7 @@ summary: Retires a pod with a retirement reason, its lifetime counts, and a deta
 
 ## Operations served by the session core to the platform tools seam, the metering proxy, and the API front
 
-A part that moves a session to a terminal state, such as a cancel tool, the orphan and deadlock sweeps, the metering proxy's budget enforcement, or an operator's force-terminate, runs the session core's terminal pipeline through these operations.
+A part that moves a session to a terminal state, such as a cancel tool, the orphan and deadlock sweeps, or an operator's force-terminate, runs the session core's terminal pipeline through these operations.
 
 <a id="gwseam-beginterminal"></a>
 
@@ -436,6 +436,32 @@ requirements: [GW-R1]
 summary: Records activity on a session, so that the idle watchdog does not count a session that works through platform tools or the metering proxy as idle.
 ```
 
+## Operations served by the session core to the metering proxy
+
+The session core serves these operations. The metering proxy's budget enforcement calls [`GWSEAM-ExpireSession`](#gwseam-expiresession) when a session exhausts its token budget, and its credential fallback calls [`GWSEAM-RotateCredential`](#gwseam-rotatecredential) when an upstream credential faults and the fallback chain names another pool.
+
+<a id="gwseam-expiresession"></a>
+
+```lenny-def
+kind: operation
+name: ExpireSession
+method: Go method
+path: seam.SessionExpiry
+requirements: [GW-R1]
+summary: Moves a session to the expired state with the failure reason the caller gives and runs the terminal pipeline, and returns without waiting for either. A session already in a terminal state is left as it is.
+```
+
+<a id="gwseam-rotatecredential"></a>
+
+```lenny-def
+kind: operation
+name: RotateCredential
+method: Go method
+path: seam.CredentialRotations
+requirements: [GW-R1]
+summary: Issues a replacement credential lease from a given pool for a session whose upstream credential faulted, and pushes it to the session's pod when this replica holds the pod's binding.
+```
+
 ## Operations served by the session core to the API front
 
 <a id="gwseam-afterrevokewrite"></a>
@@ -473,6 +499,8 @@ summary: Releases the pods of a user's sessions in a tenant, and returns the cou
 
 ## Operations served by the session core to the upload handler
 
+The upload handler verifies a client's upload token, holds an upload's size against its tenant's storage quota, and records the upload audit event through the session core, because the upload token, quota, tenant, and audit packages stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2).
+
 <a id="gwseam-writeworkspace"></a>
 
 ```lenny-def
@@ -480,9 +508,55 @@ kind: operation
 name: WriteWorkspace
 method: Go method
 path: seam.Workspaces
-returns: [ErrNoLiveBinding]
+returns: [ErrNoLiveBinding, ErrWorkspaceWrite]
 requirements: [GW-R1]
-summary: Writes uploaded files into the workspace of a session whose pod is bound on this replica, and returns the count of files written.
+summary: Writes uploaded files, each with its workspace-relative path, content, and optional file mode, into the workspace of a session whose pod is bound on this replica, and returns the count of files written; a failure of the pod's adapter names whether staging or promotion failed.
+```
+
+<a id="gwseam-verifyuploadtoken"></a>
+
+```lenny-def
+kind: operation
+name: VerifyUploadToken
+method: Go method
+path: seam.UploadTokens
+returns: [ErrUploadTokenInvalid, ErrUploadTokenExpired, ErrUploadTokenMismatch, ErrUploadTokenConsumed]
+requirements: [GW-R1]
+summary: Verifies the upload token a client presents for a session, and reports a token that is absent or invalid, expired, issued for another session, or already consumed.
+```
+
+<a id="gwseam-reservestorage"></a>
+
+```lenny-def
+kind: operation
+name: ReserveStorage
+method: Go method
+path: seam.StorageQuota
+returns: [ErrStorageQuotaExceeded, ErrStorageQuotaUnavailable, ErrContentLengthRequired]
+requirements: [GW-R1]
+summary: Reserves an upload's declared size against its tenant's storage quota, and returns the bytes reserved and the headroom the upload's stream may not exceed, or no reservation when the tenant has no storage quota; a refusal by the quota carries the tenant's current usage and limit.
+```
+
+<a id="gwseam-adjuststorage"></a>
+
+```lenny-def
+kind: operation
+name: AdjustStorage
+method: Go method
+path: seam.StorageQuota
+requirements: [GW-R1]
+summary: Adds a signed byte count to a tenant's storage usage, which releases a reservation that GWSEAM-ReserveStorage made or reconciles it to the bytes an upload wrote.
+```
+
+<a id="gwseam-auditupload"></a>
+
+```lenny-def
+kind: operation
+name: AuditUpload
+method: Go method
+path: seam.UploadAudit
+requirements: [GW-R1]
+summary: Records the session upload audit event for a session record, with the upload's outcome, its rejection reason, and a detail, under the session's own tenant.
 ```
 
 ## Operations served by the session core to the stream proxy
@@ -833,7 +907,7 @@ summary: Returns the deployment floor that elicitation settings may not go below
 
 ## Operations served by the metering proxy
 
-The metering proxy serves these operations. The session core calls [`GWSEAM-ForgetBudget`](#gwseam-forgetbudget) and [`GWSEAM-TrackedBudgetSessions`](#gwseam-trackedbudgetsessions), and the platform tools seam calls [`GWSEAM-RaiseBudget`](#gwseam-raisebudget) and [`GWSEAM-TerminateForBudget`](#gwseam-terminateforbudget) when a budget extension resolves.
+The metering proxy serves these operations. The session core calls [`GWSEAM-ForgetBudget`](#gwseam-forgetbudget) and [`GWSEAM-TrackedBudgetSessions`](#gwseam-trackedbudgetsessions), and the platform tools seam calls [`GWSEAM-RaiseBudget`](#gwseam-raisebudget) and [`GWSEAM-TerminateForBudget`](#gwseam-terminateforbudget) when a budget extension resolves. Each pair is an interface of its own, so neither caller holds the other's operations.
 
 <a id="gwseam-forgetbudget"></a>
 
@@ -841,7 +915,7 @@ The metering proxy serves these operations. The session core calls [`GWSEAM-Forg
 kind: operation
 name: ForgetBudget
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetTracking
 requirements: [GW-R1]
 summary: Discards the metering proxy's budget state for a session that ended.
 ```
@@ -852,7 +926,7 @@ summary: Discards the metering proxy's budget state for a session that ended.
 kind: operation
 name: TrackedBudgetSessions
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetTracking
 requirements: [GW-R1]
 summary: Returns the sessions for which the metering proxy holds budget state.
 ```
@@ -863,7 +937,7 @@ summary: Returns the sessions for which the metering proxy holds budget state.
 kind: operation
 name: RaiseBudget
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetResolutions
 requirements: [GW-R1]
 summary: Raises a session's budget by a granted amount.
 ```
@@ -874,7 +948,7 @@ summary: Raises a session's budget by a granted amount.
 kind: operation
 name: TerminateForBudget
 method: Go method
-path: seam.MeteringBudgets
+path: seam.BudgetResolutions
 requirements: [GW-R1]
 summary: Ends a session whose budget extension was refused.
 ```
@@ -1011,9 +1085,11 @@ A route names the access check the API front applies before the handler runs, th
 
 No route takes a default check: a zero or unknown access check is refused at registration.
 
+The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself.
+
 ## Crossings without an operation
 
-- Each part emits its metrics into the gateway's metric registry through a metrics interface the part declares itself. A metrics interface is not an operation of the seam interface.
+- Each part emits its metrics into the gateway's metric registry. A seam registers its own metric collectors on the registry, because a seam holds no value of a replica-level part. The session core and the replica-level parts register their own collectors or emit through a metrics interface they declare, which the gateway's metric set satisfies. Neither form is an operation of the seam interface.
 - The API front reads pool status through the session core's pool status reader, and authenticates service-account tokens through the platform tools seam's token verifier. Neither is an operation of the seam interface: each is domain logic that belongs in a concern package outside the gateway.
 
 ## Compatibility

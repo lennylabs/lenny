@@ -22,15 +22,21 @@ type UploadWindows interface {
 	RecordExtractionAbort(errorType string)
 }
 
-// MeteringBudgets is served by the metering proxy to the session core and
-// the platform tools seam: the per-session budget state the proxy enforces.
-type MeteringBudgets interface {
+// BudgetTracking is served by the metering proxy to the session core: the
+// per-session budget state the proxy holds, which the core forgets for a
+// settled session and sweeps for sessions that ended elsewhere.
+type BudgetTracking interface {
 	// ForgetBudget is GWSEAM-ForgetBudget.
 	ForgetBudget(sessionID string)
 
 	// TrackedBudgetSessions is GWSEAM-TrackedBudgetSessions.
 	TrackedBudgetSessions() []string
+}
 
+// BudgetResolutions is served by the metering proxy to the platform tools
+// seam: the resolution of a budget extension on the budget the proxy
+// enforces.
+type BudgetResolutions interface {
 	// RaiseBudget is GWSEAM-RaiseBudget.
 	RaiseBudget(sessionID string, delta int64)
 
