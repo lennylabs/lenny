@@ -150,8 +150,9 @@ func TestLoadProgramFailsOnACompileErrorAndOnNoGoFiles(t *testing.T) {
 
 // TestWiringRatchetLetsEachBaseRowBackOneRowAndMapsOnlyAdmittedMoves pins
 // the review's ratchet probes: a renamed copy kept beside its original, a
-// sub-path that maps back to a path the base never held, and a manifest
-// line the branch adds to map an unrelated package onto a base row.
+// sub-path that maps back to a path the base never held, a manifest line
+// the branch adds to map an unrelated package onto a base row, and a row
+// whose other end moved before the merge base.
 // spec: GW-R1
 func TestWiringRatchetLetsEachBaseRowBackOneRowAndMapsOnlyAdmittedMoves(t *testing.T) {
 	baseRow := Row{To: "pkg/gateway/mcpfabric/mcptools", Interface: "Terminal", From: "pkg/gateway/sessionserver", Type: "Server", Step: "0117.S7"}
@@ -173,10 +174,26 @@ func TestWiringRatchetLetsEachBaseRowBackOneRowAndMapsOnlyAdmittedMoves(t *testi
 	}
 
 	forged := append(append([]gatewaylayout.Move{}, moves...), gatewaylayout.Move{Old: "pkg/gateway/sessionserver", New: "pkg/gateway/playground/evil", Step: "0117.S4"})
-	admitted := gatewaylayout.RenameMoves(forged, moves, func(string) bool { return false })
+	admitted := gatewaylayout.RenameMoves(forged, moves, func(string) bool { return false }, func(string) bool { return true })
 	evil := baseRow
 	evil.From = "pkg/gateway/playground/evil"
 	if got := Ratchet(base, Register{Version: 1, Crossings: []Row{evil}}, admitted); len(got) != 1 {
 		t.Errorf("a row mapped through a manifest line the branch added passed: %v", got)
+	}
+
+	// A base row whose other end a step before the merge base moved names
+	// that end's new path, so a row the branch renames keeps the other end
+	// as it is rather than mapping it back through the landed move.
+	landedBase := Row{To: "pkg/gateway/meteringproxy/llmproxy", Interface: "FallbackAuditSink", From: "pkg/gateway/externalapi/admin", Type: "AuditSink", Step: "0117.S8"}
+	all := []gatewaylayout.Move{
+		{Old: "pkg/gateway/llmproxy/llmproxy", New: "pkg/gateway/meteringproxy/llmproxy", Step: "0117.S3"},
+		{Old: "pkg/gateway/externalapi/admin", New: "pkg/gateway/api/admin", Step: "0117.S8"},
+	}
+	atBase := map[string]bool{"pkg/gateway/externalapi/admin": true}
+	ran := gatewaylayout.RenameMoves(all, all, func(string) bool { return false }, func(p string) bool { return atBase[p] })
+	moved := landedBase
+	moved.From = "pkg/gateway/api/admin"
+	if got := Ratchet(Register{Version: 1, Crossings: []Row{landedBase}}, Register{Version: 1, Crossings: []Row{moved}}, ran); len(got) != 0 {
+		t.Errorf("a row the branch renamed, whose other end moved before the merge base, was refused: %v", got)
 	}
 }

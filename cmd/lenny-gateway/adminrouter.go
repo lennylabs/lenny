@@ -986,7 +986,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// the route keeps answering 503 QUOTA_RECONCILE_UNAVAILABLE.
 	// F-24.6.2 / F-24.6.3.
 	if quotaCheckpointSvc != nil {
-		adminRouter = adminRouter.WithQuotaReconciler(quotacheckpoint.AdminReconciler{Service: quotaCheckpointSvc})
+		adminRouter = adminRouter.WithQuotaReconciler(admin.QuotaCheckpointReconciler{Service: quotaCheckpointSvc})
 	}
 	// spec: §4.1 — record the constructed admin router and the admin-block
 	// subsystems the §4.1 background-worker step reads onto the accumulator.
