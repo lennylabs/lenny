@@ -33,7 +33,7 @@ The operations are grouped by the party that serves them and the parties that ca
 - **Context.** Every operation that reads or writes state, blocks, or reaches another replica takes the caller's context and honors its cancellation. An operation that returns at once and runs its work on the serving part's own context, such as [`GWSEAM-StampActivity`](#gwseam-stampactivity) and [`GWSEAM-ExpireSession`](#gwseam-expiresession), takes no caller context.
 - **Errors.** An operation reports a failure the caller branches on as one of the errors the `returns` field of its block names. The package `pkg/gateway/seam` declares each of them. A `Refusal` carries a client API error code with its message and details. It is not transient: the caller reports it as it came and does not retry the operation. Any other error is a transient failure the caller reports as such.
 - **Authorization.** An operation trusts the identity that its caller's context carries. A seam that serves a client request resolves the caller's authorization through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession) before it reads or writes the session.
-- **Values.** The operations carry values that the package `pkg/gateway/seam` declares or that packages outside the gateway declare, and no value that a package of another part declares. A session crosses the boundary as a session record: its identifier, tenant, owning user, parent and root sessions, runtime, pool, state, the sequence number of its last event, its depth in its delegation tree, the pod it is bound to, and the times it was created, last written, and moved to a terminal state.
+- **Values.** The operations carry values that the package `pkg/gateway/seam` declares or that packages outside the gateway declare, and no value that a package of another part declares. A session crosses the boundary as a session record: its identifier, tenant, owning user, parent and root sessions, runtime, pool, state, the sequence number of its last event, its depth in its delegation tree, the pod it is bound to, and the times it was created, last written, and moved to a terminal state. A seam that read or wrote the session's stored row hands the row back in the record, unread by the seam, so an operation that runs the session core's logic on that row, such as the terminal pipeline after the seam's terminal write, reads the row the seam acted on rather than reading the session again; a record that carries no row is read as the row its fields describe, and the terminal pipeline then reads the row back from the primary.
 
 ## Operations served by the session core to every seam
 
@@ -108,7 +108,7 @@ requirements: [GW-R1]
 summary: Reports whether a message whose forward to the holder replica was not delivered is held for later delivery, for a session record and a forward kind.
 ```
 
-The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded. The upload handler forwards a mid-session upload with the upload kind. [`GWSEAM-ForwardRequest`](#gwseam-forwardrequest) is declared on an interface of its own, `seam.RequestForwarding`, which the seams that serve HTTP requests hold, apart from the operations through which the platform tools seam forwards a tool call.
+The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded. The upload handler forwards a mid-session upload with the upload kind. The platform tools seam forwards a call that ends a session with the terminate kind, a message that answers an input request with the message kind, and any other message with the message kind for no reply, which the caller holds when its forward to a running session is not delivered. A forward the holder replica could not take is refused with TARGET_NOT_READY and the session's current state, and the platform tools seam returns the same refusal for a message that a replica which lost the coordination lease did not deliver. [`GWSEAM-ForwardRequest`](#gwseam-forwardrequest) is declared on an interface of its own, `seam.RequestForwarding`, which the seams that serve HTTP requests hold, apart from the operations through which the platform tools seam forwards a tool call.
 
 ## Operations served by the session core to the platform tools seam
 
@@ -123,7 +123,7 @@ method: Go method
 path: seam.ChildSessions
 returns: [Refusal]
 requirements: [GW-R1]
-summary: Creates a session in a tenant from a client API session-creation body, and returns its identifier, its state, and its upload token; a refusal carries the client API error code, such as UNAUTHORIZED or a quota, policy, or environment access code.
+summary: Creates a session in a tenant from a client API session-creation body, and returns its identifier, its state, and its upload token; a body that names no environment takes the explicit environment of the caller's connection, and a refusal carries the client API error code, such as VALIDATION_ERROR for a body that does not decode or names no runtime, UNAUTHORIZED, or a quota, policy, or environment access code.
 ```
 
 <a id="gwseam-materializechild"></a>
@@ -272,6 +272,39 @@ path: seam.MessageDelivery
 returns: [CapRefusal]
 requirements: [GW-R1]
 summary: Checks that resuming a session stays within its tenant's limits, and returns the refusal with its message and details when it does not.
+```
+
+<a id="gwseam-routemessage"></a>
+
+```lenny-def
+kind: operation
+name: RouteMessage
+method: Go method
+path: seam.MessageDelivery
+requirements: [GW-R1]
+summary: Returns the delivery path the session core's routing rules give a message from another session, for the session's state and whether it waits for input, which is to deliver it now, to place it in the inbox, to hold it, to refuse it because the session is terminal, or to hold it and resume the session.
+```
+
+<a id="gwseam-sessionaccessible"></a>
+
+```lenny-def
+kind: operation
+name: SessionAccessible
+method: Go method
+path: seam.SessionAccess
+requirements: [GW-R1]
+summary: Reports whether the caller in the context may read or manage a session, for a session record the platform tools seam read itself; a context that carries no caller subject is refused.
+```
+
+<a id="gwseam-handlebudgetkeysexpired"></a>
+
+```lenny-def
+kind: operation
+name: HandleBudgetKeysExpired
+method: Go method
+path: seam.TreeBudgetExpiry
+requirements: [GW-R1]
+summary: Fails a delegation tree whose budget keys expired, ending the tree's nodes through the terminal pipeline, when the delegation service's reservation finds the keys gone for a tree that already holds a delegated session.
 ```
 
 <a id="gwseam-exportpaths"></a>
@@ -1156,7 +1189,7 @@ name: RequestCaller
 method: Go method
 path: seam.CallerIdentity
 requirements: [GW-R1]
-summary: Returns the authenticated caller that the context of a request or a platform tool call carries, with its subject, its tenant, the session a session-scoped caller acts for, its caller type, and its groups, or reports that the context carries no caller.
+summary: Returns the authenticated caller that the context of a request or a platform tool call carries, with its subject, its tenant, the session a session-scoped caller acts for, its caller type, its groups, and the identifier and origin of the bearer it presented, or reports that the context carries no caller.
 ```
 
 <a id="gwseam-isbearerrevoked"></a>

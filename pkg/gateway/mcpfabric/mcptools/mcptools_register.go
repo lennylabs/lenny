@@ -23,16 +23,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	obstracing "github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
@@ -129,31 +126,17 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// so a multi-tenant deployment scopes the session row to the
 		// caller's tenant. F-9.2.13 / F-15.2.15.
 		tenant := callerTenantID(ctx, deps, tenant)
-		// spec: §15.2.1 rule 4 — decode the full OpenAPI
-		// CreateSessionRequest and forward every field to the shared
-		// service so the MCP create_session path runs the same workspace-
+		// The session core decodes the arguments as the full OpenAPI
+		// CreateSessionRequest and forwards every field to the shared
+		// service, so the MCP create_session path runs the same workspace-
 		// plan, isolation-profile, metadata, and retry-policy validation
-		// the REST handler runs. The §11.5 idempotencyKey is read by the
-		// MCP idempotency hook before this handler runs and is not a
-		// CreateSessionRequest field, so json.Unmarshal drops it here.
-		// F-15.2.7 / F-15.2.4 / F-11.5.1.
-		var in sessionserver.CreateSessionRequest
-		if err := json.Unmarshal(args, &in); err != nil {
-			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				fmt.Sprintf("invalid arguments: %v", err), nil)
-		}
-		if in.RuntimeRef == "" {
-			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
-				"runtimeRef is required",
-				map[string]any{"field": "runtimeRef"})
-		}
-		// spec: §10.6 — a connection scoped to the explicit
-		// environment surface (/mcp/environments/{name}) defaults the
-		// session to that environment when the call omits one. An explicit
-		// `environment` argument still wins. F-10.6.11.
-		if in.Environment == "" {
-			in.Environment = environmentmw.ExplicitEnvironmentFromContext(ctx)
-		}
+		// the REST handler runs. It refuses arguments that do not decode or
+		// name no runtimeRef with VALIDATION_ERROR, and a call that names no
+		// environment takes the explicit environment the connection is
+		// scoped to (/mcp/environments/{name}). The idempotencyKey is read
+		// by the MCP idempotency hook before this handler runs and is not a
+		// CreateSessionRequest field, so the decode drops it.
+		//
 		// spec: §15.2.1 rule 1 — route the create through the
 		// shared §15.1 service layer so the MCP surface runs the same
 		// active-user, quota, concurrency, admission-rate, policy-chain,
@@ -172,12 +155,15 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			return mcp.ToolResult{}, mcp.NewToolError("INTERNAL_ERROR",
 				"session creation is not configured on this server", nil)
 		}
-		resp, svcErr := deps.SessionCreator.CreateSessionService(ctx, tenant, in)
-		if svcErr != nil {
+		resp, err := deps.SessionCreator.CreateSession(ctx, tenant, args)
+		if r, ok := seam.IsRefusal(err); ok {
 			// The §15.2.1 rule-3 envelope: surface the REST code +
 			// details so the shared errorclassify table assigns the
 			// same (category, retryable) pair on both surfaces.
-			return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
+			return mcp.ToolResult{}, mcp.RefusalError(r)
+		}
+		if err != nil {
+			return mcp.ToolResult{}, err
 		}
 		// Project the shared response onto the MCP create_session
 		// envelope: the `sessionId`/`state` fields the MCP clients and
@@ -290,7 +276,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// coordinator of a forwarded call (§29.3 Forwarding rule 4). An
 		// exceeded limit returns a RATE_LIMITED delivery receipt rather
 		// than a tool error, so the sender can react. F-7.2.6.
-		if !sessionserver.Forwarded(ctx) {
+		if !forwarded(ctx, deps.HolderForward) {
 			allowed, err := msgLimiter.allowSender(ctx, tenant, senderID, clock())
 			if err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("messaging rate limit: %w", err)
@@ -309,15 +295,15 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// DLQ; ForwardToolCall refuses one to a session in any other state.
 		undelivered := false
 		if deps.HolderForward != nil {
-			kind := sessionserver.ForwardKindMessageNoReplyTo
+			kind := seam.ForwardMessageNoReplyTo
 			if in.InReplyTo != "" {
-				kind = sessionserver.ForwardKindMessage
+				kind = seam.ForwardMessage
 			}
-			res, outcome, ferr := deps.HolderForward.ForwardToolCall(ctx, row, kind, "lenny/send_message", args)
+			res, outcome, ferr := forwardToolCall(ctx, deps.HolderForward, row, kind, "lenny/send_message", args)
 			switch {
-			case outcome == sessionserver.ForwardNotDelivered && sessionserver.HoldsUndelivered(row, kind):
+			case outcome == seam.ForwardNotDelivered && deps.HolderForward.HoldsUndelivered(seamrow.Record(row), kind):
 				undelivered = true
-			case outcome != sessionserver.ForwardLocal:
+			case outcome != seam.ForwardLocal:
 				return res, ferr
 			}
 		}
@@ -445,8 +431,8 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// returns under every reason, before the playground_client_closed
 		// path below can turn a refusal into an accepted hint.
 		if deps.HolderForward != nil {
-			res, outcome, ferr := deps.HolderForward.ForwardToolCall(ctx, row, sessionserver.ForwardKindTerminate, "lenny/cancel_session", args)
-			if outcome != sessionserver.ForwardLocal {
+			res, outcome, ferr := forwardToolCall(ctx, deps.HolderForward, row, seam.ForwardTerminate, "lenny/cancel_session", args)
+			if outcome != seam.ForwardLocal {
 				return res, ferr
 			}
 		}
@@ -509,7 +495,7 @@ func cancelSession(ctx context.Context, deps Deps, tenant, sessionID string, clo
 	if deps.Terminal == nil {
 		return updated, nil
 	}
-	return deps.Terminal.AfterTerminalWrite(context.WithoutCancel(ctx), from, updated, nil), nil
+	return afterTerminalWrite(context.WithoutCancel(ctx), deps.Terminal, from, updated, nil), nil
 }
 
 // registerTaskTreeTools installs the §8.5/§8.9 delegation-tree tools:
@@ -756,7 +742,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 			// actively waiting on slow children. The stamper coalesces to
 			// ≤1/s. F-11.3.7.
 			if deps.ActivityStamper != nil {
-				deps.ActivityStamper.Stamp(tenant, in.SessionID)
+				deps.ActivityStamper.StampActivity(tenant, in.SessionID)
 			}
 			results, settled, err := collectChildResults(ctx, deps.Store, deps.TreeArchive, deps.TaskUsage, deps.RetryBudget, tenant, in.ChildIDs, mode)
 			if err != nil {
@@ -1764,8 +1750,8 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			})
 		}
 		body, _ := json.Marshal(struct {
-			Runtimes            []discoveredRuntime  `json:"runtimes"`
-			AdapterCapabilities adapter.Capabilities `json:"adapterCapabilities"`
+			Runtimes            []discoveredRuntime `json:"runtimes"`
+			AdapterCapabilities adapterCapabilities `json:"adapterCapabilities"`
 		}{Runtimes: out, AdapterCapabilities: mcpAdapterCapabilities()})
 		return textResult(string(body)), nil
 	})
@@ -2024,15 +2010,15 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				// it. spec: §8.3.
 				return mcp.ToolResult{}, err
 			}
-			q := sessionserver.DelegationCredentialQuery{
+			q := seam.ChildCredentialQuery{
 				TenantID:                  tenant,
 				UserID:                    callerUserID,
 				ChildRuntimeRef:           targetRef,
 				CredentialOriginSessionID: originID,
 			}
-			if err := deps.CredAvailability.CheckDelegationCredentialAvailability(ctx, q); err != nil {
+			if err := deps.CredAvailability.CheckChildCredentials(ctx, q); err != nil {
 				switch {
-				case errors.Is(err, sessionserver.ErrDelegationCredentialUnavailable):
+				case errors.Is(err, seam.ErrChildCredentialUnavailable):
 					// spec: §15.2.1 — surface the canonical lenny code via
 					// *mcp.ToolError so the REST and MCP envelopes share the
 					// same POLICY / 503 (category, retryable) pair registered
@@ -2040,7 +2026,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					return mcp.ToolResult{}, mcp.NewToolError("CREDENTIAL_POOL_EXHAUSTED",
 						"credential pool exhausted: no assignable credential for the delegated child at delegation time",
 						map[string]any{"childRuntime": targetRef, "credentialPropagation": string(mode)})
-				case errors.Is(err, sessionserver.ErrDelegationUserCredentialNotFound):
+				case errors.Is(err, seam.ErrChildUserCredentialNotFound):
 					// spec: §15.2.1, §4.9 — the same user-only-policy
 					// condition session start surfaces as USER_CREDENTIAL_NOT_FOUND
 					// (PERMANENT / 404, registered at errorclassify.go). Return
@@ -2527,16 +2513,16 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// overwrites it and the handle reads running.
 		childState := res.Child.State
 		if deps.ChildMaterializer != nil {
-			st, mErr := deps.ChildMaterializer.MaterializeDelegatedChild(ctx, tenant, res.Child.ID)
+			st, mErr := deps.ChildMaterializer.MaterializeChild(ctx, tenant, res.Child.ID)
 			if mErr != nil {
 				return mcp.ToolResult{}, materializeToolError(mErr, targetRef, res.Child.ID)
 			}
-			childState = st
+			childState = session.State(st)
 		}
 		// Deliver the (possibly interceptor-modified) task input to
 		// the child as its first message.
 		if taskInput != "" && deps.Executor != nil {
-			if _, err := deps.Executor.Send(ctx, res.Child.ID, []executor.Message{
+			if _, err := deps.Executor.SendMessages(ctx, res.Child.ID, []seam.Message{
 				{Role: "user", Content: taskInput},
 			}); err != nil {
 				return mcp.ToolResult{}, fmt.Errorf("child %s created but task input delivery failed: %w",
@@ -2561,7 +2547,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	})
 }
 
-// materializeToolError maps a ChildMaterializer.MaterializeDelegatedChild failure to the
+// materializeToolError maps a GWSEAM-MaterializeChild failure to the
 // canonical MCP tool error the delegating parent observes. The materialization
 // composes the same create-and-start engine the top-level session-start path
 // runs, so it returns the same typed credential sentinels, and this switch
@@ -2571,7 +2557,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 // rollbackBinding on a post-launch persist failure) before the sentinel
 // surfaces here.
 //
-// A post-pod-claim credential-assignment race (podsession.CredentialAssignmentError)
+// A post-pod-claim credential-assignment race (seam.ErrChildCredentialAssignment)
 // and a pre-claim pool exhaustion (seam.ErrChildCredentialUnavailable) both map
 // to CREDENTIAL_POOL_EXHAUSTED, matching the top-level create path and the §8.3
 // assignment-race clause. A user-only policy with no registered credential maps
@@ -2584,10 +2570,8 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 // error taxonomy).
 func materializeToolError(err error, childRuntime, childID string) error {
 	details := map[string]any{"childRuntime": childRuntime, "childSessionId": childID}
-	var credAssign *podsession.CredentialAssignmentError
-	var warming *podsession.PoolWarmingError
 	switch {
-	case errors.As(err, &credAssign), errors.Is(err, seam.ErrChildCredentialUnavailable):
+	case errors.Is(err, seam.ErrChildCredentialAssignment), errors.Is(err, seam.ErrChildCredentialUnavailable):
 		// spec: §8.3 / §4.9 -- a post-pod-claim lease
 		// assignment race (the loser of concurrent delegations that each
 		// passed the point-in-time pre-check) and a pre-claim empty
@@ -2606,11 +2590,11 @@ func materializeToolError(err error, childRuntime, childID string) error {
 			"no pre-registered credential found for the delegated child's user and provider; "+
 				"register one via POST /v1/credentials or configure pool fallback",
 			details)
-	case errors.As(err, &warming):
+	case errors.Is(err, seam.ErrPoolWarming):
 		// spec: §5.2 -- the child's warm pool is still warming
 		// toward idle, the same "Pool Not Ready" condition session start maps
 		// to RUNTIME_UNAVAILABLE (TRANSIENT / 503, retryable).
-		return mcp.NewToolError("RUNTIME_UNAVAILABLE", warming.Error(), details)
+		return mcp.NewToolError("RUNTIME_UNAVAILABLE", err.Error(), details)
 	case errors.Is(err, seam.ErrTokenServiceUnavailable):
 		// spec: §4.3 -- the Token Service could not mint the child's
 		// credential lease, surfaced as TOKEN_SERVICE_UNAVAILABLE (UPSTREAM /

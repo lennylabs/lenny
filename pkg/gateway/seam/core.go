@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"io"
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
@@ -92,7 +93,9 @@ type ChildSessions interface {
 }
 
 // Terminals is the terminal pipeline of the session core, which a seam or
-// the API front runs after its own terminal write.
+// the API front runs after its own terminal write. The API front's
+// force-terminate is an interface of its own, ForceTerminations, so a seam
+// holds only the pipeline.
 type Terminals interface {
 	// BeginTerminal is GWSEAM-BeginTerminal. The caller calls the returned
 	// function when its terminal work ends, so shutdown waits for it.
@@ -261,7 +264,29 @@ type MessageDelivery interface {
 	// AdmitResume checks a resume against the tenant's limits and returns
 	// a *CapRefusal when a limit refuses it.
 	AdmitResume(ctx context.Context, s Session) error
+
+	// RouteMessage is GWSEAM-RouteMessage. inputRequired reports that the
+	// session waits for input although its state does not say so.
+	RouteMessage(st state.State, inputRequired bool) MessageRoute
 }
+
+// MessageRoute names how the session core delivers a message one session
+// sends another.
+type MessageRoute int
+
+// The message routes.
+const (
+	// RouteDeliver delivers the message now, after the held messages.
+	RouteDeliver MessageRoute = iota + 1
+	// RouteInbox places the message in the session's inbox.
+	RouteInbox
+	// RouteHold holds the message for later delivery.
+	RouteHold
+	// RouteTerminal refuses the message because the session is terminal.
+	RouteTerminal
+	// RouteResume holds the message and resumes the suspended session.
+	RouteResume
+)
 
 // Message is one message SendMessages delivers.
 type Message struct {
@@ -279,13 +304,14 @@ type Response struct {
 	Annotations map[string]any
 }
 
-// MessagePart is one part of a Response.
+// MessagePart is one part of a Response, with the JSON names of an output
+// part of the client API.
 type MessagePart struct {
-	Type          string
-	Text          string
-	Ref           string
-	SchemaVersion int
-	Annotations   map[string]any
+	Type          string         `json:"type"`
+	Text          string         `json:"text,omitempty"`
+	Ref           string         `json:"ref,omitempty"`
+	SchemaVersion int            `json:"schemaVersion,omitempty"`
+	Annotations   map[string]any `json:"annotations,omitempty"`
 }
 
 // InboxMessage is a message held in a session's inbox or held for later
@@ -294,7 +320,7 @@ type InboxMessage struct {
 	MessageID       string
 	SenderSessionID string
 	Payload         []byte
-	EnqueuedAtUnix  int64
+	EnqueuedAt      time.Time
 }
 
 // HoldOutcome is the result of holding a message.

@@ -15,13 +15,13 @@ package exportwire
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // DefaultExportTTL is the §4.5 TTL stamped on a durable exported-file
@@ -30,26 +30,20 @@ import (
 // uploaded file does.
 const DefaultExportTTL = 7 * 24 * time.Hour
 
-// adapterRegistry is the subset of *podsession.Registry PodExporter needs:
-// resolving a running session's bound pod adapter client. Narrowed to an
-// interface so the exporter is unit-testable without a real registry.
-type adapterRegistry interface {
-	Get(sessionID string) (*podsession.BindResult, bool)
-}
-
 // PodExporter implements export.ParentExporter by routing the §8.7
-// ExportPaths RPC to the running parent session's bound pod adapter. The
-// parent must be bound on this gateway replica (the §6.3 binder records
-// the binding in the registry); an unbound parent yields ErrParentUnbound
-// so the delegation fails rather than silently exporting nothing.
+// ExportPaths RPC to the running parent session's bound pod adapter
+// through the session core's GWSEAM-ExportPaths. The parent must be bound
+// on this gateway replica (the §6.3 binder records the binding); an
+// unbound parent yields ErrParentUnbound so the delegation fails rather
+// than silently exporting nothing.
 type PodExporter struct {
-	reg adapterRegistry
+	files seam.PodFiles
 }
 
-// NewPodExporter returns a PodExporter over the gateway's pod-session
-// registry. reg is required.
-func NewPodExporter(reg *podsession.Registry) *PodExporter {
-	return &PodExporter{reg: reg}
+// NewPodExporter returns a PodExporter over the session core's pod file
+// export. files is required.
+func NewPodExporter(files seam.PodFiles) *PodExporter {
+	return &PodExporter{files: files}
 }
 
 // ErrParentUnbound reports that the parent session has no pod binding on
@@ -61,13 +55,12 @@ var ErrParentUnbound = fmt.Errorf("exportwire: parent session has no bound pod a
 // spec against the parent pod's adapter and adapts the result to the
 // export package's ExportedFile form.
 func (e *PodExporter) ExportPaths(ctx context.Context, parentSessionID string, spec export.Spec) ([]export.ExportedFile, error) {
-	bind, ok := e.reg.Get(parentSessionID)
-	if !ok || bind == nil || bind.Adapter == nil {
-		return nil, ErrParentUnbound
-	}
-	files, err := bind.Adapter.ExportPaths(ctx, parentSessionID, []adapterclient.ExportSpec{
+	files, err := e.files.ExportPaths(ctx, parentSessionID, []seam.ExportSpec{
 		{Source: spec.Source, DestPrefix: spec.DestPrefix},
 	})
+	if errors.Is(err, seam.ErrNoLiveBinding) {
+		return nil, ErrParentUnbound
+	}
 	if err != nil {
 		return nil, err
 	}

@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -140,10 +141,11 @@ func Start(t testing.TB, opts Options) *Server {
 		// spec: §10.2 (Session ownership) — the platform-tool path runs
 		// under the calling session's principal, whose subject is the
 		// session's owner, so the owner-granting double admits it.
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               s.store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Events:              s.Bus,
 		InputWaits:          s.Waits,
 		RequestInputTimeout: timeout,

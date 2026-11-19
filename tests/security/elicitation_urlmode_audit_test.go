@@ -169,7 +169,8 @@ func newGatewayURLModeElicitationServer(t *testing.T, auditor mcptools.Delegatio
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Callers:           toolops.Callers{},
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Interactions:      interactions,

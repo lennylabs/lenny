@@ -140,7 +140,8 @@ func testIntraPodResidual(t *testing.T) {
 	// intra-pod surface directly.
 	mcptools.Register(srv, mcptools.Deps{
 		Callers:           toolops.Callers{},
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Delegation:        svc,

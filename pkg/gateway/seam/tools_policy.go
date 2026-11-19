@@ -33,6 +33,11 @@ type Caller struct {
 	// Groups is the caller's group set, which environment membership
 	// reads.
 	Groups []string
+	// JTI is the identifier of the bearer token the caller presented, and
+	// Origin that bearer's origin claim, such as "playground"; the MCP
+	// WebSocket transport's revocation watch keys on both.
+	JTI    string
+	Origin string
 }
 
 // CallerChecks is served by the session core to the platform tools seam.

@@ -11,28 +11,30 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
-// SessionService is the §15.2.1 rule-1 shared service layer the
-// overlapping client-facing MCP tools dispatch through.
-// *sessionserver.Server implements it: a tool builds the REST request
-// target and forwards it in-process, so the MCP surface runs the exact
-// REST route, validation, and response shaping rather than a parallel
-// implementation that could drift. The 2xx body is returned verbatim and
-// a non-2xx surfaces the §15.1 error envelope (code/category/retryable)
-// so the §15.2.1 rule-3/5(d) parity holds on both surfaces.
+// invokeClientAPI runs one client API request in process through the
+// shared service layer, GWSEAM-InvokeClientAPI: a tool builds the REST
+// request target and forwards it in-process, so the MCP surface runs the
+// exact REST route, validation, and response shaping rather than a parallel
+// implementation that could drift. A 2xx result is returned, and a result
+// outside 2xx returns its §15.1 error envelope as the tool error, so the
+// rule-3/5(d) parity holds on both surfaces.
 //
-// SessionAccessible is the §10.2 ownership predicate the tools that read
-// the session store directly call on the row a tool call names: it
-// reports whether the principal on ctx may read (act == false) or act on
-// (act == true) that row.
-//
-// spec: §15.2.1 rule 1. F-15.2.3. §10.2 (Session ownership) rules 4 and 5.
-type SessionService interface {
-	ServiceCall(ctx context.Context, tenantID, method, target string, body []byte, contentType string, headers map[string]string) (sessionserver.ServiceResult, *sessionserver.ServiceError)
-	SessionAccessible(ctx context.Context, row sessionstore.Session, act bool) bool
+// spec: §15.2.1 rule 1. F-15.2.3.
+func invokeClientAPI(ctx context.Context, svc seam.ClientAPI, tenantID, method, target string, body []byte, contentType string, headers map[string]string) (seam.ClientAPIResult, error) {
+	res, err := svc.InvokeClientAPI(ctx, seam.ClientAPICall{
+		TenantID: tenantID, Method: method, Target: target,
+		Body: body, ContentType: contentType, Headers: headers,
+	})
+	if err != nil {
+		return seam.ClientAPIResult{}, err
+	}
+	if res.Status < 200 || res.Status >= 300 {
+		return seam.ClientAPIResult{}, mcp.NewToolError(res.ErrorCode, res.ErrorMessage, res.ErrorDetails)
+	}
+	return res, nil
 }
 
 // registerClientFacingTools installs the §15.2
@@ -54,9 +56,9 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	// carrying the canonical lenny code so the shared errorclassify table
 	// assigns the same (category, retryable) pair on both surfaces.
 	dispatch := func(ctx context.Context, method, target string, body []byte, contentType string, headers map[string]string) (mcp.ToolResult, error) {
-		res, svcErr := svc.ServiceCall(ctx, callerTenantID(ctx, deps, tenant), method, target, body, contentType, headers)
-		if svcErr != nil {
-			return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
+		res, err := invokeClientAPI(ctx, svc, callerTenantID(ctx, deps, tenant), method, target, body, contentType, headers)
+		if err != nil {
+			return mcp.ToolResult{}, err
 		}
 		return textResult(string(res.Body)), nil
 	}
@@ -224,10 +226,10 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"ref is required", map[string]any{"field": "ref"})
 		}
-		res, svcErr := svc.ServiceCall(ctx, callerTenantID(ctx, deps, tenant), "GET",
+		res, err := invokeClientAPI(ctx, svc, callerTenantID(ctx, deps, tenant), "GET",
 			"/v1/blobs/"+url.PathEscape(in.Ref), nil, "", nil)
-		if svcErr != nil {
-			return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
+		if err != nil {
+			return mcp.ToolResult{}, err
 		}
 		out, _ := json.Marshal(map[string]any{
 			"ref":        in.Ref,

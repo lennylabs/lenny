@@ -94,7 +94,8 @@ func newElicitReplica(sessions sessionstore.Store, inter interactionstore.Store,
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Callers:            toolops.Callers{},
-		SessionService:     ownerprincipal.SessionAccess{},
+		SessionService:     ownerprincipal.ToolAccess{},
+		SessionAccess:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:  true,
 		Store:              sessions,
 		Interactions:       inter,

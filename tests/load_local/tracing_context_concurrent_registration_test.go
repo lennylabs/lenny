@@ -70,7 +70,8 @@ func newTracingMCP(t *testing.T, store sessionstore.Store, sessionID string) htt
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Callers:           toolops.Callers{},
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Clock:             func() time.Time { return now },

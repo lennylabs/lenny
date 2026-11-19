@@ -9,7 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -24,7 +26,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -34,11 +35,12 @@ import (
 // §8.3 gate applies and the exact query contents (tenant, user, child runtime,
 // resolved credential origin) the gate derives.
 type fakeCredChecker struct {
+	seam.ChildSessions
 	err   error
-	calls []sessionserver.DelegationCredentialQuery
+	calls []seam.ChildCredentialQuery
 }
 
-func (f *fakeCredChecker) CheckDelegationCredentialAvailability(_ context.Context, q sessionserver.DelegationCredentialQuery) error {
+func (f *fakeCredChecker) CheckChildCredentials(_ context.Context, q seam.ChildCredentialQuery) error {
 	f.calls = append(f.calls, q)
 	return f.err
 }
@@ -73,16 +75,17 @@ func (s getErrStore) Get(ctx context.Context, tenantID, id string) (sessionstore
 // running parent session whose credential origin is parentOrigin (empty leaves
 // the parent as its own origin). The delegation service issues child ids of
 // "sess_child", so a committed child row proves the handler reached Delegate.
-func newDelegateCredAvailMCP(t *testing.T, checker mcptools.CredentialAvailabilityChecker, parentOrigin string) (*mcp.Server, sessionstore.Store) {
+func newDelegateCredAvailMCP(t *testing.T, checker seam.ChildSessions, parentOrigin string) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		CredAvailability:  checker,
 		Delegation: delegation.NewService(store, delegation.Options{
@@ -122,7 +125,7 @@ func childRowExists(t *testing.T, store sessionstore.Store) bool {
 func TestDelegateTaskCredentialPoolExhaustedRejects_spec_8_3(t *testing.T) {
 	for _, mode := range []string{"inherit", "independent"} {
 		t.Run(mode, func(t *testing.T) {
-			checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+			checker := &fakeCredChecker{err: seam.ErrChildCredentialUnavailable}
 			srv, store := newDelegateCredAvailMCP(t, checker, "")
 
 			resp := call(t, srv.Handler(), "lenny/delegate_task",
@@ -179,7 +182,7 @@ func TestDelegateTaskCredentialAvailableProceeds_spec_8_3(t *testing.T) {
 // entirely (the checker is never invoked) and the delegation proceeds even when
 // the checker is configured to reject.
 func TestDelegateTaskDenyModeSkipsCredentialCheck_spec_8_3(t *testing.T) {
-	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+	checker := &fakeCredChecker{err: seam.ErrChildCredentialUnavailable}
 	srv, store := newDelegateCredAvailMCP(t, checker, "")
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
@@ -217,7 +220,7 @@ func TestDelegateTaskNilCheckerSkipsGate_spec_8_3(t *testing.T) {
 // the cross-environment inherit CREDENTIAL_PROVIDER_MISMATCH provider-compatibility
 // gate is evaluated before the §8.3 availability gate on a cross-environment
 // inherit hop.
-func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAvailabilityChecker, childProviders []string) (*mcp.Server, sessionstore.Store) {
+func newCrossEnvInheritCredAvailMCP(t *testing.T, checker seam.ChildSessions, childProviders []string) (*mcp.Server, sessionstore.Store) {
 	t.Helper()
 	store := memstore.New()
 	runtimes := runtimestore.NewMemory()
@@ -225,15 +228,16 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Environments:        envs,
 		Tenants:             toolops.NewTenants(tenants, nil, nil),
 		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, ""),
 		CredAvailability:    checker,
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -298,7 +302,7 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 // report exhaustion, the handler returns CREDENTIAL_PROVIDER_MISMATCH, proving the
 // availability gate does not preempt the provider-compatibility gate.
 func TestDelegateTaskCrossEnvInheritMismatchBeforeAvailability_spec_8_3(t *testing.T) {
-	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+	checker := &fakeCredChecker{err: seam.ErrChildCredentialUnavailable}
 	srv, store := newCrossEnvInheritCredAvailMCP(t, checker, []string{"openai_direct"})
 
 	resp := callAs(t, srv.Handler(), teamAMember, "lenny/delegate_task",
@@ -324,7 +328,7 @@ func TestDelegateTaskCrossEnvInheritMismatchBeforeAvailability_spec_8_3(t *testi
 // default-mode delegation.
 func TestDelegateTaskOmittedModeRunsIndependentCheck_spec_8_3(t *testing.T) {
 	t.Run("exhausted", func(t *testing.T) {
-		checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+		checker := &fakeCredChecker{err: seam.ErrChildCredentialUnavailable}
 		srv, store := newDelegateCredAvailMCP(t, checker, "")
 
 		resp := call(t, srv.Handler(), "lenny/delegate_task",
@@ -366,7 +370,7 @@ func TestDelegateTaskOmittedModeRunsIndependentCheck_spec_8_3(t *testing.T) {
 // USER_CREDENTIAL_NOT_FOUND (PERMANENT / 404) rather than the generic
 // INTERNAL_ERROR a bare error would produce.
 func TestDelegateTaskUserCredentialNotFoundRejects_spec_8_3(t *testing.T) {
-	checker := &fakeCredChecker{err: sessionserver.ErrDelegationUserCredentialNotFound}
+	checker := &fakeCredChecker{err: seam.ErrChildUserCredentialNotFound}
 	srv, store := newDelegateCredAvailMCP(t, checker, "")
 
 	resp := call(t, srv.Handler(), "lenny/delegate_task",
@@ -457,10 +461,11 @@ func TestDelegateTaskParentLookupErrorFailsClosed_spec_8_3(t *testing.T) {
 	wrapped := newGetErrStore(base, "sess_parent", errors.New("store unavailable"))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             wrapped,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		CredAvailability:  checker,
 		Delegation: delegation.NewService(wrapped, delegation.Options{
@@ -502,16 +507,17 @@ func TestDelegateTaskParentLookupErrorFailsClosed_spec_8_3(t *testing.T) {
 // which read the parent for every gated mode and propagated the lookup error,
 // this hop returned the raw store error and never reached the checker.
 func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T) {
-	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+	checker := &fakeCredChecker{err: seam.ErrChildCredentialUnavailable}
 	base := memstore.New()
 	runtimes := runtimestore.NewMemory()
 	wrapped := newGetErrStore(base, "sess_parent", errors.New("store unavailable"))
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             wrapped,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		CredAvailability:  checker,
 		Delegation: delegation.NewService(wrapped, delegation.Options{
@@ -555,14 +561,15 @@ func TestDelegateTaskIndependentParentLookupErrorRunsCheck_spec_8_3(t *testing.T
 // any delegation gate runs: the credential pre-check is never reached and no
 // child is created.
 func TestDelegateTaskNilStoreFailsClosedOnOwnership_spec_10_2(t *testing.T) {
-	checker := &fakeCredChecker{err: sessionserver.ErrDelegationCredentialUnavailable}
+	checker := &fakeCredChecker{err: seam.ErrChildCredentialUnavailable}
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             nil,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		CredAvailability:  checker,
 		Delegation: delegation.NewService(memstore.New(), delegation.Options{

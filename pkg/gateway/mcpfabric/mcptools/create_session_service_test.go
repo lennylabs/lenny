@@ -8,7 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -37,23 +40,32 @@ type fakeSessionCreator struct {
 	gotReq    sessionserver.CreateSessionRequest
 	resp      sessionserver.CreateSessionResponse
 	err       *sessionserver.ServiceError
+	seam.ChildSessions
 }
 
-func (f *fakeSessionCreator) CreateSessionService(_ context.Context, tenantID string, req sessionserver.CreateSessionRequest) (sessionserver.CreateSessionResponse, *sessionserver.ServiceError) {
+// CreateSession decodes the create body as the session core does and answers
+// the canned response, or the canned service error as the core's refusal.
+func (f *fakeSessionCreator) CreateSession(_ context.Context, tenantID string, body json.RawMessage) (seam.CreatedSession, error) {
 	f.gotTenant = tenantID
-	f.gotReq = req
-	return f.resp, f.err
+	if err := json.Unmarshal(body, &f.gotReq); err != nil {
+		return seam.CreatedSession{}, err
+	}
+	if f.err != nil {
+		return seam.CreatedSession{}, &seam.Refusal{Code: f.err.Code, Message: f.err.Message, Details: f.err.Details}
+	}
+	return seam.CreatedSession{ID: f.resp.ID, State: state.State(f.resp.State), UploadToken: f.resp.UploadToken}, nil
 }
 
-func newMCPWithCreator(t *testing.T, creator mcptools.SessionCreator) *mcp.Server {
+func newMCPWithCreator(t *testing.T, creator seam.ChildSessions) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             memstore.New(),
 		SessionCreator:    creator,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },
 		TenantID:          "acme",
@@ -153,10 +165,11 @@ func TestCreateSessionWithoutCreatorFailsClosed_spec_10_2(t *testing.T) {
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		IDFunc:            func() string { return "sess_mcp" },
 		TenantID:          "acme",
 	})

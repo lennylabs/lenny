@@ -34,10 +34,18 @@ func TestRecordAndRowCarryTheRecordsFields(t *testing.T) {
 		DelegationDepth: 2, PodAssignment: "pod-1", LastSeq: 9,
 		CreatedAt: at, UpdatedAt: at.Add(time.Second), TerminatedAt: at.Add(2 * time.Second),
 	}
-	if rec != want {
-		t.Fatalf("record = %+v, want %+v", rec, want)
+	if stored, ok := rec.Stored.(sessionstore.Session); !ok || stored.ID != row.ID {
+		t.Fatalf("record carries %+v, want the row", rec.Stored)
 	}
-	back := seamrow.Row(rec)
+	bare := rec
+	bare.Stored = nil
+	if bare != want {
+		t.Fatalf("record = %+v, want %+v", bare, want)
+	}
+	if got := seamrow.Row(rec); got.ID != row.ID || got.PodAssignment != row.PodAssignment {
+		t.Fatalf("row of a carrying record = %+v, want the carried row", got)
+	}
+	back := seamrow.Row(bare)
 	if back.ID != row.ID || back.PoolRef != "pool-a" || back.DelegationDepth != 2 || back.LastSeq != 9 ||
 		back.PodAssignment != "pod-1" || !back.TerminatedAt.Equal(row.TerminatedAt) || back.State != row.State {
 		t.Errorf("row = %+v, want the record's fields of %+v", back, row)

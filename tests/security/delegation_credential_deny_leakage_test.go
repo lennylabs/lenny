@@ -61,6 +61,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // The provider/pool identifiers the fixture spans. shared-tool supports both
@@ -194,16 +195,17 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Callers:           toolops.Callers{},
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   denyLeakageIDCounter("sess-deleg-"),
 			Runtimes: runtimes,
 		}),
-		CredAvailability: srv,
+		CredAvailability: srv.ToolsSeam(),
 		Clock:            func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:           func() string { return "sess_mcp" },
 		TenantID:         "acme",

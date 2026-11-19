@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/environment"
@@ -36,14 +37,15 @@ func TestDelegateTaskEnvironmentScope(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Environments:        envs,
 		Tenants:             toolops.NewTenants(tenants, nil, nil),
 		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, ""),
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -111,14 +113,15 @@ func TestDelegateTaskCrossEnvironmentReachable(t *testing.T) {
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Environments:        envs,
 		Tenants:             toolops.NewTenants(tenants, nil, nil),
 		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, ""),
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -195,7 +198,8 @@ func TestDelegateTaskRejectsTypeMCPTarget_spec_8_2_F_8_2_8(t *testing.T) {
 	runtimes := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
 		Runtimes:          runtimes,
@@ -253,10 +257,11 @@ func TestDelegateTaskPoolIsolationMonotonicity(t *testing.T) {
 	audit := &fakeDelegationAuditor{}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Pools:             pools,
 		Audit:             audit,
 		Delegation: delegation.NewService(store, delegation.Options{

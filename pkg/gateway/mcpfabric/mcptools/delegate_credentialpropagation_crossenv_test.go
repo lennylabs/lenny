@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -43,14 +44,15 @@ func newCrossEnvInheritMCP(t *testing.T, childProviders []string) (*mcp.Server, 
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Environments:        envs,
 		Tenants:             toolops.NewTenants(tenants, nil, nil),
 		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, ""),
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

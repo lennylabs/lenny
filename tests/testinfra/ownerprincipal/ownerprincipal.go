@@ -14,6 +14,7 @@ import (
 	"net/http"
 
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -73,4 +74,27 @@ func (SessionAccess) ServiceCall(context.Context, string, string, string, []byte
 func (SessionAccess) SessionAccessible(ctx context.Context, row sessionstore.Session, _ bool) bool {
 	p, ok := authmw.FromContext(ctx)
 	return ok && p.Subject != "" && p.Subject == row.UserID
+}
+
+// ToolAccess is the session core double for a suite that calls the MCP
+// tools reading the session store directly, through the platform tools
+// seam. Its SessionAccessible grants the session's owner and nobody else,
+// the owner half of the ownership rule, so a fixture that calls as the
+// seeded owner reaches the tool body. Its InvokeClientAPI refuses, because
+// such a suite dispatches no client-facing tool through the shared service
+// layer.
+type ToolAccess struct{}
+
+// InvokeClientAPI refuses every call with INTERNAL_ERROR.
+func (ToolAccess) InvokeClientAPI(context.Context, seam.ClientAPICall) (seam.ClientAPIResult, error) {
+	return seam.ClientAPIResult{
+		Status: http.StatusInternalServerError, ErrorCode: "INTERNAL_ERROR",
+		ErrorMessage: "ownerprincipal.ToolAccess serves no client-facing tool",
+	}, nil
+}
+
+// SessionAccessible reports whether the principal on ctx owns the session.
+func (ToolAccess) SessionAccessible(ctx context.Context, s seam.Session, _ seam.SessionAction) bool {
+	p, ok := authmw.FromContext(ctx)
+	return ok && p.Subject != "" && p.Subject == s.UserID
 }

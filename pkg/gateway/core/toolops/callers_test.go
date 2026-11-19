@@ -27,11 +27,13 @@ func TestRequestCallerReadsThePrincipal(t *testing.T) {
 	groups := []string{"eng"}
 	ctx := authmw.WithPrincipal(context.Background(), authmw.Principal{
 		Subject: "alice", TenantID: "acme", SessionID: "sess_1", CallerType: "agent", Groups: groups,
+		JTI: "jti-1", Origin: "playground",
 	})
 	got, ok := (Callers{}).RequestCaller(ctx)
 	want := seam.Caller{Subject: "alice", TenantID: "acme", SessionID: "sess_1", CallerType: "agent", Groups: []string{"eng"}}
 	if !ok || got.Subject != want.Subject || got.TenantID != want.TenantID || got.SessionID != want.SessionID ||
-		got.CallerType != want.CallerType || len(got.Groups) != 1 || got.Groups[0] != "eng" {
+		got.CallerType != want.CallerType || len(got.Groups) != 1 || got.Groups[0] != "eng" ||
+		got.JTI != "jti-1" || got.Origin != "playground" {
 		t.Fatalf("RequestCaller = %+v, %v; want %+v, true", got, ok, want)
 	}
 	got.Groups[0] = "changed"

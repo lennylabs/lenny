@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // spec: §10.6 — defaultDelegationPolicy is the
@@ -70,10 +71,10 @@ func envPolicyHarness(t *testing.T, parentRuntimeRef, envName, envDefaultPolicy 
 	})
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Delegation:          svc,
 		Environments:        envs,
@@ -82,6 +83,7 @@ func envPolicyHarness(t *testing.T, parentRuntimeRef, envName, envDefaultPolicy 
 		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:              func() string { return "sess_mcp" },
 		TenantID:            "acme",
+		SessionAccess:       ownerprincipal.ToolAccess{},
 	})
 	return srv, runtimes, policies
 }

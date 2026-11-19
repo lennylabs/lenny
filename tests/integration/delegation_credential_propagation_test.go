@@ -67,6 +67,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // spec: 8.3 (deny receives no LLM credentials; inherit-from-deny fails closed)
@@ -323,16 +324,17 @@ func newDenyOriginFixture(t *testing.T) (*mcp.Server, sessionstore.Store) {
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		Callers:           toolops.Callers{},
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   childIDCounter(),
 			Runtimes: runtimes,
 		}),
-		CredAvailability: credChecker,
+		CredAvailability: credChecker.ToolsSeam(),
 		Clock:            func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:           func() string { return "sess_mcp" },
 		TenantID:         "acme",

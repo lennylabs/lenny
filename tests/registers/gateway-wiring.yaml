@@ -193,116 +193,16 @@ crossings:
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: Options.BudgetKeysExpired
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: Options.ExperimentRouter
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation/export
     interface: NewMaterializer(2)
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: AttachConfig.Authorize
-    from: pkg/gateway/middleware/auth
-    type: FromContext
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: AttachConfig.Authorize
-    from: pkg/gateway/sessionserver
-    type: Server.SessionAccessible
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: AttachConfig.TenantFromRequest
-    from: pkg/gateway/middleware/auth
-    type: FromContext
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: Server.SetWebSocketAuth(0)
-    from: pkg/gateway/middleware/auth
-    type: FromContext
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: Server.SetWebSocketAuth(1)
-    from: pkg/gateway/playground
-    type: Handler
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcp
-    interface: WebSocketBearerCarrier(0)
-    from: pkg/gateway/middleware/auth
-    type: Wrap
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.ActivityStamper
-    from: pkg/gateway/session/sessionidle
-    type: Stamper
-    step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.Audit
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.ChildMaterializer
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.CredAvailability
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.Delivery
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.Executor
-    from: pkg/gateway/session/executor
-    type: EchoExecutor
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.Executor
-    from: pkg/gateway/session/executor
-    type: PodExecutor
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.Executor
-    from: pkg/gateway/session/executor
-    type: SubprocessExecutor
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.HolderForward
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.RetryBudget
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.SessionCreator
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.SessionService
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.Terminal
-    from: pkg/gateway/sessionserver
-    type: Server
-    step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.TreeCycleObserver
     from: pkg/gateway/replica/gatewaymetrics

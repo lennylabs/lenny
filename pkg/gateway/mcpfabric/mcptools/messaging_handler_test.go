@@ -8,7 +8,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -27,11 +29,15 @@ func newMCPMessaging(t *testing.T, def, max session.MessagingScope, limits mcpto
 	store := memstore.New()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:        ownerprincipal.SessionAccess{},
-		DevTenantFallback:     true,
-		Store:                 store,
-		Executor:              executor.NewEchoExecutor(),
-		InputWaits:            inputwait.NewRegistry(),
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
+		InputWaits:        inputwait.NewRegistry(),
+		// A forwarding double that runs every call locally and reads the
+		// forward listener's mark, as a coordinating replica does.
+		HolderForward:         &fakeForwarder{outcome: seam.ForwardLocal},
 		Clock:                 func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:                func() string { return "sess_mcp" },
 		TenantID:              "acme",
@@ -144,10 +150,11 @@ func TestSendMessageCrossTenantDenied_spec_7_2_268(t *testing.T) {
 	store := &foreignTenantStore{Store: memstore.New(), foreignID: "sess_foreign"}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:        inputwait.NewRegistry(),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
@@ -43,10 +44,11 @@ func newWaitConn(name string, store sessionstore.Store, ids *atomic.Int64) *wait
 	c := &waitConn{name: name, reg: inputwait.NewRegistry(), srv: mcp.NewServer(), gen: inputwaitrecovery.NewGeneration()}
 	mcptools.Register(c.srv, mcptools.Deps{
 		Callers:             toolops.Callers{},
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:          c.reg,
 		RequestInputTimeout: time.Minute,
 		IDFunc:              func() string { return fmt.Sprintf("%s-%d", name, ids.Add(1)) },

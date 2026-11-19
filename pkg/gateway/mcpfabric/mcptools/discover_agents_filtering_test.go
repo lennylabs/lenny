@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
@@ -36,10 +37,10 @@ func newMCPFiltered(t *testing.T) (*mcp.Server, runtimestore.Store, environments
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               memstore.New(),
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Environments:        envs,
 		Tenants:             toolops.NewTenants(tenants, nil, nil),
@@ -47,6 +48,7 @@ func newMCPFiltered(t *testing.T) (*mcp.Server, runtimestore.Store, environments
 		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:              func() string { return "sess_mcp" },
 		TenantID:            "acme",
+		SessionAccess:       ownerprincipal.ToolAccess{},
 	})
 	return srv, runtimes, envs, tenants
 }
@@ -397,10 +399,10 @@ func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimes
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               memstore.New(),
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:            runtimes,
 		Environments:        envs,
 		Tenants:             toolops.NewTenants(tenants, nil, nil),
@@ -408,6 +410,7 @@ func buildFilteredMCP(t *testing.T, defaultPolicy string) (*mcp.Server, runtimes
 		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:              func() string { return "sess_mcp" },
 		TenantID:            "acme",
+		SessionAccess:       ownerprincipal.ToolAccess{},
 	})
 	return srv, runtimes, envs, tenants
 }

@@ -54,6 +54,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -606,14 +607,15 @@ func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
 	return mcptools.Deps{
 		Callers:            toolops.Callers{},
 		DevTenantFallback:  true,
-		HolderForward:      r.Server,
+		HolderForward:      r.Server.ToolsSeam(),
 		Store:              h.Store,
-		Terminal:           r.Server,
-		SessionService:     r.Server,
-		Delivery:           r.Server,
-		Executor:           r.Executor,
+		Terminal:           r.Server.ToolsSeam(),
+		SessionService:     r.Server.ToolsSeam(),
+		SessionAccess:      r.Server.ToolsSeam(),
+		Delivery:           r.Server.ToolsSeam(),
+		Executor:           toolseam.Executor(r.Executor),
 		InputWaits:         r.InputWaits,
-		Messaging:          h.Messaging,
+		Messaging:          toolseam.Messaging(h.Messaging),
 		Interactions:       h.Interactions,
 		Clock:              h.Clock.Now,
 		TenantID:           Tenant,

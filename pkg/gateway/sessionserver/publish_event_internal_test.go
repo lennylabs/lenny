@@ -6,10 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
@@ -28,7 +26,7 @@ func TestANilBusPublishesNothingWithoutPanicking(t *testing.T) {
 	s.publishEvent("acme", "sess-1", "status_change", map[string]string{"state": "running"})
 	s.publishEvent("", "sess-1", "response", map[string]string{"text": "hi"})
 
-	gate := NewToolApprovalGate(memstore.New(), interactionstore.NewMemory(), bus, platformtools.NewToolApprovals(toolapproval.NewRegistry()), time.Now, 0)
+	gate := NewToolApprovalGate(memstore.New(), interactionstore.NewMemory(), bus, nil, time.Now, 0)
 	if gate.events != nil {
 		t.Errorf("the tool approval gate stored %#v, want no event bus", gate.events)
 	}

@@ -33,6 +33,8 @@ func (Callers) RequestCaller(ctx context.Context) (seam.Caller, bool) {
 		SessionID:  p.SessionID,
 		CallerType: p.CallerType,
 		Groups:     slices.Clone(p.Groups),
+		JTI:        p.JTI,
+		Origin:     p.Origin,
 	}, true
 }
 

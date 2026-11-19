@@ -63,13 +63,17 @@ func (t ToolsSeam) AfterTerminalWrite(ctx context.Context, from state.State, s s
 	return seamSessionOf(t.s.AfterTerminalWrite(ctx, session.State(from), t.s.terminalRow(ctx, s), rowSignals))
 }
 
-// terminalRow reads back from the primary the row a seam's terminal write
-// produced, because the terminal pipeline reads row fields the session
-// record does not carry. A read failure is logged and the pipeline runs on
+// terminalRow returns the row a seam's terminal write produced: the row the
+// session record carries, or, for a record that carries none, the row read
+// back from the primary, because the terminal pipeline reads row fields the
+// session record does not carry. A read failure is logged and the pipeline runs on
 // the row the record carries, so the session's pod is still released.
 //
 // spec: GWSEAM-OnSessionTerminal
 func (s *Server) terminalRow(ctx context.Context, rec seam.Session) sessionstore.Session {
+	if row, ok := rec.Stored.(sessionstore.Session); ok {
+		return row
+	}
 	row, err := s.readPrimary(ctx, rec.TenantID, rec.ID)
 	if err == nil {
 		return row

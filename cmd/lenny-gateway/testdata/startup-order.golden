@@ -53,7 +53,6 @@ runGateway:
   w.buildCredentialSurface
     w.concernRedis.For
   w.buildMCPSurface
-    w.sessions.Get
   w.buildRevocationWiring
     w.credAssign.OnAssigned
   w.buildAdminRouter

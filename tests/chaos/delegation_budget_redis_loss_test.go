@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/redis/go-redis/v9"
 
@@ -233,10 +234,11 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 	surface := mcp.NewServer()
 	mcptools.Register(surface, mcptools.Deps{
 		Callers:           toolops.Callers{},
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             st.sessions,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Delegation:        svc,
 		TenantID:          dlgLossTenant,

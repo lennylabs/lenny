@@ -10,24 +10,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
-// seamMatched is a failure of the session core that also matches the seam
-// interface's sentinel for it, so the platform tools seam branches on the
-// sentinel without importing the credential packages GW-R2 confines. Its
-// message and chain are the core's error unchanged.
-type seamMatched struct {
-	err      error
-	sentinel error
-}
-
-func (e *seamMatched) Error() string { return e.err.Error() }
-
-// Unwrap returns the core's error and the seam sentinel.
-func (e *seamMatched) Unwrap() []error { return []error{e.err, e.sentinel} }
-
 // childCredentialError adds to a delegated child's materialization failure
-// the seam sentinel of its credential cause: credrouter's exhausted pool and
-// missing user credential, and credassign's Token Service outage. Any other
-// error, nil included, is returned unchanged.
+// the seam sentinel of its credential cause, so the platform tools seam
+// branches on the sentinel without importing the credential packages GW-R2
+// confines: credrouter's exhausted pool and missing user credential, and
+// credassign's Token Service outage. The message and the chain are the
+// core's error unchanged (withSentinel). Any other error, nil included, is
+// returned unchanged.
 // spec: GWSEAM-MaterializeChild
 func childCredentialError(err error) error {
 	var sentinel error
@@ -43,5 +32,5 @@ func childCredentialError(err error) error {
 	default:
 		return err
 	}
-	return &seamMatched{err: err, sentinel: sentinel}
+	return withSentinel(sentinel, err.Error(), err)
 }

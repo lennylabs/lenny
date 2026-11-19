@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // receiptStatusReason is the §15.4 receipt fields the parity assertion
@@ -64,8 +65,9 @@ func newUnwiredMessagingServers(t *testing.T) (*httptest.Server, *httptest.Serve
 		Store:             store,
 		// spec: §10.2 (Session ownership) — lenny/send_message checks the
 		// caller against the target's owner through the shared service.
-		SessionService: rest,
-		Executor:       exec,
+		SessionService: rest.ToolsSeam(),
+		SessionAccess:  rest.ToolsSeam(),
+		Executor:       toolseam.Executor(exec),
 		Clock:          func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:         func() string { return "sess_mcp_unavailable" },
 		TenantID:       "acme",

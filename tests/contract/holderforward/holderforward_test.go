@@ -151,7 +151,8 @@ func runningRow() sessionstore.Session {
 // what the coordinator received.
 func (f *fixture) forward(t *testing.T, ctx context.Context) (wireRequest, authmw.Principal) {
 	t.Helper()
-	res, out, err := f.serving.ForwardToolCall(ctx, runningRow(), sessionserver.ForwardKindTerminate, "lenny/target", json.RawMessage(`{"reason":"done"}`))
+	raw, out, err := f.serving.ForwardToolCall(ctx, runningRow(), sessionserver.ForwardKindTerminate, "lenny/target", json.RawMessage(`{"reason":"done"}`))
+	res, _ := mcp.FromSeamResult(raw)
 	if err != nil || out != sessionserver.ForwardDelivered || len(res.Content) != 1 || res.Content[0].Text != "terminated" {
 		t.Fatalf("ForwardToolCall = %+v, %v, %v; want the coordinator's result delivered", res, out, err)
 	}

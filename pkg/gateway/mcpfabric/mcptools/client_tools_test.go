@@ -9,11 +9,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -32,27 +32,30 @@ type fakeService struct {
 	err    *sessionserver.ServiceError
 }
 
-func (f *fakeService) ServiceCall(_ context.Context, _ /*tenantID*/, method, target string, body []byte, contentType string, headers map[string]string) (sessionserver.ServiceResult, *sessionserver.ServiceError) {
-	f.method, f.target, f.body, f.contentType, f.headers = method, target, body, contentType, headers
+// InvokeClientAPI records the call and answers the canned result, or the
+// canned service error as a result outside 2xx, as the session core does.
+func (f *fakeService) InvokeClientAPI(_ context.Context, call seam.ClientAPICall) (seam.ClientAPIResult, error) {
+	f.method, f.target, f.body, f.contentType, f.headers = call.Method, call.Target, call.Body, call.ContentType, call.Headers
 	if f.err != nil {
-		return sessionserver.ServiceResult{}, f.err
+		return seam.ClientAPIResult{Status: f.err.HTTPStatus, ErrorCode: f.err.Code, ErrorMessage: f.err.Message, ErrorDetails: f.err.Details}, nil
 	}
-	return f.result, nil
+	return seam.ClientAPIResult{Status: f.result.Status, Body: f.result.Body, ContentType: f.result.ContentType}, nil
 }
 
-// SessionAccessible grants the row's owner, so the double satisfies
-// SessionService. spec: §10.2 (Session ownership).
-func (f *fakeService) SessionAccessible(ctx context.Context, row sessionstore.Session, _ bool) bool {
-	return ownerprincipal.SessionAccess{}.SessionAccessible(ctx, row, false)
+// SessionAccessible grants the session's owner. spec: §10.2 (Session
+// ownership).
+func (f *fakeService) SessionAccessible(ctx context.Context, s seam.Session, a seam.SessionAction) bool {
+	return ownerprincipal.ToolAccess{}.SessionAccessible(ctx, s, a)
 }
 
-func newClientToolsMCP(t *testing.T, svc mcptools.SessionService) *mcp.Server {
+func newClientToolsMCP(t *testing.T, svc toolSessions) *mcp.Server {
 	t.Helper()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             memstore.New(),
 		SessionService:    svc,
+		SessionAccess:     svc,
 		TenantID:          "acme",
 	})
 	return srv

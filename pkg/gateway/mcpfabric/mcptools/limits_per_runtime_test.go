@@ -44,7 +44,8 @@ func newMCPForElicitationWithRuntimes(t *testing.T, globalTimeout time.Duration,
 	rts := runtimestore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:            ownerprincipal.SessionAccess{},
+		SessionService:            ownerprincipal.ToolAccess{},
+		SessionAccess:             ownerprincipal.ToolAccess{},
 		DevTenantFallback:         true,
 		Store:                     store,
 		Interactions:              interactions,
@@ -127,7 +128,8 @@ func TestRequestInputExpiredPublishedToParentStream_spec_11_3_238(t *testing.T) 
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,
@@ -174,7 +176,8 @@ func TestRequestInputExpiredSkippedForRootSession_spec_11_3_238(t *testing.T) {
 	bus := sessionevents.NewBus(0)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:      ownerprincipal.SessionAccess{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
 		Events:              bus,

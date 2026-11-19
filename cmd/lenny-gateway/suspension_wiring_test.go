@@ -41,7 +41,8 @@ func TestSuspensionSeamsAreWiredToTheSessionServer_spec_6_2(t *testing.T) {
 	for _, tc := range []struct {
 		file, want, seam string
 	}{
-		{"mcpsurface.go", "Delivery: sessionSrv,", "the MCP tools' Delivery"},
+		{"mcpsurface.go", "toolsSeam := sessionSrv.ToolsSeam()", "the session core's side of the platform tools seam"},
+		{"mcpsurface.go", "Delivery: toolsSeam,", "the MCP tools' Delivery"},
 		{"controlserver.go", "WithSuspendedPodReleaser(sessionSrv)", "the watchdog's suspended-pod releaser"},
 		{"controlserver.go", "WithBacklogResumer(sessionSrv)", "the watchdog's backlog resumer"},
 		{"controlserver.go", "if w.podBinder != nil { wd = wd.WithIdleSuspender(sessionSrv) }", "the idle suspender behind the pod-binder guard"},

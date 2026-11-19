@@ -27,6 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // capEnvelope is the projection of an error envelope the parity test
@@ -71,9 +72,10 @@ func newCapLimitedServers(t *testing.T) (*httptest.Server, *httptest.Server) {
 		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
-		SessionService:    rest,
-		Delivery:          rest,
-		Executor:          exec,
+		SessionService:    rest.ToolsSeam(),
+		SessionAccess:     rest.ToolsSeam(),
+		Delivery:          rest.ToolsSeam(),
+		Executor:          toolseam.Executor(exec),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "msg_cap" },
 		TenantID:          "acme",

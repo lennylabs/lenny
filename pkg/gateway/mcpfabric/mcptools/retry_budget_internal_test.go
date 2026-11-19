@@ -8,15 +8,19 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
 
-// fixedBudget is a RetryBudget that resolves every row to one budget,
-// standing in for the session server's deployer caps.
-type fixedBudget int
+// fixedBudget is the session core's GWSEAM-EffectiveMaxRetries resolving
+// every session to one budget, standing in for the deployer caps.
+type fixedBudget struct {
+	seam.ChildSessions
+	max int
+}
 
-func (b fixedBudget) EffectiveMaxRetries(sessionstore.Session) int { return int(b) }
+func (b fixedBudget) EffectiveMaxRetries(seam.Session) int { return b.max }
 
 // TestResolveChildRetriesExhaustedUsesRetryBudget_spec_8_8 pins the
 // row-only §8.8 TaskResult error block on the await path to the
@@ -28,12 +32,12 @@ func (b fixedBudget) EffectiveMaxRetries(sessionstore.Session) int { return int(
 func TestResolveChildRetriesExhaustedUsesRetryBudget_spec_8_8(t *testing.T) {
 	cases := []struct {
 		name   string
-		budget RetryBudget
+		budget seam.ChildSessions
 		want   bool
 	}{
 		{"no resolver, default budget left", nil, false},
-		{"resolver cap spent", fixedBudget(1), true},
-		{"resolver cap left", fixedBudget(3), false},
+		{"resolver cap spent", fixedBudget{max: 1}, true},
+		{"resolver cap left", fixedBudget{max: 3}, false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

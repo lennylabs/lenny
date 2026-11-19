@@ -58,6 +58,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 const (
@@ -272,12 +273,13 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 		mcpSrv := mcp.NewServer()
 		mcptools.Register(mcpSrv, mcptools.Deps{
 			Callers:           toolops.Callers{},
-			SessionService:    ownerprincipal.SessionAccess{},
+			SessionService:    ownerprincipal.ToolAccess{},
+			SessionAccess:     ownerprincipal.ToolAccess{},
 			DevTenantFallback: true,
 			Store:             store,
-			Executor:          executor.NewEchoExecutor(),
+			Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 			Runtimes:          memRuntimes,
-			ChildMaterializer: srv,
+			ChildMaterializer: srv.ToolsSeam(),
 			Delegation: delegation.NewService(store, delegation.Options{
 				IDFunc:   denyLeakageIDCounter("sess-outage-child-"),
 				Runtimes: memRuntimes,

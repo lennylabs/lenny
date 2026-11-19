@@ -3,10 +3,13 @@
 package mcp
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // spec: §27.9; §16.4 — a credential literal carried as a
@@ -129,21 +132,35 @@ func TestPlaygroundEgressGate_spec_27_9_251(t *testing.T) {
 	if s.playgroundEgress(httptest.NewRequest("GET", "/mcp/v1/ws", nil)) {
 		t.Error("playgroundEgress with no extractor = true, want false")
 	}
-	// Wired extractor keyed on a header. nil revocations leaves the
-	// §27.5 watch off while the egress gate still reads origin.
-	s.SetWebSocketAuth(func(r *http.Request) (WSPrincipal, bool) {
-		return WSPrincipal{Tenant: "acme", JTI: "j1", Origin: r.Header.Get("X-Origin")}, true
-	}, nil, 0)
+	// Wired caller identity keyed on the request context. nil revocations
+	// leaves the watch off while the egress gate still reads origin.
+	s.SetWebSocketAuth(contextOriginCaller{}, nil, 0)
 
-	pgReq := httptest.NewRequest("GET", "/mcp/v1/ws", nil)
-	pgReq.Header.Set("X-Origin", playgroundOriginClaim)
+	pgReq := withOrigin(httptest.NewRequest("GET", "/mcp/v1/ws", nil), playgroundOriginClaim)
 	if !s.playgroundEgress(pgReq) {
 		t.Error("playgroundEgress for origin=playground = false, want true")
 	}
 
-	apiReq := httptest.NewRequest("GET", "/mcp/v1/ws", nil)
-	apiReq.Header.Set("X-Origin", "api")
+	apiReq := withOrigin(httptest.NewRequest("GET", "/mcp/v1/ws", nil), "api")
 	if s.playgroundEgress(apiReq) {
 		t.Error("playgroundEgress for origin=api = true, want false")
 	}
+}
+
+// testOriginKey carries the origin claim of a test request on its context.
+type testOriginKey struct{}
+
+// withOrigin returns r carrying origin on its context, as the API front's
+// authentication carries the caller.
+func withOrigin(r *http.Request, origin string) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), testOriginKey{}, origin))
+}
+
+// contextOriginCaller answers a caller of tenant acme with the bearer j1 and
+// the origin withOrigin stored on the context.
+type contextOriginCaller struct{}
+
+func (contextOriginCaller) RequestCaller(ctx context.Context) (seam.Caller, bool) {
+	origin, _ := ctx.Value(testOriginKey{}).(string)
+	return seam.Caller{TenantID: "acme", JTI: "j1", Origin: origin}, true
 }

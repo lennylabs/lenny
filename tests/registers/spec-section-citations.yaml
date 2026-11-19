@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1528
+      count: 1527
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -257,6 +257,8 @@ packages:
       count: 10
     - package: pkg/gateway/api/requestmetrics
       count: 6
+    - package: pkg/gateway/api/wsbearer
+      count: 4
     - package: pkg/gateway/audit/auditretention
       count: 12
     - package: pkg/gateway/audit/auditscope
@@ -448,7 +450,7 @@ packages:
     - package: pkg/gateway/llmproxy/semanticcache/redisstore
       count: 4
     - package: pkg/gateway/mcpfabric/delegation
-      count: 169
+      count: 168
     - package: pkg/gateway/mcpfabric/delegation/export
       count: 5
     - package: pkg/gateway/mcpfabric/delegation/exportwire
@@ -486,13 +488,13 @@ packages:
     - package: pkg/gateway/mcpfabric/elicitationfloor
       count: 8
     - package: pkg/gateway/mcpfabric/mcp
-      count: 126
+      count: 123
     - package: pkg/gateway/mcpfabric/mcpruntimes
       count: 18
     - package: pkg/gateway/mcpfabric/mcpschemagen
       count: 11
     - package: pkg/gateway/mcpfabric/mcptools
-      count: 680
+      count: 669
     - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
       count: 1
     - package: pkg/gateway/meteringproxy/llmproxy
@@ -674,7 +676,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3016
+      count: 3021
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock

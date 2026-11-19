@@ -15,18 +15,32 @@ package mcpcreate
 
 import (
 	"context"
+	"encoding/json"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
 // StartingCreator runs create_session through the session server's
 // create-and-start service. The owner, the admission gates, and the tenant
 // resolution are the server's own.
 type StartingCreator struct {
+	seam.ChildSessions
 	Srv *sessionserver.Server
 }
 
-// CreateSessionService creates and starts the session.
-func (c StartingCreator) CreateSessionService(ctx context.Context, tenantID string, req sessionserver.CreateSessionRequest) (sessionserver.CreateSessionResponse, *sessionserver.ServiceError) {
-	return c.Srv.CreateAndStartService(ctx, tenantID, req)
+// CreateSession decodes the create body and creates and starts the session.
+// A body that does not decode and a refusal of the service come back as
+// refusals, as the session core's create does.
+func (c StartingCreator) CreateSession(ctx context.Context, tenantID string, body json.RawMessage) (seam.CreatedSession, error) {
+	var req sessionserver.CreateSessionRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return seam.CreatedSession{}, &seam.Refusal{Code: "VALIDATION_ERROR", Message: "invalid arguments: " + err.Error()}
+	}
+	resp, svcErr := c.Srv.CreateAndStartService(ctx, tenantID, req)
+	if svcErr != nil {
+		return seam.CreatedSession{}, &seam.Refusal{Code: svcErr.Code, Message: svcErr.Message, Details: svcErr.Details}
+	}
+	return seam.CreatedSession{ID: resp.ID, State: state.State(resp.State), UploadToken: resp.UploadToken}, nil
 }

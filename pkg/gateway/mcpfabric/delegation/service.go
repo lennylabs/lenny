@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -196,16 +197,6 @@ type Auditor interface {
 	EmitDelegationEvent(ctx context.Context, eventType string, detail map[string]any)
 }
 
-// ExperimentRouter routes a delegation child afresh through the §10.7
-// ExperimentRouter when the parent's propagation mode is `independent`
-// (or the parent carries no experiment context). spec: §8.2
-// (independent propagation evaluates the child for experiment
-// eligibility independently). The session server's
-// `*Server.ApplyExperimentRouting` implements this interface.
-type ExperimentRouter interface {
-	ApplyExperimentRouting(ctx context.Context, row *sessionstore.Session) error
-}
-
 // ExportMaterializer runs the §8.7 gateway-side file-export pipeline for
 // one delegation: it pulls the declared `fileExport` specs from the
 // running parent pod, validates and optionally content-scans them,
@@ -247,16 +238,6 @@ type TreeGrantReader interface {
 	TreeTokenGrant(ctx context.Context, tenantID, rootSessionID string) (int64, error)
 }
 
-// BudgetKeysExpiredHandler runs the §8.3 BUDGET_KEYS_EXPIRED tree cleanup for
-// the tree rooted at rootSessionID. The session server implements it. The
-// delegation service calls it only on a reservation detection: a second
-// absent-sentinel result for a tree that already holds a delegated session.
-//
-// spec: §8.3 (BUDGET_KEYS_EXPIRED detection and tree cleanup)
-type BudgetKeysExpiredHandler interface {
-	HandleBudgetKeysExpired(ctx context.Context, tenantID, rootSessionID string)
-}
-
 // Service creates child sessions from a delegation request.
 type Service struct {
 	store            sessionstore.Store
@@ -265,7 +246,7 @@ type Service struct {
 	policies         delegationpolicystore.Store
 	metrics          MetricsRecorder
 	auditor          Auditor
-	experimentRouter ExperimentRouter
+	experimentRouter seam.ChildSessions
 	clock            func() time.Time
 	idFn             func() string
 	mode             cycle.Mode
@@ -312,7 +293,7 @@ type Service struct {
 	// keysExpired runs the §8.3 BUDGET_KEYS_EXPIRED tree cleanup on a
 	// reservation detection. Nil skips the cleanup; the delegation still
 	// fails with ErrBudgetKeysExpired.
-	keysExpired BudgetKeysExpiredHandler
+	keysExpired seam.TreeBudgetExpiry
 	// maxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap: the maximum count of live
 	// (non-terminal) delegated children a single user may hold across all
@@ -406,7 +387,7 @@ type Options struct {
 	// parent carries no experiment enrollment). Nil leaves the child
 	// at the propagated context only, which silently unenrolls the
 	// child under `independent`.
-	ExperimentRouter ExperimentRouter
+	ExperimentRouter seam.ChildSessions
 
 	// InterceptorWeakeningCooldown is the §8.3 cluster-scoped
 	// `gateway.interceptorWeakeningCooldownSeconds`. During the window
@@ -454,7 +435,7 @@ type Options struct {
 	// cleanup when a reservation detects the tree's budget keys expired.
 	// Nil skips the cleanup. spec: §8.3 (BUDGET_KEYS_EXPIRED detection and
 	// tree cleanup).
-	BudgetKeysExpired BudgetKeysExpiredHandler
+	BudgetKeysExpired seam.TreeBudgetExpiry
 
 	// MaxActiveChildrenPerUser is the §11.1 per-user
 	// active-delegated-children admission cap. Before reserving tree
@@ -1516,7 +1497,10 @@ func (s *Service) buildChildSession(ctx context.Context, tenantID string, req Re
 	// a fail-closed *variantIsolationError aborts the delegation
 	// rather than creating an unenrolled child.
 	if s.experimentRouter != nil && child.ExperimentContext == nil {
-		if err := s.experimentRouter.ApplyExperimentRouting(ctx, &child); err != nil {
+		rec := seamrow.Record(child)
+		err := s.experimentRouter.ApplyExperimentRouting(ctx, &rec)
+		child = seamrow.Row(rec)
+		if err != nil {
 			return sessionstore.Session{}, reserved, err
 		}
 	}

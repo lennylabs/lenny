@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // matrixErrorClasses is the §15.2.1 error-class list:
@@ -273,8 +274,8 @@ func newFencedConsistencyServers(t *testing.T, tenants tenantstore.Store, users 
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
-		Store:             store, SessionCreator: rest, SessionService: rest,
-		Executor: executor.NewEchoExecutor(), Users: users, Tenants: toolops.NewTenants(tenants, users, nil),
+		Store:             store, SessionCreator: rest.ToolsSeam(), SessionService: rest.ToolsSeam(), SessionAccess: rest.ToolsSeam(),
+		Executor: toolseam.Executor(executor.NewEchoExecutor()), Users: users, Tenants: toolops.NewTenants(tenants, users, nil),
 		IDFunc: func() string { return "sess_mcp_fence" }, TenantID: "acme",
 	})
 	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))

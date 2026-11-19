@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -248,12 +249,13 @@ func TestDelegatedChildMaterializationCredentialDelivery(t *testing.T) {
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Callers:           toolops.Callers{},
-		SessionService:    ownerprincipal.SessionAccess{},
+		SessionService:    ownerprincipal.ToolAccess{},
+		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
-		ChildMaterializer: srv,
+		ChildMaterializer: srv.ToolsSeam(),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   denyLeakageIDCounter("sess-mat-"),
 			Runtimes: runtimes,

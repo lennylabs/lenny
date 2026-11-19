@@ -16,6 +16,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
@@ -128,7 +129,7 @@ func TestAttachProjectsElicitationCreateAndToolApproval_spec_15_2_1362(t *testin
 		`{"tool_call_id":"tc-9","tool":"shell","args":{"cmd":"ls"}}`, streamTS())
 
 	srv := NewServer()
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme"), Now: streamTS})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -171,9 +172,9 @@ func TestAttachStreamsBacklogThenLive_spec_15_2(t *testing.T) {
 
 	srv := NewServer()
 	srv.SetAttach(AttachConfig{
-		Events:            bus,
-		TenantFromRequest: func(*http.Request) string { return "acme" },
-		Now:               streamTS,
+		Events:  bus,
+		Callers: tenantCaller("acme"),
+		Now:     streamTS,
 	})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
@@ -218,7 +219,7 @@ func TestAttachResumeFromSeqReplaysOnlyNewer_spec_15_2(t *testing.T) {
 		bus.Publish("acme", "sess-1", "response", `{}`, streamTS())
 	}
 	srv := NewServer()
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme"), Now: streamTS})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -239,7 +240,7 @@ func TestAttachLastEventIDResume_spec_15_2(t *testing.T) {
 		bus.Publish("acme", "sess-1", "response", `{}`, streamTS())
 	}
 	srv := NewServer()
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme"), Now: streamTS})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -272,7 +273,7 @@ func TestAttachGapDetected_spec_15_2(t *testing.T) {
 	}
 	// history now holds seq 3,4; oldest retained = 3.
 	srv := NewServer()
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme"), Now: streamTS})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -305,7 +306,7 @@ func TestAttachKeepalive_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	bus.Publish("acme", "sess-1", "response", `{}`, streamTS())
 	srv := NewServer()
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme"), Now: streamTS})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()
 
@@ -394,7 +395,7 @@ func TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15(t *test
 	}
 
 	srv := NewServer()
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }, Now: streamTS})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme"), Now: streamTS})
 	ts := httptest.NewUnstartedServer(srv.Handler())
 	ts.Config.ConnState = func(c net.Conn, state http.ConnState) {
 		if state == http.StateNew {
@@ -468,7 +469,7 @@ func TestAttachStreamClosesStalledSubscriberWithinBoundedTimeout_spec_15(t *test
 func TestAttachMissingSessionID_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	srv := NewServer()
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme")})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"` + AttachToolName + `","arguments":{}}}`
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
@@ -494,11 +495,10 @@ func TestAttachAuthorizeRejection_spec_15_2(t *testing.T) {
 	bus := sessionevents.NewBus(256)
 	srv := NewServer()
 	srv.SetAttach(AttachConfig{
-		Events:            bus,
-		TenantFromRequest: func(*http.Request) string { return "acme" },
-		Authorize: func(_ context.Context, _, _ string) error {
-			return NewToolError("RESOURCE_NOT_FOUND", "session not found", nil)
-		},
+		Events:   bus,
+		Callers:  tenantCaller("acme"),
+		Sessions: lookupSessionsInternal{err: seam.ErrSessionNotFound},
+		Access:   grantAccessInternal(true),
 	})
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(attachBody(t, "ghost", 0)))
 	req.Header.Set("Accept", "text/event-stream")
@@ -525,7 +525,7 @@ func TestAttachNonStreamFallsThroughToHandler_spec_15_2(t *testing.T) {
 			called = true
 			return ToolResult{Content: []ToolContent{{Type: "text", Text: `{"state":"running"}`}}}, nil
 		})
-	srv.SetAttach(AttachConfig{Events: bus, TenantFromRequest: func(*http.Request) string { return "acme" }})
+	srv.SetAttach(AttachConfig{Events: bus, Callers: tenantCaller("acme")})
 
 	req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(attachBody(t, "sess-1", 0)))
 	// No Accept: text/event-stream — the snapshot handler must run.

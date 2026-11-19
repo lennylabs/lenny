@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/exportwire"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // TestBlobSinkPersist_spec_8_2_4 asserts the §8.2-step-4 durable hand-off:
@@ -73,10 +73,55 @@ func TestBlobSinkUniquePartIDs(t *testing.T) {
 // parent with no pod binding on this replica fails with ErrParentUnbound
 // rather than silently returning an empty set.
 func TestPodExporterUnboundParent_spec_8_2_3(t *testing.T) {
-	// A fresh registry has no binding for any session.
-	exp := exportwire.NewPodExporter(podsession.NewRegistry())
+	// The session core reports no live binding for the parent.
+	exp := exportwire.NewPodExporter(fakePodFiles{err: seam.ErrNoLiveBinding})
 	_, err := exp.ExportPaths(context.Background(), "missing-parent", export.Spec{Source: "*"})
 	if !errors.Is(err, exportwire.ErrParentUnbound) {
 		t.Fatalf("err = %v, want ErrParentUnbound", err)
+	}
+}
+
+// fakePodFiles is the session core's pod file export, answering with fixed
+// files or a fixed error and recording the specifications it was asked for.
+type fakePodFiles struct {
+	files []seam.ExportedFile
+	err   error
+	got   *[]seam.ExportSpec
+}
+
+func (f fakePodFiles) ExportPaths(_ context.Context, _ string, specs []seam.ExportSpec) ([]seam.ExportedFile, error) {
+	if f.got != nil {
+		*f.got = specs
+	}
+	return f.files, f.err
+}
+
+// TestPodExporterReadsTheParentsFilesThroughTheSessionCore checks that the
+// exporter asks the session core for the one specification it was given
+// and returns each file the core read with its path, content, digest, and
+// size, and that a failure of the core other than a missing binding comes
+// back as it came.
+// spec: GWSEAM-ExportPaths
+func TestPodExporterReadsTheParentsFilesThroughTheSessionCore(t *testing.T) {
+	var got []seam.ExportSpec
+	exp := exportwire.NewPodExporter(fakePodFiles{
+		files: []seam.ExportedFile{{Path: "out/a.txt", Content: []byte("alpha"), SHA256: "h", Size: 5}},
+		got:   &got,
+	})
+	files, err := exp.ExportPaths(context.Background(), "parent", export.Spec{Source: "src/*", DestPrefix: "out/"})
+	if err != nil {
+		t.Fatalf("ExportPaths: %v", err)
+	}
+	if len(got) != 1 || got[0] != (seam.ExportSpec{Source: "src/*", DestPrefix: "out/"}) {
+		t.Fatalf("specs sent to the core = %+v", got)
+	}
+	want := export.ExportedFile{Path: "out/a.txt", Content: []byte("alpha"), SHA256: "h", Size: 5}
+	if len(files) != 1 || files[0].Path != want.Path || string(files[0].Content) != "alpha" || files[0].SHA256 != "h" || files[0].Size != 5 {
+		t.Fatalf("files = %+v, want %+v", files, want)
+	}
+
+	boom := errors.New("adapter unavailable")
+	if _, err := exportwire.NewPodExporter(fakePodFiles{err: boom}).ExportPaths(context.Background(), "parent", export.Spec{}); !errors.Is(err, boom) || errors.Is(err, exportwire.ErrParentUnbound) {
+		t.Fatalf("err = %v, want the core's error as it came", err)
 	}
 }

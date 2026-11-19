@@ -13,12 +13,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
+	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/messagerouting"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -136,17 +135,16 @@ func (m *mcpSend) deliver(ctx context.Context, entry sessionstore.Session) (mcp.
 func (m *mcpSend) route(ctx context.Context, row sessionstore.Session) (mcp.ToolResult, error) {
 	inputRequired := row.State == session.StateInputRequired ||
 		(m.deps.InputWaits != nil && len(m.deps.InputWaits.PendingForSession(row.ID)) > 0)
-	decision := messagerouting.Classify(row.State, inputRequired, false, messagerouting.SourceInterSession)
-	switch decision.Action {
-	case messagerouting.ActionRejectTerminal:
+	switch m.routeOf(row.State, inputRequired) {
+	case seam.RouteTerminal:
 		return mcp.ToolResult{}, mcp.NewToolError("TARGET_TERMINAL",
 			fmt.Sprintf("session %s is terminal (%s)", row.ID, row.State), nil)
-	case messagerouting.ActionBufferInbox:
+	case seam.RouteInbox:
 		return m.enqueueInbox(ctx, row)
-	case messagerouting.ActionBufferDLQ:
+	case seam.RouteHold:
 		res, _, err := m.hold(ctx, row)
 		return res, err
-	case messagerouting.ActionResumeAndDeliver:
+	case seam.RouteResume:
 		if err := m.admitResume(ctx, row); err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -156,22 +154,37 @@ func (m *mcpSend) route(ctx context.Context, row sessionstore.Session) (mcp.Tool
 	}
 }
 
+// routeOf classifies the message under the session core's delivery paths,
+// GWSEAM-RouteMessage, through whichever of the delivery operation sets is
+// wired; in production all three are the session core's one side of the
+// seam. With none wired the message is delivered now, which answers that no
+// executor is configured.
+func (m *mcpSend) routeOf(st session.State, inputRequired bool) seam.MessageRoute {
+	for _, d := range []seam.MessageDelivery{m.deps.Delivery, m.deps.Executor, m.deps.Messaging} {
+		if d != nil {
+			return d.RouteMessage(state.State(st), inputRequired)
+		}
+	}
+	return seam.RouteDeliver
+}
+
 // heldMessage builds the inbox or DLQ entry for the message. The entry holds
-// the session server's message payload, so the delivery of held messages
-// decodes an MCP-held message as it decodes a REST one; the §15.4 union
-// content keeps its wire form, or carries the MODIFY result.
+// the client API message envelope the REST message path holds, so the
+// delivery of held messages decodes an MCP-held message as it decodes a
+// REST one; the §15.4 union content keeps its wire form, or carries the
+// MODIFY result.
 // spec: §15.4 (MessageEnvelope.input), §7.2 (Message delivery routing —
 // seven paths, path 6)
-func (m *mcpSend) heldMessage() (sessioninbox.Message, error) {
-	payload, err := json.Marshal(sessionserver.MessagePayload{
+func (m *mcpSend) heldMessage() (seam.InboxMessage, error) {
+	payload, err := json.Marshal(heldMessagePayload{
 		ID:      m.messageID,
 		Role:    "user",
 		Content: m.content,
 	})
 	if err != nil {
-		return sessioninbox.Message{}, fmt.Errorf("marshal held message content: %w", err)
+		return seam.InboxMessage{}, fmt.Errorf("marshal held message content: %w", err)
 	}
-	return sessioninbox.Message{
+	return seam.InboxMessage{
 		MessageID:       m.messageID,
 		SenderSessionID: m.senderID,
 		Payload:         payload,
@@ -237,20 +250,20 @@ func (m *mcpSend) holdIn(ctx context.Context, row sessionstore.Session, undelive
 	if err != nil {
 		return mcp.ToolResult{}, false, err
 	}
-	var outcome sessionserver.HoldOutcome
-	var state session.State
+	var outcome seam.HoldOutcome
+	var st state.State
 	if undelivered {
-		outcome, state, err = m.deps.Delivery.HoldUndeliveredForward(ctx, row, msg)
+		outcome, st, err = m.deps.Delivery.HoldUndeliveredForward(ctx, seamrow.Record(row), msg)
 	} else {
-		outcome, state, err = m.deps.Delivery.HoldMessage(ctx, m.tenant, row.ID, msg)
+		outcome, st, err = m.deps.Delivery.HoldMessage(ctx, m.tenant, row.ID, msg)
 	}
 	switch {
 	case err != nil:
 		return m.receipt(session.DeliveryStatusError, session.DeliveryReasonInboxUnavailable), false, nil
-	case outcome == sessionserver.HoldTerminal:
+	case outcome == seam.HoldTerminal:
 		return mcp.ToolResult{}, false, mcp.NewToolError("TARGET_TERMINAL",
-			fmt.Sprintf("session %s is terminal (%s)", row.ID, state), nil)
-	case outcome == sessionserver.HoldDropped:
+			fmt.Sprintf("session %s is terminal (%s)", row.ID, st), nil)
+	case outcome == seam.HoldDropped:
 		return m.receipt(session.DeliveryStatusDropped, session.DeliveryReasonDLQOverflow), true, nil
 	default:
 		return m.receipt(session.DeliveryStatusQueued, ""), true, nil
@@ -275,13 +288,12 @@ func (m *mcpSend) admitResume(ctx context.Context, row sessionstore.Session) err
 	if m.deps.Delivery == nil {
 		return nil
 	}
-	cerr := m.deps.Delivery.AdmitResume(ctx, row)
+	cerr := m.deps.Delivery.AdmitResume(ctx, seamrow.Record(row))
 	if cerr == nil {
 		return nil
 	}
-	var refusal *sessionserver.CapRefusal
-	if errors.As(cerr, &refusal) {
-		return mcp.NewToolError("QUOTA_EXCEEDED", refusal.Message(), refusal.Details())
+	if te := capRefusalError(cerr); te != nil {
+		return te
 	}
 	return fmt.Errorf("resume admission check for session %s: %w", row.ID, cerr)
 }
@@ -303,7 +315,7 @@ func (m *mcpSend) holdAndResume(ctx context.Context, row sessionstore.Session) (
 	}
 	m.unlock()
 	row.State = session.StateSuspended
-	if rerr := m.deps.Delivery.ResumeSuspended(ctx, row); rerr != nil {
+	if rerr := m.deps.Delivery.ResumeSuspended(ctx, seamrow.Record(row)); rerr != nil {
 		slog.Info("mcptools: resume a suspended session a message is held for", "session_id", row.ID, "error", rerr)
 	}
 	return res, nil
@@ -320,7 +332,8 @@ func (m *mcpSend) holdAndResume(ctx context.Context, row sessionstore.Session) (
 // (Message delivery routing — seven paths, path 6)
 func (m *mcpSend) notCoordinating(ctx context.Context, row sessionstore.Session) (mcp.ToolResult, error) {
 	if m.inReplyTo != "" {
-		return mcp.ToolResult{}, sessionserver.RefuseToolForward(ctx, row)
+		idemmw.DoNotStore(ctx)
+		return mcp.ToolResult{}, mcp.RefusalError(seam.TargetNotReady(state.State(row.State)))
 	}
 	return m.holdUndelivered(ctx, row)
 }
@@ -337,14 +350,14 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 		return mcp.ToolResult{}, errors.New("no executor configured")
 	}
 	if m.deps.Delivery != nil {
-		if err := m.deps.Delivery.DeliverHeld(ctx, row); err != nil {
-			if errors.Is(err, executor.ErrSessionSealed) {
+		if err := m.deps.Delivery.DeliverHeld(ctx, seamrow.Record(row)); err != nil {
+			if errors.Is(err, seam.ErrSessionSealed) {
 				return m.rerouteSealed(ctx, row)
 			}
-			if errors.Is(err, executor.ErrNotBound) {
+			if errors.Is(err, seam.ErrNotBound) {
 				return m.rerouteUnbound(ctx, row, err)
 			}
-			if errors.Is(err, sessionserver.ErrHeldDeliveryPreempted) {
+			if errors.Is(err, seam.ErrHeldDeliveryPreempted) {
 				return m.notCoordinating(ctx, row)
 			}
 			return mcp.ToolResult{}, err
@@ -352,19 +365,17 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 	}
 	// spec: §15.4 / §13.5 mitigation 6 — the gateway stamps the delivered
 	// envelope's `from` from the authenticated sending session.
-	resp, err := m.deps.Executor.Send(ctx, row.ID, []executor.Message{
-		{Role: "user", Content: m.content.Text(), From: executor.SenderFrom(m.senderID)},
-	})
-	if errors.Is(err, executor.ErrSessionSealed) {
+	resp, err := m.deps.Executor.SendMessages(ctx, row.ID, []seam.Message{senderMessage(m.content.Text(), m.senderID)})
+	if errors.Is(err, seam.ErrSessionSealed) {
 		// A refusal after the runtime received the message delivered it;
 		// only an undelivered message routes again.
-		var sealed *executor.SealedError
+		var sealed *seam.SealedError
 		if errors.As(err, &sealed) && sealed.Delivered > 0 {
 			return m.deliveredResult(ctx, row, sealed.Response)
 		}
 		return m.rerouteSealed(ctx, row)
 	}
-	if errors.Is(err, executor.ErrNotBound) {
+	if errors.Is(err, seam.ErrNotBound) {
 		return m.rerouteUnbound(ctx, row, err)
 	}
 	if err != nil {
@@ -425,7 +436,7 @@ func (m *mcpSend) rerouteSealed(ctx context.Context, row sessionstore.Session) (
 
 // deliveredResult runs the §4.8 PostAgentOutput chain over the response and
 // answers the delivered receipt followed by the runtime's text output.
-func (m *mcpSend) deliveredResult(ctx context.Context, row sessionstore.Session, resp executor.Response) (mcp.ToolResult, error) {
+func (m *mcpSend) deliveredResult(ctx context.Context, row sessionstore.Session, resp seam.Response) (mcp.ToolResult, error) {
 	out, rej := applyPostAgentOutput(ctx, m.deps, m.tenant, row.ID, resp.Parts)
 	if rej != nil {
 		code := rej.Code
@@ -475,7 +486,7 @@ func deliverChildHeld(ctx context.Context, deps Deps, tenant, childID string) {
 	if child.State != session.StateRunning {
 		return
 	}
-	if err := deps.Delivery.DeliverHeld(ctx, child); err != nil {
+	if err := deps.Delivery.DeliverHeld(ctx, seamrow.Record(child)); err != nil {
 		slog.Warn("mcptools: deliver a delegated child's held messages", "session_id", childID, "error", err)
 	}
 }

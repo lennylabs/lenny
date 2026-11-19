@@ -9,8 +9,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
 // hookTerminal is a post-terminal hook fake standing in for the session
@@ -49,19 +51,23 @@ func (h *hookTerminal) BeginTerminal(id string) func() {
 	}
 }
 
-func (h *hookTerminal) AfterTerminalWrite(ctx context.Context, from session.State, sess sessionstore.Session,
-	signals func(context.Context, sessionstore.Session),
-) sessionstore.Session {
+// OnSessionTerminal is not called by the cancel tools.
+func (h *hookTerminal) OnSessionTerminal(context.Context, state.State, seam.Session) {}
+
+func (h *hookTerminal) AfterTerminalWrite(ctx context.Context, from state.State, s seam.Session,
+	signals func(context.Context, seam.Session),
+) seam.Session {
+	sess := seamrow.Row(s)
 	if signals != nil {
-		signals(ctx, sess)
+		signals(ctx, s)
 	}
 	if h.exec != nil {
 		_ = executor.ReleaseSession(ctx, h.exec, sess.ID, executor.DispositionCancelled)
 	}
 	h.mu.Lock()
-	h.calls = append(h.calls, hookCall{id: sess.ID, from: from, to: sess.State})
+	h.calls = append(h.calls, hookCall{id: sess.ID, from: session.State(from), to: sess.State})
 	h.mu.Unlock()
-	return sess
+	return s
 }
 
 // waitSettled waits until n hook calls ran and every claim ended.

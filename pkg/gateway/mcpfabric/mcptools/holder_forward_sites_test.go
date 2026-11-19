@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/alicebob/miniredis/v2"
@@ -27,7 +28,6 @@ import (
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
@@ -35,27 +35,51 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
 
-// fakeForwarder is a HolderForwarder that answers each call with a fixed
-// outcome, result, and error, and records the calls it received.
+// fakeForwarder is the session core's tool call forwarding, answering each
+// call with a fixed outcome, result, and error and recording the calls it
+// received. Its other operations answer as the session core does.
 type fakeForwarder struct {
 	mu      sync.Mutex
-	outcome sessionserver.ForwardOutcome
+	outcome seam.ForwardOutcome
 	result  mcp.ToolResult
 	err     error
 	calls   []forwardedCall
 }
 
 type forwardedCall struct {
-	kind sessionserver.ForwardKind
+	kind seam.ForwardKind
 	tool string
 	args string
 }
 
-func (f *fakeForwarder) ForwardToolCall(_ context.Context, _ sessionstore.Session, kind sessionserver.ForwardKind, tool string, args json.RawMessage) (mcp.ToolResult, sessionserver.ForwardOutcome, error) {
+func (f *fakeForwarder) ForwardToolCall(_ context.Context, _ seam.Session, kind seam.ForwardKind, tool string, args json.RawMessage) (seam.ToolResult, seam.ForwardOutcome, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls = append(f.calls, forwardedCall{kind: kind, tool: tool, args: string(args)})
-	return f.result, f.outcome, f.err
+	var err error
+	if te, ok := f.err.(*mcp.ToolError); ok {
+		err = &seam.Refusal{Code: te.Code, Message: te.Msg, Details: te.Details}
+	} else if f.err != nil {
+		err = f.err
+	}
+	var res seam.ToolResult
+	if f.result.Content != nil || f.result.IsError {
+		content, merr := json.Marshal(f.result.Content)
+		if merr != nil {
+			return seam.ToolResult{}, f.outcome, merr
+		}
+		res = seam.ToolResult{Content: content, IsError: f.result.IsError}
+	}
+	return res, f.outcome, err
+}
+
+// Forwarded reports whether the request arrived on the forward listener,
+// as the session core does.
+func (f *fakeForwarder) Forwarded(ctx context.Context) bool { return sessionserver.Forwarded(ctx) }
+
+// HoldsUndelivered answers as the session core does.
+func (f *fakeForwarder) HoldsUndelivered(s seam.Session, kind seam.ForwardKind) bool {
+	return (*sessionserver.Server)(nil).ToolsSeam().HoldsUndelivered(s, kind)
 }
 
 // countingExec counts the sends that reach the local executor.
@@ -101,20 +125,20 @@ func TestOffHolderSendMessageReturnsTheCoordinatorsAnswer_spec_29_3(t *testing.T
 		name     string
 		fwd      *fakeForwarder
 		args     string
-		wantKind sessionserver.ForwardKind
+		wantKind seam.ForwardKind
 		wantCode string
 	}{
 		{
-			"delivered", &fakeForwarder{outcome: sessionserver.ForwardDelivered, result: coordinatorAnswer},
-			`{"to":"sess_t","message":"hi","fromSessionId":"sess_ghost"}`, sessionserver.ForwardKindMessageNoReplyTo, "",
+			"delivered", &fakeForwarder{outcome: seam.ForwardDelivered, result: coordinatorAnswer},
+			`{"to":"sess_t","message":"hi","fromSessionId":"sess_ghost"}`, seam.ForwardMessageNoReplyTo, "",
 		},
 		{
-			"outcome unknown", &fakeForwarder{outcome: sessionserver.ForwardUnknown, err: refusal(session.StateRunning)},
-			`{"to":"sess_t","message":"hi"}`, sessionserver.ForwardKindMessageNoReplyTo, "TARGET_NOT_READY",
+			"outcome unknown", &fakeForwarder{outcome: seam.ForwardUnknown, err: refusal(session.StateRunning)},
+			`{"to":"sess_t","message":"hi"}`, seam.ForwardMessageNoReplyTo, "TARGET_NOT_READY",
 		},
 		{
-			"inReplyTo not delivered", &fakeForwarder{outcome: sessionserver.ForwardNotDelivered, err: refusal(session.StateInputRequired)},
-			`{"to":"sess_t","message":"hi","inReplyTo":"req-1"}`, sessionserver.ForwardKindMessage, "TARGET_NOT_READY",
+			"inReplyTo not delivered", &fakeForwarder{outcome: seam.ForwardNotDelivered, err: refusal(session.StateInputRequired)},
+			`{"to":"sess_t","message":"hi","inReplyTo":"req-1"}`, seam.ForwardMessage, "TARGET_NOT_READY",
 		},
 	}
 	for _, tc := range cases {
@@ -128,7 +152,7 @@ func TestOffHolderSendMessageReturnsTheCoordinatorsAnswer_spec_29_3(t *testing.T
 			mkSession(t, store, "sess_ghost", session.StateRunning, "")
 			resp := call(t, srv.Handler(), "lenny/send_message", tc.args)
 			if len(tc.fwd.calls) != 1 || tc.fwd.calls[0].tool != "lenny/send_message" || tc.fwd.calls[0].kind != tc.wantKind {
-				t.Fatalf("forward calls = %+v, want one lenny/send_message of kind %d", tc.fwd.calls, tc.wantKind)
+				t.Fatalf("forward calls = %+v, want one lenny/send_message of kind %q", tc.fwd.calls, tc.wantKind)
 			}
 			if tc.fwd.calls[0].args != tc.args {
 				t.Errorf("forwarded arguments = %s, want the client's %s", tc.fwd.calls[0].args, tc.args)
@@ -156,7 +180,7 @@ func TestOffHolderSendMessageReturnsTheCoordinatorsAnswer_spec_29_3(t *testing.T
 // spec: 29.3 (Interactive message send) Forwarding rule 6, 7.2 (Message
 // delivery routing — seven paths, path 6)
 func TestUndeliveredSendMessageIsCheckedThenHeld_spec_29_3(t *testing.T) {
-	fwd := &fakeForwarder{outcome: sessionserver.ForwardNotDelivered}
+	fwd := &fakeForwarder{outcome: seam.ForwardNotDelivered}
 	exec := &countingExec{Executor: executor.NewEchoExecutor()}
 	srv, store, _, _, del := newMCPRoutingDeliveryWith(t, exec, func(d *mcptools.Deps) { d.HolderForward = fwd })
 	mkSession(t, store, "sess_parent", session.StateRunning, "")
@@ -185,7 +209,7 @@ func TestUndeliveredSendMessageIsCheckedThenHeld_spec_29_3(t *testing.T) {
 //
 // spec: 29.3 (Interactive message send) Forwarding rule 1
 func TestLocalForwardOutcomeRunsTheLocalSendPath_spec_29_3(t *testing.T) {
-	fwd := &fakeForwarder{outcome: sessionserver.ForwardLocal}
+	fwd := &fakeForwarder{outcome: seam.ForwardLocal}
 	exec := &countingExec{Executor: executor.NewEchoExecutor()}
 	srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, exec, func(d *mcptools.Deps) { d.HolderForward = fwd })
 	mkSession(t, store, "sess_t", session.StateRunning, "")
@@ -233,14 +257,14 @@ func TestForwardedSendMessageSkipsTheSenderLimits_spec_29_3(t *testing.T) {
 func TestOffHolderCancelSessionReturnsTheForwardAnswer_spec_29_3(t *testing.T) {
 	for _, reason := range []string{"", "playground_client_closed"} {
 		t.Run("reason "+reason, func(t *testing.T) {
-			fwd := &fakeForwarder{outcome: sessionserver.ForwardNotDelivered, err: refusal(session.StateRunning)}
+			fwd := &fakeForwarder{outcome: seam.ForwardNotDelivered, err: refusal(session.StateRunning)}
 			srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd })
 			mkSession(t, store, "sess_t", session.StateRunning, "")
 			args := `{"sessionId":"sess_t","reason":"` + reason + `"}`
 			if code := toolErrorCode(t, call(t, srv.Handler(), "lenny/cancel_session", args)); code != "TARGET_NOT_READY" {
 				t.Fatalf("code = %q, want TARGET_NOT_READY", code)
 			}
-			if len(fwd.calls) != 1 || fwd.calls[0].kind != sessionserver.ForwardKindTerminate || fwd.calls[0].tool != "lenny/cancel_session" {
+			if len(fwd.calls) != 1 || fwd.calls[0].kind != seam.ForwardTerminate || fwd.calls[0].tool != "lenny/cancel_session" {
 				t.Errorf("forward calls = %+v, want one lenny/cancel_session terminate", fwd.calls)
 			}
 			row, _ := store.Get(context.Background(), "acme", "sess_t")
@@ -250,7 +274,7 @@ func TestOffHolderCancelSessionReturnsTheForwardAnswer_spec_29_3(t *testing.T) {
 		})
 	}
 	t.Run("delivered", func(t *testing.T) {
-		fwd := &fakeForwarder{outcome: sessionserver.ForwardDelivered, result: mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: `{"sessionId":"sess_t","state":"cancelled"}`}}}}
+		fwd := &fakeForwarder{outcome: seam.ForwardDelivered, result: mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: `{"sessionId":"sess_t","state":"cancelled"}`}}}}
 		srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd })
 		mkSession(t, store, "sess_t", session.StateRunning, "")
 		resp := call(t, srv.Handler(), "lenny/cancel_session", `{"sessionId":"sess_t"}`)
@@ -263,7 +287,7 @@ func TestOffHolderCancelSessionReturnsTheForwardAnswer_spec_29_3(t *testing.T) {
 		}
 	})
 	t.Run("terminal row refused before the forward", func(t *testing.T) {
-		fwd := &fakeForwarder{outcome: sessionserver.ForwardDelivered}
+		fwd := &fakeForwarder{outcome: seam.ForwardDelivered}
 		srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd })
 		mkSession(t, store, "sess_t", session.StateCompleted, "")
 		_ = call(t, srv.Handler(), "lenny/cancel_session", `{"sessionId":"sess_t"}`)
@@ -391,7 +415,7 @@ func TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5
 	f := newForwardMaterial(t)
 	nonHolder := func(t *testing.T) string {
 		third, _ := f.forwarder(t, "gw-c.00@127.0.0.1:1")
-		coord, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = third })
+		coord, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = third.ToolsSeam() })
 		mkSession(t, store, "sess_t", session.StateRunning, "")
 		return f.serve(t, sessionserver.NewHolderForwardHandler(coord.Handler(), devAuth, nil))
 	}
@@ -406,7 +430,7 @@ func TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5
 	for _, target := range targets {
 		t.Run(target.name, func(t *testing.T) {
 			fwd, leases := f.forwarder(t, "gw-b.00@"+target.addr(t))
-			srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd })
+			srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd.ToolsSeam() })
 			mkSession(t, store, "sess_t", session.StateRunning, "")
 			cache := idemmw.NewMemoryStore()
 			h := authmw.Wrap(idemmw.Wrap(srv.Handler(), cache, idemmw.Options{}), devAuth)
