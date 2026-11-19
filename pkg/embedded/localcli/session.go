@@ -249,16 +249,20 @@ func mintEmbeddedBearer() (string, error) {
 	return signer.Issue(devauth.DefaultTokenTTL)
 }
 
-// cmdSessionNew implements `lenny session new` per §24.17. With
-// no `--workspace`/`--file` it routes through the §15.2 MCP
-// lenny/create_session tool. With `--workspace <dir>` or `--file <path>`
-// it runs the §26.2 staging flow: create over REST, tar the
-// workspace honoring `.lennyignore`/`.gitignore`, upload it, bind the
-// resulting `uploadArchive` plan at finalize, then start. A positional
-// argument is delivered as the session's opening prompt. When `--attach`
-// is set (the §24.17 default in an interactive TTY) it then opens
-// the §15.1 event stream and renders output, elicitation prompts, and
-// lifecycle transitions inline until the session terminates.
+// cmdSessionNew implements `lenny session new` per §24.17. It creates
+// and starts the session through createStartedSession, so the session is
+// running before anything is sent to it, then delivers the positional
+// arguments as the session's opening prompt. When the session cannot be
+// started it reports the error and sends no prompt. When `--attach` is
+// set (the §24.17 default in an interactive TTY) it then opens the §15.1
+// event stream and renders output, elicitation prompts, and lifecycle
+// transitions inline until the session terminates.
+//
+// A prompt sent to a session that is still in created is refused with
+// TARGET_NOT_READY, which is how the command failed before it started the
+// session on the path without `--workspace` (issue CLIINST-I1).
+//
+// spec: §24.17 (Session Operations)
 func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer) int {
 	f, err := parseSessionFlags(args)
 	if err != nil {
@@ -276,23 +280,10 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 
 	prompt := strings.TrimSpace(strings.Join(f.pos, " "))
 
-	var sessionID string
-	if f.workspace != "" || len(f.files) > 0 {
-		// spec: §26.2 — stage the local workspace into the
-		// session before it starts.
-		id, werr := createSessionWithWorkspace(ctx, client, f, stderr)
-		if werr != nil {
-			fmt.Fprintf(stderr, "lenny session new: %v\n", werr)
-			return 1
-		}
-		sessionID = id
-	} else {
-		created, cerr := client.MCP().CreateSession(ctx, f.runtime)
-		if cerr != nil {
-			fmt.Fprintf(stderr, "lenny session new: %v\n", cerr)
-			return 1
-		}
-		sessionID = created.SessionID
+	sessionID, err := createStartedSession(ctx, client, f, stderr)
+	if err != nil {
+		fmt.Fprintf(stderr, "lenny session new: %v\n", err)
+		return 1
 	}
 	if sessionID == "" {
 		fmt.Fprintln(stderr, "lenny session new: gateway returned no session id")
@@ -319,6 +310,32 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return streamSession(ctx, client, sessionID, stdout, stderr)
 	}
 	return 0
+}
+
+// createStartedSession creates the session `lenny session new` names and
+// brings it to running, and returns its id. With `--workspace` or
+// `--file` it runs the REST staging flow of createSessionWithWorkspace,
+// which ends with start. Otherwise it calls the MCP tool
+// lenny/create_and_start_session, which creates and starts the session
+// in one call. lenny/create_session would leave the session in created,
+// and no `lenny session` verb starts a created session, so a prompt sent
+// to it would be refused.
+//
+// The one-call tool keeps the path on MCP and needs no upload token on
+// the client, and a failure or an interrupt cannot leave behind a
+// session that was created but never started, as a sequence of create,
+// finalize, and start calls could.
+//
+// spec: §24.17 (Session Operations)
+func createStartedSession(ctx context.Context, client *lenny.Client, f sessionFlags, stderr io.Writer) (string, error) {
+	if f.workspace != "" || len(f.files) > 0 {
+		return createSessionWithWorkspace(ctx, client, f, stderr)
+	}
+	started, err := client.MCP().CreateAndStartSession(ctx, f.runtime)
+	if err != nil {
+		return "", fmt.Errorf("create and start session: %w", err)
+	}
+	return started.SessionID, nil
 }
 
 // createSessionWithWorkspace runs the §26.2 workspace-staging

@@ -333,6 +333,46 @@ func (m *MCPClient) CreateSession(ctx context.Context, runtimeRef string) (*MCPC
 	return &out, nil
 }
 
+// MCPCreateAndStartSessionResult is the decoded result of the
+// lenny/create_and_start_session MCP tool. The gateway answers the tool
+// with the body of the REST call it runs, POST /v1/sessions/start, so
+// the session identifier is in the `id` field rather than the
+// `sessionId` field that lenny/create_session answers with.
+type MCPCreateAndStartSessionResult struct {
+	// SessionID is the identifier of the created and started session.
+	SessionID string `json:"id"`
+
+	// State is the session state the gateway reports, running on
+	// success.
+	State string `json:"state"`
+}
+
+// CreateAndStartSession invokes the lenny/create_and_start_session MCP
+// tool, which creates a session against runtimeRef and starts it in one
+// call, so the session is running when the call returns and a message
+// sent to it reaches the runtime. lenny/create_session, by contrast,
+// leaves the session in created until it is finalized and started.
+//
+// The tools/call request is sent once and is not retried: a retry after
+// a transport failure could create a second session, and the failure
+// does not tell the caller whether the first one was created.
+//
+// spec: §15.2 (MCP API)
+func (m *MCPClient) CreateAndStartSession(ctx context.Context, runtimeRef string) (*MCPCreateAndStartSessionResult, error) {
+	res, err := m.CallTool(ctx, "lenny/create_and_start_session", map[string]any{"runtimeRef": runtimeRef})
+	if err != nil {
+		return nil, err
+	}
+	if res.IsError {
+		return nil, fmt.Errorf("lenny: lenny/create_and_start_session reported a failure: %s", res.Text())
+	}
+	var out MCPCreateAndStartSessionResult
+	if err := json.Unmarshal([]byte(res.Text()), &out); err != nil {
+		return nil, fmt.Errorf("lenny: decode lenny/create_and_start_session result: %w", err)
+	}
+	return &out, nil
+}
+
 // SendMessage invokes the §15.2 lenny/send_message MCP tool, delivering
 // a message to the session and returning the agent's text reply. It is
 // the MCP counterpart of a §15.1 send-message REST call. The wire

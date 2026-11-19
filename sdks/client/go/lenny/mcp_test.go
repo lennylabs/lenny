@@ -90,6 +90,18 @@ func handleStubToolCall(w http.ResponseWriter, req mcpRPCEnvelope) {
 			return
 		}
 		writeRPC(w, req.ID, toolResultMap(`{"sessionId":"sess_mcp_1","state":"running"}`, false), nil)
+	case "lenny/create_and_start_session":
+		// The gateway answers with the REST POST /v1/sessions/start body,
+		// which carries the session identifier as `id`.
+		var args struct {
+			RuntimeRef string `json:"runtimeRef"`
+		}
+		_ = json.Unmarshal(params.Arguments, &args)
+		if args.RuntimeRef == "" {
+			writeRPC(w, req.ID, toolResultMap("runtimeRef is required", true), nil)
+			return
+		}
+		writeRPC(w, req.ID, toolResultMap(`{"id":"sess_mcp_started","tenantId":"acme","runtimeRef":"`+args.RuntimeRef+`","state":"running","uploadToken":"up-tok"}`, false), nil)
 	case "lenny/send_message":
 		// §8.5 wire contract: the tool arguments are `to`
 		// (target session id) and `message` (content). F-8.5.16 renamed
