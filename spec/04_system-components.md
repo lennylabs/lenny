@@ -13,7 +13,7 @@
 - `pkg/events/{emitter,types}.go` — `EventEmitter` interface and the shared event-type vocabulary. Every subsystem that emits operational events depends on this neutral package.
 - `pkg/events/eventbuffer/buffer.go` — the gateway-side in-memory ring buffer.
 - `pkg/gateway/opsendpoints/health/{service,runbook_links}.go` — the gateway health service and its runbook link table.
-- `pkg/recommendations/service.go` — gateway-side capacity recommendations; defines the `MetricReader` interface.
+- `pkg/recommendations/{service,metricreader}.go` — gateway-side capacity recommendations; defines the `MetricReader` interface.
 - `pkg/ops/gateway/{client,discovery}.go` — `GatewayClient` plus headless-Service replica discovery.
 - `pkg/ops/metrics/source.go` — Prometheus-with-fan-out-fallback `MetricSource` implementation and a Prometheus-backed `MetricReader`.
 - `pkg/ops/events/service.go` — event stream service (SSE, polling, webhooks).
