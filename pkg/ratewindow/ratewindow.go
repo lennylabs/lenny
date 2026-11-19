@@ -32,9 +32,9 @@ func New() *Memory {
 	return &Memory{counts: map[string]int{}}
 }
 
-// Incr records one request against key's current one-minute window and
-// returns the window's running count (1 for the first request in a fresh
-// window). It never fails.
+// Incr counts one request under key in the current minute and returns the
+// count so far, which is 1 for the first request of a minute. It never
+// fails.
 func (m *Memory) Incr(_ context.Context, key string, now time.Time) (int, error) {
 	minute := now.Unix() / 60
 	m.mu.Lock()

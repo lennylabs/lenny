@@ -25,10 +25,9 @@ func (e *seamMatched) Error() string { return e.err.Error() }
 func (e *seamMatched) Unwrap() []error { return []error{e.err, e.sentinel} }
 
 // childCredentialError adds to a delegated child's materialization failure
-// the seam sentinel of its credential cause: a pool with no assignable
-// credential, a user with no registered credential, and a Token Service
-// that could not mint the lease. Any other error, nil included, is
-// returned unchanged.
+// the seam sentinel of its credential cause: credrouter's exhausted pool and
+// missing user credential, and credassign's Token Service outage. Any other
+// error, nil included, is returned unchanged.
 // spec: GWSEAM-MaterializeChild
 func childCredentialError(err error) error {
 	var sentinel error

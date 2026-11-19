@@ -29,8 +29,8 @@ func NewRateCounter(counter ratelimit.Counter) RateCounter {
 	return RateCounter{counter: counter}
 }
 
-// IncrementRate records one request against key's current one-minute
-// window and returns the window's running count.
+// IncrementRate counts one request under key in the counter's minute
+// window and returns the count so far.
 // spec: GWSEAM-IncrementRate
 func (r RateCounter) IncrementRate(ctx context.Context, key string, now time.Time) (int, error) {
 	return r.counter.Incr(ctx, key, now)

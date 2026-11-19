@@ -9,11 +9,9 @@ import (
 )
 
 // The interfaces below are served to the platform tools seam by the session
-// core, and CallerIdentity by the API front: the confined packages the
-// seam's tools read (the interceptor chain, the caller check, the VCS
-// credential pools, the tenant store, environment access, and the rate
-// limiter) stay with the part that holds them, and the seam reaches them
-// through these operations.
+// core, and CallerIdentity by the API front. The confined packages the
+// seam's tools read stay with the part that holds them, and the seam
+// reaches them through these operations.
 
 // CallerIdentity is served by the API front to the platform tools seam.
 type CallerIdentity interface {
@@ -258,9 +256,8 @@ func (e *VCSTokenError) Error() string { return e.Message }
 
 // RateCounter is served by the session core to the platform tools seam.
 type RateCounter interface {
-	// IncrementRate is GWSEAM-IncrementRate. It records one request against
-	// the key's current one-minute window and returns the window's running
-	// count.
+	// IncrementRate is GWSEAM-IncrementRate. It counts one request under
+	// the key in the counter's minute window and returns the count so far.
 	IncrementRate(ctx context.Context, key string, now time.Time) (int, error)
 }
 

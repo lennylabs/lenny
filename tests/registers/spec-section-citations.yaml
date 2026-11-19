@@ -448,7 +448,7 @@ packages:
     - package: pkg/gateway/llmproxy/semanticcache/redisstore
       count: 4
     - package: pkg/gateway/mcpfabric/delegation
-      count: 173
+      count: 167
     - package: pkg/gateway/mcpfabric/delegation/export
       count: 5
     - package: pkg/gateway/mcpfabric/delegation/exportwire
@@ -514,7 +514,7 @@ packages:
     - package: pkg/gateway/middleware/deprecation
       count: 5
     - package: pkg/gateway/middleware/environment
-      count: 1
+      count: 2
     - package: pkg/gateway/middleware/idempotency
       count: 49
     - package: pkg/gateway/middleware/ratelimit
@@ -881,6 +881,8 @@ packages:
       count: 27
     - package: pkg/quota
       count: 12
+    - package: pkg/ratewindow
+      count: 2
     - package: pkg/recommendations/rules
       count: 3
     - package: pkg/redisconn
