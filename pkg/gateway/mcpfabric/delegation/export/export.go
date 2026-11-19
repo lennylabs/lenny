@@ -3,7 +3,8 @@
 // Package export implements the §8.7 gateway-side delegation file-export
 // materialization orchestrator. It is the caller the §8.7 primitive
 // packages (pkg/gateway/delegation/fileexport validators,
-// pkg/gateway/interceptor.RunPreExportMaterialization scan,
+// PreExportMaterialization scan the session core runs through the seam
+// interface (GWSEAM-ScanExportFiles),
 // pkg/upload archive validators) were built for: it composes the
 // §8.2-step-3 parent-runtime export with the §8.7 validation, the
 // per-file content scan, the archive-validator inheritance for exported
@@ -27,7 +28,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -97,13 +98,16 @@ type ContentScan struct {
 	// than this is rejected with EXPORT_FILE_SCAN_SIZE_EXCEEDED before
 	// any interceptor call. Non-positive disables the per-file ceiling.
 	MaxFileSize int64
-	// Chain is the resolved contentPolicy.interceptorRef chain. Required
-	// when Enabled is true; a nil Chain with Enabled true is a
-	// configuration error surfaced by Materialize.
-	Chain *interceptor.Chain
-	// ScanCtx carries the §11.7 / §16.1 labels and the ExportScanObserver
-	// that emits the per-file audit events and metrics.
-	ScanCtx interceptor.ExportScanContext
+	// Scanner is the resolved contentPolicy.interceptorRef scan, which the
+	// session core runs with the observer that emits the per-file §11.7
+	// audit events and §16.1 metrics. Required when Enabled is true; a nil
+	// Scanner with Enabled true is a configuration error surfaced by
+	// Materialize.
+	Scanner seam.ExportScan
+	// PolicyName and Pool are the §11.7 policy_name and §16.1 pool labels
+	// of the scan's audit events and metrics.
+	PolicyName string
+	Pool       string
 }
 
 // Params is one delegation's resolved file-export request.
@@ -193,7 +197,7 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 	if m.exporter == nil || m.sink == nil {
 		return Result{}, fmt.Errorf("export: materializer requires a parent exporter and a sink")
 	}
-	if p.Scan.Enabled && p.Scan.Chain == nil {
+	if p.Scan.Enabled && p.Scan.Scanner == nil {
 		// spec: §8.7 — scanExportedFiles:true presupposes a resolvable
 		// contentPolicy.interceptorRef. A true flag with no chain is a
 		// fail-closed configuration error rather than a silent skip.
@@ -246,14 +250,18 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 	// scanned once (its surviving content). RunPreExportMaterialization
 	// applies MODIFY rewrites and fails on the first REJECT.
 	if p.Scan.Enabled {
-		scanIn := make([]interceptor.ExportFile, 0, len(order))
+		scanIn := make([]seam.ExportFile, 0, len(order))
 		for _, pth := range order {
 			f := byPath[pth]
-			scanIn = append(scanIn, interceptor.ExportFile{Path: pth, Content: f.Content})
+			scanIn = append(scanIn, seam.ExportFile{Path: pth, Content: f.Content})
 		}
-		scanned, err := interceptor.RunPreExportMaterialization(
-			ctx, p.Scan.Chain, p.Scan.ScanCtx, p.TenantID, p.ChildSessionID, p.Scan.MaxFileSize, scanIn...,
-		)
+		scanned, err := p.Scan.Scanner.ScanExportFiles(ctx, seam.ExportScanTarget{
+			TenantID:    p.TenantID,
+			SessionID:   p.ChildSessionID,
+			PolicyName:  p.Scan.PolicyName,
+			Pool:        p.Scan.Pool,
+			MaxFileSize: p.Scan.MaxFileSize,
+		}, scanIn)
 		if err != nil {
 			return Result{}, err
 		}
@@ -261,7 +269,7 @@ func (m *Materializer) Materialize(ctx context.Context, p Params) (Result, error
 			f := byPath[sf.Path]
 			f.Content = sf.Content
 			f.Size = int64(len(sf.Content))
-			f.SHA256 = interceptor.ComputeExportFileHash(sf.Content)
+			f.SHA256 = sf.SHA256
 			byPath[sf.Path] = f
 		}
 	}

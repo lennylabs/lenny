@@ -13,8 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/messagerouting"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
@@ -38,13 +37,12 @@ func runPreMessageDelivery(ctx context.Context, deps Deps, tenant, sessionID str
 		return msg, false, nil
 	}
 	text := msg.Text()
-	req := interceptor.Request{
-		Phase:     interceptor.PhasePreMessageDelivery,
+	req := seam.InterceptRequest{
+		Phase:     seam.InterceptPreMessageDelivery,
 		SessionID: sessionID,
 		TenantID:  tenant,
 		Content:   []byte(text),
 	}
-	var res interceptor.Result
 	if deps.ContentPolicies != nil {
 		ref := ""
 		if maxSize, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, sessionID); ok {
@@ -61,18 +59,16 @@ func runPreMessageDelivery(ctx context.Context, deps Deps, tenant, sessionID str
 				}
 			}
 			if maxSize > 0 && len(text) > maxSize {
-				return msg, false, mcp.NewToolError(policy.CodeInputTooLarge,
+				return msg, false, mcp.NewToolError(seam.CodeInputTooLarge,
 					fmt.Sprintf("message body is %d bytes, exceeding the target session's contentPolicy.maxInputSize limit of %d bytes", len(text), maxSize),
-					map[string]any{"phase": string(interceptor.PhasePreMessageDelivery)})
+					map[string]any{"phase": string(seam.InterceptPreMessageDelivery)})
 			}
 		}
-		res = deps.Interceptors.RunPolicyScoped(ctx, req, ref)
-	} else {
-		res = deps.Interceptors.Run(ctx, req)
+		req.PolicyScoped, req.InterceptorRef = true, ref
 	}
+	res := deps.Interceptors.Intercept(ctx, req)
 	switch res.Action {
-	case interceptor.ActionReject:
-		recordChainRejection(ctx, deps, tenant, sessionID, interceptor.PhasePreMessageDelivery, res)
+	case seam.InterceptReject:
 		// spec: §15.2.1 rule 3 — a deliberate REJECT is a policy decision;
 		// a built-in code on the Result is surfaced verbatim.
 		code := "INTERCEPTOR_REJECTED"
@@ -81,7 +77,7 @@ func runPreMessageDelivery(ctx context.Context, deps Deps, tenant, sessionID str
 		}
 		return msg, false, mcp.NewToolError(code,
 			fmt.Sprintf("message delivery rejected by policy: %s", res.Reason), nil)
-	case interceptor.ActionModify:
+	case seam.InterceptModify:
 		return sessionrecord.MessageContentFromText(string(res.ModifiedContent)), true, nil
 	default:
 		return msg, false, nil

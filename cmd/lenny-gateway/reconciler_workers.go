@@ -43,7 +43,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 	maxDeadlockWaitSeconds := f.maxDeadlockWaitSeconds
 	quotaSyncIntervalSeconds := f.quotaSyncIntervalSeconds
 	// ----- §8.10 orphan-cleanup job -----
-	orphanSweeper := orphancleanup.New(w.sessions, tenantsLister{w.tenants}, orphancleanup.Options{
+	orphanSweeper := orphancleanup.New(w.sessions, toolTenants(w.tenants, w.users), orphancleanup.Options{
 		Archive: w.treeArchive,
 		Clock:   clockinject.Now,
 		// spec: §8.10 — operator-tunable cascade timeout. The
@@ -182,7 +182,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			// F-12.4.30.
 			Probe:           concernRedisProbe(w.concernRedis, storerouter.RedisConcernDelegation),
 			Counters:        delegationbudget.CounterAdapter{Reserver: w.treeBudgetConcrete},
-			Trees:           delegationbudget.SessionTreeLister{Sessions: w.sessions, Tenants: (tenantsLister{w.tenants}).ListTenants},
+			Trees:           delegationbudget.SessionTreeLister{Sessions: w.sessions, Tenants: toolTenants(w.tenants, w.users)},
 			Store:           delegationbudgetpg.New(w.pgPool),
 			Live:            delegationbudget.SessionEnumerator{Sessions: w.sessions},
 			Marker:          delegationbudget.SessionUnrecoverableMarker{Sessions: w.sessions},

@@ -31,6 +31,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -102,6 +103,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Now: clock,
 	})
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		SessionCreator:    restHandler,

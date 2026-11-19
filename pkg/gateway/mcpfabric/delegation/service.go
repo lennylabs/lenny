@@ -32,8 +32,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -220,20 +220,6 @@ type ExportMaterializer interface {
 	Materialize(ctx context.Context, p export.Params) (export.Result, error)
 }
 
-// ExportScanChainResolver resolves the §8.3 `contentPolicy.interceptorRef`
-// named RequestInterceptor into the PreExportMaterialization chain and the
-// §11.7 / §16.1 ExportScanContext used by the per-file content scan. It is
-// consulted only when the effective DelegationPolicy sets
-// `contentPolicy.scanExportedFiles: true`. A nil resolver makes a
-// scan-required export fail closed with ErrExportScanUnavailable: the
-// spec forbids honoring `scanExportedFiles` without a resolvable
-// interceptor (§8.3 rule 1).
-//
-// spec: §8.3.
-type ExportScanChainResolver interface {
-	ResolveExportScanChain(ctx context.Context, tenantID, interceptorRef string) (*interceptor.Chain, interceptor.ExportScanContext, error)
-}
-
 // TreeBudgetReserver atomically reserves a delegation's structural
 // budget axes (tree node count, tree memory footprint, per-parent
 // concurrent children, per-parent total descendants, tree token pool)
@@ -309,10 +295,11 @@ type Service struct {
 	// delegation declares `fileExport` entries. Nil makes such a
 	// delegation fail with ErrExportNotConfigured. F-8.7.1.
 	exportMat ExportMaterializer
-	// exportScanResolver resolves the §8.3 contentPolicy.interceptorRef
-	// chain for the optional per-file export content scan. Nil makes a
-	// `scanExportedFiles: true` policy fail closed. F-8.7.1.
-	exportScanResolver ExportScanChainResolver
+	// exportScans resolves, through the session core, the §8.3
+	// contentPolicy.interceptorRef scan for the optional per-file export
+	// content scan. Nil makes a `scanExportedFiles: true` policy fail
+	// closed. F-8.7.1.
+	exportScans seam.ExportScans
 	// treeBudget atomically reserves the §8.2 structural budget axes
 	// against the §12.4 Redis counters on every admission. Nil skips
 	// the Redis-backed gate (in-process minimal path). F-8.2.18 /
@@ -437,11 +424,15 @@ type Options struct {
 	// with no `fileExport` entries is unaffected. F-8.7.1.
 	ExportMaterializer ExportMaterializer
 
-	// ExportScanChainResolver, when set, resolves the §8.3
-	// contentPolicy.interceptorRef chain for the optional per-file
-	// export content scan. Nil makes a `scanExportedFiles: true` policy
-	// fail closed with ErrExportScanUnavailable. F-8.7.1.
-	ExportScanChainResolver ExportScanChainResolver
+	// ExportScans, when set, resolves through the session core the §8.3
+	// contentPolicy.interceptorRef scan for the optional per-file export
+	// content scan (GWSEAM-ResolveExportScan). It is consulted only when
+	// the effective DelegationPolicy sets `contentPolicy.scanExportedFiles:
+	// true`. Nil makes such a policy fail closed with
+	// ErrExportScanUnavailable: the spec forbids honoring
+	// `scanExportedFiles` without a resolvable interceptor (§8.3 rule 1).
+	// F-8.7.1.
+	ExportScans seam.ExportScans
 
 	// TreeBudgetReserver, when set, gates every admission on the §12.4
 	// Redis-backed delegation tree budget counters (maxTreeSize,
@@ -495,17 +486,14 @@ type Options struct {
 }
 
 // InterceptorCooldownResolver reports the §8.3 SEC-013 active fail-open
-// weakening cooldown for a named external interceptor. It is satisfied
-// by interceptorstore.CooldownResolver in production. The resolver is
-// the single source of truth read per invocation (§8.3 rule 1): the
-// service never snapshots the interceptor configuration into a lease.
-type InterceptorCooldownResolver interface {
-	// FailOpenCooldown returns the server-minted transition timestamp and
-	// the cooldown seconds that were in force at that transition for the
-	// named interceptor. ok is false when the interceptor is unknown or
-	// not currently weakened.
-	FailOpenCooldown(ctx context.Context, name string) (transitionTs time.Time, cooldownSeconds int, ok bool)
-}
+// weakening cooldown for a named external interceptor: the server-minted
+// transition timestamp and the cooldown seconds in force at that
+// transition, or ok false when the interceptor is unknown or not
+// currently weakened. The session core serves it from the interceptor
+// registry (GWSEAM-FailOpenCooldown). The resolver is the single source of
+// truth read per invocation (§8.3 rule 1): the service never snapshots
+// the interceptor configuration into a lease.
+type InterceptorCooldownResolver = seam.InterceptorCooldowns
 
 // NewService returns a delegation Service.
 func NewService(store sessionstore.Store, opts Options) *Service {
@@ -548,7 +536,7 @@ func NewService(store sessionstore.Store, opts Options) *Service {
 		interceptorWeakeningCooldown: cooldown,
 		interceptorCooldown:          opts.InterceptorCooldown,
 		exportMat:                    opts.ExportMaterializer,
-		exportScanResolver:           opts.ExportScanChainResolver,
+		exportScans:                  opts.ExportScans,
 		treeBudget:                   opts.TreeBudgetReserver,
 		treeGrants:                   opts.TreeGrants,
 		keysExpired:                  opts.BudgetKeysExpired,
@@ -1904,23 +1892,25 @@ func (s *Service) materializeExport(ctx context.Context, tenantID string, req Re
 	// resolvable interceptor the scan cannot run; fail closed rather than
 	// materialize unscanned files.
 	if havePol && pol.ContentPolicy.ScanExportedFiles {
-		if s.exportScanResolver == nil {
+		if s.exportScans == nil {
 			return nil, ErrExportScanUnavailable
 		}
-		chain, scanCtx, err := s.exportScanResolver.ResolveExportScanChain(ctx, tenantID, pol.ContentPolicy.InterceptorRef)
+		scanner, err := s.exportScans.ResolveExportScan(ctx, tenantID, pol.ContentPolicy.InterceptorRef)
+		if errors.Is(err, seam.ErrExportScanUnavailable) {
+			return nil, ErrExportScanUnavailable
+		}
 		if err != nil {
 			return nil, err
 		}
 		// spec: §11.7 / §16.1 — the policy_name and pool
 		// labels come from the per-delegation context the resolver does not
 		// see (it is keyed only on tenant + interceptorRef).
-		scanCtx.PolicyName = pol.Name
-		scanCtx.Pool = req.PoolRef
 		params.Scan = export.ContentScan{
 			Enabled:     true,
 			MaxFileSize: pol.ContentPolicy.MaxExportedFileSize,
-			Chain:       chain,
-			ScanCtx:     scanCtx,
+			Scanner:     scanner,
+			PolicyName:  pol.Name,
+			Pool:        req.PoolRef,
 		}
 	}
 	res, err := s.exportMat.Materialize(ctx, params)

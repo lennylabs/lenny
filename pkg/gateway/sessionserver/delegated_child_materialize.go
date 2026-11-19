@@ -65,9 +65,16 @@ func (e *DelegatedChildNotCreatedError) Error() string {
 // failure after a successful startOnPod it releases the bound pod and its
 // assigned credential lease via rollbackBinding before registerBinding runs,
 // mirroring the top-level create path's post-launch persist rollback, so no
-// pod, lease, or registry entry leaks past the failed persist.
+// pod, lease, or registry entry leaks past the failed persist. A credential
+// sentinel also matches its seam interface sentinel (childCredentialError).
 // spec: §8.2.
 func (s *Server) MaterializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error) {
+	st, err := s.materializeDelegatedChild(ctx, tenantID, childID)
+	return st, childCredentialError(err)
+}
+
+// materializeDelegatedChild is the body of MaterializeDelegatedChild.
+func (s *Server) materializeDelegatedChild(ctx context.Context, tenantID, childID string) (session.State, error) {
 	// spec: §5.2 (Slot assignment atomicity) — the launch bound starts before
 	// the primary read of the child's row, and the claim and the launch run
 	// under it, so a materialization that read the row created ends within

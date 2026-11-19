@@ -47,6 +47,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
@@ -78,6 +79,7 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 	store := memstore.New()
 	sessions := sessionserver.New(store, sessionserver.Options{})
 	mcptools.Register(srv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),

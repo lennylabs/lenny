@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -41,6 +42,7 @@ type waitConn struct {
 func newWaitConn(name string, store sessionstore.Store, ids *atomic.Int64) *waitConn {
 	c := &waitConn{name: name, reg: inputwait.NewRegistry(), srv: mcp.NewServer(), gen: inputwaitrecovery.NewGeneration()}
 	mcptools.Register(c.srv, mcptools.Deps{
+		Callers:             toolops.Callers{},
 		SessionService:      ownerprincipal.SessionAccess{},
 		DevTenantFallback:   true,
 		Store:               store,

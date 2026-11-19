@@ -11,6 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -185,7 +186,10 @@ func TestDelegateFromForeignRestrictedParentAnswersMissing_spec_10_2(t *testing.
 	}); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	f := newOwnershipFixtureWith(t, serverSessionService(t), func(d *mcptools.Deps) { d.Users = users })
+	f := newOwnershipFixtureWith(t, serverSessionService(t), func(d *mcptools.Deps) {
+		d.Users = users
+		d.Tenants = toolops.NewTenants(nil, users, nil)
+	})
 	args := `{"parentSessionId":"%s","target":"echo","task":{"input":[{"type":"text","inline":"x"}]}}`
 	foreign := f.dispatchAs(t, bobSubject, "lenny/delegate_task", strings.Replace(args, "%s", aliceSession, 1))
 	missing := f.dispatchAs(t, bobSubject, "lenny/delegate_task", strings.Replace(args, "%s", missingSession, 1))

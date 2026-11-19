@@ -38,6 +38,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
@@ -133,6 +134,7 @@ func Start(t testing.TB, opts Options) *Server {
 	var ids atomic.Int64
 	tools := mcp.NewServer()
 	mcptools.Register(tools, mcptools.Deps{
+		Callers: toolops.Callers{},
 		// spec: §10.2 (Session ownership) — the platform-tool path runs
 		// under the calling session's principal, whose subject is the
 		// session's owner, so the owner-granting double admits it.

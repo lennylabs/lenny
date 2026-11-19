@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -36,6 +37,7 @@ func newDelegateMCPWithUsers(t *testing.T, users userstore.Store) (*mcp.Server, 
 		Executor:          executor.NewEchoExecutor(),
 		Runtimes:          runtimes,
 		Users:             users,
+		Tenants:           toolops.NewTenants(nil, users, nil),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

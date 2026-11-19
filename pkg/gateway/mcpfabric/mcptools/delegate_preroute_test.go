@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -50,7 +51,7 @@ func newDelegateMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Serve
 		Store:             store,
 		Executor:          executor.NewEchoExecutor(),
 		Runtimes:          runtimes,
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
