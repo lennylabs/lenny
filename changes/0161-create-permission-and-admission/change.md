@@ -4,7 +4,7 @@ Status: `In progress`, revision 1, 2026-11-19.
 
 ## Problem
 
-A session can be created through four calls: REST `POST /v1/sessions` and `POST /v1/sessions/start`, the MCP tools `lenny/create_session` and `lenny/create_and_start_session`, and the implicit session of a built-in adapter request (the single-shot path). The specification requires each of them to run the same checks. Two gaps break that parity. Issue [CAPISES-I1](../../issues/CAPISES/CAPISES-I1-in-process-create-skips-permission-check.md) records the first and issue [CAPISES-I2](../../issues/CAPISES/CAPISES-I2-create-and-start-skips-drain-and-degraded-gates.md) the second.
+A session can be created through four calls: REST `POST /v1/sessions` and `POST /v1/sessions/start`, the MCP tools `lenny/create_session` and `lenny/create_and_start_session`, and the implicit session of a built-in adapter request (the single-shot path). The specification requires each of them to run the same checks. Two gaps break that parity. Issue [CAPISES-I1](../../issues/closed/CAPISES/CAPISES-I1-in-process-create-skips-permission-check.md) records the first and issue [CAPISES-I2](../../issues/closed/CAPISES/CAPISES-I2-create-and-start-skips-drain-and-degraded-gates.md) the second.
 
 **The create permission is skipped in process.** Evidence from the tree:
 

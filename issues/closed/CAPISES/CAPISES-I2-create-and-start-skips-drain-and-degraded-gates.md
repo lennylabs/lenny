@@ -1,9 +1,12 @@
 ---
 id: CAPISES-I2
-status: open
+status: closed
 kind: spec-defect
 severity: medium
 requirements: []
+change: 0161.S1
+closed: fixed
+closed-by: 0161.S1
 ---
 
 # `POST /v1/sessions/start` skips the pool-drain and dual-store degraded gates that `POST /v1/sessions` runs
