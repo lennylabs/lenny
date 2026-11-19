@@ -28,9 +28,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
+	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -244,10 +246,12 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 	// than newTestServer's, which sits behind the test owner-principal
 	// layer. The session server wraps its mux in the §10.2 tenant gate,
 	// which exposes the mux through Mux().
-	// The upload handler registers the upload and blob routes on the same
-	// mux, attached as the gateway attaches it.
+	// The upload handler registers the upload and blob routes, and the
+	// stream proxy the event and log stream routes, on the same mux,
+	// attached as the gateway attaches them.
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
 	uploadwire.Attach(t, srv, uploadhandler.Options{})
+	streamwire.Attach(t, srv, streamproxy.Options{})
 	sess := srv.Handler()
 	h := sess
 	if u, ok := h.(interface{ Mux() *http.ServeMux }); ok {
