@@ -542,6 +542,7 @@ func TestRuntimeSDKSessionStartedFollowsContextCreation_spec_28_5_3(t *testing.T
 //	by sessionId alone leaks the first context or serves the session from
 //	it.
 func TestRuntimeSDKOverlappingCreationsAreEachReleasedOnce_spec_28_5_3(t *testing.T) {
+	t.Skip("quarantined: the Go SDK case passes and fails on one commit (1 of 10 and 2 of 20 on main fd4ea4def); RTPSDK-I1, tests/flake-budget.yaml")
 	for _, sdk := range probeSDKs {
 		t.Run(sdk.name, func(t *testing.T) {
 			dir := t.TempDir()
