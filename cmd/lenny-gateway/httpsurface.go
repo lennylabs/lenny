@@ -354,9 +354,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// tools/call scoped to an environment (`?environment=<name>`) by that
 	// environment's mcpRuntimeFilters capability filter. F-10.6.2.
 	clientMux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(w.runtimes, nil).WithEnvironments(environments))
-	// The credential server belongs to the credentials subtree, which GW-R2
-	// confines and allows the API front none of, so the composition root
-	// mounts it on the REST mux itself (decision 65 of change 0117, settled by the owner on 2026-11-19).
+	// The credential server sits under pkg/credential, which GW-R2 confines
+	// with no allowance to the API front for this package, so the
+	// composition root mounts it on the REST mux itself (decisions 65 and 81
+	// of change 0117).
 	mux.Handle("/v1/credentials", credServer.Handler())
 	mux.Handle("/v1/credentials/", credServer.Handler())
 
