@@ -40,6 +40,19 @@ quarantined:
     issue: https://github.com/lennylabs/lenny/blob/main/issues/TOKX/TOKX-I1-impersonation-cross-replica-test-flaky-under-load.md
     eta: 2026-12-15
     root_cause: flaky-time
+  - test: TestRuntimeSDKOverlappingCreationsAreEachReleasedOnce_spec_28_5_3
+    package: tests/contract/sdks
+    owner: jafargas
+    reason: >-
+      The go subtest passes and fails on one commit of main (1 of 10 and 2 of
+      20 runs on fd4ea4def): when it asserts, the SDK has recorded the first
+      creation's release but not yet the second's. Either the test reads the
+      releases before the second asynchronous release lands, or the Go SDK
+      releases the second creation late or not at all.
+    quarantined_at: 2026-11-19
+    issue: https://github.com/lennylabs/lenny/blob/main/issues/RTPSDK/RTPSDK-I1-overlapping-creations-release-order-flaky.md
+    eta: 2026-12-15
+    root_cause: flaky-ordering
     notes: Quarantined at the owner's direction on 2026-11-17.
 
 # Schema for entries when populated:
