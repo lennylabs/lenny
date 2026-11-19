@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -278,7 +279,7 @@ func TestFailureFunnelRacesSameReplicaResume_spec_7_3(t *testing.T) {
 		}
 		f.seedSlot(t, id, pod, 2)
 		// spec: §10.2 (Session ownership) — the resumes run as the seeded rows' owner.
-		h := ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice)
+		h := ownerprincipal.Wrap(apifront.Handler(f.srv), ownerprincipal.Alice)
 
 		start := make(chan struct{})
 		var wg sync.WaitGroup

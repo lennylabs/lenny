@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
@@ -362,7 +363,10 @@ type gatewayWiringFields struct {
 	// apiRoutes is the API front's route table, through which every part
 	// registers its HTTP routes and from which the REST and forward
 	// listeners serve them.
-	apiRoutes         *routetable.Table
+	apiRoutes *routetable.Table
+	// apiPipeline is the API front's request pipeline of the session paths,
+	// which buildHTTPSurface mounts on the REST and forward listeners.
+	apiPipeline       *pipeline.Pipeline
 	kmsProbeLifecycle *tenantkms.Lifecycle
 	mtlsDenyProp      *mtlsdenylistprop.Propagator
 	podBinder         *podsession.Binder

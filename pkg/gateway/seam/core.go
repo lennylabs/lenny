@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -127,6 +128,14 @@ type CallingSessions interface {
 	// AttachCallingSession is GWSEAM-AttachCallingSession. It returns
 	// ErrSessionNotFound for an unknown calling session.
 	AttachCallingSession(ctx context.Context, sessionID string) (context.Context, error)
+}
+
+// Permissions is served by the session core to the API front: the
+// permission gate of the routes the request pipeline mounts.
+type Permissions interface {
+	// AuthorizePermission is GWSEAM-AuthorizePermission. It returns nil
+	// when the caller in ctx holds perm, and ErrForbidden when it does not.
+	AuthorizePermission(ctx context.Context, perm auth.Permission) error
 }
 
 // Revocations is served by the session core to the API front: the session

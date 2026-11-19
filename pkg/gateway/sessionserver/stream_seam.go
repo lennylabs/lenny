@@ -18,9 +18,10 @@ import (
 // StreamSeam is the session core's side of the seam operations the stream
 // proxy calls: the session lookup and authorization, the frames a reader
 // attaching after a coordinator handoff receives, and the request identity
-// operation, which the session server's request plumbing holds until the
-// API front holds it. The composition root hands it to the stream proxy
-// through the seam interfaces. The operations every seam calls run in
+// operation, which the test harnesses take from it while the composition
+// root hands the stream proxy the API front's pipeline.Identity. The
+// composition root hands it to the stream proxy through the seam
+// interfaces. The operations every seam calls run in
 // methods of Server that each seam's adapter shares.
 type StreamSeam struct {
 	s *Server

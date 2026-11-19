@@ -74,19 +74,19 @@ type Server struct {
 	store sessionstore.Store
 	clock func() time.Time
 	idFn  func() string
-	// serviceHandlerOnce/serviceHandler cache the routing handler the
-	// §15.2.1 rule-1 in-process service layer (ServiceCall) dispatches
-	// through, so the MCP tool surface reuses the exact REST routes and
-	// handlers rather than a parallel table that could drift. spec:
+	// serviceHandler is the routing handler the §15.2.1 rule-1 in-process
+	// service layer (ServiceCall) dispatches through, the API front's
+	// request pipeline of the client listener, so the MCP tool surface
+	// reuses the exact REST routes, checks, and handlers rather than a
+	// parallel table that could drift. SetServiceHandler sets it. spec:
 	// §15.2.1 rule 1. F-15.2.3.
-	serviceHandlerOnce sync.Once
-	serviceHandler     http.Handler
-	deriveAuditSink    DeriveAuditSink
-	uploadIssuer       *uploadtoken.Issuer
-	uploadVerifier     *uploadtoken.Verifier
-	blobs              blobstore.Store
-	executor           executor.Executor
-	transcripts        transcriptstore.Store
+	serviceHandler  http.Handler
+	deriveAuditSink DeriveAuditSink
+	uploadIssuer    *uploadtoken.Issuer
+	uploadVerifier  *uploadtoken.Verifier
+	blobs           blobstore.Store
+	executor        executor.Executor
+	transcripts     transcriptstore.Store
 	// artifacts is the §12.5 artifact catalog. The §8.10 archive
 	// materialization reads it (ListBySession) to populate the §8.8
 	// TaskResult.output.artifactRefs for a completed child. Nil when the
@@ -649,13 +649,6 @@ type Server struct {
 	// upload handler is attached. SetUploadWindows sets it before the
 	// server serves.
 	uploads seam.UploadWindows
-
-	// routeTable is the API front's route table, from which Handler and
-	// ForwardHandler read the routes other parts registered for the request
-	// pipeline the session server holds until the API front holds it. Nil
-	// when no part registers routes. SetRouteTable sets it before the
-	// server serves.
-	routeTable seam.RouteTable
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active

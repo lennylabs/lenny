@@ -43,6 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
@@ -284,7 +285,7 @@ func newAdmissionFixture(t *testing.T) *admissionFixture {
 	})
 	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 	f := &admissionFixture{
-		handler: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), store: store, cluster: cluster,
+		handler: ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice), store: store, cluster: cluster,
 		assigner: assigner, rpcs: rpcs, bus: bus,
 	}
 	createBody, _ := json.Marshal(sessionserver.CreateSessionRequest{RuntimeRef: "echo"})

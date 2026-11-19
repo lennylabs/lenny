@@ -27,6 +27,7 @@ import (
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker"
 	correlationmw "github.com/lennylabs/lenny/pkg/gateway/api/correlation"
 	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/api/deprecation"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
 	recovermw "github.com/lennylabs/lenny/pkg/gateway/api/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
@@ -37,7 +38,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
@@ -126,13 +126,16 @@ func (w *gatewayWiring) buildHTTPSurface(
 	mux := front.Handler(seam.ListenerClient)
 	clientMux := routetable.HandlerMux{Routes: front, Listener: seam.ListenerClient}
 	internalMux := routetable.HandlerMux{Routes: front, Listener: seam.ListenerInternal}
-	// The session core's paths on the client, internal, and forward
-	// listeners. Its handlers mount the routes the other parts registered
-	// behind the session routes' access checks, so every part's routes
-	// registered in buildSessionServer, before this call.
+	// The session core's routes on the client, internal, and forward
+	// listeners, each with its access check, and then the API front's
+	// request pipeline, which mounts every route with a tenant, session,
+	// or permission check, and every route under the session paths, behind
+	// its check on the session paths. Every part's routes registered in
+	// buildSessionServer, before this call.
 	if err := sessionSrv.RegisterRoutes(front); err != nil {
 		log.Fatalf("lenny-gateway: session routes: %v", err)
 	}
+	w.apiPipeline = mountRequestPipeline(front, sessionSrv)
 	if err := w.adminRouter.RegisterRoutes(front); err != nil {
 		log.Fatalf("lenny-gateway: admin routes: %v", err)
 	}
@@ -290,7 +293,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// /v1/oauth surface is unmounted; callers receive 404 from the
 	// gateway. spec: F-4.3.12. The proxy is a token package GW-R2 confines
 	// and allows the API front none of, so the composition root mounts it
-	// on the REST mux itself (open decision 65 of change 0117).
+	// on the REST mux itself (decision 65 of change 0117, settled by the owner on 2026-11-19).
 	if *tokenServiceHTTPURL != "" {
 		proxy, err := tokensvcproxy.New(*tokenServiceHTTPURL)
 		if err != nil {
@@ -353,7 +356,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	clientMux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(w.runtimes, nil).WithEnvironments(environments))
 	// The credential server belongs to the credentials subtree, which GW-R2
 	// confines and allows the API front none of, so the composition root
-	// mounts it on the REST mux itself (open decision 65 of change 0117).
+	// mounts it on the REST mux itself (decision 65 of change 0117, settled by the owner on 2026-11-19).
 	mux.Handle("/v1/credentials", credServer.Handler())
 	mux.Handle("/v1/credentials/", credServer.Handler())
 
@@ -466,7 +469,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// request already carries, and the revocation is checked through
 		// GWSEAM-IsBearerRevoked; non-playground bearers (no origin claim)
 		// are not watched. F-27.5.4.
-		mcpSrv.SetWebSocketAuth(toolops.Callers{}, pg, 0)
+		mcpSrv.SetWebSocketAuth(pipeline.Callers{}, pg, 0)
 		// §11.4 / §27.6 — drive the §11.4 user-invalidation
 		// fan-out into the playground revocation primitive so an OIDC
 		// principal invalidation revokes the user's playground sessions.

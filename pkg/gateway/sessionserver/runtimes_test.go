@@ -18,8 +18,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // spec: §9.1 GET /v1/runtimes runtime discovery.
@@ -494,7 +496,7 @@ func TestInternalRuntimeMetaServesInternalEntry(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/spec", nil)
 	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	apifront.Listener(srv, seam.ListenerClient).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK || rr.Body.String() != "internal: yes" {
 		t.Fatalf("internal meta: status %d body %q", rr.Code, rr.Body.String())
 	}
@@ -503,7 +505,7 @@ func TestInternalRuntimeMetaServesInternalEntry(t *testing.T) {
 	// endpoint does not enumerate.
 	anon := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/spec", nil)
 	rrAnon := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rrAnon, anon)
+	apifront.Listener(srv, seam.ListenerClient).ServeHTTP(rrAnon, anon)
 	if rrAnon.Code != http.StatusNotFound {
 		t.Errorf("unauthenticated internal meta: status %d, want 404", rrAnon.Code)
 	}
@@ -512,7 +514,7 @@ func TestInternalRuntimeMetaServesInternalEntry(t *testing.T) {
 	pub := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/card", nil)
 	pub = pub.WithContext(authmw.WithPrincipal(pub.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
 	rrPub := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rrPub, pub)
+	asOwner(apifront.Listener(srv, seam.ListenerClient)).ServeHTTP(rrPub, pub)
 	if rrPub.Code != http.StatusNotFound {
 		t.Errorf("public entry at /internal: status %d, want 404", rrPub.Code)
 	}
@@ -535,7 +537,7 @@ func TestInternalRuntimeMetaTenantVisibility(t *testing.T) {
 	granted := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
 	granted = granted.WithContext(authmw.WithPrincipal(granted.Context(), authmw.Principal{Subject: "alice", TenantID: "acme"}))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, granted)
+	asOwner(apifront.Listener(srv, seam.ListenerClient)).ServeHTTP(rr, granted)
 	if rr.Code != http.StatusOK || rr.Body.String() != `{"rate":10}` {
 		t.Fatalf("granted tenant meta: status %d body %q", rr.Code, rr.Body.String())
 	}
@@ -545,7 +547,7 @@ func TestInternalRuntimeMetaTenantVisibility(t *testing.T) {
 	other := httptest.NewRequest(http.MethodGet, "/internal/runtimes/carded/meta/cost", nil)
 	other = other.WithContext(authmw.WithPrincipal(other.Context(), authmw.Principal{Subject: "bob", TenantID: "globex"}))
 	rrOther := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rrOther, other)
+	asOwner(apifront.Listener(srv, seam.ListenerClient)).ServeHTTP(rrOther, other)
 	if rrOther.Code != http.StatusNotFound {
 		t.Errorf("ungranted tenant meta: status %d, want 404", rrOther.Code)
 	}

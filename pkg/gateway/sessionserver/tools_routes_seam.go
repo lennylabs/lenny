@@ -20,8 +20,9 @@ func (t ToolsSeam) AdmitActiveCaller(ctx context.Context, action string) error {
 	return t.s.activeUserRefusal(ctx, action)
 }
 
-// RequestTenant is GWSEAM-RequestTenant, served by the session server's
-// request plumbing until the API front holds the request pipeline.
+// RequestTenant is GWSEAM-RequestTenant as the session core resolves the
+// tenant, which the test harnesses hand the platform tools seam; the
+// composition root hands it the API front's pipeline.Identity.
 //
 // spec: GWSEAM-RequestTenant
 func (t ToolsSeam) RequestTenant(r *http.Request) string {

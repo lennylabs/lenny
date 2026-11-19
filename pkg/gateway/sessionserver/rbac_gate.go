@@ -4,7 +4,6 @@ package sessionserver
 
 import (
 	"context"
-	"errors"
 	"net/http"
 	"slices"
 
@@ -14,6 +13,11 @@ import (
 )
 
 // §10.2 session-endpoint authorization.
+//
+// The API front's request pipeline (pkg/gateway/api/pipeline) applies
+// these checks before a route's handler runs, through
+// GWSEAM-AuthorizePermission and GWSEAM-AuthorizeSession, which the
+// session core serves from this file's predicates.
 //
 // The §10.2 RBAC permission matrix splits the session surface into two
 // operation categories:
@@ -60,33 +64,15 @@ import (
 // only.
 // spec: §10.2 (Session ownership).
 
-// requireSessionPermission wraps a session handler with the §10.2
-// permission check for perm. It returns the http.HandlerFunc the mux
-// registers in place of the bare handler.
-func (s *Server) requireSessionPermission(perm auth.Permission, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if !s.sessionPermissionGranted(r, perm) {
-			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
-				"this endpoint requires the "+string(perm)+" permission", nil)
-			return
-		}
-		next(w, r)
-	}
-}
-
-// sessionPermissionGranted reports whether the request's caller is
-// admitted by the §10.2 permission gate for an operation requiring perm.
-// The gate admits a request with no authenticated principal, and a
-// role-less principal in a single-tenant deployment; the ownership step
-// that follows then refuses a request with no principal subject on every
-// {id} route, on list, and on create. A principal that carries roles is
-// admitted only when principalHolds reports perm.
-func (s *Server) sessionPermissionGranted(r *http.Request, perm auth.Permission) bool {
-	return s.permissionGranted(r.Context(), perm)
-}
-
-// permissionGranted is sessionPermissionGranted for the principal ctx
-// carries, which GWSEAM-AuthorizeSession applies outside a request.
+// permissionGranted reports whether the caller ctx carries is admitted by
+// the §10.2 permission gate for an operation requiring perm, which
+// GWSEAM-AuthorizePermission and GWSEAM-AuthorizeSession serve to the API
+// front's request pipeline. The gate admits a request with no
+// authenticated principal, and a role-less principal in a single-tenant
+// deployment; the session check that follows then refuses a request with
+// no principal subject on every {id} route, and list and create refuse it
+// through ownerFromPrincipal. A principal that carries roles is admitted
+// only when principalHolds reports perm.
 //
 // spec: §10.2 (Session ownership) rule 7.
 func (s *Server) permissionGranted(ctx context.Context, perm auth.Permission) bool {
@@ -149,7 +135,7 @@ func (s *Server) principalHolds(ctx context.Context, p authmw.Principal, perm au
 // PermReadTenantSessions, and is never granted an action.
 //
 // The read bypass calls principalHolds rather than
-// sessionPermissionGranted, because the latter admits a role-less
+// permissionGranted, because the latter admits a role-less
 // principal to every permission in a single-tenant deployment, which
 // would let every user of an IdP that sends no role claim read every
 // session.
@@ -167,39 +153,6 @@ func (s *Server) SessionAccessible(ctx context.Context, row sessionstore.Session
 		return false
 	}
 	return s.principalHolds(ctx, p, auth.PermReadTenantSessions)
-}
-
-// requireSessionAccess wraps a /v1/sessions/{id} handler with the §10.2
-// ownership check. It runs inside requireSessionPermission, so a caller
-// the permission matrix refuses has already received 403. It refuses a
-// request with no principal subject with 401, reads the session row named
-// by the path, and calls next only when SessionAccessible grants the
-// caller a read (act == false) or an action (act == true) on it. A row the
-// caller may not read or act on answers exactly as a missing session does,
-// so the refusal does not reveal that the session exists, and next is
-// never called on a refusal.
-//
-// spec: §10.2 (Session ownership) rules 3, 5, 6, and 7.
-func (s *Server) requireSessionAccess(act bool, next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := s.requireOwner(w, r); !ok {
-			return
-		}
-		row, err := s.accessRow(r.Context(), s.resolveTenant(r), r.PathValue("id"))
-		switch {
-		case errors.Is(err, sessionstore.ErrNotFound):
-			s.writeSessionNotFound(w)
-			return
-		case err != nil:
-			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
-			return
-		}
-		if !s.SessionAccessible(r.Context(), row, act) {
-			s.writeSessionNotFound(w)
-			return
-		}
-		next(w, r)
-	}
 }
 
 // accessRow reads the session row the ownership check decides on. It reads

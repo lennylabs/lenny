@@ -1319,7 +1319,7 @@ func credentialServingSurface(s *Server, verifier jwt.Verifier) http.Handler {
 	rest.HandleFunc("/v1/sessions/{id}/interrupt", func(w http.ResponseWriter, r *http.Request) {
 		s.forwardToHolder(w, r, forwardRow(), ForwardKindInterrupt, r.Body)
 	})
-	s.serviceHandlerOnce.Do(func() { s.serviceHandler = rest })
+	s.serviceHandler = rest
 
 	tools := mcp.NewServer()
 	tools.RegisterTool(mcp.Tool{Name: "lenny/service"}, func(ctx context.Context, _ json.RawMessage) (mcp.ToolResult, error) {

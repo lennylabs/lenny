@@ -19,7 +19,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -27,6 +27,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/sdks/client/go/lenny"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
@@ -56,11 +57,11 @@ func newParitySurface(t *testing.T, st session.State) *paritySurface {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: exec})
 	t.Cleanup(srv.Close)
 	// spec: §10.2 (Session ownership) — REST requests run as the seeded rows' owner.
-	rest := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	rest := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(rest.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store, SessionService: srv.ToolsSeam(), SessionAccess: srv.ToolsSeam(), Delivery: srv.ToolsSeam(), Executor: toolseam.Executor(exec),
 		Clock: func() time.Time { return now }, TenantID: "acme",

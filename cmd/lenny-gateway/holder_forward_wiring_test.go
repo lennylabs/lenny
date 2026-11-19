@@ -136,10 +136,11 @@ func TestHolderForwardServerServesOnlyTheSessionAndMCPSurfaces_spec_29_3(t *test
 		})
 	}
 	table := routetable.New()
-	forward := routetable.HandlerMux{Routes: table, Listener: seam.ListenerForward}
-	forward.Handle("/v1/sessions", mark("sessions"))
-	forward.Handle("/v1/sessions/", mark("sessions"))
-	forward.Handle("/mcp", mark("mcp"))
+	// The request pipeline serves the forward listener's session paths.
+	if err := table.MountSessionPaths(seam.ListenerForward, mark("sessions")); err != nil {
+		t.Fatal(err)
+	}
+	routetable.HandlerMux{Routes: table, Listener: seam.ListenerForward}.Handle("/mcp", mark("mcp"))
 	registerForwardResponses(table, mark("responses"))
 	srv := newHolderForwardServer(":0", serverTLS, table.Handler(seam.ListenerForward), devAuthOptionsForTest(), memstore.New())
 	if srv.TLSConfig != serverTLS || srv.ReadHeaderTimeout == 0 {

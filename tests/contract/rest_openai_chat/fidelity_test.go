@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -81,7 +82,7 @@ func newOpenAIServers(t *testing.T, clock func() time.Time, id string) (*httptes
 	t.Cleanup(tsOpenAI.Close)
 
 	restHandler := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(restHandler), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	return tsOpenAI, tsREST, store

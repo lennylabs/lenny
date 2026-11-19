@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
@@ -34,7 +35,7 @@ func attachUploadHandler(
 	core := srv.UploadSeam()
 	up, err := uploadhandler.New(uploadhandler.Options{
 		Sessions:   core,
-		Identity:   core,
+		Identity:   pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()},
 		Forwarding: core,
 		Workspaces: core,
 		Tokens:     core,

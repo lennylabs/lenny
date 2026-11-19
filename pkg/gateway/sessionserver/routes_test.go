@@ -14,11 +14,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // okRoute is a part's handler that answers 204, so a test reads from the
@@ -30,19 +30,18 @@ func clientRoute(method, pattern string, access seam.RouteAccess) seam.Route {
 	return seam.Route{Listener: seam.ListenerClient, Method: method, Pattern: pattern, Access: access, Handler: okRoute}
 }
 
-// TestSessionHandlersMountEachListenersPartRoutes checks that the client
-// handler mounts the routes parts registered on the client listener, that
-// the forward handler mounts only those registered on the forward listener
-// while serving the session endpoints both serve, that a route that leaves
-// authentication to its handler is left to the API front's mux, and that a
-// part route registered after a handler is built is refused rather than
-// left unmounted.
+// TestSessionHandlersMountEachListenersPartRoutes checks that the request
+// pipeline's client handler mounts the routes parts registered on the client
+// listener, that its forward handler mounts only those registered on the
+// forward listener while serving the session endpoints both serve, that a
+// route outside the session paths that leaves authentication to its handler
+// is left to the listener's mux, and that a part route registered after a
+// handler is built is refused rather than left unmounted.
 //
-// spec: GWSEAM-HandleRoute, GWSEAM-ListenerRoutes
+// spec: GWSEAM-HandleRoute
 func TestSessionHandlersMountEachListenersPartRoutes(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
-	table := routetable.New()
-	srv.SetRouteTable(table)
+	table := apifront.Routes(srv)
 	forwarded := clientRoute(http.MethodPost, "/v1/parts/{id}/forwarded", seam.AccessTenant)
 	for _, r := range []seam.Route{
 		clientRoute(http.MethodPost, "/v1/parts/{id}", seam.AccessTenant),
@@ -85,49 +84,63 @@ func TestSessionHandlersMountEachListenersPartRoutes(t *testing.T) {
 		})
 	}
 	if got := serve(forward, http.MethodPut, "/v1/parts/p1/forwarded"); got != http.StatusMethodNotAllowed {
-		t.Errorf("PUT on the forwarded route = %d, want 405 from the session handler's mux", got)
+		t.Errorf("PUT on the forwarded route = %d, want 405 from the pipeline's mux", got)
 	}
 	if err := table.HandleRoute(clientRoute(http.MethodGet, "/v1/late", seam.AccessTenant)); !errors.Is(err, seam.ErrInvalidRoute) {
 		t.Fatalf("a part route after Handler = %v, want ErrInvalidRoute", err)
 	}
 }
 
-// TestRegisterRoutesMountsTheSessionPathsOnEachListener checks that the
-// session core registers its session, blob, runtime, and model paths on
-// the client listener, the internal runtime metadata path on the internal
-// listener, and the session paths on the forward listener, each for any
-// method with no check by the API front, and that the API front then
-// serves the session endpoints and the part routes through them.
+// TestRegisterRoutesNamesEachSessionRoutesCheck checks that the session
+// core registers each session route with the access check of its §10.2
+// permission-matrix row, the routes under /v1/sessions also on the forward
+// listener, and the internal runtime metadata route on the internal
+// listener with no check by the API front, and that the API front's
+// request pipeline, mounted on the session paths, then serves the session
+// endpoints and the part routes behind their checks.
 //
 // spec: GWSEAM-RegisterRoutes
-func TestRegisterRoutesMountsTheSessionPathsOnEachListener(t *testing.T) {
+func TestRegisterRoutesNamesEachSessionRoutesCheck(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
-	table := routetable.New()
-	srv.SetRouteTable(table)
+	table := apifront.Routes(srv)
 	if err := table.HandleRoute(clientRoute(http.MethodPost, "/v1/sessions/{id}/part", seam.AccessTenant)); err != nil {
 		t.Fatal(err)
 	}
-	if err := srv.RegisterRoutes(table); err != nil {
-		t.Fatalf("RegisterRoutes: %v", err)
+	if err := apifront.Pipeline(srv).Mount(); err != nil {
+		t.Fatalf("Mount: %v", err)
 	}
-	want := map[seam.Listener][]string{
-		seam.ListenerClient:   {"/v1/sessions", "/v1/sessions/", "/v1/blobs/", "/v1/runtimes", "/v1/runtimes/", "/v1/models"},
-		seam.ListenerInternal: {"/internal/runtimes/"},
-		seam.ListenerForward:  {"/v1/sessions", "/v1/sessions/"},
+	type key struct {
+		l       seam.Listener
+		pattern string
 	}
-	got := map[seam.Listener][]string{}
+	got := map[key]seam.RouteAccess{}
 	for _, r := range table.Routes() {
-		if r.Access != seam.AccessHandler {
-			continue
-		}
-		if r.Method != seam.MethodAny {
-			t.Errorf("%s registered for %s, want any method", r.Pattern, r.Method)
-		}
-		got[r.Listener] = append(got[r.Listener], r.Pattern)
+		got[key{r.Listener, r.MuxPattern()}] = r.Access
 	}
-	for l, patterns := range want {
-		if strings.Join(got[l], " ") != strings.Join(patterns, " ") {
-			t.Errorf("listener %d: registered %v, want %v", l, got[l], patterns)
+	for k, want := range map[key]seam.RouteAccess{
+		{seam.ListenerClient, "POST /v1/sessions"}:                          seam.AccessSessionCreate,
+		{seam.ListenerClient, "POST /v1/sessions/start"}:                    seam.AccessSessionCreate,
+		{seam.ListenerClient, "POST /v1/environments/{name}/sessions"}:      seam.AccessSessionCreate,
+		{seam.ListenerClient, "GET /v1/sessions"}:                           seam.AccessSessionList,
+		{seam.ListenerClient, "GET /v1/sessions/{id}"}:                      seam.AccessSessionRead,
+		{seam.ListenerClient, "GET /v1/sessions/{id}/transcript"}:           seam.AccessSessionRead,
+		{seam.ListenerClient, "DELETE /v1/sessions/{id}"}:                   seam.AccessSessionManage,
+		{seam.ListenerClient, "POST /v1/sessions/{id}/messages"}:            seam.AccessSessionManage,
+		{seam.ListenerClient, "POST /v1/sessions/{id}/eval"}:                seam.AccessSessionEval,
+		{seam.ListenerClient, "GET /v1/sessions/{id}/usage"}:                seam.AccessTenant,
+		{seam.ListenerClient, "GET /v1/runtimes"}:                           seam.AccessTenant,
+		{seam.ListenerClient, "GET /v1/runtimes/{name}/meta/{key}"}:         seam.AccessHandler,
+		{seam.ListenerInternal, "GET /internal/runtimes/{name}/meta/{key}"}: seam.AccessHandler,
+		{seam.ListenerForward, "GET /v1/sessions/{id}"}:                     seam.AccessSessionRead,
+		{seam.ListenerForward, "POST /v1/sessions"}:                         seam.AccessSessionCreate,
+	} {
+		if a, ok := got[k]; !ok || a != want {
+			t.Errorf("listener %d %s: access %d (registered %v), want %d", k.l, k.pattern, a, ok, want)
+		}
+	}
+	for k := range got {
+		if k.l == seam.ListenerForward && !strings.Contains(k.pattern, " /v1/sessions") {
+			t.Errorf("forward listener carries %s, which lies outside /v1/sessions", k.pattern)
 		}
 	}
 	shared := table.Handler(seam.ListenerClient)
@@ -143,7 +156,7 @@ func TestRegisterRoutesMountsTheSessionPathsOnEachListener(t *testing.T) {
 		rr := httptest.NewRecorder()
 		shared.ServeHTTP(rr, req)
 		if rr.Code != tc.want {
-			t.Errorf("%s %s = %d %q, want %d from the session handler", tc.method, tc.path, rr.Code, rr.Body.String(), tc.want)
+			t.Errorf("%s %s = %d %q, want %d from the request pipeline", tc.method, tc.path, rr.Code, rr.Body.String(), tc.want)
 		}
 	}
 }
@@ -154,7 +167,7 @@ func TestRegisterRoutesMountsTheSessionPathsOnEachListener(t *testing.T) {
 // and manage access apply the ownership rule, and the evaluation and usage
 // checks apply the permission gate of their permission.
 //
-// spec: GWSEAM-ListenerRoutes; §10.2 (Session ownership) rules 5, 6, and 7.
+// spec: GWSEAM-AuthorizeSession; GWSEAM-AuthorizePermission; §10.2 (Session ownership) rules 5, 6, and 7.
 func TestPartRoutesRunBehindTheAccessCheckTheyName(t *testing.T) {
 	store := memstore.New()
 	now := time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC)
@@ -164,8 +177,7 @@ func TestPartRoutesRunBehindTheAccessCheckTheyName(t *testing.T) {
 		t.Fatal(err)
 	}
 	srv := sessionserver.New(store, sessionserver.Options{MultiTenant: true})
-	table := routetable.New()
-	srv.SetRouteTable(table)
+	table := apifront.Routes(srv)
 	for _, r := range []seam.Route{
 		clientRoute(http.MethodGet, "/v1/part/tenant", seam.AccessTenant),
 		clientRoute(http.MethodGet, "/v1/sessions/{id}/part-read", seam.AccessSessionRead),

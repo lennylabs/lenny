@@ -13,13 +13,14 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -36,11 +37,11 @@ func newUploadTokenServers(t *testing.T) (*httptest.Server, *httptest.Server, se
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
 	})
-	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(rest), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		SessionCreator:    rest.ToolsSeam(),

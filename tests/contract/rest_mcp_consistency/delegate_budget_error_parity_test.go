@@ -20,7 +20,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
@@ -85,7 +85,7 @@ func newBudgetDelegateMCP(t *testing.T) (string, *miniredis.Miniredis, *counting
 	cleanup := &countingCleanup{inner: srv}
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store, SessionService: srv.ToolsSeam(), SessionAccess: srv.ToolsSeam(), Executor: toolseam.Executor(exec), Runtimes: runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{

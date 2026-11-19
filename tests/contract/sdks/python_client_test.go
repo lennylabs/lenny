@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/contract/sdks/harness"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -421,7 +422,7 @@ func TestPythonClientIdempotencyKeyHandling(t *testing.T) {
 	// replayed key returns the cached create response.
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)))
+	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)))
 	t.Cleanup(ts.Close)
 	h := spawnPythonHelper(t, ts.URL)
 

@@ -10,6 +10,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
@@ -256,7 +257,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		Delegation:          delegationSvc,
 		Users:               w.users,
 		CallerCheck:         toolops.NewCallerCheck(sessionCallerCheck(w.pgPool, w.auditValidator)),
-		Callers:             toolops.Callers{},
+		Callers:             pipeline.Callers{},
 		Runtimes:            w.runtimes,
 		CapabilityOverrides: w.capOverrides,
 		Environments:        environments,
@@ -384,7 +385,7 @@ func (w *gatewayWiring) buildMCPSurface(
 	// F-15.2.2, F-9.1.7.
 	mcpSrv.SetAttach(mcp.AttachConfig{
 		Events:   w.eventBus,
-		Callers:  toolops.Callers{},
+		Callers:  pipeline.Callers{},
 		Sessions: toolsSeam,
 		Access:   toolsSeam,
 		Now:      clockinject.Now,

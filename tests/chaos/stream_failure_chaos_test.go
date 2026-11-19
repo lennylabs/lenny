@@ -55,6 +55,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -107,7 +108,7 @@ func newStreamChaosGateway(t *testing.T, id string, cl *adapterclient.Client) *s
 		srv.ReportAttachStreamFailure(tenantID, sessionID, agentPodName, cause)
 	})
 	// spec: §10.2 (Session ownership) — the requests run as the seeded row's owner.
-	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	hs := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 	g.base = hs.URL
 	now := time.Now().UTC()

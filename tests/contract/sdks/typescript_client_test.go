@@ -51,6 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/tests/contract/sdks/harness"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 )
@@ -282,7 +283,7 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 	// disconnector severs the SDK's first SSE connection mid-stream so
 	// the reconnect path is exercised. It is defined in
 	// go_client_test.go and shared across the contract suite.
-	d := &disconnector{inner: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)}
+	d := &disconnector{inner: ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)}
 	ts := httptest.NewServer(d)
 	t.Cleanup(ts.Close)
 
@@ -656,7 +657,7 @@ func TestTypeScriptClientIdempotencyKeyHandling(t *testing.T) {
 	// replayed key returns the cached create response.
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)))
+	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)))
 	t.Cleanup(ts.Close)
 	h := spawnTSHelper(t, ts.URL)
 

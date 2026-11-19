@@ -9,12 +9,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // recordedRoutes is a seam.Routes that records each route it is handed.
@@ -42,7 +43,7 @@ func TestNewRefusesOptionsWithoutARequiredOperation(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	core := srv.ToolsSeam()
 	full := platformtools.Options{
-		Sessions: core, Identity: core, Callers: toolops.Callers{}, ActiveCallers: core, Store: memstore.New(),
+		Sessions: core, Identity: core, Callers: pipeline.Callers{}, ActiveCallers: core, Store: memstore.New(),
 	}
 	if _, err := platformtools.New(full); err != nil {
 		t.Fatalf("New with every required operation: %v", err)
@@ -71,7 +72,7 @@ func TestRegisterRoutesDeclaresEachRouteWithItsAccessCheck(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	core := srv.ToolsSeam()
 	h, err := platformtools.New(platformtools.Options{
-		Sessions: core, Identity: core, Callers: toolops.Callers{}, ActiveCallers: core, Store: memstore.New(),
+		Sessions: core, Identity: core, Callers: pipeline.Callers{}, ActiveCallers: core, Store: memstore.New(),
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +149,7 @@ func TestTheUserLifecycleCheckAnswersEachOutcome(t *testing.T) {
 				platformtools.Options{Interactions: store, ActiveCallers: activeCallers{err: tc.err}})
 			req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 			rr := httptest.NewRecorder()
-			srv.Handler().ServeHTTP(rr, req)
+			apifront.Handler(srv).ServeHTTP(rr, req)
 			if rr.Code != tc.status {
 				t.Fatalf("status %d, want %d; body=%s", rr.Code, tc.status, rr.Body.String())
 			}

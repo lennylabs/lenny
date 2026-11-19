@@ -23,6 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // Token-claim anchors. The jwt package compares Expiry against real
@@ -49,7 +50,7 @@ func newTestServer(t *testing.T, opts authmw.Options) (*httptest.Server, *jwt.HM
 	opts.Verifier = signer
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	wrapped := authmw.Wrap(srv.Handler(), opts)
+	wrapped := authmw.Wrap(apifront.Handler(srv), opts)
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
 	return ts, signer

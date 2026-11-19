@@ -133,7 +133,7 @@ func TestStreamsAnswerAStoreFailureAsAnInternalError(t *testing.T) {
 	if err := h.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	for _, path := range []string{"/v1/sessions/sess_fail/events", "/v1/sessions/sess_fail/logs"} {
 		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
@@ -176,7 +176,7 @@ func TestStreamsTreatANilBusPointerAsNoBus(t *testing.T) {
 	if err := h.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatal(err)
 	}
-	handler := asOwner(srv.Handler())
+	handler := asOwner(apifront.Handler(srv))
 	for _, path := range []string{"/v1/sessions/sess_nilbus/events", "/v1/sessions/sess_nilbus/logs"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")

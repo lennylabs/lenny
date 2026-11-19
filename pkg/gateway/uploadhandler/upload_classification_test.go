@@ -16,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -61,7 +62,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 		t.Fatalf("issue token: %v", err)
 	}
 
-	rr := doUpload(t, asOwner(srv.Handler()), "sess_t4", "restricted", tok, "restricted-bytes")
+	rr := doUpload(t, asOwner(apifront.Handler(srv)), "sess_t4", "restricted", tok, "restricted-bytes")
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("status = %d, want %d (body=%s)", rr.Code, http.StatusUnprocessableEntity, rr.Body.String())
 	}

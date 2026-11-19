@@ -22,13 +22,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // ownerBindingGateway serves the session API behind the auth middleware's
 // dev-header transport over store.
 func ownerBindingGateway(store sessionstore.Store) http.Handler {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	return authmw.Wrap(srv.Handler(), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
+	return authmw.Wrap(apifront.Handler(srv), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
 }
 
 // postOwnerBindingCreate posts a create to path whose body names bob as the

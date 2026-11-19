@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
@@ -273,7 +274,7 @@ func TestPlaygroundJWTAcceptedByPublicSessionsAPI(t *testing.T) {
 	// §10.2 auth middleware, verifying with the same signer.
 	store := memstore.New()
 	publicAPI := authmw.Wrap(
-		sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}).Handler(),
+		apifront.Handler(sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})),
 		authmw.Options{
 			Verifier:    signer,
 			MultiTenant: true,

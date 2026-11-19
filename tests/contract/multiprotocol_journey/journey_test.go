@@ -29,12 +29,13 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
@@ -89,7 +90,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	})
 	streamwire.Attach(t, restHandler, streamproxy.Options{Events: bus, Clock: clock})
 	toolwire.Attach(t, restHandler, platformtools.Options{Store: store, Memory: mem})
-	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(restHandler), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
@@ -104,7 +105,7 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 		Now:     clock,
 	})
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		SessionCreator:    restHandler.ToolsSeam(),

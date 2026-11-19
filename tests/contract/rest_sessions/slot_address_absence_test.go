@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
@@ -66,7 +67,7 @@ func TestMessageBodyIgnoresStaleSlotAddress_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	rec := &recordingExecutor{Executor: executor.NewEchoExecutor()}
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: rec})
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	id := createSession(t, ts)
 	for _, step := range []string{"finalize", "start"} {
@@ -367,7 +368,7 @@ func TestStartSlotFailedBodyNamesSession_spec_5_2(t *testing.T) {
 		t.Fatalf("seed session row: %v", err)
 	}
 	srv := slotFailServer(t, cluster, store, codes.InvalidArgument)
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	resp, body := do(t, ts, "POST", "/v1/sessions/"+id+"/start", nil)
@@ -406,7 +407,7 @@ func TestCreateAndStartSlotFailureBodyCarriesNoSlotAddress_spec_5_2(t *testing.T
 	cluster := slotFailCluster(t)
 	store := memstore.New()
 	srv := slotFailServer(t, cluster, store, codes.InvalidArgument)
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{
@@ -457,7 +458,7 @@ func TestCreateAndStartTransientSlotFailureStaysRetryable_spec_5_2(t *testing.T)
 	cluster := slotFailCluster(t)
 	store := memstore.New()
 	srv := slotFailServer(t, cluster, store, codes.Unavailable)
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	resp, body := do(t, ts, "POST", "/v1/sessions/start", map[string]any{
@@ -507,7 +508,7 @@ func TestStartSlotBindRefusalAnswersRetryableFallback_spec_4_7_1(t *testing.T) {
 	refusal := fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAlreadyStarted,
 		status.Error(codes.FailedPrecondition, "slot bind already started"))
 	srv := slotFailServerWithErr(t, cluster, store, refusal)
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	resp, body := do(t, ts, "POST", "/v1/sessions/"+id+"/start", nil)
@@ -547,7 +548,7 @@ func TestCreateOnlySlotFailureKeepsCreationEnvelope_spec_7_1(t *testing.T) {
 	cluster := slotFailCluster(t)
 	store := memstore.New()
 	srv := slotFailServer(t, cluster, store, codes.InvalidArgument)
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	resp, body := do(t, ts, "POST", "/v1/sessions", map[string]any{

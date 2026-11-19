@@ -51,7 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
@@ -65,6 +65,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
@@ -147,7 +148,7 @@ func TestDenyChildReceivesNoCredentialAtFinalize(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   binder.Blobs,
 	})
-	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
+	h := ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)
 
 	post := func(path string, body []byte) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
@@ -323,7 +324,7 @@ func newDenyOriginFixture(t *testing.T) (*mcp.Server, sessionstore.Store) {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,

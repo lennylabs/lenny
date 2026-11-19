@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -62,7 +63,7 @@ func TestUploadStartsSessionUploadSpan(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -115,7 +116,7 @@ func TestUploadSpanRecordsMissingSessionError(t *testing.T) {
 	// on the upload span.
 	tok, _ := issuer.Issue("sess_missing_upload", 0)
 
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_missing_upload", "acme", tok, []byte("x"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_missing_upload", "acme", tok, []byte("x"), "text/plain")
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status: got %d, want 404; body=%s", rr.Code, rr.Body.String())
 	}

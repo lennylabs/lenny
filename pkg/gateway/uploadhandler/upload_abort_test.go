@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -68,7 +69,7 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 	req.Header.Set("Content-Type", "application/octet-stream")
 	req.ContentLength = 10
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("over-stream status: got %d, want 429; body=%s", rr.Code, rr.Body.String())
 	}
@@ -114,7 +115,7 @@ func TestUploadAfterFinalizeReturnsChannelClosed_spec_7_4_16(t *testing.T) {
 	// That is the simpler half of F-7.4.16: post-finalize calls to
 	// /upload are rejected. We test that here.
 	tok, _ := issuer.Issue("sess_upload", 0)
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("/upload after finalize: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -149,7 +150,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 
 	uploadDone := make(chan struct{})
 	go func() {
-		asOwner(srv.Handler()).ServeHTTP(rr, req)
+		asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 		close(uploadDone)
 	}()
 
@@ -161,7 +162,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 	finReq.Header.Set("X-Lenny-Tenant-ID", "acme")
 	finReq.Header.Set("X-Lenny-Upload-Token", tok)
 	finRR := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(finRR, finReq)
+	asOwner(apifront.Handler(srv)).ServeHTTP(finRR, finReq)
 	if finRR.Code != http.StatusOK {
 		t.Fatalf("finalize: status %d, want 200; body=%s", finRR.Code, finRR.Body.String())
 	}
@@ -215,7 +216,7 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 	finReq.Header.Set("X-Lenny-Tenant-ID", "acme")
 	finReq.Header.Set("X-Lenny-Upload-Token", tok)
 	finRR := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(finRR, finReq)
+	asOwner(apifront.Handler(srv)).ServeHTTP(finRR, finReq)
 	if finRR.Code != http.StatusOK {
 		t.Fatalf("finalize: status %d, want 200; body=%s", finRR.Code, finRR.Body.String())
 	}
@@ -223,7 +224,7 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 	// Now attempt /upload — the pre-Put precondition check fires
 	// before the abort registry; the spec-mandated channel-closure
 	// surfaces as the precondition error.
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("post-finalize /upload: status %d, want 409; body=%s", rr.Code, rr.Body.String())
 	}
@@ -281,7 +282,7 @@ func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
 	req.Header.Set("Content-Type", "text/plain")
 	req.Header.Set(uploadhandler.UploadContentHashHeader, matching)
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("matching hash: status %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}
@@ -303,7 +304,7 @@ func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
 	req.Header.Set(uploadhandler.UploadContentHashHeader,
 		"0000000000000000000000000000000000000000000000000000000000000000")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("mismatched hash: status %d, want 422; body=%s", rr.Code, rr.Body.String())
 	}
@@ -333,7 +334,7 @@ func TestUploadOptionalContentHashCaseInsensitive_spec_7_4_10(t *testing.T) {
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	req.Header.Set(uploadhandler.UploadContentHashHeader, upper)
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
 		t.Errorf("uppercase hex hash: status %d, want 201; body=%s", rr.Code, rr.Body.String())
 	}

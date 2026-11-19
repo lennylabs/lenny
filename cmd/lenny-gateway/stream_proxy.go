@@ -6,6 +6,7 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
@@ -24,7 +25,7 @@ func attachStreamProxy(srv *sessionserver.Server, front seam.Routes, bus *sessio
 	opts := streamproxy.Options{
 		Sessions: core,
 		Frames:   core,
-		Identity: core,
+		Identity: pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()},
 		Clock:    clockinject.Now,
 	}
 	// A nil bus leaves Events unset, so the endpoints answer

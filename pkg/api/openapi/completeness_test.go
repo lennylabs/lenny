@@ -44,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
@@ -496,7 +497,7 @@ func registeredRouteTemplates(t *testing.T) []string {
 	var out []string
 	out = append(out, walkServeMux(t, router.Handler())...)
 	out = append(out, walkServeMux(t, cred.Handler())...)
-	out = append(out, walkServeMux(t, sess.Handler())...)
+	out = append(out, walkServeMux(t, apifront.Handler(sess))...)
 	sort.Strings(out)
 	return out
 }

@@ -5,7 +5,8 @@ package sessionserver
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
+
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 )
 
@@ -24,12 +25,7 @@ func attachUploads(t *testing.T, srv *Server, opts uploadhandler.Options) *uploa
 	if err != nil {
 		t.Fatalf("build the upload handler: %v", err)
 	}
-	table, ok := srv.RouteTable().(*routetable.Table)
-	if !ok {
-		table = routetable.New()
-		srv.SetRouteTable(table)
-	}
-	if err := up.RegisterRoutes(table); err != nil {
+	if err := up.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatalf("register the upload routes: %v", err)
 	}
 	srv.SetUploadWindows(up)

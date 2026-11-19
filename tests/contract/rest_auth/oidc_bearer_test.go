@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
 
@@ -32,7 +33,7 @@ func newOIDCServer(t *testing.T, idp *oidcstub.Stub) *httptest.Server {
 		t.Fatalf("NewOIDCVerifier: %v", err)
 	}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
-	ts := httptest.NewServer(authmw.Wrap(srv.Handler(), authmw.Options{
+	ts := httptest.NewServer(authmw.Wrap(apifront.Handler(srv), authmw.Options{
 		Verifier:    jwt.NewTenantClaimVerifier(v, oidcTenantClaim),
 		MultiTenant: true,
 		Registry:    &fakeRegistry{registered: map[string]bool{"acme": true}},

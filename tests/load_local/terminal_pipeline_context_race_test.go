@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -106,7 +107,7 @@ func ctxRaceREST(method, suffix string) ctxRaceWriter {
 		req := httptest.NewRequest(method, "/v1/sessions/"+id+suffix, nil).WithContext(ctx)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		// spec: §10.2 (Session ownership) — the request runs as the seeded row's owner.
-		ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice).ServeHTTP(httptest.NewRecorder(), req)
+		ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice).ServeHTTP(httptest.NewRecorder(), req)
 	}
 }
 

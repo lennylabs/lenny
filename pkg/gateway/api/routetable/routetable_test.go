@@ -74,20 +74,23 @@ func TestHandleRouteMountsHandlerRoutesOnTheirListenerMux(t *testing.T) {
 	}
 }
 
-// TestListenerRoutesReturnsPipelineRoutesAndClosesTheirRegistration checks
-// that a route whose access check the request pipeline applies is not
-// mounted on the listener mux, that ListenerRoutes returns those routes of
-// one listener in registration order, and that it refuses a later pipeline
-// route on that listener while still accepting a handler route there and a
-// pipeline route on another listener.
-// spec: GWSEAM-ListenerRoutes, GWSEAM-HandleRoute
-func TestListenerRoutesReturnsPipelineRoutesAndClosesTheirRegistration(t *testing.T) {
+// TestPipelineRoutesReturnsHeldRoutesAndClosesTheirRegistration checks
+// that a route whose access check the request pipeline applies, and a route
+// under the session paths that leaves authentication to its handler, is not
+// mounted on the listener mux, that PipelineRoutes returns those routes of
+// one listener in registration order, and that it refuses a later held
+// route on that listener while still accepting a handler route outside the
+// session paths there and a held route on another listener.
+//
+// spec: GWSEAM-HandleRoute
+func TestPipelineRoutesReturnsHeldRoutesAndClosesTheirRegistration(t *testing.T) {
 	table := routetable.New()
 	upload := seam.Route{Listener: seam.ListenerClient, Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload-to-session", Access: seam.AccessSessionManage, Handler: marker("upload")}
 	events := seam.Route{Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "/v1/sessions/{id}/events", Access: seam.AccessSessionRead, Handler: marker("events")}
+	public := seam.Route{Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "/v1/runtimes/{name}/meta/{key}", Access: seam.AccessHandler, Handler: marker("public")}
 	forwarded := upload
 	forwarded.Listener = seam.ListenerForward
-	for _, r := range []seam.Route{upload, events, forwarded} {
+	for _, r := range []seam.Route{upload, events, public, forwarded} {
 		if err := table.HandleRoute(r); err != nil {
 			t.Fatalf("HandleRoute %s %s: %v", r.Method, r.Pattern, err)
 		}
@@ -95,26 +98,32 @@ func TestListenerRoutesReturnsPipelineRoutesAndClosesTheirRegistration(t *testin
 	if code, _ := serve(table.Handler(seam.ListenerClient), http.MethodGet, "/v1/sessions/s1/events"); code != http.StatusNotFound {
 		t.Errorf("a pipeline route answered %d on the listener mux, want 404", code)
 	}
-	got := table.ListenerRoutes(seam.ListenerClient)
-	if len(got) != 2 || got[0].Pattern != upload.Pattern || got[1].Pattern != events.Pattern {
-		t.Fatalf("ListenerRoutes(client) = %+v, want the upload then the events route", got)
+	if code, _ := serve(table.Handler(seam.ListenerClient), http.MethodGet, "/v1/runtimes/r/meta/k"); code != http.StatusNotFound {
+		t.Errorf("a handler route under the session paths answered %d on the listener mux, want 404", code)
+	}
+	got := table.PipelineRoutes(seam.ListenerClient)
+	if len(got) != 3 || got[0].Pattern != upload.Pattern || got[1].Pattern != events.Pattern || got[2].Pattern != public.Pattern {
+		t.Fatalf("PipelineRoutes(client) = %+v, want the upload, the events, then the public route", got)
 	}
 	late := seam.Route{Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "/v1/sessions/{id}/late", Access: seam.AccessSessionRead, Handler: marker("late")}
 	if err := table.HandleRoute(late); !errors.Is(err, seam.ErrInvalidRoute) {
-		t.Errorf("a pipeline route after ListenerRoutes = %v, want ErrInvalidRoute", err)
+		t.Errorf("a pipeline route after PipelineRoutes = %v, want ErrInvalidRoute", err)
 	}
 	if err := table.HandleRoute(seam.Route{Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "/late", Access: seam.AccessHandler, Handler: marker("late")}); err != nil {
-		t.Errorf("a handler route after ListenerRoutes was refused: %v", err)
+		t.Errorf("a handler route after PipelineRoutes was refused: %v", err)
+	}
+	if err := table.HandleRoute(seam.Route{Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "/v1/runtimes/late", Access: seam.AccessHandler, Handler: marker("late")}); !errors.Is(err, seam.ErrInvalidRoute) {
+		t.Errorf("a handler route under the session paths after PipelineRoutes = %v, want ErrInvalidRoute", err)
 	}
 	late.Listener = seam.ListenerForward
 	if err := table.HandleRoute(late); err != nil {
 		t.Errorf("a pipeline route on the unsealed forward listener was refused: %v", err)
 	}
-	if got := table.ListenerRoutes(seam.ListenerForward); len(got) != 2 {
-		t.Errorf("ListenerRoutes(forward) holds %d routes, want 2", len(got))
+	if got := table.PipelineRoutes(seam.ListenerForward); len(got) != 2 {
+		t.Errorf("PipelineRoutes(forward) holds %d routes, want 2", len(got))
 	}
-	if got := table.ListenerRoutes(seam.ListenerInternal); len(got) != 0 {
-		t.Errorf("ListenerRoutes(internal) = %+v, want none", got)
+	if got := table.PipelineRoutes(seam.ListenerInternal); len(got) != 0 {
+		t.Errorf("PipelineRoutes(internal) = %+v, want none", got)
 	}
 }
 
@@ -182,8 +191,8 @@ func TestHandleRouteIsSafeForConcurrentRegistration(t *testing.T) {
 	if got := len(table.Routes()); got != 2*n {
 		t.Errorf("Routes() holds %d routes, want %d", got, 2*n)
 	}
-	if got := len(table.ListenerRoutes(seam.ListenerForward)); got != n {
-		t.Errorf("ListenerRoutes(forward) holds %d routes, want %d", got, n)
+	if got := len(table.PipelineRoutes(seam.ListenerForward)); got != n {
+		t.Errorf("PipelineRoutes(forward) holds %d routes, want %d", got, n)
 	}
 }
 
@@ -236,4 +245,50 @@ func TestHandlerMuxRegistersMountedHandlersWithoutARouteCheck(t *testing.T) {
 		}
 	}()
 	mux.Handle("/v1/responses", marker("again"))
+}
+
+// TestMountSessionPathsMountsTheHandlerOnEachSessionPath checks that the
+// request pipeline's handler of a listener is mounted on every session path
+// of that listener and on no other path, that the client and forward
+// listeners have their own session paths, and that a second mount, a
+// listener with no session paths the API front serves, and a session path
+// a route already holds are refused.
+//
+// spec: GWSEAM-HandleRoute
+func TestMountSessionPathsMountsTheHandlerOnEachSessionPath(t *testing.T) {
+	table := routetable.New()
+	if err := table.MountSessionPaths(seam.ListenerClient, marker("client-pipeline")); err != nil {
+		t.Fatalf("MountSessionPaths(client): %v", err)
+	}
+	if err := table.MountSessionPaths(seam.ListenerForward, marker("forward-pipeline")); err != nil {
+		t.Fatalf("MountSessionPaths(forward): %v", err)
+	}
+	for _, tc := range []struct {
+		l          seam.Listener
+		path, want string
+		code       int
+	}{
+		{seam.ListenerClient, "/v1/sessions", "client-pipeline", http.StatusOK},
+		{seam.ListenerClient, "/v1/sessions/s1/messages", "client-pipeline", http.StatusOK},
+		{seam.ListenerClient, "/v1/blobs/b1", "client-pipeline", http.StatusOK},
+		{seam.ListenerClient, "/v1/runtimes/r1", "client-pipeline", http.StatusOK},
+		{seam.ListenerClient, "/v1/models", "client-pipeline", http.StatusOK},
+		{seam.ListenerClient, "/v1/admin/tenants", "", http.StatusNotFound},
+		{seam.ListenerForward, "/v1/sessions/s1", "forward-pipeline", http.StatusOK},
+		{seam.ListenerForward, "/v1/models", "", http.StatusNotFound},
+	} {
+		code, body := serve(table.Handler(tc.l), http.MethodGet, tc.path)
+		if code != tc.code || (tc.want != "" && body != tc.want) {
+			t.Errorf("listener %d GET %s = %d %q, want %d %q", tc.l, tc.path, code, body, tc.code, tc.want)
+		}
+	}
+	if err := table.MountSessionPaths(seam.ListenerClient, marker("again")); !errors.Is(err, seam.ErrInvalidRoute) {
+		t.Errorf("a second mount = %v, want ErrInvalidRoute", err)
+	}
+	if err := table.MountSessionPaths(seam.ListenerPodProxy, marker("proxy")); !errors.Is(err, seam.ErrInvalidRoute) {
+		t.Errorf("a pod proxy mount = %v, want ErrInvalidRoute", err)
+	}
+	if got := routetable.SessionPaths(seam.ListenerInternal); len(got) != 0 {
+		t.Errorf("SessionPaths(internal) = %v, want none", got)
+	}
 }

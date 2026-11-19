@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
@@ -46,7 +47,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	uploadwire.Attach(t, srv, uploadhandler.Options{})
 	streamwire.Attach(t, srv, streamproxy.Options{})
 	toolwire.Attach(t, srv, platformtools.Options{Store: store})
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts
 }

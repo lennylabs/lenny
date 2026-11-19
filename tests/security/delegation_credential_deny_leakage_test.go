@@ -45,7 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
@@ -59,6 +59,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
@@ -186,7 +187,7 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 		CredentialRouter:        credrouter.NewDefault(),
 		Blobs:                   blobs,
 	})
-	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
+	h := ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)
 
 	// The same sessionserver.Server is the §8.3 delegation-time
 	// credential-availability checker for the MCP delegate_task handler, so the
@@ -194,7 +195,7 @@ func TestDenyDelegationDeliversNoLeaseToken(t *testing.T) {
 	// store the finalize path also reads.
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,

@@ -36,6 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 )
@@ -83,7 +84,7 @@ func TestStartLaunchFailureAnswersStartingFailedAndFailsTheSession_spec_15_1(t *
 	seedReadySession(t, store, id)
 	launchErr := fmt.Errorf("%w: %w", adapterclient.ErrSlotBindAlreadyStarted,
 		status.Error(codes.FailedPrecondition, "slot bind already started"))
-	ts := httptest.NewServer(ownerprincipal.Wrap(slotFailServerWithErr(t, cluster, store, launchErr).Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(slotFailServerWithErr(t, cluster, store, launchErr)), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	resp, body := do(t, ts, http.MethodPost, "/v1/sessions/"+id+"/start", nil)
@@ -107,7 +108,7 @@ func TestSecondStartWhileTheFirstIsHeldAnswersStarting_spec_15_1(t *testing.T) {
 	store := &commitHoldStore{Store: memstore.New(), held: make(chan struct{}), release: make(chan struct{})}
 	const id = "sess_start_held"
 	seedReadySession(t, store.Store, id)
-	ts := httptest.NewServer(ownerprincipal.Wrap(sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}).Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	first := make(chan int, 1)
@@ -145,7 +146,7 @@ func TestStartStreamsStartingBeforeRunning_spec_7_2(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	streamwire.Attach(t, srv, streamproxy.Options{Events: bus})
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	if resp, body := do(t, ts, http.MethodPost, "/v1/sessions/"+id+"/start", nil); resp.StatusCode != http.StatusOK {

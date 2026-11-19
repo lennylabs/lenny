@@ -41,7 +41,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
@@ -51,6 +51,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
@@ -219,7 +220,7 @@ func multiTurnRESTServer(t *testing.T, e executor.Executor) (*httptest.Server, s
 		Transcripts:     transcriptstore.NewMemory(),
 	})
 	// spec: §10.2 (Session ownership) — the requests run as the seeded rows' owner.
-	hs := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	hs := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 	return hs, store
 }
@@ -307,7 +308,7 @@ func TestMCPSendMessageCarriesEveryMessageOnTheHeldStream_spec_28_5_1(t *testing
 	multiTurnSeed(t, store, "sess-mcp", session.StateRunning)
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,

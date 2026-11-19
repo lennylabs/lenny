@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // spec: §8 delegation task tree; §15.1 GET /v1/sessions/{id}/tree.
@@ -53,7 +54,7 @@ func TestTreeSingleNode(t *testing.T) {
 	seedTreeSession(t, store, "sess_root", "")
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
+	rr, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -73,7 +74,7 @@ func TestTreeWithChildren(t *testing.T) {
 	seedTreeSession(t, store, "sess_grandchild", "sess_child_a")
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
+	rr, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -121,7 +122,7 @@ func TestTreeNodeAttributes_spec_8_9_1010(t *testing.T) {
 	}
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
+	rr, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -180,7 +181,7 @@ func TestTreeFullVisibilityShowsEntireTreeFromApex_spec_8_5_540(t *testing.T) {
 
 	// sess_mid carries the default (empty → full) visibility, so the
 	// tree it sees is rooted at the apex (sess_root) with all 3 nodes.
-	_, resp := getTree(t, asOwner(srv.Handler()), "sess_mid")
+	_, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_mid")
 	if resp.NodeCount != 3 || resp.Root.TaskID != "sess_root" {
 		t.Errorf("full from mid: got root=%q count=%d, want sess_root/3 (§8.5)", resp.Root.TaskID, resp.NodeCount)
 	}
@@ -197,7 +198,7 @@ func TestTreeParentAndSelfVisibility_spec_8_5_540(t *testing.T) {
 	seedTreeSession(t, store, "sess_leaf", "sess_mid")
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	_, resp := getTree(t, asOwner(srv.Handler()), "sess_mid")
+	_, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_mid")
 	// Rooted at the parent (sess_root) with exactly sess_mid as its only
 	// visible child; the sibling and the leaf are pruned. 2 nodes.
 	if resp.NodeCount != 2 || resp.Root.TaskID != "sess_root" {
@@ -220,7 +221,7 @@ func TestTreeSelfOnlyVisibility_spec_8_5_540(t *testing.T) {
 	seedTreeSession(t, store, "sess_leaf", "sess_mid")
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	_, resp := getTree(t, asOwner(srv.Handler()), "sess_mid")
+	_, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_mid")
 	if resp.NodeCount != 1 || resp.Root.TaskID != "sess_mid" || len(resp.Root.Children) != 0 {
 		t.Errorf("self-only: got %+v, want sess_mid alone", resp)
 	}
@@ -235,7 +236,7 @@ func TestTreeParentAndSelfAtRootDegradesToSelf_spec_8_3_315(t *testing.T) {
 	seedTreeSession(t, store, "sess_child", "sess_root")
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	_, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
+	_, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_root")
 	if resp.NodeCount != 1 || resp.Root.TaskID != "sess_root" || len(resp.Root.Children) != 0 {
 		t.Errorf("parent-and-self at root: got %+v, want sess_root alone", resp)
 	}
@@ -244,7 +245,7 @@ func TestTreeParentAndSelfAtRootDegradesToSelf_spec_8_3_315(t *testing.T) {
 func TestTreeMissingSession(t *testing.T) {
 	store := memstore.New()
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
-	rr, _ := getTree(t, asOwner(srv.Handler()), "sess_missing")
+	rr, _ := getTree(t, asOwner(apifront.Handler(srv)), "sess_missing")
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("missing session: got %d, want 404", rr.Code)
 	}
@@ -264,7 +265,7 @@ func TestTreeRecordsAreSessionRowsLinkedByParentSessionID(t *testing.T) {
 	seedTreeSession(t, store, "sess_grandchild", "sess_child")
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
+	rr, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_root")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -320,7 +321,7 @@ func TestTreeCrossTenantIsolation(t *testing.T) {
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
-	_, resp := getTree(t, asOwner(srv.Handler()), "sess_root")
+	_, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_root")
 	if resp.NodeCount != 1 {
 		t.Errorf("cross-tenant child must not appear: %+v", resp)
 	}
@@ -342,7 +343,7 @@ func TestTreeReadsOnlySessionsInTheRequestedTree_spec_8_9_1010(t *testing.T) {
 	seedTreeSession(t, store, "sess_kid_b", "sess_root_b")
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 
-	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_root_a")
+	rr, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_root_a")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -369,7 +370,7 @@ func TestTreeUsesTaskIDField_spec_8_5_540(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_root_rt/tree", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -420,7 +421,7 @@ func TestTreeEmitsCycleObservation_spec_8_9_F_8_9_10(t *testing.T) {
 		DevTenantHeader: true,
 	}, platformtools.Options{TreeCycles: observer})
 
-	rr, resp := getTree(t, asOwner(srv.Handler()), "sess_a_899")
+	rr, resp := getTree(t, asOwner(apifront.Handler(srv)), "sess_a_899")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -456,7 +457,7 @@ func TestTreeAcyclicEmitsNoCycle_spec_8_9_F_8_9_10(t *testing.T) {
 	srv := newServer(t, store, sessionserver.Options{
 		DevTenantHeader: true,
 	}, platformtools.Options{TreeCycles: observer})
-	rr, _ := getTree(t, asOwner(srv.Handler()), "sess_root_clean")
+	rr, _ := getTree(t, asOwner(apifront.Handler(srv)), "sess_root_clean")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}
@@ -484,7 +485,7 @@ func TestTreeNilObserverIsSafe_spec_8_9_F_8_9_10(t *testing.T) {
 		CreatedAt:       now, UpdatedAt: now,
 	})
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
-	rr, _ := getTree(t, asOwner(srv.Handler()), "sess_x_899")
+	rr, _ := getTree(t, asOwner(apifront.Handler(srv)), "sess_x_899")
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status: %d", rr.Code)
 	}

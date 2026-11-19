@@ -22,9 +22,10 @@ import (
 // handler calls: the session lookup and authorization, the request
 // forwarding, the workspace write, the upload token verification, the
 // storage quota, and the upload audit event. It also serves the request
-// identity operation, which the session server's request plumbing holds
-// until the API front holds it. The composition root hands it to the
-// upload handler through the seam interfaces. The session lookup, the
+// identity operation, which the test harnesses take from it while the
+// composition root hands the upload handler the API front's
+// pipeline.Identity. The composition root hands it to the upload handler
+// through the seam interfaces. The session lookup, the
 // authorization, and the request identity run in the Server methods that
 // StreamSeam shares.
 type UploadSeam struct {

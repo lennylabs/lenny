@@ -458,11 +458,9 @@ func (w *gatewayWiring) buildSessionServer(
 		CallbackDispatcher: callbackDispatcher,
 	})
 	// The API front's route table: each part registers its routes through
-	// it, and the session server mounts from it the routes it serves behind
-	// the session routes' access checks, until the API front holds the
-	// request pipeline.
+	// it, and the API front's request pipeline mounts from it the routes
+	// with a tenant, session, or permission check behind that check.
 	w.apiRoutes = routetable.New()
-	srv.SetRouteTable(w.apiRoutes)
 	attachUploadHandler(srv, w.apiRoutes, w.podBinder, w.blobs, w.runtimes, uploadSubsystem, uploadMetrics, uploadFlags)
 	attachStreamProxy(srv, w.apiRoutes, w.eventBus)
 	// The platform tools seam's packages register their own metric

@@ -20,6 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -28,7 +29,7 @@ func newTestServer(t *testing.T) *httptest.Server {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	idem := idempotencymw.NewMemoryStore()
-	wrapped := idempotencymw.Wrap(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), idem, idempotencymw.Options{})
+	wrapped := idempotencymw.Wrap(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice), idem, idempotencymw.Options{})
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
 	return ts

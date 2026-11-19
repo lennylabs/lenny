@@ -26,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	kmsstub "github.com/lennylabs/lenny/tests/testinfra/stubs/kms"
 )
 
@@ -50,7 +51,7 @@ func newForgeryTestServer(t *testing.T) (*httptest.Server, *memstore.Store, *jwt
 	}
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	wrapped := authmw.Wrap(srv.Handler(), authmw.Options{
+	wrapped := authmw.Wrap(apifront.Handler(srv), authmw.Options{
 		MultiTenant: false,
 		RequireAuth: true,
 		Verifier:    keys,

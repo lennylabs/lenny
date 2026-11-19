@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // runDerive drives POST /v1/sessions/{id}/derive of the owner's replay
@@ -43,7 +44,7 @@ func (w *World) runDerive(ctx context.Context, o *CreateOutcome, failing, crash 
 		writer = failingFinalise{w.Manifests}
 	}
 	ids := []string{o.ID, uuid.NewString()}
-	h := sessionserver.New(p, sessionserver.Options{
+	h := apifront.Handler(sessionserver.New(p, sessionserver.Options{
 		DevTenantHeader: true,
 		IDFunc: func() string {
 			id := ids[0]
@@ -57,7 +58,7 @@ func (w *World) runDerive(ctx context.Context, o *CreateOutcome, failing, crash 
 		CheckpointManifestWriter: writer,
 		ResumeChunkResolver:      unboundRestore{},
 		PersistDeriveFailureRows: true,
-	}).Handler()
+	}))
 	rr, crashed := serveUntilCrash(h, w.deriveRequest(ctx, src, o.Owner))
 	if crashed {
 		return

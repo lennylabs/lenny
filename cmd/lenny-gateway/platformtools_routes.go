@@ -6,7 +6,7 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
@@ -18,10 +18,11 @@ import (
 
 // attachToolRoutes builds the platform tools seam's client routes and
 // registers them through the API front's route table front, from which the
-// session server mounts them behind the session routes' access checks
-// until the API front holds the request pipeline. The routes reach the session core through its side of the seam
-// interface, read the caller identity through the request plumbing
-// (toolops.Callers), and count tree cycles on the seam's own metric set.
+// API front's request pipeline mounts them behind their access checks. The
+// routes reach the session core through its side of the seam interface,
+// resolve the request's tenant through the API front's request identity,
+// read the caller identity through the request plumbing (pipeline.Callers),
+// and count tree cycles on the seam's own metric set.
 // No memory store is wired, as the session server had none, so the memory
 // routes answer MEMORY_UNAVAILABLE. It is a free function rather than a
 // method of the wiring accumulator, so the startup order guard is
@@ -30,8 +31,8 @@ func attachToolRoutes(srv *sessionserver.Server, front seam.Routes, sessions ses
 	core := srv.ToolsSeam()
 	routes, err := platformtools.New(platformtools.Options{
 		Sessions:         core,
-		Identity:         core,
-		Callers:          toolops.Callers{},
+		Identity:         pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()},
+		Callers:          pipeline.Callers{},
 		ActiveCallers:    core,
 		Store:            sessions,
 		Interactions:     interactions,

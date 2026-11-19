@@ -30,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -92,7 +93,7 @@ func serveCreateRoute(t *testing.T, path string, ic interceptor.Interceptor) (in
 		t.Fatalf("register interceptor: %v", err)
 	}
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Interceptors: chain})
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	body, err := json.Marshal(map[string]any{"runtimeRef": "claude-code"})

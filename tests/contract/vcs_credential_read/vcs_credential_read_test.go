@@ -29,6 +29,7 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"google.golang.org/grpc/codes"
@@ -153,7 +154,7 @@ func TestPlanBindingVCSCredentialReadCodes(t *testing.T) {
 				CredentialPools: pools,
 				VCSCredentials:  &vcscred.StoreResolver{Pools: pools, Secrets: secrets},
 			})
-			rr := createSession(t, ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+			rr := createSession(t, ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
 			}

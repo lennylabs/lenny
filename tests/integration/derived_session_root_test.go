@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -133,7 +134,7 @@ func TestDerivedSessionIsOutsideTheSourceTree_spec_12_6(t *testing.T) {
 	}
 
 	// spec: §10.2 (Session ownership) — the derives run as the sources' owner.
-	handler := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
+	handler := ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)
 	fromDone := deriveVia(t, handler, tenant, "sess_src_done", false)
 	fromLive := deriveVia(t, handler, tenant, "sess_src_live", true)
 

@@ -24,7 +24,7 @@ func TestRouteValidateRefusesZeroAndUnknownValues(t *testing.T) {
 		t.Fatalf("a complete route was refused: %v", err)
 	}
 	for _, l := range []Listener{ListenerClient, ListenerPodProxy, ListenerForward} {
-		for _, a := range []RouteAccess{AccessTenant, AccessSessionRead, AccessSessionManage, AccessSessionEval, AccessUsageView, AccessHandler} {
+		for _, a := range []RouteAccess{AccessTenant, AccessSessionRead, AccessSessionManage, AccessSessionEval, AccessUsageView, AccessSessionCreate, AccessSessionList, AccessHandler} {
 			r := ok
 			r.Listener, r.Access = l, a
 			if err := r.Validate(); err != nil {

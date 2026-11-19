@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/callercheck"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
@@ -70,11 +71,11 @@ func newCallerCheckServers(t *testing.T) (rest, mcpURL string, store sessionstor
 		CallerCheck:     callercheck.Deps{IssuedTokens: impersonationTokens{}, Audit: rec},
 	})
 	t.Cleanup(srv.Close)
-	tsREST := httptest.NewServer(asImpersonationBearer(srv.Handler()))
+	tsREST := httptest.NewServer(asImpersonationBearer(apifront.Handler(srv)))
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		SessionCreator:    srv.ToolsSeam(),
@@ -146,11 +147,11 @@ func newOwnershipParityServers(t *testing.T) (rest, mcpURL string) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Executor: executor.NewEchoExecutor()})
 	t.Cleanup(srv.Close)
 	const bob = "bob@acme.com"
-	tsREST := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), bob))
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), bob))
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		SessionCreator:    srv.ToolsSeam(),

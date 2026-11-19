@@ -17,15 +17,6 @@ type Routes interface {
 	HandleRoute(r Route) error
 }
 
-// RouteTable is served by the API front to the request pipeline: the
-// routes it mounts behind their access checks.
-type RouteTable interface {
-	// ListenerRoutes returns the routes of listener l that carry an
-	// access check other than AccessHandler, in the order they registered,
-	// and seals l against more of them.
-	ListenerRoutes(l Listener) []Route
-}
-
 // RouteProvider is served by each part that has HTTP routes.
 type RouteProvider interface {
 	// RegisterRoutes registers every route of the part through routes.
@@ -94,6 +85,14 @@ const (
 	// AccessUsageView requires a resolved tenant and the view_usage
 	// permission.
 	AccessUsageView
+	// AccessSessionCreate requires a resolved tenant and the
+	// manage_own_sessions permission, for a route that creates a session
+	// and names none.
+	AccessSessionCreate
+	// AccessSessionList requires a resolved tenant and the
+	// read_own_sessions permission, for a route that lists sessions and
+	// names none.
+	AccessSessionList
 	// AccessHandler leaves authentication to the handler, as for a route
 	// that authenticates a token the request carries itself.
 	AccessHandler

@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -73,7 +74,7 @@ func TestUploadUnderStorageQuota(t *testing.T) {
 	srv, issuer, counter := newQuotaUploadServer(t, 1000)
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("under quota: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -86,7 +87,7 @@ func TestUploadRejectedByStorageQuotaPreCheck(t *testing.T) {
 	srv, issuer, counter := newQuotaUploadServer(t, 10)
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("over quota: status %d, want 429; body %s", rr.Code, rr.Body.String())
 	}
@@ -105,7 +106,7 @@ func TestUploadRejectedByStorageQuotaStreamCap(t *testing.T) {
 	// Declare 10 bytes but stream 200: the reservation is admitted on
 	// the declared size, then the hard stream cap aborts the upload.
 	big := bytes.Repeat([]byte("x"), 200)
-	rr := uploadWithContentLength(t, asOwner(srv.Handler()), tok, big, 10)
+	rr := uploadWithContentLength(t, asOwner(apifront.Handler(srv)), tok, big, 10)
 	if rr.Code != http.StatusTooManyRequests {
 		t.Fatalf("over-stream: status %d, want 429; body %s", rr.Code, rr.Body.String())
 	}
@@ -123,7 +124,7 @@ func TestUploadReconcilesStorageQuota(t *testing.T) {
 
 	// Declare 50 bytes but send only 11: the reservation reconciles
 	// down to the bytes actually written.
-	rr := uploadWithContentLength(t, asOwner(srv.Handler()), tok, []byte("hello world"), 50)
+	rr := uploadWithContentLength(t, asOwner(apifront.Handler(srv)), tok, []byte("hello world"), 50)
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("reconcile upload: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}
@@ -136,7 +137,7 @@ func TestUploadWithoutContentLengthRejectedUnderQuota(t *testing.T) {
 	srv, issuer, _ := newQuotaUploadServer(t, 1000)
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadWithContentLength(t, asOwner(srv.Handler()), tok, []byte("hello world"), -1)
+	rr := uploadWithContentLength(t, asOwner(apifront.Handler(srv)), tok, []byte("hello world"), -1)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("missing Content-Length under a quota: status %d, want 400; body %s",
 			rr.Code, rr.Body.String())
@@ -184,7 +185,7 @@ func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("dual outage: status %d, want 503; body %s", rr.Code, rr.Body.String())
 	}
@@ -199,7 +200,7 @@ func TestUploadNoStorageQuotaSkipsEnforcement(t *testing.T) {
 	srv, issuer, counter := newQuotaUploadServer(t, 0)
 	tok, _ := issuer.Issue("sess_upload", 0)
 
-	rr := uploadRequest(t, asOwner(srv.Handler()), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
+	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("unlimited tenant: status %d, want 201; body %s", rr.Code, rr.Body.String())
 	}

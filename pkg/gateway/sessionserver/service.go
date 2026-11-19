@@ -50,16 +50,21 @@ type ServiceResult struct {
 	ContentType string
 }
 
-// serviceMux returns the cached routing handler the in-process service
-// layer dispatches through. It is the same handler the public REST
-// surface mounts, so an overlapping operation invoked from the §15.2 MCP
+// serviceMux returns the routing handler the in-process service layer
+// dispatches through, which SetServiceHandler set: the API front's request
+// pipeline of the client listener, the same handler the public REST
+// surface mounts on the session paths, so an overlapping operation invoked from the §15.2 MCP
 // tool runs the identical route, validation, and response shaping — the
 // §15.2.1 rule-1 "implemented exactly once" guarantee, with no parallel
-// route table to drift. spec: §15.2.1 rule 1. F-15.2.3.
+// route table to drift. A server with no service handler answers every
+// in-process call with INTERNAL_ERROR. spec: §15.2.1 rule 1. F-15.2.3.
 func (s *Server) serviceMux() http.Handler {
-	s.serviceHandlerOnce.Do(func() {
-		s.serviceHandler = s.Handler()
-	})
+	if s.serviceHandler == nil {
+		return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+				"the in-process service layer has no request pipeline", nil)
+		})
+	}
 	return s.serviceHandler
 }
 

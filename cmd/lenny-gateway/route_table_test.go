@@ -52,26 +52,26 @@ import (
 // before 0117.S8 moved route registration. Each line names the listener
 // (rest for the server of the client and internal listeners, forward for
 // CH-HOLDERFORWARD), the mux (the listener's own, which the API front's
-// route table holds, or the session handler's that the listener mounts
+// route table holds, or the request pipeline's that the listener mounts
 // under the session paths), and the pattern, with the access check of each
-// route another part registered for the session handler. The playground,
+// route the request pipeline mounts. The playground,
 // the token service proxy, and the forced-drain audit endpoint are enabled,
 // so each conditional route is in the table. The concurrent-stateless
 // ingress, which the background workers mount only with a cluster client,
 // is not.
 func TestGatewayRouteTableIsFixed(t *testing.T) {
-	w, sessionSrv := routeTableWiring(t)
+	w, _ := routeTableWiring(t)
 	var b strings.Builder
 	for _, p := range servedPatterns(t, w.apiRoutes.Handler(seam.ListenerClient)) {
 		b.WriteString("rest  listener  " + p + "\n")
 	}
-	for _, p := range sortedCopy(sessionSrv.RoutePatterns(seam.ListenerClient)) {
+	for _, p := range sortedCopy(w.apiPipeline.RoutePatterns(seam.ListenerClient)) {
 		b.WriteString("rest  session   " + p + "\n")
 	}
 	for _, p := range servedPatterns(t, w.apiRoutes.Handler(seam.ListenerForward)) {
 		b.WriteString("forward  listener  " + p + "\n")
 	}
-	for _, p := range sortedCopy(sessionSrv.RoutePatterns(seam.ListenerForward)) {
+	for _, p := range sortedCopy(w.apiPipeline.RoutePatterns(seam.ListenerForward)) {
 		b.WriteString("forward  session   " + p + "\n")
 	}
 	compareGolden(t, filepath.Join("testdata", "route-table.golden"), b.String())
@@ -120,7 +120,6 @@ func routeTableWiring(t *testing.T) (*gatewayWiring, *sessionserver.Server) {
 
 	sessionSrv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	w.apiRoutes = routetable.New()
-	sessionSrv.SetRouteTable(w.apiRoutes)
 	uploadMetrics, err := uploadhandler.NewUploadMetrics(gwMetrics.Registerer())
 	if err != nil {
 		t.Fatal(err)

@@ -30,6 +30,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -41,7 +42,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
@@ -137,7 +137,7 @@ func Start(t testing.TB, opts Options) *Server {
 	var ids atomic.Int64
 	tools := mcp.NewServer()
 	mcptools.Register(tools, mcptools.Deps{
-		Callers: toolops.Callers{},
+		Callers: pipeline.Callers{},
 		// spec: §10.2 (Session ownership) — the platform-tool path runs
 		// under the calling session's principal, whose subject is the
 		// session's owner, so the owner-granting double admits it.

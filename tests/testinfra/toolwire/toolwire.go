@@ -15,7 +15,7 @@ package toolwire
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
@@ -41,7 +41,7 @@ func Attach(t testing.TB, srv *sessionserver.Server, opts platformtools.Options)
 		opts.ActiveCallers = core
 	}
 	if opts.Callers == nil {
-		opts.Callers = toolops.Callers{}
+		opts.Callers = pipeline.Callers{}
 	}
 	h, err := platformtools.New(opts)
 	if err != nil {

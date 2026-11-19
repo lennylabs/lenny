@@ -64,6 +64,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/runtimekit/echocore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
@@ -314,7 +315,7 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 	// seam's, attached as the gateway attaches them.
 	toolwire.Attach(t, f.srv, platformtools.Options{Store: f.store, Interactions: rep.interactions})
 	// spec: §10.2 (Session ownership) — the requests run as the seeded row's owner.
-	hs := httptest.NewServer(ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice))
+	hs := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(f.srv), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
 	f.base = hs.URL
 	streamFailureSeed(t, f.store, id, f.agentPod, st, retries)
@@ -640,7 +641,7 @@ func TestCrossReplicaResumeIsAStoreWriteTheCoordinatorRestores_spec_7_3(t *testi
 		ReplicaID:               "rep-2",
 		IDFunc:                  func() string { return id },
 	})
-	secondHS := httptest.NewServer(ownerprincipal.Wrap(second.Handler(), ownerprincipal.Alice))
+	secondHS := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(second), ownerprincipal.Alice))
 	t.Cleanup(secondHS.Close)
 
 	if code, resp := first.post(t, "turn-1"); code != http.StatusOK {
