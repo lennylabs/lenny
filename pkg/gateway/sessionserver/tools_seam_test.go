@@ -37,7 +37,7 @@ func TestToolsSeamCarriesTheStoredRowAcrossTheSeam(t *testing.T) {
 	}
 	rec.Stored = nil
 	got := rowOf(rec)
-	if got.ID != "s1" || got.TenantID != "acme" || got.UserID != "alice" || got.PoolRef != "p" || got.LastSeq != 7 || got.PodAssignment != "" {
+	if got.ID != "s1" || got.TenantID != "acme" || got.UserID != "alice" || got.PoolRef != "p" || got.LastSeq != 7 || got.PodAssignment != "pod-1" || got.RetryPolicy != nil {
 		t.Fatalf("row of a bare record = %+v", got)
 	}
 }

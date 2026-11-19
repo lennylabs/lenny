@@ -69,7 +69,9 @@ func TestStreamSeamLookupCarriesTheSessionRecordAndReportsAMissingSession(t *tes
 		ID: "sess-stream", TenantID: "acme", UserID: "bob@acme.com", ParentSessionID: "sess-parent",
 		RootSessionID: "sess-root", RuntimeRef: "rt", Pool: "pool-a", State: "running", LastSeq: 7,
 	}
-	if got != want {
+	// The record also carries the row's creation and update times.
+	want.CreatedAt, want.UpdatedAt = got.CreatedAt, got.UpdatedAt
+	if got != want || got.CreatedAt.IsZero() {
 		t.Errorf("record = %+v, want %+v", got, want)
 	}
 	if _, err := core.LookupSession(context.Background(), "acme", "sess-none"); !errors.Is(err, seam.ErrSessionNotFound) {
