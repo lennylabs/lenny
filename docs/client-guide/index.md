@@ -25,7 +25,7 @@ Every option below ultimately exercises the same session lifecycle. You can mix 
 The CLI that ships with Lenny includes a `session` subcommand. Use it to drive a session without writing client code: useful for scripts, smoke tests, and day-to-day development.
 
 ```shell
-lenny session new --runtime chat --message "hello"
+lenny session new --runtime chat "hello"
 lenny session send $SESSION_ID "continue the thought"
 lenny session logs $SESSION_ID --follow
 lenny session cancel $SESSION_ID
@@ -108,7 +108,7 @@ For most applications, REST + the log streaming endpoint (`GET /v1/sessions/{id}
 
 1. Install the CLI: `brew install lennylabs/tap/lenny` (or grab a binary from the releases page).
 2. Start the stack locally: `lenny up`. This runs the whole platform on your machine.
-3. Open a session: `lenny session new --runtime chat --message "hello"`.
+3. Open a session: `lenny session new --runtime chat --attach "hello"`.
 4. Prefer clicking? Visit `https://localhost:8443/playground`.
 
 For a guided walkthrough, see the [`lenny up` walkthrough](../tutorials/lenny-up-walkthrough) and [Your First Session](../tutorials/first-session).

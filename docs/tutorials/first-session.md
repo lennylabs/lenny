@@ -30,20 +30,12 @@ The CLI drives a session by hand. Each command is a thin wrapper over the same A
 ### Step 1: Start the session
 
 ```shell
-lenny session new --runtime chat --message "hello, what is 2 + 2?"
+lenny session new --runtime chat --attach "hello, what is 2 + 2?"
 ```
 
-You'll see something like:
+The command prints the session ID on the first line of its output, then streams the agent's reply and the session's state changes until the session ends. Press `Ctrl+C` to stop streaming; the session keeps running. Save the printed ID as `SESSION_ID` for the steps below.
 
-```
-session_id: sess_01J5K9ABCDEF
-runtime:    chat
-state:      running
-message_id: msg_001
-response:   4
-```
-
-**What just happened:** Lenny picked an idle pod for the `chat` runtime, set up an isolated workspace, started the agent, delivered your message, and streamed the reply back. The session stays open; you can keep talking to it.
+**What just happened:** Lenny picked an idle pod for the `chat` runtime, set up an isolated workspace, and started the agent. Once the session was running, the CLI delivered your message as the session's first prompt and streamed the reply back. The session stays open, so you can keep talking to it. When the session cannot start, the command prints the reason and exits with status 1 without sending the message.
 
 ### Step 2: Continue the conversation
 

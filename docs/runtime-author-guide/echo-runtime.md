@@ -305,7 +305,7 @@ go build -o echo-runtime .
 docker build -t echo-runtime:dev -f examples/runtimes/echo/Dockerfile .
 lenny up
 lenny runtime publish echo --image echo-runtime:dev
-lenny session new --runtime echo --message "Hello"
+lenny session new --runtime echo --attach "Hello"
 ```
 
 `lenny up` starts the whole platform from one binary, including an embedded Kubernetes, and runs your runtime in an actual pod. Use it to exercise the same code path production uses and to run end-to-end demos.

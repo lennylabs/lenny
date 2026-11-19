@@ -242,7 +242,7 @@ lenny up
 lenny runtime publish my-agent --image my-agent:dev
 
 # 5. Try it
-lenny session new --runtime my-agent --message "Hello"
+lenny session new --runtime my-agent --attach "Hello"
 ```
 
 If you want to see the raw protocol first, the [Echo Runtime Sample](echo-runtime.md) is an annotated Go program that implements the Basic level with zero Lenny dependencies. Read it before picking up the SDK to understand the wire format up front.
