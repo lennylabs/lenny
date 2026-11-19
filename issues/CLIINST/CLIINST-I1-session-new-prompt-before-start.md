@@ -11,7 +11,7 @@ change: 0160.S1
 
 ## Specification
 
-§24.17, the `lenny session new` row of the session command table, maps the command to MCP `lenny/create_session` plus the event stream, and to REST `POST /v1/sessions`, upload, finalize, and start when `--workspace` or `--file` is given. It states that a positional argument is the session's opening prompt. It does not state that the command finalizes and starts the session on the MCP path. §15.1 and §15.2 define `lenny/create_session` as equivalent to `POST /v1/sessions`, which leaves the session in `created` until `POST /v1/sessions/{id}/finalize` and `/start` run.
+§24.17, the `lenny session new` row of the session command table, maps the command to MCP `lenny/create_session` plus the event stream, and to REST `POST /v1/sessions`, upload, finalize, and start when `--workspace` or `--file` is given. It does not name a positional prompt, which the CLI and the documentation treat as the session's opening prompt, and it does not state that the command finalizes and starts the session on the MCP path. §15.1 and §15.2 define `lenny/create_session` as equivalent to `POST /v1/sessions`, which leaves the session in `created` until `POST /v1/sessions/{id}/finalize` and `/start` run.
 
 ## Evidence
 

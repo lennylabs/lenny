@@ -18,6 +18,8 @@ The §24.17 session command table lists `lenny session new`, `attach`, `send`, `
 - `docs/tutorials/first-session.md`, "Before you start": it points the CLI at a deployed cluster with `LENNY_GATEWAY` and `LENNY_TOKEN`, which the CLI does not read.
 - `docs/tutorials/first-session.md`, steps 2 and 6: the sample outputs (`message_id:` and `response:` lines, and `state: completed` after `cancel`) do not match what `cmdSessionSend` and `cmdSessionCancel` print, which is the reply text and `<sessionId> cancelled`.
 - `docs/client-guide/index.md`, "The `lenny session` CLI": it runs `lenny session logs $SESSION_ID --follow` and tells a remote user to add `--gateway https://lenny.example.com --token $TOKEN`; the CLI has no `--gateway` flag.
+- `docs/tutorials/first-session.md`, Path C: the `POST /v1/sessions/start` example sends `"runtime"` and `"input"` and shows a `"session_id"` response field. `CreateAndStartRequest` in `pkg/gateway/core/session/sessionserver/create_and_start.go` reads `runtimeRef`, and the response carries the session identifier as `id`.
+- `parseSessionFlags` in `pkg/embedded/localcli/session.go` accepts only the space-separated flag form (`--runtime echo`) and refuses `--runtime=echo` as an unknown flag. The examples in the specification's §17.4 Embedded Mode text and in the reference runtime catalog of §26 use the `=` form (`lenny session new --runtime=echo --attach "hello"`, `--runtime=chat`, `--workspace=./my-repo`).
 - Found while change 0160 (step 0160.S1) corrected the `--message` flag in the `lenny session new` examples of these pages.
 
 ## Gap
@@ -26,4 +28,4 @@ A reader who follows the first-session tutorial or the client guide past the fir
 
 ## Suggested resolution
 
-Rewrite Path A of `docs/tutorials/first-session.md` and the CLI block of `docs/client-guide/index.md` with the verbs and flags §24.17 lists, `--api-url`/`LENNY_API_URL` and `--token`/`LENNY_API_TOKEN`, and outputs the CLI produces. If the transcript, artifact, follow, or retention commands are wanted, raise them as a change to §24.17 first.
+Rewrite Paths A and C of `docs/tutorials/first-session.md` and the CLI block of `docs/client-guide/index.md` with the verbs and flags §24.17 lists, `--api-url`/`LENNY_API_URL` and `--token`/`LENNY_API_TOKEN`, and outputs the CLI produces. If the transcript, artifact, follow, or retention commands are wanted, raise them as a change to §24.17 first. For the flag form, either make the CLI accept `--flag=value` as well, or change the specification's examples to the space-separated form.

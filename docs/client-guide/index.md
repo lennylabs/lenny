@@ -25,7 +25,7 @@ Every option below ultimately exercises the same session lifecycle. You can mix 
 The CLI that ships with Lenny includes a `session` subcommand. Use it to drive a session without writing client code: useful for scripts, smoke tests, and day-to-day development.
 
 ```shell
-lenny session new --runtime chat "hello"
+SESSION_ID=$(lenny session new --runtime chat "hello")
 lenny session send $SESSION_ID "continue the thought"
 lenny session logs $SESSION_ID --follow
 lenny session cancel $SESSION_ID

@@ -361,7 +361,7 @@ You can try Lenny locally by starting a single-host stack with embedded k3s, run
 
 ```bash
 lenny up
-lenny session new --runtime=echo --attach "hello"
+lenny session new --runtime echo --attach "hello"
 lenny down
 ```
 
