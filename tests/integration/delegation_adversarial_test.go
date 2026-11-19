@@ -64,7 +64,7 @@ func lennyErrorEnvelope(t *testing.T, rpc map[string]any) map[string]any {
 // cmd/lenny-gateway binary. This pins the §8.2 three-layer AND gate
 // and its `details.blockedBy`/`details.effectiveSettings` payload to
 // the wire contract an agent actually observes, not just the
-// pkg/gateway/platformtools/delegation unit tests that call
+// pkg/gateway/mcpfabric/delegation unit tests that call
 // Service.Delegate directly.
 //
 // The platform layer is forced on (--gateway-allow-self-recursion=true)
@@ -137,7 +137,7 @@ func TestDelegationCycleDetectedRejectsSelfRecursion(t *testing.T) {
 // rejection surfaced as a generic INTERNAL_ERROR rather than the
 // canonical depth-exceeded code the lease package documents. This
 // pins the §8.2.bis positive-integer maxDepth bound to the wire the
-// gateway actually serves, not just pkg/gateway/platformtools/delegation's
+// gateway actually serves, not just pkg/gateway/mcpfabric/delegation's
 // direct Service.Delegate unit tests.
 func TestDelegationDepthExceededRejectsChainBeyondCeiling(t *testing.T) {
 	t.Parallel()
