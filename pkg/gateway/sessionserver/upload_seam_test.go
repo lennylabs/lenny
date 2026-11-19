@@ -97,6 +97,7 @@ func TestAuthorizeSessionAppliesThePermissionGateAndTheOwnershipRule(t *testing.
 		{"missing session", as("bob@acme.com", auth.RoleUser), "sess-none", seam.SessionRead, seam.ErrSessionNotFound},
 		{"another user's session", as("alice@acme.com", auth.RoleUser), "sess-seam", seam.SessionManage, seam.ErrSessionNotFound},
 		{"tenant reader manages", as("carol@acme.com", auth.RoleTenantViewer, auth.RoleUser), "sess-seam", seam.SessionManage, seam.ErrSessionNotFound},
+		{"owner's subject in another tenant", authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "bob@acme.com", TenantID: "globex", Roles: []auth.Role{auth.RoleUser}}), "sess-seam", seam.SessionManage, seam.ErrSessionNotFound},
 		{"owner manages", as("bob@acme.com", auth.RoleUser), "sess-seam", seam.SessionManage, nil},
 		{"tenant reader reads", as("carol@acme.com", auth.RoleTenantViewer), "sess-seam", seam.SessionRead, nil},
 	}
