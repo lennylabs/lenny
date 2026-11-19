@@ -244,7 +244,7 @@ packages:
     - package: pkg/common/registry
       count: 8
     - package: pkg/common/scopes
-      count: 8
+      count: 13
     - package: pkg/common/seqname
       count: 21
     - package: pkg/compliance
