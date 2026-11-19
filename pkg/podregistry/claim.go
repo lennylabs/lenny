@@ -19,9 +19,9 @@ import (
 // The claim-object helpers below create, name, release, and first bind the
 // per-pod occupancy PodClaim. The gateway's pod claimer
 // (pkg/gateway/core/podclaim) calls them on its claim path, and the
-// Postgres-backed fallback claim path of this package and the CRD pool
-// manager of pkg/podlifecycle call them directly, so every writer creates
-// an identical claim without importing the gateway.
+// Postgres-backed fallback claim path of this package calls them directly,
+// so both create an identical claim. The CRD pool manager of
+// pkg/podlifecycle names its claims with ClaimName.
 
 // claimStatusFieldOwner is the gateway field manager the first binding-state
 // write carries. spec: §4.6.3 grants the gateway `patch` (not `update`) on

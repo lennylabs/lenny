@@ -3,8 +3,8 @@
 package runtimeexec
 
 // Message captures the §7.2 / §15.4 inbound message envelope.
-// Implementations of Executor receive a slice of Messages and emit
-// a slice of MessageParts.
+// An executor receives a slice of Messages and emits a slice of
+// MessageParts.
 type Message struct {
 	// ID is the §15.4 stable message identifier. Gateway-assigned
 	// when the sender omits it.

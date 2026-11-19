@@ -11,4 +11,6 @@
 // from the subprocess executor, so the adapter imports no gateway package,
 // which the gateway layout gate refuses outside pkg/gateway and
 // cmd/lenny-gateway.
+//
+// spec: RTPMSG, RTPPART
 package runtimeexec
