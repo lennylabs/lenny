@@ -35,16 +35,6 @@ var privateRangeCIDRs = map[string]bool{
 	"fe80::/10":      true,
 }
 
-// imdsCIDRs is the §13.2 NET-044/NET-065 cloud instance-metadata
-// exclusion set: the AWS/GCP/Azure IPv4 IMDS address, the Alibaba Cloud
-// IMDS address, and the AWS IPv6 IMDS address. It is the default of the
-// egressCIDRs.excludeIMDS Helm value.
-var imdsCIDRs = map[string]bool{
-	"169.254.169.254/32": true,
-	"100.100.100.200/32": true,
-	"fd00:ec2::254/128":  true,
-}
-
 // cidrCanonical returns the canonical string form of a CIDR so that
 // except-block comparisons are insensitive to spacing or
 // non-canonical host bits. It returns the empty string when the CIDR
