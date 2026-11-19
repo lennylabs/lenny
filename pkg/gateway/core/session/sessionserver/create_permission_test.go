@@ -218,7 +218,7 @@ func TestInProcessCreateRolelessPrincipalFollowsTheTenancyMode(t *testing.T) {
 // tenant-viewer receives 403 FORBIDDEN, and a user, whom the permission
 // admits, receives the 503 PLATFORM_DEGRADED refusal.
 //
-// spec: §10.2 (Authorization and RBAC) Session creation surfaces, §10.1 (Dual-Store Unavailability) item 2
+// spec: §10.2 (Authorization and RBAC) Session creation surfaces, §10.1.3 (Dual-Store Unavailability) item 2
 func TestInProcessCreateRefusesAForbiddenRoleBeforeAdmissionGates(t *testing.T) {
 	for _, ep := range createEntryPoints {
 		t.Run(ep.name, func(t *testing.T) {

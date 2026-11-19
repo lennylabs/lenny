@@ -153,7 +153,7 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 // or token budget and claims no pod. In-progress sessions are unaffected: they
 // continue on cached coordination state. With no gate wired it admits.
 //
-// spec: §10.1 (Dual-Store Unavailability) item 2. F-10.1.3.
+// spec: §10.1.3 (Dual-Store Unavailability) item 2. F-10.1.3.
 func (s *Server) requireStoresAvailable(w http.ResponseWriter) bool {
 	if s.dualStore == nil || !s.dualStore.Unavailable() {
 		return true

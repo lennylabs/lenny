@@ -51,10 +51,12 @@ type CreateAndStartResponse = CreateSessionResponse
 // "running" so callers receive the uploadToken + sessionIsolationLevel
 // in the same envelope they would from POST /v1/sessions.
 //
-// Workspace plan validation, isolation profile resolution, upload
-// token minting, and the role check all run as in handleCreate; the
-// extra work here is just to advance the row through the §15.1
-// precondition table to running before returning.
+// Workspace plan validation, isolation profile resolution, the admission
+// gates, and upload token minting all run as in handleCreate; the extra
+// work here is to advance the row through the §15.1 precondition table to
+// running before returning. The permission check runs before this handler:
+// in the API front's request pipeline for the REST route, and in
+// guardPermission for CreateAndStartService.
 func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// spec: §10.2 (Session ownership) rules 1 and 3 — the owner is the
 	// principal's subject, resolved before any gate, store write, or claim.

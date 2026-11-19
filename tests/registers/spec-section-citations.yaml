@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1515
+      count: 1519
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -452,7 +452,7 @@ packages:
     - package: pkg/gateway/core/session/sessioninbox
       count: 73
     - package: pkg/gateway/core/session/sessionserver
-      count: 2963
+      count: 2979
     - package: pkg/gateway/core/session/slotcounter
       count: 125
     - package: pkg/gateway/core/session/slothealth
@@ -546,7 +546,7 @@ packages:
     - package: pkg/gateway/platformtools/mcp
       count: 123
     - package: pkg/gateway/platformtools/mcptools
-      count: 671
+      count: 677
     - package: pkg/gateway/platformtools/mcptools/internal/genmcpschemas
       count: 1
     - package: pkg/gateway/platformtools/orphancleanup
@@ -1226,7 +1226,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 547
+      count: 550
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

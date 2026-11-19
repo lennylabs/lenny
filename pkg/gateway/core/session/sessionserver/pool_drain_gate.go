@@ -39,8 +39,9 @@ func (s *Server) requirePoolNotDraining(w http.ResponseWriter, r *http.Request, 
 	if err != nil || !pool.IsDraining() {
 		// A lookup error fails open: a transient pool-store outage must
 		// not block admission against a pool that is not draining. The
-		// dual-store gate in createSession already rejects when the
-		// coordination stores are unreachable.
+		// dual-store gate (requireStoresAvailable), which both create
+		// handlers run first, already rejects when the coordination stores
+		// are unreachable.
 		return true
 	}
 	est := 0

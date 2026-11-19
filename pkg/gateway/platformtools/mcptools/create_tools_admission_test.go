@@ -181,7 +181,7 @@ func TestMCPCreateToolsRefuseWhileThePoolDrains(t *testing.T) {
 // create tools refuse a create with PLATFORM_DEGRADED while both
 // coordination stores are unreachable, and create no session.
 //
-// spec: §10.1 (Dual-Store Unavailability) item 2, §15.2.1 (REST/MCP Consistency Contract)
+// spec: §10.1.3 (Dual-Store Unavailability) item 2, §15.2.1 (REST/MCP Consistency Contract)
 func TestMCPCreateToolsRefuseWhileBothStoresAreUnavailable(t *testing.T) {
 	for _, tool := range createToolNames {
 		t.Run(tool, func(t *testing.T) {

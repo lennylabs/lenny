@@ -79,7 +79,7 @@ func TestSingleShotBinderFollowsTheCreatePermissionRow(t *testing.T) {
 // unreachable with a retryable 503 PLATFORM_DEGRADED single-shot error that
 // carries the ten-second Retry-After the adapter re-emits.
 //
-// spec: §10.1 (Dual-Store Unavailability) item 2, §15 (Built-in adapter single-shot compute model)
+// spec: §10.1.3 (Dual-Store Unavailability) item 2, §15 (Built-in adapter single-shot compute model)
 func TestSingleShotBinderRefusesWhileBothStoresAreUnavailable(t *testing.T) {
 	binding, ssErr, err := singleShotBind(t, sessionserver.Options{DualStore: downStores{down: true}}, pkgauth.RoleUser)
 	if err == nil {

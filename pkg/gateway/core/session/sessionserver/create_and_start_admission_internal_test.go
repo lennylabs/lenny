@@ -182,7 +182,7 @@ func TestCreateAndStartServiceRefusesWhileThePoolDrains(t *testing.T) {
 // ten seconds, and dual_store_unavailable reason, before the claim and with
 // no row written, and admit a create once the stores are available.
 //
-// spec: §10.1 (Dual-Store Unavailability) item 2
+// spec: §10.1.3 (Dual-Store Unavailability) item 2
 func TestCreateRoutesRefuseWhileBothStoresAreUnavailable(t *testing.T) {
 	for _, route := range rcRoutes {
 		t.Run(route+"/unavailable", func(t *testing.T) {
@@ -225,7 +225,7 @@ func TestCreateRoutesRefuseWhileBothStoresAreUnavailable(t *testing.T) {
 // retryable ServiceError with HTTP status 503, code PLATFORM_DEGRADED, and
 // ten Retry-After seconds, with no row written.
 //
-// spec: §10.1 (Dual-Store Unavailability) item 2, §15 (Built-in adapter single-shot compute model)
+// spec: §10.1.3 (Dual-Store Unavailability) item 2, §15 (Built-in adapter single-shot compute model)
 func TestCreateAndStartServiceRefusesWhileBothStoresAreUnavailable(t *testing.T) {
 	f := newWDFixture(t, rcRuntimes(), wdOpts{})
 	f.srv.dualStore = unavailableStores{down: true}
