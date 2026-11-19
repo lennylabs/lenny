@@ -43,8 +43,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
+	rlcounter "github.com/lennylabs/lenny/pkg/policy/ratelimit"
 )
 
 // DefaultFailOpenMaxSeconds is the §11.3 /

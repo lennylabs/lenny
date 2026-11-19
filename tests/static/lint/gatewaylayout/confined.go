@@ -43,7 +43,6 @@ var Confined = []Confinement{
 	{Path: "pkg/gateway/connectors/connectorcredstore", APIFront: true},
 	{Path: "pkg/gateway/connectors/connectorsecret"},
 	{Path: "pkg/gateway/connectors/connectorauthz"},
-	{Path: "pkg/gateway/provisioning/vcscred"},
 	{Path: "pkg/workspaceplan/vcscred"},
 	{Path: "pkg/gateway/llmproxy/credrouter"},
 	// The token and key packages.
@@ -60,8 +59,6 @@ var Confined = []Confinement{
 	{Path: "pkg/tokenservice"},
 	{Path: "pkg/proto/tokenservice/v1", APIFront: true},
 	{Path: "pkg/gateway/api/serviceidentity", APIFront: true},
-	{Path: "pkg/gateway/pki/carotation", APIFront: true},
-	{Path: "pkg/gateway/pki/carotationstore", APIFront: true},
 	{Path: "pkg/mtls/carotation", APIFront: true},
 	{Path: "pkg/mtls/carotationstore", APIFront: true},
 	{Path: "pkg/mtls/denylist"},
@@ -70,13 +67,9 @@ var Confined = []Confinement{
 	{Path: "pkg/tenantkms"},
 	// The admission packages.
 	{Path: "pkg/auth/authmw", APIFront: true},
-	{Path: "pkg/gateway/quota", APIFront: true},
 	{Path: "pkg/quota", APIFront: true},
-	{Path: "pkg/gateway/policy/interceptor", APIFront: true},
 	{Path: "pkg/policy/interceptor", APIFront: true},
-	{Path: "pkg/gateway/policy/ratelimit", APIFront: true},
 	{Path: "pkg/policy/ratelimit", APIFront: true},
-	{Path: "pkg/gateway/policy"},
 	{Path: "pkg/policy"},
 	{Path: "pkg/gateway/environment/tenantstore", APIFront: true, Playground: true},
 	{Path: "pkg/tenancy/tenantstore", APIFront: true, Playground: true},
@@ -88,7 +81,6 @@ var Confined = []Confinement{
 	{Path: "pkg/tenancy/tenantaccessstore", APIFront: true},
 	{Path: "pkg/gateway/environment/customrolestore", APIFront: true},
 	{Path: "pkg/tenancy/customrolestore", APIFront: true},
-	{Path: "pkg/gateway/mcpfabric/delegationpolicystore", APIFront: true, PlatformTools: true},
 	{Path: "pkg/delegation/delegationpolicystore", APIFront: true, PlatformTools: true},
 }
 

@@ -13,9 +13,9 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/billing/correctionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/correctionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 

@@ -6,7 +6,7 @@
 // against a real MAXLEN-bounded Redis ops:events:stream. It drives the
 // pkg/ops/events.Service Redis source (XRANGE polling, XREAD BLOCK 0 live
 // tail, cross-source cursor translation) against a real Redis container
-// paired with the pkg/gateway/eventbuffer.StreamEmitter producer, so the
+// paired with the pkg/events/eventbuffer.StreamEmitter producer, so the
 // producer XADD encoding and the read-side decode are exercised end to end.
 package eventstream_test
 
@@ -24,7 +24,7 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )

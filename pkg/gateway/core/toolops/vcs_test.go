@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 // stubResolver answers every resolution with cred and err, and records the

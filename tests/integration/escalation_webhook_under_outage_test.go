@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"
 	"github.com/lennylabs/lenny/pkg/webhookdelivery"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"

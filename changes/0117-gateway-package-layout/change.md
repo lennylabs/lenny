@@ -197,7 +197,7 @@ Member changes of the program whose code steps edit a package this change moves 
 A runtime calls `lenny/delegate_task`. After the change:
 
 1. The adapter forwards the call on `LNK-GWCONTROL`, and the platform tools seam's dispatcher (`pkg/gateway/platformtools/mcp`) hands it to the tool handler in `platformtools/mcptools`.
-2. The handler checks the delegation policy and the lease through `pkg/delegation` and `pkg/policy`, which any part may import.
+2. The handler checks the delegation policy and the lease through `pkg/delegation`, whose delegation policy store GW-R2 allows the platform tools seam, and runs the interceptor chain of `pkg/policy`, which GW-R2 confines to the session core, through `seam.Interception` (`GWSEAM-Intercept`).
 3. It creates the child through `seam.Sessions.CreateChild`, which the session core implements in `pkg/gateway/core/session`. Today the handler imports `sessionserver` and calls `ServiceCall`. The interface and method names here are proposals that 0117.S1 fixes.
 4. The core claims a pod through `core/podclaim` and publishes the child's state change through `seam.Events.Publish`, which the stream proxy implements.
 5. When the child ends, the core calls the delegation tree's terminal hook through `seam.DelegationTree.OnTerminal`, which the platform tools seam implements. Today `sessionserver` imports `treebudget`, `resultrollup`, `orphancleanup`, and `treearchive`.

@@ -8,8 +8,8 @@ import (
 	"slices"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 // VCSTokens serves seam.VCSTokens over the VCS credential resolver the

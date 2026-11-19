@@ -98,11 +98,11 @@ github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention	github.com
 github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore	github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/eventbuffer	github.com/lennylabs/lenny/pkg/events/eventbuffer	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore	github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore	0117.S9
-github.com/lennylabs/lenny/pkg/gateway/operability/recommendations	github.com/lennylabs/lenny/pkg/recommendations/recommendations	0117.S9
+github.com/lennylabs/lenny/pkg/gateway/operability/recommendations	github.com/lennylabs/lenny/pkg/recommendations	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/pki/carotation	github.com/lennylabs/lenny/pkg/mtls/carotation	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore	github.com/lennylabs/lenny/pkg/mtls/carotationstore	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/policy/interceptor	github.com/lennylabs/lenny/pkg/policy/interceptor	0117.S9
-github.com/lennylabs/lenny/pkg/gateway/policy/policy	github.com/lennylabs/lenny/pkg/policy/policy	0117.S9
+github.com/lennylabs/lenny/pkg/gateway/policy/policy	github.com/lennylabs/lenny/pkg/policy	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit	github.com/lennylabs/lenny/pkg/policy/ratelimit	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/provisioning/envblock	github.com/lennylabs/lenny/pkg/workspaceplan/envblock	0117.S9
 github.com/lennylabs/lenny/pkg/gateway/provisioning/gitref	github.com/lennylabs/lenny/pkg/workspaceplan/gitref	0117.S9

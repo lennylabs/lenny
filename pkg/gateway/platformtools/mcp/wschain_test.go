@@ -18,8 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
+	rlcounter "github.com/lennylabs/lenny/pkg/policy/ratelimit"
 )
 
 // spec: §27.5 / §27.3.1 — the MCP WebSocket transport at

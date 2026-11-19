@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
+	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint"
 )
 
 // CheckpointReconciler is the reconcile of the Postgres token-usage

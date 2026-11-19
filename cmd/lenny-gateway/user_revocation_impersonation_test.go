@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 )
 
 // fakeUserTokenStore is a userTokenStore over in-memory token sets. own

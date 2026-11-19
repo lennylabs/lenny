@@ -217,19 +217,19 @@ func TestRegisteredViolationsPassAndStaleRowsFail(t *testing.T) {
 func TestPackagesInTransitAreImportableAndDomainPackagesStayOutside(t *testing.T) {
 	pkgs := append(
 		base(),
-		pkg("pkg/gateway/billing/billingstore", "pkg/gateway/connectors/conn"),
+		pkg("pkg/gateway/ledger/ledgerstore", "pkg/gateway/connectors/conn"),
 		pkg("pkg/gateway/connectors/conn", "pkg/gateway/core/podclaim", "pkg/gateway/streamproxy/bus"),
-		pkg("pkg/gateway/platformtools/tools", "pkg/gateway/billing/billingstore", "pkg/gateway/connectors/conn"),
-		pkg("pkg/ops", "pkg/gateway/billing/billingstore", "pkg/gateway/connectors/conn"),
-		pkg("pkg/gateway/quota/quotacheckpoint", "pkg/gateway/api/pipeline"),
+		pkg("pkg/gateway/platformtools/tools", "pkg/gateway/ledger/ledgerstore", "pkg/gateway/connectors/conn"),
+		pkg("pkg/ops", "pkg/gateway/ledger/ledgerstore", "pkg/gateway/connectors/conn"),
+		pkg("pkg/gateway/ledger/ledgercheckpoint", "pkg/gateway/api/pipeline"),
 	)
 	reg := Register{Packages: []PackageRow{
-		{Package: "pkg/gateway/billing/billingstore", Part: PartDomain, Step: "0117.S9"},
-		{Package: "pkg/gateway/quota/quotacheckpoint", Part: PartDomain, Step: "0117.S9"},
+		{Package: "pkg/gateway/ledger/ledgerstore", Part: PartDomain, Step: "0117.S12"},
+		{Package: "pkg/gateway/ledger/ledgercheckpoint", Part: PartDomain, Step: "0117.S12"},
 		{Package: "pkg/gateway/connectors/conn", Part: PartRemoved, RemovedBy: "0124"},
 	}}
 	res := check(t, pkgs, reg)
-	assertOnly(t, res, Violation{RuleOutsideImports, "pkg/gateway/quota/quotacheckpoint", "pkg/gateway/api/pipeline"})
+	assertOnly(t, res, Violation{RuleOutsideImports, "pkg/gateway/ledger/ledgercheckpoint", "pkg/gateway/api/pipeline"})
 }
 
 // TestARegisterRowOverridesTheDirectoryOfAMisplacedPackage checks that a
@@ -488,15 +488,15 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 
 	allowed := append(
 		base(),
-		pkg("pkg/gateway/core/admission", "pkg/gateway/quota/quotastore", "pkg/policy/policy", "pkg/gateway/credentials/credentialstore"),
+		pkg("pkg/gateway/core/admission", "pkg/quota/quotastore", "pkg/policy", "pkg/gateway/credentials/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/api/pipeline2", "pkg/auth/authmw"),
-		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/api/admintoken", "pkg/gateway/pki/carotation", "pkg/connectoroauth", "pkg/gateway/api/serviceidentity"),
+		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/quota/quotastore", "pkg/policy/ratelimit", "pkg/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/api/admintoken", "pkg/connectoroauth", "pkg/mtls/carotation", "pkg/gateway/api/serviceidentity"),
 		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/gateway/storage/issuedtokenstore", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
-		pkg("pkg/gateway/platformtools/delegation", "pkg/gateway/mcpfabric/delegationpolicystore", "pkg/gateway/mcpfabric/delegationpolicystore/pgstore", "pkg/delegation/delegationpolicystore"),
-		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
+		pkg("pkg/gateway/platformtools/delegation", "pkg/delegation/delegationpolicystore", "pkg/delegation/delegationpolicystore/pgstore"),
+		pkg("cmd/lenny-gateway/wire", "pkg/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),
-		pkg("pkg/gateway/billing/usage", "pkg/gateway/quota/quotastore"),
+		pkg("pkg/gateway/billing/usage", "pkg/quota/quotastore"),
 	)
 	transit := Register{Packages: []PackageRow{{Package: "pkg/gateway/billing/usage", Part: PartDomain, Step: "0117.S9"}}}
 	res := check(t, allowed, transit)
@@ -510,8 +510,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		want Violation
 	}{
 		{
-			"a seam imports quota", pkg("pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore"),
-			Violation{RuleConfinedImports, "pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore"},
+			"a seam imports quota", pkg("pkg/gateway/platformtools/tools", "pkg/quota/quotastore"),
+			Violation{RuleConfinedImports, "pkg/gateway/platformtools/tools", "pkg/quota/quotastore"},
 		},
 		{
 			"a seam imports the moved credential store", pkg("pkg/gateway/streamproxy/x", "pkg/credential/credentialstore/pgstore"),
@@ -522,8 +522,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 			Violation{RuleConfinedImports, "pkg/gateway/uploadhandler/up", "pkg/auth/authmw"},
 		},
 		{
-			"the API front imports policy", pkg("pkg/gateway/api/admin", "pkg/gateway/policy/policy"),
-			Violation{RuleConfinedImports, "pkg/gateway/api/admin", "pkg/gateway/policy/policy"},
+			"the API front imports policy", pkg("pkg/gateway/api/admin", "pkg/policy"),
+			Violation{RuleConfinedImports, "pkg/gateway/api/admin", "pkg/policy"},
 		},
 		{
 			"a replica-level part imports the tenant store", pkg("pkg/gateway/replica/x", "pkg/gateway/environment/tenantstore"),
@@ -578,8 +578,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 			Violation{RuleConfinedImports, "pkg/gateway/replica/m", "pkg/mtls/denylist"},
 		},
 		{
-			"the playground imports quota", pkg("pkg/gateway/playground/q", "pkg/gateway/quota/quotastore"),
-			Violation{RuleConfinedImports, "pkg/gateway/playground/q", "pkg/gateway/quota/quotastore"},
+			"the playground imports quota", pkg("pkg/gateway/playground/q", "pkg/quota/quotastore"),
+			Violation{RuleConfinedImports, "pkg/gateway/playground/q", "pkg/quota/quotastore"},
 		},
 		{
 			"the playground imports token introspection", pkg("pkg/gateway/playground/i", "pkg/auth/introspection"),
@@ -602,8 +602,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/d", "pkg/delegation/delegationpolicystore"},
 		},
 		{
-			"the platform tools seam imports the interceptor chain", pkg("pkg/gateway/platformtools/i", "pkg/gateway/policy/interceptor"),
-			Violation{RuleConfinedImports, "pkg/gateway/platformtools/i", "pkg/gateway/policy/interceptor"},
+			"the platform tools seam imports the interceptor chain", pkg("pkg/gateway/platformtools/i", "pkg/policy/interceptor"),
+			Violation{RuleConfinedImports, "pkg/gateway/platformtools/i", "pkg/policy/interceptor"},
 		},
 		{
 			"the platform tools seam imports the tenant store", pkg("pkg/gateway/platformtools/t", "pkg/tenancy/tenantstore"),
@@ -619,8 +619,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 	// A registered importer passes, and its row goes stale when the import
 	// goes.
 	withRow := transit
-	withRow.Imports = []ImportRow{{From: "pkg/gateway/platformtools/tools", To: "pkg/gateway/quota/quotastore", Rule: RuleConfinedImports, Step: "0117.S7"}}
-	res = check(t, append(append([]Package{}, allowed...), pkg("pkg/gateway/platformtools/tools", "pkg/gateway/quota/quotastore")), withRow)
+	withRow.Imports = []ImportRow{{From: "pkg/gateway/platformtools/tools", To: "pkg/quota/quotastore", Rule: RuleConfinedImports, Step: "0117.S7"}}
+	res = check(t, append(append([]Package{}, allowed...), pkg("pkg/gateway/platformtools/tools", "pkg/quota/quotastore")), withRow)
 	if res.Failed() {
 		t.Fatalf("a registered confined import failed: unregistered %v, stale %v", res.Unregistered, res.Stale)
 	}

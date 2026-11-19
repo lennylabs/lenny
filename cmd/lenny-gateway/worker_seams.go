@@ -10,7 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingcheckpoint"
+	"github.com/lennylabs/lenny/pkg/billing/billingcheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"

@@ -17,7 +17,7 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
 )
 

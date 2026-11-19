@@ -8,12 +8,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/billing/correctionstore"
+	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/correctionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore"
 )
 
 // spec: §11.2.1 — the interceptor failPolicy transition is a billing-stream

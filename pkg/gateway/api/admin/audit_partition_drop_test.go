@@ -11,8 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
 

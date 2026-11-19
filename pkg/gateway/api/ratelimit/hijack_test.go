@@ -11,7 +11,7 @@ import (
 	"testing"
 
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	rlcounter "github.com/lennylabs/lenny/pkg/policy/ratelimit"
 )
 
 // spec: §27.5 / §27.3.1 — the rate-limit wrapper (rateLimitRW)

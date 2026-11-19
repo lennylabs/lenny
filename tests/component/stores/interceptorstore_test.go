@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §4.8 external-interceptor registry, exercising
-// the Postgres-backed pkg/gateway/policy/interceptor/interceptorstore/pgstore
+// the Postgres-backed pkg/policy/interceptor/interceptorstore/pgstore
 // against a real container with the production migrations applied. The
 // registry is the persistent, cross-replica registration surface of the
 // §4.8 interceptor chain: the deployer-supplied RequestInterceptor
@@ -24,9 +24,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
-	interceptorpg "github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore"
+	interceptorpg "github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore/pgstore"
 )
 
 // interceptorName returns a fresh unique §4.8 interceptor name. The name
@@ -55,7 +55,7 @@ func sampleInterceptor(name string) interceptorstore.Interceptor {
 // priority-ceiling and PreAuth-phase rejection), 8.3 (SEC-013
 // server-minted cooldown fields), 15.1 (optimistic-concurrency version).
 // diagnosis: the Postgres-backed §4.8 interceptor registry in
-// pkg/gateway/policy/interceptor/interceptorstore/pgstore did not behave
+// pkg/policy/interceptor/interceptorstore/pgstore did not behave
 // as specified. Create/Get must round-trip the registration fields
 // including the jsonb phase array and the SEC-013 server-minted
 // transition fields; the §4.8 priority-ceiling and PreAuth-phase

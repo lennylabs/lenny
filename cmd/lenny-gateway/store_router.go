@@ -7,9 +7,9 @@ import (
 	"log"
 	"time"
 
-	billingpg "github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
+	billingpg "github.com/lennylabs/lenny/pkg/billing/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/quota/storagequota"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

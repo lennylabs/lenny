@@ -92,7 +92,7 @@ func (c *nonceCheckpoint) write(n uint64) error {
 // counter (and its optional disk checkpoint). The eventbuffer Emitter and
 // StreamEmitter share this so the buffer and the Redis stream stamp the
 // same eventKey format. It is exported so the concrete emitters in
-// pkg/gateway/eventbuffer, which produce the events this package's
+// pkg/events/eventbuffer, which produce the events this package's
 // vocabulary describes, can build and use it. spec: §25.3.
 type Keyer struct {
 	replicaID  string

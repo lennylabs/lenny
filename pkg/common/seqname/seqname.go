@@ -30,8 +30,8 @@
 // (CREATE SEQUENCE, nextval, setval) need no separate identifier
 // allowlisting.
 //
-// Consumers: the billing store (pkg/gateway/billing/billingstore),
-// the audit store (pkg/gateway/audit/auditstore), and the admin
+// Consumers: the billing store (pkg/billing/billingstore),
+// the audit store (pkg/audit/auditstore), and the admin
 // tenant-provisioning helper (pkg/gateway/externalapi/admin) all call
 // this package so the four write and provisioning paths agree on one
 // derivation.

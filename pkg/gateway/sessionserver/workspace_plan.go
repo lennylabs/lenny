@@ -12,10 +12,10 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 // storedWorkspacePlan re-parses the §14 WorkspacePlan stored on the session

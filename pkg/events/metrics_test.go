@@ -39,7 +39,7 @@ func TestEmittedTotalByType_spec_25_3_709(t *testing.T) {
 // TestEmitFailedTotalByType_spec_25_3_703 asserts IncEmitFailed counts a
 // failed remote write on lenny_ops_events_emit_failed_total. The §25.5
 // Redis-unreachable path through the StreamEmitter is exercised in
-// pkg/gateway/eventbuffer; this asserts the metric family the emitter
+// pkg/events/eventbuffer; this asserts the metric family the emitter
 // drives.
 func TestEmitFailedTotalByType_spec_25_3_703(t *testing.T) {
 	m := newTestMetrics(t)

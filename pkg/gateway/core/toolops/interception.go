@@ -6,10 +6,10 @@ import (
 	"context"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/policy"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore"
 )
 
 // Interception serves seam.Interception over the gateway interceptor chain

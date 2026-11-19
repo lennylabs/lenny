@@ -14,10 +14,10 @@
 //
 // The Service is the single owner of the operational-event buffer on
 // the lenny-ops side. The gateway emits its events through the §25.3
-// pkg/gateway/eventbuffer.Emitter; the lenny-ops side has its own buffer
+// pkg/events/eventbuffer.Emitter; the lenny-ops side has its own buffer
 // for events that originate in lenny-ops (escalations, drift,
 // platform-upgrade lifecycle, ops self-health). Both feed the same
-// Redis stream (§25.5 "Both write to the same Redis stream"); the
+// Redis stream (§25.5 (Operational Event Stream)); the
 // Service consumes either side via Publish, which keeps the in-memory
 // transport-agnostic. The read side selects its source from SourceHealth:
 // the Redis ops:events:stream is primary (redissource.go: XRANGE for
@@ -42,7 +42,7 @@ import (
 	"time"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 )
 

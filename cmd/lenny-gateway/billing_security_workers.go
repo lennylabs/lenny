@@ -7,8 +7,8 @@ import (
 	"log"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/billing/billingretention"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/idempotency"

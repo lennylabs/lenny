@@ -23,11 +23,11 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/experiment"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"

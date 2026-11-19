@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
+	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint"
 )
 
 // fakeCheckpointReconciler answers a reconcile with a fixed result, or

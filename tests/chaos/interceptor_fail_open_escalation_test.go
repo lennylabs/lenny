@@ -34,7 +34,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	stubinterceptor "github.com/lennylabs/lenny/tests/testinfra/stubs/interceptor"
 )

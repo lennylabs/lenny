@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 )
 
 // routeModifyInterceptor returns a MODIFY that replaces the content with

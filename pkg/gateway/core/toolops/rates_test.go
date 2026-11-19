@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
 )
 
 // TestIncrementRateCountsPerMinute checks that the rate counter counts
