@@ -150,15 +150,10 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		_ = container.Terminate(stopCtx)
 	})
 
-	host, err := container.Host(ctx)
+	endpoint, err := mappedEndpoint(ctx, container, "9000/tcp")
 	if err != nil {
-		t.Fatalf("StartMinIO: host: %v", err)
+		t.Fatalf("StartMinIO: endpoint: %v", err)
 	}
-	port, err := container.MappedPort(ctx, "9000/tcp")
-	if err != nil {
-		t.Fatalf("StartMinIO: port: %v", err)
-	}
-	endpoint := host + ":" + port.Port()
 
 	client, err := minio.New(endpoint, &minio.Options{
 		Creds:  miniocreds.NewStaticV4(minioTestAccessKey, minioTestSecretKey, ""),
