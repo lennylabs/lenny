@@ -332,7 +332,7 @@ packages:
     - package: pkg/embedded/k3s
       count: 91
     - package: pkg/embedded/localcli
-      count: 52
+      count: 55
     - package: pkg/embedded/manifests
       count: 6
     - package: pkg/embedded/stack
@@ -984,7 +984,7 @@ packages:
     - package: scripts/specshift/pass
       count: 3
     - package: sdks/client/go/lenny
-      count: 90
+      count: 93
     - package: sdks/runtime/go/runtime
       count: 129
     - package: tests/chaos
