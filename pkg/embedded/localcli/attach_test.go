@@ -57,7 +57,10 @@ func (g *attachGateway) server(t *testing.T) *httptest.Server {
 		case "initialize":
 			write(map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "serverInfo": map[string]any{"name": "g", "version": "0"}})
 		case "tools/call":
-			write(map[string]any{"content": []map[string]any{{"type": "text", "text": `{"sessionId":"sess_att","state":"running"}`}}})
+			// The only tool `session new` calls is
+			// lenny/create_and_start_session, which answers with the REST
+			// POST /v1/sessions/start body and its `id` field.
+			write(map[string]any{"content": []map[string]any{{"type": "text", "text": `{"id":"sess_att","state":"running"}`}}})
 		default:
 			write(map[string]any{})
 		}

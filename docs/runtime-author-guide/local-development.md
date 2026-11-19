@@ -47,7 +47,7 @@ Build your image and register it against the running gateway:
 ```bash
 docker build -t my-agent:dev .
 lenny runtime publish my-agent --image my-agent:dev
-lenny session new --runtime my-agent --message "Hello"
+lenny session new --runtime my-agent --attach "Hello"
 ```
 
 Or scaffold one from scratch:

@@ -103,6 +103,37 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 	return ts
 }
 
+// newMCPStartGateway brings up the gateway MCP server in process with the
+// session server's request pipeline behind it, so a tool that the gateway
+// runs as a REST call through the shared service layer, such as
+// lenny/create_and_start_session, reaches the REST route it names. Unlike
+// newMCPGateway, it wires the session server itself as the session
+// creator, so lenny/create_session leaves the session in created as the
+// gateway does.
+func newMCPStartGateway(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := mcp.NewServer()
+	store := memstore.New()
+	exec := executor.NewEchoExecutor()
+	sessions := sessionserver.New(store, sessionserver.Options{Executor: exec})
+	// Creating the API front hands the session server the request
+	// pipeline its in-process service calls run through.
+	apifront.Routes(sessions)
+	mcptools.Register(srv, mcptools.Deps{
+		Callers:           pipeline.Callers{},
+		DevTenantFallback: true,
+		Store:             store,
+		Executor:          toolseam.Executor(exec),
+		SessionCreator:    sessions.ToolsSeam(),
+		SessionService:    sessions.ToolsSeam(),
+		SessionAccess:     sessions.ToolsSeam(),
+		TenantID:          "acme",
+	})
+	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	t.Cleanup(ts.Close)
+	return ts
+}
+
 // idempotencyWrapped wraps the gateway handler in the §11.5
 // idempotency middleware so a replayed Idempotency-Key returns the
 // cached create response. The tenant is read from the same
@@ -757,6 +788,45 @@ func TestGoClientMCP(t *testing.T) {
 		t.Errorf("unknown-tool error is not an *MCPError: %v", err)
 	} else if mcpErr.Code != -32601 {
 		t.Errorf("unknown-tool error code: got %d, want -32601", mcpErr.Code)
+	}
+}
+
+// spec: §15.2 (MCP API)
+// diagnosis: The SDK's CreateAndStartSession did not return a running
+//
+//	session from the gateway's lenny/create_and_start_session tool, or a
+//	message sent to that session did not reach the runtime. Inspect the
+//	result decoding in MCPClient.CreateAndStartSession in
+//	sdks/client/go/lenny/mcp.go, which reads the `id` field of the REST
+//	POST /v1/sessions/start body the tool answers with, and the tool's
+//	dispatch in pkg/gateway/platformtools/mcptools/client_tools.go.
+func TestGoClientMCPCreateAndStartSessionReturnsARunningSession(t *testing.T) {
+	ts := newMCPStartGateway(t)
+	client, err := lenny.New(ts.URL, lenny.WithTenant("acme"))
+	if err != nil {
+		t.Fatalf("construct SDK client: %v", err)
+	}
+	mcpClient := client.MCP()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	started, err := mcpClient.CreateAndStartSession(ctx, "claude-code")
+	if err != nil {
+		t.Fatalf("lenny/create_and_start_session over MCP: %v", err)
+	}
+	if started.SessionID == "" {
+		t.Fatal("lenny/create_and_start_session returned an empty session id")
+	}
+	if started.State != "running" {
+		t.Errorf("state after lenny/create_and_start_session: got %q, want running", started.State)
+	}
+	reply, err := mcpClient.SendMessage(ctx, started.SessionID, "ping")
+	if err != nil {
+		t.Fatalf("lenny/send_message to the started session: %v", err)
+	}
+	if !strings.Contains(reply, "ping") {
+		t.Errorf("send_message reply %q does not echo the message", reply)
 	}
 }
 

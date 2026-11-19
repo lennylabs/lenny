@@ -446,7 +446,7 @@ Session commands route through the **MCP** client SDK, and `lenny session new` w
 
 | Command | Description | Min Role |
 |---|---|---|
-| `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]...` | Create a session against the specified runtime. With `--attach` (default in interactive TTYs), the CLI opens an MCP stream and renders the session's output, elicitation prompts, and lifecycle transitions inline. | `user` |
+| `lenny session new --runtime <name> [--attach] [--workspace <dir>] [--file <path>]... ["prompt"]` | Create a session against the specified runtime and start it, with or without `--workspace` or `--file`. The positional arguments, joined with spaces, are the session's opening prompt, which the CLI sends as a user message once the session is running. When the session cannot start, the CLI reports the error, sends no prompt, and exits with status 1. When the session starts and the prompt cannot be delivered, the CLI exits with status 1 and names the running session in its error, so the prompt can be resent with `lenny session send` or the session cancelled with `lenny session cancel`. With `--attach` (default in interactive TTYs), the CLI opens an MCP stream and renders the session's output, elicitation prompts, and lifecycle transitions inline. | `user` |
 | `lenny session attach <sessionId>` | Attach to an existing session and stream its output from the current cursor. Supports reconnect-with-cursor. | `user` (owner) |
 | `lenny session send <sessionId> <message>` | Send a user message to an existing session. If the CLI is not attached, the message is delivered and the CLI exits. | `user` (owner) |
 | `lenny session interrupt <sessionId>` | Send an interrupt to a running session. | `user` (owner) |

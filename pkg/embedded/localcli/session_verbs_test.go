@@ -61,8 +61,8 @@ func fakeGateway(t *testing.T) *httptest.Server {
 			}
 			_ = json.Unmarshal(p.Arguments, &a)
 			switch p.Name {
-			case "lenny/create_session":
-				write(text(`{"sessionId":"sess_new","state":"running"}`))
+			case "lenny/create_and_start_session":
+				write(text(`{"id":"sess_new","state":"running"}`))
 			case "lenny/send_message":
 				write(text("echo: " + a.Message))
 			case "lenny/interrupt_session":
@@ -106,21 +106,6 @@ func fakeGateway(t *testing.T) *httptest.Server {
 // Embedded Mode stack.
 func remoteArgs(srv *httptest.Server, args ...string) []string {
 	return append([]string{"--api-url", srv.URL, "--token", "test-bearer"}, args...)
-}
-
-// TestSessionNewRoutesThroughMCP_spec_24_17_209 confirms `session new`
-// drives the §15.2 MCP lenny/create_session tool (not the REST start
-// path) and prints the created id. F-24.17.3.
-func TestSessionNewRoutesThroughMCP_spec_24_17_209(t *testing.T) {
-	srv := fakeGateway(t)
-	var stdout, stderr bytes.Buffer
-	code := cmdSession(append([]string{"new"}, remoteArgs(srv, "--runtime", "claude-code")...), &stdout, &stderr)
-	if code != 0 {
-		t.Fatalf("session new: code=%d stderr=%s", code, stderr.String())
-	}
-	if strings.TrimSpace(stdout.String()) != "sess_new" {
-		t.Errorf("stdout = %q, want sess_new", stdout.String())
-	}
 }
 
 // TestSessionSendInterruptCancel_spec_24_17 exercises the three MCP

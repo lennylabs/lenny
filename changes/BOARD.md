@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Ready | 1 |
 | Waiting on decisions | 40 |
 | Blocked | 132 |
-| Landed | 13 |
+| Landed | 14 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -225,6 +225,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
+| [0160.S1](0160-cli-session-new-starts/steps.md#0160s1-start-the-session-before-delivering-the-prompt) | Start the session before delivering the prompt | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -269,3 +270,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
+| [0160](0160-cli-session-new-starts/change.md) | lenny session new starts the session before the prompt | `Implemented` | 1 of 1 | 2 |
