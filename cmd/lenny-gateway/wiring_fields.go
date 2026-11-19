@@ -331,6 +331,11 @@ type gatewayWiringFields struct {
 	delegationPolicies delegationpolicystore.Store
 	interceptors       interceptorstore.Store
 	deploymentConfig   deploymentconfigstore.Store
+	// platformToolsMetrics holds the metric sets the platform tools seam's
+	// packages register on the gateway's metric registry. buildMCPSurface
+	// builds it; the control server and the reconciler workers read the
+	// lease-extension, orphan-cleanup, and budget-reconstruction sets back.
+	platformToolsMetrics platformToolsMetrics
 	// §4.8 policy interceptor chain outputs. buildPolicyChain constructs the
 	// chain, the §8.3 maxInputSize resolver holder, the policy audit sink,
 	// and the §11.2 quota counter and tenant-limits resolver; the session

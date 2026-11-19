@@ -92,7 +92,8 @@ func (w *gatewayWiring) buildControlServer(
 	// intra-pod tool forwards and scrub reports. The §8.6 lease-extension
 	// dispatch is no longer a wire RPC on this listener: the gateway LLM
 	// Proxy drives the budget-exhaustion trigger in-process through
-	// leasecontrol.ExtendForBudget, wired below. gwMetrics satisfies
+	// leasecontrol.ExtendForBudget, wired below. The lease-extension
+	// metric set that buildMCPSurface registered satisfies
 	// leasecontrol.MetricEmitter so every grant drives the §16
 	// lenny_delegation_lease_extension_total counter. F-8.6.13.
 	// spec: §8.6 / §11.7 — the leasecontrol auditor adapts the
@@ -150,7 +151,7 @@ func (w *gatewayWiring) buildControlServer(
 			log.Fatalf("lenny-gateway: §4.7 scrub-report service: %v", err)
 		}
 	}
-	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, gwMetrics, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny, inputWaitRecoveryDeps{sessions: w.sessions, waits: w.inputWaits, events: w.eventBus})
+	gatewayCtrlSrv, gatewayCtrlLis, leaseControlSvc, err := newGatewayControlServer(*grpcAddr, leaseBudgets, w.platformToolsMetrics.leaseExtension, leaseExtensionAuditor, leaseElicit, w.rateLimiter, *leaseAutoMaxPerMin, platformToolBridge, connectorToolBridge, scrubReports, w.replica, *adapterTLSCert, *adapterTLSKey, *adapterCA, *spiffeTrustDomain, *saTokenAudience, w.saTokenVerifier, mtlsDeny, inputWaitRecoveryDeps{sessions: w.sessions, waits: w.inputWaits, events: w.eventBus})
 	if err != nil {
 		log.Fatalf("lenny-gateway: §8.6 GatewayControl listen: %v", err)
 	}

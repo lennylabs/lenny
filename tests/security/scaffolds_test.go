@@ -244,10 +244,10 @@ func TestInputFuzzingOWASPZAP(t *testing.T) {
 //     resolver, VerifyContent digest check, content provenance).
 //   - pkg/gateway/mcptools/elicitation.go (the dispatcher that
 //     consults the resolver; tier-2 unit tests).
-//   - pkg/gateway/gatewaymetrics (the
+//   - pkg/gateway/mcpfabric/mcptools (the
 //     lenny_elicitation_content_tamper_detected_total counter the
 //     §16.5 alert reads; unit-tested in
-//     gatewaymetrics_test.go::TestRecordElicitationContentTamperDetectedExposesCounter).
+//     prommetrics_test.go::TestElicitationPromMetricsExposeTheirSeries).
 //   - pkg/alerting/rules/rules.go (the §16.5
 //     ElicitationContentTamperDetected alert rule).
 //   - cmd/runtimes/elicitation-echo (the Standard-level runtime

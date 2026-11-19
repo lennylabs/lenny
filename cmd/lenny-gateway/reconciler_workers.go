@@ -58,7 +58,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 		// counter, the fleet-wide active gauge, and the per-tenant active
 		// gauge so the §16.5 OrphanTasksPerTenantHigh alert evaluates.
 		// F-8.10.7.
-		Metrics: w.gwMetrics,
+		Metrics: w.platformToolsMetrics.orphanCleanup,
 	})
 	go orphanSweeper.Run(w.watchdogCtx, func(terminated int, err error) {
 		if err != nil {
@@ -186,7 +186,7 @@ func (w *gatewayWiring) startReconcilerWorkers() {
 			Store:           delegationbudgetpg.New(w.pgPool),
 			Live:            delegationbudget.SessionEnumerator{Sessions: w.sessions},
 			Marker:          delegationbudget.SessionUnrecoverableMarker{Sessions: w.sessions},
-			Metrics:         w.gwMetrics,
+			Metrics:         w.platformToolsMetrics.budgetReconstruction,
 			Interval:        time.Duration(quota.ClampSyncIntervalSeconds(*quotaSyncIntervalSeconds)) * time.Second,
 			NodeMemoryBytes: *delegationNodeMemoryFootprintBytes,
 			Now:             clockinject.Now,

@@ -224,11 +224,6 @@ crossings:
     type: CooldownResolver
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation
-    interface: Options.Metrics
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegation
     interface: Options.Policies
     from: pkg/gateway/mcpfabric/delegationpolicystore
     type: Memory
@@ -243,11 +238,6 @@ crossings:
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/delegationbudget
-    interface: Reconciler.Metrics
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationbudget
     interface: SessionTreeLister.Tenants
     from: pkg/gateway/environment/tenantstore
@@ -283,11 +273,6 @@ crossings:
     from: pkg/gateway/sessionserver
     type: Server.OnSessionTerminal
     step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/deadlock
-    interface: NewManager(1)
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     interface: ClaimDispositionDriver
     from: pkg/gateway/session/recycle
@@ -297,11 +282,6 @@ crossings:
     interface: DrainLedger
     from: pkg/gateway/session/recycle
     type: NewDrainLedger
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-    interface: MetricEmitter
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/leasecontrol
     interface: Options.AutoExtensionCounter
@@ -367,11 +347,6 @@ crossings:
     interface: New(1)
     from: pkg/gateway/environment/tenantstore/pgstore
     type: Store
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
-    interface: Options.Metrics
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegationtree/orphancleanup
     interface: Options.Terminal
@@ -444,16 +419,6 @@ crossings:
     type: Server
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.ElicitationLifecycleMetrics
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.ElicitationMetrics
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.ElicitationModeResolver
     from: pkg/gateway/environment/tenantstore
     type: Memory
@@ -467,11 +432,6 @@ crossings:
     interface: Deps.ElicitationModeResolver
     from: pkg/gateway/environment/tenantstore/pgstore
     type: Store
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.ElicitationTamperMetrics
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
     step: 0117.S7
   - to: pkg/gateway/mcpfabric/mcptools
     interface: Deps.Executor

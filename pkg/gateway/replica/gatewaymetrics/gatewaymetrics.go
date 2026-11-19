@@ -114,20 +114,6 @@ func New() (*Metrics, error) {
 	return m, nil
 }
 
-// IncDelegationLeaseExtension records a §8.6 lease-extension
-// decision against the §16
-// `lenny_delegation_lease_extension_total` counter. The `outcome`
-// label is the §8.6 audit classification
-// (`approved`/`capped`/`denied`) — emitted by
-// leasecontrol.Service alongside its audit record so the dashboard and
-// the audit chain share one source of truth. spec: §16; §8.6; F-8.6.13.
-func (m *Metrics) IncDelegationLeaseExtension(tenantID, outcome string) {
-	if m == nil {
-		return
-	}
-	m.delegationLeaseExtension.WithLabelValues(tenantID, outcome).Inc()
-}
-
 // IncDelegationBudgetKeysExpired records one §8.3 BUDGET_KEYS_EXPIRED
 // reservation detection against the §16.1
 // `lenny_delegation_budget_keys_expired_total{pool, tenant_id}` counter. pool
@@ -137,18 +123,6 @@ func (m *Metrics) IncDelegationBudgetKeysExpired(pool, tenantID string) {
 		return
 	}
 	m.delegationBudgetKeysExpired.WithLabelValues(pool, tenantID).Inc()
-}
-
-// IncDelegationBudgetReconstruction records one §11.2 delegation
-// tree budget reconstruction event. `outcome` is `success` (counters
-// restored via the MAX rule) or `irrecoverable` (the tree root was moved
-// to awaiting_client_action because the checkpoint was too stale and the
-// live state could not be enumerated). spec: §11.2; §12.4; F-11.2.5.
-func (m *Metrics) IncDelegationBudgetReconstruction(outcome string) {
-	if m == nil {
-		return
-	}
-	m.delegationBudgetReconstruction.WithLabelValues(outcome).Inc()
 }
 
 // IncQuotaCheckpointReconcile records one §11.2 / §24.6
@@ -928,31 +902,6 @@ func (m *Metrics) IncIdempotencyCacheSkipped(tenantID, reason string) {
 	m.idempotencyCacheSkipped.WithLabelValues(tenantID, reason).Inc()
 }
 
-// ObserveDelegationDepth records a §8.2 delegation-admission depth
-// observation onto the `lenny_delegation_depth` histogram labeled by
-// `pool`. spec: §8.2; §16.1.
-func (m *Metrics) ObserveDelegationDepth(pool string, depth int) {
-	if m == nil {
-		return
-	}
-	m.delegationDepth.WithLabelValues(pool).Observe(float64(depth))
-}
-
-// IncDelegationWouldHaveBlocked increments the §8.2 three-layer-gate
-// `lenny_delegation_would_have_blocked_total` counter for one
-// (`layer`, `mode`) attribution row. Callers emit one row per failing
-// layer: under `mode: enforce` this attributes the rejection causes
-// for a rejected hop; under `mode: warn` it records the
-// would-have-blocked layers for an admitted hop. The counter is not
-// emitted under `mode: permissive` (the caller decides; this helper
-// is unconditional). spec: §8.2; §16.1.
-func (m *Metrics) IncDelegationWouldHaveBlocked(pool, tenantID, layer, mode string) {
-	if m == nil {
-		return
-	}
-	m.delegationWouldHaveBlocked.WithLabelValues(pool, tenantID, layer, mode).Inc()
-}
-
 // IncDelegationTreeCycleDetected increments the §8.9
 // `lenny_delegation_tree_cycle_detected_total` counter when a tree
 // walker hits a cycle in the §8.2 ParentSessionID lineage. `source`
@@ -964,31 +913,6 @@ func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
 		return
 	}
 	m.delegationTreeCycleDetected.WithLabelValues(tenantID, source).Inc()
-}
-
-// IncDelegationDeadlockDetected increments the §8.8
-// `lenny_delegation_deadlock_detected_total` counter once per
-// newly-detected deadlocked subtree root, labelled by the root's pool.
-// spec: §16.1 (Metrics), §8.8. F-8.8.6, F-8.8.22.
-func (m *Metrics) IncDelegationDeadlockDetected(pool string) {
-	if m == nil {
-		return
-	}
-	m.delegationDeadlockDetected.WithLabelValues(pool).Inc()
-}
-
-// ObserveDelegationDeadlockResolution closes out one tracked §8.8
-// deadlock: it increments `lenny_delegation_deadlock_resolution_total`
-// labelled by the root's pool and the resolution (`client_input` |
-// `child_cancel` | `timeout`), and records the detection-to-resolution
-// latency on `lenny_delegation_deadlock_duration_seconds`, labelled by the
-// pool alone. spec: §16.1 (Metrics), §8.8. F-8.8.6, F-8.8.22.
-func (m *Metrics) ObserveDelegationDeadlockResolution(pool, resolution string, seconds float64) {
-	if m == nil {
-		return
-	}
-	m.delegationDeadlockResolution.WithLabelValues(pool, resolution).Inc()
-	m.delegationDeadlockDuration.WithLabelValues(pool).Observe(seconds)
 }
 
 // ObserveDelegationParallelChildrenHighWatermark records the §8.3 maximum simultaneous in-flight children for one delegation tree
@@ -1392,16 +1316,6 @@ func (m *Metrics) SetMaxOrphanTasksPerTenant(value int) {
 	m.maxOrphanTasksPerTenant.Set(float64(value))
 }
 
-// IncOrphanCleanupRun increments the §8.10 / §16.1
-// `lenny_orphan_cleanup_runs_total` counter — one tick per sweep
-// invocation regardless of outcome. spec: §8.10; F-8.10.7.
-func (m *Metrics) IncOrphanCleanupRun() {
-	if m == nil {
-		return
-	}
-	m.orphanCleanupRuns.Inc()
-}
-
 // IncOrphanSessionReconciliation increments
 // `lenny_orphan_session_reconciliations_total` once per session the
 // §10.1 reconciler forces to `failed` after its bound pod terminated
@@ -1438,42 +1352,6 @@ func (m *Metrics) ClearAgentPodStateMirrorLag() {
 	m.agentPodStateMirrorLag.Reset()
 }
 
-// AddOrphanTasksTerminated bumps the §8.10 / §16.1
-// `lenny_orphan_tasks_terminated` counter by the per-sweep terminated
-// count (the cleanup tick's return value). A zero-count sweep is a no-op.
-// spec: §8.10 / §16.1; F-8.10.7.
-func (m *Metrics) AddOrphanTasksTerminated(n int) {
-	if m == nil || n <= 0 {
-		return
-	}
-	m.orphanTasksTerminated.Add(float64(n))
-}
-
-// SetOrphanTasksActive publishes the fleet-wide active orphan count as
-// `lenny_orphan_tasks_active` per §8.10 / §16.1. Operators
-// alert when the gauge exceeds a deployment-specific threshold
-// (suggested 50 per §8.10). spec: §16.1; F-8.10.7.
-func (m *Metrics) SetOrphanTasksActive(value int) {
-	if m == nil {
-		return
-	}
-	m.orphanTasksActive.Set(float64(value))
-}
-
-// SetOrphanTasksActivePerTenant publishes the per-tenant active orphan
-// count as `lenny_orphan_tasks_active_per_tenant{tenant_id}`. The §16.5
-// OrphanTasksPerTenantHigh alert reads `value > 0.80 *
-// scalar(lenny_max_orphan_tasks_per_tenant)`. The cleanup sweep calls
-// this for every tenant on every Tick so a tenant whose orphan count
-// drops to zero re-publishes a zero value. spec: §8.10;
-// §16.1; F-8.10.7.
-func (m *Metrics) SetOrphanTasksActivePerTenant(tenantID string, value int) {
-	if m == nil {
-		return
-	}
-	m.orphanTasksActivePerTenant.WithLabelValues(tenantID).Set(float64(value))
-}
-
 // ObserveTreeRecoveryDuration records one wall-clock duration on the
 // §8.10 / §16.1
 // histogram. `pool` is the root session's pool; `outcome` is one of
@@ -1497,26 +1375,6 @@ func (m *Metrics) IncTreeRecoveryTimeout(pool, timeoutType string) {
 	m.treeRecoveryTimeout.WithLabelValues(pool, timeoutType).Inc()
 }
 
-// RecordElicitationDrop increments the §9.1 lenny_elicitation_dropped_total
-// counter for the given drop reason (for example `budget_exceeded`).
-func (m *Metrics) RecordElicitationDrop(reason string) {
-	m.elicitationDropped.WithLabelValues(reason).Inc()
-}
-
-// RecordElicitationContentTamperDetected increments the §9.2 /
-// §16.5 lenny_elicitation_content_tamper_detected_total counter
-// when the §9.2 chain walk catches a forwarding hop that mutated
-// the elicitation payload. Labelled by origin_pod (the pod that
-// legitimately originated the elicitation), tampering_pod (the
-// forwarding pod whose re-emission diverged), and enforcement_mode
-// so the §16.5 ElicitationContentTamperDetected alert (which matches
-// enforcement_mode="enforce") fires only when a tamper caused a hard
-// drop; detect-only catches still bump the metric for visibility
-// without firing the critical alert. spec: §16.1; §9.2. F-9.2.4.
-func (m *Metrics) RecordElicitationContentTamperDetected(originPod, tamperingPod, enforcementMode string) {
-	m.elicitationTamperDetected.WithLabelValues(originPod, tamperingPod, enforcementMode).Inc()
-}
-
 // SetElicitationIntegrityWeakened publishes the §16.5
 // standing-alert gauge: the count of active tenants whose §9.2
 // effective elicitation content-integrity mode is weaker than
@@ -1526,57 +1384,6 @@ func (m *Metrics) RecordElicitationContentTamperDetected(originPod, tamperingPod
 // spec: §16.5. F-9.2.5.
 func (m *Metrics) SetElicitationIntegrityWeakened(weakenedTenants int) {
 	m.elicitationIntegrityWeakened.Set(float64(weakenedTenants))
-}
-
-// IncElicitationPending increments the §16.1
-// `lenny_elicitation_pending` in-flight gauge. The §16.5
-// ElicitationBacklogHigh alert reads `> 50 for 30s`. spec: §16.1.
-// F-9.2.14.
-func (m *Metrics) IncElicitationPending() {
-	if m == nil {
-		return
-	}
-	m.elicitationPending.Inc()
-}
-
-// DecElicitationPending decrements the §16.1 gauge on every
-// terminal phase (responded | dismissed | timeout). spec: §16.1. F-9.2.14.
-func (m *Metrics) DecElicitationPending() {
-	if m == nil {
-		return
-	}
-	m.elicitationPending.Dec()
-}
-
-// IncElicitationTimeout increments the §16.1
-// `lenny_elicitation_timeout_total` counter when the dispatcher
-// drops a pending elicitation on the §9.1 maxElicitationWait
-// deadline. spec: §16.1. F-9.2.14.
-func (m *Metrics) IncElicitationTimeout() {
-	if m == nil {
-		return
-	}
-	m.elicitationTimeout.Inc()
-}
-
-// IncElicitationSuppressed increments the §16.1
-// `lenny_elicitation_suppressed_total` counter for a §9.2 depth-policy
-// suppression or a §9.1 per-session budget rejection. spec: §16.1. F-9.2.14.
-func (m *Metrics) IncElicitationSuppressed() {
-	if m == nil {
-		return
-	}
-	m.elicitationSuppressed.Inc()
-}
-
-// ObserveElicitationRoundtrip records the §16.1
-// `lenny_elicitation_roundtrip_seconds` admit-to-terminal latency.
-// spec: §16.1. F-9.2.14.
-func (m *Metrics) ObserveElicitationRoundtrip(d time.Duration) {
-	if m == nil {
-		return
-	}
-	m.elicitationRoundtripSeconds.Observe(d.Seconds())
 }
 
 // RecordExperimentIsolationRejection increments the §16.1

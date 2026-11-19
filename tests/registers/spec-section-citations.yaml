@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1539
+      count: 1540
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -448,7 +448,7 @@ packages:
     - package: pkg/gateway/llmproxy/semanticcache/redisstore
       count: 4
     - package: pkg/gateway/mcpfabric/delegation
-      count: 173
+      count: 175
     - package: pkg/gateway/mcpfabric/delegation/export
       count: 5
     - package: pkg/gateway/mcpfabric/delegation/exportwire
@@ -456,7 +456,7 @@ packages:
     - package: pkg/gateway/mcpfabric/delegation/fileexport
       count: 5
     - package: pkg/gateway/mcpfabric/delegationbudget
-      count: 22
+      count: 24
     - package: pkg/gateway/mcpfabric/delegationbudget/pgstore
       count: 3
     - package: pkg/gateway/mcpfabric/delegationpolicystore
@@ -464,15 +464,15 @@ packages:
     - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
       count: 3
     - package: pkg/gateway/mcpfabric/delegationtree/deadlock
-      count: 27
+      count: 29
     - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol
-      count: 257
+      count: 259
     - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg
       count: 4
     - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
       count: 13
     - package: pkg/gateway/mcpfabric/delegationtree/orphancleanup
-      count: 50
+      count: 52
     - package: pkg/gateway/mcpfabric/delegationtree/resultrollup
       count: 12
     - package: pkg/gateway/mcpfabric/delegationtree/treearchive
@@ -492,7 +492,7 @@ packages:
     - package: pkg/gateway/mcpfabric/mcpschemagen
       count: 11
     - package: pkg/gateway/mcpfabric/mcptools
-      count: 678
+      count: 680
     - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
       count: 1
     - package: pkg/gateway/meteringproxy/llmproxy
@@ -580,7 +580,7 @@ packages:
     - package: pkg/gateway/replica/gatewayleader
       count: 4
     - package: pkg/gateway/replica/gatewaymetrics
-      count: 228
+      count: 201
     - package: pkg/gateway/replica/pdbwatcher
       count: 7
     - package: pkg/gateway/replica/tlsprobe

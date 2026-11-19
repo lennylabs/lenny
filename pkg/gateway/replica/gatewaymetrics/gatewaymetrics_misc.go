@@ -34,16 +34,6 @@ type miscMetrics struct {
 	// for recycling session-mode pools so the scaling formula converges
 	// on observed reuse. Labeled by `pool` and `k8s_pod_name` per §16.1.
 	sessionReuseCount *prometheus.HistogramVec
-	// delegationLeaseExtension is the §16 counter for §8.6
-	// lease extensions. Labelled by `tenant_id` and `outcome` (one of
-	// `approved` / `capped` / `denied` — the §8.6 audit
-	// classification). The §16.1 catalog declares the metric with no
-	// labels; tenant_id and outcome are tier-2 dimensions that keep
-	// cardinality bounded (tenants × 3 outcomes) and let the
-	// per-tenant dashboards under §16 surface the rejection-rate split
-	// the §8.6 elicitation flow drives. Emitted from leasecontrol.Service
-	// on every ExtendLease decision. F-8.6.13.
-	delegationLeaseExtension *prometheus.CounterVec
 	// delegationBudgetKeysExpired is the §16.1
 	// lenny_delegation_budget_keys_expired_total counter, labelled by `pool`
 	// (the tree root's pool) and `tenant_id`. The §8.3 tree cleanup
@@ -149,19 +139,6 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 		Help:    "Sessions served by a single pod under recycle.enabled (§5.2 / §16.1).",
 		Buckets: prometheus.ExponentialBuckets(1, 2, 10),
 	}, []string{"pool", "k8s_pod_name"})
-	if err != nil {
-		return m, err
-	}
-	// §16 — `lenny_delegation_lease_extension_total` counter
-	// of §8.6 lease-extension decisions, labelled by `tenant_id` and
-	// the §8.6 classification (approved/capped/
-	// denied). Driven by leasecontrol.Service.auditFull on every
-	// ExtendLease return — wired in cmd/lenny-gateway/main.go via the
-	// Options.Metrics field. F-8.6.13.
-	delegationLeaseExtension, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_delegation_lease_extension_total",
-		Help: "§8.6 delegation lease-extension decisions by tenant and §8.6 outcome.",
-	}, []string{"tenant_id", "outcome"})
 	if err != nil {
 		return m, err
 	}
@@ -281,7 +258,6 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	reg.MustRegister(statelessRequests,
 		statelessConcurrentActive,
 		sessionReuseCount,
-		delegationLeaseExtension,
 		delegationBudgetKeysExpired,
 		exportFileScans,
 		exportFileScanDuration,
@@ -296,7 +272,6 @@ func newMiscMetrics(reg *prometheus.Registry) (miscMetrics, error) {
 	m.statelessRequests = statelessRequests
 	m.statelessConcurrentActive = statelessConcurrentActive
 	m.sessionReuseCount = sessionReuseCount
-	m.delegationLeaseExtension = delegationLeaseExtension
 	m.delegationBudgetKeysExpired = delegationBudgetKeysExpired
 	m.exportFileScans = exportFileScans
 	m.exportFileScanDuration = exportFileScanDuration

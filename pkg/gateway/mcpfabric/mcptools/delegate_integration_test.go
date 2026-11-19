@@ -25,7 +25,7 @@ import (
 
 // fakeMetrics captures §8.2 / §16.1 delegation metric calls so the
 // integration test can assert emission without depending on the
-// prometheus registry. *gatewaymetrics.Metrics is the production
+// prometheus registry. delegation.PromMetrics is the production
 // implementation; this fake satisfies delegation.MetricsRecorder.
 type fakeMetrics struct {
 	depths []depthCall

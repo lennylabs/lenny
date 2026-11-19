@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"log"
 	"net/http"
 	"time"
 
@@ -82,6 +83,16 @@ func (w *gatewayWiring) buildMCPSurface(
 	messagingMaxPerMinute := f.messagingMaxPerMinute
 	messagingMaxPerSession := f.messagingMaxPerSession
 	messagingMaxInboundPerMinute := f.messagingMaxInboundPerMinute
+
+	// The platform tools seam's packages register their own metric
+	// collectors on the gateway's metric registry (decision 21 of change
+	// 0117); the control server and the reconciler workers read the sets
+	// they emit through back from the accumulator.
+	ptMetrics, ptMetricsErr := newPlatformToolsMetrics(gwMetrics.Registerer())
+	if ptMetricsErr != nil {
+		log.Fatalf("lenny-gateway: platform tools metrics: %v", ptMetricsErr)
+	}
+	w.platformToolsMetrics = ptMetrics
 
 	// ----- MCP adapter -----
 	// spec: §8.3 — the DelegationPolicy registry feeds both the
@@ -177,9 +188,9 @@ func (w *gatewayWiring) buildMCPSurface(
 		InterceptorCooldown: interceptorCooldownResolver,
 		// §8.2 / §16.1: the delegation service emits
 		// `lenny_delegation_depth` and
-		// `lenny_delegation_would_have_blocked_total` through the
-		// gateway metrics registry.
-		Metrics: gwMetrics,
+		// `lenny_delegation_would_have_blocked_total` through its own
+		// metric set on the gateway metrics registry.
+		Metrics: ptMetrics.delegation,
 		// spec: §11.7 / §16.7 — wire the §11.7 audit sink so
 		// the service emits `delegation.spawned`,
 		// `delegation.self_recursion_allowed`, and `delegation.cycle_warning`.
@@ -212,7 +223,7 @@ func (w *gatewayWiring) buildMCPSurface(
 	deadlockTracker := deadlock.NewAwaitTracker()
 	var deadlockManager *deadlock.Manager
 	if *maxDeadlockWaitSeconds > 0 {
-		deadlockManager = deadlock.NewManager(time.Duration(*maxDeadlockWaitSeconds)*time.Second, gwMetrics)
+		deadlockManager = deadlock.NewManager(time.Duration(*maxDeadlockWaitSeconds)*time.Second, ptMetrics.deadlock)
 	}
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store: w.sessions,
@@ -292,19 +303,19 @@ func (w *gatewayWiring) buildMCPSurface(
 		PrimaryReadTimeout: *w.f.sessionPrimaryReadTimeout,
 		Interactions:       w.interactions,
 		Memory:             w.memories,
-		ElicitationMetrics: gwMetrics,
+		ElicitationMetrics: ptMetrics.elicitation,
 		// spec: §16.1; §16.5. F-9.2.14 — the
 		// §9.2 dispatcher emits admit/terminal lifecycle samples that
 		// drive the ElicitationBacklogHigh alert and the operator
 		// roundtrip / timeout / suppressed dashboards.
-		ElicitationLifecycleMetrics: gwMetrics,
+		ElicitationLifecycleMetrics: ptMetrics.elicitation,
 		// spec: §16.1; §9.2 — the §9.2 chain walker
 		// reports a content-tamper detection through this recorder, which
 		// increments lenny_elicitation_content_tamper_detected_total
 		// {origin_pod, tampering_pod, enforcement_mode}. Without it the
 		// dispatcher's tamper branch is a no-op and the §16.5
 		// ElicitationContentTamperDetected alert can never fire. F-9.2.4.
-		ElicitationTamperMetrics: gwMetrics,
+		ElicitationTamperMetrics: ptMetrics.elicitation,
 		// spec: §9.2 — resolve the per-tenant effective
 		// content-integrity enforcement mode (max of the platform floor
 		// and the tenant stored mode) on the elicitation dispatch path so
