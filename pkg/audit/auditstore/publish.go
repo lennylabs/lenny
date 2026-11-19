@@ -113,7 +113,7 @@ func (a *PublishingAppender) publishAndMark(ctx context.Context, row audit.Row) 
 		// Translation failure — the row carries no envelope, so the
 		// best we can do is mark it for the retranscribe worker. The
 		// worker will go through the OCSF dead-letter receipt path
-		// (pkg/gateway/auditstore/retranscribe.go).
+		// (pkg/audit/auditstore/retranscribe.go).
 		_ = a.Store.SetPublishState(ctx, row.TenantID, row.Seq,
 			eventbus.PublishRetryPending, 0)
 		return fmt.Errorf("ocsf translate: %w", ocsfErr)

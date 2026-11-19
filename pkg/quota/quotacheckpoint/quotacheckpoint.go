@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package quotacheckpoint is the §11.2 durability layer for the Redis
-// token-usage counters (pkg/gateway/quotastore). The fast path lives in
+// token-usage counters (pkg/quota/quotastore). The fast path lives in
 // Redis under the §12.4 key t:{tenant_id}:quota:tokens:{user_id}:{window};
 // those counters are volatile, so this package adds the two obligations
 // §11.2 attaches to them:

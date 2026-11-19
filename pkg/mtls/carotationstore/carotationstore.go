@@ -6,7 +6,7 @@
 // operator who interrupts the procedure ... resumes from the recorded
 // stage rather than restarting"). The rotation is a platform-global
 // procedure, so the store holds a single row; pgstore keys it with a
-// constant id and Memory holds one value. The pkg/gateway/carotation
+// constant id and Memory holds one value. The pkg/mtls/carotation
 // Manager loads the row, drives pkg/mtls.CARotation, and writes the new
 // stage back here under an optimistic version guard.
 package carotationstore

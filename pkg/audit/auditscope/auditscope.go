@@ -14,7 +14,7 @@
 // `security.audit_write_rejected` event under the platform tenant.
 //
 // Validator wraps any audit-chain backend (the Postgres-backed
-// pkg/gateway/auditstore.Store or the in-memory pkg/audit.ChainSet)
+// pkg/audit/auditstore.Store or the in-memory pkg/audit.ChainSet)
 // and is inserted at the caller-driven write boundaries (the §11.7
 // admin audit sink and the §4.8 policy-rejection sink). Gateway-
 // internal writers that carry no authenticated principal on their

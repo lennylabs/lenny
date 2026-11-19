@@ -15,7 +15,7 @@
 //   - MemoryStore: in-memory implementation backing unit tests and
 //     dev-mode deployments.
 //   - Postgres-backed implementation lives in
-//     pkg/gateway/checkpointretention/pgstore.
+//     pkg/checkpoint/checkpointretention/pgstore.
 //
 // spec: §4.4, §12.5 latest-2 checkpoints retention.
 package checkpointretention

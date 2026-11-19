@@ -149,9 +149,19 @@ packages:
       count: 47
     - package: pkg/audit/adminaudit
       count: 2
+    - package: pkg/audit/auditretention
+      count: 12
+    - package: pkg/audit/auditscope
+      count: 2
+    - package: pkg/audit/auditstore
+      count: 71
+    - package: pkg/audit/auditstore/auditbatch
+      count: 7
     - package: pkg/audit/integrity
       count: 45
     - package: pkg/audit/jcs
+      count: 4
+    - package: pkg/audit/jwtaudit
       count: 4
     - package: pkg/audit/ocsf
       count: 31
@@ -169,6 +179,30 @@ packages:
       count: 88
     - package: pkg/auth/satoken
       count: 2
+    - package: pkg/billing/billingcheckpoint
+      count: 2
+    - package: pkg/billing/billingfanout
+      count: 11
+    - package: pkg/billing/billingretention
+      count: 4
+    - package: pkg/billing/billingsink
+      count: 11
+    - package: pkg/billing/billingstore
+      count: 26
+    - package: pkg/billing/billingstore/failover
+      count: 20
+    - package: pkg/billing/billingstore/failover/redisstream
+      count: 19
+    - package: pkg/billing/billingstore/pgstore
+      count: 20
+    - package: pkg/billing/correctionstore
+      count: 1
+    - package: pkg/billing/correctionstore/pgstore
+      count: 4
+    - package: pkg/billing/usagestore
+      count: 1
+    - package: pkg/billing/usagestore/pgstore
+      count: 6
     - package: pkg/blobstore
       count: 109
     - package: pkg/blobstore/artifactcatalog
@@ -192,6 +226,12 @@ packages:
     - package: pkg/chart/values
       count: 23
     - package: pkg/checkpoint
+      count: 3
+    - package: pkg/checkpoint/checkpointretention
+      count: 18
+    - package: pkg/checkpoint/partialmanifeststore
+      count: 48
+    - package: pkg/checkpoint/partialmanifeststore/pgstore
       count: 3
     - package: pkg/clockinject
       count: 8
@@ -245,6 +285,10 @@ packages:
       count: 16
     - package: pkg/delegation/cycle
       count: 3
+    - package: pkg/delegation/delegationpolicystore
+      count: 14
+    - package: pkg/delegation/delegationpolicystore/pgstore
+      count: 3
     - package: pkg/delegation/lease
       count: 23
     - package: pkg/delegation/recovery
@@ -271,6 +315,8 @@ packages:
       count: 2
     - package: pkg/events
       count: 19
+    - package: pkg/events/eventbuffer
+      count: 8
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
@@ -303,48 +349,8 @@ packages:
       count: 9
     - package: pkg/gateway/api/wsbearer
       count: 4
-    - package: pkg/audit/auditretention
-      count: 12
-    - package: pkg/audit/auditscope
-      count: 2
-    - package: pkg/audit/auditstore
-      count: 71
-    - package: pkg/audit/auditstore/auditbatch
-      count: 7
-    - package: pkg/audit/jwtaudit
-      count: 4
-    - package: pkg/billing/billingcheckpoint
-      count: 2
-    - package: pkg/billing/billingfanout
-      count: 11
-    - package: pkg/billing/billingretention
-      count: 4
-    - package: pkg/billing/billingsink
-      count: 11
-    - package: pkg/billing/billingstore
-      count: 26
-    - package: pkg/billing/billingstore/failover
-      count: 20
-    - package: pkg/billing/billingstore/failover/redisstream
-      count: 19
-    - package: pkg/billing/billingstore/pgstore
-      count: 20
-    - package: pkg/billing/correctionstore
-      count: 1
-    - package: pkg/billing/correctionstore/pgstore
-      count: 4
-    - package: pkg/billing/usagestore
-      count: 1
-    - package: pkg/billing/usagestore/pgstore
-      count: 6
     - package: pkg/gateway/checkpoint/checkpointer
       count: 301
-    - package: pkg/checkpoint/checkpointretention
-      count: 18
-    - package: pkg/checkpoint/partialmanifeststore
-      count: 48
-    - package: pkg/checkpoint/partialmanifeststore/pgstore
-      count: 3
     - package: pkg/gateway/checkpoint/resumechunks
       count: 24
     - package: pkg/gateway/connectors/connectorauthz
@@ -449,8 +455,6 @@ packages:
       count: 29
     - package: pkg/gateway/environment/userstore/pgstore
       count: 9
-    - package: pkg/events/eventbuffer
-      count: 8
     - package: pkg/gateway/experiment/evalstore
       count: 9
     - package: pkg/gateway/experiment/evalstore/pgstore
@@ -471,10 +475,6 @@ packages:
       count: 2
     - package: pkg/gateway/llmproxy/semanticcache/redisstore
       count: 4
-    - package: pkg/delegation/delegationpolicystore
-      count: 14
-    - package: pkg/delegation/delegationpolicystore/pgstore
-      count: 3
     - package: pkg/gateway/mcpfabric/mcpruntimes
       count: 18
     - package: pkg/gateway/mcpfabric/mcpschemagen
@@ -485,18 +485,10 @@ packages:
       count: 53
     - package: pkg/gateway/meteringproxy/sessionbudget
       count: 28
-    - package: pkg/recommendations
-      count: 18
     - package: pkg/gateway/opsendpoints/health
       count: 46
     - package: pkg/gateway/opsendpoints/health/backends
       count: 19
-    - package: pkg/mtls/carotation
-      count: 1
-    - package: pkg/mtls/carotationstore
-      count: 1
-    - package: pkg/mtls/carotationstore/pgstore
-      count: 1
     - package: pkg/gateway/platformtools
       count: 53
     - package: pkg/gateway/platformtools/deadlock
@@ -555,38 +547,6 @@ packages:
       count: 510
     - package: pkg/gateway/podlifecycle/slotreaper
       count: 20
-    - package: pkg/policy/interceptor
-      count: 48
-    - package: pkg/policy/interceptor/interceptorstore
-      count: 4
-    - package: pkg/policy
-      count: 31
-    - package: pkg/policy/ratelimit
-      count: 1
-    - package: pkg/policy/ratelimit/redisstore
-      count: 1
-    - package: pkg/workspaceplan/envblock
-      count: 1
-    - package: pkg/workspaceplan/gitref
-      count: 2
-    - package: pkg/workspaceplan/vcscred
-      count: 8
-    - package: pkg/quota/quotabudget
-      count: 16
-    - package: pkg/quota/quotacheckpoint
-      count: 32
-    - package: pkg/quota/quotacheckpoint/pgstore
-      count: 6
-    - package: pkg/quota/quotaerasure
-      count: 4
-    - package: pkg/quota/quotafailopen
-      count: 16
-    - package: pkg/quota/quotastore
-      count: 23
-    - package: pkg/quota/storagequota
-      count: 26
-    - package: pkg/quota/storagequota/redisstore
-      count: 3
     - package: pkg/gateway/replica/devmode
       count: 4
     - package: pkg/gateway/replica/gatewayleader
@@ -773,6 +733,12 @@ packages:
       count: 1
     - package: pkg/mtls
       count: 12
+    - package: pkg/mtls/carotation
+      count: 1
+    - package: pkg/mtls/carotationstore
+      count: 1
+    - package: pkg/mtls/carotationstore/pgstore
+      count: 1
     - package: pkg/mtls/certreload
       count: 3
     - package: pkg/mtls/interceptordial
@@ -885,6 +851,16 @@ packages:
       count: 42
     - package: pkg/podsecurity
       count: 12
+    - package: pkg/policy
+      count: 31
+    - package: pkg/policy/interceptor
+      count: 48
+    - package: pkg/policy/interceptor/interceptorstore
+      count: 4
+    - package: pkg/policy/ratelimit
+      count: 1
+    - package: pkg/policy/ratelimit/redisstore
+      count: 1
     - package: pkg/preflight
       count: 269
     - package: pkg/preflight/infra
@@ -893,8 +869,26 @@ packages:
       count: 27
     - package: pkg/quota
       count: 12
+    - package: pkg/quota/quotabudget
+      count: 16
+    - package: pkg/quota/quotacheckpoint
+      count: 32
+    - package: pkg/quota/quotacheckpoint/pgstore
+      count: 6
+    - package: pkg/quota/quotaerasure
+      count: 4
+    - package: pkg/quota/quotafailopen
+      count: 16
+    - package: pkg/quota/quotastore
+      count: 23
+    - package: pkg/quota/storagequota
+      count: 26
+    - package: pkg/quota/storagequota/redisstore
+      count: 3
     - package: pkg/ratewindow
       count: 2
+    - package: pkg/recommendations
+      count: 18
     - package: pkg/recommendations/rules
       count: 3
     - package: pkg/redisconn
@@ -963,6 +957,12 @@ packages:
       count: 7
     - package: pkg/workspaceplan
       count: 23
+    - package: pkg/workspaceplan/envblock
+      count: 1
+    - package: pkg/workspaceplan/gitref
+      count: 2
+    - package: pkg/workspaceplan/vcscred
+      count: 8
     - package: scripts/refactor
       count: 2
     - package: scripts/refactor/rewrite

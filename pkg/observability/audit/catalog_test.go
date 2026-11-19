@@ -201,7 +201,7 @@ func TestIsKnownEventType(t *testing.T) {
 
 // TestInterceptorRejectedIsKnownButNotCatalogued asserts the §11.7-path
 // core event interceptor.rejected (emitted by
-// pkg/gateway/policy.RecordRejection) is recognized by IsKnownEventType
+// pkg/policy.(*AuditSink).RecordRejection) is recognized by IsKnownEventType
 // so audit-sink validators do not discard the rows, while staying out
 // of Catalog() because §16.7 enumerates only the §25 additions.
 // spec: §11.7; §16.7. F-11.7.18.

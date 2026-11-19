@@ -1051,9 +1051,11 @@ func TestCheckpointSlotDropCitesTheOwningSpecSections(t *testing.T) {
 	}
 }
 
-// checkpointGoSourceRoot is the package subtree whose Go sources and tests
-// carry the checkpoint persistence surface the slot-column drop re-keys.
-const checkpointGoSourceRoot = "pkg/gateway/checkpoint"
+// checkpointGoSourceRoots are the package subtrees whose Go sources and tests
+// carry the checkpoint persistence surface the slot-column drop re-keys: the
+// session core's checkpoint packages and the checkpoint stores in the
+// checkpoint concern directory.
+var checkpointGoSourceRoots = []string{"pkg/gateway/checkpoint", "pkg/checkpoint"}
 
 // checkpointGoCitationFiles are the checkpoint test files that live outside
 // that subtree. Walking the subtree alone leaves the tier files that pin the
@@ -1149,24 +1151,26 @@ func TestCheckpointSourcesCiteNoCredentialLeasingSection(t *testing.T) {
 		t.Fatalf("spec section 4.9 heading = %q, want the credential leasing service; update the exclusion rationale above", heading)
 	}
 
-	dir := filepath.Join(root, checkpointGoSourceRoot)
-	var scanned int
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+	for _, rootRel := range checkpointGoSourceRoots {
+		dir := filepath.Join(root, rootRel)
+		var scanned int
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			scanned++
+			reportCredentialLeasingCitations(t, root, path, heading)
 			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", rootRel, err)
 		}
-		scanned++
-		reportCredentialLeasingCitations(t, root, path, heading)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", checkpointGoSourceRoot, err)
-	}
-	if scanned == 0 {
-		t.Fatalf("no Go sources found under %s; the gate scans nothing", checkpointGoSourceRoot)
+		if scanned == 0 {
+			t.Fatalf("no Go sources found under %s; the gate scans nothing", rootRel)
+		}
 	}
 	for _, rel := range checkpointGoCitationFiles {
 		path := filepath.Join(root, rel)
@@ -1309,24 +1313,26 @@ func TestCheckpointSourcesFileNoPersistenceClaimUnderPostgresHA(t *testing.T) {
 		}
 	}
 
-	dir := filepath.Join(root, checkpointGoSourceRoot)
-	var scanned int
-	err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.IsDir() || !strings.HasSuffix(path, ".go") {
+	for _, rootRel := range checkpointGoSourceRoots {
+		dir := filepath.Join(root, rootRel)
+		var scanned int
+		err := filepath.WalkDir(dir, func(path string, d fs.DirEntry, err error) error {
+			if err != nil {
+				return err
+			}
+			if d.IsDir() || !strings.HasSuffix(path, ".go") {
+				return nil
+			}
+			scanned++
+			report(path)
 			return nil
+		})
+		if err != nil {
+			t.Fatalf("walk %s: %v", rootRel, err)
 		}
-		scanned++
-		report(path)
-		return nil
-	})
-	if err != nil {
-		t.Fatalf("walk %s: %v", checkpointGoSourceRoot, err)
-	}
-	if scanned == 0 {
-		t.Fatalf("no Go sources found under %s; the gate scans nothing", checkpointGoSourceRoot)
+		if scanned == 0 {
+			t.Fatalf("no Go sources found under %s; the gate scans nothing", rootRel)
+		}
 	}
 	for _, rel := range checkpointGoCitationFiles {
 		path := filepath.Join(root, rel)
