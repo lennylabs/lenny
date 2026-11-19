@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
 )
@@ -359,11 +360,11 @@ func TestAdminDurableRevokeNoObserveOnAlreadyRevoked_SEC_TS_1(t *testing.T) {
 	}
 }
 
-// The fan-out adapters satisfy the §11.4 admin-router interfaces they
+// The fan-out adapters satisfy the §11.4 interfaces they
 // are wired against in WithUserRevocation.
 var (
-	_ admin.UserPodTerminator = (*bindReleaseFanOut)(nil)
-	_ admin.UserTokenRevoker  = (*userTokenRevoker)(nil)
+	_ sessionserver.UserBindingReleases = (*bindReleaseFanOut)(nil)
+	_ admin.UserTokenRevoker            = (*userTokenRevoker)(nil)
 	// *issuedtokenstore.Store satisfies the consumer-side store interface
 	// the adapter now depends on, so the production wiring is type-checked.
 	_ adminIssuedTokenStore         = (*issuedtokenstore.Store)(nil)

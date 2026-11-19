@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorauthz"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
+	"github.com/lennylabs/lenny/pkg/gateway/core/adminops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
@@ -46,6 +47,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/pki/carotation"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
 	carotationpg "github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
@@ -302,7 +304,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// secretRef is parsed against and stored canonical in.
 		CredentialsNamespace: f.resolvedCredentialsNamespace(),
 	})).
-		WithKMSProbe(kmsProbeLifecycle).
+		WithKMSProbe(admin.SeamKMSProbe{Keys: adminops.TenantKeys{Probe: kmsProbeLifecycle}}).
 		WithRuntimes(w.runtimes).
 		WithRuntimeCapabilityOverrides(w.capOverrides).
 		WithUsers(w.users).
@@ -344,8 +346,8 @@ func (w *gatewayWiring) buildAdminRouter(
 		// terminal claim, cancel its same-replica resume attempt and drain
 		// its inbox and DLQ right after the write, and reclaim a cancelled
 		// session that never started.
-		WithRevokeHook(sessionSrv).
-		WithSessionAdmin(sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal}).
+		WithRevokeHook(admin.SeamRevokeHook{Terminals: sessionSrv.AdminSeam(nil), Revocations: sessionSrv.AdminSeam(nil)}).
+		WithSessionAdmin(admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)}).
 		WithInteractions(w.interactions).
 		WithExperiments(w.experiments).
 		WithStickyFlusher(adminStickyFlusher).
@@ -381,7 +383,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// leasecontrol budget source the in-process dispatch reads. The
 		// route resolves the root row through the session store wired
 		// above, which confines a tenant-admin to its own tenant.
-		adminRouter = adminRouter.WithLeaseDenials(leaseBudgets)
+		adminRouter = adminRouter.WithLeaseDenials(admin.SeamLeaseDenials{Delegation: platformtools.DelegationAdmin{Denials: leaseBudgets}})
 	}
 	// §5.2: surface live poolCondition / idlePodCount on the
 	// admin pool GET when the gateway has a Kubernetes client (an
@@ -409,7 +411,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// effective-mode resolution and below-floor guard observe a ConfigMap
 	// floor change without re-wiring. Always wired (even when the startup
 	// flag is empty) because the reconcile may raise the floor at runtime.
-	adminRouter = adminRouter.WithElicitationFloorProvider(elicitationFloorProvider.Floor)
+	adminRouter = adminRouter.WithElicitationFloorProvider(admin.SeamElicitationFloor(platformtools.DelegationAdmin{Floors: elicitationFloorProvider}))
 	// §16.7 deployment-transition audit emitter: the post-upgrade hook
 	// reconciles the rendered Helm deployment config against the persisted
 	// baseline and emits the gateway.*/platform.*/deployment.* transition
@@ -525,7 +527,7 @@ func (w *gatewayWiring) buildAdminRouter(
 				log.Printf("lenny-gateway: §11.4/§12.8: publish binding-release request: %v", err)
 			}))
 		bindReleaseProp = fanOut.prop
-		userPods = fanOut
+		userPods = admin.SeamUserPods{Revocations: sessionSrv.AdminSeam(fanOut)}
 	}
 	// §12.8 GDPR erasure: build the DeleteByUser orchestrator over the
 	// wired stores and expose it behind the admin erasure endpoints.
@@ -558,7 +560,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		if w.artifactCatalog != nil {
 			artifactHolds = w.artifactCatalog
 		}
-		erasureTerm := sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal}
+		erasureTerm := admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)}
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
 			WithFailureObserver(gwMetrics.IncErasureJobFailed).
 			// spec: §12.8 — the per-job duration histogram for
@@ -757,7 +759,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			// lifecycle drain, each drain bounded by --lifecycle-tick-budget.
 			// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
 			Terminator: w.newTenantSessionTerminator(
-				sessionAdminAdapter{store: w.sessions, onTerminal: sessionSrv.OnSessionTerminal, beginTerminal: sessionSrv.BeginTerminal},
+				admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)},
 				userPods,
 				*lifecycleTickBudget,
 			),
@@ -854,7 +856,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// admin endpoint routes through the propagator so a revocation
 		// fans out to every replica's cache over Redis pub/sub, not just
 		// the replica that served the request.
-		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(w.pgPool), revProp)
+		adminRouter = adminRouter.WithIssuedTokens(issuedtokenstore.New(w.pgPool), admin.SeamRevocationCache{Tokens: adminops.TokenRevocations{Cache: revProp}})
 	}
 	// spec: §17.6 — the initial admin credential. Wired
 	// when the gateway has both an in-cluster client (to write the
@@ -872,7 +874,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			Audience:    w.expectedAuds,
 		}, w.jwtSigner, w.users,
 			k8ssecret.New(w.clusterClient),
-			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: revProp, metrics: gwMetrics, clock: clockinject.Now},
+			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: admin.SeamRevocationCache{Tokens: adminops.TokenRevocations{Cache: revProp}}, metrics: gwMetrics, clock: clockinject.Now},
 			clockinject.Now)
 		if atErr != nil {
 			log.Fatalf("lenny-gateway: initial admin credential: %v", atErr)
@@ -895,7 +897,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		)
 		// The §11.4 lease step built above, over the §4.9 credential-lease
 		// store and the credential assigner.
-		userLeases = leaseRevoker
+		userLeases = admin.SeamUserLeaseRevoker{Revocations: adminops.UserLeases{Revoker: leaseRevoker}}
 		if w.pgPool != nil {
 			revoker := &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
 			// A nil *auditstore.Store must not reach the interface field:
@@ -913,7 +915,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// pool credential is denied on every replica.
 	if ls, ok := w.llmLeases.(poolLeaseStore); ok {
 		adminRouter = adminRouter.WithPoolCredentialRevocation(
-			&poolCredentialRevoker{leases: ls, denyList: credRenewalProp},
+			admin.SeamPoolCredentialRevoker{Revocations: adminops.PoolCredentials{Revoker: &poolCredentialRevoker{leases: ls, denyList: credRenewalProp}}},
 		)
 		// §24.5 row 2: surface per-credential lease counts on the admin GET
 		// from the same lease store the revoker drains.

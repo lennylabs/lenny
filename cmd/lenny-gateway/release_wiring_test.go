@@ -73,9 +73,9 @@ func TestSlotSetRecoveryProbeRunsOnTheWatchdogContext_spec_12_4(t *testing.T) {
 func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T) {
 	assertWired(t, []struct{ file, want, seam string }{
 		{"adminrouter.go", "fanOut := &bindReleaseFanOut{registry: w.podRegistry, releaser: sessionSrv}", "the binding release through the session server"},
-		{"adminrouter.go", "userPods = fanOut", "the pod terminator handed to the admin router"},
+		{"adminrouter.go", "userPods = admin.SeamUserPods{Revocations: sessionSrv.AdminSeam(fanOut)}", "the pod terminator handed to the admin router"},
 		{"adminrouter.go", "leaseRevoker := leaserevoke.New(w.llmLeases, w.credAssign, nil)", "the lease revoker's credential assigner"},
-		{"adminrouter.go", "userLeases = leaseRevoker", "the lease revoker handed to the admin router"},
+		{"adminrouter.go", "userLeases = admin.SeamUserLeaseRevoker{Revocations: adminops.UserLeases{Revoker: leaseRevoker}}", "the lease revoker handed to the admin router"},
 	})
 }
 
@@ -91,7 +91,7 @@ func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T)
 func TestLifecycleDrainsShareTheBindReleaseFanOut_spec_12_8(t *testing.T) {
 	assertWired(t, []struct{ file, want, seam string }{
 		{"adminrouter.go", "admin.DrainSessions(ctx, w.sessions, erasureTerm, userPods, tenantID, userID)", "the erasure drain's fan-out"},
-		{"adminrouter.go", "beginTerminal: sessionSrv.BeginTerminal}, userPods, *lifecycleTickBudget, )", "the tenant-deletion drain's fan-out"},
+		{"adminrouter.go", "admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)}, userPods, *lifecycleTickBudget, )", "the tenant-deletion drain's fan-out"},
 		{"adminrouter.go", "adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)", "the admin router's fan-out"},
 		{"tenantdeletion.go", "admin.DrainSessions(tctx, t.sessions, t.term, t.pods, tenantID, \"\")", "the tenant-deletion terminator's publish"},
 	})

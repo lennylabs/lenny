@@ -779,6 +779,17 @@ requirements: [GW-R1]
 summary: Reports whether the tenant's key for a workspace tier is available in the key management service, which the admin API checks before it accepts the tier.
 ```
 
+<a id="gwseam-lasttenantkmsprobe"></a>
+
+```lenny-def
+kind: operation
+name: LastTenantKMSProbe
+method: Go method
+path: seam.TenantKeys
+requirements: [GW-R1]
+summary: Returns the time of the most recent successful probe of a tenant's key, which the admin API reports on a T4 tenant, or reports that none is recorded.
+```
+
 <a id="gwseam-resolveconnectorsecret"></a>
 
 ```lenny-def

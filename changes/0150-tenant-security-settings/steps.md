@@ -28,7 +28,7 @@ The settings model, §12.10, versions and the relaxation rule, the admin routes,
 
 0150.S2 can land before the placement design, because the placement settings it stores take effect only when 0150.S3 lands. Until then the T4 webhook keeps reading the Runtime's field, so 0150.S2 must not remove that field.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes or removes `GWSEAM-ProbeTenantKMS`, through which the admin API probes a tenant's key before it accepts a workspace tier, with the tenant key states and the removal of the tenant `workspaceTier`.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes or removes `GWSEAM-ProbeTenantKMS` and `GWSEAM-LastTenantKMSProbe`, through which the admin API probes a tenant's key before it accepts a workspace tier and reports the last successful probe, with the tenant key states and the removal of the tenant `workspaceTier`.
 
 ### 0150.S3 Placement settings as operator requirements
 - status: Planned

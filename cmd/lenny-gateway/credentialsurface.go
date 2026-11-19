@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	connectorcredpg "github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorsecret"
+	"github.com/lennylabs/lenny/pkg/gateway/core/adminops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
 	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore/pgstore"
@@ -216,7 +217,7 @@ func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server)
 		// confidential-client callback returns a clear "no client-secret
 		// resolver is wired" error instead of failing on exchange. F-9.3.4.
 		if w.clusterClient != nil {
-			connectorOAuth.ClientSecrets = connectorsecret.NewKubeResolver(w.clusterClient, *connectorOAuthClientSecretKey)
+			connectorOAuth.ClientSecrets = admin.SeamClientSecrets{Secrets: adminops.ConnectorSecrets{Resolver: connectorsecret.NewKubeResolver(w.clusterClient, *connectorOAuthClientSecretKey)}}
 		}
 		// §9.3: when the provider's token endpoint is behind a private
 		// CA, --connector-oauth-ca supplies the bundle that verifies it.
