@@ -30,6 +30,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -92,21 +93,17 @@ func newJourneyGateway(t *testing.T, clock func() time.Time, idSeed string) *jou
 	// §15.2.1 rule-1 service layer produces on the REST-proxied tools
 	// (create_and_start_session, terminate_session).
 	mcpSrv.SetAttach(mcp.AttachConfig{
-		Events: bus,
-		TenantFromRequest: func(r *http.Request) string {
-			if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-				return v
-			}
-			return journeyTenant
-		},
-		Now: clock,
+		Events:  bus,
+		Callers: toolseam.TenantCaller(journeyTenant),
+		Now:     clock,
 	})
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
-		SessionCreator:    restHandler,
-		SessionService:    restHandler,
-		Executor:          exec,
+		SessionCreator:    restHandler.ToolsSeam(),
+		SessionService:    restHandler.ToolsSeam(),
+		SessionAccess:     restHandler.ToolsSeam(),
+		Executor:          toolseam.Executor(exec),
 		Memory:            mem,
 		Events:            bus,
 		Clock:             clock,

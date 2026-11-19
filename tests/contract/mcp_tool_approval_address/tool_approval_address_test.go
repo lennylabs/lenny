@@ -35,6 +35,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 const (
@@ -85,8 +86,8 @@ func TestToolUseRequestedAddressesSessionOnly_spec_7_2(t *testing.T) {
 
 	srv := mcp.NewServer()
 	srv.SetAttach(mcp.AttachConfig{
-		Events:            bus,
-		TenantFromRequest: func(*http.Request) string { return approvalTenant },
+		Events:  bus,
+		Callers: toolseam.TenantCaller(approvalTenant),
 	})
 	ts := httptest.NewServer(srv.Handler())
 	defer ts.Close()

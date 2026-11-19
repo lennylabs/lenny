@@ -41,8 +41,9 @@ func newUploadTokenServers(t *testing.T) (*httptest.Server, *httptest.Server, se
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
-		SessionCreator:    rest,
-		SessionService:    rest,
+		SessionCreator:    rest.ToolsSeam(),
+		SessionService:    rest.ToolsSeam(),
+		SessionAccess:     rest.ToolsSeam(),
 		Clock:             func() time.Time { return time.Now().UTC() },
 		TenantID:          "acme",
 	})

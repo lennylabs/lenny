@@ -28,6 +28,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 // impersonationTokens reads every jti as a live impersonation row.
@@ -74,9 +75,10 @@ func newCallerCheckServers(t *testing.T) (rest, mcpURL string, store sessionstor
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
-		SessionCreator:    srv,
-		SessionService:    srv,
-		Executor:          executor.NewEchoExecutor(),
+		SessionCreator:    srv.ToolsSeam(),
+		SessionService:    srv.ToolsSeam(),
+		SessionAccess:     srv.ToolsSeam(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },
 		TenantID:          "acme",
@@ -148,9 +150,10 @@ func newOwnershipParityServers(t *testing.T) (rest, mcpURL string) {
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
 		Store:             store,
-		SessionCreator:    srv,
-		SessionService:    srv,
-		Executor:          executor.NewEchoExecutor(),
+		SessionCreator:    srv.ToolsSeam(),
+		SessionService:    srv.ToolsSeam(),
+		SessionAccess:     srv.ToolsSeam(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Clock:             func() time.Time { return now },
 		TenantID:          "acme",
 	})

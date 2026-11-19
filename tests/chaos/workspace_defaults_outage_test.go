@@ -55,6 +55,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/tcpfault"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
 
 const (
@@ -167,7 +168,7 @@ func (e *wsdOutageEnv) delegateServer(t *testing.T, runtimes runtimestore.Store)
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             e.sessions,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Delegation: delegation.NewService(e.sessions, delegation.Options{
 			IDFunc:             e.nextChildID,

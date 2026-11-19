@@ -36,6 +36,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/redis/go-redis/v9"
 
@@ -232,7 +233,7 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             st.sessions,
-		Executor:          executor.NewEchoExecutor(),
+		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Delegation:        svc,
 		TenantID:          dlgLossTenant,

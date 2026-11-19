@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -340,9 +341,9 @@ func materializeServer(
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store,
-		Executor:          podExec,
+		Executor:          toolseam.Executor(podExec),
 		Runtimes:          runtimes,
-		ChildMaterializer: sessionSrv,
+		ChildMaterializer: sessionSrv.ToolsSeam(),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   childIDCounter(),
 			Runtimes: runtimes,

@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
@@ -45,7 +46,7 @@ func newWaitConn(name string, store sessionstore.Store, ids *atomic.Int64) *wait
 		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		InputWaits:          c.reg,
 		RequestInputTimeout: time.Minute,
 		IDFunc:              func() string { return fmt.Sprintf("%s-%d", name, ids.Add(1)) },

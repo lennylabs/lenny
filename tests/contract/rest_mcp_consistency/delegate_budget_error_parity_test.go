@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
@@ -84,7 +85,7 @@ func newBudgetDelegateMCP(t *testing.T) (string, *miniredis.Miniredis, *counting
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
-		Store:             store, SessionService: srv, Executor: exec, Runtimes: runtimes,
+		Store:             store, SessionService: srv.ToolsSeam(), SessionAccess: srv.ToolsSeam(), Executor: toolseam.Executor(exec), Runtimes: runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{
 			Clock:              func() time.Time { return now },
 			IDFunc:             func() string { return "sess_budget_new" },

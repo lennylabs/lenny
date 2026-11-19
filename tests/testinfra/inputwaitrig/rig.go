@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
@@ -140,7 +141,7 @@ func Start(t testing.TB, opts Options) *Server {
 		SessionAccess:       ownerprincipal.ToolAccess{},
 		DevTenantFallback:   true,
 		Store:               s.store,
-		Executor:            executor.NewEchoExecutor(),
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
 		Events:              s.Bus,
 		InputWaits:          s.Waits,
 		RequestInputTimeout: timeout,

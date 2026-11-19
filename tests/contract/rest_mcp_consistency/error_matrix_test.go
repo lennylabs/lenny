@@ -20,6 +20,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
@@ -271,8 +272,8 @@ func newFencedConsistencyServers(t *testing.T, tenants tenantstore.Store, users 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		DevTenantFallback: true,
-		Store:             store, SessionCreator: rest, SessionService: rest,
-		Executor: executor.NewEchoExecutor(), Users: users, Tenants: tenants,
+		Store:             store, SessionCreator: rest.ToolsSeam(), SessionService: rest.ToolsSeam(), SessionAccess: rest.ToolsSeam(),
+		Executor: toolseam.Executor(executor.NewEchoExecutor()), Users: users, Tenants: tenants,
 		IDFunc: func() string { return "sess_mcp_fence" }, TenantID: "acme",
 	})
 	tsMCP := httptest.NewServer(ownerprincipal.Wrap(mcpSrv.Handler(), ownerprincipal.Alice))
