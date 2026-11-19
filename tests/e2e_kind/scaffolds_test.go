@@ -273,7 +273,7 @@ func TestConcurrentExecutionModes(t *testing.T) {
 // diagnosis: TESTING.md §13.32 / §10.6 cross-environment delegation is not
 // exercisable from the e2e_kind-tier harness. The §10.6 bilateral
 // cross-environment-delegation reachability primitive is wired into
-// pkg/gateway/envaccess and consulted by the gateway's lenny/delegate_task
+// pkg/tenancy/envaccess and consulted by the gateway's lenny/delegate_task
 // MCP tool handler (pkg/gateway/mcptools), but lenny/delegate_task is
 // dispatched only over the gateway's virtual MCP server inside an agent
 // pod's adapter — the REST session API the sessiondriver harness drives
@@ -289,7 +289,7 @@ func TestConcurrentExecutionModes(t *testing.T) {
 // envaccess.CrossEnvironmentReachable; the §10.6 transparent-filter
 // middleware is covered by pkg/environment/environmentmw.
 // TESTING.md §13.32 / §10.6 cross-environment delegation — covered by:
-//   - pkg/gateway/envaccess.CrossEnvironmentReachable (the bilateral
+//   - pkg/tenancy/envaccess.CrossEnvironmentReachable (the bilateral
 //     reachability rule itself; tier-2 unit suite).
 //   - pkg/environment/environmentmw (transparent-filter
 //     middleware; per-handler unit tests).

@@ -38,10 +38,10 @@ import (
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/tenancy/userstore/pgstore"
 )
 
 // inProgressIndex is the migration 0186 partial unique index that allows

@@ -2,9 +2,9 @@
 
 // Package resultrollup assembles the §8.8 TaskResult.usage and
 // TaskResult.treeUsage rollups from the per-session token accumulator
-// (pkg/gateway/sessionusage), the session row, and the §8.10 tree archive
+// (pkg/billing/sessionusage), the session row, and the §8.10 tree archive
 // (pkg/gateway/treearchive). The name deconflicts with the per-session
-// token accumulator in pkg/gateway/sessionusage.
+// token accumulator in pkg/billing/sessionusage.
 //
 // usage is the settling task's own consumption: token counts from the
 // session's accumulator, plus wallClockSeconds / podMinutes /
@@ -29,9 +29,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/billing/sessionusage"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 

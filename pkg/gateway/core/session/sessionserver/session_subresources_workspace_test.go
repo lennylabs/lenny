@@ -19,8 +19,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 func getSubresource(t *testing.T, h http.Handler, path, tenant string) *httptest.ResponseRecorder {

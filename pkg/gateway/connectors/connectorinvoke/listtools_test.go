@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
 )
 
 // toolsListResponses is the three-response transcript a tools/list

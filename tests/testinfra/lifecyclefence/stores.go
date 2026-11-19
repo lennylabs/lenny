@@ -9,19 +9,19 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/transcriptstore"
+	transcriptpg "github.com/lennylabs/lenny/pkg/session/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 	erasurepg "github.com/lennylabs/lenny/pkg/storage/erasurejob/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
+	tenantpg "github.com/lennylabs/lenny/pkg/tenancy/tenantstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/tenancy/userstore/pgstore"
 )
 
 // Transcripts is the part of the transcript store a World uses: seeding a

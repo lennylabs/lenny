@@ -7,8 +7,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // TestRouterRegistersUnderTheAdminPrefixOnTheClientListener checks that

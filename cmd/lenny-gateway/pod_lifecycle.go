@@ -33,11 +33,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // adapterGRPCPort is the TCP port an AgentPod pod's §4.7 adapter listens

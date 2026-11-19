@@ -11,8 +11,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	interactionpg "github.com/lennylabs/lenny/pkg/session/interactionstore/pgstore"
 )
 
 // spec: 9.2 (Elicitation Chain), 8.2 (Delegation Mechanism)

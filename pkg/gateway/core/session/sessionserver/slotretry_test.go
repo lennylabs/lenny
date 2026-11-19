@@ -17,8 +17,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slothealth"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/slotstate"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // fakeSlotBinder records the calls applySlotRetryPolicy makes and replays a

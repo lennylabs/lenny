@@ -299,12 +299,12 @@ sites:
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/session/sessioncheckpointmeta/pgstore/pgstore_test.go
+    - path: pkg/session/sessioncheckpointmeta/pgstore/pgstore_test.go
       function: TestSessionCheckpointMetaPgStore_spec_10_1
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/session/sessionusage/pgstore/pgstore_test.go
+    - path: pkg/billing/sessionusage/pgstore/pgstore_test.go
       function: TestSessionUsagePgStore_spec_8_8_897
       site: 1
       call: Skip

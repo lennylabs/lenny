@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // DeletionStep names one tenant-deletion Phase 3 step or one Phase 4 entry.

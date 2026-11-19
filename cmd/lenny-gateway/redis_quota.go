@@ -20,12 +20,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/scaling/capacityplanning"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/policy/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/quota/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/quota/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )

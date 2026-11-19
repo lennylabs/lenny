@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/transcriptstore"
 )
 
 // messageFrom is the §15.4 MessageEnvelope `from` attribution surfaced

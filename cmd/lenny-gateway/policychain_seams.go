@@ -14,11 +14,11 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/pkg/mtls/interceptordial"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 	"github.com/lennylabs/lenny/pkg/policy"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // sessionRetryLookup adapts the §4.2 session store to the §4.8

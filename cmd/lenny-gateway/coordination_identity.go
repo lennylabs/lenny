@@ -10,7 +10,7 @@ import (
 	"os"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // resolveReplicaID returns this gateway replica's §10.1 coordination

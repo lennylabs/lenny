@@ -10,8 +10,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // CustomRolePayload is the §10.2 / §15.1 admin custom-role wire shape.

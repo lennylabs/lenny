@@ -39,7 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // SessionResolver resolves a session id to its row tenant-agnostically.

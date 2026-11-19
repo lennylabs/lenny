@@ -15,13 +15,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/mtls"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/recommendations"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 

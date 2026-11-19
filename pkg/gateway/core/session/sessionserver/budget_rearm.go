@@ -6,7 +6,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // rearmBudgetKeys re-arms the delegation budget keys of the tree row belongs

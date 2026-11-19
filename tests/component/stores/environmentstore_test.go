@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §10.6 Environment registry, exercising the
-// Postgres-backed pkg/gateway/environmentstore/pgstore against a real
+// Postgres-backed pkg/tenancy/environmentstore/pgstore against a real
 // container with the production migrations applied. Covers CRUD, the
 // jsonb-encoded nested Environment body, the sentinel errors,
 // cross-tenant isolation, the SELECT ... FOR UPDATE mutate path,
@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	environmentpg "github.com/lennylabs/lenny/pkg/tenancy/environmentstore/pgstore"
 )
 
 // sampleEnvironment returns a fully-populated §10.6 Environment whose
@@ -73,7 +73,7 @@ func sampleEnvironment(tenant, name string) environmentstore.Environment {
 
 // spec: 10.6
 // diagnosis: the Postgres-backed Environment registry in
-// pkg/gateway/environmentstore/pgstore did not behave as specified.
+// pkg/tenancy/environmentstore/pgstore did not behave as specified.
 // Create and Get must round-trip an environment including its
 // jsonb-encoded nested body, the sentinel errors and cross-tenant
 // isolation must hold, the SELECT ... FOR UPDATE mutate path must

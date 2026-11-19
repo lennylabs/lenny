@@ -6,7 +6,7 @@ import (
 	"context"
 	"sync"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // LaggingReadStore wraps a session store so that Get models a §12.3 read

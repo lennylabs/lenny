@@ -24,8 +24,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 var (

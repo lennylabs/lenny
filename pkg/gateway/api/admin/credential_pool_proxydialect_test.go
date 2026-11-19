@@ -11,8 +11,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // newCredentialPoolAdminWithRuntimes builds a pool admin router wired

@@ -5,7 +5,7 @@ package sessionserver
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // recordSessionRetry fires the §16.1 lenny_session_retry_total metric

@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the platform tenant registry, exercising the
-// Postgres-backed pkg/gateway/tenantstore/pgstore against a real
+// Postgres-backed pkg/tenancy/tenantstore/pgstore against a real
 // container. Covers CRUD, id validation, soft-delete (and its
 // idempotency), the IncludeDeleted list filter, and the
 // auth.TenantRegistry IsRegistered probe.
@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/tenantstoretest"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
+	tenantpg "github.com/lennylabs/lenny/pkg/tenancy/tenantstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore/tenantstoretest"
 )
 
 func tenantID(t *testing.T) string {
@@ -42,7 +42,7 @@ func jsonRawEqual(a, b json.RawMessage) bool {
 
 // spec: 15.1, 10.2
 // diagnosis: the Postgres-backed tenant registry in
-// pkg/gateway/tenantstore/pgstore did not behave as specified. Create
+// pkg/tenancy/tenantstore/pgstore did not behave as specified. Create
 // and Get must round-trip a tenant, id validation must reject
 // duplicates and malformed ids, Update must re-apply and advance
 // updated_at, the soft-delete lifecycle must honor the IncludeDeleted
@@ -152,7 +152,7 @@ func TestTenantStoreContract(t *testing.T) {
 	// pgstore Create/Update/Get paths must round-trip them. ADM-3.
 	// diagnosis: the elicitation_content_integrity_justification,
 	// _changed_at, and _changed_by columns the §15.1 GET body reads are
-	// not persisted by pkg/gateway/tenantstore/pgstore — a tenant-admin
+	// not persisted by pkg/tenancy/tenantstore/pgstore — a tenant-admin
 	// GET after a PUT would return empty provenance.
 	t.Run("elicitation integrity provenance round-trip", func(t *testing.T) {
 		id := tenantID(t)

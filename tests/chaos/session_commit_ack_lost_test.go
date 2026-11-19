@@ -25,8 +25,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/commitfault"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/randctl"
@@ -89,7 +89,7 @@ func writeReason(reason string) func(*sessionstore.Session) error {
 // past the bound was reported applied. A writer that sees the first error
 // skips the post-commit steps of a committed write, so a committed terminal
 // write runs no terminal pipeline. Check Store.Update's read-back in
-// pkg/gateway/session/sessionstore/pgstore.
+// pkg/session/sessionstore/pgstore.
 func TestSessionWriteCommitAckLostAcrossPrimaryOutage_spec_12_3(t *testing.T) {
 	c := newCommitAckChaos(t)
 	ctx := context.Background()
@@ -145,7 +145,7 @@ func TestSessionWriteCommitAckLostAcrossPrimaryOutage_spec_12_3(t *testing.T) {
 // session store reported a write applied that the primary does not hold,
 // or reported a write not applied that committed while its read-back could
 // complete. Check Store.Update's write identifier and writeApplied in
-// pkg/gateway/session/sessionstore/pgstore.
+// pkg/session/sessionstore/pgstore.
 func TestSessionWriteCommitAckRandomizedFaults_spec_12_3(t *testing.T) {
 	c := newCommitAckChaos(t)
 	r := randctl.New(t)

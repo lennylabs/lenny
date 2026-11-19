@@ -10,7 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
+	"github.com/lennylabs/lenny/pkg/session/sessioncheckpointmeta"
 )
 
 // recordingCheckpointer records the per-session CheckpointWithTrigger

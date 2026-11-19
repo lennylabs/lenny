@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	cbmw "github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 func (w *gatewayWiring) runServers() {

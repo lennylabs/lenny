@@ -11,11 +11,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore/cachingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // exportStorageQuotaMetrics refreshes the §16.1 per-tenant

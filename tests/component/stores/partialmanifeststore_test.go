@@ -24,8 +24,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 )
 
 // manifestRow returns a valid intent-row Record for the supplied ids.

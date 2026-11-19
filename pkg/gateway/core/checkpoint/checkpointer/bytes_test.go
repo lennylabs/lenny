@@ -8,7 +8,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // spec: §7.3 / §10.1 — the gateway persists the

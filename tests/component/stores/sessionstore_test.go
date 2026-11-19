@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the TESTING.md §12.2.1 SessionStore, exercising the
-// Postgres-backed pkg/gateway/sessionstore/pgstore against a real
+// Postgres-backed pkg/session/sessionstore/pgstore against a real
 // container with the production migrations applied. Covers CRUD, the
 // sentinel errors, cross-tenant isolation, the SELECT ... FOR UPDATE
 // mutate path, strict-monotonic UpdatedAt, List filters, and the
@@ -23,10 +23,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -148,7 +148,7 @@ func awaitUpdateResult[T any](t *testing.T, name string, done <-chan T) T {
 
 // spec: 12.2.1
 // diagnosis: the Postgres-backed SessionStore in
-// pkg/gateway/sessionstore/pgstore did not behave as specified. Create
+// pkg/session/sessionstore/pgstore did not behave as specified. Create
 // and Get must round-trip a session including its jsonb workspace
 // plan, the sentinel errors and cross-tenant isolation must hold, the
 // SELECT ... FOR UPDATE mutate path must strictly advance UpdatedAt,

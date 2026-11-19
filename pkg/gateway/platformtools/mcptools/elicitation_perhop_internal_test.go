@@ -10,7 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // slowAncestorStore satisfies sessionstore.Store but blocks Get on the

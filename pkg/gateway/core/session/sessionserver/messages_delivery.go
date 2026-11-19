@@ -18,10 +18,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/messagerouting"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/transcriptstore"
 )
 
 // parseMessageBatch decodes the §15.4 MessageRequest, rejects an empty

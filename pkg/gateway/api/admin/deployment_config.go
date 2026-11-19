@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/elicitation"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // platformAuditTenant is the §11.7 platform tenant the deployment-scope

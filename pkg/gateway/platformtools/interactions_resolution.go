@@ -8,7 +8,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
 )
 
 // interactionResolution captures the parameters of a resolve call.

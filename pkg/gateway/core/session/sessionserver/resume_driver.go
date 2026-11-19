@@ -19,7 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // This file is the §7.3 resume driver: the only code that writes

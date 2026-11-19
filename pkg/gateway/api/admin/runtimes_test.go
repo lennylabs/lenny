@@ -14,11 +14,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/agentcard"
 	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 func newRuntimeAdmin(t *testing.T) (*admin.Router, runtimestore.Store, *recordingAudit) {

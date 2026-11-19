@@ -15,7 +15,7 @@
 // §9.1 runtime-discovery surfaces and the session-creation path — read
 // the Resolution from context and call FilterRuntimes / FilterConnectors
 // so there is a single filtering implementation backed by
-// pkg/gateway/envaccess.
+// pkg/tenancy/envaccess.
 //
 // The middleware is nil-safe: when the environment or tenant registry
 // is not wired, or the request carries no authenticated principal, it
@@ -33,10 +33,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/envaccess"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // Resolution is the §10.6 environment context the middleware resolves

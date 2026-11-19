@@ -7,18 +7,18 @@ import (
 	"sync"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/billing/sessionusage"
 	"github.com/lennylabs/lenny/pkg/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	"github.com/lennylabs/lenny/pkg/policy"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/quota/quotabudget"
 	"github.com/lennylabs/lenny/pkg/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/quota/quotastore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // Recorder bridges the §4.9 LLM proxy's authoritative

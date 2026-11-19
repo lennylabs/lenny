@@ -25,10 +25,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/credential/revocation"
 	"github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 const devSecret = "ops-dev-secret"

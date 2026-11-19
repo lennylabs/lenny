@@ -37,7 +37,7 @@ import (
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
+	"github.com/lennylabs/lenny/pkg/session/sessioncheckpointmeta"
 )
 
 // Source labels the provenance of a barrier-target-set read. They are

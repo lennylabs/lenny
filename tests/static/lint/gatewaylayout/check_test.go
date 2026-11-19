@@ -150,8 +150,8 @@ func TestEachRuleRefusesTheImportThatBreaksIt(t *testing.T) {
 			Violation{RuleOutsideImports, "cmd/lenny-adapter", "pkg/gateway/seam"},
 		},
 		{
-			"a package outside every directory", pkg("pkg/gateway/session/sessionstore"),
-			Violation{Rule: RulePlacement, Package: "pkg/gateway/session/sessionstore"},
+			"a package outside every directory", pkg("pkg/gateway/ledger/ledgerstore"),
+			Violation{Rule: RulePlacement, Package: "pkg/gateway/ledger/ledgerstore"},
 		},
 	}
 	for _, tc := range cases {
@@ -491,8 +491,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		pkg("pkg/gateway/core/admission", "pkg/quota/quotastore", "pkg/policy", "pkg/credential/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/api/pipeline2", "pkg/auth/authmw"),
-		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/quota/quotastore", "pkg/policy/ratelimit", "pkg/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/api/admintoken", "pkg/connectoroauth", "pkg/mtls/carotation", "pkg/gateway/api/serviceidentity"),
-		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
+		pkg("pkg/gateway/api/admin2", "pkg/tenancy/tenantstore", "pkg/quota/quotastore", "pkg/policy/ratelimit", "pkg/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/api/admintoken", "pkg/connectoroauth", "pkg/mtls/carotation", "pkg/gateway/api/serviceidentity"),
+		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/storage/issuedtokenstore", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/platformtools/delegation", "pkg/delegation/delegationpolicystore", "pkg/delegation/delegationpolicystore/pgstore"),
 		pkg("cmd/lenny-gateway/wire", "pkg/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),
@@ -526,8 +526,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 			Violation{RuleConfinedImports, "pkg/gateway/api/admin", "pkg/policy"},
 		},
 		{
-			"a replica-level part imports the tenant store", pkg("pkg/gateway/replica/x", "pkg/gateway/environment/tenantstore"),
-			Violation{RuleConfinedImports, "pkg/gateway/replica/x", "pkg/gateway/environment/tenantstore"},
+			"a replica-level part imports the tenant store", pkg("pkg/gateway/replica/x", "pkg/tenancy/tenantstore"),
+			Violation{RuleConfinedImports, "pkg/gateway/replica/x", "pkg/tenancy/tenantstore"},
 		},
 		{
 			"the seam interface imports quota", pkg("pkg/gateway/seam/q", "pkg/quota"),
@@ -594,8 +594,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 			Violation{RuleConfinedImports, "pkg/gateway/drain/t", "pkg/storage/issuedtokenstore"},
 		},
 		{
-			"a seam imports an authorization predicate", pkg("pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"),
-			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/a", "pkg/gateway/environment/envaccess"},
+			"a seam imports an authorization predicate", pkg("pkg/gateway/streamproxy/a", "pkg/tenancy/envaccess"),
+			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/a", "pkg/tenancy/envaccess"},
 		},
 		{
 			"another seam imports the delegation policy store", pkg("pkg/gateway/streamproxy/d", "pkg/delegation/delegationpolicystore"),

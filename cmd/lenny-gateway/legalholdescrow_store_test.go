@@ -17,10 +17,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/legalholdescrow"
 	"github.com/lennylabs/lenny/pkg/legalholdescrow/blobescrow"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // countingBlobs wraps a blob store and counts the reads and writes each

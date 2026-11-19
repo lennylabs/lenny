@@ -24,10 +24,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol/denialpg"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol/leaseelicit"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	interactionpg "github.com/lennylabs/lenny/pkg/session/interactionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 )
 
 // spec: §8.6 (Elicitation mode flow), §8.6 (Extension state), §9.2 (Elicitation chain)

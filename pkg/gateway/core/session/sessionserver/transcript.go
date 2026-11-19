@@ -9,8 +9,8 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/api/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/transcriptstore"
 )
 
 // transcriptSortField is the only sort key valid on the §15.1

@@ -14,7 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/migrations"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 

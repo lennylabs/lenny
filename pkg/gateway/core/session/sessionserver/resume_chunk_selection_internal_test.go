@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // recordingResolver records the checkpoint_id the resume path asks it to

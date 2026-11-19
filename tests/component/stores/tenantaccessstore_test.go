@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §4 runtime/pool tenant-access registry,
-// exercising the Postgres-backed pkg/gateway/tenantaccessstore/pgstore
+// exercising the Postgres-backed pkg/tenancy/tenantaccessstore/pgstore
 // against a real container. Covers the grant/list round-trip, the
 // idempotent re-grant, revoke, ListForTenant, the kind/resource
 // scoping of the runtime_tenant_access and pool_tenant_access join
@@ -17,8 +17,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
+	tenantaccesspg "github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -64,7 +64,7 @@ func tenantaccessTenantIDs(grants []tenantaccessstore.Grant) []string {
 
 // spec: §4 runtime/pool tenant-access join tables.
 // diagnosis: the Postgres-backed tenant-access registry in
-// pkg/gateway/tenantaccessstore/pgstore did not behave as specified.
+// pkg/tenancy/tenantaccessstore/pgstore did not behave as specified.
 // Grant and List must round-trip a grant, a re-grant must be idempotent
 // (created=false, no duplicate row), Revoke must remove a grant and
 // return ErrNotFound for a missing one, List must order tenant-id

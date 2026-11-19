@@ -22,7 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential/impersonation"
 	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // assertWired fails the test for every seam whose wiring text is missing

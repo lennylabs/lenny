@@ -15,11 +15,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/common/semver"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/agentcard"
 	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

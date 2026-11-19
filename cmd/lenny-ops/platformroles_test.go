@@ -17,9 +17,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/ops/coordination"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // seededPlatformRoles returns a resolver over an in-memory user registry

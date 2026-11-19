@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // phaseRecorder is an external §4.8 interceptor that appends its name to a

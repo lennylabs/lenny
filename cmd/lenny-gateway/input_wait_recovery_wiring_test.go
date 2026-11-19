@@ -14,9 +14,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // blockingControl holds each ListPlatformTools call until the input wait it

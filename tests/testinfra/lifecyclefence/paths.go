@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // Path names one creation path by the store calls it makes.
