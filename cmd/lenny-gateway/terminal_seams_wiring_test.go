@@ -35,7 +35,7 @@ func TestTerminalWriterSeamsAreWiredToTheSessionServer_spec_7_2(t *testing.T) {
 		{"mcpsurface.go", "Terminal: toolsSeam,", "the MCP tools' Terminal"},
 		{"controlserver.go", "WithTerminalHook(sessionSrv)", "the watchdog's terminal hook"},
 		{"adminrouter.go", "WithRevokeHook(admin.SeamRevokeHook{Terminals: sessionSrv.AdminSeam(nil), Revocations: sessionSrv.AdminSeam(nil)})", "the full_revoke revoke hook"},
-		{"adminrouter.go", "WithSessionAdmin(admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)})", "ForceTerminate's claim and funnel"},
+		{"adminrouter.go", "WithSessionAdmin(admin.SessionTerminator{Store: w.sessions, Force: sessionSrv.AdminSeam(nil)})", "ForceTerminate's claim and funnel"},
 		{"main.go", "w.budgetTerminator.beginTerminal = sessionSrv.BeginTerminal", "the budget terminator's claim"},
 		{"reconciler_workers.go", "deadlock.TerminalFail(w.sessions, w.sessionSrv.ToolsSeam(), w.inputWaits, time.Now)", "the deadlock writer's claim and funnel"},
 		{"reconciler_workers.go", "Terminal: seamrow.TerminalHook(w.sessionSrv.ToolsSeam()),", "the orphan-cleanup sweep's Terminal"},

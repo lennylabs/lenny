@@ -29,7 +29,8 @@ type DelegationAdmin struct {
 	// ErrDelegationAdminUnwired, and the composition root registers the
 	// admin route only when a budget source is wired.
 	Denials DenialClearer
-	// Floors reads the elicitation floor. Nil reads the empty floor.
+	// Floors reads the elicitation floor. An unset field reads the empty
+	// floor; the composition root always sets it.
 	Floors FloorReader
 }
 

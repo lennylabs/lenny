@@ -153,7 +153,7 @@ type UserTermination struct {
 type TokenRevocations interface {
 	// PropagateTokenRevocation is GWSEAM-PropagateTokenRevocation. It
 	// revokes jti in the revocation cache of every replica.
-	PropagateTokenRevocation(jti string)
+	PropagateTokenRevocation(ctx context.Context, jti string)
 }
 
 // PoolCredentialRevocations is served by the session core to the API front.
@@ -167,7 +167,7 @@ type PoolCredentialRevocations interface {
 type UserLeaseRevocations interface {
 	// RevokeUserLeases is GWSEAM-RevokeUserLeases. It returns the count of
 	// leases returned to their pools.
-	RevokeUserLeases(tenantID, userID string, sessionIDs []string) int
+	RevokeUserLeases(ctx context.Context, tenantID, userID string, sessionIDs []string) int
 }
 
 // TenantKeys is served by the session core to the API front.

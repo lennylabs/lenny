@@ -347,7 +347,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		// its inbox and DLQ right after the write, and reclaim a cancelled
 		// session that never started.
 		WithRevokeHook(admin.SeamRevokeHook{Terminals: sessionSrv.AdminSeam(nil), Revocations: sessionSrv.AdminSeam(nil)}).
-		WithSessionAdmin(admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)}).
+		WithSessionAdmin(admin.SessionTerminator{Store: w.sessions, Force: sessionSrv.AdminSeam(nil)}).
 		WithInteractions(w.interactions).
 		WithExperiments(w.experiments).
 		WithStickyFlusher(adminStickyFlusher).
@@ -560,7 +560,7 @@ func (w *gatewayWiring) buildAdminRouter(
 		if w.artifactCatalog != nil {
 			artifactHolds = w.artifactCatalog
 		}
-		erasureTerm := admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)}
+		erasureTerm := admin.SessionTerminator{Store: w.sessions, Force: sessionSrv.AdminSeam(nil)}
 		erasureRunner := erasurejob.NewRunner(erasureJobs, erasureOrch, nil).
 			WithFailureObserver(gwMetrics.IncErasureJobFailed).
 			// spec: §12.8 — the per-job duration histogram for
@@ -759,7 +759,7 @@ func (w *gatewayWiring) buildAdminRouter(
 			// lifecycle drain, each drain bounded by --lifecycle-tick-budget.
 			// spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain).
 			Terminator: w.newTenantSessionTerminator(
-				admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)},
+				admin.SessionTerminator{Store: w.sessions, Force: sessionSrv.AdminSeam(nil)},
 				userPods,
 				*lifecycleTickBudget,
 			),

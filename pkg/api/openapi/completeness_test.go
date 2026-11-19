@@ -125,7 +125,7 @@ func TestDocumentMatchesRegisteredEndpoints(t *testing.T) {
 // diagnosis: A lenny-ops route the opsserver serves is absent from the served
 // openapi.json (or documented under a different verb/casing). The F-COV-3
 // document merge is stale: run `go generate
-// ./pkg/gateway/externalapi/openapi/...` after updating
+// ./pkg/api/openapi/...` after updating
 // opsserver.RouteSchemas so the served document regains the named route.
 func TestGatewayDocumentCoversLennyOpsRoutes(t *testing.T) {
 	doc := openapi.Document()

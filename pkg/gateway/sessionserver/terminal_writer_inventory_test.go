@@ -59,7 +59,7 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/environment/translator/openai_chat.go", "handleCreateCompletion", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "serveCold", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "endHeldSession", "endHeldSession"},
-	{"pkg/gateway/api/admin/session_terminator.go", "ForceTerminate", "ForceTerminate"},
+	{"pkg/gateway/sessionserver/force_terminate.go", "ForceTerminate", "ForceTerminate"},
 	{"cmd/lenny-gateway/session_budget.go", "terminate", "ExpireSession"},
 	{"pkg/gateway/platformtools/deadlock/terminal_fail.go", "TerminalFail", "TerminalFail"},
 }

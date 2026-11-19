@@ -612,7 +612,7 @@ summary: Records one request against a key's current one-minute window and retur
 
 ## Operations served by the session core to the platform tools seam, the metering proxy, and the API front
 
-A part that moves a session to a terminal state, such as a cancel tool, the orphan and deadlock sweeps, or an operator's force-terminate, runs the session core's terminal pipeline through these operations.
+A part that moves a session to a terminal state, such as a cancel tool or the orphan and deadlock sweeps, runs the session core's terminal pipeline through these operations, and the API front's full_revoke opens the terminal claim through `GWSEAM-BeginTerminal`. An operator's force-terminate runs through `GWSEAM-ForceTerminate`, in which the session core writes the terminal state and runs the pipeline itself.
 
 <a id="gwseam-beginterminal"></a>
 
@@ -733,7 +733,7 @@ summary: Releases the pods of a user's sessions in a tenant, and returns the cou
 
 ## Operations served by the session core to the API front for credentials and keys
 
-The session core serves these operations. The API front's admin handlers call them, because the revocation propagators, the credential lease stores, the tenant key lifecycle, and the connector secret resolver stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2). Each operation acts on the confined package and returns only the outcome the handler reports.
+The session core serves these operations. The API front's admin handlers call them, because the revocation propagators, the credential lease revokers, the tenant key lifecycle, and the connector secret resolver stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2). Each operation acts on the confined package and returns only the outcome the handler reports.
 
 <a id="gwseam-propagatetokenrevocation"></a>
 
@@ -776,7 +776,7 @@ name: ProbeTenantKMS
 method: Go method
 path: seam.TenantKeys
 requirements: [GW-R1]
-summary: Reports whether the tenant's key for a workspace tier is available in the key management service, which the admin API checks before it accepts the tier.
+summary: Reports whether the tenant's key for a workspace tier is available in the key management service, which the admin API checks before it accepts the tier; any error means the key is not available, and the admin API refuses the tier on it.
 ```
 
 <a id="gwseam-lasttenantkmsprobe"></a>

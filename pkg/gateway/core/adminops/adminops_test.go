@@ -55,11 +55,11 @@ func TestEachOperationActsOnItsConfinedValue(t *testing.T) {
 	ctx := context.Background()
 	r := &recorder{}
 
-	adminops.TokenRevocations{Cache: r}.PropagateTokenRevocation("jti-1")
+	adminops.TokenRevocations{Cache: r}.PropagateTokenRevocation(ctx, "jti-1")
 	if n := (adminops.PoolCredentials{Revoker: r}).RevokePoolCredentials(ctx, "pool-a", []string{"c1", "c2"}); n != 2 {
 		t.Errorf("RevokePoolCredentials = %d, want 2", n)
 	}
-	if n := (adminops.UserLeases{Revoker: r}).RevokeUserLeases("acme", "alice", []string{"s1"}); n != 2 {
+	if n := (adminops.UserLeases{Revoker: r}).RevokeUserLeases(ctx, "acme", "alice", []string{"s1"}); n != 2 {
 		t.Errorf("RevokeUserLeases = %d, want 2", n)
 	}
 	keys := adminops.TenantKeys{Probe: r}

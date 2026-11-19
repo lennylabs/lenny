@@ -21,7 +21,7 @@
 // uses and splices it before the paths object's closing brace, so the diff is
 // scoped to the added routes.
 //
-// Run it via `go generate ./pkg/gateway/externalapi/openapi/...` after adding
+// Run it via `go generate ./pkg/api/openapi/...` after adding
 // or removing a lenny-ops route (and updating opsserver.RouteSchemas). The
 // gateway completeness test (TestGatewayDocumentCoversLennyOpsRoutes) fails the
 // build when the committed openapi.json omits a route the registry names.

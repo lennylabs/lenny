@@ -4,6 +4,8 @@ package sessionserver
 
 import (
 	"context"
+	"errors"
+	"fmt"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
@@ -37,9 +39,42 @@ func (s *Server) AdminSeam(pods UserBindingReleases) AdminSeam {
 }
 
 var (
-	_ seam.Terminals   = AdminSeam{}
-	_ seam.Revocations = AdminSeam{}
+	_ seam.Terminals         = AdminSeam{}
+	_ seam.Revocations       = AdminSeam{}
+	_ seam.ForceTerminations = AdminSeam{}
 )
+
+// ForceTerminate moves a session of tenantID to failed on an operator
+// request and runs the terminal pipeline on the row the write produced. It
+// returns the record of that row, carrying the row, the state the session
+// left, and whether this call moved it; a session already terminal is a
+// no-op that returns its row and state. A session of that identifier that
+// does not exist in tenantID is ErrSessionNotFound.
+//
+// spec: GWSEAM-ForceTerminate
+func (a AdminSeam) ForceTerminate(ctx context.Context, tenantID, sessionID string) (seam.Session, state.State, bool, error) {
+	return forceTerminateRecord(ctx, ForceTerminator{
+		Store:             a.s.store,
+		BeginTerminal:     a.s.BeginTerminal,
+		OnSessionTerminal: a.s.OnSessionTerminal,
+	}, tenantID, sessionID)
+}
+
+// forceTerminateRecord runs the forced write and returns the record of the
+// written row, carrying the row, or ErrSessionNotFound for a session
+// missing from tenantID.
+func forceTerminateRecord(ctx context.Context, f ForceTerminator, tenantID, sessionID string) (seam.Session, state.State, bool, error) {
+	row, prev, transitioned, err := f.ForceTerminate(ctx, tenantID, sessionID)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return seam.Session{}, "", false, fmt.Errorf("%w: %w", seam.ErrSessionNotFound, err)
+	}
+	if err != nil {
+		return seam.Session{}, "", false, err
+	}
+	rec := seamSessionOf(row)
+	rec.Stored = row
+	return rec, state.State(prev), transitioned, nil
+}
 
 // BeginTerminal opens the replica's terminal claim for a session.
 //

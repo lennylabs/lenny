@@ -12,7 +12,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -57,13 +56,17 @@ func (f *fakeCore) TerminateUserSessions(_ context.Context, _, _ string, ids []s
 	return seam.UserTermination{PodsTerminated: len(ids) - 1, FailedSessions: ids[:1]}
 }
 
-func (f *fakeCore) PropagateTokenRevocation(jti string) { f.jtis = append(f.jtis, jti) }
+func (f *fakeCore) PropagateTokenRevocation(_ context.Context, jti string) {
+	f.jtis = append(f.jtis, jti)
+}
 
 func (f *fakeCore) RevokePoolCredentials(_ context.Context, _ string, ids []string) int {
 	return len(ids)
 }
 
-func (f *fakeCore) RevokeUserLeases(_, _ string, ids []string) int { return 2 * len(ids) }
+func (f *fakeCore) RevokeUserLeases(_ context.Context, _, _ string, ids []string) int {
+	return 2 * len(ids)
+}
 
 func (f *fakeCore) ProbeTenantKMS(_ context.Context, tenantID, _ string) error {
 	if tenantID != "acme" {
@@ -113,41 +116,42 @@ func TestSeamRevokeHookHandsTheCoreTheRowItWrote(t *testing.T) {
 	}
 }
 
-// TestSessionTerminatorRunsTheCorePipelineOnTheForcedRow checks that a
-// forced terminal write opens the core's terminal claim, runs the core's
-// terminal pipeline on the row the write produced with the pre-force
-// state, and ends the claim, and that a session already terminal runs no
-// pipeline.
+// fakeForce answers GWSEAM-ForceTerminate with a fixed record or error.
+type fakeForce struct {
+	rec  seam.Session
+	prev state.State
+	err  error
+}
+
+func (f fakeForce) ForceTerminate(context.Context, string, string) (seam.Session, state.State, bool, error) {
+	return f.rec, f.prev, f.err == nil, f.err
+}
+
+// TestSessionTerminatorReadsTheRowTheCoreWrote checks that the admin
+// router's force-terminate returns the row the session core's
+// GWSEAM-ForceTerminate carries back with the state the session left,
+// answers a session the core does not find as sessionstore.ErrNotFound,
+// and refuses a record that carries another session's row.
 //
-// spec: GWSEAM-BeginTerminal, GWSEAM-OnSessionTerminal
-func TestSessionTerminatorRunsTheCorePipelineOnTheForcedRow(t *testing.T) {
+// spec: GWSEAM-ForceTerminate
+func TestSessionTerminatorReadsTheRowTheCoreWrote(t *testing.T) {
 	ctx := context.Background()
-	store := memstore.New()
-	if err := store.Create(ctx, sessionstore.Session{ID: "sess-1", TenantID: "acme", UserID: "alice", State: session.StateRunning}); err != nil {
-		t.Fatalf("Create: %v", err)
-	}
-	core := &fakeCore{}
-	term := admin.SessionTerminator{Store: store, Terminals: core}
-
-	updated, prev, transitioned, err := term.ForceTerminate(ctx, "acme", "sess-1")
-	if err != nil || !transitioned || prev != session.StateRunning || updated.State != session.StateFailed {
-		t.Fatalf("ForceTerminate = %v, %v, %v, %v; want failed from running", updated.State, prev, transitioned, err)
-	}
-	if len(core.terminal) != 1 || core.fromState[0] != state.State(session.StateRunning) {
-		t.Fatalf("pipeline runs = %d from %v, want one from running", len(core.terminal), core.fromState)
-	}
-	if stored, ok := core.terminal[0].Stored.(sessionstore.Session); !ok || stored.State != session.StateFailed || core.terminal[0].ID != "sess-1" {
-		t.Errorf("pipeline record = %+v, want sess-1 carrying the failed row", core.terminal[0])
-	}
-	if core.ended != 1 {
-		t.Errorf("terminal claim ended %d times, want 1", core.ended)
+	row := sessionstore.Session{ID: "sess-1", TenantID: "acme", State: session.StateFailed, FailureReason: "FORCE_TERMINATED"}
+	term := admin.SessionTerminator{Force: fakeForce{rec: seam.Session{ID: "sess-1", TenantID: "acme", Stored: row}, prev: state.State(session.StateRunning)}}
+	got, prev, transitioned, err := term.ForceTerminate(ctx, "acme", "sess-1")
+	if err != nil || !transitioned || prev != session.StateRunning || got.FailureReason != "FORCE_TERMINATED" {
+		t.Fatalf("ForceTerminate = %+v, %v, %v, %v; want the core's failed row from running", got, prev, transitioned, err)
 	}
 
-	if _, _, transitioned, err := term.ForceTerminate(ctx, "acme", "sess-1"); err != nil || transitioned {
-		t.Errorf("repeat ForceTerminate transitioned = %v, err %v; want an idempotent no-op", transitioned, err)
+	missing := admin.SessionTerminator{Force: fakeForce{err: seam.ErrSessionNotFound}}
+	if _, _, _, err := missing.ForceTerminate(ctx, "acme", "sess-2"); !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Errorf("missing session err = %v, want sessionstore.ErrNotFound", err)
 	}
-	if len(core.terminal) != 1 {
-		t.Errorf("pipeline ran %d times, want once", len(core.terminal))
+
+	other := sessionstore.Session{ID: "sess-1", TenantID: "globex"}
+	forged := admin.SessionTerminator{Force: fakeForce{rec: seam.Session{ID: "sess-1", TenantID: "acme", Stored: other}}}
+	if _, _, _, err := forged.ForceTerminate(ctx, "acme", "sess-1"); err == nil {
+		t.Error("a record carrying another tenant's row was accepted")
 	}
 }
 

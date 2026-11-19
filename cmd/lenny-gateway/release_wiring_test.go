@@ -91,7 +91,7 @@ func TestFullRevokeFanOutReleasesThroughTheSessionServer_spec_11_4(t *testing.T)
 func TestLifecycleDrainsShareTheBindReleaseFanOut_spec_12_8(t *testing.T) {
 	assertWired(t, []struct{ file, want, seam string }{
 		{"adminrouter.go", "admin.DrainSessions(ctx, w.sessions, erasureTerm, userPods, tenantID, userID)", "the erasure drain's fan-out"},
-		{"adminrouter.go", "admin.SessionTerminator{Store: w.sessions, Terminals: sessionSrv.AdminSeam(nil)}, userPods, *lifecycleTickBudget, )", "the tenant-deletion drain's fan-out"},
+		{"adminrouter.go", "admin.SessionTerminator{Store: w.sessions, Force: sessionSrv.AdminSeam(nil)}, userPods, *lifecycleTickBudget, )", "the tenant-deletion drain's fan-out"},
 		{"adminrouter.go", "adminRouter = adminRouter.WithUserRevocation(userPods, userLeases, userTokens)", "the admin router's fan-out"},
 		{"tenantdeletion.go", "admin.DrainSessions(tctx, t.sessions, t.term, t.pods, tenantID, \"\")", "the tenant-deletion terminator's publish"},
 	})

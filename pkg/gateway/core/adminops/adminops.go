@@ -24,10 +24,10 @@ type TokenRevocations struct {
 var _ seam.TokenRevocations = TokenRevocations{}
 
 // PropagateTokenRevocation revokes jti in the revocation cache of every
-// replica.
+// replica. The propagator publishes on its own context.
 //
 // spec: GWSEAM-PropagateTokenRevocation
-func (t TokenRevocations) PropagateTokenRevocation(jti string) {
+func (t TokenRevocations) PropagateTokenRevocation(_ context.Context, jti string) {
 	t.Cache.Revoke(jti)
 }
 
@@ -67,10 +67,10 @@ type UserLeases struct {
 var _ seam.UserLeaseRevocations = UserLeases{}
 
 // RevokeUserLeases returns the leases the named sessions hold and returns
-// the count returned.
+// the count returned. The lease revoker runs on its own context.
 //
 // spec: GWSEAM-RevokeUserLeases
-func (u UserLeases) RevokeUserLeases(tenantID, userID string, sessionIDs []string) int {
+func (u UserLeases) RevokeUserLeases(_ context.Context, tenantID, userID string, sessionIDs []string) int {
 	return u.Revoker.RevokeUserLeases(tenantID, userID, sessionIDs)
 }
 

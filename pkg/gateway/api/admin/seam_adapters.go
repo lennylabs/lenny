@@ -69,7 +69,9 @@ type SeamRevocationCache struct {
 var _ RevocationCache = SeamRevocationCache{}
 
 // Revoke revokes jti in the revocation cache of every replica.
-func (c SeamRevocationCache) Revoke(jti string) { c.Tokens.PropagateTokenRevocation(jti) }
+func (c SeamRevocationCache) Revoke(jti string) {
+	c.Tokens.PropagateTokenRevocation(context.Background(), jti)
+}
 
 // SeamPoolCredentialRevoker revokes a pool credential's leases through
 // GWSEAM-RevokePoolCredentials.
@@ -94,7 +96,7 @@ var _ UserLeaseRevoker = SeamUserLeaseRevoker{}
 
 // RevokeUserLeases returns the leases the named sessions hold.
 func (r SeamUserLeaseRevoker) RevokeUserLeases(tenantID, userID string, sessionIDs []string) int {
-	return r.Revocations.RevokeUserLeases(tenantID, userID, sessionIDs)
+	return r.Revocations.RevokeUserLeases(context.Background(), tenantID, userID, sessionIDs)
 }
 
 // SeamKMSProbe probes a tenant's key through GWSEAM-ProbeTenantKMS.
@@ -147,4 +149,24 @@ func (d SeamLeaseDenials) ClearSubtreeDenial(ctx context.Context, tenantID, root
 // the form WithElicitationFloorProvider takes.
 func SeamElicitationFloor(d seam.DelegationAdmin) func() string {
 	return d.ElicitationFloor
+}
+
+// seamRecord is the session record of a stored row, carrying the row so
+// that the session core runs its logic on the row the API front wrote.
+func seamRecord(row sessionstore.Session) seam.Session {
+	return seam.Session{
+		ID:              row.ID,
+		TenantID:        row.TenantID,
+		UserID:          row.UserID,
+		ParentSessionID: row.ParentSessionID,
+		RootSessionID:   row.RootSessionID,
+		RuntimeRef:      row.RuntimeRef,
+		Pool:            row.PoolRef,
+		State:           state.State(row.State),
+		Stored:          row,
+		PodAssignment:   row.PodAssignment,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		TerminatedAt:    row.TerminatedAt,
+	}
 }
