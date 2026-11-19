@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 
@@ -51,10 +51,10 @@ func TestSubprocessSessionStartValidatesAgainstSchema_spec_28_5_3(t *testing.T) 
 	defer cancel()
 
 	sendBin, sendCapture := newCaptureRuntime(t)
-	sendEx := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: sendBin, SendTimeout: 10 * time.Second})
+	sendEx := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: sendBin, SendTimeout: 10 * time.Second})
 	const sendSession = "sess-devloop-open"
 	for _, content := range []string{"one", "two"} {
-		if _, err := sendEx.Send(ctx, sendSession, []executor.Message{{Content: content}}); err != nil {
+		if _, err := sendEx.Send(ctx, sendSession, []runtimeexec.Message{{Content: content}}); err != nil {
 			t.Fatalf("Send(%s): %v", content, err)
 		}
 	}
@@ -83,12 +83,12 @@ func TestSubprocessSessionStartValidatesAgainstSchema_spec_28_5_3(t *testing.T) 
 	}
 
 	startBin, startCapture := newCaptureRuntime(t)
-	startEx := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: startBin, SendTimeout: 10 * time.Second})
+	startEx := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: startBin, SendTimeout: 10 * time.Second})
 	const startSession = "sess-adapter-open"
 	if err := startEx.Start(ctx, startSession); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if _, err := startEx.Send(ctx, startSession, []executor.Message{{Content: "hi"}}); err != nil {
+	if _, err := startEx.Send(ctx, startSession, []runtimeexec.Message{{Content: "hi"}}); err != nil {
 		t.Fatalf("Send after Start: %v", err)
 	}
 	_ = startEx.Close(ctx, startSession)

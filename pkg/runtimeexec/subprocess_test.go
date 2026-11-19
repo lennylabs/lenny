@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor_test
+package runtimeexec_test
 
 import (
 	"context"
@@ -13,7 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // echoBinary is the compiled cmd/runtimes/echo path, built once in
@@ -51,11 +51,11 @@ func repoRoot() string {
 }
 
 func TestSubprocessExecutorEchoesMessage(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     echoBinary,
 		SendTimeout: 10 * time.Second,
 	})
-	out, err := exec.Send(context.Background(), "sess_1", []executor.Message{
+	out, err := exec.Send(context.Background(), "sess_1", []runtimeexec.Message{
 		{Role: "user", Content: "hello world"},
 	})
 	if err != nil {
@@ -76,14 +76,14 @@ func TestSubprocessExecutorEchoesMessage(t *testing.T) {
 }
 
 func TestSubprocessExecutorMultipleMessagesSameSession(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     echoBinary,
 		SendTimeout: 10 * time.Second,
 	})
 	defer exec.Close(context.Background(), "sess_2")
 
 	for i, content := range []string{"first", "second", "third"} {
-		out, err := exec.Send(context.Background(), "sess_2", []executor.Message{
+		out, err := exec.Send(context.Background(), "sess_2", []runtimeexec.Message{
 			{Role: "user", Content: content},
 		})
 		if err != nil {
@@ -96,18 +96,18 @@ func TestSubprocessExecutorMultipleMessagesSameSession(t *testing.T) {
 }
 
 func TestSubprocessExecutorIndependentSessions(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     echoBinary,
 		SendTimeout: 10 * time.Second,
 	})
 	defer exec.Close(context.Background(), "a")
 	defer exec.Close(context.Background(), "b")
 
-	outA, err := exec.Send(context.Background(), "a", []executor.Message{{Content: "from-a"}})
+	outA, err := exec.Send(context.Background(), "a", []runtimeexec.Message{{Content: "from-a"}})
 	if err != nil {
 		t.Fatalf("Send a: %v", err)
 	}
-	outB, err := exec.Send(context.Background(), "b", []executor.Message{{Content: "from-b"}})
+	outB, err := exec.Send(context.Background(), "b", []runtimeexec.Message{{Content: "from-b"}})
 	if err != nil {
 		t.Fatalf("Send b: %v", err)
 	}
@@ -120,14 +120,14 @@ func TestSubprocessExecutorIndependentSessions(t *testing.T) {
 }
 
 func TestSubprocessExecutorCloseUnopenedIsNoOp(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: echoBinary})
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: echoBinary})
 	if err := exec.Close(context.Background(), "never-spawned"); err != nil {
 		t.Errorf("Close unopened: %v", err)
 	}
 }
 
 func TestSubprocessExecutorStartSpawnsProcess(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     echoBinary,
 		SendTimeout: 10 * time.Second,
 	})
@@ -141,7 +141,7 @@ func TestSubprocessExecutorStartSpawnsProcess(t *testing.T) {
 		t.Fatalf("second Start: %v", err)
 	}
 	// The eagerly-started process handles a message without a respawn.
-	out, err := exec.Send(context.Background(), "eager", []executor.Message{{Content: "ping"}})
+	out, err := exec.Send(context.Background(), "eager", []runtimeexec.Message{{Content: "ping"}})
 	if err != nil {
 		t.Fatalf("Send after Start: %v", err)
 	}
@@ -151,7 +151,7 @@ func TestSubprocessExecutorStartSpawnsProcess(t *testing.T) {
 }
 
 func TestSubprocessExecutorWriteEnvelope(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     echoBinary,
 		SendTimeout: 10 * time.Second,
 	})
@@ -166,14 +166,14 @@ func TestSubprocessExecutorWriteEnvelope(t *testing.T) {
 }
 
 func TestSubprocessExecutorWriteEnvelopeUnstartedSessionErrors(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: echoBinary})
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: echoBinary})
 	if err := exec.WriteEnvelope("never-started", []byte(`{}`)); err == nil {
 		t.Error("WriteEnvelope to an unstarted session should error")
 	}
 }
 
 func TestSubprocessExecutorStartBadBinaryErrors(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath: "/nonexistent/runtime/binary",
 	})
 	if err := exec.Start(context.Background(), "sess_bad"); err == nil {
@@ -182,17 +182,17 @@ func TestSubprocessExecutorStartBadBinaryErrors(t *testing.T) {
 }
 
 func TestSubprocessExecutorBadBinaryErrors(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath: "/nonexistent/runtime/binary",
 	})
-	_, err := exec.Send(context.Background(), "sess_x", []executor.Message{{Content: "x"}})
+	_, err := exec.Send(context.Background(), "sess_x", []runtimeexec.Message{{Content: "x"}})
 	if err == nil {
 		t.Error("Send against a missing binary should error")
 	}
 }
 
 func TestSubprocessExecutorCleanInterrupt(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     echoBinary,
 		SendTimeout: 10 * time.Second,
 	})
@@ -206,7 +206,7 @@ func TestSubprocessExecutorCleanInterrupt(t *testing.T) {
 }
 
 func TestSubprocessExecutorHardInterruptKillsRuntime(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     echoBinary,
 		SendTimeout: 10 * time.Second,
 	})
@@ -217,7 +217,7 @@ func TestSubprocessExecutorHardInterruptKillsRuntime(t *testing.T) {
 		t.Fatalf("hard Interrupt: %v", err)
 	}
 	// SIGKILL terminated the runtime, so a subsequent Send must fail.
-	if _, err := exec.Send(context.Background(), "sess_hard", []executor.Message{
+	if _, err := exec.Send(context.Background(), "sess_hard", []runtimeexec.Message{
 		{Role: "user", Content: "after kill"},
 	}); err == nil {
 		t.Error("Send succeeded after a hard interrupt, want a failure")
@@ -226,7 +226,7 @@ func TestSubprocessExecutorHardInterruptKillsRuntime(t *testing.T) {
 }
 
 func TestSubprocessExecutorInterruptUnknownSession(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath: echoBinary,
 	})
 	if err := exec.Interrupt(context.Background(), "sess_missing", false); err == nil {
@@ -235,7 +235,7 @@ func TestSubprocessExecutorInterruptUnknownSession(t *testing.T) {
 }
 
 func TestSubprocessExecutorOutputUnknownSession(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath: echoBinary,
 	})
 	if _, err := exec.Output(context.Background(), "sess_missing"); err == nil {
@@ -244,7 +244,7 @@ func TestSubprocessExecutorOutputUnknownSession(t *testing.T) {
 }
 
 func TestSubprocessExecutorOutputClosesWhenRuntimeExits(t *testing.T) {
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath: echoBinary,
 	})
 	if err := exec.Start(context.Background(), "sess_out"); err != nil {
@@ -276,7 +276,7 @@ func TestSubprocessExecutorOutputClosesWhenRuntimeExits(t *testing.T) {
 // runtime_not_live.
 // spec: 5.2 (Pod retirement policy), 4.7 (ReportPodScrub)
 func TestSubprocessExecutorServesNextSession_spec_5_2(t *testing.T) {
-	e := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: "/bin/true"})
+	e := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: "/bin/true"})
 	if !e.ServesNextSession() {
 		t.Error("ServesNextSession() = false, want true for a per-session subprocess")
 	}
@@ -295,7 +295,7 @@ func TestSubprocessExecutorOutputFansOutPastACancelledWait_spec_28_5_3(t *testin
 	if err != nil {
 		t.Skipf("blocked: cat not on PATH: %v", err)
 	}
-	e := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: cat})
+	e := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: cat})
 	defer e.Close(context.Background(), "sess_fan")
 	if err := e.Start(context.Background(), "sess_fan"); err != nil {
 		t.Fatalf("Start: %v", err)

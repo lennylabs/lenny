@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor_test
+package runtimeexec_test
 
 import (
 	"context"
@@ -9,14 +9,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // spec: §4.7.1 (Role and Gateway RPC Contract), §28.5.3 (CH-MSGSOCK)
 // A child the adapter starts through Start hands every stdout line to the
 // recorded activity tap with no Output subscriber.
 func TestSubprocessExecutorTapReadsWithoutOutput_spec_4_7_1(t *testing.T) {
-	e := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: "/bin/cat"})
+	e := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: "/bin/cat"})
 	var mu sync.Mutex
 	var lines []string
 	e.TapOutput(func(line []byte) {

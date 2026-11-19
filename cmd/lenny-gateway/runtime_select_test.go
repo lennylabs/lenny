@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // spec: §17.4 — LENNY_AGENT_RUNTIME=echo selects the built-in
@@ -40,7 +41,7 @@ func TestResolveExecutorRuntimeBinary_spec_17_4_323(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if _, ok := exec.(*executor.SubprocessExecutor); !ok {
+	if _, ok := exec.(*runtimeexec.SubprocessExecutor); !ok {
 		t.Fatalf("want *SubprocessExecutor, got %T", exec)
 	}
 	if !strings.Contains(desc, "/path/to/agent") {

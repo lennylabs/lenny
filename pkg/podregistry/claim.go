@@ -57,9 +57,8 @@ func CreateClaim(ctx context.Context, cl client.Client, namespace, agentPodName,
 			Namespace: namespace,
 		},
 		Spec: lennyv1.PodClaimSpec{
-			// The per-pod occupancy claim (§4.6.3) carries only agentPodRef
-			// and tenantId; the session-to-pod binding lives on the Postgres
-			// session row's pod_assignment column.
+			// The occupancy claim names the pod and its tenant and no session:
+			// the session row records which session holds the pod (§4.6.3).
 			AgentPodRef: agentPodName,
 			TenantID:    tenantID,
 		},

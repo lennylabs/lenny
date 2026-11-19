@@ -17,6 +17,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // errStreamEnded is the cause a Send returns when the session's Attach
@@ -392,11 +393,11 @@ func (e *PodExecutor) handleFrame(c *attachConn, frame []byte) {
 	if e.approvals != nil && e.maybeGateToolCall(c, frame) {
 		return
 	}
-	var env responseEnvelope
+	var env runtimeexec.ResponseEnvelope
 	if err := json.Unmarshal(frame, &env); err != nil || env.Type != "response" {
 		return
 	}
-	parts, ann := ingestResponse(env)
+	parts, ann := runtimeexec.IngestResponse(env)
 	c.completeTurn(turnResult{parts: parts, ann: ann})
 }
 
@@ -532,7 +533,7 @@ func verdictFrame(call toolCallFrame, decision ApprovalDecision) ([]byte, error)
 	return json.Marshal(toolResultFrame{
 		Type:    "tool_result",
 		ID:      call.ID,
-		Content: []wireMessagePart{{Type: "text", Inline: decision.Reason}},
+		Content: []runtimeexec.WirePart{{Type: "text", Inline: decision.Reason}},
 		IsError: true,
 	})
 }

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor
+package runtimeexec
 
 import (
 	"bytes"

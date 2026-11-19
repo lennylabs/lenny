@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor
+package runtimeexec
 
 import (
 	"testing"
@@ -13,11 +13,11 @@ import (
 // `annotations.originalType`, and an `unregistered_platform_type` warning
 // rides on the part (MED-018).
 func TestIngestUnregisteredPlatformType_spec_15_4_1_1522(t *testing.T) {
-	env := responseEnvelope{
+	env := ResponseEnvelope{
 		Type:   "response",
-		Output: []wireMessagePart{{Type: "heatmap", Inline: "<<grid>>"}},
+		Output: []WirePart{{Type: "heatmap", Inline: "<<grid>>"}},
 	}
-	parts, envAnn := ingestResponse(env)
+	parts, envAnn := IngestResponse(env)
 	if envAnn != nil {
 		t.Errorf("an unregistered type is a part-level warning, not an envelope annotation: %v", envAnn)
 	}
@@ -43,11 +43,11 @@ func TestIngestUnregisteredPlatformType_spec_15_4_1_1522(t *testing.T) {
 // back to text with originalType, but does NOT earn the warning: it is a
 // deliberate extension, not an unrecognized platform type.
 func TestIngestVendorNamespacedType_spec_15_4_1_1522(t *testing.T) {
-	env := responseEnvelope{
+	env := ResponseEnvelope{
 		Type:   "response",
-		Output: []wireMessagePart{{Type: "x-acme/heatmap", Inline: "v"}},
+		Output: []WirePart{{Type: "x-acme/heatmap", Inline: "v"}},
 	}
-	parts, _ := ingestResponse(env)
+	parts, _ := IngestResponse(env)
 	p := parts[0]
 	if p.Type != "text" {
 		t.Errorf("vendor type should collapse to text, got %q", p.Type)
@@ -63,11 +63,11 @@ func TestIngestVendorNamespacedType_spec_15_4_1_1522(t *testing.T) {
 // spec: §28.5.3 — a canonical type passes through untouched with no
 // annotations.
 func TestIngestCanonicalTypeUntouched_spec_15_4_1(t *testing.T) {
-	env := responseEnvelope{
+	env := ResponseEnvelope{
 		Type:   "response",
-		Output: []wireMessagePart{{Type: "code", Inline: "print(1)"}},
+		Output: []WirePart{{Type: "code", Inline: "print(1)"}},
 	}
-	parts, envAnn := ingestResponse(env)
+	parts, envAnn := IngestResponse(env)
 	if envAnn != nil {
 		t.Errorf("canonical part raised an envelope annotation: %v", envAnn)
 	}
@@ -87,14 +87,14 @@ func TestIngestCanonicalTypeUntouched_spec_15_4_1(t *testing.T) {
 // the enclosing envelope, carrying knownVersion + encounteredVersion. The
 // part itself is still forward-read (MED-017).
 func TestIngestSchemaVersionAhead_spec_15_4_1_1501(t *testing.T) {
-	env := responseEnvelope{
+	env := ResponseEnvelope{
 		Type: "response",
-		Output: []wireMessagePart{
+		Output: []WirePart{
 			{Type: "text", Inline: "a", SchemaVersion: 1},
 			{Type: "text", Inline: "b", SchemaVersion: 4},
 		},
 	}
-	parts, envAnn := ingestResponse(env)
+	parts, envAnn := IngestResponse(env)
 	if len(parts) != 2 {
 		t.Fatalf("parts = %d, want 2 (both forward-read)", len(parts))
 	}
@@ -113,7 +113,7 @@ func TestIngestSchemaVersionAhead_spec_15_4_1_1501(t *testing.T) {
 // spec: §28.5.3 — the Basic-level `{type:"response", text:"..."}`
 // shorthand ingests as a single v1 text part with no degradation.
 func TestIngestResponseTextShorthand_spec_15_4_1(t *testing.T) {
-	parts, envAnn := ingestResponse(responseEnvelope{Type: "response", Text: "hi"})
+	parts, envAnn := IngestResponse(ResponseEnvelope{Type: "response", Text: "hi"})
 	if envAnn != nil || len(parts) != 1 || parts[0].Type != "text" || parts[0].Text != "hi" {
 		t.Errorf("shorthand ingest = %+v / %v", parts, envAnn)
 	}

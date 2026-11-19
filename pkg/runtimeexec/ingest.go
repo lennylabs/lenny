@@ -1,13 +1,13 @@
 // SPDX-License-Identifier: MIT
 
-package executor
+package runtimeexec
 
 import (
 	"github.com/lennylabs/lenny/pkg/degradation"
 	"github.com/lennylabs/lenny/pkg/outputtype"
 )
 
-// ingestResponse converts a runtime `response` frame into the gateway's
+// IngestResponse converts a runtime `response` frame into the gateway's
 // MessageParts and the envelope-level degradation annotations a live
 // consumer must surface. The gateway is the live consumer at this
 // boundary: it forward-reads the runtime's parts, so it MUST signal when
@@ -23,7 +23,7 @@ import (
 // spec: §28.5.3 (the adapter↔binary `response` frame); §15.4 (Internal
 // MessagePart Format — live-consumer forward-read and the canonical
 // type-registry fallback).
-func ingestResponse(env responseEnvelope) ([]MessagePart, map[string]any) {
+func IngestResponse(env ResponseEnvelope) ([]MessagePart, map[string]any) {
 	parts := make([]MessagePart, 0, len(env.Output))
 	if env.Text != "" && len(env.Output) == 0 {
 		// Basic-level `{type:"response", text:"..."}` shorthand: a single
@@ -52,10 +52,10 @@ func ingestResponse(env responseEnvelope) ([]MessagePart, map[string]any) {
 	return parts, envAnn
 }
 
-// mergeAnnotations folds src into dst, allocating dst on first use. It
+// MergeAnnotations folds src into dst, allocating dst on first use. It
 // merges the envelope-level degradation annotations a multi-message Send
 // accumulates across its per-message `response` frames.
-func mergeAnnotations(dst, src map[string]any) map[string]any {
+func MergeAnnotations(dst, src map[string]any) map[string]any {
 	if len(src) == 0 {
 		return dst
 	}
@@ -77,7 +77,7 @@ func mergeAnnotations(dst, src map[string]any) map[string]any {
 // passes it through visibly. A missing schemaVersion defaults to 1.
 //
 // spec: §28.5.3.
-func ingestPart(p wireMessagePart) MessagePart {
+func ingestPart(p WirePart) MessagePart {
 	sv := p.SchemaVersion
 	if sv <= 0 {
 		sv = 1

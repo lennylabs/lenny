@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor_test
+package runtimeexec_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
 
@@ -35,13 +35,13 @@ func writeRuntimeScript(t *testing.T, body string) string {
 // stderr tail (MED-016).
 func TestSubprocessExecutorSynthesizesRuntimeCrash_spec_15_4_1_1889(t *testing.T) {
 	bin := writeRuntimeScript(t, "echo 'boom-detail' >&2\nexit 7")
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     bin,
 		SendTimeout: 10 * time.Second,
 	})
 	defer exec.Close(context.Background(), "crash")
 
-	_, err := exec.Send(context.Background(), "crash", []executor.Message{{Content: "hi"}})
+	_, err := exec.Send(context.Background(), "crash", []runtimeexec.Message{{Content: "hi"}})
 	if err == nil {
 		t.Fatal("Send against a crashing runtime returned no error")
 	}
@@ -68,13 +68,13 @@ func TestSubprocessExecutorSynthesizesRuntimeCrash_spec_15_4_1_1889(t *testing.T
 // RUNTIME_CRASH.
 func TestSubprocessExecutorCleanExitNoResponseIsNotCrash_spec_15_4_1_1889(t *testing.T) {
 	bin := writeRuntimeScript(t, "exit 0")
-	exec := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	exec := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     bin,
 		SendTimeout: 10 * time.Second,
 	})
 	defer exec.Close(context.Background(), "clean")
 
-	_, err := exec.Send(context.Background(), "clean", []executor.Message{{Content: "hi"}})
+	_, err := exec.Send(context.Background(), "clean", []runtimeexec.Message{{Content: "hi"}})
 	if err == nil {
 		t.Fatal("Send against a runtime that exits without responding returned no error")
 	}

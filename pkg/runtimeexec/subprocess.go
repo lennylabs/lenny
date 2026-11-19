@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor
+package runtimeexec
 
 import (
 	"bufio"
@@ -197,13 +197,13 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 	var out []MessagePart
 	var envAnn map[string]any
 	for _, m := range messages {
-		env := messageEnvelope{
+		env := MessageEnvelope{
 			SchemaVersion: 1,
 			Type:          "message",
-			ID:            newMessageID(),
-			From:          resolveFromBlock(m),
+			ID:            NewMessageID(),
+			From:          ResolveFromBlock(m),
 			SessionID:     sessionID,
-			Input:         []wireMessagePart{{Type: "text", Inline: m.Content}},
+			Input:         []WirePart{{Type: "text", Inline: m.Content}},
 		}
 		line, err := json.Marshal(env)
 		if err != nil {
@@ -217,7 +217,7 @@ func (e *SubprocessExecutor) Send(ctx context.Context, sessionID string, message
 			return Response{}, err
 		}
 		out = append(out, parts...)
-		envAnn = mergeAnnotations(envAnn, ann)
+		envAnn = MergeAnnotations(envAnn, ann)
 	}
 	return Response{Parts: out, Annotations: envAnn}, nil
 }
@@ -319,7 +319,7 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 	ch := make(chan result, 1)
 	go func() {
 		for sess.stdout.Scan() {
-			var env responseEnvelope
+			var env ResponseEnvelope
 			if err := json.Unmarshal(sess.stdout.Bytes(), &env); err != nil {
 				// Skip unparseable lines (forward compatibility).
 				continue
@@ -328,7 +328,7 @@ func (e *SubprocessExecutor) readResponse(ctx context.Context, sess *subprocessS
 				// heartbeat_ack, status, etc. — keep scanning.
 				continue
 			}
-			parts, ann := ingestResponse(env)
+			parts, ann := IngestResponse(env)
 			ch <- result{parts: parts, ann: ann}
 			return
 		}
@@ -507,12 +507,12 @@ func (e *SubprocessExecutor) Close(_ context.Context, sessionID string) error {
 
 // ----- §28.5.3 wire types -----
 
-type messageEnvelope struct {
-	SchemaVersion int               `json:"schemaVersion"`
-	Type          string            `json:"type"`
-	ID            string            `json:"id"`
-	From          fromBlock         `json:"from"`
-	Input         []wireMessagePart `json:"input"`
+type MessageEnvelope struct {
+	SchemaVersion int        `json:"schemaVersion"`
+	Type          string     `json:"type"`
+	ID            string     `json:"id"`
+	From          FromBlock  `json:"from"`
+	Input         []WirePart `json:"input"`
 	// SessionID names the session this envelope is addressed to. It is
 	// stamped on every outbound envelope on every pod, whatever the pool's
 	// maxConcurrentSessions, so the adapter and the runtime address one
@@ -523,26 +523,26 @@ type messageEnvelope struct {
 	SessionID string `json:"sessionId"`
 }
 
-type fromBlock struct {
+type FromBlock struct {
 	Kind string `json:"kind"`
 	ID   string `json:"id"`
 }
 
-// resolveFromBlock returns the §15.4 from-object for an outbound
+// ResolveFromBlock returns the §15.4 from-object for an outbound
 // message. A message carrying an explicit From (an inter-session
 // lenny/send_message whose sender the gateway authenticated) is stamped
 // verbatim; a message with no attribution defaults to the gateway-client
 // identity used for top-level client turns. The runtime never supplies
 // `from`; the gateway is authoritative. spec: §15.4.
 // F-13.5.11.
-func resolveFromBlock(m Message) fromBlock {
+func ResolveFromBlock(m Message) FromBlock {
 	if m.From.Kind != "" {
-		return fromBlock{Kind: m.From.Kind, ID: m.From.ID}
+		return FromBlock{Kind: m.From.Kind, ID: m.From.ID}
 	}
-	return fromBlock{Kind: "client", ID: "client_gateway"}
+	return FromBlock{Kind: "client", ID: "client_gateway"}
 }
 
-type wireMessagePart struct {
+type WirePart struct {
 	Type          string         `json:"type"`
 	Inline        string         `json:"inline,omitempty"`
 	Ref           string         `json:"ref,omitempty"`
@@ -550,17 +550,17 @@ type wireMessagePart struct {
 	Annotations   map[string]any `json:"annotations,omitempty"`
 }
 
-type responseEnvelope struct {
-	Type   string            `json:"type"`
-	Text   string            `json:"text,omitempty"`
-	Output []wireMessagePart `json:"output,omitempty"`
+type ResponseEnvelope struct {
+	Type   string     `json:"type"`
+	Text   string     `json:"text,omitempty"`
+	Output []WirePart `json:"output,omitempty"`
 }
 
-// newMessageID returns a §15.4-shaped message id. The schema
+// NewMessageID returns a §15.4-shaped message id. The schema
 // pattern is `^msg_[0-9A-HJKMNP-TV-Z]{26}$` (Crockford base32, ULID
 // style). The minimal executor generates 26 Crockford-base32
 // characters from 130 random bits.
-func newMessageID() string {
+func NewMessageID() string {
 	const alphabet = "0123456789ABCDEFGHJKMNPQRSTVWXYZ"
 	var raw [26]byte
 	_, _ = rand.Read(raw[:])

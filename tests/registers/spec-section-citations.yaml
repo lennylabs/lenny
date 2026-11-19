@@ -416,7 +416,7 @@ packages:
     - package: pkg/gateway/core/leaderjobs
       count: 3
     - package: pkg/gateway/core/podclaim
-      count: 190
+      count: 187
     - package: pkg/gateway/core/session/adapterclient
       count: 121
     - package: pkg/gateway/core/session/bindrelease
@@ -426,7 +426,7 @@ packages:
     - package: pkg/gateway/core/session/derivelock
       count: 11
     - package: pkg/gateway/core/session/executor
-      count: 150
+      count: 102
     - package: pkg/gateway/core/session/messagerouting
       count: 4
     - package: pkg/gateway/core/session/orphansession
@@ -794,7 +794,7 @@ packages:
     - package: pkg/podlifecycle
       count: 27
     - package: pkg/podregistry
-      count: 42
+      count: 45
     - package: pkg/podsecurity
       count: 12
     - package: pkg/policy
@@ -865,6 +865,8 @@ packages:
       count: 2
     - package: pkg/runtime/runtimeupgradestore/pgstore
       count: 1
+    - package: pkg/runtimeexec
+      count: 48
     - package: pkg/runtimekit
       count: 21
     - package: pkg/runtimekit/echocore

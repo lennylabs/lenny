@@ -10,6 +10,7 @@ import (
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // ErrSessionIDRequired is the §7.2 fail-closed dispatch invariant. It is
@@ -126,12 +127,12 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 	var envAnn map[string]any
 	delivered := 0
 	for _, m := range messages {
-		env := messageEnvelope{
+		env := runtimeexec.MessageEnvelope{
 			SchemaVersion: 1,
 			Type:          "message",
-			ID:            newMessageID(),
-			From:          resolveFromBlock(m),
-			Input:         []wireMessagePart{{Type: "text", Inline: m.Content}},
+			ID:            runtimeexec.NewMessageID(),
+			From:          runtimeexec.ResolveFromBlock(m),
+			Input:         []runtimeexec.WirePart{{Type: "text", Inline: m.Content}},
 			// spec: §28.5.3 — every session is bound to a slot on every
 			// pod, and the wire addresses it by its session identifier, so
 			// the envelope carries the session it is being sent on
@@ -158,7 +159,7 @@ func (e *PodExecutor) Send(ctx context.Context, sessionID string, messages []Mes
 		}
 		delivered++
 		out = append(out, res.parts...)
-		envAnn = mergeAnnotations(envAnn, res.ann)
+		envAnn = runtimeexec.MergeAnnotations(envAnn, res.ann)
 	}
 	return Response{Parts: out, Annotations: envAnn}, nil
 }
@@ -262,10 +263,10 @@ type toolCallFrame struct {
 // the runtime on a denial (isError:true) so the blocked tool call
 // returns the deny reason rather than executing.
 type toolResultFrame struct {
-	Type    string            `json:"type"`
-	ID      string            `json:"id"`
-	Content []wireMessagePart `json:"content"`
-	IsError bool              `json:"isError"`
+	Type    string                 `json:"type"`
+	ID      string                 `json:"id"`
+	Content []runtimeexec.WirePart `json:"content"`
+	IsError bool                   `json:"isError"`
 }
 
 // Close removes the session's binding, closes its Attach stream, and

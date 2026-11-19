@@ -50,9 +50,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/prestop"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
-	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 	"github.com/lennylabs/lenny/pkg/runtimekit"
 )
 
@@ -476,7 +476,7 @@ func main() {
 	case *runtimeBin != "":
 		// Developer loop: exec the runtime as a child and drive it over
 		// stdin/stdout.
-		adapterSrv.Runtime = executor.NewSubprocessExecutor(executor.SubprocessOptions{
+		adapterSrv.Runtime = runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 			BinPath: *runtimeBin,
 		})
 	}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor_test
+package runtimeexec_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // recordingRuntimeScript is a Basic-level runtime that appends every
@@ -70,10 +70,10 @@ func recordedFrames(t *testing.T, recordPath string) []map[string]any {
 // further session_start.
 func TestSubprocessSendSpawnOpensSessionWithSessionStart_spec_28_5_3(t *testing.T) {
 	bin, record := newRecordingRuntime(t)
-	ex := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: bin, SendTimeout: 10 * time.Second})
+	ex := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: bin, SendTimeout: 10 * time.Second})
 	const sessionID = "sess-devloop"
 	for _, content := range []string{"first", "second"} {
-		if _, err := ex.Send(context.Background(), sessionID, []executor.Message{{Content: content}}); err != nil {
+		if _, err := ex.Send(context.Background(), sessionID, []runtimeexec.Message{{Content: content}}); err != nil {
 			t.Fatalf("Send(%s): %v", content, err)
 		}
 	}
@@ -110,12 +110,12 @@ func TestSubprocessSendSpawnOpensSessionWithSessionStart_spec_28_5_3(t *testing.
 // to it, neither at Start nor on a later Send.
 func TestSubprocessStartSpawnWritesNoSessionStart_spec_28_5_3(t *testing.T) {
 	bin, record := newRecordingRuntime(t)
-	ex := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: bin, SendTimeout: 10 * time.Second})
+	ex := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: bin, SendTimeout: 10 * time.Second})
 	const sessionID = "sess-adapter"
 	if err := ex.Start(context.Background(), sessionID); err != nil {
 		t.Fatalf("Start: %v", err)
 	}
-	if _, err := ex.Send(context.Background(), sessionID, []executor.Message{{Content: "hi"}}); err != nil {
+	if _, err := ex.Send(context.Background(), sessionID, []runtimeexec.Message{{Content: "hi"}}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 	if err := ex.Close(context.Background(), sessionID); err != nil {
@@ -146,9 +146,9 @@ read eof
 	if err := os.WriteFile(path, []byte(script), 0o755); err != nil {
 		t.Fatalf("write runtime: %v", err)
 	}
-	ex := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: path, SendTimeout: 10 * time.Second})
+	ex := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: path, SendTimeout: 10 * time.Second})
 	defer ex.Close(context.Background(), "sess-ack")
-	out, err := ex.Send(context.Background(), "sess-ack", []executor.Message{{Content: "hi"}})
+	out, err := ex.Send(context.Background(), "sess-ack", []runtimeexec.Message{{Content: "hi"}})
 	if err != nil {
 		t.Fatalf("Send: %v", err)
 	}

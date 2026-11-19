@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package executor
+package runtimeexec
 
 import "testing"
 
@@ -8,7 +8,7 @@ import "testing"
 // attribution (a top-level client turn) resolves to the gateway-client
 // identity used before F-13.5.11. spec: §15.4.
 func TestResolveFromBlockDefault_spec_15_4_1(t *testing.T) {
-	got := resolveFromBlock(Message{Role: "user", Content: "hi"})
+	got := ResolveFromBlock(Message{Role: "user", Content: "hi"})
 	if got.Kind != "client" || got.ID != "client_gateway" {
 		t.Errorf("unattributed message must default to the gateway-client from-object; got %+v", got)
 	}
@@ -20,7 +20,7 @@ func TestResolveFromBlockDefault_spec_15_4_1(t *testing.T) {
 // or default client origin. spec: §15.4; §13.5
 // mitigation 6. F-13.5.11.
 func TestResolveFromBlockAgent_spec_15_4_1(t *testing.T) {
-	got := resolveFromBlock(Message{
+	got := ResolveFromBlock(Message{
 		Role:    "user",
 		Content: "hi",
 		From:    MessageFrom{Kind: "agent", ID: "sess_b"},
