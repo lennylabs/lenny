@@ -8,7 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 4 |
+| Building | 1 |
+| Ready | 3 |
 | Waiting on decisions | 40 |
 | Blocked | 133 |
 | Landed | 9 |
@@ -28,10 +29,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Building |  |
 | [0117.S10](0117-gateway-package-layout/steps.md#0117s10-domain-packages-second-group-905-import-sites) | Domain packages, second group (905 import sites) | Ready |  |
 | [0117.S11](0117-gateway-package-layout/steps.md#0117s11-session-core-1020-import-sites) | Session core (1,020 import sites) | Ready |  |
 | [0117.S12](0117-gateway-package-layout/steps.md#0117s12-session-and-tenancy-stores-1909-import-sites) | Session and tenancy stores (1,909 import sites) | Ready |  |
-| [0117.S9](0117-gateway-package-layout/steps.md#0117s9-domain-packages-first-group-694-import-sites) | Domain packages, first group (694 import sites) | Ready |  |
 | [0117.S1](0117-gateway-package-layout/steps.md#0117s1-the-seam-interface-page-and-the-import-rule) | The seam interface page and the import rule | Landed |  |
 | [0117.S2](0117-gateway-package-layout/steps.md#0117s2-the-seam-interface-package-the-layout-gate-and-the-move-driver) | The seam interface package, the layout gate, and the move driver | Landed |  |
 | [0117.S3](0117-gateway-package-layout/steps.md#0117s3-metering-proxy-51-import-sites) | Metering proxy (51 import sites) | Landed |  |
