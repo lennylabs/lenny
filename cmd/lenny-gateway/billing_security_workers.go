@@ -26,11 +26,11 @@ import (
 // background-worker stage.
 //
 // spec: §4.1 gateway background subsystems; §11.2.1 / §11.6 / §13.3 loops.
-func (w *gatewayWiring) startBillingAndSecurityWorkers() {
+func (w *gatewayWiring) startBillingAndSecurityWorkers(checkpointerFlags *checkpointer.Flags) {
 	f := w.f
 	billingFlushIntervalMs := f.billingFlushIntervalMs
 	billingRetentionDays := f.billingRetentionDays
-	checkpointInterval := f.checkpointInterval
+	checkpointInterval := checkpointerFlags.Interval
 	idempotencyGCIntervalSeconds := f.idempotencyGCIntervalSeconds
 	issuedTokenGCIntervalSeconds := f.issuedTokenGCIntervalSeconds
 	credentialLeaseGCIntervalSeconds := f.credentialLeaseGCIntervalSeconds

@@ -66,7 +66,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	adapterTLSCert := f.adapterTLSCert
 	adapterTLSKey := f.adapterTLSKey
 	agentNamespace := f.agentNamespace
-	checkpointInterval := f.checkpointInterval
+	checkpointInterval := core.checkpointer.Interval
 	checkpointJitterFraction := core.checkpointer.JitterFraction
 	checkpointGrantWindow := core.checkpointer.GrantWindow
 	checkpointCapabilityTTLSeconds := core.checkpointer.CapabilityTTLSeconds

@@ -27,6 +27,7 @@ func TestRegisterFlagsKeepsTheGatewayFlagNamesAndDefaults(t *testing.T) {
 	f := RegisterFlags(fs)
 	for name, def := range map[string]string{
 		"checkpoint-capability-ttl-seconds": "30",
+		"checkpoint-interval":               "10m0s",
 		"checkpoint-grant-window":           "4",
 		"checkpoint-jitter-fraction":        "0.2",
 	} {

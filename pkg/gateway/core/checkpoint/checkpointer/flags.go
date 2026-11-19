@@ -4,12 +4,16 @@ package checkpointer
 
 import (
 	"flag"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/common/envdefault"
 )
 
 // Flags holds the flags only the checkpointer reads.
 type Flags struct {
+	// Interval is the value of --checkpoint-interval.
+	Interval *time.Duration
+
 	// JitterFraction is the value of --checkpoint-jitter-fraction.
 	JitterFraction *float64
 
@@ -24,6 +28,8 @@ type Flags struct {
 // values, which fs fills when it parses.
 func RegisterFlags(fs *flag.FlagSet) *Flags {
 	f := &Flags{}
+	f.Interval = fs.Duration("checkpoint-interval", 10*time.Minute,
+		"§4.4 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
 	f.JitterFraction = fs.Float64("checkpoint-jitter-fraction", envdefault.Float64("LENNY_CHECKPOINT_JITTER_FRACTION", DefaultJitterFraction),
 		"§4.4. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	f.GrantWindow = fs.Int("checkpoint-grant-window",

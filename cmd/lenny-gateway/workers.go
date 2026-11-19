@@ -218,7 +218,7 @@ func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *ga
 
 	w.startLeaderElectedSweeps(leader, tokenFlags, core)
 
-	w.startBillingAndSecurityWorkers()
+	w.startBillingAndSecurityWorkers(core.checkpointer)
 	// ----- §16.1 metrics export -----
 	// Refreshes the gauge metrics (storage quota, circuit breakers)
 	// that the §16.5 alerts read.

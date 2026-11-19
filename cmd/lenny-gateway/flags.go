@@ -233,7 +233,6 @@ type gatewayFlags struct {
 	minioUseSSL                                   *bool
 	artifactReplicationConfig                     *string
 	artifactReplicationRoleARN                    *string
-	checkpointInterval                            *time.Duration
 	gcCycleIntervalSeconds                        *int
 	gcTombstoneRetentionSeconds                   *int
 	maxDeadlockWaitSeconds                        *int
@@ -906,8 +905,6 @@ func (f *gatewayFlags) registerSessionFlags() {
 //
 // spec: §4.1 gateway subsystem seams.
 func (f *gatewayFlags) registerArtifactFlags() {
-	f.checkpointInterval = flag.Duration("checkpoint-interval", 10*time.Minute,
-		"§4.4 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
 	// spec: §12.5 — gc.cycleIntervalSeconds (default 900, min 60).
 	// Drives both the §7.1 retention sweep and the §12.5 hard-prune
 	// sweep cadence. A value below the floor is clamped up to 60s.
