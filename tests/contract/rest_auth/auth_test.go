@@ -21,8 +21,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
@@ -323,7 +323,7 @@ func TestDevHeaderTransportAccepted(t *testing.T) {
 //	a body userId set the owner. The session owner is the principal's
 //	subject in every mode, and a create whose principal has an empty
 //	subject is refused with 401 UNAUTHORIZED. Inspect ownerFromPrincipal
-//	in pkg/gateway/sessionserver/request_identity.go and its callers in
+//	in pkg/gateway/core/session/sessionserver/request_identity.go and its callers in
 //	the create handlers.
 func TestDevHeaderCreateWithoutSubjectReturns401(t *testing.T) {
 	ts, _ := newTestServer(t, authmw.Options{

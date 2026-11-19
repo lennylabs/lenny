@@ -53,7 +53,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 )
 
 // pollLoop mirrors the production directUsageLoop's registry-keyed poll

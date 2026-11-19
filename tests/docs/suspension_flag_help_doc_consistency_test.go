@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 )
 
 // retiredReaderTerms are the identifiers the change retired: the resume

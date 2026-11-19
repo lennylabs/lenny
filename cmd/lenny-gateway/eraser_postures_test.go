@@ -15,12 +15,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordlease"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/storage/erasure"
 )

@@ -32,7 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

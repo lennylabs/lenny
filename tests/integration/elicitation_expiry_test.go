@@ -79,7 +79,7 @@ func TestFailureEdgeExpiresTheElicitationsTheSessionRaised_spec_9_2(t *testing.T
 //
 // The gateway commits the failure edge's state write and then expires the
 // elicitations the session raised as a separate step (afterRecoveryEdge in
-// pkg/gateway/sessionserver/failure.go), so a reader can observe
+// pkg/gateway/core/session/sessionserver/failure.go), so a reader can observe
 // resume_pending before the expiry has run. §9.2 states the expiry as a
 // consequence of the committed failure rather than as part of the state
 // write: a resolution recorded before the expiry is returned to the runtime

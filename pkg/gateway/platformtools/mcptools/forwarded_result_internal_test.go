@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // spec: 29.3 (Interactive message send) Forwarding rule 4, 4.8 (Gateway Policy Engine)

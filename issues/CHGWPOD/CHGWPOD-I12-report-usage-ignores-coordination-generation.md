@@ -22,7 +22,7 @@ change: 0133.S2
 
 ## Gap
 
-`ReportUsageRequest` carries `coordination_generation`, and the adapter's `ReportUsage` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served. The gateway calls `ReportUsage` today (`pkg/gateway/runtime/adapterclient/client.go`), so the gap is live until 0133.S2 removes the RPC.
+`ReportUsageRequest` carries `coordination_generation`, and the adapter's `ReportUsage` handler does not compare it with the generation the pod holds for the session, so a request from a replica that has lost coordination is served. The gateway calls `ReportUsage` today (`pkg/gateway/core/session/adapterclient/client.go`), so the gap is live until 0133.S2 removes the RPC.
 
 ## Suggested resolution
 

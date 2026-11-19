@@ -24,7 +24,7 @@
 //       (MinIO and Postgres both down: session.lost with reason
 //       eviction_total_loss, lenny_session_eviction_total_loss_total and
 //       the partial-keys-logged counter fire, no durable row survives).
-//   - pkg/gateway/storage/evictionfallback (chooser and total-loss
+//   - pkg/gateway/core/checkpoint/evictionfallback (chooser and total-loss
 //     branches against in-memory fakes).
 //   - tests/component/stores/evictionfallback_test.go (the writer
 //     against a real Postgres store on the healthy path).

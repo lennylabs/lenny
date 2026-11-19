@@ -264,7 +264,7 @@ sites:
       site: 1
       call: Skip
       reason: 'open: AUDIT_SIEM_DELIVERY_DEGRADED maps to unbundled runbook siem-delivery-failure; resolution is a pending product decision'
-    - path: pkg/gateway/podlifecycle/podsession/binder_test.go
+    - path: pkg/gateway/core/session/podsession/binder_test.go
       function: tempGitRepo
       site: 1
       call: Skip
@@ -309,7 +309,7 @@ sites:
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/sessionserver/terminal_context_internal_test.go
+    - path: pkg/gateway/core/session/sessionserver/terminal_context_internal_test.go
       function: TestTerminalPipelineContextEveryWriter_spec_7_1
       site: 1
       call: Skipf

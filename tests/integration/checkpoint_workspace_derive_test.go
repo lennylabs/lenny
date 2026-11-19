@@ -43,7 +43,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
@@ -602,7 +602,7 @@ func restoreCases() []restoreCase {
 // spec: §7.1 (Derive restore semantics); §7.1 (Derive copy semantics); §7.1
 // (Derive session semantics) derive rule 2; §7.1 (Atomicity of session
 // creation (steps 2–8)); §15.1 (Session Replay Semantics); §5.1; §5.2; §14.1
-// diagnosis: a derived or replayed session did not start, started without its source snapshot, restored it from the source session's objects instead of its own copy, restored the session-file tree, or let the snapshot overwrite a plan source. On the exclusive pool, a row with no pod assignment or a 503 STARTING_FAILED naming no claimed sandbox binding means derive or replay inserted the row without the create-time claim (claimForNewRow in pkg/gateway/sessionserver). Otherwise check workspaceRestore in pkg/gateway/sessionserver, mintRestoreChunks in pkg/gateway/podlifecycle/podsession, and restoreSeed in pkg/adapter.
+// diagnosis: a derived or replayed session did not start, started without its source snapshot, restored it from the source session's objects instead of its own copy, restored the session-file tree, or let the snapshot overwrite a plan source. On the exclusive pool, a row with no pod assignment or a 503 STARTING_FAILED naming no claimed sandbox binding means derive or replay inserted the row without the create-time claim (claimForNewRow in pkg/gateway/core/session/sessionserver). Otherwise check workspaceRestore in pkg/gateway/core/session/sessionserver, mintRestoreChunks in pkg/gateway/core/session/podsession, and restoreSeed in pkg/adapter.
 func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *testing.T) {
 	pools := []struct {
 		name          string
@@ -664,7 +664,7 @@ func TestDerivedAndReplayedSessionsStartFromTheirRestoredSnapshot_spec_7_1(t *te
 //
 // spec: §7.1 (Derive restore semantics); §7.1 (Derive session semantics)
 // derive rule 2; §5.2; §4.7.1; §15.1
-// diagnosis: a restore that cannot complete started the session with a different workspace, was classified as a permanent slot failure, or bound more than once on a slot reserved at create. Check the errRestore arm of FinalizeWorkspace in pkg/adapter and bindConcurrentSlot and failReservedSlot in pkg/gateway/sessionserver.
+// diagnosis: a restore that cannot complete started the session with a different workspace, was classified as a permanent slot failure, or bound more than once on a slot reserved at create. Check the errRestore arm of FinalizeWorkspace in pkg/adapter and bindConcurrentSlot and failReservedSlot in pkg/gateway/core/session/sessionserver.
 func TestCorruptDerivedChunkFailsTheStartOnTheReservedSlot_spec_7_1(t *testing.T) {
 	f := newRestoreFixture(t, 2, 8)
 	const source, checkpointID = "sess_restore_corrupt_source", "ck_restore_corrupt"
@@ -739,7 +739,7 @@ func (f *restoreFixture) finalizeCalls() int {
 // spec: §15.1 (Session Replay Semantics) ("identical to `POST /v1/sessions`",
 // "upload → finalize → start → run"); §7.1 (Normal Flow) step 8; §7.4 (Upload
 // Safety) Upload authorization; §7.1 (Derive restore semantics)
-// diagnosis: derive or replay returned no uploadToken, stored a digest the upload path does not accept, or the uploaded file did not reach the workspace. Check mintUploadToken in pkg/gateway/sessionserver/create.go and its calls in derive.go and replay.go.
+// diagnosis: derive or replay returned no uploadToken, stored a digest the upload path does not accept, or the uploaded file did not reach the workspace. Check mintUploadToken in pkg/gateway/core/session/sessionserver/create.go and its calls in derive.go and replay.go.
 func TestDerivedAndReplayedSessionsAcceptUploadsBeforeFinalize_spec_15_1(t *testing.T) {
 	cases := restoreCases()
 	f := newRestoreFixture(t, len(cases), 0)

@@ -22,7 +22,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 )
 
 // spec: §10.1.7 — an extra object at index N with chunk_count = N is

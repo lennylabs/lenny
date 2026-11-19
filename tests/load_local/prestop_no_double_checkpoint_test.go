@@ -27,7 +27,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 )

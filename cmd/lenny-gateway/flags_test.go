@@ -11,7 +11,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
 )
 
 // spec: 4.1 (gateway subsystem seams)

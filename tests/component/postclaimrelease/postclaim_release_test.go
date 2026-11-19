@@ -40,9 +40,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )

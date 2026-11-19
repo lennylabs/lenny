@@ -819,7 +819,7 @@ entries:
   - file: pkg/adapter/usage_test.go
     occurrence: 2
     channel: CH-RUNTIMEOPS
-  - file: pkg/gateway/runtime/adapterclient/client.go
+  - file: pkg/gateway/core/session/adapterclient/client.go
     occurrence: 1
     channel: CH-ADAPTEREVENTS
     carrier: go-symbol

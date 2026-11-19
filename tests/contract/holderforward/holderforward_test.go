@@ -31,12 +31,12 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
@@ -181,7 +181,7 @@ func assertToolCallRequest(t *testing.T, got wireRequest) {
 // calling-session header from an MCP client, or changed its JSON-RPC body,
 // so a coordinator authenticates the wrong identity or cannot decode the
 // call. Read ForwardToolCall and newToolForwardRequest in
-// pkg/gateway/sessionserver/holder_forward.go.
+// pkg/gateway/core/session/sessionserver/holder_forward.go.
 func TestForwardedToolCallFromAnMCPClientCarriesTheCredential_spec_28_5_4(t *testing.T) {
 	f := newFixture(t)
 	ctx := authmw.WithCredential(context.Background(), authmw.Credential{Authorization: "Bearer " + f.bearer})
@@ -203,7 +203,7 @@ func TestForwardedToolCallFromAnMCPClientCarriesTheCredential_spec_28_5_4(t *tes
 // session in X-Lenny-Calling-Session, carries a credential it has none of,
 // or the coordinator's listener no longer installs the principal
 // GWSEAM-AttachCallingSession installs. Read setForwardIdentity in
-// pkg/gateway/sessionserver/holder_forward.go and the calling-session branch
+// pkg/gateway/core/session/sessionserver/holder_forward.go and the calling-session branch
 // of NewHolderForwardHandler in holder_forward_listener.go.
 func TestForwardedPlatformToolCallCarriesTheCallingSession_spec_28_5_4(t *testing.T) {
 	f := newFixture(t)
@@ -292,7 +292,7 @@ func assertUploadRequest(t *testing.T, got wireRequest, bearer string) {
 // byte-equal to the client's request in method, target, query, and body, or
 // the coordinator's 4xx status, headers, and error body no longer reach the
 // client unchanged. Read forwardToHolder, newForwardRequest, and
-// copyForwardResponse in pkg/gateway/sessionserver/holder_forward.go.
+// copyForwardResponse in pkg/gateway/core/session/sessionserver/holder_forward.go.
 func TestForwardedRESTRequestAndCoordinator4xxCrossUnchanged_spec_28_5_4(t *testing.T) {
 	f := newFixture(t)
 	f.rest = func(w http.ResponseWriter, _ *http.Request) {
@@ -324,7 +324,7 @@ func TestForwardedRESTRequestAndCoordinator4xxCrossUnchanged_spec_28_5_4(t *test
 // status, headers, or bytes. The coordinator writes its second event only
 // after the client has read the first, so a buffering forward stalls until
 // the coordinator gives up. Read copyForwardResponse, isLiveStream, and
-// streamBody in pkg/gateway/sessionserver/holder_forward.go.
+// streamBody in pkg/gateway/core/session/sessionserver/holder_forward.go.
 func TestForwardedRESTStreamedUploadResponseCrossesUnchanged_spec_28_5_4(t *testing.T) {
 	const (
 		first  = "event: progress\ndata: 50\n\n"

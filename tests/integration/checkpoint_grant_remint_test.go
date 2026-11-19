@@ -42,9 +42,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -185,7 +185,7 @@ func realAdapterCheckpointClient(t *testing.T, transport adapter.CheckpointTrans
 // Either the gateway sent the CheckpointGrant without expires_at (so the
 // adapter cannot tell the capability expired and replays a dead signature),
 // or the re-mint double-reserved or double-confirmed the chunk. Re-check
-// pkg/gateway/checkpoint/checkpointer mintGrant (expires_at) and
+// pkg/gateway/core/checkpoint/checkpointer mintGrant (expires_at) and
 // pkg/adapter/checkpoint grantExpired.
 func TestCheckpointReMintsExpiredGrantEndToEnd(t *testing.T) {
 	store := newCPStore()

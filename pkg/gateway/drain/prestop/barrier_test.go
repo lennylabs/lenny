@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/barrier"
 )
 
 // recordingBarrier records the Dispatch call and whether the context it

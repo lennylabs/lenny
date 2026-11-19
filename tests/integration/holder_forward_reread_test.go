@@ -11,8 +11,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -23,7 +23,7 @@ import (
 // listener applied it locally, or held a message in the DLQ for a session
 // that is no longer running, rather than refusing it with 409
 // TARGET_NOT_READY carrying the re-read state. Check that forwardTarget in
-// pkg/gateway/sessionserver/holder_forward.go applies the rule-5 branch
+// pkg/gateway/core/session/sessionserver/holder_forward.go applies the rule-5 branch
 // ahead of forwardGated, and that HoldsUndelivered gates the DLQ hold.
 func TestForwardedRequestWhoseRowLeftTheForwardStatesIsRefusedAtANonHolder_spec_29_3(t *testing.T) {
 	cases := []struct {

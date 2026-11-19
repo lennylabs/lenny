@@ -16,7 +16,7 @@
 // ProxyModeSpiffeBindingDisabled) before the credential lease is minted, so no
 // lease token reaches the SPIFFE-unbound pod. It exercises the security
 // boundary an external client reaches, complementing the in-package seam cases
-// in pkg/gateway/sessionserver.
+// in pkg/gateway/core/session/sessionserver.
 package security_test
 
 import (
@@ -47,12 +47,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"

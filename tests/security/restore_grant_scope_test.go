@@ -49,7 +49,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -400,7 +400,7 @@ func (f *restoreScopeFixture) requireNoBearerLeak(t *testing.T) {
 // tenant and nothing else, none of which reached a log line or an answer.
 //
 // spec: §7.1 (Derive restore semantics); §13.1; §13.2.2
-// diagnosis: a derived or replayed session's restore minted a capability for an object outside its own prefix, such as the source session's or another tenant's chunks, or a presigned URL was written to a log line or an error string. Check workspaceRestore in pkg/gateway/sessionserver and the per-index presign in pkg/gateway/checkpoint/resumechunks.
+// diagnosis: a derived or replayed session's restore minted a capability for an object outside its own prefix, such as the source session's or another tenant's chunks, or a presigned URL was written to a log line or an error string. Check workspaceRestore in pkg/gateway/core/session/sessionserver and the per-index presign in pkg/gateway/core/checkpoint/resumechunks.
 func TestRestoreGrantsNameOnlyTheSessionsOwnPrefix_spec_7_1(t *testing.T) {
 	f := newRestoreScopeFixture(t)
 	f.seedSource(t, "sess_scope_source", "ck_scope_source")
@@ -434,7 +434,7 @@ func TestRestoreGrantsNameOnlyTheSessionsOwnPrefix_spec_7_1(t *testing.T) {
 //
 // spec: §7.1 (Derive restore semantics); §13.1; §13.2.2; §10.1 (Reassembly on
 // resume)
-// diagnosis: a forged or cross-tenant snapshot ref minted capabilities for another session's or another tenant's chunks, a chunk set with a missing index was restored partially, or a failed restore leaked a presigned URL. Check workspaceRestore in pkg/gateway/sessionserver and the contiguity check in pkg/gateway/checkpoint/resumechunks.
+// diagnosis: a forged or cross-tenant snapshot ref minted capabilities for another session's or another tenant's chunks, a chunk set with a missing index was restored partially, or a failed restore leaked a presigned URL. Check workspaceRestore in pkg/gateway/core/session/sessionserver and the contiguity check in pkg/gateway/core/checkpoint/resumechunks.
 func TestForgedOrMisorderedRestoreFailsClosed_spec_7_1(t *testing.T) {
 	// One pod per case: each case's failed bind drains the pod it ran on.
 	f := newRestoreScopeFixtureOn(t, 3, restoreScopeConcurrent)
@@ -504,7 +504,7 @@ func (r *recordingObjectTransport) setFault(fault func(string) string) {
 // a warm pod at create (F-7.1.36).
 //
 // spec: §7.1 (Derive restore semantics); §7.1 (Derive session semantics) derive rule 2; §13.2.3 (Checkpoint Capability Model); §13.2.2
-// diagnosis: a restore chunk fetch that failed at the object store copied the presigned GET URL into its error, which reached a span, a gateway answer, or a log line. Check withoutCapability in pkg/adapter/checkpointtransport.go and the fetch error in chunkStream in pkg/adapter/resume.go. An exclusive case that fetched no capability means derive inserted its row without the create-time claim (claimForNewRow in pkg/gateway/sessionserver).
+// diagnosis: a restore chunk fetch that failed at the object store copied the presigned GET URL into its error, which reached a span, a gateway answer, or a log line. Check withoutCapability in pkg/adapter/checkpointtransport.go and the fetch error in chunkStream in pkg/adapter/resume.go. An exclusive case that fetched no capability means derive inserted its row without the create-time claim (claimForNewRow in pkg/gateway/core/session/sessionserver).
 func TestFailedRestoreFetchLeaksNoCapability_spec_7_1(t *testing.T) {
 	unreachable := closedListenerHost(t)
 	pools := []struct {

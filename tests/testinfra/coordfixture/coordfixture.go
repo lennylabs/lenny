@@ -34,10 +34,10 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 )
 
 // Tenants is a coordination.TenantLister over a fixed set of tenant ids.

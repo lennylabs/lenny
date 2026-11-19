@@ -11,7 +11,7 @@
 // playground is a client of that surface and mints standard tokens.
 //
 // The harness composes the real pkg/gateway/playground handler with
-// the real pkg/gateway/sessionserver handler behind the §10.2 auth
+// the real pkg/gateway/core/session/sessionserver handler behind the §10.2 auth
 // middleware, the same wiring cmd/lenny-gateway uses. No browser is
 // involved; the tests assert the HTTP and JWT contract.
 
@@ -30,9 +30,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )

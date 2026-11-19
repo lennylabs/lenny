@@ -30,10 +30,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	leasepg "github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
-	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
@@ -93,8 +93,8 @@ func requireNothingHeld(t *testing.T, h *lifecycleharness.Harness, id, text stri
 // TARGET_NOT_READY with the session's current state. An outcome-unknown
 // forward may already have been applied, so holding it could deliver it
 // twice. Check the outcome classification in
-// pkg/gateway/sessionserver/holder_forward.go and forwardMessageBatch in
-// pkg/gateway/sessionserver/messages_delivery.go.
+// pkg/gateway/core/session/sessionserver/holder_forward.go and forwardMessageBatch in
+// pkg/gateway/core/session/sessionserver/messages_delivery.go.
 func TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3(t *testing.T) {
 	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 4})
 	coordinator, peer := h.Replicas[0], h.Replicas[1]
@@ -142,8 +142,8 @@ func TestCoordinatorCrashAfterReadingAForwardIsRefusedAndNotHeld_spec_29_3(t *te
 // the fallback did not store the holder value with the replica address, or
 // the serving replica resolved the forward target from somewhere other than
 // the lease store it coordinates through. Check the holder value in
-// pkg/gateway/storage/leasestore/pgstore and the target resolution in
-// pkg/gateway/sessionserver/holder_forward.go.
+// pkg/gateway/core/coordination/leasestore/pgstore and the target resolution in
+// pkg/gateway/core/session/sessionserver/holder_forward.go.
 func TestForwardResolvesTheCoordinatorThroughThePostgresLeaseFallback_spec_10_1_1(t *testing.T) {
 	ctx := context.Background()
 	newStore, pg := lifecycleharness.PostgresStore(t)

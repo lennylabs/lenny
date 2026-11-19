@@ -16,8 +16,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 

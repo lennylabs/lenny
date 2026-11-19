@@ -43,10 +43,10 @@ type exgUnwrittenStore struct {
 // exgUnwrittenStores are the packages the redis_caches and eviction_state
 // exemptions rest on.
 var exgUnwrittenStores = []exgUnwrittenStore{
-	{pkg: "pkg/storage/evictionstatestore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
-	{pkg: "pkg/storage/evictionstatestore/pgstore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
-	{pkg: "pkg/gateway/storage/evictionfallback", exemption: "eviction_state"},
-	{pkg: "pkg/gateway/session/routingcache", exemption: "redis_caches"},
+	{pkg: "pkg/storage/evictionstatestore", allowed: []string{"pkg/gateway/core/checkpoint/evictionfallback"}, exemption: "eviction_state"},
+	{pkg: "pkg/storage/evictionstatestore/pgstore", allowed: []string{"pkg/gateway/core/checkpoint/evictionfallback"}, exemption: "eviction_state"},
+	{pkg: "pkg/gateway/core/checkpoint/evictionfallback", exemption: "eviction_state"},
+	{pkg: "pkg/gateway/core/session/routingcache", exemption: "redis_caches"},
 	// The token service constructs the access-token cache and discards it;
 	// the call check below keeps it from becoming a writer.
 	{pkg: "pkg/tokenservice/cache", allowed: []string{"cmd/lenny-token-service"}, exemption: "redis_caches"},
@@ -293,7 +293,7 @@ func TestErasureExemptionGuardCatchesNewWriters_spec_12_8(t *testing.T) {
 		want []string
 	}{
 		{dir: "clean"},
-		{dir: "importer", want: []string{"pkg/gateway/session/sessionserver/evict.go imports pkg/storage/evictionstatestore", "eviction_state"}},
+		{dir: "importer", want: []string{"pkg/gateway/core/session/sessionserver/evict.go imports pkg/storage/evictionstatestore", "eviction_state"}},
 		{dir: "cacheput", want: []string{"cmd/lenny-token-service/exchange.go calls Put on the access-token cache", "redis_caches"}},
 	}
 	for _, tc := range cases {

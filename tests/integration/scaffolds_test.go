@@ -66,7 +66,7 @@ func TestAdminBootstrap(t *testing.T) {
 // TESTING.md §13.19 — checkpoint/resume.
 // §4.4 / §7.1 checkpoint + resume — built and covered by:
 //   - pkg/checkpoint (checkpoint pipeline + property tests)
-//   - pkg/gateway/sessionserver Resume handler in handleResume
+//   - pkg/gateway/core/session/sessionserver Resume handler in handleResume
 //   - pkg/storage/retentiongc (retention sweep)
 //   - tier-2 miniostore_test.go (MinIO ArtifactStore round-trip)
 //
@@ -174,7 +174,7 @@ func TestMigrationUpgrade(t *testing.T) {
 // §10.7 ExperimentRouter — built and covered by:
 //   - pkg/experiment (Router, HMAC bucketing, status-transition rules)
 //   - pkg/gateway/experiment/experimentstore (admin CRUD)
-//   - pkg/gateway/sessionserver/start.go (variant-pool routing on
+//   - pkg/gateway/core/session/sessionserver/start.go (variant-pool routing on
 //     session create) with start_test.go
 //   - pkg/controller/poolscaling/variants.go (PoolScalingController
 //     variant-pool sizing path) and variants_test.go.

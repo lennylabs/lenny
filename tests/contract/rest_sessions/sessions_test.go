@@ -3,7 +3,7 @@
 //go:build contract
 
 // Contract tests for the §15.1 REST session lifecycle. These
-// tests drive pkg/gateway/sessionserver via httptest. Every test
+// tests drive pkg/gateway/core/session/sessionserver via httptest. Every test
 // covers an assertion from the §15.1 spec text — the happy path,
 // the state-machine precondition table, the §15.1 error envelope.
 //
@@ -23,9 +23,9 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
@@ -436,7 +436,7 @@ func assertInvalidStateTransition(t *testing.T, body map[string]any, wantCurrent
 // version are emitted on every response so clients can read them
 // uniformly across created / running / terminal states.
 // diagnosis: the §4.2 wire-level fields are missing from the
-// SessionResponse envelope. Recheck pkg/gateway/sessionserver
+// SessionResponse envelope. Recheck pkg/gateway/core/session/sessionserver
 // SessionResponse and toResponse for the camelCase JSON tags
 // (recoveryGeneration, schemaVersion, cwd, podAssignment).
 func TestSessionEnvelopeCarriesSpec42Fields(t *testing.T) {

@@ -23,8 +23,8 @@ import (
 	"strconv"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
@@ -35,7 +35,7 @@ import (
 // sourceExecutionMode or targetExecutionMode detail, refused a runtime of
 // the source's mode, left a row behind, or wrote a body the served OpenAPI
 // document does not declare. Check requireReplayRuntimeCompatible in
-// pkg/gateway/sessionserver/replay_runtime.go and the 400 response of the
+// pkg/gateway/core/session/sessionserver/replay_runtime.go and the 400 response of the
 // replay operation in pkg/gateway/externalapi/openapi/openapi.json.
 func TestReplayIncompatibleRuntimeContract_spec_15_1(t *testing.T) {
 	v := newSnapCopyValidator(t)

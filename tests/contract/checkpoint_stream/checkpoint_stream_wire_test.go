@@ -47,9 +47,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -737,7 +737,7 @@ func newGatewayHarness(t *testing.T, sa *scriptedAdapter) *gatewayHarness {
 // arithmetic against, an out-of-range chunk declaration instead of aborting
 // with stream_truncated first. A pod could then present a chunk larger than
 // the gateway's own chunk_size_bytes and have it signed. Re-check
-// pkg/gateway/checkpoint/checkpointer onChunkReady.
+// pkg/gateway/core/checkpoint/checkpointer onChunkReady.
 func TestCheckpointStreamRejectsOutOfRangeChunk(t *testing.T) {
 	cases := []struct {
 		name        string
@@ -795,7 +795,7 @@ func TestCheckpointStreamRejectsOutOfRangeChunk(t *testing.T) {
 // diagnosis: The gateway upload driver accepted a committed chunk whose
 // Stat-confirmed size exceeded the Content-Length it signed, so a pod could
 // write more bytes than its capability granted without aborting. Re-check
-// pkg/gateway/checkpoint/checkpointer confirmChunk.
+// pkg/gateway/core/checkpoint/checkpointer confirmChunk.
 func TestCheckpointStreamAbortsOnLengthMismatch(t *testing.T) {
 	sa := &scriptedAdapter{
 		probeBytes:             4096,
@@ -833,7 +833,7 @@ func TestCheckpointStreamAbortsOnLengthMismatch(t *testing.T) {
 // expires_at, so the adapter cannot tell when the presigned PUT capability has
 // expired and never re-mints. A checkpoint PUT retried past the capability TTL
 // replays a dead signature and fails instead of recovering. Re-check
-// pkg/gateway/checkpoint/checkpointer mintGrant.
+// pkg/gateway/core/checkpoint/checkpointer mintGrant.
 func TestCheckpointStreamGrantCarriesCapabilityExpiry(t *testing.T) {
 	sa := &scriptedAdapter{
 		probeBytes: 4096,

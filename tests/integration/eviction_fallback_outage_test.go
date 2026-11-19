@@ -16,7 +16,7 @@
 //     session.lost with reason eviction_total_loss, the
 //     lenny_session_eviction_total_loss_total counter, and the §4.4 partial-keys-logged counter, leaving no durable row.
 //
-// The unit tests in pkg/gateway/storage/evictionfallback cover the
+// The unit tests in pkg/gateway/core/checkpoint/evictionfallback cover the
 // chooser and total-loss branches against in-memory fakes, and the
 // component test drives the writer against a real Postgres store
 // on the healthy path. This integration-tier test adds genuine fault injection
@@ -44,7 +44,7 @@ import (
 	"github.com/minio/minio-go/v7"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionfallback"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/evictionfallback"
 	"github.com/lennylabs/lenny/pkg/storage/evictionstatestore"
 	evictionpg "github.com/lennylabs/lenny/pkg/storage/evictionstatestore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"

@@ -29,8 +29,8 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"

@@ -19,7 +19,7 @@
 // envtest-backed warm pool, so the security tier exercises the
 // authorization boundary the way an external client reaches it. It
 // complements the in-package component cases in
-// pkg/gateway/sessionserver/pool_selection_component_test.go, asserting
+// pkg/gateway/core/session/sessionserver/pool_selection_component_test.go, asserting
 // the security-tier fail-closed posture on the unauthorized-pin path.
 package security_test
 
@@ -41,10 +41,10 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"

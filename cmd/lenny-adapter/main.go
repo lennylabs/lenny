@@ -50,7 +50,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/prestop"
 	"github.com/lennylabs/lenny/pkg/adapter/scrub"
 	"github.com/lennylabs/lenny/pkg/adapter/sharedassets"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/runtimekit"

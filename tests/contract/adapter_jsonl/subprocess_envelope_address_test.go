@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 )
 
 // captureRuntimeScript is a Basic-level runtime that records every inbound

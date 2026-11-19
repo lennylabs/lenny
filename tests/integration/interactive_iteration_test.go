@@ -43,7 +43,7 @@ import (
 func TestInteractiveIterationInterruptThenResumeAndDeliver(t *testing.T) {
 	t.Parallel()
 	// A real Redis backs the §7.2 inbox/DLQ coordinator (see
-	// pkg/gateway/sessionserver/messages.go and
+	// pkg/gateway/core/session/sessionserver/messages.go and
 	// cmd/lenny-gateway/stores.go buildSessionMessaging): without it,
 	// a buffered message fails closed with a "error"/"inbox_unavailable"
 	// receipt instead of the "queued" receipt this test verifies. This

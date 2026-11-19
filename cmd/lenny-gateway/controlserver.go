@@ -15,6 +15,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorauthz"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionage"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
@@ -23,11 +28,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolbridge"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 )
 

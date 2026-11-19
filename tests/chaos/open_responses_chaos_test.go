@@ -23,8 +23,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -252,7 +252,7 @@ func TestRestoreMidTurnFailsTheTurnAndTheSession_spec_15(t *testing.T) {
 // delivered it to the runtime, or answered other than 409 TARGET_NOT_READY
 // in the adapter's native envelope. An outcome-unknown forward may already
 // have been applied, so it fails closed. Check ForwardResponsesTurn in
-// pkg/gateway/sessionserver/holder_forward.go and handleCreate in
+// pkg/gateway/core/session/sessionserver/holder_forward.go and handleCreate in
 // pkg/gateway/environment/translator/open_responses.go.
 func TestCoordinatorCrashAfterReadingAForwardedResponsesTurnFailsClosed_spec_29_3(t *testing.T) {
 	h := lifecycleharness.New(t, lifecycleharness.Options{Replicas: 2, Pods: 6})

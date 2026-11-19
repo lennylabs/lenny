@@ -23,7 +23,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 )
 

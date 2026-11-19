@@ -520,7 +520,7 @@ func TestParseManifest_CommittedManifestNamesAStepPerMove(t *testing.T) {
 		mod + "pkg/gateway/llmproxy/llmproxy":     {New: mod + "pkg/gateway/meteringproxy/llmproxy", Step: "0117.S3"},
 		mod + "pkg/gateway/core/subsystem":        {New: mod + "pkg/gateway/seam/subsystem", Step: "0117.S4"},
 		mod + "pkg/gateway/session/sessionevents": {New: mod + "pkg/gateway/streamproxy/sessionevents", Step: "0117.S6"},
-		mod + "pkg/gateway/sessionserver":         {New: mod + "pkg/gateway/core/session", Step: "0117.S11"},
+		mod + "pkg/gateway/sessionserver":         {New: mod + "pkg/gateway/core/session/sessionserver", Step: "0117.S11"},
 	}
 	for old, w := range want {
 		got := byOld[old]

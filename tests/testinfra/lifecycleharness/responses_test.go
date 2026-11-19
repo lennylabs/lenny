@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 )
 
 // postResponses posts one Open Responses turn, continuing prev when it is

@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
-	"github.com/lennylabs/lenny/pkg/gateway/session/budgetstate"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/budgetstate"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotreaper"
 )
 
 // validateBudgetStateSweepInterval refuses a non-positive

@@ -81,17 +81,17 @@ func userRevokedReasonGone(t testing.TB, root string) (bool, string) {
 
 // closedReleaseFindings are the findings the release-ownership work closed.
 var closedReleaseFindings = []closedReleaseFinding{
-	{id: "F-4.6.26", file: "pkg/gateway/podlifecycle/podsession/reclaim.go", symbol: "Binder.ReclaimClaimed"},
-	{id: "F-4.6.27", file: "pkg/gateway/sessionserver/finalize.go", symbol: "Server.reclaimFinalizedPod"},
-	{id: "F-4.6.28", file: "pkg/gateway/runtime/watchdog/watchdog.go", symbol: "Watchdog.reasonForState", holds: createdSweeperGone},
-	{id: "F-4.9.35", file: "pkg/gateway/sessionserver/finalize.go", symbol: "Server.revokeFinalizeLease"},
-	{id: "F-5.2.49", file: "pkg/gateway/podlifecycle/podsession/slotbinder.go", symbol: "Binder.releaseSlotRetrying"},
-	{id: "F-7.3.33", file: "pkg/gateway/sessionserver/terminal_hook.go", symbol: "Server.releaseAfterTerminal"},
-	{id: "F-7.3.34", file: "pkg/gateway/podlifecycle/podclaim/slotclaimer.go", symbol: "SlotClaimer.rollbackContext"},
-	{id: "F-10.1.28", file: "pkg/gateway/sessionserver/terminal_hook.go", symbol: "Server.settleStaleBinding"},
-	{id: "F-11.4.11", file: "pkg/gateway/sessionserver/terminal_binding.go", symbol: "Server.ReleaseRevokedBinding", holds: userRevokedReasonGone},
-	{id: "F-11.4.15", file: "pkg/gateway/sessionserver/terminal_hook.go", symbol: "Server.ReclaimRevokedPreRunning"},
-	{id: "F-11.4.16", file: "pkg/gateway/sessionserver/terminal_hook.go", symbol: "Server.ReclaimRevokedPreRunning"},
+	{id: "F-4.6.26", file: "pkg/gateway/core/session/podsession/reclaim.go", symbol: "Binder.ReclaimClaimed"},
+	{id: "F-4.6.27", file: "pkg/gateway/core/session/sessionserver/finalize.go", symbol: "Server.reclaimFinalizedPod"},
+	{id: "F-4.6.28", file: "pkg/gateway/core/session/watchdog/watchdog.go", symbol: "Watchdog.reasonForState", holds: createdSweeperGone},
+	{id: "F-4.9.35", file: "pkg/gateway/core/session/sessionserver/finalize.go", symbol: "Server.revokeFinalizeLease"},
+	{id: "F-5.2.49", file: "pkg/gateway/core/session/podsession/slotbinder.go", symbol: "Binder.releaseSlotRetrying"},
+	{id: "F-7.3.33", file: "pkg/gateway/core/session/sessionserver/terminal_hook.go", symbol: "Server.releaseAfterTerminal"},
+	{id: "F-7.3.34", file: "pkg/gateway/core/podclaim/slotclaimer.go", symbol: "SlotClaimer.rollbackContext"},
+	{id: "F-10.1.28", file: "pkg/gateway/core/session/sessionserver/terminal_hook.go", symbol: "Server.settleStaleBinding"},
+	{id: "F-11.4.11", file: "pkg/gateway/core/session/sessionserver/terminal_binding.go", symbol: "Server.ReleaseRevokedBinding", holds: userRevokedReasonGone},
+	{id: "F-11.4.15", file: "pkg/gateway/core/session/sessionserver/terminal_hook.go", symbol: "Server.ReclaimRevokedPreRunning"},
+	{id: "F-11.4.16", file: "pkg/gateway/core/session/sessionserver/terminal_hook.go", symbol: "Server.ReclaimRevokedPreRunning"},
 }
 
 // diagnosis: a finding the release-ownership work closed no longer matches

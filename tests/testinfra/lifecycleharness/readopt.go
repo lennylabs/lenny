@@ -6,8 +6,8 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 )
 
 // readopter is the harness's coordination.Readopter. It re-adopts a

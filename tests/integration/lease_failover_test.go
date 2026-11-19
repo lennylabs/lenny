@@ -16,10 +16,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/common/seqname"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	leasepg "github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
-	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

@@ -42,9 +42,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter/slotlayout"
 	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 

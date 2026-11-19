@@ -14,7 +14,7 @@ requirements: []
 
 ## Evidence
 
-- The security review of 0117.S8 on 2026-11-19 (branch `change/0117.S8-api-front`, raised as 0117 decision 71): `CreateSessionService` and `CreateAndStartService` in `pkg/gateway/sessionserver` apply the tenant check only. A `tenant-viewer` that the REST route refuses with 403 can create a session through MCP `lenny/create_session` or the single-shot path.
+- The security review of 0117.S8 on 2026-11-19 (branch `change/0117.S8-api-front`, raised as 0117 decision 71): `CreateSessionService` and `CreateAndStartService` in `pkg/gateway/core/session/sessionserver` apply the tenant check only. A `tenant-viewer` that the REST route refuses with 403 can create a session through MCP `lenny/create_session` or the single-shot path.
 - `main` behaves the same; 0117.S8 kept the behavior because 0117's steps change no behavior.
 
 ## Gap

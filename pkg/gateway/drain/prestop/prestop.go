@@ -11,7 +11,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 

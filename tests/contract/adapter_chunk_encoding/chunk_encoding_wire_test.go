@@ -41,9 +41,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
@@ -241,7 +241,7 @@ func TestAdapterRefusesADeclaredChunkEncodingItDoesNotProduce_spec_10_1(t *testi
 //	adapter refused the gateway's declared encoding (the checkpoint fails),
 //	the manifest or a chunk key names an encoding other than tar.gz, or the
 //	stored chunks do not decode as gzip-compressed tar. Re-check the
-//	gateway's chunkEncoding in pkg/gateway/checkpoint/checkpointer and
+//	gateway's chunkEncoding in pkg/gateway/core/checkpoint/checkpointer and
 //	workspace.ArchiveTreeEncoding in pkg/adapter/workspace.
 func TestGatewayDeclaredChunkEncodingMatchesTheAdapterBytes_spec_10_1(t *testing.T) {
 	store := blobstore.NewMemoryStore(time.Now)
