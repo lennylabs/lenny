@@ -3,6 +3,7 @@
 package lint
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -274,9 +275,32 @@ func exgTerminalName(e ast.Expr) string {
 //
 // spec: 12.8 (Compliance Interfaces: Storage backends in erasure scope)
 func TestErasureExemptionsHaveNoProductionWriter_spec_12_8(t *testing.T) {
-	for _, v := range exgExemptionViolations(t, schematest.RepoRoot(t)) {
+	root := schematest.RepoRoot(t)
+	for _, v := range exgMissingWatchedPaths(root) {
 		t.Error(v)
 	}
+	for _, v := range exgExemptionViolations(t, root) {
+		t.Error(v)
+	}
+}
+
+// exgMissingWatchedPaths reports each store, allowed importer, and token
+// service tree the guard names whose directory no longer exists under root.
+// The guard compares import paths with these strings, so a path left behind
+// by a package move would stop watching the store without failing.
+func exgMissingWatchedPaths(root string) []string {
+	paths := append([]string{exgTokenCachePkg}, exgTokenServiceDirs...)
+	for _, s := range exgUnwrittenStores {
+		paths = append(paths, s.pkg)
+		paths = append(paths, s.allowed...)
+	}
+	var out []string
+	for _, p := range paths {
+		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err != nil || !info.IsDir() {
+			out = append(out, fmt.Sprintf("%s, which the erasure exemption guard watches, is not a directory under the repository root: update the guard's paths to the package's current directory", p))
+		}
+	}
+	return out
 }
 
 // TestErasureExemptionGuardCatchesNewWriters_spec_12_8 runs the guard over
