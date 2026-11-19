@@ -41,7 +41,7 @@ This step goes first because it removes a branch from every file that 0118.S4 (P
 
 Removal of pre-launched runtimes from the pod and the pool ("PL-8"), with RP D6's removal of the capability. RP's proposal for D6 lands in the same release.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the pod recycle operations (`GWSEAM-IncrementSessionsServed`, `GWSEAM-IncrementScrubFailureCount`, `GWSEAM-RecycleCounters`, `GWSEAM-RecordLeak`, `GWSEAM-RetireOnSessionCount`, `GWSEAM-InspectForRecycle`, `GWSEAM-RecyclePod`, and `GWSEAM-RetirePod`), whose recycle policy no longer carries `preConnect` (PL-8).
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the pod recycle operations (`GWSEAM-IncrementSessionsServed`, `GWSEAM-IncrementScrubFailureCount`, `GWSEAM-RecycleCounters`, `GWSEAM-RecordLeak`, `GWSEAM-RetireOnSessionCount`, `GWSEAM-InspectForRecycle`, `GWSEAM-RecyclePod`, `GWSEAM-RetirePod`, `GWSEAM-RecordScrubFailure`, and `GWSEAM-RecordPodRetirement`), whose recycle policy no longer carries `preConnect` (PL-8).
 
 ### 0118.S3 Renames and acknowledgeSharedPod
 - status: Planned

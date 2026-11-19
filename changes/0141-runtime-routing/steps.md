@@ -36,4 +36,4 @@ The steps land in order.
 
 Within 0141.S2, the specification edits land first, then routes and routing labels with their tests, then the removal and the migration, then the documentation and records.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-ApplyExperimentRouting` with the `ExperimentRouter`.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-ApplyExperimentRouting` with the `ExperimentRouter`, and reshapes `GWSEAM-Intercept`, through which the platform tools seam runs the pre-route phase for a delegated child, with the corrected payload of that phase.

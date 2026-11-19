@@ -30,7 +30,7 @@ The delivery core: MD-1 to MD-7, MD-9, MD-12, and MD-14, and the message rows of
 
 SL-A of [`0146-session-lifecycle`](../0146-session-lifecycle/steps.md#steps) lands with this step, because the delivery paths name the states `idle`, `dormant`, `suspended`, and `blocked`.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-SendMessages`, which `Deliver` replaces (MD-6), reshapes the held-delivery operations (`GWSEAM-LockDelivery`, `GWSEAM-HoldMessage`, `GWSEAM-HoldUndeliveredForward`, `GWSEAM-DeliverHeld`, `GWSEAM-ResumeSuspended`, and `GWSEAM-AdmitResume`) and `GWSEAM-EnqueueInbox` (MD-3 and MD-5), and reshapes `GWSEAM-AuthorizeSession` with the predicate for the root's client that the delivery paths read.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-SendMessages`, which `Deliver` replaces (MD-6), reshapes the held-delivery operations (`GWSEAM-LockDelivery`, `GWSEAM-HoldMessage`, `GWSEAM-HoldUndeliveredForward`, `GWSEAM-DeliverHeld`, `GWSEAM-ResumeSuspended`, and `GWSEAM-AdmitResume`) `GWSEAM-EnqueueInbox`, and `GWSEAM-RouteMessage`, which chooses among those paths (MD-3 and MD-5), and reshapes `GWSEAM-AuthorizeSession` with the predicate for the root's client that the delivery paths read.
 
 ### 0135.S2 Provider surfaces and client tools
 - status: Planned
