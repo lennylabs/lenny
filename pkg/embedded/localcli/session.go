@@ -258,9 +258,9 @@ func mintEmbeddedBearer() (string, error) {
 // event stream and renders output, elicitation prompts, and lifecycle
 // transitions inline until the session terminates.
 //
-// A prompt sent to a session that is still in created is refused with
-// TARGET_NOT_READY, which is how the command failed before it started the
-// session on the path without `--workspace` (issue CLIINST-I1).
+// The prompt waits for the start because the gateway refuses a message to
+// a session that is still in created with TARGET_NOT_READY. A delivery
+// failure after the start reports the running session's id in the error.
 //
 // spec: §24.17 (Session Operations)
 func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer) int {
@@ -290,23 +290,25 @@ func cmdSessionNew(ctx context.Context, args []string, stdout, stderr io.Writer)
 		return 1
 	}
 
-	// spec: §24.17 / §26.2 — deliver the positional
-	// prompt as the session's opening message so the agent starts working.
+	// Deliver the positional prompt as the session's opening message so
+	// the agent starts working.
 	if prompt != "" {
 		if _, err := client.SendMessages(ctx, sessionID, lenny.SendMessagesRequest{
 			Messages: []lenny.MessagePayload{{Role: "user", Content: prompt}},
 		}); err != nil {
-			fmt.Fprintf(stderr, "lenny session new: deliver prompt: %v\n", err)
+			// The session is already running and holds a pod, so name it:
+			// the caller can resend the prompt with `lenny session send`
+			// or release the session with `lenny session cancel`.
+			fmt.Fprintf(stderr, "lenny session new: session %s started, but delivering the prompt failed: %v\n", sessionID, err)
 			return 1
 		}
 	}
 
 	fmt.Fprintln(stdout, sessionID)
 	if attachWanted(f, stdout) {
-		// spec: §24.17 — render the session inline until it
-		// terminates. The created id is already on stdout so a caller
-		// that captured it can still drive the session even if the
-		// attach stream is interrupted.
+		// Render the session inline until it terminates. The created id
+		// is already on stdout, so a caller that captured it can still
+		// drive the session even if the attach stream is interrupted.
 		return streamSession(ctx, client, sessionID, stdout, stderr)
 	}
 	return 0

@@ -332,7 +332,7 @@ packages:
     - package: pkg/embedded/k3s
       count: 91
     - package: pkg/embedded/localcli
-      count: 55
+      count: 53
     - package: pkg/embedded/manifests
       count: 6
     - package: pkg/embedded/stack

@@ -23,6 +23,9 @@ type startGateway struct {
 	// failStart makes lenny/create_and_start_session report a tool
 	// failure and create no session.
 	failStart bool
+	// failMessages makes every message request fail with a server error
+	// after the session has started.
+	failMessages bool
 
 	mu       sync.Mutex
 	calls    []string
@@ -89,6 +92,11 @@ func (g *startGateway) serveMessages(w http.ResponseWriter, r *http.Request) {
 	g.messages = append(g.messages, string(body))
 	g.mu.Unlock()
 	w.Header().Set("Content-Type", "application/json")
+	if g.failMessages {
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`{"error":{"code":"VALIDATION_ERROR","category":"PERMANENT","message":"message content is not valid","retryable":false}}`))
+		return
+	}
 	if state != "running" {
 		// The gateway classes TARGET_NOT_READY as transient. The fake
 		// marks it non-retryable so a regression fails at once rather
@@ -194,5 +202,32 @@ func TestSessionNewReportsAFailedStartAndSendsNoPrompt(t *testing.T) {
 	}
 	if len(messages) != 0 {
 		t.Errorf("message bodies = %v, want no prompt after a failed start", messages)
+	}
+}
+
+// TestSessionNewNamesTheStartedSessionWhenThePromptFails checks that when
+// the session starts but the prompt cannot be delivered, the command exits
+// with status 1 and names the running session on stderr, so the caller can
+// resend the prompt to it or cancel it rather than leave it holding a pod.
+//
+// spec: §24.17 (Session Operations)
+func TestSessionNewNamesTheStartedSessionWhenThePromptFails(t *testing.T) {
+	srv, g := newStartGateway(t, false)
+	g.failMessages = true
+	var stdout, stderr bytes.Buffer
+	code := cmdSession(append([]string{"new"}, remoteArgs(srv, "--runtime", "echo", "hello")...), &stdout, &stderr)
+	if code != 1 {
+		t.Fatalf("session new with a failed prompt: code=%d, want 1; stderr=%s", code, stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "session sess_started started") {
+		t.Errorf("stderr = %q, want it to name the started session", stderr.String())
+	}
+	if !strings.Contains(stderr.String(), "message content is not valid") {
+		t.Errorf("stderr = %q, want the gateway's reason", stderr.String())
+	}
+	calls, _ := g.snapshot()
+	want := []string{"lenny/create_and_start_session", "messages"}
+	if strings.Join(calls, ",") != strings.Join(want, ",") {
+		t.Errorf("call order = %v, want %v", calls, want)
 	}
 }
