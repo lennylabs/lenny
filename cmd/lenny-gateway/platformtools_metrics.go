@@ -5,12 +5,12 @@ package main
 import (
 	"github.com/prometheus/client_golang/prometheus"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
 )
 
 // platformToolsMetrics holds the metric sets of the platform tools seam's

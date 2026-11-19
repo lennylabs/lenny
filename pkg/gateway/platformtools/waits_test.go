@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 )
 
 // TestInputWaitsListResolveAndForget checks that the session core sees a

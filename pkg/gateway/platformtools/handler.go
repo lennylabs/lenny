@@ -7,7 +7,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"

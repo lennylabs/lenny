@@ -28,9 +28,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"

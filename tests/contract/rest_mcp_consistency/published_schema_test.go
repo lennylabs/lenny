@@ -6,7 +6,7 @@
 // catalog against the published MCP protocol schema for the
 // negotiated revision, vendored at
 // tests/testdata/mcp/schema/{2025-03-26,2024-11-05}.schema.json (see
-// the README next to it for provenance). pkg/gateway/mcpfabric/mcp's
+// the README next to it for provenance). pkg/gateway/platformtools/mcp's
 // own unit tests check field presence against Lenny's ad hoc
 // map[string]any construction; neither those nor the scaffold suite
 // in this package catch a response that satisfies Lenny's own
@@ -134,7 +134,7 @@ func TestMCPInitializeMatchesPublishedSchema(t *testing.T) {
 // own `Tool` / `ListToolsResult` schema — most commonly an
 // `inputSchema` missing the literal `"type": "object"` the MCP schema
 // requires, or a tool missing `name` or `inputSchema`. Lenny's own
-// tools/list tests (pkg/gateway/mcpfabric/mcptools) only check that
+// tools/list tests (pkg/gateway/platformtools/mcptools) only check that
 // specific tool names are present; they do not validate every catalog
 // entry against the external MCP `Tool` contract.
 func TestMCPToolsListMatchesPublishedSchema(t *testing.T) {

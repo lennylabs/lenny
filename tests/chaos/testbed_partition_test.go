@@ -50,8 +50,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	dlease "github.com/lennylabs/lenny/pkg/delegation/lease"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"

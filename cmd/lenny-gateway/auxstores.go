@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"

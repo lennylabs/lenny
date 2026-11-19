@@ -14,8 +14,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"

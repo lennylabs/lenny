@@ -151,7 +151,7 @@ func TestMCPInitializeConformsToPublishedSchemaOnDeployedGateway(t *testing.T) {
 // ListToolsResult schema for the current negotiated version — most
 // commonly an inputSchema missing the literal "type": "object" the MCP
 // schema requires, or a tool missing name or inputSchema. Lenny's own
-// tools/list tests (pkg/gateway/mcpfabric/mcptools) and the tier-3
+// tools/list tests (pkg/gateway/platformtools/mcptools) and the tier-3
 // contract suite only exercise the in-process construction; this test
 // is the only one that validates the catalog a live client receives
 // from the deployed gateway.

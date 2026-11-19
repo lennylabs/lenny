@@ -186,7 +186,7 @@ func TestBlackboxFuzzPathTraversalArtifactKeyRejected(t *testing.T) {
 // deeply nested value in a string-typed field (method) instead of
 // rejecting it with the shared lenny error envelope. §15.2.1 rule 3
 // (TESTING.md 12.9.6's "REST and MCP surfaces" — carried at the wire
-// level by pkg/gateway/mcpfabric/mcp) states that even transport-level
+// level by pkg/gateway/platformtools/mcp) states that even transport-level
 // JSON-RPC errors carry the shared lenny envelope (code, category,
 // retryable) in error.data, so an MCP-surface rejection is asserted
 // against that envelope rather than an HTTP status: JSON-RPC reports

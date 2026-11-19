@@ -8,7 +8,7 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"

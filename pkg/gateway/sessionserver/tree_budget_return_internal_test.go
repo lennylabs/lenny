@@ -14,9 +14,9 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"

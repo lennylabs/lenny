@@ -8,7 +8,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 )
 
 // leaseExtensionAuditAdapter implements leasecontrol.Auditor, turning

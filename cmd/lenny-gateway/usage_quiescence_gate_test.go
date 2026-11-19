@@ -13,8 +13,8 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"

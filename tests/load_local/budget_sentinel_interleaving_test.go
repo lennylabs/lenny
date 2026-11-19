@@ -24,7 +24,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 )
 
 const sentinelRoot = "root-sentinel"

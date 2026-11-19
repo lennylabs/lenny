@@ -48,9 +48,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"

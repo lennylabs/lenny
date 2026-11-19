@@ -10,7 +10,7 @@
 // between servers. It installs the stats handler and the recovery
 // interceptor in the order the gateway installs them, behind the same
 // verified-peer gate, and dispatches CallPlatformTool through the same
-// platformtools bridge and mcptools handlers the gateway runs. Each Dial is
+// toolbridge bridge and mcptools handlers the gateway runs. Each Dial is
 // one connection, so a test can stand for a pod process's current connection,
 // the connection it left, and a second pod.
 //
@@ -42,13 +42,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolbridge"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
@@ -104,7 +104,7 @@ func (k *killableStore) Update(ctx context.Context, tenantID, id string, mutate 
 // controlServer serves the platform-tool RPCs through the gateway bridge.
 type controlServer struct {
 	adapterv1.UnimplementedGatewayControlServer
-	bridge *platformtools.Bridge
+	bridge *toolbridge.Bridge
 }
 
 func (c *controlServer) ListPlatformTools(ctx context.Context, req *adapterv1.ListPlatformToolsRequest) (*adapterv1.ListPlatformToolsResponse, error) {
@@ -176,7 +176,7 @@ func Start(t testing.TB, opts Options) *Server {
 		serverOpts = append(serverOpts, tlsOpt)
 	}
 	s.gs = grpc.NewServer(serverOpts...)
-	adapterv1.RegisterGatewayControlServer(s.gs, &controlServer{bridge: platformtools.New(tools, sessionserver.NewCallingSessions(s.store))})
+	adapterv1.RegisterGatewayControlServer(s.gs, &controlServer{bridge: toolbridge.New(tools, sessionserver.NewCallingSessions(s.store))})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("inputwaitrig: listen: %v", err)

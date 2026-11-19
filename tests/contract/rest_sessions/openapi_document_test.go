@@ -105,7 +105,7 @@ const lineCitationSpecimenFile = "testdata/line-citation-specimen.txt"
 // copy their descriptions out of the document verbatim, so a citation
 // left in the document reaches an MCP client through them.
 var generatedMCPToolSchemaFiles = []string{
-	"pkg/gateway/mcpfabric/mcptools/generated_schemas.go",
+	"pkg/gateway/platformtools/mcptools/generated_schemas.go",
 	"pkg/ops/mcp/generated_tools.go",
 }
 

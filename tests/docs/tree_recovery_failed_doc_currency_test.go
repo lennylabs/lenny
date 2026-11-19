@@ -22,7 +22,7 @@ type treeRecoveryFailedDoc struct {
 var treeRecoveryFailedDocs = []treeRecoveryFailedDoc{
 	{"pkg/delegation/recovery/recovery.go", ""},
 	{"pkg/delegation/recovery/recovery.go", "OutcomeFailed"},
-	{"pkg/gateway/mcpfabric/delegationtree/treerecovery/treerecovery.go", "Summary.Failed"},
+	{"pkg/gateway/platformtools/treerecovery/treerecovery.go", "Summary.Failed"},
 	{"pkg/gateway/sessionserver/treerecovery.go", "recoverDelegationTree"},
 }
 

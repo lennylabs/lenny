@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"

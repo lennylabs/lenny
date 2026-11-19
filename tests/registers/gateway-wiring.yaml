@@ -85,7 +85,7 @@ crossings:
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
     interface: Router.WithElicitationFloorProvider(0)
-    from: pkg/gateway/mcpfabric/elicitationfloor
+    from: pkg/gateway/platformtools/elicitationfloor
     type: Provider.Floor
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
@@ -100,7 +100,7 @@ crossings:
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
     interface: Router.WithLeaseDenials(0)
-    from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    from: pkg/gateway/platformtools/leasecontrol
     type: StoreBudgetSource
     step: 0117.S8
   - to: pkg/gateway/externalapi/admin
@@ -188,29 +188,29 @@ crossings:
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/delegation
+  - to: pkg/gateway/platformtools/delegation
     interface: Options.Auditor
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/delegation/export
+  - to: pkg/gateway/platformtools/delegation/export
     interface: NewMaterializer(2)
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/mcptools
+  - to: pkg/gateway/platformtools/mcptools
     interface: Deps.Audit
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
   - to: pkg/gateway/serviceidentity
     interface: Config.Verifier
-    from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    from: pkg/gateway/platformtools/leasecontrol
     type: TokenReviewVerifier
     step: 0117.S8
   - to: pkg/gateway/serviceidentity
     interface: SATokenAuthenticator
-    from: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    from: pkg/gateway/platformtools/leasecontrol
     type: TokenReviewVerifier
     step: 0117.S8
   - to: pkg/gateway/sessionserver

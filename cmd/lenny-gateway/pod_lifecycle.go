@@ -26,7 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"

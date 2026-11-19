@@ -437,9 +437,9 @@ packages:
       count: 3
     - package: pkg/gateway/externalapi/pagination
       count: 3
-    - package: pkg/gateway/gatewaycontrol/inputwaitrecovery
+    - package: pkg/gateway/platformtools/inputwaitrecovery
       count: 38
-    - package: pkg/gateway/gatewaycontrol/platformtools
+    - package: pkg/gateway/platformtools/toolbridge
       count: 4
     - package: pkg/gateway/llmproxy/credrouter
       count: 19
@@ -449,53 +449,53 @@ packages:
       count: 2
     - package: pkg/gateway/llmproxy/semanticcache/redisstore
       count: 4
-    - package: pkg/gateway/mcpfabric/delegation
+    - package: pkg/gateway/platformtools/delegation
       count: 168
-    - package: pkg/gateway/mcpfabric/delegation/export
+    - package: pkg/gateway/platformtools/delegation/export
       count: 5
-    - package: pkg/gateway/mcpfabric/delegation/exportwire
+    - package: pkg/gateway/platformtools/delegation/exportwire
       count: 2
-    - package: pkg/gateway/mcpfabric/delegation/fileexport
+    - package: pkg/gateway/platformtools/delegation/fileexport
       count: 5
-    - package: pkg/gateway/mcpfabric/delegationbudget
+    - package: pkg/gateway/platformtools/delegationbudget
       count: 24
-    - package: pkg/gateway/mcpfabric/delegationbudget/pgstore
+    - package: pkg/gateway/platformtools/delegationbudget/pgstore
       count: 3
     - package: pkg/gateway/mcpfabric/delegationpolicystore
       count: 14
     - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
       count: 3
-    - package: pkg/gateway/mcpfabric/delegationtree/deadlock
+    - package: pkg/gateway/platformtools/deadlock
       count: 31
-    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol
+    - package: pkg/gateway/platformtools/leasecontrol
       count: 259
-    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg
+    - package: pkg/gateway/platformtools/leasecontrol/denialpg
       count: 4
-    - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit
+    - package: pkg/gateway/platformtools/leasecontrol/leaseelicit
       count: 13
-    - package: pkg/gateway/mcpfabric/delegationtree/orphancleanup
+    - package: pkg/gateway/platformtools/orphancleanup
       count: 52
-    - package: pkg/gateway/mcpfabric/delegationtree/resultrollup
+    - package: pkg/gateway/platformtools/resultrollup
       count: 12
-    - package: pkg/gateway/mcpfabric/delegationtree/treearchive
+    - package: pkg/gateway/platformtools/treearchive
       count: 16
-    - package: pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore
+    - package: pkg/gateway/platformtools/treearchive/pgstore
       count: 7
-    - package: pkg/gateway/mcpfabric/delegationtree/treebudget
+    - package: pkg/gateway/platformtools/treebudget
       count: 60
-    - package: pkg/gateway/mcpfabric/delegationtree/treerecovery
+    - package: pkg/gateway/platformtools/treerecovery
       count: 16
-    - package: pkg/gateway/mcpfabric/elicitationfloor
+    - package: pkg/gateway/platformtools/elicitationfloor
       count: 8
-    - package: pkg/gateway/mcpfabric/mcp
+    - package: pkg/gateway/platformtools/mcp
       count: 123
     - package: pkg/gateway/mcpfabric/mcpruntimes
       count: 18
     - package: pkg/gateway/mcpfabric/mcpschemagen
       count: 11
-    - package: pkg/gateway/mcpfabric/mcptools
+    - package: pkg/gateway/platformtools/mcptools
       count: 671
-    - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
+    - package: pkg/gateway/platformtools/mcptools/internal/genmcpschemas
       count: 1
     - package: pkg/gateway/meteringproxy/llmproxy
       count: 71
@@ -631,7 +631,7 @@ packages:
       count: 22
     - package: pkg/gateway/session/executor
       count: 150
-    - package: pkg/gateway/session/inputwait
+    - package: pkg/gateway/platformtools/inputwait
       count: 11
     - package: pkg/gateway/session/interactionstore
       count: 12

@@ -3,9 +3,9 @@
 package platformtools
 
 import (
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 )
 
 // InputWaits serves the registry of the input requests a session's runtime

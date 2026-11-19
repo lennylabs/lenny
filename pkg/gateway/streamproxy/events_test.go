@@ -15,7 +15,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"

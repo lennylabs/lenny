@@ -26,13 +26,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
@@ -831,7 +831,7 @@ func receivedFrom(h *lifecycleharness.Harness, id, text string) (string, string,
 // playground_client_closed path; the lifetime cap counted per coordinating
 // replica; or PreToolResult ran on both replicas. Check the lenny/send_message
 // and lenny/cancel_session handlers in
-// pkg/gateway/mcpfabric/mcptools/mcptools_register.go.
+// pkg/gateway/platformtools/mcptools/mcptools_register.go.
 func TestOffHolderMCPToolCallsForwardAsToolCalls_spec_29_3(t *testing.T) {
 	t.Run("MCP client send and cancel", func(t *testing.T) {
 		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})

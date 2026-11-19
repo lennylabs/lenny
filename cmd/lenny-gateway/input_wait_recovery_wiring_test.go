@@ -13,7 +13,7 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"

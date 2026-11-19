@@ -24,9 +24,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol/denialpg"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"

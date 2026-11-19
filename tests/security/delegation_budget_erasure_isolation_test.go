@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget"
-	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget"
+	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

@@ -7,11 +7,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 

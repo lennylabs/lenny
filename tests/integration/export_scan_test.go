@@ -31,9 +31,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"

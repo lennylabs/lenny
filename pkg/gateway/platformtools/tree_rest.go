@@ -29,7 +29,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 

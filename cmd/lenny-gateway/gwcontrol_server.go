@@ -14,10 +14,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"

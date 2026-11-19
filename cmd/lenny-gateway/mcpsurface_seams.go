@@ -13,8 +13,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 )
 
 // mcpDelegationAuditor adapts the gateway audit sink to the

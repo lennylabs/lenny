@@ -14,7 +14,7 @@ var treeBudgetReturnDocFiles = []struct {
 	want string
 }{
 	{path: "pkg/gateway/sessionserver/delegation_seams.go", want: "returnTreeBudget"},
-	{path: "pkg/gateway/mcpfabric/delegationtree/treebudget/treebudget.go", want: "post-terminal hook"},
+	{path: "pkg/gateway/platformtools/treebudget/treebudget.go", want: "post-terminal hook"},
 }
 
 // retiredArchiveReturnFragment names the archive-time budget return the

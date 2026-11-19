@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"

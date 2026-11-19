@@ -67,13 +67,13 @@ func TestFileFabric(t *testing.T) {
 // TestMCPFabricPlatformTools — platform MCP tools (lenny/output,
 // lenny/request_elicitation, lenny/memory_write, lenny/memory_query,
 // lenny/send_message, lenny/request_input) against real stores.
-// pkg/gateway/mcpfabric/mcptools implements all six tools and the unit
+// pkg/gateway/platformtools/mcptools implements all six tools and the unit
 // suites cover dispatch against memstore; the backing Postgres stores are
 // covered by the tier-2 stores contract tests, so a duplicated
 // MCP-on-Postgres component test adds no production-code coverage.
 //
 // spec: 12.2.3
-// diagnosis: the pkg/gateway/mcpfabric/mcptools unit suites cover dispatch and
+// diagnosis: the pkg/gateway/platformtools/mcptools unit suites cover dispatch and
 // the Postgres-backed stores are covered by the stores contract
 // tests; a tier-2 MCP-on-Postgres wiring adds no new code path.
 func TestMCPFabricPlatformTools(t *testing.T) {
@@ -82,7 +82,7 @@ func TestMCPFabricPlatformTools(t *testing.T) {
 		"lenny/request_elicitation, lenny/memory_write, " +
 		"lenny/memory_query, lenny/send_message, lenny/request_input, " +
 		"lenny/delegate_task, lenny/await_children): " +
-		"pkg/gateway/mcpfabric/mcptools unit suites.")
+		"pkg/gateway/platformtools/mcptools unit suites.")
 	t.Log("- backing-store contracts for the stores those tools mutate " +
 		"(memorystore, sessionstore, interactionstore): the suites " +
 		"under tests/component/stores/.")

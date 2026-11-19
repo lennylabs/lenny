@@ -29,7 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"

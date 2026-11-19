@@ -13,8 +13,8 @@ package treeseam
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 

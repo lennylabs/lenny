@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
-	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationbudget/pgstore"
+	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"

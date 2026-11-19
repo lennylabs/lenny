@@ -23,7 +23,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"

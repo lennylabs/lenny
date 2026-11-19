@@ -269,12 +269,12 @@ sites:
       site: 1
       call: Skip
       reason: served OpenAPI emits operability routes with status-code-only responses and models no operability error envelope; closing the gap needs a spec decision on per-route response schemas and the error-category taxonomy (§25.2 AUTH vs §16.3/§15.1 UPSTREAM)
-    - path: pkg/gateway/mcpfabric/delegation/fileexport/fileexport_test.go
+    - path: pkg/gateway/platformtools/delegation/fileexport/fileexport_test.go
       function: TestResolveWithinRootAdmitsInternalSymlink_spec_8_7_787
       site: 1
       call: Skipf
       reason: 'symlinks unsupported: %v'
-    - path: pkg/gateway/mcpfabric/delegation/fileexport/fileexport_test.go
+    - path: pkg/gateway/platformtools/delegation/fileexport/fileexport_test.go
       function: TestResolveWithinRootRejectsEscapingSymlink_spec_8_7_787
       site: 1
       call: Skipf

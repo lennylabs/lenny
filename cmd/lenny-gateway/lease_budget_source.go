@@ -7,8 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol/denialpg"
 )
 
 // leaseExtensionConfig resolves the deployment-level §8.6 lease-extension

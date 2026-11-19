@@ -13,8 +13,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
