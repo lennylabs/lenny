@@ -78,6 +78,8 @@ As built so far: the moves keep each package's name under `pkg/gateway/api` and 
 
 The `audit`, `billing`, `quota`, and `policy` packages, the checkpoint retention and partial manifest stores, `mcpfabric/delegationpolicystore`, `eventbuffer`, `operability/recommendations`, the CA rotation packages, and the `provisioning` packages to their concern directories. §4.0 takes the new paths of `eventbuffer` and `operability/recommendations`. `pkg/ops`, `pkg/ctlcli`, `cmd/lenny-ops`, `cmd/lenny-token-service`, and `cmd/lenny-backup` take the new paths.
 
+As built: the moves keep each package's name under `pkg/audit`, `pkg/billing`, `pkg/quota`, `pkg/checkpoint`, `pkg/delegation`, `pkg/events`, `pkg/mtls`, and `pkg/workspaceplan` (decision 6). The policy package and the capacity recommendations service sit at the roots of their concern directories, as `pkg/policy` and `pkg/recommendations`, beside `pkg/policy/interceptor`, `pkg/policy/ratelimit`, and `pkg/recommendations/rules`, rather than at `pkg/policy/policy` and `pkg/recommendations/recommendations`, as `pkg/audit` and `pkg/quota` already hold their concern's own package. Every row naming 0117.S9 in the layout register is cleared, and the wiring register named none. The confined packages keep their confinement at their destinations, where `confined.go` already listed them, and the entries of the directories the moves emptied are dropped. The step crosses no part boundary and adds no seam operation, so no member change gains a line of decision 8.
+
 ### 0117.S10 Domain packages, second group (905 import sites)
 - status: Planned
 - lanes: [code]
