@@ -28,12 +28,12 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth/callercheck"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
-	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -74,19 +74,19 @@ type Server struct {
 	store sessionstore.Store
 	clock func() time.Time
 	idFn  func() string
-	// serviceHandlerOnce/serviceHandler cache the routing handler the
-	// §15.2.1 rule-1 in-process service layer (ServiceCall) dispatches
-	// through, so the MCP tool surface reuses the exact REST routes and
-	// handlers rather than a parallel table that could drift. spec:
+	// serviceHandler is the routing handler the §15.2.1 rule-1 in-process
+	// service layer (ServiceCall) dispatches through, the API front's
+	// request pipeline of the client listener, so the MCP tool surface
+	// reuses the exact REST routes, checks, and handlers rather than a
+	// parallel table that could drift. SetServiceHandler sets it. spec:
 	// §15.2.1 rule 1. F-15.2.3.
-	serviceHandlerOnce sync.Once
-	serviceHandler     http.Handler
-	deriveAuditSink    DeriveAuditSink
-	uploadIssuer       *uploadtoken.Issuer
-	uploadVerifier     *uploadtoken.Verifier
-	blobs              blobstore.Store
-	executor           executor.Executor
-	transcripts        transcriptstore.Store
+	serviceHandler  http.Handler
+	deriveAuditSink DeriveAuditSink
+	uploadIssuer    *uploadtoken.Issuer
+	uploadVerifier  *uploadtoken.Verifier
+	blobs           blobstore.Store
+	executor        executor.Executor
+	transcripts     transcriptstore.Store
 	// artifacts is the §12.5 artifact catalog. The §8.10 archive
 	// materialization reads it (ListBySession) to populate the §8.8
 	// TaskResult.output.artifactRefs for a completed child. Nil when the
@@ -649,15 +649,6 @@ type Server struct {
 	// upload handler is attached. SetUploadWindows sets it before the
 	// server serves.
 	uploads seam.UploadWindows
-
-	// partRoutes are the routes other parts registered through HandleRoute,
-	// which Handler mounts behind the access check each names. routesMu
-	// guards them and routesServed, which Handler sets so a route
-	// registered after the server began serving is refused rather than
-	// silently left unmounted.
-	routesMu     sync.Mutex
-	partRoutes   []seam.Route
-	routesServed bool
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active

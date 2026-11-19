@@ -22,7 +22,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
@@ -31,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
@@ -48,12 +49,12 @@ func newConsistencyServers(t *testing.T, tenant string) (*httptest.Server, *http
 
 	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	toolwire.Attach(t, rest, platformtools.Options{Store: store, Memory: mem})
-	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(rest), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		// spec: §15.2.1 rule 1 — wire the shared §15.1 service

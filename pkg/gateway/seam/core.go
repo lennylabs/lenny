@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -129,6 +130,14 @@ type CallingSessions interface {
 	AttachCallingSession(ctx context.Context, sessionID string) (context.Context, error)
 }
 
+// Permissions is served by the session core to the API front: the
+// permission gate of the routes the request pipeline mounts.
+type Permissions interface {
+	// AuthorizePermission is GWSEAM-AuthorizePermission. It returns nil
+	// when the caller in ctx holds perm, and ErrForbidden when it does not.
+	AuthorizePermission(ctx context.Context, perm auth.Permission) error
+}
+
 // Revocations is served by the session core to the API front: the session
 // side of a credential or user revocation.
 type Revocations interface {
@@ -147,6 +156,45 @@ type Revocations interface {
 type UserTermination struct {
 	PodsTerminated int
 	FailedSessions []string
+}
+
+// TokenRevocations is served by the session core to the API front.
+type TokenRevocations interface {
+	// PropagateTokenRevocation is GWSEAM-PropagateTokenRevocation. It
+	// revokes jti in the revocation cache of every replica.
+	PropagateTokenRevocation(ctx context.Context, jti string)
+}
+
+// PoolCredentialRevocations is served by the session core to the API front.
+type PoolCredentialRevocations interface {
+	// RevokePoolCredentials is GWSEAM-RevokePoolCredentials. It returns
+	// the count of leases revoked.
+	RevokePoolCredentials(ctx context.Context, poolID string, credentialIDs []string) int
+}
+
+// UserLeaseRevocations is served by the session core to the API front.
+type UserLeaseRevocations interface {
+	// RevokeUserLeases is GWSEAM-RevokeUserLeases. It returns the count of
+	// leases returned to their pools.
+	RevokeUserLeases(ctx context.Context, tenantID, userID string, sessionIDs []string) int
+}
+
+// TenantKeys is served by the session core to the API front.
+type TenantKeys interface {
+	// ProbeTenantKMS is GWSEAM-ProbeTenantKMS. It returns nil when the
+	// tenant's key for workspaceTier is available.
+	ProbeTenantKMS(ctx context.Context, tenantID, workspaceTier string) error
+
+	// LastTenantKMSProbe is GWSEAM-LastTenantKMSProbe. The boolean is
+	// false when no successful probe of the tenant's key is recorded.
+	LastTenantKMSProbe(tenantID string) (time.Time, bool)
+}
+
+// ConnectorSecrets is served by the session core to the API front.
+type ConnectorSecrets interface {
+	// ResolveConnectorSecret is GWSEAM-ResolveConnectorSecret. ref names
+	// the secret as the connector records it.
+	ResolveConnectorSecret(ctx context.Context, ref string) (string, error)
 }
 
 // Activity is served by the session core to the platform tools seam and the

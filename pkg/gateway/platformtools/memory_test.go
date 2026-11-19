@@ -17,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // memoryServer wires a sessionserver bound to a fresh in-memory
@@ -31,7 +32,7 @@ func memoryServer(t *testing.T, seed ...sessionstore.Session) (http.Handler, mem
 	}
 	mem := memorystore.NewInMemory(0, nil)
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{Memory: mem})
-	return asOwner(srv.Handler()), mem
+	return asOwner(apifront.Handler(srv)), mem
 }
 
 func memorySession(id, user string) sessionstore.Session {
@@ -209,7 +210,7 @@ func TestMemoryEndpointsUnavailableWhenStoreNil(t *testing.T) {
 	store := memstore.New()
 	_ = store.Create(context.Background(), memorySession("sess_x", testOwner))
 	srv := newServer(t, store, sessionserver.Options{DevTenantHeader: true}, platformtools.Options{}) // no Memory wired
-	h := asOwner(srv.Handler())
+	h := asOwner(apifront.Handler(srv))
 
 	cases := []struct {
 		method, path string

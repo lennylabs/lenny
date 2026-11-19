@@ -2,7 +2,7 @@
 
 package main
 
-import "github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+import "github.com/lennylabs/lenny/pkg/gateway/api/admin"
 
 // The gateway's production-only startup refusals, each a pure decision over
 // the production-mode bit and the condition the gate checks. The caller

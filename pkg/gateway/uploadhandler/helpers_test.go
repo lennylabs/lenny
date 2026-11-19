@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
@@ -37,7 +38,7 @@ func serveUploads(t *testing.T, store sessionstore.Store, core sessionserver.Opt
 	t.Helper()
 	srv := sessionserver.New(store, core)
 	uploadwire.Attach(t, srv, up)
-	return srv, srv.Handler()
+	return srv, apifront.Handler(srv)
 }
 
 // lifecycleSink records the session lifecycle audit events the session core

@@ -15,7 +15,7 @@ requirements: []
 ## Evidence
 
 - The 0157 pilot run `20261118T185934Z-0a42f2`, journey `tenant-admin-onboarding`, trials 1 and 2: the agent seeded `{"users":[{"tenantId":"globex-<nonce>","subject":"carol@globex.com","role":"tenant-admin"}]}` through `lenny-ctl bootstrap --from-values`. The response reported `users.createdCount: 1` with no error, and `GET /v1/admin/tenants/globex-<nonce>/users` then showed no role for Carol, so the postcondition `carol-is-tenant-admin` failed.
-- `pkg/gateway/externalapi/admin/users.go`, `UserPayload`: the field is `roles` (a list). The bootstrap decoder does not refuse the unknown `role` key, so `upsertUsers` (`bootstrap.go`) creates the user with no role.
+- `pkg/gateway/api/admin/users.go`, `UserPayload`: the field is `roles` (a list). The bootstrap decoder does not refuse the unknown `role` key, so `upsertUsers` (`bootstrap.go`) creates the user with no role.
 
 ## Gap
 

@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -83,7 +84,7 @@ func newOutageReplica(t *testing.T, blobs blobstore.Store, threshold int) replic
 
 	const tenant, session = "acme", "sess_convergence"
 	tok := seedAndMintUploadSubsystem(t, store, issuer, session, tenant)
-	return replica{handler: asOwner(srv.Handler()), tenant: tenant, session: session, token: tok, breaker: br}
+	return replica{handler: asOwner(apifront.Handler(srv)), tenant: tenant, session: session, token: tok, breaker: br}
 }
 
 // upload drives one upload through the replica's real HTTP handler and

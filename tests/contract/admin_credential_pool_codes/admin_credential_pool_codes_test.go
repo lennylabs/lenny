@@ -26,12 +26,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 const credNS = "lenny-credentials"

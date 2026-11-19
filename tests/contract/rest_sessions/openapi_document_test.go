@@ -25,13 +25,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
@@ -246,8 +248,8 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 
 	// Route introspection reads the session server's own handler rather
 	// than newTestServer's, which sits behind the test owner-principal
-	// layer. The session server wraps its mux in the §10.2 tenant gate,
-	// which exposes the mux through Mux().
+	// layer. The API front's request pipeline wraps its mux in the §10.2
+	// tenant gate, which exposes the mux through Mux().
 	// The upload handler registers the upload and blob routes, the stream
 	// proxy the event and log stream routes, and the platform tools seam the
 	// memory, interaction resolution, and tree routes, on the same mux,
@@ -257,7 +259,7 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 	uploadwire.Attach(t, srv, uploadhandler.Options{})
 	streamwire.Attach(t, srv, streamproxy.Options{})
 	toolwire.Attach(t, srv, platformtools.Options{Store: store})
-	sess := srv.Handler()
+	sess := apifront.Handler(srv)
 	h := sess
 	if u, ok := h.(interface{ Mux() *http.ServeMux }); ok {
 		h = u.Mux()
@@ -265,6 +267,12 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 	mux, ok := h.(*http.ServeMux)
 	if !ok {
 		t.Fatalf("session server handler is %T, not *http.ServeMux", sess)
+	}
+	// The internal runtime metadata route registers on the internal
+	// listener, whose mux the API front serves beside the session paths.
+	listener, ok := apifront.Listener(srv, seam.ListenerInternal).(*http.ServeMux)
+	if !ok {
+		t.Fatal("the internal listener's handler is not an *http.ServeMux")
 	}
 
 	checked := 0
@@ -283,7 +291,11 @@ func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 			if err != nil {
 				t.Fatalf("build request for %s %s: %v", method, concrete, err)
 			}
-			if _, pattern := mux.Handler(req); pattern == "" {
+			_, pattern := mux.Handler(req)
+			if pattern == "" {
+				_, pattern = listener.Handler(req)
+			}
+			if pattern == "" {
 				t.Errorf("documented %s %s (template %s) has no live handler on the session server mux", method, concrete, path)
 			}
 			checked++

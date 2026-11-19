@@ -35,6 +35,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
 
@@ -46,7 +47,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
@@ -233,7 +233,7 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 	}
 	surface := mcp.NewServer()
 	mcptools.Register(surface, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,

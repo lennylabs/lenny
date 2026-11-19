@@ -377,6 +377,13 @@ func (r *Registry) Names() []string {
 	return out
 }
 
+// Mux is where Mount installs each adapter's handler: a net/http.ServeMux,
+// or the composition root's registration of the routes through the API
+// front.
+type Mux interface {
+	Handle(pattern string, handler http.Handler)
+}
+
 // Mount installs every registered adapter's HTTPHandler on mux at the
 // adapter's Capabilities().PathPrefix. The §15 routing contract
 // says simultaneously active adapters route by path prefix; Mount
@@ -386,7 +393,7 @@ func (r *Registry) Names() []string {
 // Mount is safe to call once after all built-in adapters have been
 // registered; the §15 admin-API runtime-registration path uses
 // MountAdapter for individual adapters added after Mount has run.
-func (r *Registry) Mount(mux *http.ServeMux) {
+func (r *Registry) Mount(mux Mux) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	for _, a := range r.adapters {
@@ -397,13 +404,13 @@ func (r *Registry) Mount(mux *http.ServeMux) {
 // MountAdapter installs one adapter's HTTPHandler on mux. The §15
 // admin-API runtime-registration path calls this after a successful
 // Register so the new adapter starts serving without a restart.
-func (r *Registry) MountAdapter(mux *http.ServeMux, a ExternalProtocolAdapter) {
+func (r *Registry) MountAdapter(mux Mux, a ExternalProtocolAdapter) {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	r.mountUnlocked(mux, a)
 }
 
-func (r *Registry) mountUnlocked(mux *http.ServeMux, a ExternalProtocolAdapter) {
+func (r *Registry) mountUnlocked(mux Mux, a ExternalProtocolAdapter) {
 	prefix := a.Capabilities().PathPrefix
 	h := a.HTTPHandler()
 	// Mount the exact path so a single-shot handler (the v1 MCP POST

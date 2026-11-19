@@ -29,6 +29,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
@@ -213,7 +214,7 @@ func newChunkGateway(t *testing.T, store *miniostore.Store, mstore *partialmanif
 	})
 	// spec: §10.2 (Session ownership) — the requests run as the seeded
 	// rows' owner, so derive and replay pass the ownership check.
-	return ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), sessions
+	return ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice), sessions
 }
 
 // getWorkspace issues GET /v1/sessions/{id}/workspace against the gateway

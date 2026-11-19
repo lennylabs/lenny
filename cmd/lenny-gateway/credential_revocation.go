@@ -6,8 +6,8 @@ import (
 	"context"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
 // This file wires the §4.9 Emergency Credential Revocation lease

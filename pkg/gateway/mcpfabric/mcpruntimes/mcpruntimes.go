@@ -31,9 +31,9 @@ import (
 	"io"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )

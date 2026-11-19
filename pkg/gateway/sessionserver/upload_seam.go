@@ -21,12 +21,9 @@ import (
 // UploadSeam is the session core's side of the seam operations the upload
 // handler calls: the session lookup and authorization, the request
 // forwarding, the workspace write, the upload token verification, the
-// storage quota, and the upload audit event. It also serves the request
-// identity operation, which the session server's request plumbing holds
-// until the API front holds it. The composition root hands it to the
-// upload handler through the seam interfaces. The session lookup, the
-// authorization, and the request identity run in the Server methods that
-// StreamSeam shares.
+// storage quota, and the upload audit event. The composition root hands it
+// to the upload handler through the seam interfaces. The session lookup and
+// the authorization run in the Server methods that StreamSeam shares.
 type UploadSeam struct {
 	s *Server
 }
@@ -255,11 +252,6 @@ func (u *UploadSeam) AuditUpload(ctx context.Context, ev seam.UploadAuditEvent) 
 		Detail:     ev.Detail,
 		At:         u.s.clock(),
 	})
-}
-
-// RequestTenant is GWSEAM-RequestTenant for the upload handler.
-func (u *UploadSeam) RequestTenant(r *http.Request) string {
-	return u.s.requestSeamTenant(r)
 }
 
 // verifyUploadToken verifies the `X-Lenny-Upload-Token` header of a request

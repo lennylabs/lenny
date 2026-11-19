@@ -29,11 +29,12 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // adminPrincipal returns a request carrying a platform-admin
@@ -55,7 +56,7 @@ func newRouter(t *testing.T) *admin.Router {
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	return admin.NewRouter(store, admin.Options{
 		Clock: clock,
-		Audit: admin.NewChainAuditSink(chains, clock),
+		Audit: adminaudit.NewChainSink(chains, clock),
 	}).WithAuditChains(chains)
 }
 

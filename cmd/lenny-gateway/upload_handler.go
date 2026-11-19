@@ -6,8 +6,10 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
@@ -15,14 +17,14 @@ import (
 
 // attachUploadHandler builds the §4.1 upload handler seam and wires it to
 // the session core through the seam interface: the handler reaches the core
-// through the core's upload seam operations, registers its routes with the
-// session server, which serves the route registration interface until the
-// API front holds the request pipeline, and serves the core and the pod
+// through the core's upload seam operations, registers its routes through
+// the API front's route table front, and serves the core and the pod
 // binder the operations that close a session's upload window and count an
 // archive extraction abort. It runs before the session server serves. A
 // wiring failure stops the process, as every other build step's does.
 func attachUploadHandler(
 	srv *sessionserver.Server,
+	front seam.Routes,
 	binder *podsession.Binder,
 	blobs blobstore.Store,
 	runtimes runtimestore.Store,
@@ -33,7 +35,7 @@ func attachUploadHandler(
 	core := srv.UploadSeam()
 	up, err := uploadhandler.New(uploadhandler.Options{
 		Sessions:   core,
-		Identity:   core,
+		Identity:   pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()},
 		Forwarding: core,
 		Workspaces: core,
 		Tokens:     core,
@@ -54,7 +56,7 @@ func attachUploadHandler(
 	if err != nil {
 		log.Fatalf("lenny-gateway: upload handler: %v", err)
 	}
-	if err := up.RegisterRoutes(srv); err != nil {
+	if err := up.RegisterRoutes(front); err != nil {
 		log.Fatalf("lenny-gateway: upload handler routes: %v", err)
 	}
 	srv.SetUploadWindows(up)

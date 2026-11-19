@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // spec: §11.4 — hard_disable "reject[s] pending delegation approvals
@@ -35,7 +36,7 @@ func TestToolUseApproveDeniedForDisabledUser_spec_11_4(t *testing.T) {
 
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("disabled user approve: %d, want 403; body=%s", rr.Code, rr.Body.String())
 	}
@@ -69,7 +70,7 @@ func TestElicitationRespondAllowedForActiveUser_spec_11_4(t *testing.T) {
 		strings.NewReader(`{"response":"yes"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("active user respond: %d, want 200; body=%s", rr.Code, rr.Body.String())
 	}
@@ -129,7 +130,7 @@ func TestInteractionResolutionCallerCheck_spec_12_8(t *testing.T) {
 				req := asAlice(httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.body)))
 				req.Header.Set("Content-Type", "application/json")
 				rr := httptest.NewRecorder()
-				asOwner(srv.Handler()).ServeHTTP(rr, req)
+				asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 				if st.status == http.StatusOK {
 					if rr.Code >= 400 {
 						t.Fatalf("status = %d, want success; body %s", rr.Code, rr.Body.String())

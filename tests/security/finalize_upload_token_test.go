@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 type finalizeTokenProbe struct {
@@ -40,7 +41,7 @@ func newFinalizeTokenProbe(t *testing.T) *finalizeTokenProbe {
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
 	})
-	ts := httptest.NewServer(srv.Handler())
+	ts := httptest.NewServer(apifront.Handler(srv))
 	t.Cleanup(ts.Close)
 	return &finalizeTokenProbe{ts: ts, store: store, issuer: issuer}
 }

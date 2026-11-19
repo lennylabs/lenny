@@ -11,12 +11,12 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
 )
@@ -332,7 +332,7 @@ func (m *mcpSend) holdAndResume(ctx context.Context, row sessionstore.Session) (
 // (Message delivery routing — seven paths, path 6)
 func (m *mcpSend) notCoordinating(ctx context.Context, row sessionstore.Session) (mcp.ToolResult, error) {
 	if m.inReplyTo != "" {
-		idemmw.DoNotStore(ctx)
+		idempotencymw.DoNotStore(ctx)
 		return mcp.ToolResult{}, mcp.RefusalError(seam.TargetNotReady(state.State(row.State)))
 	}
 	return m.holdUndelivered(ctx, row)

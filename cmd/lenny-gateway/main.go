@@ -32,7 +32,7 @@ import (
 	"log"
 	"os"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/observability/logging"
 )
@@ -199,7 +199,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// §4.9 end-user credential surface (translators, credential store/server,
 	// the pre-authorized user-source materializer, the §4.9.1 KMS-rotation
 	// job) and the §9.3 connector OAuth flow.
-	w.buildCredentialSurface(sessionSrv)
+	w.buildCredentialSurface(parts.admin, sessionSrv)
 
 	// §9.1 MCP fabric (the delegation-policy/external-interceptor/
 	// deployment-config stores, the §8.2 delegation service, the §9.1 MCP
@@ -219,7 +219,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// returns the locals the control server, the LLM proxy, and the mux
 	// (the §10.5 runtime-upgrade store) still consume.
 	connectorAuthorizer, connectorInvoker, ruStore, erasureSemanticCache := w.buildAdminRouter(
-		gwMetrics, w.delegationSvc, environments, w.connectorCreds, w.connectorOAuth,
+		parts.admin, parts.adminToken, gwMetrics, w.delegationSvc, environments, w.connectorCreds, w.connectorOAuth,
 		w.credentialRekeyJob, policyChain, auditSink, auditAppender,
 		w.wireAudit, w.adminStickyFlusher, w.erasureSticky, w.deploymentConfig,
 		credentialPools, customRoles, w.delegationPolicies, w.interceptors,
@@ -229,17 +229,17 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 		w.quotaFailOpenAccum, revProp,
 	)
 
-	// §15.1 REST mux and HTTP server. Records w.mux and w.httpSrv.
+	// §15.1 REST routes and HTTP server. Records w.httpSrv.
 	w.buildHTTPSurface(
-		parts.playground,
+		parts.playground, parts.rateLimit, parts.deprecation, parts.serviceIdentity, parts.idempotency,
 		gwMetrics, sessionSrv, w.openaiHandler, w.responsesHandler, w.credServer,
 		mcpSrv, policyChain, auditSink, auditAppender, opsEmitter, environments,
 		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
 		w.siemHealthChecker, resolvedNoEnvPolicy,
 	)
-	// §29.3 Forwarding — the CH-HOLDERFORWARD listener over the session mux
-	// and /mcp handler, behind the REST listener's auth options.
-	w.buildHolderForwardServer(sessionSrv, mcpSrv)
+	// §29.3 Forwarding — the CH-HOLDERFORWARD listener over the forward
+	// listener's routes, behind the REST listener's auth options.
+	w.buildHolderForwardServer()
 
 	// §4.9 LLM Proxy subsystem (a named §4.1 extraction target).
 	llmProxySrv := w.buildLLMProxy(parts.llmProxy, parts.metering, policyChain,
@@ -279,7 +279,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// background-worker step (it reads w.sessionSrv and the recorded
 	// propagators to drive the periodic sweepers).
 	w.sessionSrv = sessionSrv
-	w.startBackgroundWorkers(parts.pdbWatcher, parts.leader)
+	w.startBackgroundWorkers(parts.pdbWatcher, parts.leader, parts.adminToken)
 
 	// §17 — record the LLM proxy server, then hand off to runServers (the
 	// §25.13 alert tracker, the signal handler, and the run-and-shutdown loop).

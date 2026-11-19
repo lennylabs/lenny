@@ -612,7 +612,7 @@ summary: Records one request against a key's current one-minute window and retur
 
 ## Operations served by the session core to the platform tools seam, the metering proxy, and the API front
 
-A part that moves a session to a terminal state, such as a cancel tool, the orphan and deadlock sweeps, or an operator's force-terminate, runs the session core's terminal pipeline through these operations.
+A part that moves a session to a terminal state, such as a cancel tool or the orphan and deadlock sweeps, runs the session core's terminal pipeline through these operations, and the API front's full_revoke opens the terminal claim through `GWSEAM-BeginTerminal`. An operator's force-terminate runs through `GWSEAM-ForceTerminate`, in which the session core writes the terminal state and runs the pipeline itself.
 
 <a id="gwseam-beginterminal"></a>
 
@@ -698,6 +698,18 @@ summary: Issues a replacement credential lease from a given pool for a session w
 
 ## Operations served by the session core to the API front
 
+<a id="gwseam-authorizepermission"></a>
+
+```lenny-def
+kind: operation
+name: AuthorizePermission
+method: Go method
+path: seam.Permissions
+returns: [ErrForbidden]
+requirements: [GW-R1]
+summary: Resolves whether the caller in the context holds a permission of the permission matrix, admitting a request with no principal and, in a single-tenant deployment, a principal with no roles, as the session routes' permission gate does; the API front applies it before a route's handler runs.
+```
+
 <a id="gwseam-afterrevokewrite"></a>
 
 ```lenny-def
@@ -729,6 +741,76 @@ method: Go method
 path: seam.Revocations
 requirements: [GW-R1]
 summary: Releases the pods of a user's sessions in a tenant, and returns the count of pods released and the sessions whose release failed.
+```
+
+## Operations served by the session core to the API front for credentials and keys
+
+The session core serves these operations. The API front's admin handlers call them, because the revocation propagators, the credential lease revokers, the tenant key lifecycle, and the connector secret resolver stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2). Each operation acts on the confined package and returns only the outcome the handler reports.
+
+<a id="gwseam-propagatetokenrevocation"></a>
+
+```lenny-def
+kind: operation
+name: PropagateTokenRevocation
+method: Go method
+path: seam.TokenRevocations
+requirements: [GW-R1]
+summary: Revokes a bearer token identifier in the revocation cache of every replica, after the API front recorded the revocation in the issued-token index.
+```
+
+<a id="gwseam-revokepoolcredentials"></a>
+
+```lenny-def
+kind: operation
+name: RevokePoolCredentials
+method: Go method
+path: seam.PoolCredentialRevocations
+requirements: [GW-R1]
+summary: Revokes the leases of the named credentials of a pool and denies those credentials on every replica, and returns the count of leases revoked.
+```
+
+<a id="gwseam-revokeuserleases"></a>
+
+```lenny-def
+kind: operation
+name: RevokeUserLeases
+method: Go method
+path: seam.UserLeaseRevocations
+requirements: [GW-R1]
+summary: Returns to their pools the credential leases that a user's named sessions hold, and returns the count of leases returned.
+```
+
+<a id="gwseam-probetenantkms"></a>
+
+```lenny-def
+kind: operation
+name: ProbeTenantKMS
+method: Go method
+path: seam.TenantKeys
+requirements: [GW-R1]
+summary: Reports whether the tenant's key for a workspace tier is available in the key management service, which the admin API checks before it accepts the tier; any error means the key is not available, and the admin API refuses the tier on it.
+```
+
+<a id="gwseam-lasttenantkmsprobe"></a>
+
+```lenny-def
+kind: operation
+name: LastTenantKMSProbe
+method: Go method
+path: seam.TenantKeys
+requirements: [GW-R1]
+summary: Returns the time of the most recent successful probe of a tenant's key, which the admin API reports on a T4 tenant, or reports that none is recorded.
+```
+
+<a id="gwseam-resolveconnectorsecret"></a>
+
+```lenny-def
+kind: operation
+name: ResolveConnectorSecret
+method: Go method
+path: seam.ConnectorSecrets
+requirements: [GW-R1]
+summary: Resolves a connector's client secret reference to the secret's value.
 ```
 
 ## Operations served by the session core to the upload handler
@@ -1192,8 +1274,6 @@ summary: Returns the tenant that a client request runs as, which the API front's
 
 ## Operations served by the API front to the platform tools seam
 
-The session core serves [`GWSEAM-RequestCaller`](#gwseam-requestcaller) until the API front holds the request pipeline.
-
 <a id="gwseam-requestcaller"></a>
 
 ```lenny-def
@@ -1288,7 +1368,7 @@ method: Go method
 path: seam.Routes
 returns: [ErrInvalidRoute]
 requirements: [GW-R1]
-summary: Registers one route, given its listener, its method, its path pattern, the access check it requires, and its handler, and refuses a route whose listener or access check is zero or unknown or that lacks a method, a pattern, or a handler.
+summary: Registers one route, given its listener, its method, its path pattern, the access check it requires, and its handler, and refuses a route whose listener or access check is zero or unknown, that lacks a method, a pattern, or a handler, whose pattern does not begin with a slash, that names the pod proxy listener, that names the internal listener under a session path of the client listener, that repeats the method and pattern of a route on a listener sharing its mux, or that the request pipeline would mount after it has mounted the session paths of that listener.
 ```
 
 <a id="gwseam-registerroutes"></a>
@@ -1303,13 +1383,18 @@ requirements: [GW-R1]
 summary: Registers every route of one part through GWSEAM-HandleRoute.
 ```
 
-A route names the listener that serves it:
+A route names one listener that serves it, and a part registers a route once for each listener that serves it:
 
 - the client listener, which serves the client and admin APIs;
+- the internal listener, which serves the drain and ops endpoints that the admission webhooks, the kubelet probes, and the metrics scrape call;
 - the pod proxy listener, the pod-facing listener of the metering proxy;
 - the forward listener, on which another replica forwards a request to the session's holder replica.
 
-The metering proxy serves its routes on its own listener and server, as it does today. The API front never mounts a route of the pod proxy listener on the client listener, so the pod-facing endpoint is never reachable from a client.
+The gateway serves the client and internal listeners on one port, through one mux behind one request pipeline, so a method and pattern registered on one of them cannot be registered on the other. The forward listener serves only the routes registered on it, so a part registers on the forward listener each route that another replica forwards to the holder replica, and no other.
+
+The metering proxy serves its routes on its own listener and server, as it does today. The API front refuses a route of the pod proxy listener, so the pod-facing endpoint is never reachable from a client.
+
+A route names an HTTP method, or any method for a handler that dispatches by method itself, as the playground's handlers and the handlers mounted under a path prefix do.
 
 A route names the access check the API front applies before the handler runs, through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession) where the check reads a session:
 
@@ -1318,18 +1403,27 @@ A route names the access check the API front applies before the handler runs, th
 - manage access to the session the path names;
 - the `session:eval:write` permission, as the evaluation route requires, whose handler applies its own rule for the caller of the session;
 - a resolved tenant and the `view_usage` permission, as the usage route requires;
+- a resolved tenant and the `manage_own_sessions` permission, as the session creation routes require, which name no session;
+- a resolved tenant and the `read_own_sessions` permission, as the session list requires, which names no session;
 - no check by the API front, for a route whose handler authenticates the request itself.
 
-No route takes a default check: a zero or unknown access check is refused at registration.
+No route takes a default check: a zero or unknown access check is refused at registration. Every route on the internal listener leaves authentication to its handler.
 
-The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself.
+The API front applies each permission through [`GWSEAM-AuthorizePermission`](#gwseam-authorizepermission) and each session check through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession), both served by the session core, which holds the permission matrix, the custom role registry, and the session store. A refused permission answers 403 `FORBIDDEN` naming the permission, a request with no principal subject on a session check answers 401 `UNAUTHORIZED`, and a session the caller may not read or manage answers as a missing session does.
 
-The platform tools seam registers its memory write and delete routes and its tool-use and elicitation resolution routes with manage access to the session the path names, and its memory query and delegation tree read routes with read access to it.
+The API front's request pipeline serves the session paths: on the client listener `/v1/sessions` and the paths under it, the paths under `/v1/blobs/`, `/v1/runtimes` and the paths under it, and `/v1/models`; on the forward listener `/v1/sessions` and the paths under it. It mounts each route with an access check that reads the tenant, the session, or a permission on the session paths of its listener behind that check, and it mounts there also each route under a session path that leaves authentication to its handler. A request on a session path whose route reads the tenant, the session, or a permission is refused with 401 `UNAUTHORIZED` when no tenant resolves for it; a request the session paths do not route answers 404 or 405 with no tenant check. The API front mounts every other route that leaves authentication to its handler on its listener's mux when the route registers. It refuses a route on the internal listener whose path lies under a session path of the client listener, because the two listeners share one mux and the route would take precedence over the pipeline's handler of that path.
+
+The session core registers its session routes with the access check each requires: session creation with the `manage_own_sessions` permission, the session list with the `read_own_sessions` permission, each read of a named session with read access to it, each action on a named session with manage access to it, the evaluation route with the `session:eval:write` permission, and the runtime and model discovery routes and the routes whose handler applies its own permission with a resolved tenant. The published runtime metadata route leaves authentication to its handler, which serves a public entry with no principal, and the internal runtime metadata route on the internal listener checks its own principal. It registers on the forward listener its routes under `/v1/sessions`.
+
+The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself. It registers the mid-session upload on the client and forward listeners, because a replica that does not hold the session forwards it to the holder, and the plain and archive uploads and the blob read on the client listener only.
+
+The platform tools seam registers its memory write and delete routes and its tool-use and elicitation resolution routes with manage access to the session the path names, and its memory query and delegation tree read routes with read access to it, all on the client listener. It registers the MCP WebSocket transport and the environment-scoped MCP endpoint on the client listener and the MCP endpoint on the forward listener, each with no check by the API front.
 
 ## Crossings without an operation
 
 - Each part emits its metrics into the gateway's metric registry. A seam registers its own metric collectors on the registry, because a seam holds no value of a replica-level part. The session core and the replica-level parts register their own collectors or emit through a metrics interface they declare, which the gateway's metric set satisfies. Neither form is an operation of the seam interface.
-- The API front reads pool status through the session core's pool status reader, and authenticates service-account tokens through the platform tools seam's token verifier. Neither is an operation of the seam interface: each is domain logic that belongs in a concern package outside the gateway.
+- The API front reads pool status through the pool status reader of `pkg/runtime/poolstatus`, and authenticates service-account tokens through the token verifier of `pkg/auth/satoken`, which the platform tools seam's lease-control server also uses. Neither is an operation of the seam interface: each is domain logic in a concern package outside the gateway.
+- The API front writes the admin audit events through the chain sink of `pkg/audit/adminaudit`, which the other parts also hold for the platform events they record. The sink is domain logic in the audit concern, so handing it to a part is not an operation of the seam interface.
 
 ## Compatibility
 

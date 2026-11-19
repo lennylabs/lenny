@@ -14,11 +14,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -33,7 +34,7 @@ import (
 func TestResumeAnswersTheNewStateWithNoPodBinder_spec_15_1(t *testing.T) {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	t.Run("awaiting_client_action answers resume_pending", func(t *testing.T) {
@@ -68,7 +69,7 @@ func TestResumeAnswersTheNewStateWithNoPodBinder_spec_15_1(t *testing.T) {
 		if errorclassify.Known("RESUME_FAILED") {
 			t.Error("the error catalog still names RESUME_FAILED")
 		}
-		doc, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), "pkg/gateway/externalapi/openapi/openapi.json"))
+		doc, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), "pkg/api/openapi/openapi.json"))
 		if err != nil {
 			t.Fatalf("read openapi.json: %v", err)
 		}

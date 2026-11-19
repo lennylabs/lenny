@@ -39,6 +39,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
@@ -47,7 +48,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )

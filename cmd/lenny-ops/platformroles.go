@@ -11,9 +11,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // roleLookupLogInterval bounds how often a failed role lookup is logged,

@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/auth/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )

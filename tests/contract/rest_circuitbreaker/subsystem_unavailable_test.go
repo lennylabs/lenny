@@ -33,6 +33,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
@@ -86,7 +87,7 @@ func TestOpenUploadSubsystemBreakerReturns503WhileStreamProxyServes(t *testing.T
 		},
 	})
 	streamwire.Attach(t, srv, streamproxy.Options{Events: bus})
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	// Create a session so the Stream Proxy attach below targets a real

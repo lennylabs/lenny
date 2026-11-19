@@ -6,7 +6,7 @@ import (
 	"context"
 	"net/http"
 
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 )
 
 // testOwner is the subject the tests in this package authenticate as when a

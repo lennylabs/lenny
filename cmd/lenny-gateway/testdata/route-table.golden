@@ -1,0 +1,107 @@
+rest  listener  /mcp
+rest  listener  /mcp/
+rest  listener  /mcp/v1/ws
+rest  listener  /openapi.json
+rest  listener  /openapi.yaml
+rest  listener  /playground
+rest  listener  /playground/
+rest  listener  /v1/admin/
+rest  listener  /v1/admin/health
+rest  listener  /v1/admin/health/
+rest  listener  /v1/blobs/
+rest  listener  /v1/chat/completions
+rest  listener  /v1/chat/completions/
+rest  listener  /v1/credentials
+rest  listener  /v1/credentials/
+rest  listener  /v1/models
+rest  listener  /v1/oauth/
+rest  listener  /v1/openapi.json
+rest  listener  /v1/openapi.yaml
+rest  listener  /v1/playground/token
+rest  listener  /v1/responses
+rest  listener  /v1/responses/
+rest  listener  /v1/runtimes
+rest  listener  /v1/runtimes/
+rest  listener  /v1/sessions
+rest  listener  /v1/sessions/
+rest  listener  GET /healthz
+rest  listener  GET /internal/drain-readiness
+rest  listener  GET /internal/prestop
+rest  listener  GET /internal/runtime-upgrade/active
+rest  listener  GET /internal/runtimes/{name}/meta/{key}
+rest  listener  GET /metrics
+rest  listener  GET /readyz
+rest  listener  POST /internal/audit/node-drain-forced
+rest  listener  POST /internal/prestop
+rest  listener  POST /mcp/environments/{name}
+rest  listener  POST /mcp/runtimes/{name}
+rest  session   DELETE /v1/sessions/{id} [session-manage]
+rest  session   DELETE /v1/sessions/{id}/memory/{memoryId} [session-manage]
+rest  session   GET /v1/blobs/{ref...} [tenant]
+rest  session   GET /v1/metering/events [tenant]
+rest  session   GET /v1/models [tenant]
+rest  session   GET /v1/pools [tenant]
+rest  session   GET /v1/runtimes [tenant]
+rest  session   GET /v1/runtimes/{name}/meta/{key} [handler]
+rest  session   GET /v1/sessions [session-list]
+rest  session   GET /v1/sessions/{id} [session-read]
+rest  session   GET /v1/sessions/{id}/artifacts [session-read]
+rest  session   GET /v1/sessions/{id}/events [session-read]
+rest  session   GET /v1/sessions/{id}/logs [session-read]
+rest  session   GET /v1/sessions/{id}/memory [session-read]
+rest  session   GET /v1/sessions/{id}/messages [session-read]
+rest  session   GET /v1/sessions/{id}/setup-output [session-read]
+rest  session   GET /v1/sessions/{id}/transcript [session-read]
+rest  session   GET /v1/sessions/{id}/tree [session-read]
+rest  session   GET /v1/sessions/{id}/usage [tenant]
+rest  session   GET /v1/sessions/{id}/webhook-events [session-read]
+rest  session   GET /v1/sessions/{id}/workspace [session-read]
+rest  session   GET /v1/usage [tenant]
+rest  session   POST /v1/environments/{name}/sessions [session-create]
+rest  session   POST /v1/sessions [session-create]
+rest  session   POST /v1/sessions/start [session-create]
+rest  session   POST /v1/sessions/{id}/derive [session-manage]
+rest  session   POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss [session-manage]
+rest  session   POST /v1/sessions/{id}/elicitations/{elicitationId}/respond [session-manage]
+rest  session   POST /v1/sessions/{id}/eval [session-eval]
+rest  session   POST /v1/sessions/{id}/extend-retention [session-manage]
+rest  session   POST /v1/sessions/{id}/finalize [session-manage]
+rest  session   POST /v1/sessions/{id}/interrupt [session-manage]
+rest  session   POST /v1/sessions/{id}/memory [session-manage]
+rest  session   POST /v1/sessions/{id}/messages [session-manage]
+rest  session   POST /v1/sessions/{id}/replay [session-manage]
+rest  session   POST /v1/sessions/{id}/resume [session-manage]
+rest  session   POST /v1/sessions/{id}/start [session-manage]
+rest  session   POST /v1/sessions/{id}/terminate [session-manage]
+rest  session   POST /v1/sessions/{id}/tool-use/{toolCallId}/approve [session-manage]
+rest  session   POST /v1/sessions/{id}/tool-use/{toolCallId}/deny [session-manage]
+rest  session   POST /v1/sessions/{id}/upload [session-manage]
+rest  session   POST /v1/sessions/{id}/upload-archive [session-manage]
+rest  session   POST /v1/sessions/{id}/upload-to-session [session-manage]
+forward  listener  /mcp
+forward  listener  /v1/sessions
+forward  listener  /v1/sessions/
+forward  listener  POST /v1/responses
+forward  session   DELETE /v1/sessions/{id} [session-manage]
+forward  session   GET /v1/sessions [session-list]
+forward  session   GET /v1/sessions/{id} [session-read]
+forward  session   GET /v1/sessions/{id}/artifacts [session-read]
+forward  session   GET /v1/sessions/{id}/messages [session-read]
+forward  session   GET /v1/sessions/{id}/setup-output [session-read]
+forward  session   GET /v1/sessions/{id}/transcript [session-read]
+forward  session   GET /v1/sessions/{id}/usage [tenant]
+forward  session   GET /v1/sessions/{id}/webhook-events [session-read]
+forward  session   GET /v1/sessions/{id}/workspace [session-read]
+forward  session   POST /v1/sessions [session-create]
+forward  session   POST /v1/sessions/start [session-create]
+forward  session   POST /v1/sessions/{id}/derive [session-manage]
+forward  session   POST /v1/sessions/{id}/eval [session-eval]
+forward  session   POST /v1/sessions/{id}/extend-retention [session-manage]
+forward  session   POST /v1/sessions/{id}/finalize [session-manage]
+forward  session   POST /v1/sessions/{id}/interrupt [session-manage]
+forward  session   POST /v1/sessions/{id}/messages [session-manage]
+forward  session   POST /v1/sessions/{id}/replay [session-manage]
+forward  session   POST /v1/sessions/{id}/resume [session-manage]
+forward  session   POST /v1/sessions/{id}/start [session-manage]
+forward  session   POST /v1/sessions/{id}/terminate [session-manage]
+forward  session   POST /v1/sessions/{id}/upload-to-session [session-manage]

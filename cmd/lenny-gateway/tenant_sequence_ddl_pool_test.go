@@ -9,7 +9,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 )
 
 // TestAliasPrimaryDDLToBillingAudit pins the single-instance vs

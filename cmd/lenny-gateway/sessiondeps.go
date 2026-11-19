@@ -7,9 +7,9 @@ import (
 	"log"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"

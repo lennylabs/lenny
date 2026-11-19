@@ -12,11 +12,15 @@ import (
 	"k8s.io/client-go/rest"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken/k8ssecret"
+	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/api/admintoken/reclaimer"
+	apileaderjobs "github.com/lennylabs/lenny/pkg/gateway/api/leaderjobs"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/adminops"
 	"github.com/lennylabs/lenny/pkg/gateway/core/leaderjobs"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/k8ssecret"
-	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -27,7 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
 )
 
-func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
+func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags, tokenFlags *admintoken.Flags) {
 	f := w.f
 	gatewayLeaderElection := leader.Election
 	gatewayNamespace := f.gatewayNamespace
@@ -40,11 +44,11 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
 	eventBusRetryIntervalSeconds := f.eventBusRetryIntervalSeconds
 	t4KmsProbeIntervalSeconds := f.t4KmsProbeIntervalSeconds
 	t4KmsProbeRateLimit := f.t4KmsProbeRateLimit
-	adminTokenDisabled := f.adminTokenDisabled
-	adminTokenNamespace := f.adminTokenNamespace
-	adminTokenSecretName := f.adminTokenSecretName
-	adminTokenTenant := f.adminTokenTenant
-	adminTokenReclaimIntervalSeconds := f.adminTokenReclaimIntervalSeconds
+	adminTokenDisabled := tokenFlags.Disabled
+	adminTokenNamespace := tokenFlags.Namespace
+	adminTokenSecretName := tokenFlags.SecretName
+	adminTokenTenant := tokenFlags.Tenant
+	adminTokenReclaimIntervalSeconds := tokenFlags.ReclaimIntervalSeconds
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	// ----- §12.5 gateway-leader election (lenny-gateway-leader Lease) -----
 	// spec: §12.5 — the artifact-GC orchestrator and the
@@ -428,31 +432,21 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
 	// token store to revoke, a namespace, and admin-token provisioning enabled.
 	// spec: §13.3, §16.7, §17.6.
 	if !*adminTokenDisabled && w.clusterClient != nil && w.pgPool != nil && *adminTokenNamespace != "" {
-		recl, rerr := admintokenreclaimer.New(admintokenreclaimer.Config{
+		recl, rerr := apileaderjobs.NewAdminTokenReclaimer(admintokenreclaimer.Config{
 			Namespace:  *adminTokenNamespace,
 			SecretName: *adminTokenSecretName,
 			Tenant:     *adminTokenTenant,
 			Interval:   time.Duration(*adminTokenReclaimIntervalSeconds) * time.Second,
 		},
 			k8ssecret.New(w.clusterClient),
-			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: w.revProp, metrics: w.gwMetrics, clock: clockinject.Now},
+			adminIssuedTokens{store: issuedtokenstore.New(w.pgPool), cache: admin.SeamRevocationCache{Tokens: adminops.TokenRevocations{Cache: w.revProp}}, metrics: w.gwMetrics, clock: clockinject.Now},
 			clockinject.Now)
 		if rerr != nil {
 			log.Fatalf("lenny-gateway: §13.3 admin-token reclaimer: %v", rerr)
 		}
 		log.Printf("lenny-gateway: §13.3 admin-token reclaimer sweep cadence %s (Secret %s/%s, tenant %s)",
 			recl.Interval(), *adminTokenNamespace, *adminTokenSecretName, *adminTokenTenant)
-		leaderGate.Add("admin-token-reclaimer", func(ctx context.Context) {
-			recl.Run(ctx, func(reclaimed bool, err error) {
-				if err != nil {
-					log.Printf("lenny-gateway: §13.3 admin-token reclaimer sweep error: %v", err)
-					return
-				}
-				if reclaimed {
-					log.Printf("lenny-gateway: §13.3 admin-token reclaimer durably revoked an orphaned predecessor token (crash between Secret patch and revoke)")
-				}
-			})
-		})
+		leaderGate.Add("admin-token-reclaimer", recl.Run)
 	}
 
 	// ----- §12.8 user-erasure executor and SLA sampler -----

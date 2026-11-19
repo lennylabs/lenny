@@ -31,7 +31,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -69,7 +69,7 @@ func newTracingMCP(t *testing.T, store sessionstore.Store, sessionID string) htt
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,

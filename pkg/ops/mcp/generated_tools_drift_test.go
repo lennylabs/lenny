@@ -8,8 +8,8 @@ import (
 	"os"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 	"github.com/lennylabs/lenny/pkg/common/scopes"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/ops/mcp"
 	"github.com/lennylabs/lenny/pkg/ops/mcp/mcptoolgen"
 )

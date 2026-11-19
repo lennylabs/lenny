@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // TestValidateTenancyConfigRefusesContradiction covers every pair of the

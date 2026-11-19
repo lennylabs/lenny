@@ -11,12 +11,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	replicationpgstore "github.com/lennylabs/lenny/pkg/blobstore/replication/pgstore"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/scaling/gcpause"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -31,7 +33,7 @@ import (
 // and the listeners. It produces no value the later steps consume.
 //
 // spec: §4.1 — gateway background subsystems; §10.1 / §11.2 / §12.5 sweeps.
-func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *gatewayleader.Flags) {
+func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *gatewayleader.Flags, tokenFlags *admintoken.Flags) {
 	f := w.f
 	agentNamespace := f.agentNamespace
 	artifactReplicationConfig := f.artifactReplicationConfig
@@ -56,7 +58,12 @@ func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *ga
 	// is absent (no stateless pods exist to route to). F-5.2.29.
 	if w.clusterClient != nil && *agentNamespace != "" {
 		statelessMgr := buildStatelessRouting(w.watchdogCtx, w.clusterClient, *agentNamespace, w.pools, w.gwMetrics)
-		w.mux.Handle("/v1/stateless/", statelessMgr)
+		if err := w.apiRoutes.HandleRoute(seam.Route{
+			Listener: seam.ListenerClient, Method: seam.MethodAny, Pattern: "/v1/stateless/",
+			Access: seam.AccessHandler, Handler: statelessMgr,
+		}); err != nil {
+			log.Fatalf("lenny-gateway: §5.2 concurrent-stateless route: %v", err)
+		}
 		log.Printf("lenny-gateway: §5.2 concurrent-stateless ingress mounted at /v1/stateless/ (agent namespace %s)", *agentNamespace)
 	}
 
@@ -209,7 +216,7 @@ func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *ga
 		w.adminRouter = w.adminRouter.WithArtifactReplication(replCtrl)
 	}
 
-	w.startLeaderElectedSweeps(leader)
+	w.startLeaderElectedSweeps(leader, tokenFlags)
 
 	w.startBillingAndSecurityWorkers()
 	// ----- §16.1 metrics export -----

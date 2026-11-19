@@ -15,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
 	"github.com/alicebob/miniredis/v2"
@@ -22,13 +23,13 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
@@ -51,6 +52,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
@@ -610,7 +612,7 @@ func (h *Harness) AddReplica(name string) *Replica {
 // replicaMCPDeps is the dependency set of the replica's MCP surface.
 func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
 	return mcptools.Deps{
-		Callers:            toolops.Callers{},
+		Callers:            pipeline.Callers{},
 		DevTenantFallback:  true,
 		HolderForward:      r.Server.ToolsSeam(),
 		Store:              h.Store,
@@ -642,7 +644,7 @@ func (h *Harness) serveReplica(r *Replica) {
 	inner := http.NewServeMux()
 	inner.Handle("/mcp", r.MCP.Handler())
 	inner.HandleFunc("POST /v1/responses", r.serveResponses)
-	inner.Handle("/", r.Server.Handler())
+	inner.Handle("/", apifront.Handler(r.Server))
 	r.public = authmw.Wrap(inner, harnessAuthOptions)
 	r.forward.serve(sessionserver.HolderForwardServerTLS(h.reloader, h.pki.CAPool),
 		sessionserver.NewHolderForwardHandler(inner, harnessAuthOptions, h.Inner))

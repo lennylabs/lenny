@@ -11,8 +11,10 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // identityRequest builds a request with an optional principal, an optional
@@ -121,7 +123,7 @@ func TestHandlerRefusesUnresolvedTenantOutsideDevMode(t *testing.T) {
 //
 // spec: §5.1 (publishedMetadata visibility levels).
 func TestHandlerServesTenantlessRoutesWithoutPrincipal(t *testing.T) {
-	h := asOwner(New(memstore.New(), Options{}).Handler())
+	h := asOwner(apifront.Listener(New(memstore.New(), Options{}), seam.ListenerClient))
 	for _, path := range []string{"/v1/runtimes/echo/meta/agent-card", "/internal/runtimes/echo/meta/agent-card"} {
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, identityRequest(http.MethodGet, path, "", "", ""))
@@ -153,6 +155,7 @@ func TestHandlerDevModeKeepsHeaderTenant(t *testing.T) {
 // spec: §10.2 (Authentication), §15.2.1 rule 1 (shared service layer).
 func TestServiceEntryPointsFailClosedWithoutTenant(t *testing.T) {
 	s := New(memstore.New(), Options{})
+	apifront.Pipeline(s)
 	ctx := context.Background()
 
 	if _, err := s.CreateSessionService(ctx, "", CreateSessionRequest{RuntimeRef: "echo"}); err == nil || err.Code != "UNAUTHORIZED" {

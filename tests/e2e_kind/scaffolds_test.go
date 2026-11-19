@@ -287,11 +287,11 @@ func TestConcurrentExecutionModes(t *testing.T) {
 // crossEnvironmentDelegation declaration. The §10.6 reachability rule
 // itself is covered by the component suite against
 // envaccess.CrossEnvironmentReachable; the §10.6 transparent-filter
-// middleware is covered by pkg/gateway/middleware/environment.
+// middleware is covered by pkg/environment/environmentmw.
 // TESTING.md §13.32 / §10.6 cross-environment delegation — covered by:
 //   - pkg/gateway/envaccess.CrossEnvironmentReachable (the bilateral
 //     reachability rule itself; tier-2 unit suite).
-//   - pkg/gateway/middleware/environment (transparent-filter
+//   - pkg/environment/environmentmw (transparent-filter
 //     middleware; per-handler unit tests).
 //   - pkg/gateway/mcptools/delegate_task_filtering_test.go (the
 //     lenny/delegate_task MCP tool handler that consults the
@@ -308,7 +308,7 @@ func TestConcurrentExecutionModes(t *testing.T) {
 func TestCrossEnvironmentDelegation(t *testing.T) {
 	kind.InstallLenny(t)
 	t.Logf("TESTING.md §13.32 / §10.6: reachability rule covered by envaccess unit suite, " +
-		"transparent filtering by pkg/gateway/middleware/environment, and the " +
+		"transparent filtering by pkg/environment/environmentmw, and the " +
 		"MCP tool handler by delegate_task_filtering_test. Composite e2e is on the " +
 		"e2e_kind-tier ops backlog.")
 }

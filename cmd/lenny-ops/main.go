@@ -36,8 +36,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	opsLogging "github.com/lennylabs/lenny/pkg/observability/logging"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"

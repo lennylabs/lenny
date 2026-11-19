@@ -47,8 +47,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -56,9 +55,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	idempotency "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/sdks/client/go/lenny"
 	"github.com/lennylabs/lenny/tests/contract/sdks/harness"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/mcpcreate"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
@@ -82,7 +83,7 @@ func newMCPGateway(t *testing.T) *httptest.Server {
 	store := memstore.New()
 	sessions := sessionserver.New(store, sessionserver.Options{})
 	mcptools.Register(srv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
@@ -159,7 +160,7 @@ func newGateway(t *testing.T) *httptest.Server {
 		UploadTokenIssuer:   uploadtoken.NewIssuer(ring, nil),
 		UploadTokenVerifier: uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil),
 	})
-	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+	ts := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts
 }
@@ -278,7 +279,7 @@ func TestGoClientStreamingReconnect(t *testing.T) {
 	// and forces the SDK to reconnect. Every later connection is
 	// served straight through. This forces a mid-stream disconnect
 	// without modifying the gateway.
-	d := &disconnector{inner: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)}
+	d := &disconnector{inner: ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)}
 	ts := httptest.NewServer(d)
 	t.Cleanup(ts.Close)
 
@@ -554,7 +555,7 @@ func TestGoClientIdempotencyKeyHandling(t *testing.T) {
 	// replayed key returns the cached create response.
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)))
+	ts := httptest.NewServer(idempotencyWrapped(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)))
 	t.Cleanup(ts.Close)
 	h := spawnHelper(t, ts.URL)
 

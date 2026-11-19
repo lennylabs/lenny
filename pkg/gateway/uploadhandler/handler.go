@@ -7,8 +7,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
@@ -126,20 +126,23 @@ func New(opts Options) (*Handler, error) {
 	}, nil
 }
 
-// RegisterRoutes registers the upload handler's routes on the client
-// listener. The three upload routes take the manage check on the path's
-// session. The blob read takes only the tenant check, since handleBlob
-// compares the blob URI's tenant with the caller's.
+// RegisterRoutes registers the upload handler's routes. The three upload
+// routes take the manage check on the path's session. The blob read takes
+// only the tenant check, since handleBlob compares the blob URI's tenant
+// with the caller's. Every route serves the client listener, and the
+// mid-session upload also serves the forward listener, where the holder
+// replica receives the uploads other replicas forward to it.
 //
 // spec: GWSEAM-RegisterRoutes
 func (h *Handler) RegisterRoutes(routes seam.Routes) error {
+	toSession := http.HandlerFunc(h.handleUploadToSession)
 	for _, r := range []seam.Route{
-		{Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload", Access: seam.AccessSessionManage, Handler: http.HandlerFunc(h.handleUpload)},
-		{Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload-archive", Access: seam.AccessSessionManage, Handler: http.HandlerFunc(h.handleUploadArchive)},
-		{Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload-to-session", Access: seam.AccessSessionManage, Handler: http.HandlerFunc(h.handleUploadToSession)},
-		{Method: http.MethodGet, Pattern: "/v1/blobs/{ref...}", Access: seam.AccessTenant, Handler: http.HandlerFunc(h.handleBlob)},
+		{Listener: seam.ListenerClient, Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload", Access: seam.AccessSessionManage, Handler: http.HandlerFunc(h.handleUpload)},
+		{Listener: seam.ListenerClient, Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload-archive", Access: seam.AccessSessionManage, Handler: http.HandlerFunc(h.handleUploadArchive)},
+		{Listener: seam.ListenerClient, Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload-to-session", Access: seam.AccessSessionManage, Handler: toSession},
+		{Listener: seam.ListenerForward, Method: http.MethodPost, Pattern: "/v1/sessions/{id}/upload-to-session", Access: seam.AccessSessionManage, Handler: toSession},
+		{Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "/v1/blobs/{ref...}", Access: seam.AccessTenant, Handler: http.HandlerFunc(h.handleBlob)},
 	} {
-		r.Listener = seam.ListenerClient
 		if err := routes.HandleRoute(r); err != nil {
 			return err
 		}

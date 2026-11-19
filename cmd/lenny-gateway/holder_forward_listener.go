@@ -13,8 +13,9 @@ import (
 	"os"
 	"time"
 
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 )
@@ -70,34 +71,31 @@ func loadCAPool(path string) (*x509.CertPool, error) {
 }
 
 // buildHolderForwardServer builds the CH-HOLDERFORWARD listener over the
-// session handler mux, the /mcp handler, and the Open Responses handler the
-// REST listener serves, behind the REST listener's auth options. It runs
-// after the HTTP surface is built.
+// forward listener's mux of the API front's route table, behind the REST
+// listener's auth options. The session core registers the session paths
+// there and the MCP server registers /mcp; this step registers the Open
+// Responses warm turn, whose package belongs to no part. It runs after the
+// HTTP surface is built.
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 3 and 4, §10.3
 // (mTLS PKI) NET-072, §15 (Open Responses conversation sessions)
-func (w *gatewayWiring) buildHolderForwardServer(sessionSrv *sessionserver.Server, mcpSrv *mcp.Server) {
+func (w *gatewayWiring) buildHolderForwardServer() {
 	if w.holderForwardTLS == nil {
 		return
 	}
+	registerForwardResponses(w.apiRoutes, w.responsesHandler.Handler())
 	w.holderForwardSrv = newHolderForwardServer(*w.f.holderForwardListenAddr, w.holderForwardTLS,
-		holderForwardInner(sessionSrv.Handler(), mcpSrv.Handler(), w.responsesHandler.Handler()), w.restAuthOpts, w.sessions)
+		w.apiRoutes.Handler(seam.ListenerForward), w.restAuthOpts, w.sessions)
 }
 
-// holderForwardInner routes the session paths to the session handler, /mcp
-// to the MCP handler, and an Open Responses warm turn to the responses
-// handler, the surfaces a forward reaches. GET /v1/responses/{id} reads
-// stores only and is never forwarded, so it is not mounted.
+// registerForwardResponses registers an Open Responses warm turn, POST
+// /v1/responses, on the forward listener of routes. GET /v1/responses/{id}
+// reads stores only and is never forwarded, so it is not registered.
 //
 // spec: §29.3 (Interactive message send) Forwarding, §15 (Open Responses
 // conversation sessions)
-func holderForwardInner(sessions, mcpHandler, responses http.Handler) http.Handler {
-	mux := http.NewServeMux()
-	mux.Handle("/v1/sessions", sessions)
-	mux.Handle("/v1/sessions/", sessions)
-	mux.Handle("/mcp", mcpHandler)
-	mux.Handle("POST /v1/responses", responses)
-	return mux
+func registerForwardResponses(routes seam.Routes, responses http.Handler) {
+	routetable.HandlerMux{Routes: routes, Listener: seam.ListenerForward}.Handle("POST /v1/responses", responses)
 }
 
 // newHolderForwardServer builds the listener's http.Server.

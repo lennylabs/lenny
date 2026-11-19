@@ -490,8 +490,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		base(),
 		pkg("pkg/gateway/core/admission", "pkg/gateway/quota/quotastore", "pkg/policy/policy", "pkg/gateway/credentials/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
-		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
-		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/externalapi/admintoken", "pkg/gateway/pki/carotation", "pkg/connectoroauth", "pkg/gateway/serviceidentity"),
+		pkg("pkg/gateway/api/pipeline2", "pkg/auth/authmw"),
+		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/api/admintoken", "pkg/gateway/pki/carotation", "pkg/connectoroauth", "pkg/gateway/api/serviceidentity"),
 		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/gateway/storage/issuedtokenstore", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/platformtools/delegation", "pkg/gateway/mcpfabric/delegationpolicystore", "pkg/gateway/mcpfabric/delegationpolicystore/pgstore", "pkg/delegation/delegationpolicystore"),
 		pkg("cmd/lenny-gateway/wire", "pkg/gateway/policy/interceptor"),
@@ -518,8 +518,8 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 			Violation{RuleConfinedImports, "pkg/gateway/streamproxy/x", "pkg/credential/credentialstore/pgstore"},
 		},
 		{
-			"a seam imports the authentication middleware", pkg("pkg/gateway/uploadhandler/up", "pkg/gateway/middleware/auth"),
-			Violation{RuleConfinedImports, "pkg/gateway/uploadhandler/up", "pkg/gateway/middleware/auth"},
+			"a seam imports the authentication middleware", pkg("pkg/gateway/uploadhandler/up", "pkg/auth/authmw"),
+			Violation{RuleConfinedImports, "pkg/gateway/uploadhandler/up", "pkg/auth/authmw"},
 		},
 		{
 			"the API front imports policy", pkg("pkg/gateway/api/admin", "pkg/gateway/policy/policy"),
@@ -676,9 +676,12 @@ func TestRenameMovesAdmitsOnlyMergeBaseLinesThatRan(t *testing.T) {
 	ran := Move{Old: "pkg/gateway/a", New: "pkg/gateway/core/a", Step: "0117.S11"}
 	pending := Move{Old: "pkg/gateway/b", New: "pkg/gateway/core/b", Step: "0117.S11"}
 	added := Move{Old: "pkg/gateway/c", New: "pkg/gateway/core/c", Step: "0117.S11"}
+	landed := Move{Old: "pkg/gateway/d", New: "pkg/gateway/core/d", Step: "0117.S3"}
 	exists := map[string]bool{"pkg/gateway/b": true}
-	got := RenameMoves([]Move{ran, pending, added}, []Move{ran, pending}, func(p string) bool { return exists[p] })
+	atBase := map[string]bool{"pkg/gateway/a": true, "pkg/gateway/b": true, "pkg/gateway/c": true}
+	got := RenameMoves([]Move{ran, pending, added, landed}, []Move{ran, pending, landed},
+		func(p string) bool { return exists[p] }, func(p string) bool { return atBase[p] })
 	if len(got) != 1 || got[0] != ran {
-		t.Errorf("RenameMoves = %+v, want only the merge-base line whose old path is gone", got)
+		t.Errorf("RenameMoves = %+v, want only the merge-base line whose old path the branch moved", got)
 	}
 }

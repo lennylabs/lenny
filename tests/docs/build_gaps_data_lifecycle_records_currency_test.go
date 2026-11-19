@@ -114,7 +114,7 @@ func listFilterReadsPrimary(t testing.TB, root string) (bool, string) {
 
 const (
 	creationFenceFile = "pkg/gateway/session/sessionstore/creation_fence.go"
-	drainFile         = "pkg/gateway/externalapi/admin/drain.go"
+	drainFile         = "pkg/gateway/api/admin/drain.go"
 	responsesFile     = "pkg/gateway/environment/translator/open_responses.go"
 	erasurePgFile     = "pkg/gateway/storage/erasurejob/pgstore/pgstore.go"
 	terminatorFile    = "cmd/lenny-gateway/tenantdeletion.go"
@@ -152,8 +152,8 @@ var closedLifecycleFindings = []closedLifecycleFinding{
 		holds: fileOmits(responsesFile, "DELETE /v1/responses"),
 	},
 	{
-		id: "F-15.1.50", file: "pkg/gateway/externalapi/admin/tenant_suspend.go", symbol: "Router.handleSuspendTenant",
-		holds: fileContains("pkg/gateway/externalapi/admin/tenant_suspend.go", "context.WithoutCancel(req.Context())"),
+		id: "F-15.1.50", file: "pkg/gateway/api/admin/tenant_suspend.go", symbol: "Router.handleSuspendTenant",
+		holds: fileContains("pkg/gateway/api/admin/tenant_suspend.go", "context.WithoutCancel(req.Context())"),
 	},
 	{id: "F-15.1.51", file: creationFenceFile, symbol: "CreationMarkers.Refusal"},
 }
@@ -376,7 +376,7 @@ const secondHalfDeviations = secondHalfProposal +
 	"0095_fix_data-lifecycle-second-half-the-remaining-tenant-deletion-and.deviations.md"
 
 const (
-	usersFile         = "pkg/gateway/externalapi/admin/users.go"
+	usersFile         = "pkg/gateway/api/admin/users.go"
 	tenantErasersFile = "cmd/lenny-gateway/tenant_erasers.go"
 	adminRouterFile   = "cmd/lenny-gateway/adminrouter.go"
 	erasureOrderFile  = "pkg/gateway/storage/erasure/order.go"

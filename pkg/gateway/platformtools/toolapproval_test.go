@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -203,7 +204,7 @@ func TestToolUseApproveUnblocksGate_spec_7_2_18(t *testing.T) {
 
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc-1/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("approve: %d, body=%s", rr.Code, rr.Body.String())
 	}

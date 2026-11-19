@@ -55,11 +55,11 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/platformtools/orphancleanup/orphancleanup.go", "endOrphan", "endOrphan"},
 	{"pkg/gateway/platformtools/mcptools/mcptools.go", "cancelNode", "cancelNode"},
 	{"pkg/gateway/platformtools/mcptools/mcptools_register.go", "cancelSession", "cancelSession"},
-	{"pkg/gateway/externalapi/admin/users.go", "cancelForRevoke", "cancelForRevoke"},
+	{"pkg/gateway/api/admin/users.go", "cancelForRevoke", "cancelForRevoke"},
 	{"pkg/gateway/environment/translator/openai_chat.go", "handleCreateCompletion", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "serveCold", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "endHeldSession", "endHeldSession"},
-	{"cmd/lenny-gateway/session_admin.go", "ForceTerminate", "ForceTerminate"},
+	{"pkg/gateway/sessionserver/force_terminate.go", "ForceTerminate", "ForceTerminate"},
 	{"cmd/lenny-gateway/session_budget.go", "terminate", "ExpireSession"},
 	{"pkg/gateway/platformtools/deadlock/terminal_fail.go", "TerminalFail", "TerminalFail"},
 }

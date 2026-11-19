@@ -9,7 +9,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
 
 // spec: §10.3 (mTLS PKI) NET-072
@@ -45,7 +45,7 @@ func TestForwardedMarkerFlushCarriesTheNoStoreMark_spec_29_3(t *testing.T) {
 			var ctlErr error
 			h := forwardedMarker{inner: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if tc.gate {
-					idemmw.DoNotStore(r.Context())
+					idempotencymw.DoNotStore(r.Context())
 				}
 				w.(http.Flusher).Flush()
 				ctlErr = http.NewResponseController(w).Flush()

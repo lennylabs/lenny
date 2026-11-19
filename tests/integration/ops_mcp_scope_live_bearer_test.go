@@ -14,7 +14,7 @@
 // pkg/ops/mcp/server_test.go injects the caller's scope claim via the
 // X-Lenny-Scope test header directly against a mock Invoker, never
 // through a verified Bearer JWT. None of it runs the real cmd/lenny-ops
-// composition root's OIDC auth middleware (pkg/gateway/middleware/auth),
+// composition root's OIDC auth middleware (pkg/auth/authmw),
 // so none of it proves the caller's RFC 9068 `scope` claim actually
 // survives from a signed token, through the verifier, onto the
 // authenticated Principal, and into the §25.1 scope gate the MCP

@@ -5,8 +5,8 @@ package main
 import (
 	"fmt"
 
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // Tenancy mode values of the --tenancy-mode flag, mirroring the

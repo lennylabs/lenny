@@ -45,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -171,7 +172,7 @@ func TestInjectionGateFailsClosedOnTransientOverrideStoreError_spec_5_1_49(t *te
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
-	rr := postInjectionMessage(t, srv.Handler(), "acme1", "acme")
+	rr := postInjectionMessage(t, apifront.Handler(srv), "acme1", "acme")
 	assertInjectionGateFailedClosed(t, rr)
 	// The fail-closed branch must record the granular override-store cause
 	// as a metric so the F-5.1.20 path is observable beyond the log line.
@@ -202,6 +203,6 @@ func TestInjectionGateFailsClosedOnTransientRegistryError_spec_5_1(t *testing.T)
 	}); err != nil {
 		t.Fatalf("seed session: %v", err)
 	}
-	rr := postInjectionMessage(t, srv.Handler(), "s1", "acme")
+	rr := postInjectionMessage(t, apifront.Handler(srv), "s1", "acme")
 	assertInjectionGateFailedClosed(t, rr)
 }

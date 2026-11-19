@@ -20,16 +20,18 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
@@ -268,11 +270,11 @@ func newFencedConsistencyServers(t *testing.T, tenants tenantstore.Store, users 
 	t.Helper()
 	store := memstore.New(memstore.WithCreationMarkers(sessionstore.StoreMarkers(tenants, users)))
 	rest := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Tenants: tenants, Users: users})
-	tsREST := httptest.NewServer(ownerprincipal.Wrap(rest.Handler(), ownerprincipal.Alice))
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(rest), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
-		Callers:           toolops.Callers{},
+		Callers:           pipeline.Callers{},
 		DevTenantFallback: true,
 		Store:             store, SessionCreator: rest.ToolsSeam(), SessionService: rest.ToolsSeam(), SessionAccess: rest.ToolsSeam(),
 		Executor: toolseam.Executor(executor.NewEchoExecutor()), Users: users, Tenants: toolops.NewTenants(tenants, users, nil),

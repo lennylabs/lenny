@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
@@ -57,7 +58,8 @@ type revokedBindingReleaser interface {
 // (§28.5.7). It reads the per-replica pod-session registry and
 // releases the binding of every cancelled session this replica holds
 // through the session release, which sends the pod the §4.7 Shutdown RPC.
-// It satisfies admin.UserPodTerminator and, for the cross-replica path,
+// It serves the session core's binding releases (sessionserver.UserBindingReleases)
+// and, for the cross-replica path,
 // bindrelease.LocalTerminator.
 //
 // A pod binding lives in exactly one replica's registry, so the handling
@@ -73,14 +75,14 @@ type bindReleaseFanOut struct {
 	prop     *bindrelease.Propagator
 }
 
-// TerminateUserSessions is the admin.UserPodTerminator entry the
-// full_revoke handler drives. It releases the bindings this replica holds
+// TerminateUserSessions is the binding release the full_revoke handler
+// drives through GWSEAM-TerminateUserSessions. It releases the bindings this replica holds
 // for the cancelled sessions and fans the §11.4 step-2 request out to peer
 // replicas so the bindings they hold are released too. The returned result
 // reports only this replica's releases — the peer releases happen
 // asynchronously on each peer's subscriber, matching the §11.4 note that
 // propagation completes within seconds.
-func (p *bindReleaseFanOut) TerminateUserSessions(ctx context.Context, tenantID, userID string, sessionIDs []string) admin.UserTerminationResult {
+func (p *bindReleaseFanOut) TerminateUserSessions(ctx context.Context, tenantID, userID string, sessionIDs []string) seam.UserTermination {
 	req := bindrelease.Request{
 		TenantID:   tenantID,
 		UserID:     userID,
@@ -90,7 +92,7 @@ func (p *bindReleaseFanOut) TerminateUserSessions(ctx context.Context, tenantID,
 	if p.prop != nil {
 		p.prop.Publish(ctx, req)
 	}
-	return admin.UserTerminationResult{PodsTerminated: res.PodsTerminated, FailedSessions: res.FailedSessions}
+	return seam.UserTermination{PodsTerminated: res.PodsTerminated, FailedSessions: res.FailedSessions}
 }
 
 // TerminateLocal is the bindrelease.LocalTerminator entry the

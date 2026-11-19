@@ -10,9 +10,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/idempotency"
+	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
 )
 

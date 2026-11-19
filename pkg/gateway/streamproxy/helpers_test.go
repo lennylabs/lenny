@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"testing"
 
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // testOwner is the subject the tests in this package authenticate as when a
@@ -44,13 +46,13 @@ func newStreamServer(t *testing.T, store sessionstore.Store, opts sessionserver.
 		Events:   opts.Events,
 		Sessions: core,
 		Frames:   core,
-		Identity: core,
+		Identity: pipeline.Identity{DevTenantHeader: opts.DevTenantHeader},
 		Clock:    opts.Clock,
 	})
 	if err != nil {
 		t.Fatalf("streamproxy.New: %v", err)
 	}
-	if err := streams.RegisterRoutes(srv); err != nil {
+	if err := streams.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatalf("RegisterRoutes: %v", err)
 	}
 	return srv

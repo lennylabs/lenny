@@ -60,3 +60,26 @@ func TestBoolReadsTruthyAndFalsyValuesAndFallsBackOtherwise(t *testing.T) {
 		}
 	}
 }
+
+func TestFloat64ReadsTheVariableAndFallsBackOnUnsetBlankOrMalformed(t *testing.T) {
+	const name = "LENNY_ENVDEFAULT_TEST_FLOAT64"
+	if got := Float64(name, 0.5); got != 0.5 {
+		t.Errorf("Float64 unset = %v, want 0.5", got)
+	}
+	cases := []struct {
+		value string
+		want  float64
+	}{
+		{"", 0.5},
+		{"  ", 0.5},
+		{"1000", 1000},
+		{" 2.25 ", 2.25},
+		{"lots", 0.5},
+	}
+	for _, c := range cases {
+		t.Setenv(name, c.value)
+		if got := Float64(name, 0.5); got != c.want {
+			t.Errorf("Float64 with %q = %v, want %v", c.value, got, c.want)
+		}
+	}
+}

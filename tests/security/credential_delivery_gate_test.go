@@ -57,6 +57,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
@@ -227,7 +228,7 @@ func TestCredentialDeliveryGateFailsClosedAtFinalize(t *testing.T) {
 		TenancyMode:             direct_mode_isolation.TenancyMulti,
 	})
 	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
-	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
+	h := ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice)
 
 	post := func(path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
 		t.Helper()

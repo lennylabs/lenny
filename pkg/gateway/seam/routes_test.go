@@ -24,7 +24,7 @@ func TestRouteValidateRefusesZeroAndUnknownValues(t *testing.T) {
 		t.Fatalf("a complete route was refused: %v", err)
 	}
 	for _, l := range []Listener{ListenerClient, ListenerPodProxy, ListenerForward} {
-		for _, a := range []RouteAccess{AccessTenant, AccessSessionRead, AccessSessionManage, AccessSessionEval, AccessUsageView, AccessHandler} {
+		for _, a := range []RouteAccess{AccessTenant, AccessSessionRead, AccessSessionManage, AccessSessionEval, AccessUsageView, AccessSessionCreate, AccessSessionList, AccessHandler} {
 			r := ok
 			r.Listener, r.Access = l, a
 			if err := r.Validate(); err != nil {
@@ -32,14 +32,22 @@ func TestRouteValidateRefusesZeroAndUnknownValues(t *testing.T) {
 			}
 		}
 	}
+	internal := ok
+	internal.Listener, internal.Access, internal.Method = ListenerInternal, AccessHandler, MethodAny
+	if err := internal.Validate(); err != nil {
+		t.Errorf("an internal route that leaves authentication to its handler was refused: %v", err)
+	}
 	cases := map[string]func(*Route){
 		"zero listener":    func(r *Route) { r.Listener = 0 },
-		"unknown listener": func(r *Route) { r.Listener = ListenerForward + 1 },
-		"zero access":      func(r *Route) { r.Access = 0 },
-		"unknown access":   func(r *Route) { r.Access = AccessHandler + 1 },
-		"no method":        func(r *Route) { r.Method = "" },
-		"no pattern":       func(r *Route) { r.Pattern = "" },
-		"no handler":       func(r *Route) { r.Handler = nil },
+		"unknown listener": func(r *Route) { r.Listener = ListenerInternal + 1 },
+		"internal route with a pipeline check": func(r *Route) {
+			r.Listener, r.Access = ListenerInternal, AccessTenant
+		},
+		"zero access":    func(r *Route) { r.Access = 0 },
+		"unknown access": func(r *Route) { r.Access = AccessHandler + 1 },
+		"no method":      func(r *Route) { r.Method = "" },
+		"no pattern":     func(r *Route) { r.Pattern = "" },
+		"no handler":     func(r *Route) { r.Handler = nil },
 	}
 	for name, mutate := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -49,6 +57,19 @@ func TestRouteValidateRefusesZeroAndUnknownValues(t *testing.T) {
 				t.Errorf("Validate() = %v, want ErrInvalidRoute", err)
 			}
 		})
+	}
+}
+
+// TestRouteMuxPatternJoinsTheMethodUnlessAnyMethod checks that a route
+// mounts under its method and pattern, and under its pattern alone when it
+// is served for any method.
+// spec: GWSEAM-HandleRoute
+func TestRouteMuxPatternJoinsTheMethodUnlessAnyMethod(t *testing.T) {
+	if got := (Route{Method: http.MethodGet, Pattern: "/healthz"}).MuxPattern(); got != "GET /healthz" {
+		t.Errorf("MuxPattern = %q, want %q", got, "GET /healthz")
+	}
+	if got := (Route{Method: MethodAny, Pattern: "/playground/"}).MuxPattern(); got != "/playground/" {
+		t.Errorf("MuxPattern = %q, want %q", got, "/playground/")
 	}
 }
 

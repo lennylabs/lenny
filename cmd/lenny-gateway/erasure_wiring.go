@@ -8,8 +8,8 @@ import (
 	"fmt"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 )
@@ -62,7 +62,7 @@ func (l erasureSessionLister) List(ctx context.Context, tenantID, userID string)
 // the job's tenant chain through the audit appender and returns the append
 // error, so the runner completes the job and lifts the restriction only
 // after the receipt is durable. It writes the payload layout
-// admin.ChainAuditSink.EmitAdminEvent writes, attributing the event to the
+// adminaudit.ChainSink.EmitAdminEvent writes, attributing the event to the
 // principal persisted on the job rather than to a request context. It does
 // not go through the admin router's AuditSink, which drops the error.
 //

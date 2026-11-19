@@ -21,10 +21,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
+	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/api/admintoken/reclaimer"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
-	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken/reclaimer"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"

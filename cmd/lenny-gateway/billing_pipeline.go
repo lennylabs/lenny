@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/pgaudit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/deployenv"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingretention"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingsink"
@@ -23,7 +24,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/failover/redisstream"
 	billingpg "github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )

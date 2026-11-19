@@ -41,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
@@ -165,7 +166,7 @@ func newUploadScopeGateway(t *testing.T, pods int) *uploadScopeGateway {
 		Blobs:                   blobs,
 	})
 	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
-	return &uploadScopeGateway{h: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), blobs: blobs}
+	return &uploadScopeGateway{h: ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice), blobs: blobs}
 }
 
 // post issues a request for tenant acme and returns the recorder.

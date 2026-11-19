@@ -30,16 +30,17 @@ import (
 
 	"github.com/santhosh-tekuri/jsonschema/v5"
 
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -164,7 +165,7 @@ func (f snapCopyFixture) handler(mod func(*sessionserver.Options)) http.Handler 
 	if mod != nil {
 		mod(&o)
 	}
-	return ownerprincipal.Wrap(sessionserver.New(f.store, o).Handler(), ownerprincipal.Alice)
+	return ownerprincipal.Wrap(apifront.Handler(sessionserver.New(f.store, o)), ownerprincipal.Alice)
 }
 
 // call posts ep's body to ep's path for the source session.

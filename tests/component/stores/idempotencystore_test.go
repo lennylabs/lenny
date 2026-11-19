@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §11.5 idempotency-key store, exercising the
-// Postgres-backed pkg/gateway/middleware/idempotency/pgstore against a
+// Postgres-backed pkg/idempotency/idempotencymw/pgstore against a
 // real container with the production migrations applied. Covers the
 // put/get round-trip, replace-on-conflict, cross-tenant isolation, the
 // 24-hour TTL read filter, the DeleteExpired garbage-collection sweep,
@@ -16,13 +16,13 @@ import (
 	"testing"
 	"time"
 
-	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
 	"github.com/lennylabs/lenny/pkg/idempotency"
+	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 )
 
 // spec: 11.5
 // diagnosis: the Postgres-backed idempotency-key store in
-// pkg/gateway/middleware/idempotency/pgstore did not behave as
+// pkg/idempotency/idempotencymw/pgstore did not behave as
 // specified. Put and Get must round-trip a record, Put must replace on
 // key conflict, keys must be isolated per tenant, a record past the
 // 24-hour TTL must read as absent, DeleteExpired must reclaim only

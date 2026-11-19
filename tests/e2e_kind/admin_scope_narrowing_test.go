@@ -12,7 +12,7 @@
 // entirely), and every other live-cluster caller authenticates with the
 // dev-header shortcut (X-Lenny-Tenant-ID / X-Lenny-Roles /
 // X-Lenny-User-ID), whose Claims carry no `scope` at all
-// (pkg/gateway/middleware/auth/auth.go serveDevHeaders never sets
+// (pkg/auth/authmw/auth.go serveDevHeaders never sets
 // Principal.Scopes from a header). Neither path proves the RFC 9068
 // `scope` JWT claim is actually parsed off a real Bearer token and
 // enforced by the deployed gateway's §25.1 admin-API scope gate.
@@ -39,7 +39,7 @@
 // carrying aud: ["dev.local"], the only audience the wrapping
 // ClaimChecker accepts (embeddedOIDCAudience), passes the same auth
 // middleware as a Lenny-issued bearer, including the RFC 9068 `scope`
-// claim parse in pkg/gateway/middleware/auth.
+// claim parse in pkg/auth/authmw.
 //
 // The e2e install already provisions and mounts this key for a
 // different purpose, and this test reuses it as a live JWT-signing key

@@ -40,12 +40,13 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 
@@ -136,7 +137,7 @@ func TestCreateBodyPoolEnforcesTenantAccess_spec_4(t *testing.T) {
 		req.Header.Set("X-Lenny-Tenant-ID", tenant)
 		req.Header.Set("Content-Type", "application/json")
 		rr := httptest.NewRecorder()
-		srv.Handler().ServeHTTP(rr, req)
+		apifront.Handler(srv).ServeHTTP(rr, req)
 		return rr
 	}
 

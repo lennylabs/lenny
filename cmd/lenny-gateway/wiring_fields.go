@@ -11,8 +11,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
+	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
@@ -25,14 +28,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/session/budgetstate"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
@@ -73,6 +74,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore/cachingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
@@ -99,11 +103,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
-	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
@@ -358,10 +360,16 @@ type gatewayWiringFields struct {
 	eventBusRetranscriber       *eventbus.Retranscriber
 	failOpenReplicas            *failopen.ReplicaCount
 	inputWaits                  *inputwait.Registry
-	kmsProbeLifecycle           *tenantkms.Lifecycle
-	mtlsDenyProp                *mtlsdenylistprop.Propagator
-	mux                         *http.ServeMux
-	podBinder                   *podsession.Binder
+	// apiRoutes is the API front's route table, through which every part
+	// registers its HTTP routes and from which the REST and forward
+	// listeners serve them.
+	apiRoutes *routetable.Table
+	// apiPipeline is the API front's request pipeline of the session paths,
+	// which buildHTTPSurface mounts on the REST and forward listeners.
+	apiPipeline       *pipeline.Pipeline
+	kmsProbeLifecycle *tenantkms.Lifecycle
+	mtlsDenyProp      *mtlsdenylistprop.Propagator
+	podBinder         *podsession.Binder
 	// slotCounter is the §5.2 slot set shared by every concurrent-mode
 	// reservation and release; its §12.4 recovery probe runs on
 	// watchdogCtx, and the leader-run stale-slot reaper reads and removes

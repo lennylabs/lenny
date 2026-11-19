@@ -14,7 +14,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
@@ -148,8 +149,7 @@ func runAccessCase(t *testing.T, timeout time.Duration, pattern string, getO, pr
 		spy.Add(1)
 		w.WriteHeader(http.StatusOK)
 	}
-	mux := http.NewServeMux()
-	mux.HandleFunc(pattern, s.requireSessionPermission(pkgauth.PermManageOwnSessions, s.requireSessionAccess(true, next)))
+	mux := s.spyPipeline(pattern, seam.AccessSessionManage, next)
 	path := "/v1/sessions/sess_alice/start"
 	if pattern == "POST /v1/sessions/{id}/resume" {
 		path = "/v1/sessions/sess_alice/resume"

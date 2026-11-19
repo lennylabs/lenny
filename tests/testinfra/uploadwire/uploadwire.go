@@ -14,15 +14,18 @@ package uploadwire
 import (
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
-// Attach builds an upload handler from opts, registers its routes with srv,
-// and attaches it as srv's upload windows, before srv serves. Each seam
-// field of opts left nil is filled with srv's own side of the operation, as
-// the composition root fills all of them, so a test sets only the fields it
-// replaces with a fake. It fails the test on a wiring error.
+// Attach builds an upload handler from opts, registers its routes through
+// the API front route table srv mounts, and attaches it as srv's upload
+// windows, before srv serves. Each seam field of opts left nil is filled
+// with srv's own side of the operation, as the composition root fills all of
+// them, so a test sets only the fields it replaces with a fake. It fails the
+// test on a wiring error.
 func Attach(t testing.TB, srv *sessionserver.Server, opts uploadhandler.Options) *uploadhandler.Handler {
 	t.Helper()
 	core := srv.UploadSeam()
@@ -30,7 +33,7 @@ func Attach(t testing.TB, srv *sessionserver.Server, opts uploadhandler.Options)
 		opts.Sessions = core
 	}
 	if opts.Identity == nil {
-		opts.Identity = core
+		opts.Identity = pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()}
 	}
 	if opts.Forwarding == nil {
 		opts.Forwarding = core
@@ -51,7 +54,7 @@ func Attach(t testing.TB, srv *sessionserver.Server, opts uploadhandler.Options)
 	if err != nil {
 		t.Fatalf("uploadwire: build the upload handler: %v", err)
 	}
-	if err := up.RegisterRoutes(srv); err != nil {
+	if err := up.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatalf("uploadwire: register the upload routes: %v", err)
 	}
 	srv.SetUploadWindows(up)

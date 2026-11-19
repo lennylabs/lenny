@@ -27,7 +27,7 @@ import (
 	"net/url"
 	"strconv"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/tenantaffinity"
 )
 

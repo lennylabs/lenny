@@ -29,13 +29,14 @@ import (
 	"sort"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -153,7 +154,7 @@ func TestPlanBindingVCSCredentialReadCodes(t *testing.T) {
 				CredentialPools: pools,
 				VCSCredentials:  &vcscred.StoreResolver{Pools: pools, Secrets: secrets},
 			})
-			rr := createSession(t, ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
+			rr := createSession(t, ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice))
 			if rr.Code != tc.wantStatus {
 				t.Fatalf("status = %d, want %d; body %s", rr.Code, tc.wantStatus, rr.Body.String())
 			}

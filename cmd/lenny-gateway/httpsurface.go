@@ -13,20 +13,31 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/auth/callercheck"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
+	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	cbmw "github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker"
+	correlationmw "github.com/lennylabs/lenny/pkg/gateway/api/correlation"
+	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/api/deprecation"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
+	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
+	recovermw "github.com/lennylabs/lenny/pkg/gateway/api/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
+	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
-	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
@@ -35,18 +46,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
-	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
-	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/deprecation"
-	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
-	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
-	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
-	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
@@ -56,7 +56,7 @@ import (
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry"
-	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -65,12 +65,18 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
+	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
 )
 
 func (w *gatewayWiring) buildHTTPSurface(
 	pgFlags *playground.Flags,
+	rateLimitFlags *ratelimitmw.Flags,
+	deprecationFlags *deprecationmw.Flags,
+	serviceIdentityFlags *serviceidentity.Flags,
+	idempotencyFlags *idempotencymw.Flags,
 	gwMetrics *gatewaymetrics.Metrics,
 	sessionSrv *sessionserver.Server,
 	openaiHandler *translator.OpenAIChatHandler,
@@ -95,35 +101,44 @@ func (w *gatewayWiring) buildHTTPSurface(
 	addr := f.addr
 	multiTenant := f.multiTenant
 	adminSATokenAudience := f.adminSATokenAudience
-	platformAdminServiceAccounts := f.platformAdminServiceAccounts
+	platformAdminServiceAccounts := serviceIdentityFlags.PlatformAdminServiceAccounts
 	devMode := f.devMode
-	deprecatedAPIVersionsCSV := f.deprecatedAPIVersionsCSV
+	deprecatedAPIVersionsCSV := deprecationFlags.Versions
 	adapterTLSCert := f.adapterTLSCert
 	barrierAckTimeoutSeconds := f.barrierAckTimeoutSeconds
-	idempotencyMaxBodyBytes := f.idempotencyMaxBodyBytes
+	idempotencyMaxBodyBytes := idempotencyFlags.MaxBodyBytes
 	failOpenStatePath := f.failOpenStatePath
 	tokenServiceHTTPURL := f.tokenServiceHTTPURL
-	rlGlobalPerMin := f.rlGlobalPerMin
-	rlPerUserPerMin := f.rlPerUserPerMin
-	rlPerTenantPerMin := f.rlPerTenantPerMin
-	rlFailOpenMaxSeconds := f.rlFailOpenMaxSeconds
+	rlGlobalPerMin := rateLimitFlags.GlobalPerMin
+	rlPerUserPerMin := rateLimitFlags.PerUserPerMin
+	rlPerTenantPerMin := rateLimitFlags.PerTenantPerMin
+	rlFailOpenMaxSeconds := rateLimitFlags.FailOpenMaxSeconds
 	quotaUserFailOpenFraction := f.quotaUserFailOpenFraction
 	quotaPerReplicaHardCap := f.quotaPerReplicaHardCap
 	quotaFailOpenCumulativeMaxSeconds := f.quotaFailOpenCumulativeMaxSeconds
 	capabilityTokenTTL := f.capabilityTokenTTL
-	mux := http.NewServeMux()
-	mux.Handle("/v1/sessions", sessionSrv.Handler())
-	mux.Handle("/v1/sessions/", sessionSrv.Handler())
-	mux.Handle("/v1/blobs/", sessionSrv.Handler())
-	// §9.1 / §15.1 runtime-discovery and model-list surfaces. The
-	// sessionserver mux serves GET /v1/runtimes, /v1/runtimes/{name}/
-	// meta/{key}, /v1/models, and the §5.1 internal meta-fetch path;
-	// each is identity-filtered by §10.6 environment access.
-	mux.Handle("/v1/runtimes", sessionSrv.Handler())
-	mux.Handle("/v1/runtimes/", sessionSrv.Handler())
-	mux.Handle("/v1/models", sessionSrv.Handler())
-	mux.Handle("/internal/runtimes/", sessionSrv.Handler())
-	mux.Handle("/v1/admin/", w.adminRouter.Handler())
+	// Every route of the REST and forward listeners registers through the
+	// API front's route table: each part registers its own, and the
+	// composition root registers those of the packages that belong to no
+	// part yet through a routetable.HandlerMux. The client and internal
+	// listeners share the table's REST mux.
+	front := w.apiRoutes
+	mux := front.Handler(seam.ListenerClient)
+	clientMux := routetable.HandlerMux{Routes: front, Listener: seam.ListenerClient}
+	internalMux := routetable.HandlerMux{Routes: front, Listener: seam.ListenerInternal}
+	// The session core's routes on the client, internal, and forward
+	// listeners, each with its access check, and then the API front's
+	// request pipeline, which mounts every route with a tenant, session,
+	// or permission check, and every route under the session paths, behind
+	// its check on the session paths. Every part's routes registered in
+	// buildSessionServer, before this call.
+	if err := sessionSrv.RegisterRoutes(front); err != nil {
+		log.Fatalf("lenny-gateway: session routes: %v", err)
+	}
+	w.apiPipeline = mountRequestPipeline(front, sessionSrv)
+	if err := w.adminRouter.RegisterRoutes(front); err != nil {
+		log.Fatalf("lenny-gateway: admin routes: %v", err)
+	}
 
 	// §25.3 Platform Health API. Registered at the specific
 	// /v1/admin/health* paths so Go's ServeMux routes them to the
@@ -257,29 +272,28 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// accumulator so the run loop (runServers) can Store the constructed
 	// evaluator into it after the signal handler is installed.
 	w.alertEvalPtr = &alertEvalPtr
-	healthHandler := health.Handler(healthAgg, poolHealthResolver)
-	mux.Handle("/v1/admin/health", healthHandler)
-	mux.Handle("/v1/admin/health/", healthHandler)
+	if err := health.RegisterRoutes(front, healthAgg, poolHealthResolver); err != nil {
+		log.Fatalf("lenny-gateway: §25.3 health routes: %v", err)
+	}
 	// spec: §15.1 — served `info.version` must reflect the
-	// gateway's release version, not the embedded default.
-	openapiHandler := openapi.HandlerWithVersion(buildVersion)
-	mux.Handle("/openapi.yaml", openapiHandler)
-	// spec: §15.1 — `/openapi.json` is the canonical
-	// gateway-side JSON mount. spec: §15.1 (OpenAPI generation and
-	// discovery) — `/v1/openapi.json` and `/v1/openapi.yaml` are the
-	// admin-API discovery paths the §25.12 schema-discovery block and
-	// the §25.4 `/me` `links.openApi` hop resolve against; both forms
+	// gateway's release version, not the embedded default. `/openapi.json`
+	// is the canonical gateway-side JSON mount. spec: §15.1 (OpenAPI
+	// generation and discovery) — `/v1/openapi.json` and `/v1/openapi.yaml`
+	// are the admin-API discovery paths the §25.12 schema-discovery block
+	// and the §25.4 `/me` `links.openApi` hop resolve against; both forms
 	// are mounted so the YAML path is not a 404 against the gateway.
 	// F-15.1.17 / F-COV-1.
-	mux.Handle("/openapi.json", openapiHandler)
-	mux.Handle("/v1/openapi.json", openapiHandler)
-	mux.Handle("/v1/openapi.yaml", openapiHandler)
+	if err := routetable.RegisterFrontRoutes(front, openapi.HandlerWithVersion(buildVersion)); err != nil {
+		log.Fatalf("lenny-gateway: API front routes: %v", err)
+	}
 	// §4.3 canonical token endpoint. The gateway reverse-
 	// proxies /v1/oauth/* to lenny-token-service so the Token Service
 	// is the actual minter for every Lenny bearer token. When the
 	// flag is empty (dev path without a Token Service binary), the
 	// /v1/oauth surface is unmounted; callers receive 404 from the
-	// gateway. spec: F-4.3.12.
+	// gateway. spec: F-4.3.12. The proxy is a token package GW-R2 confines
+	// and allows the API front none of, so the composition root mounts it
+	// on the REST mux itself (decision 65 of change 0117, settled by the owner on 2026-11-19).
 	if *tokenServiceHTTPURL != "" {
 		proxy, err := tokensvcproxy.New(*tokenServiceHTTPURL)
 		if err != nil {
@@ -316,19 +330,21 @@ func (w *gatewayWiring) buildHTTPSurface(
 	if err := adapterReg.Register(adapterregistry.NewMCPAdapter(mcpSrv.Handler())); err != nil {
 		log.Fatalf("lenny-gateway: §15 adapter registry: %v", err)
 	}
-	adapterReg.Mount(mux)
+	adapterReg.Mount(clientMux)
 	// §4.1 long-lived interactive streams: the MCP WebSocket transport
 	// is mounted alongside the POST /mcp single-shot handler so the
 	// playground UI (pkg/gateway/playground/assets.go WSPath
 	// /mcp/v1/ws) and any other MCP-over-WebSocket client land on the
 	// same dispatch logic. The Streamable HTTP path remains on /mcp.
-	mux.Handle("/mcp/v1/ws", mcpSrv.WebSocketHandler())
 	// spec: §10.6 — the explicit-environment MCP surface. A
 	// client opts into a named environment scope by speaking MCP to
 	// /mcp/environments/{name}; the dispatch is identical to POST /mcp
 	// with the environment attached to the request context so
 	// session-creation and discovery default to that scope. F-10.6.11.
-	mux.Handle("POST /mcp/environments/{name}", mcpSrv.EnvironmentHandler())
+	// The MCP server also registers /mcp on the forward listener.
+	if err := mcpSrv.RegisterRoutes(front); err != nil {
+		log.Fatalf("lenny-gateway: MCP routes: %v", err)
+	}
 	// §4.1 dedicated MCP endpoints for type:mcp runtimes. The
 	// dispatcher is nil in v1: every request that passes runtime
 	// type validation surfaces RUNTIME_UNAVAILABLE per §15.2.1
@@ -337,7 +353,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// spec: §10.6 — the per-runtime MCP dispatcher gates a
 	// tools/call scoped to an environment (`?environment=<name>`) by that
 	// environment's mcpRuntimeFilters capability filter. F-10.6.2.
-	mux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(w.runtimes, nil).WithEnvironments(environments))
+	clientMux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(w.runtimes, nil).WithEnvironments(environments))
+	// The credential server belongs to the credentials subtree, which GW-R2
+	// confines and allows the API front none of, so the composition root
+	// mounts it on the REST mux itself (decision 65 of change 0117, settled by the owner on 2026-11-19).
 	mux.Handle("/v1/credentials", credServer.Handler())
 	mux.Handle("/v1/credentials/", credServer.Handler())
 
@@ -450,7 +469,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// request already carries, and the revocation is checked through
 		// GWSEAM-IsBearerRevoked; non-playground bearers (no origin claim)
 		// are not watched. F-27.5.4.
-		mcpSrv.SetWebSocketAuth(toolops.Callers{}, pg, 0)
+		mcpSrv.SetWebSocketAuth(pipeline.Callers{}, pg, 0)
 		// §11.4 / §27.6 — drive the §11.4 user-invalidation
 		// fan-out into the playground revocation primitive so an OIDC
 		// principal invalidation revokes the user's playground sessions.
@@ -458,9 +477,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// time, so wiring it here (after the admin mux is built) takes
 		// effect on the next invalidate call. F-27.6.4 / F-27.3.2.
 		w.adminRouter = w.adminRouter.WithPlaygroundRevocation(pg)
-		mux.Handle("/playground", pg.PlaygroundRoutes())
-		mux.Handle("/playground/", pg.PlaygroundRoutes())
-		mux.Handle("/v1/playground/token", pg.TokenRoutes())
+		if err := pg.RegisterRoutes(front); err != nil {
+			log.Fatalf("lenny-gateway: §27 playground routes: %v", err)
+		}
 		// spec: §27.3.1 / §27.6 — drive the
 		// playground-auth-record idle-timeout sweep so an abandoned OIDC
 		// cookie-to-bearer session is reclaimed through the same revocation
@@ -474,7 +493,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 	}
 
 	// ----- §16.1 Prometheus metrics -----
-	mux.Handle("GET /metrics", gwMetrics.Handler())
+	if err := gwMetrics.RegisterRoutes(front); err != nil {
+		log.Fatalf("lenny-gateway: §16.1 metrics route: %v", err)
+	}
 
 	// ----- Healthz (unauthenticated) -----
 	// spec: §13.3 — when this replica's NTP drift exceeds the
@@ -482,7 +503,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// by removing the pod from the Service endpoints, so traffic stops
 	// reaching a replica whose clock cannot be trusted for `exp`
 	// validation. F-13.3.5.
-	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
+	internalMux.Handle("GET /healthz", http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		if driftMonitor.Degraded() {
 			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 			w.WriteHeader(http.StatusServiceUnavailable)
@@ -490,14 +511,16 @@ func (w *gatewayWiring) buildHTTPSurface(
 			return
 		}
 		w.WriteHeader(http.StatusOK)
-	})
+	}))
 
 	// ----- §12.5 drain-readiness endpoint (unauthenticated) -----
 	// The lenny-drain-readiness webhook probes this before admitting a
 	// node-drain pod eviction. blobProbe runs a real MinIO bucket check
 	// when the artifact store is MinIO-backed, and an always-ready stub
 	// for the process-local in-memory store.
-	mux.Handle("GET /internal/drain-readiness", &drainreadiness.Handler{Prober: w.blobProbe})
+	if err := (&drainreadiness.Handler{Prober: w.blobProbe}).RegisterRoutes(front); err != nil {
+		log.Fatalf("lenny-gateway: §12.5 drain-readiness route: %v", err)
+	}
 
 	// ----- §10.5 runtime-upgrade-active endpoint (unauthenticated) -----
 	// The lenny-podset-deletion-guard webhook probes this before
@@ -506,7 +529,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// (§10.5). The same record's schemaGated flag gates a Phase 3
 	// migration for the pool (§10.5). Same internal-port
 	// NetworkPolicy scope and unauthenticated posture as drain-readiness.
-	mux.Handle("GET /internal/runtime-upgrade/active", &runtimeupgradeguard.Handler{Store: ruStore})
+	internalMux.Handle("GET /internal/runtime-upgrade/active", &runtimeupgradeguard.Handler{Store: ruStore})
 
 	// ----- §12.5 node.drain.forced audit endpoint (unauthenticated) -----
 	// The webhook POSTs here on a drain-force override admission so the
@@ -516,11 +539,14 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// because the webhook's egress NetworkPolicy is the only path that
 	// can reach it.
 	if auditAppender != nil {
-		mux.Handle("POST /internal/audit/node-drain-forced", &drainreadiness.ForcedDrainHandler{
+		forced := &drainreadiness.ForcedDrainHandler{
 			Appender:       auditAppender,
 			Metrics:        gwMetrics,
 			PlatformTenant: "platform",
-		})
+		}
+		if err := forced.RegisterRoutes(front); err != nil {
+			log.Fatalf("lenny-gateway: §12.5 forced-drain audit route: %v", err)
+		}
 	}
 
 	// ----- §4.4 / §10.1 preStop drain hook (unauthenticated) -----
@@ -611,8 +637,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		BarrierAckTimeout: time.Duration(*barrierAckTimeoutSeconds) * time.Second,
 		Logf:              func(format string, args ...any) { log.Printf(format, args...) },
 	}
-	mux.Handle("POST /internal/prestop", prestopHook)
-	mux.Handle("GET /internal/prestop", prestopHook)
+	if err := prestopHook.RegisterRoutes(front); err != nil {
+		log.Fatalf("lenny-gateway: §4.4 preStop routes: %v", err)
+	}
 
 	// ----- Readiness (unauthenticated) -----
 	// spec: §10.1 — the preStop staged drain's Stage 1 is a readiness
@@ -635,7 +662,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// /readyz handler gates on. Captured here because the handler param
 	// shadows the gatewayWiring receiver `w`.
 	credDenyRebuilt := &w.credDenyRebuilt
-	mux.HandleFunc("GET /readyz", func(w http.ResponseWriter, r *http.Request) {
+	internalMux.Handle("GET /readyz", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		dualStoreDown := dsMonitor != nil && dsMonitor.Unavailable()
 		probe := func(ctx context.Context) health.Status {
@@ -652,7 +679,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		if res.Body != "" {
 			_, _ = w.Write([]byte(res.Body))
 		}
-	})
+	}))
 
 	// ----- Middleware stack -----
 	var handler http.Handler = mux
@@ -670,7 +697,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// AllowedPaths restricts the cache to the §11.5-listed critical
 	// operations so a stray Idempotency-Key on an unrelated route
 	// cannot trap a non-mutating response for 24 hours. spec: §11.5; F-11.5.7.
-	var idemStore idemmw.Store = idemmw.NewMemoryStore()
+	var idemStore idempotencymw.Store = idempotencymw.NewMemoryStore()
 	if w.pgPool != nil {
 		idemStore = idempgstore.New(w.pgPool)
 	}
@@ -692,7 +719,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		},
 		Now: clockinject.Now,
 	})
-	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{
+	handler = idempotencymw.Wrap(handler, idemStore, idempotencymw.Options{
 		Metrics: gwMetrics,
 		// spec: §11.5 — the middleware buffers the request body
 		// to hash and replay it. The default 8 MiB cap covers the
@@ -956,10 +983,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	// spec: §4.1 — record the composed REST mux and its wrapped HTTP server
-	// on the accumulator. The §13.4 stateless-routing wiring mutates w.mux
-	// in place later; the run loop serves w.httpSrv.
-	w.mux = mux
+	// Record the wrapped HTTP server on the accumulator. The stateless
+	// routing wiring registers its route on the API front's route table
+	// later, which mounts it on the REST mux; the run loop serves w.httpSrv.
 	w.httpSrv = httpSrv
 }
 

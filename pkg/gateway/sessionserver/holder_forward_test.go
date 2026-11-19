@@ -27,14 +27,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
@@ -214,12 +214,12 @@ func TestForwardToHolderNotDeliveredWithoutReachableHolder_spec_29_3(t *testing.
 		t.Run(c.name, func(t *testing.T) {
 			s := forwardServer(c.leases, "gw-a.00@10.0.0.1:1", c.client)
 			rec := httptest.NewRecorder()
-			ctx := idemmw.WithGate(context.Background())
+			ctx := idempotencymw.WithGate(context.Background())
 			if got := s.forwardToHolder(rec, clientRequest(ctx, "{}"), forwardRow(), ForwardKindInterrupt, nil); got != ForwardNotDelivered {
 				t.Fatalf("outcome = %v, want ForwardNotDelivered", got)
 			}
 			assertTargetNotReady(t, rec, "running")
-			if !idemmw.NotStored(ctx) {
+			if !idempotencymw.NotStored(ctx) {
 				t.Error("the refusal did not mark the request as not to be stored (§11.5)")
 			}
 		})
@@ -382,12 +382,12 @@ func TestForwardClassifiesFailuresByConnection_spec_29_3(t *testing.T) {
 		addr := startTLSServer(t, serverTLSFor(t, m, gatewaypki.LeafFiles{CertFile: m.CertFile, KeyFile: m.KeyFile}), closer)
 		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
 		rec := httptest.NewRecorder()
-		ctx := idemmw.WithGate(context.Background())
+		ctx := idempotencymw.WithGate(context.Background())
 		if got := s.forwardToHolder(rec, clientRequest(ctx, "{}"), forwardRow(), ForwardKindMessageNoReplyTo, strings.NewReader("{}")); got != ForwardUnknown {
 			t.Fatalf("outcome = %v, want ForwardUnknown", got)
 		}
 		assertTargetNotReady(t, rec, "running")
-		if !idemmw.NotStored(ctx) {
+		if !idempotencymw.NotStored(ctx) {
 			t.Error("an unknown outcome was left storable (§11.5)")
 		}
 	})
@@ -530,10 +530,10 @@ func TestForwardToolCallMapsListenerRefusalsAndUndecodableBodies_spec_29_3(t *te
 	garbage := startTLSServer(t, serverTLSFor(t, m, gatewaypki.LeafFiles{CertFile: m.CertFile, KeyFile: m.KeyFile}),
 		http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = w.Write([]byte("not json-rpc")) }))
 	s = forwardServer(leasesHeldBy("gw-b.00@"+garbage), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
-	ctx := idemmw.WithGate(context.Background())
+	ctx := idempotencymw.WithGate(context.Background())
 	_, out, err = s.ForwardToolCall(ctx, forwardRow(), ForwardKindTerminate, "lenny/ok", nil)
 	assertToolError(t, out, ForwardUnknown, err, "TARGET_NOT_READY")
-	if !idemmw.NotStored(ctx) {
+	if !idempotencymw.NotStored(ctx) {
 		t.Error("an undecodable response was left storable (§11.5)")
 	}
 }
@@ -567,8 +567,8 @@ func TestForwardRefusalsAreNotStoredUnderIdempotency_spec_11_5(t *testing.T) {
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serving.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
 	})
-	store := idemmw.NewMemoryStore()
-	wrapped := authmw.Wrap(idemmw.Wrap(handler, store, idemmw.Options{}), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
+	store := idempotencymw.NewMemoryStore()
+	wrapped := authmw.Wrap(idempotencymw.Wrap(handler, store, idempotencymw.Options{}), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-1/resume", bytes.NewReader([]byte("{}")))
 		req.Header.Set("Idempotency-Key", "same-key")
@@ -607,8 +607,8 @@ func TestDeliveredForwardIsStoredAndReplayedUnderIdempotency_spec_11_5(t *testin
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		serving.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
 	})
-	store := idemmw.NewMemoryStore()
-	wrapped := authmw.Wrap(idemmw.Wrap(handler, store, idemmw.Options{}), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
+	store := idempotencymw.NewMemoryStore()
+	wrapped := authmw.Wrap(idempotencymw.Wrap(handler, store, idempotencymw.Options{}), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-1/resume", bytes.NewReader([]byte("{}")))
 		req.Header.Set("Idempotency-Key", "resume-key")
@@ -825,11 +825,11 @@ func TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3(t *testing.T) {
 		})
 		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), resetter)
 		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
-		ctx := idemmw.WithGate(context.Background())
+		ctx := idempotencymw.WithGate(context.Background())
 		if got := s.forwardToHolder(httptest.NewRecorder(), clientRequest(ctx, "{}"), forwardRow(), ForwardKindUpload, strings.NewReader("{}")); got != ForwardUnknown {
 			t.Fatalf("outcome = %v, want ForwardUnknown", got)
 		}
-		if !idemmw.NotStored(ctx) {
+		if !idempotencymw.NotStored(ctx) {
 			t.Error("a response truncated mid-body was left storable (§11.5)")
 		}
 	})
@@ -851,7 +851,7 @@ func TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3(t *testing.T) {
 		})
 		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), waiter)
 		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
-		ctx, cancel := context.WithCancel(idemmw.WithGate(context.Background()))
+		ctx, cancel := context.WithCancel(idempotencymw.WithGate(context.Background()))
 		defer cancel()
 		go func() {
 			<-read
@@ -864,7 +864,7 @@ func TestForwardFailuresAfterTheConnectionAreUnknown_spec_29_3(t *testing.T) {
 			t.Fatalf("outcome = %v, want ForwardUnknown", got)
 		}
 		assertTargetNotReady(t, rec, "running")
-		if !idemmw.NotStored(ctx) {
+		if !idempotencymw.NotStored(ctx) {
 			t.Error("an unknown outcome was left storable (§11.5)")
 		}
 	})
@@ -1020,7 +1020,7 @@ func nonHolderCoordinator(t *testing.T, m *gatewaypki.Material, row sessionstore
 // and /mcp endpoint, each calling the forward helper.
 type servingSurface struct {
 	handler http.Handler
-	store   *idemmw.MemoryStore
+	store   *idempotencymw.MemoryStore
 	calls   atomic.Int64
 }
 
@@ -1028,7 +1028,7 @@ type servingSurface struct {
 // calls forwardToHolder, and a test tool lenny/forwarded at /mcp that calls
 // ForwardToolCall, behind the auth and §11.5 idempotency middleware.
 func newServingSurface(s *Server, row sessionstore.Session) *servingSurface {
-	ss := &servingSurface{store: idemmw.NewMemoryStore()}
+	ss := &servingSurface{store: idempotencymw.NewMemoryStore()}
 	mcpSrv := mcp.NewServer()
 	mcpSrv.RegisterTool(mcp.Tool{Name: "lenny/forwarded"}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		ss.calls.Add(1)
@@ -1042,7 +1042,7 @@ func newServingSurface(s *Server, row sessionstore.Session) *servingSurface {
 		s.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
 	})
 	dev := authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}
-	ss.handler = authmw.Wrap(idemmw.Wrap(mux, ss.store, idemmw.Options{}), dev)
+	ss.handler = authmw.Wrap(idempotencymw.Wrap(mux, ss.store, idempotencymw.Options{}), dev)
 	return ss
 }
 
@@ -1319,7 +1319,7 @@ func credentialServingSurface(s *Server, verifier jwt.Verifier) http.Handler {
 	rest.HandleFunc("/v1/sessions/{id}/interrupt", func(w http.ResponseWriter, r *http.Request) {
 		s.forwardToHolder(w, r, forwardRow(), ForwardKindInterrupt, r.Body)
 	})
-	s.serviceHandlerOnce.Do(func() { s.serviceHandler = rest })
+	s.serviceHandler = rest
 
 	tools := mcp.NewServer()
 	tools.RegisterTool(mcp.Tool{Name: "lenny/service"}, func(ctx context.Context, _ json.RawMessage) (mcp.ToolResult, error) {
@@ -1569,7 +1569,7 @@ func TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3(t 
 			s := forwardServer(leasesHeldBy("gw-b.00@127.0.0.1:1"), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
 			row := forwardRow()
 			row.State = state
-			ctx := idemmw.WithGate(WithForwarded(context.Background()))
+			ctx := idempotencymw.WithGate(WithForwarded(context.Background()))
 			rec := httptest.NewRecorder()
 			var n nativeRefusal
 			if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), row, []byte("{}"), n.refuse); got != ForwardNotDelivered {
@@ -1581,7 +1581,7 @@ func TestForwardedResponsesTurnAtANonHolderIsNotDeliveredInAnyState_spec_29_3(t 
 			if rec.Code != http.StatusConflict || !strings.Contains(rec.Body.String(), `"current_state":"`+string(state)+`"`) {
 				t.Errorf("response = %d %s, want the renderer's native 409", rec.Code, rec.Body.String())
 			}
-			if !idemmw.NotStored(ctx) {
+			if !idempotencymw.NotStored(ctx) {
 				t.Error("the refusal was left storable (§11.5)")
 			}
 			if dials.Load() != 0 {
@@ -1640,7 +1640,7 @@ func TestUnforwardedResponsesTurn_spec_29_3(t *testing.T) {
 	})
 	t.Run("an unreachable holder is refused through the renderer", func(t *testing.T) {
 		s := forwardServer(leasesHeldBy("gw-b.00@"+closedAddr(t)), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
-		ctx := idemmw.WithGate(context.Background())
+		ctx := idempotencymw.WithGate(context.Background())
 		rec := httptest.NewRecorder()
 		var n nativeRefusal
 		if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), forwardRow(), []byte("{}"), n.refuse); got != ForwardNotDelivered {
@@ -1649,7 +1649,7 @@ func TestUnforwardedResponsesTurn_spec_29_3(t *testing.T) {
 		if n.calls.Load() != 1 || rec.Code != http.StatusConflict || strings.Contains(rec.Body.String(), `"details"`) {
 			t.Errorf("refusals %d, response %d %s; want one native refusal and no Lenny envelope", n.calls.Load(), rec.Code, rec.Body.String())
 		}
-		if !idemmw.NotStored(ctx) {
+		if !idempotencymw.NotStored(ctx) {
 			t.Error("the refusal was left storable (§11.5)")
 		}
 	})
@@ -1676,7 +1676,7 @@ func TestUnforwardedResponsesTurn_spec_29_3(t *testing.T) {
 	t.Run("a coordinator that closes before answering is unknown and refused", func(t *testing.T) {
 		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), closingCoordinator())
 		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
-		ctx := idemmw.WithGate(context.Background())
+		ctx := idempotencymw.WithGate(context.Background())
 		rec := httptest.NewRecorder()
 		var n nativeRefusal
 		if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), forwardRow(), []byte("{}"), n.refuse); got != ForwardUnknown {
@@ -1685,14 +1685,14 @@ func TestUnforwardedResponsesTurn_spec_29_3(t *testing.T) {
 		if n.calls.Load() != 1 || rec.Code != http.StatusConflict {
 			t.Errorf("refusals %d, status %d; want one native 409", n.calls.Load(), rec.Code)
 		}
-		if !idemmw.NotStored(ctx) {
+		if !idempotencymw.NotStored(ctx) {
 			t.Error("an unknown outcome was left storable (§11.5)")
 		}
 	})
 	t.Run("a body failing after the relayed status is unknown with no refusal", func(t *testing.T) {
 		addr := startTLSServer(t, serverTLSFor(t, m, gatewayLeaf(m)), midBodyResetter())
 		s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
-		ctx := idemmw.WithGate(context.Background())
+		ctx := idempotencymw.WithGate(context.Background())
 		rec := httptest.NewRecorder()
 		var n nativeRefusal
 		if got := s.ForwardResponsesTurn(rec, responsesRequest(ctx, "{}"), forwardRow(), []byte("{}"), n.refuse); got != ForwardUnknown {
@@ -1704,7 +1704,7 @@ func TestUnforwardedResponsesTurn_spec_29_3(t *testing.T) {
 		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "TARGET_NOT_READY") {
 			t.Errorf("response = %d %q, want the relayed 200 left truncated with no second status", rec.Code, rec.Body.String())
 		}
-		if !idemmw.NotStored(ctx) {
+		if !idempotencymw.NotStored(ctx) {
 			t.Error("a truncated response was left storable (§11.5)")
 		}
 	})
@@ -1760,7 +1760,7 @@ func TestForwardedRequestAppliesRuleFiveAheadOfTheStateGate_spec_29_3(t *testing
 					s := forwardServer(leasesHeldBy(leaseHolder), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
 					row := forwardRow()
 					row.State = state
-					ctx := idemmw.WithGate(WithForwarded(context.Background()))
+					ctx := idempotencymw.WithGate(WithForwarded(context.Background()))
 					rec := httptest.NewRecorder()
 					got := s.forwardToHolder(rec, clientRequest(ctx, "{}"), row, kind, nil)
 					if dials.Load() != 0 {
@@ -1782,7 +1782,7 @@ func TestForwardedRequestAppliesRuleFiveAheadOfTheStateGate_spec_29_3(t *testing
 						return
 					}
 					assertTargetNotReady(t, rec, string(state))
-					if !idemmw.NotStored(ctx) {
+					if !idempotencymw.NotStored(ctx) {
 						t.Error("the refusal was left storable (§11.5)")
 					}
 				})
@@ -1820,7 +1820,7 @@ func TestForwardToolCallRefusesAnUnholdableUndeliveredMessage_spec_29_3(t *testi
 			s := forwardServer(leasesHeldBy("gw-b.00@127.0.0.1:1"), "gw-a.00@10.0.0.1:1", noDialClient(&dials))
 			row := forwardRow()
 			row.State = state
-			ctx := idemmw.WithGate(WithForwarded(context.Background()))
+			ctx := idempotencymw.WithGate(WithForwarded(context.Background()))
 			_, outcome, err := s.ForwardToolCall(ctx, row, ForwardKindMessageNoReplyTo, "lenny/send_message", json.RawMessage(`{}`))
 			if outcome != ForwardNotDelivered {
 				t.Fatalf("outcome = %v, want ForwardNotDelivered", outcome)

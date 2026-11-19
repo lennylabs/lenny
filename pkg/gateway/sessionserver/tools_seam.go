@@ -10,7 +10,7 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
+	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
@@ -25,8 +25,8 @@ import (
 // platform tools seam calls by value on ToolsSeam: the session lookup and
 // the ownership rule, the tool call forwarding, the child session
 // operations, the message delivery operations, the pod file export, and the
-// tree budget expiry, with the in-process client API, which the session
-// server's request plumbing serves until the API front holds it. An
+// tree budget expiry, with the in-process client API, which runs through
+// the API front's request pipeline that SetServiceHandler hands it. An
 // operation that runs the core's logic on a stored row reads the row from
 // the session record's Stored field, which the platform tools seam fills
 // with the row it read or wrote, and returns the row the core's logic

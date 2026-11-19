@@ -282,16 +282,26 @@ type Events interface {
 // "no event bus" check, a comparison with nil, also catches a typed nil
 // and the part publishes nothing instead of dereferencing it.
 func EventsOrNil(e Events) Events {
-	if e == nil {
+	if IsNil(e) {
 		return nil
 	}
-	switch v := reflect.ValueOf(e); v.Kind() {
-	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
-		if v.IsNil() {
-			return nil
-		}
-	}
 	return e
+}
+
+// IsNil reports whether v is nil or holds a nil pointer, map, slice,
+// function, channel, or interface, such as a nil *sessionserver.Server
+// assigned to a seam interface. A part that must refuse a missing seam
+// value checks it through IsNil, because a comparison with nil misses a
+// typed nil.
+func IsNil(v any) bool {
+	if v == nil {
+		return true
+	}
+	switch rv := reflect.ValueOf(v); rv.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		return rv.IsNil()
+	}
+	return false
 }
 
 // StreamStats is the result of Events.StreamStats. Utilization is a

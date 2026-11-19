@@ -12,9 +12,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 
+	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -50,7 +51,7 @@ func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 
 	// Open the SSE stream.
@@ -113,7 +114,7 @@ func TestEventsStreamMissingSession(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("missing session: got %d, want 404", rr.Code)
 	}
@@ -131,7 +132,7 @@ func TestEventsStreamUnavailableWhenBusUnwired(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_x/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("no event bus: got %d, want 503", rr.Code)
 	}
@@ -152,7 +153,7 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 	bus.Publish("", "sess_bk", "e2", `{}`, now)
 	bus.Publish("", "sess_bk", "e3", `{}`, now)
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	// Reconnect with Last-Event-ID: 1 → backlog replays e2, e3.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_bk/events", nil)
@@ -214,7 +215,7 @@ func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 		bus.Publish("", "sess_gap", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	// Reconnect with cursor=2 → oldest retained is 8, so 5 events lost (3..7).
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_gap/events", nil)
@@ -284,7 +285,7 @@ func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T
 		bus.Publish("", "sess_ok", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_ok/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -335,7 +336,7 @@ func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 		bus.Publish("", "sess_fresh", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	// No Last-Event-ID header → fresh connect.
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_fresh/events", nil)
@@ -426,7 +427,7 @@ func TestEventsStreamSynthesizesHandoffReattach_spec_10_4(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_handoff/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -501,7 +502,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 		CompletionSeq: 4, SettledAt: now,
 	})
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_parent/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -543,7 +544,7 @@ func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) 
 		bus.Publish("acme", "sess_local", "e", `{}`, now)
 	}
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_local/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -574,7 +575,7 @@ func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/v1/sessions/sess_fresh2/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -614,7 +615,7 @@ func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -653,7 +654,7 @@ func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")
 		req.Header.Set("Accept", "application/json")
 		rr := httptest.NewRecorder()
-		asOwner(srv.Handler()).ServeHTTP(rr, req)
+		asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 		return rr.Code, rr.Body.String()
 	}
 
@@ -694,7 +695,7 @@ func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("Accept", "application/json")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
 		t.Fatalf("expired cursor: %d, want 400 (body=%s)", rr.Code, rr.Body.String())
 	}

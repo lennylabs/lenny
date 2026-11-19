@@ -15,6 +15,8 @@ import (
 	k8sruntime "k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/kubernetes/fake"
 	k8stesting "k8s.io/client-go/testing"
+
+	"github.com/lennylabs/lenny/pkg/auth/satoken"
 )
 
 // fakeReviewer returns a canned TokenReview status for every Create, so the
@@ -42,7 +44,7 @@ func TestTokenReviewVerifierAuthenticatedAudienceMatch_spec_10_3(t *testing.T) {
 		Authenticated: true,
 		Audiences:     []string{testAud},
 	}}
-	v := TokenReviewVerifier{Reviews: fr}
+	v := satoken.TokenReviewVerifier{Reviews: fr}
 	if err := v.Verify(context.Background(), "tok", testAud); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -58,10 +60,10 @@ func TestTokenReviewVerifierUnauthenticatedRejected_spec_10_3(t *testing.T) {
 		Authenticated: false,
 		Error:         "token expired",
 	}}
-	v := TokenReviewVerifier{Reviews: fr}
+	v := satoken.TokenReviewVerifier{Reviews: fr}
 	err := v.Verify(context.Background(), "tok", testAud)
-	if !errors.Is(err, ErrSATokenUnauthenticated) {
-		t.Fatalf("expected ErrSATokenUnauthenticated, got %v", err)
+	if !errors.Is(err, satoken.ErrSATokenUnauthenticated) {
+		t.Fatalf("expected satoken.ErrSATokenUnauthenticated, got %v", err)
 	}
 }
 
@@ -72,10 +74,10 @@ func TestTokenReviewVerifierAudienceMismatchRejected_spec_10_3(t *testing.T) {
 		Authenticated: true,
 		Audiences:     []string{"lenny-gateway-globex"},
 	}}
-	v := TokenReviewVerifier{Reviews: fr}
+	v := satoken.TokenReviewVerifier{Reviews: fr}
 	err := v.Verify(context.Background(), "tok", testAud)
-	if !errors.Is(err, ErrSATokenAudienceMismatch) {
-		t.Fatalf("expected ErrSATokenAudienceMismatch, got %v", err)
+	if !errors.Is(err, satoken.ErrSATokenAudienceMismatch) {
+		t.Fatalf("expected satoken.ErrSATokenAudienceMismatch, got %v", err)
 	}
 }
 
@@ -83,14 +85,14 @@ func TestTokenReviewVerifierAudienceMismatchRejected_spec_10_3(t *testing.T) {
 // (apiserver unreachable, RBAC denied) fails closed.
 func TestTokenReviewVerifierTransportErrorFailsClosed_spec_10_3(t *testing.T) {
 	fr := &fakeReviewer{err: errors.New("connection refused")}
-	v := TokenReviewVerifier{Reviews: fr}
+	v := satoken.TokenReviewVerifier{Reviews: fr}
 	err := v.Verify(context.Background(), "tok", testAud)
-	if !errors.Is(err, ErrSATokenReviewFailed) {
-		t.Fatalf("expected ErrSATokenReviewFailed, got %v", err)
+	if !errors.Is(err, satoken.ErrSATokenReviewFailed) {
+		t.Fatalf("expected satoken.ErrSATokenReviewFailed, got %v", err)
 	}
 }
 
-// TokenReviewVerifier composes with client-go's fake clientset (the same
+// satoken.TokenReviewVerifier composes with client-go's fake clientset (the same
 // AuthenticationV1().TokenReviews() the production binary wires), so the
 // seam is satisfied by the real client type.
 // spec: §10.3 (Projected SA token).
@@ -101,7 +103,7 @@ func TestTokenReviewVerifierWithFakeClientset_spec_10_3(t *testing.T) {
 		tr.Status = authnv1.TokenReviewStatus{Authenticated: true, Audiences: tr.Spec.Audiences}
 		return true, tr, nil
 	})
-	v := TokenReviewVerifier{Reviews: cs.AuthenticationV1().TokenReviews()}
+	v := satoken.TokenReviewVerifier{Reviews: cs.AuthenticationV1().TokenReviews()}
 	if err := v.Verify(context.Background(), "tok", testAud); err != nil {
 		t.Fatalf("fake clientset path: unexpected error: %v", err)
 	}
@@ -143,7 +145,7 @@ func TestSATokenInterceptorVerifierAccepts_spec_10_3(t *testing.T) {
 // fails the call closed; the handler never runs.
 func TestSATokenInterceptorVerifierRejects_spec_10_3(t *testing.T) {
 	h, called := passHandler()
-	sv := &stubVerifier{err: ErrSATokenUnauthenticated}
+	sv := &stubVerifier{err: satoken.ErrSATokenUnauthenticated}
 	itc := RequireSATokenInterceptor(testAud, sv)
 	ctx := ctxWithBearer("forged")
 	_, err := itc(ctx, nil, &grpc.UnaryServerInfo{}, h)
@@ -159,7 +161,7 @@ func TestSATokenInterceptorVerifierRejects_spec_10_3(t *testing.T) {
 // though the token may be syntactically valid.
 func TestSATokenInterceptorVerifierTransportFailsClosed_spec_10_3(t *testing.T) {
 	h, called := passHandler()
-	sv := &stubVerifier{err: ErrSATokenReviewFailed}
+	sv := &stubVerifier{err: satoken.ErrSATokenReviewFailed}
 	itc := RequireSATokenInterceptor(testAud, sv)
 	ctx := ctxWithBearer("valid-looking")
 	_, err := itc(ctx, nil, &grpc.UnaryServerInfo{}, h)
@@ -209,7 +211,7 @@ func TestTokenReviewVerifierReportsTheAuthenticatedUser_spec_10_3(t *testing.T) 
 		}
 		return true, tr, nil
 	})
-	v := TokenReviewVerifier{Reviews: cs.AuthenticationV1().TokenReviews()}
+	v := satoken.TokenReviewVerifier{Reviews: cs.AuthenticationV1().TokenReviews()}
 
 	user, err := v.VerifyUser(context.Background(), "tok", testAud)
 	if err != nil {
@@ -221,7 +223,7 @@ func TestTokenReviewVerifierReportsTheAuthenticatedUser_spec_10_3(t *testing.T) 
 
 	// An audience the apiserver did not grant is a refusal, and reports no
 	// username: a token minted for another deployment must authorize nothing.
-	if user, err := v.VerifyUser(context.Background(), "tok", "some-other-deployment"); !errors.Is(err, ErrSATokenAudienceMismatch) || user != "" {
+	if user, err := v.VerifyUser(context.Background(), "tok", "some-other-deployment"); !errors.Is(err, satoken.ErrSATokenAudienceMismatch) || user != "" {
 		t.Fatalf("VerifyUser(other audience) = (%q, %v), want an audience mismatch with no username", user, err)
 	}
 }

@@ -77,9 +77,6 @@ packages:
   - package: pkg/gateway/billing/usagestore/pgstore
     part: domain
     step: 0117.S9
-  - package: pkg/gateway/callercheck
-    part: domain
-    step: 0117.S8
   - package: pkg/gateway/checkpoint/checkpointer
     part: core
     step: 0117.S11
@@ -272,33 +269,9 @@ packages:
   - package: pkg/gateway/experiment/ofrep
     part: removed
     removed-by: '0141'
-  - package: pkg/gateway/externalapi/admin
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/externalapi/admintoken
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/externalapi/admintoken/k8ssecret
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/externalapi/admintoken/reclaimer
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/externalapi/errorclassify
-    part: domain
-    step: 0117.S8
-  - package: pkg/gateway/externalapi/openapi
-    part: domain
-    step: 0117.S8
-  - package: pkg/gateway/externalapi/openapi/internal/genopsschemas
-    part: domain
-    step: 0117.S8
   - package: pkg/gateway/externalapi/outputpartfidelity
     part: removed
     removed-by: '0138'
-  - package: pkg/gateway/externalapi/pagination
-    part: domain
-    step: 0117.S8
   - package: pkg/gateway/llmproxy/credrouter
     part: removed
     removed-by: '0133'
@@ -323,42 +296,6 @@ packages:
   - package: pkg/gateway/mcpfabric/mcpschemagen
     part: removed
     removed-by: '0138'
-  - package: pkg/gateway/middleware/auth
-    part: domain
-    step: 0117.S8
-  - package: pkg/gateway/middleware/circuitbreaker
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/middleware/circuitbreaker/breakerstore
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/middleware/correlation
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/middleware/deprecation
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/middleware/environment
-    part: domain
-    step: 0117.S8
-  - package: pkg/gateway/middleware/idempotency
-    part: domain
-    step: 0117.S8
-  - package: pkg/gateway/middleware/idempotency/pgstore
-    part: domain
-    step: 0117.S8
-  - package: pkg/gateway/middleware/ratelimit
-    part: api-front
-    step: 0117.S8
-  - package: pkg/gateway/middleware/recover
-    part: api-front
-    step: 0117.S8
   - package: pkg/gateway/operability/recommendations
     part: domain
     step: 0117.S9
@@ -488,9 +425,6 @@ packages:
   - package: pkg/gateway/runtime/watchdog
     part: core
     step: 0117.S11
-  - package: pkg/gateway/serviceidentity
-    part: api-front
-    step: 0117.S8
   - package: pkg/gateway/session/budgetstate
     part: core
     step: 0117.S11
@@ -658,10 +592,6 @@ imports:
     to: pkg/gateway/session/executor
     rule: outside-imports
     step: 0117.S11
-  - from: pkg/gateway/quota/quotacheckpoint
-    to: pkg/gateway/externalapi/admin
-    rule: outside-imports
-    step: 0117.S8
   - from: pkg/podlifecycle
     to: pkg/gateway/podlifecycle/podclaim
     rule: outside-imports

@@ -22,7 +22,7 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpschemagen"
 )
 

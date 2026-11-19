@@ -12,6 +12,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstatus"
 )
 
 // podSet returns the PodSet of one pool: it is named after the pool, carries
@@ -623,7 +624,7 @@ func TestResolvePoolAmbiguous(t *testing.T) {
 
 // seedPoolStatus stamps the §5.2 PoolWarmingUp condition and the warm/ready
 // counts on the pool's PodSet, mirroring what the WarmPoolController writes,
-// so ResolvePool and PoolStatusLookup can be exercised against a realistic
+// so ResolvePool and poolstatus.Lookup can be exercised against a realistic
 // bootstrap-window status.
 func seedPoolStatus(t *testing.T, c client.Client, poolName string, warm, ready int32, warming bool) {
 	t.Helper()
@@ -697,7 +698,7 @@ func TestResolvePoolNotWarmingWhenReady(t *testing.T) {
 	}
 }
 
-// spec: §5.2 — PoolStatusLookup feeds the admin pool GET's
+// spec: §5.2 — poolstatus.Lookup feeds the admin pool GET's
 // poolCondition and idlePodCount. One client carries a warming pool, a
 // ready pool, and an absent pool so the three cases share one envtest.
 func TestPoolStatusLookup(t *testing.T) {
@@ -710,7 +711,7 @@ func TestPoolStatusLookup(t *testing.T) {
 	seedPoolStatus(t, c, "warming-p", 2, 0, true)
 	seedPoolStatus(t, c, "ready-p", 4, 4, false)
 
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
+	l := poolstatus.Lookup{Reader: c, Namespace: ns}
 	ctx := context.Background()
 
 	cond, idle, found, err := l.PoolStatus(ctx, "warming-p")

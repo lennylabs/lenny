@@ -23,7 +23,7 @@ import (
 	k8stesting "k8s.io/client-go/testing"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 )
 

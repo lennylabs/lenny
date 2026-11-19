@@ -14,7 +14,7 @@ import (
 	"testing"
 	"time"
 
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 )
 
 // harnessAuthOptions are the auth options of every harness replica's public

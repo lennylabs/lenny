@@ -3,7 +3,7 @@
 //go:build contract
 
 // Contract tests for the §11.5 Idempotency-Key middleware.
-// Drives pkg/gateway/middleware/idempotency wrapped around the
+// Drives pkg/idempotency/idempotencymw wrapped around the
 // §15.1 sessionserver handler via httptest.
 
 package rest_idempotency_test
@@ -17,9 +17,10 @@ import (
 	"strings"
 	"testing"
 
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -27,8 +28,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
-	idem := idemmw.NewMemoryStore()
-	wrapped := idemmw.Wrap(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), idem, idemmw.Options{})
+	idem := idempotencymw.NewMemoryStore()
+	wrapped := idempotencymw.Wrap(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice), idem, idempotencymw.Options{})
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
 	return ts
@@ -45,7 +46,7 @@ func post(t *testing.T, ts *httptest.Server, path, idemKey string, body any) (*h
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	if idemKey != "" {
-		req.Header.Set(idemmw.HeaderName, idemKey)
+		req.Header.Set(idempotencymw.HeaderName, idemKey)
 	}
 	resp, err := ts.Client().Do(req)
 	if err != nil {
@@ -68,7 +69,7 @@ func post(t *testing.T, ts *httptest.Server, path, idemKey string, body any) (*h
 //
 //	did not consult the store, or the response cache was not
 //	written on the first call. Inspect captureWriter.flush and
-//	store.Put in pkg/gateway/middleware/idempotency.
+//	store.Put in pkg/idempotency/idempotencymw.
 func TestIdempotencyReplayReturnsCachedResponse(t *testing.T) {
 	ts := newTestServer(t)
 	body := map[string]any{"runtimeRef": "claude-code"}
@@ -161,7 +162,7 @@ func TestIdempotencyTenantScoped(t *testing.T) {
 	req1, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/sessions", bytes.NewReader(mustJSON(body)))
 	req1.Header.Set("Content-Type", "application/json")
 	req1.Header.Set("X-Lenny-Tenant-ID", "acme")
-	req1.Header.Set(idemmw.HeaderName, "key-3")
+	req1.Header.Set(idempotencymw.HeaderName, "key-3")
 	resp1, err := ts.Client().Do(req1)
 	if err != nil {
 		t.Fatalf("tenant A do: %v", err)
@@ -176,7 +177,7 @@ func TestIdempotencyTenantScoped(t *testing.T) {
 	req2, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/sessions", bytes.NewReader(mustJSON(body)))
 	req2.Header.Set("Content-Type", "application/json")
 	req2.Header.Set("X-Lenny-Tenant-ID", "globex")
-	req2.Header.Set(idemmw.HeaderName, "key-3")
+	req2.Header.Set(idempotencymw.HeaderName, "key-3")
 	resp2, err := ts.Client().Do(req2)
 	if err != nil {
 		t.Fatalf("tenant B do: %v", err)

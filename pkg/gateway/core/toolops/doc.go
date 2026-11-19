@@ -9,9 +9,5 @@
 // composition root hands the platform tools seam a value of the session
 // core and never a value of a confined package.
 //
-// Callers serves the caller identity operation, which the API front owns;
-// the session core serves it until change 0117's step 0117.S8 moves the
-// request pipeline into the API front.
-//
 // spec: GWSEAM, GW
 package toolops

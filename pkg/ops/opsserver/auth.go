@@ -6,7 +6,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/observability/correlation"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"

@@ -35,8 +35,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
+	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
@@ -630,3 +630,26 @@ func RefusalError(r *seam.Refusal) *ToolError {
 // so tool handlers can distinguish the two when richer error
 // mapping lands.
 var _ = errInternal
+
+// RegisterRoutes registers the MCP transports the composition root does
+// not mount through the adapter registry. /mcp/v1/ws and
+// /mcp/environments/{name} serve clients; /mcp also serves the forward
+// listener, where the holder replica receives the platform tool calls other
+// replicas forward. Each takes no route check by
+// the API front: the listener's request pipeline authenticates the request,
+// and the MCP server applies its own checks to each call.
+//
+// spec: GWSEAM-RegisterRoutes
+func (s *Server) RegisterRoutes(routes seam.Routes) error {
+	for _, r := range []seam.Route{
+		{Listener: seam.ListenerClient, Method: seam.MethodAny, Pattern: "/mcp/v1/ws", Handler: s.WebSocketHandler()},
+		{Listener: seam.ListenerClient, Method: http.MethodPost, Pattern: "/mcp/environments/{name}", Handler: s.EnvironmentHandler()},
+		{Listener: seam.ListenerForward, Method: seam.MethodAny, Pattern: "/mcp", Handler: s.Handler()},
+	} {
+		r.Access = seam.AccessHandler
+		if err := routes.HandleRoute(r); err != nil {
+			return err
+		}
+	}
+	return nil
+}

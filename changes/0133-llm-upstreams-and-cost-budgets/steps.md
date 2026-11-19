@@ -45,7 +45,7 @@ Upstreams and removal: LU-1, LU-2, the routes and session binding of LU-3, LU-4,
 
 It needs EG-2 for the removal of `provider-direct`.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-CheckChildCredentials` with the pre-claim credential check and `GWSEAM-RotateCredential` with the credential fallback (LU-4), reshapes `GWSEAM-MaterializeChild`, which no longer assigns an LLM credential lease, and removes `GWSEAM-TenantCredentialProviders` with the tenant's `credentialPolicy`.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-CheckChildCredentials` with the pre-claim credential check and `GWSEAM-RotateCredential` with the credential fallback (LU-4), reshapes `GWSEAM-MaterializeChild`, which no longer assigns an LLM credential lease, and removes `GWSEAM-TenantCredentialProviders` with the tenant's `credentialPolicy`. It also reshapes or removes `GWSEAM-RevokePoolCredentials` and `GWSEAM-RevokeUserLeases`, through which the admin API revokes a pool credential's leases and returns a revoked user's leases, with the credential renewal propagator and the lease revoker it removes.
 
 ### 0133.S3 Rate cards and credit budgets
 - status: Planned

@@ -37,6 +37,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
 
@@ -125,7 +126,7 @@ func hookRaceOnce(t *testing.T, round int, rr hookRaceRound) bool {
 	}
 	f.seedBound(t, id, pod, rr.retries, rr.slot)
 	// spec: §10.2 (Session ownership) — the requests run as the seeded rows' owner.
-	h := ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice)
+	h := ownerprincipal.Wrap(apifront.Handler(f.srv), ownerprincipal.Alice)
 
 	start := make(chan struct{})
 	var wg sync.WaitGroup

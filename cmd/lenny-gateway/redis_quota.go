@@ -8,13 +8,13 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore/cachingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
 	coordleasepg "github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
-	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit/redisstore"

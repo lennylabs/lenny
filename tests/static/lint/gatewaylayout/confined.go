@@ -50,7 +50,6 @@ var Confined = []Confinement{
 	{Path: "pkg/auth/jwt", APIFront: true, Playground: true},
 	{Path: "pkg/auth/introspection"},
 	{Path: "pkg/tokensvcproxy"},
-	{Path: "pkg/gateway/externalapi/admintoken", APIFront: true},
 	{Path: "pkg/gateway/api/admintoken", APIFront: true},
 	{Path: "pkg/gateway/storage/issuedtokenstore", APIFront: true, Playground: true},
 	{Path: "pkg/storage/issuedtokenstore", APIFront: true, Playground: true},
@@ -60,7 +59,6 @@ var Confined = []Confinement{
 	{Path: "pkg/tokenexchange"},
 	{Path: "pkg/tokenservice"},
 	{Path: "pkg/proto/tokenservice/v1", APIFront: true},
-	{Path: "pkg/gateway/serviceidentity", APIFront: true},
 	{Path: "pkg/gateway/api/serviceidentity", APIFront: true},
 	{Path: "pkg/gateway/pki/carotation", APIFront: true},
 	{Path: "pkg/gateway/pki/carotationstore", APIFront: true},
@@ -71,8 +69,7 @@ var Confined = []Confinement{
 	{Path: "pkg/kms"},
 	{Path: "pkg/tenantkms"},
 	// The admission packages.
-	{Path: "pkg/gateway/middleware/auth", APIFront: true},
-	{Path: "pkg/auth/auth", APIFront: true},
+	{Path: "pkg/auth/authmw", APIFront: true},
 	{Path: "pkg/gateway/quota", APIFront: true},
 	{Path: "pkg/quota", APIFront: true},
 	{Path: "pkg/gateway/policy/interceptor", APIFront: true},
@@ -84,7 +81,6 @@ var Confined = []Confinement{
 	{Path: "pkg/gateway/environment/tenantstore", APIFront: true, Playground: true},
 	{Path: "pkg/tenancy/tenantstore", APIFront: true, Playground: true},
 	// The authorization predicates.
-	{Path: "pkg/gateway/callercheck"},
 	{Path: "pkg/auth/callercheck"},
 	{Path: "pkg/gateway/environment/envaccess"},
 	{Path: "pkg/tenancy/envaccess"},

@@ -41,7 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
@@ -222,7 +223,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body))
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()
-			ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice).ServeHTTP(rr, req)
+			ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice).ServeHTTP(rr, req)
 			return rr
 		}
 		before := ledger.count()
@@ -272,7 +273,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 	t.Run("delegated child during a tenant-store outage", func(t *testing.T) {
 		mcpSrv := mcp.NewServer()
 		mcptools.Register(mcpSrv, mcptools.Deps{
-			Callers:           toolops.Callers{},
+			Callers:           pipeline.Callers{},
 			SessionService:    ownerprincipal.ToolAccess{},
 			SessionAccess:     ownerprincipal.ToolAccess{},
 			DevTenantFallback: true,

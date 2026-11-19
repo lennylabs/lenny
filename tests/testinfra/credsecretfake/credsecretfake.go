@@ -22,7 +22,7 @@ import (
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 )
 
 // Writer is the fake credentials namespace. The zero value is not usable;

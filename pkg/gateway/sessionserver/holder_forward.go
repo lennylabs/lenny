@@ -25,10 +25,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
@@ -373,7 +373,7 @@ func (s *Server) refuseForward(w http.ResponseWriter, ctx context.Context, row s
 	if outcome == ForwardNotDelivered && HoldsUndelivered(row, kind) {
 		return
 	}
-	idemmw.DoNotStore(ctx)
+	idempotencymw.DoNotStore(ctx)
 	if kind == ForwardKindResponsesTurn && refuse != nil {
 		refuse(w, string(row.State))
 		return
@@ -501,7 +501,7 @@ func copyForwardResponse(ctx context.Context, w http.ResponseWriter, resp *http.
 	live := isLiveStream(resp)
 	h := resp.Header.Clone()
 	if h.Get(forwardNoStoreHeader) != "" {
-		idemmw.DoNotStore(ctx)
+		idempotencymw.DoNotStore(ctx)
 	}
 	for _, name := range h.Values("Connection") {
 		for _, f := range strings.Split(name, ",") {
@@ -516,7 +516,7 @@ func copyForwardResponse(ctx context.Context, w http.ResponseWriter, resp *http.
 	}
 	w.WriteHeader(resp.StatusCode)
 	if err := copyBody(w, resp.Body, live); err != nil {
-		idemmw.DoNotStore(ctx)
+		idempotencymw.DoNotStore(ctx)
 		return ForwardUnknown
 	}
 	return ForwardDelivered
@@ -629,7 +629,7 @@ func (s *Server) ForwardToolCall(ctx context.Context, row sessionstore.Session, 
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 6 and 7
 func RefuseToolForward(ctx context.Context, row sessionstore.Session) error {
-	idemmw.DoNotStore(ctx)
+	idempotencymw.DoNotStore(ctx)
 	return seam.TargetNotReady(state.State(row.State))
 }
 
@@ -671,7 +671,7 @@ func newToolForwardRequest(ctx context.Context, addr, tool string, arguments jso
 // none of them decodes the response.
 func decodeToolForwardResponse(ctx context.Context, resp *http.Response) (seam.ToolResult, *seam.Refusal, bool) {
 	if resp.Header.Get(forwardNoStoreHeader) != "" {
-		idemmw.DoNotStore(ctx)
+		idempotencymw.DoNotStore(ctx)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxForwardedToolResponse))
 	if err != nil {

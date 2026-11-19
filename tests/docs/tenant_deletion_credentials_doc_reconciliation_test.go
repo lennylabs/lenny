@@ -269,7 +269,7 @@ func TestAdminReferenceTenantAndInvalidateEntriesNameRefusals(t *testing.T) {
 		"`POST /v1/admin/tenants` rejects it with `422 RESERVED_IDENTIFIER`")
 	// The listing-failure status is the handler's: the spec names no status
 	// for it, so the check reads the code that answers it.
-	users := readDocPage(t, filepath.Join(root, "pkg", "gateway", "externalapi", "admin", "users.go"))
+	users := readDocPage(t, filepath.Join(root, "pkg", "gateway", "api", "admin", "users.go"))
 	if !strings.Contains(users, `"INTERNAL_ERROR",
 			"session listing failed: "+rep.listingError, fields)`) {
 		t.Fatalf("users.go no longer answers a full_revoke listing failure with INTERNAL_ERROR and the counts; re-derive this check")

@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )
@@ -100,7 +101,7 @@ func (f *resumeCapFixture) do(t *testing.T, method, path, body string) (int, map
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
 	// spec: §10.2 (Session ownership) — the requests run as the rows' owner.
-	ownerprincipal.Wrap(f.srv.Handler(), "alice").ServeHTTP(rec, req)
+	ownerprincipal.Wrap(apifront.Handler(f.srv), "alice").ServeHTTP(rec, req)
 	var out map[string]any
 	_ = json.Unmarshal(rec.Body.Bytes(), &out)
 	return rec.Code, out

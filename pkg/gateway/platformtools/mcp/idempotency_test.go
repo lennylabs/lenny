@@ -12,8 +12,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
 
 // rpcWithTenant POSTs an MCP JSON-RPC request and sets the
@@ -43,7 +43,7 @@ func TestMCPIdempotency_ReplaysCachedToolResult_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: `{"sessionId":"sess-1","state":"running"}`}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idemmw.NewMemoryStore(),
+		Store:             idempotencymw.NewMemoryStore(),
 		TenantFromRequest: func(r *http.Request) string { return r.Header.Get("X-Lenny-Tenant-ID") },
 		Tools:             map[string]bool{"lenny/create_session": true},
 	})
@@ -81,7 +81,7 @@ func TestMCPIdempotency_ToolErrorReleasesPending_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idemmw.NewMemoryStore(),
+		Store:             idempotencymw.NewMemoryStore(),
 		TenantFromRequest: func(r *http.Request) string { return r.Header.Get("X-Lenny-Tenant-ID") },
 		Tools:             map[string]bool{"lenny/delegate_task": true},
 	})
@@ -116,7 +116,7 @@ func TestMCPIdempotency_ConcurrentRetryInFlight_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "done"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idemmw.NewMemoryStore(),
+		Store:             idempotencymw.NewMemoryStore(),
 		TenantFromRequest: func(r *http.Request) string { return r.Header.Get("X-Lenny-Tenant-ID") },
 		Tools:             map[string]bool{"lenny/create_session": true},
 	})
@@ -151,7 +151,7 @@ func TestMCPIdempotency_DifferentBodyRejected_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "first"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idemmw.NewMemoryStore(),
+		Store:             idempotencymw.NewMemoryStore(),
 		TenantFromRequest: func(r *http.Request) string { return r.Header.Get("X-Lenny-Tenant-ID") },
 		Tools:             map[string]bool{"lenny/create_session": true},
 	})
@@ -176,7 +176,7 @@ func TestMCPIdempotency_NonAllowlistedToolIgnoresKey_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idemmw.NewMemoryStore(),
+		Store:             idempotencymw.NewMemoryStore(),
 		TenantFromRequest: func(r *http.Request) string { return r.Header.Get("X-Lenny-Tenant-ID") },
 		Tools:             map[string]bool{"lenny/create_session": true}, // send_message NOT in list
 	})
@@ -200,7 +200,7 @@ func TestMCPIdempotency_FailsClosedWhenTenantMissing_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idemmw.NewMemoryStore(),
+		Store:             idempotencymw.NewMemoryStore(),
 		TenantFromRequest: func(_ *http.Request) string { return "" },
 		Tools:             map[string]bool{"lenny/create_session": true},
 	})
@@ -223,7 +223,7 @@ func TestMCPIdempotency_NoKeyFallsThrough_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idemmw.NewMemoryStore(),
+		Store:             idempotencymw.NewMemoryStore(),
 		TenantFromRequest: func(r *http.Request) string { return r.Header.Get("X-Lenny-Tenant-ID") },
 		Tools:             map[string]bool{"lenny/create_session": true},
 	})
@@ -242,7 +242,7 @@ func TestMCPIdempotency_NoKeyFallsThrough_spec_11_5(t *testing.T) {
 // per pkg/gateway/mcp/idempotency.go's mcpKey helper. Regression
 // guard. Closes F-11.5.1.
 func TestMCPIdempotency_KeyNamespacing_spec_11_5(t *testing.T) {
-	store := idemmw.NewMemoryStore()
+	store := idempotencymw.NewMemoryStore()
 	s := mcp.NewServer()
 	s.RegisterTool(mcp.Tool{Name: "lenny/create_session", InputSchema: json.RawMessage(`{}`)},
 		func(_ context.Context, _ json.RawMessage) (mcp.ToolResult, error) {

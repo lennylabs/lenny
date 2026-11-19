@@ -3,8 +3,8 @@
 package adapterregistry
 
 import (
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 )
 
 // CallerIdentity is the §15 projection of the authenticated caller's JWT

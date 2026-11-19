@@ -27,9 +27,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	gwevents "github.com/lennylabs/lenny/pkg/events"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	opsstream "github.com/lennylabs/lenny/pkg/ops/events"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 )

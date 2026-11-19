@@ -11,9 +11,9 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 )
 
@@ -125,7 +125,7 @@ func writeListenerError(w http.ResponseWriter, err error) {
 type forwardedMarker struct{ inner http.Handler }
 
 func (m forwardedMarker) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	r = r.WithContext(idemmw.WithGate(WithForwarded(r.Context())))
+	r = r.WithContext(idempotencymw.WithGate(WithForwarded(r.Context())))
 	m.inner.ServeHTTP(&noStoreMarkWriter{ResponseWriter: w, r: r}, r)
 }
 
@@ -140,7 +140,7 @@ type noStoreMarkWriter struct {
 func (w *noStoreMarkWriter) WriteHeader(status int) {
 	if !w.wroteHeader {
 		w.wroteHeader = true
-		if idemmw.NotStored(w.r.Context()) {
+		if idempotencymw.NotStored(w.r.Context()) {
 			w.Header().Set(forwardNoStoreHeader, "1")
 		}
 	}

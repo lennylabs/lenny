@@ -12,12 +12,13 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // spec: §15.1 tool-use approve/deny + elicitation respond/dismiss.
@@ -65,7 +66,7 @@ func TestToolUseApprove(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("approve: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -85,7 +86,7 @@ func TestToolUseDenyWithReason(t *testing.T) {
 		strings.NewReader(`{"reason":"unsafe"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("deny: %d", rr.Code)
 	}
@@ -105,7 +106,7 @@ func TestElicitationRespond(t *testing.T) {
 		strings.NewReader(`{"response":"yes"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("respond: %d, body=%s", rr.Code, rr.Body.String())
 	}
@@ -123,7 +124,7 @@ func TestElicitationDismiss(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/elicitations/el_1/dismiss", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Fatalf("dismiss: %d", rr.Code)
 	}
@@ -137,7 +138,7 @@ func TestToolUseApproveUnknownReturns404(t *testing.T) {
 	srv, _ := newInteractionServer(t)
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_missing/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("unknown tool call: %d, want 404", rr.Code)
 	}
@@ -163,7 +164,7 @@ func TestElicitationRespondWrongUserReturns404(t *testing.T) {
 	ctx := authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "bob", TenantID: "acme"})
 	req = req.WithContext(ctx)
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("wrong-user respond: %d, want 404", rr.Code)
 	}
@@ -195,7 +196,7 @@ func TestElicitationRespondUnknownOnOwnSessionReturnsElicitationNotFound(t *test
 		strings.NewReader(`{"response":"x"}`)))
 	req.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
-	srv.Handler().ServeHTTP(rr, req)
+	apifront.Handler(srv).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound || !strings.Contains(rr.Body.String(), `"ELICITATION_NOT_FOUND"`) {
 		t.Errorf("unknown elicitation on own session = %d %s, want 404 ELICITATION_NOT_FOUND", rr.Code, rr.Body.String())
 	}
@@ -210,7 +211,7 @@ func TestDoubleResolveReturns409(t *testing.T) {
 	for i, want := range []int{http.StatusOK, http.StatusConflict} {
 		req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 		rr := httptest.NewRecorder()
-		asOwner(srv.Handler()).ServeHTTP(rr, req)
+		asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 		if rr.Code != want {
 			t.Errorf("resolve #%d: got %d, want %d", i, rr.Code, want)
 		}
@@ -226,7 +227,7 @@ func TestKindMismatchReturns404(t *testing.T) {
 	})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/el_1/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Errorf("kind mismatch: %d, want 404", rr.Code)
 	}
@@ -236,7 +237,7 @@ func TestInteractionsUnavailableWhenUnwired(t *testing.T) {
 	srv := newServer(t, aliceSessions(t), sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Errorf("unwired: %d, want 503", rr.Code)
 	}
@@ -331,7 +332,7 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 			req := asAlice(httptest.NewRequest(http.MethodPost, c.path, body))
 			req.Header.Set("Content-Type", "application/json")
 			rr := httptest.NewRecorder()
-			asOwner(srv.Handler()).ServeHTTP(rr, req)
+			asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 			if rr.Code != http.StatusOK {
 				t.Fatalf("status = %d, want 200; body=%s", rr.Code, rr.Body.String())
 			}
@@ -384,7 +385,7 @@ func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 	// No interaction seeded.
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_a/tool-use/tc_x/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", rr.Code)
 	}
@@ -407,7 +408,7 @@ func TestInteractionResolutionAuditNilSinkIsSafe(t *testing.T) {
 	}
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_a/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
-	asOwner(srv.Handler()).ServeHTTP(rr, req)
+	asOwner(apifront.Handler(srv)).ServeHTTP(rr, req)
 	if rr.Code != http.StatusOK {
 		t.Errorf("nil sink: status = %d, want 200", rr.Code)
 	}

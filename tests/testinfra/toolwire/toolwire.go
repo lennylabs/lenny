@@ -15,18 +15,19 @@ package toolwire
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // Attach builds the platform tools seam's route handler from opts and
-// registers its routes with srv, before srv serves. Each seam field of opts
-// left nil is filled with srv's own side of the operation, and the caller
-// identity with the request plumbing's, as the composition root fills them,
-// so a test sets only the fields it replaces with a fake. opts.Store is the
-// session store srv was built over, which the tree read walks. It fails the
-// test on a wiring error.
+// registers its routes through the API front route table srv mounts, before
+// srv serves. Each seam field of opts left nil is filled with srv's own side
+// of the operation, and the caller identity with the request plumbing's, as
+// the composition root fills them, so a test sets only the fields it
+// replaces with a fake. opts.Store is the session store srv was built over,
+// which the tree read walks. It fails the test on a wiring error.
 func Attach(t testing.TB, srv *sessionserver.Server, opts platformtools.Options) *platformtools.Handler {
 	t.Helper()
 	core := srv.ToolsSeam()
@@ -34,19 +35,19 @@ func Attach(t testing.TB, srv *sessionserver.Server, opts platformtools.Options)
 		opts.Sessions = core
 	}
 	if opts.Identity == nil {
-		opts.Identity = core
+		opts.Identity = pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()}
 	}
 	if opts.ActiveCallers == nil {
 		opts.ActiveCallers = core
 	}
 	if opts.Callers == nil {
-		opts.Callers = toolops.Callers{}
+		opts.Callers = pipeline.Callers{}
 	}
 	h, err := platformtools.New(opts)
 	if err != nil {
 		t.Fatalf("toolwire: build the platform tools routes: %v", err)
 	}
-	if err := h.RegisterRoutes(srv); err != nil {
+	if err := h.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatalf("toolwire: register the platform tools routes: %v", err)
 	}
 	return h

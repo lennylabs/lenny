@@ -11,6 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
@@ -18,7 +20,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
@@ -456,8 +457,12 @@ func (w *gatewayWiring) buildSessionServer(
 		CallbackSeal:       callbackSeal,
 		CallbackDispatcher: callbackDispatcher,
 	})
-	attachUploadHandler(srv, w.podBinder, w.blobs, w.runtimes, uploadSubsystem, uploadMetrics, uploadFlags)
-	attachStreamProxy(srv, w.eventBus)
+	// The API front's route table: each part registers its routes through
+	// it, and the API front's request pipeline mounts from it the routes
+	// with a tenant, session, or permission check behind that check.
+	w.apiRoutes = routetable.New()
+	attachUploadHandler(srv, w.apiRoutes, w.podBinder, w.blobs, w.runtimes, uploadSubsystem, uploadMetrics, uploadFlags)
+	attachStreamProxy(srv, w.apiRoutes, w.eventBus)
 	// The platform tools seam's packages register their own metric
 	// collectors on the gateway's metric registry (decision 21 of change
 	// 0117). The seam's client routes take its tree cycle counter, and the
@@ -468,7 +473,7 @@ func (w *gatewayWiring) buildSessionServer(
 		log.Fatalf("lenny-gateway: platform tools metrics: %v", ptMetricsErr)
 	}
 	w.platformToolsMetrics = ptMetrics
-	attachToolRoutes(srv, w.sessions, w.interactions, w.toolApprovalWaits, auditAppender, ptMetrics.tools)
+	attachToolRoutes(srv, w.apiRoutes, w.sessions, w.interactions, w.toolApprovalWaits, auditAppender, ptMetrics.tools)
 	return srv
 }
 

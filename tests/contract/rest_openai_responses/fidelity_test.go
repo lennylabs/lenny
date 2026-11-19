@@ -22,6 +22,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
@@ -81,7 +82,7 @@ func newResponsesServers(t *testing.T, clock func() time.Time, ids ...string) (*
 	tsResp := httptest.NewServer(ownerprincipal.Wrap(respHandler.Handler(), ownerprincipal.Alice))
 	t.Cleanup(tsResp.Close)
 
-	tsREST := httptest.NewServer(ownerprincipal.Wrap(restHandler.Handler(), ownerprincipal.Alice))
+	tsREST := httptest.NewServer(ownerprincipal.Wrap(apifront.Handler(restHandler), ownerprincipal.Alice))
 	t.Cleanup(tsREST.Close)
 
 	return tsResp, tsREST, store

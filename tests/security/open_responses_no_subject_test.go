@@ -11,7 +11,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 )
 
 // spec: §10.2 (Session ownership) rule 3, §15 (Open Responses conversation sessions), §15.1 (UNAUTHORIZED)

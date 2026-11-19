@@ -5,12 +5,11 @@ package sessionserver_test
 import (
 	"context"
 	"errors"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -63,20 +62,6 @@ func TestAdmitActiveCallerAnswersTheUserLifecycleCheck(t *testing.T) {
 	err := failing.AdmitActiveCaller(as("active"), "cannot resolve interactions")
 	if _, refused := seam.IsRefusal(err); err == nil || refused || !strings.HasPrefix(err.Error(), "user-invalidation check failed: ") {
 		t.Errorf("failed read: %v, want the failed check's error", err)
-	}
-}
-
-// TestToolsSeamRequestTenantReadsTheRequestsTenant checks that the session
-// core serves the request tenant to the platform tools seam's routes as the
-// session routes resolve it.
-//
-// spec: GWSEAM-RequestTenant
-func TestToolsSeamRequestTenantReadsTheRequestsTenant(t *testing.T) {
-	core := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true}).ToolsSeam()
-	req := httptest.NewRequest("GET", "/v1/sessions/s/tree", nil)
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	if got := core.RequestTenant(req); got != "acme" {
-		t.Errorf("tenant %q, want acme", got)
 	}
 }
 

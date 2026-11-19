@@ -5,7 +5,7 @@
 // Integration test: the §25.1 agent correlation headers
 // (X-Lenny-Operation-ID, X-Lenny-Agent-Name) survive the full
 // header-to-persisted-audit-event journey. The journey crosses the
-// correlation middleware (pkg/gateway/middleware/correlation), the
+// correlation middleware (pkg/gateway/api/correlation), the
 // admin mutation handler (pkg/gateway/externalapi/admin), the §11.7
 // Postgres-backed audit hash chain (pkg/gateway/audit/auditstore), and
 // the §11.7 OCSF translator (pkg/audit/ocsf) at the audit-events read
@@ -26,13 +26,14 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	correlationmw "github.com/lennylabs/lenny/pkg/gateway/api/correlation"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
@@ -86,7 +87,7 @@ func TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF(t *testing.T) {
 	store := auditstore.New(pg.Router(t))
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: clock,
-		Audit: admin.NewAuditLogSink(store, clock),
+		Audit: adminaudit.NewLogSink(store, clock),
 	}).WithAuditLog(store)
 
 	// The correlation middleware is the production entry point that reads

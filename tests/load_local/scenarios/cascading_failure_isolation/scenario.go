@@ -6,7 +6,7 @@
 // breaker isolation invariant: an operator-opened breaker scoped to
 // one operation type must reject only requests matching that scope;
 // requests for other operations pass through. The scenario drives
-// the real pkg/gateway/middleware/circuitbreaker + the in-process
+// the real pkg/gateway/api/circuitbreaker + the in-process
 // circuitbreaker.MemoryRegistry against two distinct request
 // shapes — one matching the open breaker (uploads), one not
 // (session creation) — and verifies the unmatched class is unaffected.
@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
-	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	cbmw "github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )

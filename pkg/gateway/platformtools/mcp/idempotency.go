@@ -10,8 +10,8 @@ import (
 	"strings"
 	"time"
 
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
 	"github.com/lennylabs/lenny/pkg/idempotency"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
 
 // IdempotencyConfig wires the §11.5 idempotency primitives onto MCP
@@ -29,7 +29,7 @@ import (
 // replay would deliver a malformed payload.
 type IdempotencyConfig struct {
 	// Store is the §11.5 cache. Required for MCP idempotency.
-	Store idemmw.Store
+	Store idempotencymw.Store
 	// TenantFromRequest extracts the tenant id from the inbound HTTP
 	// request. Set to the same function the §11.5 HTTP middleware uses
 	// so MCP and REST stay coherent under one auth chain.

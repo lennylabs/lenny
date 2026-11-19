@@ -6,14 +6,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
@@ -153,27 +151,6 @@ func TestStreamSeamAuthorizeAppliesThePermissionGateAndTheOwnershipRule(t *testi
 				t.Fatalf("got (%+v, %v), want the session record", got, err)
 			}
 		})
-	}
-}
-
-// TestStreamSeamRequestTenantResolvesTheTenantAsTheSessionRoutesDo checks
-// that the request identity operation returns the principal's tenant, under
-// the dev header posture the header's tenant, and outside it no tenant.
-//
-// spec: GWSEAM-RequestTenant
-func TestStreamSeamRequestTenantResolvesTheTenantAsTheSessionRoutesDo(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/x", nil)
-	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "bob@acme.com", TenantID: "acme"}))
-	if got := sessionserver.New(memstore.New(), sessionserver.Options{}).StreamSeam().RequestTenant(req); got != "acme" {
-		t.Errorf("principal tenant = %q, want acme", got)
-	}
-	dev := httptest.NewRequest(http.MethodGet, "/v1/x", nil)
-	dev.Header.Set("X-Lenny-Tenant-ID", "globex")
-	if got := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true}).StreamSeam().RequestTenant(dev); got != "globex" {
-		t.Errorf("dev header tenant = %q, want globex", got)
-	}
-	if got := sessionserver.New(memstore.New(), sessionserver.Options{}).StreamSeam().RequestTenant(dev); got != "" {
-		t.Errorf("dev header outside dev mode = %q, want empty", got)
 	}
 }
 

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // DefaultTerminationGraceSeconds is the §4.4 default the
@@ -524,4 +525,22 @@ func (h *Hook) logf(format string, args ...any) {
 func writeJSON(w http.ResponseWriter, code int, summary Summary) {
 	w.WriteHeader(code)
 	_ = json.NewEncoder(w).Encode(summary)
+}
+
+// RegisterRoutes registers the preStop hook on the internal listener for
+// the POST and GET methods, the latter for the kubelet's
+// lifecycle.preStop.httpGet. The hook takes no check by the API front: the
+// internal port's NetworkPolicy scopes who reaches it.
+//
+// spec: GWSEAM-RegisterRoutes
+func (h *Hook) RegisterRoutes(routes seam.Routes) error {
+	for _, method := range []string{http.MethodPost, http.MethodGet} {
+		if err := routes.HandleRoute(seam.Route{
+			Listener: seam.ListenerInternal, Method: method, Pattern: "/internal/prestop",
+			Access: seam.AccessHandler, Handler: h,
+		}); err != nil {
+			return err
+		}
+	}
+	return nil
 }

@@ -15,9 +15,10 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/responsesstub"
 
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
@@ -134,7 +135,14 @@ func TestHolderForwardServerServesOnlyTheSessionAndMCPSurfaces_spec_29_3(t *test
 			w.Header().Set("X-Surface", name)
 		})
 	}
-	srv := newHolderForwardServer(":0", serverTLS, holderForwardInner(mark("sessions"), mark("mcp"), mark("responses")), devAuthOptionsForTest(), memstore.New())
+	table := routetable.New()
+	// The request pipeline serves the forward listener's session paths.
+	if err := table.MountSessionPaths(seam.ListenerForward, mark("sessions")); err != nil {
+		t.Fatal(err)
+	}
+	routetable.HandlerMux{Routes: table, Listener: seam.ListenerForward}.Handle("/mcp", mark("mcp"))
+	registerForwardResponses(table, mark("responses"))
+	srv := newHolderForwardServer(":0", serverTLS, table.Handler(seam.ListenerForward), devAuthOptionsForTest(), memstore.New())
 	if srv.TLSConfig != serverTLS || srv.ReadHeaderTimeout == 0 {
 		t.Fatalf("server TLS or header timeout not set: %+v", srv)
 	}
@@ -160,7 +168,9 @@ func TestHolderForwardInnerRoutesOnlyTheResponsesCreate_spec_29_3(t *testing.T) 
 	responses := http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
 		reached = append(reached, r.Method+" "+r.URL.Path)
 	})
-	inner := holderForwardInner(http.NotFoundHandler(), http.NotFoundHandler(), responses)
+	table := routetable.New()
+	registerForwardResponses(table, responses)
+	inner := table.Handler(seam.ListenerForward)
 	for _, c := range []struct {
 		method, path string
 		routed       bool
@@ -204,7 +214,8 @@ func TestHolderForwardListenerBuildsStartsAndStopsWithTheRESTListener_spec_10_3(
 		HolderForwarder: responsesstub.LocalForwarder{},
 		Terminal:        responsesstub.ReleasingTerminal{},
 	})
-	w.buildHolderForwardServer(sessionserver.New(memstore.New(), sessionserver.Options{}), mcp.NewServer())
+	w.apiRoutes = routetable.New()
+	w.buildHolderForwardServer()
 	if w.holderForwardSrv == nil || w.holderForwardSrv.Addr != listen {
 		t.Fatalf("forward server = %+v, want one bound to %s", w.holderForwardSrv, listen)
 	}
@@ -235,7 +246,7 @@ func TestHolderForwardListenerBuildsStartsAndStopsWithTheRESTListener_spec_10_3(
 
 	off := &gatewayWiring{f: w.f}
 	off.buildHolderForwardTransport()
-	off.buildHolderForwardServer(nil, nil)
+	off.buildHolderForwardServer()
 	off.startHolderForwardListener()
 	if off.holderForwardClient != nil || off.holderForwardSrv != nil {
 		t.Error("a gateway without the forward enabled built a client or a listener")

@@ -25,6 +25,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
@@ -33,7 +34,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore/failover/redisstream"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -100,7 +100,7 @@ func TestRefusedPlaygroundMintAfterPhase4AuditsOnPlatformChain_spec_12_8(t *test
 	signer := jwt.NewHMACSigner("tenant-deletion-sec", []byte("tenant-deletion-playground-secret"))
 	h := playground.New(playground.Config{Enabled: true, AuthMode: playground.AuthModeAPIKey, MultiTenant: true},
 		playground.Options{Signer: jwtsign.HMAC(signer), Verifier: signer, Tenants: tenantpg.New(pg.Pool)}).
-		WithAuditEmitter(playground.ChainAuditEmitter{Sink: admin.NewAuditLogSink(auditstore.New(pg.Router(t)), nil)})
+		WithAuditEmitter(playground.ChainAuditEmitter{Sink: adminaudit.NewLogSink(auditstore.New(pg.Router(t)), nil)})
 	srv := httptest.NewServer(h.TokenRoutes())
 	defer srv.Close()
 	bearer, err := signer.Sign(jwt.Claims{

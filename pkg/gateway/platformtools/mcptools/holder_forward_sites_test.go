@@ -22,8 +22,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -31,6 +30,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
@@ -432,8 +432,8 @@ func TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5
 			fwd, leases := f.forwarder(t, "gw-b.00@"+target.addr(t))
 			srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd.ToolsSeam() })
 			mkSession(t, store, "sess_t", session.StateRunning, "")
-			cache := idemmw.NewMemoryStore()
-			h := authmw.Wrap(idemmw.Wrap(srv.Handler(), cache, idemmw.Options{}), devAuth)
+			cache := idempotencymw.NewMemoryStore()
+			h := authmw.Wrap(idempotencymw.Wrap(srv.Handler(), cache, idempotencymw.Options{}), devAuth)
 			for i := 0; i < 2; i++ {
 				rec := keyedCancel(h, "cancel-key")
 				var resp map[string]any

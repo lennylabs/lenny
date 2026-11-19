@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 
@@ -203,3 +204,28 @@ func (h *ForcedDrainHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // ErrAuditAppenderUnset is returned by callers that construct a
 // ForcedDrainHandler without an Appender.
 var ErrAuditAppenderUnset = errors.New("drainreadiness: AuditAppender is required")
+
+// RegisterRoutes registers the drain-readiness endpoint on the internal
+// listener, which the drain admission webhook probes. It takes no check by
+// the API front: the internal port's NetworkPolicy scopes who reaches it.
+//
+// spec: GWSEAM-RegisterRoutes
+func (h *Handler) RegisterRoutes(routes seam.Routes) error {
+	return routes.HandleRoute(seam.Route{
+		Listener: seam.ListenerInternal, Method: http.MethodGet, Pattern: "/internal/drain-readiness",
+		Access: seam.AccessHandler, Handler: h,
+	})
+}
+
+// RegisterRoutes registers the forced-drain audit endpoint on the internal
+// listener, to which the drain admission webhook posts a drain-force
+// override. It takes no check by the API front: the webhook's egress
+// NetworkPolicy is the only path that reaches it.
+//
+// spec: GWSEAM-RegisterRoutes
+func (h *ForcedDrainHandler) RegisterRoutes(routes seam.Routes) error {
+	return routes.HandleRoute(seam.Route{
+		Listener: seam.ListenerInternal, Method: http.MethodPost, Pattern: "/internal/audit/node-drain-forced",
+		Access: seam.AccessHandler, Handler: h,
+	})
+}

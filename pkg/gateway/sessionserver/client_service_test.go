@@ -11,12 +11,13 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -49,6 +50,7 @@ func TestServiceCall_PassthroughAndError_spec_15_2_3(t *testing.T) {
 	ctx := ownerCtx(context.Background())
 	_ = store.Create(ctx, sessionstore.Session{UserID: testOwner, ID: "s1", TenantID: "acme", State: session.StateRunning, CreatedAt: time.Unix(1, 0)})
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	apifront.Pipeline(srv)
 
 	res, svcErr := srv.ServiceCall(ctx, "acme", http.MethodGet, "/v1/sessions/s1", nil, "", nil)
 	if svcErr != nil {
@@ -83,6 +85,7 @@ func TestServiceCall_PassthroughAndError_spec_15_2_3(t *testing.T) {
 // (shared error envelope).
 func TestServiceCall_NonEnvelopeBodyFallback(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
+	apifront.Pipeline(srv)
 
 	_, svcErr := srv.ServiceCall(context.Background(), "acme", http.MethodGet, "/no/such/route", nil, "", nil)
 	if svcErr == nil {

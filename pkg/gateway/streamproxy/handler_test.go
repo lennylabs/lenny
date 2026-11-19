@@ -12,12 +12,14 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
 // recordingRoutes records the routes a part registers and refuses the
@@ -43,10 +45,10 @@ func (r *recordingRoutes) HandleRoute(route seam.Route) error {
 // spec: GWSEAM-LookupSession, GWSEAM-ResumedFrame, GWSEAM-RequestTenant
 func TestNewRefusesOptionsWithoutTheCoreOperations(t *testing.T) {
 	core := sessionserver.New(memstore.New(), sessionserver.Options{}).StreamSeam()
-	full := streamproxy.Options{Sessions: core, Frames: core, Identity: core}
+	full := streamproxy.Options{Sessions: core, Frames: core, Identity: pipeline.Identity{}}
 	for name, opts := range map[string]streamproxy.Options{
-		"no sessions": {Frames: core, Identity: core},
-		"no frames":   {Sessions: core, Identity: core},
+		"no sessions": {Frames: core, Identity: pipeline.Identity{}},
+		"no frames":   {Sessions: core, Identity: pipeline.Identity{}},
 		"no identity": {Sessions: core, Frames: core},
 	} {
 		t.Run(name, func(t *testing.T) {
@@ -68,7 +70,7 @@ func TestNewRefusesOptionsWithoutTheCoreOperations(t *testing.T) {
 // spec: GWSEAM-RegisterRoutes
 func TestRegisterRoutesNamesTheClientListenerAndTheSessionReadCheck(t *testing.T) {
 	core := sessionserver.New(memstore.New(), sessionserver.Options{}).StreamSeam()
-	h, err := streamproxy.New(streamproxy.Options{Events: sessionevents.NewBus(0), Sessions: core, Frames: core, Identity: core})
+	h, err := streamproxy.New(streamproxy.Options{Events: sessionevents.NewBus(0), Sessions: core, Frames: core, Identity: pipeline.Identity{DevTenantHeader: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -124,15 +126,15 @@ func TestStreamsAnswerAStoreFailureAsAnInternalError(t *testing.T) {
 		Events:   sessionevents.NewBus(0),
 		Sessions: failingSessions{Sessions: core, err: errors.New("postgres unavailable")},
 		Frames:   core,
-		Identity: core,
+		Identity: pipeline.Identity{DevTenantHeader: true},
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.RegisterRoutes(srv); err != nil {
+	if err := h.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatal(err)
 	}
-	ts := httptest.NewServer(asOwner(srv.Handler()))
+	ts := httptest.NewServer(asOwner(apifront.Handler(srv)))
 	defer ts.Close()
 	for _, path := range []string{"/v1/sessions/sess_fail/events", "/v1/sessions/sess_fail/logs"} {
 		req, _ := http.NewRequest(http.MethodGet, ts.URL+path, nil)
@@ -168,14 +170,14 @@ func TestStreamsTreatANilBusPointerAsNoBus(t *testing.T) {
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	core := srv.StreamSeam()
 	var bus *sessionevents.Bus
-	h, err := streamproxy.New(streamproxy.Options{Events: bus, Sessions: core, Frames: core, Identity: core})
+	h, err := streamproxy.New(streamproxy.Options{Events: bus, Sessions: core, Frames: core, Identity: pipeline.Identity{DevTenantHeader: true}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := h.RegisterRoutes(srv); err != nil {
+	if err := h.RegisterRoutes(apifront.Routes(srv)); err != nil {
 		t.Fatal(err)
 	}
-	handler := asOwner(srv.Handler())
+	handler := asOwner(apifront.Handler(srv))
 	for _, path := range []string{"/v1/sessions/sess_nilbus/events", "/v1/sessions/sess_nilbus/logs"} {
 		req := httptest.NewRequest(http.MethodGet, path, nil)
 		req.Header.Set("X-Lenny-Tenant-ID", "acme")

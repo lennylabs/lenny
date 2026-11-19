@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
@@ -163,10 +163,10 @@ func TestHolderForwardListenerAnswersATransientCallingSessionReadAsServiceUnavai
 	m := gatewaypki.Mint(t)
 	addr := startTLSServer(t, serverTLSFor(t, m, gatewaypki.LeafFiles{CertFile: m.CertFile, KeyFile: m.KeyFile}), h)
 	s := forwardServer(leasesHeldBy("gw-b.00@"+addr), "gw-a.00@10.0.0.1:1", testForwardClient(t, m, time.Second))
-	ctx := idemmw.WithGate(authmw.WithPrincipal(context.Background(), authmw.Principal{SessionID: "sess-parent", TenantID: "acme", CallerType: "agent"}))
+	ctx := idempotencymw.WithGate(authmw.WithPrincipal(context.Background(), authmw.Principal{SessionID: "sess-parent", TenantID: "acme", CallerType: "agent"}))
 	_, out, err := s.ForwardToolCall(ctx, forwardRow(), ForwardKindTerminate, "lenny/ok", nil)
 	assertToolError(t, out, ForwardDelivered, err, "SERVICE_UNAVAILABLE")
-	if !idemmw.NotStored(ctx) {
+	if !idempotencymw.NotStored(ctx) {
 		t.Error("the transient refusal was left storable (§11.5)")
 	}
 }
@@ -310,7 +310,7 @@ func TestHolderForwardListenerMarksOnlyAGatedRefusal_spec_11_5(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if c.refuse {
-					idemmw.DoNotStore(r.Context())
+					idempotencymw.DoNotStore(r.Context())
 				}
 				w.WriteHeader(http.StatusConflict)
 			})

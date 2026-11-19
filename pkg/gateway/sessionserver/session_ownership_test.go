@@ -5,30 +5,28 @@ package sessionserver_test
 import (
 	"bytes"
 	"context"
-	"go/ast"
-	"go/parser"
-	"go/token"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 
-// mountedRoute is one mux.HandleFunc call in Handler(): its pattern and the
-// name of the wrapper its handler is passed through, or "" for a handler
-// mounted bare.
+// mountedRoute is one route the session core registers: its pattern and
+// the name of the session route wrapper its access check matches, or "" for
+// a route with only the tenant check or none.
 type mountedRoute struct {
 	pattern string
 	wrapper string
@@ -63,44 +61,32 @@ func (m mountedRoute) ownershipExempt() bool {
 	return m.pattern == "POST /v1/sessions/{id}/eval" || m.pattern == "GET /v1/sessions/{id}/usage"
 }
 
-// handlerRoutes parses route_table.go and returns every route Handler()
-// mounts, so a route added to the table is a row of every test that reads
-// it without being listed here.
+// handlerRoutes returns every route the session core registers on the
+// client and internal listeners, with the name of the session route wrapper
+// that matches its access check, so a route added to RegisterRoutes is a
+// row of every test that reads it without being listed here.
 func handlerRoutes(t *testing.T) []mountedRoute {
 	t.Helper()
-	file, err := parser.ParseFile(token.NewFileSet(), "route_table.go", nil, 0)
-	if err != nil {
-		t.Fatalf("parse route_table.go: %v", err)
+	table := routetable.New()
+	if err := sessionserver.New(memstore.New(), sessionserver.Options{}).RegisterRoutes(table); err != nil {
+		t.Fatalf("RegisterRoutes: %v", err)
+	}
+	wrappers := map[seam.RouteAccess]string{
+		seam.AccessSessionRead:   "readID",
+		seam.AccessSessionManage: "manageID",
+		seam.AccessSessionCreate: "manage",
+		seam.AccessSessionList:   "read",
+		seam.AccessSessionEval:   "evalWrite",
 	}
 	var routes []mountedRoute
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) != 2 {
-			return true
+	for _, r := range table.Routes() {
+		if r.Listener == seam.ListenerForward {
+			continue
 		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok || sel.Sel.Name != "HandleFunc" {
-			return true
-		}
-		lit, ok := call.Args[0].(*ast.BasicLit)
-		if !ok || lit.Kind != token.STRING {
-			return true
-		}
-		pattern, err := strconv.Unquote(lit.Value)
-		if err != nil {
-			t.Fatalf("unquote %s: %v", lit.Value, err)
-		}
-		route := mountedRoute{pattern: pattern}
-		if wrap, ok := call.Args[1].(*ast.CallExpr); ok {
-			if id, ok := wrap.Fun.(*ast.Ident); ok {
-				route.wrapper = id.Name
-			}
-		}
-		routes = append(routes, route)
-		return true
-	})
+		routes = append(routes, mountedRoute{pattern: r.MuxPattern(), wrapper: wrappers[r.Access]})
+	}
 	if len(routes) < 30 {
-		t.Fatalf("parsed %d routes from route_table.go; the table parser no longer matches Handler()", len(routes))
+		t.Fatalf("RegisterRoutes registered %d routes; the session core's route list is shorter than expected", len(routes))
 	}
 	return routes
 }

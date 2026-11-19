@@ -285,11 +285,11 @@ var terminalContextWriters = []tcWriter{
 	{key: "pkg/gateway/platformtools/orphancleanup/orphancleanup.go endOrphan", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/platformtools/mcptools/mcptools.go cancelNode", drive: afterTerminalWriteDriver},
 	{key: "pkg/gateway/platformtools/mcptools/mcptools_register.go cancelSession", drive: afterTerminalWriteDriver},
-	{key: "pkg/gateway/externalapi/admin/users.go cancelForRevoke", noHook: "the full_revoke write runs AfterRevokeWrite and the revoked-binding release"},
+	{key: "pkg/gateway/api/admin/users.go cancelForRevoke", noHook: "the full_revoke write runs AfterRevokeWrite and the revoked-binding release"},
 	{key: "pkg/gateway/environment/translator/openai_chat.go handleCreateCompletion", noHook: "the translator writes on the none path"},
 	{key: "pkg/gateway/environment/translator/open_responses.go serveCold", noHook: "the translator writes on the none path"},
 	{key: "pkg/gateway/environment/translator/open_responses.go endHeldSession", drive: afterTerminalWriteDriver},
-	{key: "cmd/lenny-gateway/session_admin.go ForceTerminate", drive: onSessionTerminalDriver(session.StateFailed)},
+	{key: "pkg/gateway/sessionserver/force_terminate.go ForceTerminate", drive: onSessionTerminalDriver(session.StateFailed)},
 	{key: "cmd/lenny-gateway/session_budget.go terminate", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/platformtools/deadlock/terminal_fail.go TerminalFail", drive: onSessionTerminalDriver(session.StateFailed)},
 }
