@@ -45,9 +45,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // deliveryGateCluster seeds an envtest cluster with a warm pool whose
@@ -187,6 +189,7 @@ func TestCredentialDeliveryGateRejectsProxySpiffeDisabledAtFinalize(t *testing.T
 		// layer-1 registration check and the layer-2 webhook read.
 		TenancyMode: direct_mode_isolation.TenancyMulti,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 	h := ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice)
 
 	post := func(path string, body []byte, headers map[string]string) *httptest.ResponseRecorder {
@@ -210,7 +213,7 @@ func TestCredentialDeliveryGateRejectsProxySpiffeDisabledAtFinalize(t *testing.T
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var up sessionserver.UploadResponse
+	var up uploadhandler.UploadResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &up); err != nil {
 		t.Fatalf("decode upload response: %v", err)
 	}

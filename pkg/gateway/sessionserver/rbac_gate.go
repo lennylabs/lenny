@@ -81,10 +81,16 @@ func (s *Server) requireSessionPermission(perm auth.Permission, next http.Handle
 // that follows then refuses a request with no principal subject on every
 // {id} route, on list, and on create. A principal that carries roles is
 // admitted only when principalHolds reports perm.
+func (s *Server) sessionPermissionGranted(r *http.Request, perm auth.Permission) bool {
+	return s.permissionGranted(r.Context(), perm)
+}
+
+// permissionGranted is sessionPermissionGranted for the principal ctx
+// carries, which GWSEAM-AuthorizeSession applies outside a request.
 //
 // spec: §10.2 (Session ownership) rule 7.
-func (s *Server) sessionPermissionGranted(r *http.Request, perm auth.Permission) bool {
-	p, ok := getPrincipal(r)
+func (s *Server) permissionGranted(ctx context.Context, perm auth.Permission) bool {
+	p, ok := authmw.FromContext(ctx)
 	if !ok {
 		// No authenticated principal on the request: the permission gate
 		// admits, and the ownership step refuses the request with 401.
@@ -102,7 +108,7 @@ func (s *Server) sessionPermissionGranted(r *http.Request, perm auth.Permission)
 		// tokens). F-10.2.4.
 		return !s.multiTenant
 	}
-	return s.principalHolds(r.Context(), p, perm)
+	return s.principalHolds(ctx, p, perm)
 }
 
 // principalHolds reports whether a role assigned to p, built-in or tenant

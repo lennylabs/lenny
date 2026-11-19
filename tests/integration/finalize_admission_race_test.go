@@ -40,9 +40,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // admissionSessionID is the session every finalize admission case creates.
@@ -280,6 +282,7 @@ func newAdmissionFixture(t *testing.T) *admissionFixture {
 		Blobs:                   blobs,
 		Events:                  bus,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 	f := &admissionFixture{
 		handler: ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice), store: store, cluster: cluster,
 		assigner: assigner, rpcs: rpcs, bus: bus,
@@ -318,7 +321,7 @@ func (f *admissionFixture) upload(t *testing.T) string {
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("upload: status %d, body=%s", rr.Code, rr.Body.String())
 	}
-	var up sessionserver.UploadResponse
+	var up uploadhandler.UploadResponse
 	if err := json.Unmarshal(rr.Body.Bytes(), &up); err != nil || up.UploadRef == "" {
 		t.Fatalf("decode upload response (err=%v): %s", err, rr.Body.String())
 	}

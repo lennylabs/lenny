@@ -281,7 +281,7 @@ func TestRESTMCPSessionLifecycle(t *testing.T) {
 // envelope. The §15.4 adapter binary protocol carries file
 // transfer separately; there is no MCP counterpart and the spec
 // deliberately leaves upload REST-only. The REST upload handler
-// is covered by pkg/gateway/sessionserver/upload_test.go.
+// is covered by pkg/gateway/uploadhandler/upload_test.go.
 func TestRESTMCPWorkspaceUpload(t *testing.T) {
 	t.Logf("§15.1 / §15.2: workspace upload is REST-only by design (multipart payloads do not fit JSON-RPC)")
 }

@@ -3,6 +3,7 @@
 package sessionserver_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"net/http"
@@ -13,7 +14,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // tokenRoute is one handler that creates a session from a source session's
@@ -72,7 +75,8 @@ func TestDeriveAndReplayMintAnUploadToken_spec_15_1(t *testing.T) {
 			clock := func() time.Time { return t0 }
 			ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("upload-secret")})
 			verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), clock)
-			srv := sessionserver.New(store, snapshotFor(t, rt.sourceID).wire(sessionserver.Options{
+			snap := snapshotFor(t, rt.sourceID)
+			srv := sessionserver.New(store, snap.wire(sessionserver.Options{
 				DevTenantHeader:     true,
 				Clock:               clock,
 				IDFunc:              func() string { return "sess_new" },
@@ -80,6 +84,9 @@ func TestDeriveAndReplayMintAnUploadToken_spec_15_1(t *testing.T) {
 				UploadTokenVerifier: verifier,
 				UploadTokenTTL:      300 * time.Second,
 			}))
+			// The upload that proves the token goes through the upload
+			// handler, attached as the composition root attaches it.
+			uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: snap.blobs})
 			h := asOwner(srv.Handler())
 
 			rr := rt.call(t, h)
@@ -110,7 +117,12 @@ func TestDeriveAndReplayMintAnUploadToken_spec_15_1(t *testing.T) {
 				t.Errorf("stored expiry = %v, want %v (creation + maxCreatedStateTimeoutSeconds)", row.UploadTokenExpiry, want)
 			}
 
-			up := uploadRequest(t, h, "sess_new", "acme", resp.UploadToken, []byte("hello"), "text/plain")
+			upReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_new/upload", bytes.NewReader([]byte("hello")))
+			upReq.Header.Set("X-Lenny-Tenant-ID", "acme")
+			upReq.Header.Set("X-Lenny-Upload-Token", resp.UploadToken)
+			upReq.Header.Set("Content-Type", "text/plain")
+			up := httptest.NewRecorder()
+			h.ServeHTTP(up, upReq)
 			if up.Code != http.StatusCreated {
 				t.Errorf("upload with the returned token: status %d, want 201; body=%s", up.Code, up.Body.String())
 			}

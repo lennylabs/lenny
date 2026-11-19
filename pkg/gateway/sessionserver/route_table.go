@@ -70,9 +70,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/memory", manageID(s.handleMemoryWrite))
 	mux.HandleFunc("GET /v1/sessions/{id}/memory", readID(s.handleMemoryQuery))
 	mux.HandleFunc("DELETE /v1/sessions/{id}/memory/{memoryId}", manageID(s.handleMemoryDelete))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload", manageID(s.handleUpload))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload-archive", manageID(s.handleUploadArchive))
-	mux.HandleFunc("POST /v1/sessions/{id}/upload-to-session", manageID(s.handleUploadToSession))
 	mux.HandleFunc("POST /v1/sessions/{id}/messages", manageID(s.handleMessages))
 	// spec: §15.1 — the §15.4 MessageDAG list over the durable
 	// session_messages store, the read side of the message endpoint. Shares
@@ -105,7 +102,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/sessions/{id}/tool-use/{toolCallId}/deny", manageID(s.handleToolUseDeny))
 	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/respond", manageID(s.handleElicitationRespond))
 	mux.HandleFunc("POST /v1/sessions/{id}/elicitations/{elicitationId}/dismiss", manageID(s.handleElicitationDismiss))
-	mux.HandleFunc("GET /v1/blobs/{ref...}", s.handleBlob)
+	// The routes other parts registered through HandleRoute, such as the
+	// upload handler's, mount on the same mux behind the access check each
+	// names.
+	s.mountPartRoutes(mux)
 	// spec: §10.2 — a tenant-scoped route runs only for a request whose
 	// tenant resolves from its principal (or, under --dev-mode, from the
 	// dev header). F-10.2.21.

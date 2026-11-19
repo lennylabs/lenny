@@ -59,7 +59,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
@@ -341,10 +340,6 @@ type Server struct {
 	customRoles        customrolestore.Store
 	interceptors       *interceptor.Chain
 	policyAuditSink    *policy.AuditSink
-	uploadSubsystem    *subsystem.Subsystem
-	// uploadMetrics, when set, receives the §16.1 upload-handler
-	// byte-count and queue-depth observations. Nil drops them. F-13.4.12.
-	uploadMetrics UploadHandlerMetrics
 	// resumeWindow is the §4.2 default resume-eligibility
 	// duration stamped onto each session at create time. A non-zero
 	// value falls through to DefaultResumeWindow.
@@ -678,27 +673,20 @@ type Server struct {
 	// uploadtoken.DefaultTTL (300s). spec: §7.1. F-7.4.7.
 	uploadTokenTTL time.Duration
 
-	// uploadAborts is the §7.4 upload-abort registry. The
-	// upload handler registers a per-session abort signal for the
-	// duration of its body-read + blob.Put; the finalize handler closes
-	// the signal after the row transitions out of the upload-admitting
-	// state so any in-flight stream surfaces UPLOAD_CHANNEL_CLOSED.
-	// Always non-nil after New. spec: §7.4. F-7.4.16.
-	uploadAborts *uploadAbortRegistry
+	// uploads is the upload handler's side of GWSEAM-CloseUploads, which
+	// the finalize handler calls once the upload window closes. Nil when no
+	// upload handler is attached. SetUploadWindows sets it before the
+	// server serves.
+	uploads seam.UploadWindows
 
-	// uploadLimits enforces the §11.1 per-session and global
-	// concurrent-upload caps and the per-session cumulative upload-size
-	// cap. Nil when no §11.1 upload cap is configured (the pass-through
-	// posture); every call site tolerates a nil limiter. spec: §11.1. F-11.1.5, F-11.1.6.
-	uploadLimits *uploadLimiter
-
-	// midSessionUploadEnabled is the §7.4 deployer policy that,
-	// together with the bound runtime's capabilities.midSessionUpload flag,
-	// admits uploads into an already-running session via
-	// POST /v1/sessions/{id}/upload-to-session. False (the default) keeps
-	// mid-session uploads off platform-wide regardless of the runtime flag.
-	// spec: §7.4 — F-7.4.6.
-	midSessionUploadEnabled bool
+	// partRoutes are the routes other parts registered through HandleRoute,
+	// which Handler mounts behind the access check each names. routesMu
+	// guards them and routesServed, which Handler sets so a route
+	// registered after the server began serving is refused rather than
+	// silently left unmounted.
+	routesMu     sync.Mutex
+	partRoutes   []seam.Route
+	routesServed bool
 }
 
 // DefaultMaxOrphanTasksPerTenant is the §8.10 cap on a tenant's active
@@ -1487,51 +1475,6 @@ type Options struct {
 	// the emission; the rejection still fires.
 	PolicyAuditSink *policy.AuditSink
 
-	// UploadSubsystem, when set, gates POST /v1/sessions/{id}/upload
-	// through the §4.1 Upload Handler subsystem (max-concurrent
-	// semaphore + per-replica circuit breaker). A saturated subsystem
-	// returns 503 SUBSYSTEM_UNAVAILABLE for new uploads while the
-	// Stream Proxy and MCP Fabric handlers continue serving normally —
-	// the §4.1 partial-degradation contract. When nil, uploads run
-	// without subsystem gating (tests and the minimal gateway do not
-	// configure a limit).
-	UploadSubsystem *subsystem.Subsystem
-
-	// UploadMetrics, when set, receives the §16.1 upload-handler
-	// observations (lenny_upload_bytes_total, lenny_upload_queue_depth).
-	// *PromUploadMetrics satisfies it. Nil drops the observations (tests
-	// and the minimal gateway). spec: §16.1 — F-13.4.12.
-	UploadMetrics UploadHandlerMetrics
-
-	// MidSessionUploadEnabled is the §7.4 deployer policy that
-	// admits mid-session uploads (POST /v1/sessions/{id}/upload-to-session)
-	// when the bound runtime also declares capabilities.midSessionUpload.
-	// False (the default) keeps the surface closed platform-wide. spec:
-	// §7.4 — F-7.4.6.
-	MidSessionUploadEnabled bool
-
-	// MaxConcurrentUploadsPerSession is the §11.1 per-session
-	// concurrent-upload admission cap: the gateway rejects a new upload
-	// with 429 RATE_LIMITED once a session already holds this many
-	// in-flight uploads on the replica. Zero leaves the per-session
-	// concurrency scope unlimited. spec: §11.1. F-11.1.5.
-	MaxConcurrentUploadsPerSession int
-
-	// MaxConcurrentUploadsGlobal is the §11.1 global
-	// concurrent-upload admission cap: the gateway rejects a new upload
-	// with 429 RATE_LIMITED once the replica already holds this many
-	// in-flight uploads across all sessions. Zero leaves the global
-	// concurrency scope unlimited. spec: §11.1. F-11.1.5.
-	MaxConcurrentUploadsGlobal int
-
-	// MaxUploadBytesPerSession is the §11.1 per-session
-	// cumulative upload-size cap: the gateway rejects an upload with 429
-	// QUOTA_EXCEEDED once the sum of all uploads in a session would
-	// exceed this value. The per-file (per-blob) cap is the separate
-	// UploadMaxBodyBytes ceiling. Zero leaves the per-session size scope
-	// unlimited. spec: §11.1. F-11.1.6.
-	MaxUploadBytesPerSession int64
-
 	// SessionLogHook, when set, receives the §4.4 close-hook
 	// on every session transition to a terminal state. The production
 	// wiring lives in pkg/gateway/sessionlogstore (CloseHook). Nil
@@ -1794,9 +1737,6 @@ func New(store sessionstore.Store, opts Options) *Server {
 		customRoles:                opts.CustomRoles,
 		interceptors:               opts.Interceptors,
 		policyAuditSink:            opts.PolicyAuditSink,
-		uploadSubsystem:            opts.UploadSubsystem,
-		uploadMetrics:              opts.UploadMetrics,
-		midSessionUploadEnabled:    opts.MidSessionUploadEnabled,
 		resumeWindow:               opts.ResumeWindow,
 		sessionLogHook:             opts.SessionLogHook,
 		warmupEstimateSeconds:      opts.WarmupEstimateSeconds,
@@ -1830,12 +1770,6 @@ func New(store sessionstore.Store, opts Options) *Server {
 		incWarmpoolWarmupFailure:   opts.IncWarmpoolWarmupFailure,
 		incInjectionGateFailClosed: opts.IncInjectionGateFailClosed,
 		uploadTokenTTL:             opts.UploadTokenTTL,
-		uploadAborts:               newUploadAbortRegistry(),
-		uploadLimits: newUploadLimiter(
-			opts.MaxConcurrentUploadsPerSession,
-			opts.MaxConcurrentUploadsGlobal,
-			opts.MaxUploadBytesPerSession,
-		),
 	}
 	if s.slotHealth == nil {
 		// spec: §5.2 — default to a fresh per-server fail/leak tracker when no

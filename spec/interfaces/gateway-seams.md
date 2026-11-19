@@ -69,7 +69,7 @@ summary: Resolves whether the caller in the context may read or manage a session
 kind: operation
 name: ForwardRequest
 method: Go method
-path: seam.Forwarding
+path: seam.RequestForwarding
 requirements: [GW-R1]
 summary: Delivers an HTTP request for a session to the session's holder replica, or reports that the request runs on this replica, and returns the forward outcome.
 ```
@@ -108,7 +108,7 @@ requirements: [GW-R1]
 summary: Reports whether a message whose forward to the holder replica was not delivered is held for later delivery, for a session record and a forward kind.
 ```
 
-The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded.
+The forward outcome is one of: the request runs on this replica; the holder replica received it; it was not delivered, so no replica acted on it; or the delivery failed after the request was sent, so whether the holder replica acted on it is unknown. The forward kind names the request a forward carries, and the core's forwarding rules decide from it which session states are forwarded. The upload handler forwards a mid-session upload with the upload kind. [`GWSEAM-ForwardRequest`](#gwseam-forwardrequest) is declared on an interface of its own, `seam.RequestForwarding`, which the seams that serve HTTP requests hold, apart from the operations through which the platform tools seam forwards a tool call.
 
 ## Operations served by the session core to the platform tools seam
 
@@ -499,6 +499,8 @@ summary: Releases the pods of a user's sessions in a tenant, and returns the cou
 
 ## Operations served by the session core to the upload handler
 
+The upload handler verifies a client's upload token, holds an upload's size against its tenant's storage quota, and records the upload audit event through the session core, because the upload token, quota, tenant, and audit packages stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2).
+
 <a id="gwseam-writeworkspace"></a>
 
 ```lenny-def
@@ -506,9 +508,55 @@ kind: operation
 name: WriteWorkspace
 method: Go method
 path: seam.Workspaces
-returns: [ErrNoLiveBinding]
+returns: [ErrNoLiveBinding, ErrWorkspaceWrite]
 requirements: [GW-R1]
-summary: Writes uploaded files into the workspace of a session whose pod is bound on this replica, and returns the count of files written.
+summary: Writes uploaded files, each with its workspace-relative path, content, and optional file mode, into the workspace of a session whose pod is bound on this replica, and returns the count of files written; a failure of the pod's adapter names whether staging or promotion failed.
+```
+
+<a id="gwseam-verifyuploadtoken"></a>
+
+```lenny-def
+kind: operation
+name: VerifyUploadToken
+method: Go method
+path: seam.UploadTokens
+returns: [ErrUploadTokenInvalid, ErrUploadTokenExpired, ErrUploadTokenMismatch, ErrUploadTokenConsumed]
+requirements: [GW-R1]
+summary: Verifies the upload token a client presents for a session, and reports a token that is absent or invalid, expired, issued for another session, or already consumed.
+```
+
+<a id="gwseam-reservestorage"></a>
+
+```lenny-def
+kind: operation
+name: ReserveStorage
+method: Go method
+path: seam.StorageQuota
+returns: [ErrStorageQuotaExceeded, ErrStorageQuotaUnavailable, ErrContentLengthRequired]
+requirements: [GW-R1]
+summary: Reserves an upload's declared size against its tenant's storage quota, and returns the bytes reserved and the headroom the upload's stream may not exceed, or no reservation when the tenant has no storage quota; a refusal by the quota carries the tenant's current usage and limit.
+```
+
+<a id="gwseam-adjuststorage"></a>
+
+```lenny-def
+kind: operation
+name: AdjustStorage
+method: Go method
+path: seam.StorageQuota
+requirements: [GW-R1]
+summary: Adds a signed byte count to a tenant's storage usage, which releases a reservation that GWSEAM-ReserveStorage made or reconciles it to the bytes an upload wrote.
+```
+
+<a id="gwseam-auditupload"></a>
+
+```lenny-def
+kind: operation
+name: AuditUpload
+method: Go method
+path: seam.UploadAudit
+requirements: [GW-R1]
+summary: Records the session upload audit event for a session record, with the upload's outcome, its rejection reason, and a detail, under the session's own tenant.
 ```
 
 ## Operations served by the session core to the stream proxy
@@ -905,6 +953,19 @@ requirements: [GW-R1]
 summary: Ends a session whose budget extension was refused.
 ```
 
+## Operations served by the API front to every seam that serves client requests
+
+<a id="gwseam-requesttenant"></a>
+
+```lenny-def
+kind: operation
+name: RequestTenant
+method: Go method
+path: seam.RequestIdentity
+requirements: [GW-R1]
+summary: Returns the tenant that a client request runs as, which the API front's tenant check resolved before the handler ran.
+```
+
 ## Operations served by the API front to the platform tools seam
 
 <a id="gwseam-isbearerrevoked"></a>
@@ -1023,6 +1084,8 @@ A route names the access check the API front applies before the handler runs, th
 - no check by the API front, for a route whose handler authenticates the request itself.
 
 No route takes a default check: a zero or unknown access check is refused at registration.
+
+The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself.
 
 ## Crossings without an operation
 

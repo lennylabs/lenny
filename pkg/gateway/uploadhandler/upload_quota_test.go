@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package uploadhandler_test
 
 import (
 	"bytes"
@@ -16,7 +16,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // spec: §11.2 per-tenant storage quota, upload-handler enforcement.
@@ -44,10 +46,10 @@ func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: verifier,
-		Blobs:               blobstore.NewMemoryStore(nil),
 		Tenants:             tenants,
 		StorageQuota:        counter,
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobstore.NewMemoryStore(nil)})
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	return srv, issuer, counter
 }
@@ -175,10 +177,10 @@ func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 		IDFunc:              func() string { return "sess_upload" },
 		UploadTokenIssuer:   issuer,
 		UploadTokenVerifier: verifier,
-		Blobs:               blobstore.NewMemoryStore(nil),
 		Tenants:             tenants,
 		StorageQuota:        unavailableCounter{},
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobstore.NewMemoryStore(nil)})
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
 

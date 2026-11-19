@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -64,7 +65,7 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// metrics (lenny_upload_bytes_total, lenny_upload_queue_depth) that
 	// the unified per-subsystem family does not carry under their
 	// catalogued names. F-13.4.12.
-	uploadMetrics, err := sessionserver.NewUploadMetrics(gwMetrics.Registerer())
+	uploadMetrics, err := uploadhandler.NewUploadMetrics(gwMetrics.Registerer())
 	if err != nil {
 		log.Fatalf("lenny-gateway: upload metrics: %v", err)
 	}
@@ -76,12 +77,12 @@ func (w *gatewayWiring) buildSessionDeps() {
 	// §7.4 / §13.4 — archive extraction runs inside the
 	// gateway's §4.1 Upload Handler subsystem (never the pod). Share the
 	// same subsystem gate that bounds the upload HTTP path so a hostile
-	// archive's decompression cannot starve session attachment, and feed
-	// the §16.1 lenny_upload_extraction_aborted_total counter from the
-	// binder's extraction abort path. F-7.4.1, F-13.4.1, F-7.4.11.
+	// archive's decompression cannot starve session attachment. The
+	// binder's extraction abort path counts in the §16.1
+	// lenny_upload_extraction_aborted_total counter through the upload
+	// handler, which buildSessionServer attaches. F-7.4.1, F-13.4.1.
 	if w.podBinder != nil {
 		w.podBinder.UploadGate = uploadSubsystem
-		w.podBinder.ExtractionAbort = uploadMetrics.AddExtractionAbort
 	}
 
 	// §8.5 lenny/request_input pending-call registry. Shared across the

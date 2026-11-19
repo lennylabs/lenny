@@ -179,7 +179,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 		environments, tenantAccess, opsEmitter, credentialPools, vcsCreds,
 		customRoles, resolvedNoEnvPolicy, auditSink, w.sessionStickyCache,
 		w.experimentProviders, usage, taskUsageBuilder, quotaCheckpointSvc, policyChain, policyAuditSink,
-		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, slotHealth,
+		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, parts.uploads, slotHealth,
 		w.callbackValidator, w.callbackSeal, w.callbackDispatcher,
 	)
 	// spec: §11.2 — the budget terminator runs the same terminal

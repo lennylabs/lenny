@@ -25,15 +25,22 @@ type Sessions interface {
 	AuthorizeSession(ctx context.Context, tenantID, sessionID string, action SessionAction) (Session, error)
 }
 
-// Forwarding is served by the session core to every seam: the delivery of a
-// request to the replica that holds the session's coordination lease.
-type Forwarding interface {
+// RequestForwarding is served by the session core to the seams that serve
+// HTTP requests: the delivery of a client request to the replica that holds
+// the session's coordination lease.
+type RequestForwarding interface {
 	// ForwardRequest delivers an HTTP request for a session to its holder
 	// replica and relays the response on w, or returns ForwardLocal when
-	// the request runs on this replica. The caller returns on any other
-	// outcome.
+	// the request runs on this replica. On ForwardNotDelivered and
+	// ForwardUnknown it has written the refusal to w, and the caller
+	// returns on any outcome other than ForwardLocal.
 	ForwardRequest(w http.ResponseWriter, r *http.Request, s Session, kind ForwardKind, body io.Reader) ForwardOutcome
+}
 
+// Forwarding is served by the session core to the platform tools seam: the
+// delivery of a platform tool call to the replica that holds the session's
+// coordination lease.
+type Forwarding interface {
 	// ForwardToolCall delivers a platform tool call that addresses a
 	// session to its holder replica and returns the tool result. The
 	// holder's refusal envelope arrives as a *Refusal, which the caller
@@ -369,7 +376,8 @@ type PodRetirement struct {
 // Workspaces is served by the session core to the upload handler.
 type Workspaces interface {
 	// WriteWorkspace is GWSEAM-WriteWorkspace. It returns the count of
-	// files written, or ErrNoLiveBinding.
+	// files written, ErrNoLiveBinding, or a *WorkspaceWriteError, which
+	// matches ErrWorkspaceWrite, when the pod's adapter fails.
 	WriteWorkspace(ctx context.Context, sessionID string, files []WorkspaceFile) (int, error)
 }
 
@@ -378,7 +386,115 @@ type Workspaces interface {
 type WorkspaceFile struct {
 	Path    string
 	Content []byte
+	// Mode is the octal file mode, such as "0644". Empty leaves the mode to
+	// the pod's adapter.
+	Mode string
 }
+
+// WorkspacePhase names the step of a workspace write that failed.
+type WorkspacePhase string
+
+// The workspace write phases.
+const (
+	// WorkspaceStaging streams the files into the session's staging tree.
+	WorkspaceStaging WorkspacePhase = "staging"
+	// WorkspacePromotion overlays the staged files onto the session's
+	// workspace and signals the runtime.
+	WorkspacePromotion WorkspacePhase = "promotion"
+)
+
+// WorkspaceWriteError reports a workspace write that the pod's adapter
+// failed, with the phase that failed and the adapter's error. Neither phase
+// changes the live workspace when it fails. It matches ErrWorkspaceWrite
+// and the adapter's error under errors.Is.
+type WorkspaceWriteError struct {
+	Phase WorkspacePhase
+	Err   error
+}
+
+func (e *WorkspaceWriteError) Error() string {
+	return "seam: workspace " + string(e.Phase) + " failed: " + e.Err.Error()
+}
+
+// Unwrap returns ErrWorkspaceWrite and the adapter's error.
+func (e *WorkspaceWriteError) Unwrap() []error { return []error{ErrWorkspaceWrite, e.Err} }
+
+// UploadTokens is served by the session core to the upload handler.
+type UploadTokens interface {
+	// VerifyUploadToken is GWSEAM-VerifyUploadToken. token is the value the
+	// client presented, empty when it presented none. It returns nil, or
+	// one of ErrUploadTokenInvalid, ErrUploadTokenExpired,
+	// ErrUploadTokenMismatch, and ErrUploadTokenConsumed.
+	VerifyUploadToken(ctx context.Context, sessionID, token string) error
+}
+
+// StorageQuota is served by the session core to the upload handler: the
+// tenant storage quota an upload is held against.
+type StorageQuota interface {
+	// ReserveStorage is GWSEAM-ReserveStorage. incoming is the upload's
+	// declared size, negative when the request declared none. It returns a
+	// reservation whose Held is false when the tenant has no storage quota,
+	// or one of a *StorageQuotaError, ErrStorageQuotaUnavailable, and
+	// ErrContentLengthRequired.
+	ReserveStorage(ctx context.Context, tenantID string, incoming int64) (StorageReservation, error)
+
+	// AdjustStorage is GWSEAM-AdjustStorage. delta is negative to release
+	// bytes.
+	AdjustStorage(ctx context.Context, tenantID string, delta int64) error
+}
+
+// StorageReservation is a storage quota reservation that ReserveStorage
+// returns.
+type StorageReservation struct {
+	// Held is false when the tenant has no storage quota, and the other
+	// fields are then zero.
+	Held bool
+	// Reserved is the byte count reserved, the upload's declared size.
+	Reserved int64
+	// Headroom is the byte count the upload's stream may not exceed: the
+	// tenant's quota less its usage before the reservation.
+	Headroom int64
+}
+
+// StorageQuotaError reports an upload that would exceed its tenant's
+// storage quota, with the tenant's usage and limit. It matches
+// ErrStorageQuotaExceeded under errors.Is.
+type StorageQuotaError struct {
+	CurrentBytes int64
+	LimitBytes   int64
+}
+
+func (e *StorageQuotaError) Error() string { return ErrStorageQuotaExceeded.Error() }
+
+// Unwrap returns ErrStorageQuotaExceeded.
+func (e *StorageQuotaError) Unwrap() error { return ErrStorageQuotaExceeded }
+
+// UploadAudit is served by the session core to the upload handler.
+type UploadAudit interface {
+	// AuditUpload is GWSEAM-AuditUpload. It records the event without
+	// waiting for its delivery.
+	AuditUpload(ctx context.Context, ev UploadAuditEvent)
+}
+
+// UploadAuditEvent is one session upload audit event.
+type UploadAuditEvent struct {
+	// Session is the session the upload targeted.
+	Session Session
+	// Outcome is UploadAccepted or UploadRejected.
+	Outcome string
+	// Reason is the rejection sub-code of a rejected upload, such as
+	// "size_limit". It is empty on an accepted upload.
+	Reason string
+	// Detail is an event-specific note, such as the reference of the
+	// stored blob or the count of files written.
+	Detail string
+}
+
+// The upload audit outcomes.
+const (
+	UploadAccepted = "accepted"
+	UploadRejected = "rejected"
+)
 
 // StreamFrames is served by the session core to the stream proxy.
 type StreamFrames interface {

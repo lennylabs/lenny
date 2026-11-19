@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
@@ -113,6 +114,7 @@ func TestUploadTokenExpiresPerConfiguredTTL_spec_7_4_7(t *testing.T) {
 		Blobs:               blobs,
 		UploadTokenTTL:      1 * time.Second,
 	})
+	attachUploads(t, srv, uploadhandler.Options{Blobs: blobs})
 
 	body := `{"runtimeRef":"claude-code"}`
 	rr := httptest.NewRecorder()

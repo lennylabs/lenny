@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package uploadhandler_test
 
 import (
 	"bytes"
@@ -20,7 +20,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
+	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
 // spec: §7.4 — STORAGE_QUOTA_EXCEEDED on over-stream must
@@ -55,6 +57,7 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 		Tenants:             tenants,
 		StorageQuota:        storagequota.NewMemory(),
 	})
+	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
 	seedCreatedSession(t, store, "sess_upload", "acme")
 
 	tok, _ := issuer.Issue("sess_upload", 0)
@@ -276,7 +279,7 @@ func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set(sessionserver.UploadContentHashHeader, matching)
+	req.Header.Set(uploadhandler.UploadContentHashHeader, matching)
 	rr := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {
@@ -297,7 +300,7 @@ func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
 	req.Header.Set("Content-Type", "text/plain")
-	req.Header.Set(sessionserver.UploadContentHashHeader,
+	req.Header.Set(uploadhandler.UploadContentHashHeader,
 		"0000000000000000000000000000000000000000000000000000000000000000")
 	rr := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, req)
@@ -328,7 +331,7 @@ func TestUploadOptionalContentHashCaseInsensitive_spec_7_4_10(t *testing.T) {
 		bytes.NewReader([]byte("hello world")))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	req.Header.Set("X-Lenny-Upload-Token", tok)
-	req.Header.Set(sessionserver.UploadContentHashHeader, upper)
+	req.Header.Set(uploadhandler.UploadContentHashHeader, upper)
 	rr := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, req)
 	if rr.Code != http.StatusCreated {

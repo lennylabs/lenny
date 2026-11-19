@@ -19,6 +19,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -190,12 +191,13 @@ type Binder struct {
 	// `upload_handler` subsystem; nil runs extraction ungated (tests).
 	// spec: §7.4 — F-7.4.1, F-13.4.1.
 	UploadGate *subsystem.Subsystem
-	// ExtractionAbort records one §7.4 archive-extraction abort,
-	// backing `lenny_upload_extraction_aborted_total{error_type}`. errorType
-	// is the §13.4 sub-code (max_decompressed_size, non_regular_entry,
-	// symlink, etc.). Called only on the gateway extraction path. Nil is a
-	// no-op. spec: §7.4; §16.1 — F-7.4.11.
-	ExtractionAbort func(errorType string)
+	// UploadWindows is the upload handler's side of
+	// GWSEAM-RecordExtractionAbort, which counts one §7.4 archive-extraction
+	// abort in `lenny_upload_extraction_aborted_total{error_type}` by its
+	// §13.4 sub-code (max_decompressed_size, non_regular_entry, symlink,
+	// etc.). Called only on the gateway extraction path. Nil is a no-op.
+	// F-7.4.11.
+	UploadWindows seam.UploadWindows
 	// HoldCanceller cancels the holding replica's local §6.2 reserved-hold
 	// expiry timer after a successful acquisition-path rebind, so the timer
 	// does not issue a wasted no-op DELETE. The rebind patch already changed
