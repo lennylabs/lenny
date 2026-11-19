@@ -294,7 +294,7 @@ sites:
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/runtime/poolstore/pgstore/delivery_mode_db_test.go
+    - path: pkg/runtime/poolstore/pgstore/delivery_mode_db_test.go
       function: TestDeliveryModeFieldsPgRoundTrip_spec_4_9
       site: 1
       call: Skip
@@ -314,7 +314,7 @@ sites:
       site: 1
       call: Skipf
       reason: 'no post-terminal hook: %s'
-    - path: pkg/gateway/storage/pgnotify/pgnotify_test.go
+    - path: pkg/storage/pgnotify/pgnotify_test.go
       function: TestListenNotifyRoundTrip_F1338
       site: 1
       call: Skip

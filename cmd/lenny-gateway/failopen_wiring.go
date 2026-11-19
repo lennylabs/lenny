@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/storage/failopen"
 )
 
 // quotaFailOpenAuditEmitter adapts the gateway's §11.7 audit appender to

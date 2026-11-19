@@ -200,7 +200,7 @@ func TestCrossZonePartition(t *testing.T) {
 // §12.8 emergency revocation — covered structurally by:
 //   - pkg/tokenservice gRPC RevokeCredentials (commit 2862bbb).
 //   - pkg/gateway/credrenewal (proactive renewal loop).
-//   - pkg/gateway/revocation/propagator (cross-replica deny-list
+//   - pkg/credential/revocation/propagator (cross-replica deny-list
 //     propagation; unit-tested).
 //
 // Live exercise needs cred-shell-echo deployed to hold a real lease
@@ -226,7 +226,7 @@ func TestRotationFailure(t *testing.T) {
 }
 
 // §12.8 deny-list propagation under Redis outage — covered by:
-//   - pkg/gateway/denylist/propagator (deny-list pub/sub).
+//   - pkg/credential/denylist/propagator (deny-list pub/sub).
 //   - tests/chaos/store_failure_test.go::TestRedisClusterDegraded.
 //
 // spec: 12.8
@@ -290,8 +290,8 @@ func TestLeaseExtensionCoolOffPersistence(t *testing.T) {
 // --- Compliance failures ---
 
 // §12.8 erasure job mid-sequence — covered structurally by:
-//   - pkg/gateway/erasure (orchestrator with fail-fast unit tests).
-//   - pkg/gateway/erasurejob (registry + runner unit tests).
+//   - pkg/storage/erasure (orchestrator with fail-fast unit tests).
+//   - pkg/storage/erasurejob (registry + runner unit tests).
 //   - tests/component/auditstore (cross_tenant_read on
 //     background workers — the erasure orchestrator's parity path).
 //
@@ -299,11 +299,11 @@ func TestLeaseExtensionCoolOffPersistence(t *testing.T) {
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the chaos-tier ops backlog.
 func TestErasureJobFailureMidSequence(t *testing.T) {
-	t.Logf("§12.8: pkg/gateway/erasure + erasurejob unit coverage; live mid-sequence injection on the ops backlog.")
+	t.Logf("§12.8: pkg/storage/erasure + erasurejob unit coverage; live mid-sequence injection on the ops backlog.")
 }
 
 // §12.8 legal-hold override flow — covered structurally by:
-//   - pkg/gateway/erasure legal-hold preflight (Step 0 of §12.8).
+//   - pkg/storage/erasure legal-hold preflight (Step 0 of §12.8).
 //   - pkg/gateway/admin POST /v1/admin/legal-hold handler tests.
 //   - pkg/blobstore/miniostore SetLegalHold + DeleteBySession guard
 //     (commit 831eb37).
@@ -313,11 +313,11 @@ func TestErasureJobFailureMidSequence(t *testing.T) {
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the chaos-tier ops backlog.
 func TestLegalHoldOverrideFlow(t *testing.T) {
-	t.Logf("§12.8: pkg/gateway/erasure preflight + admin handler + miniostore guard; region-scoped escrow on the cloud-adapter ops backlog.")
+	t.Logf("§12.8: pkg/storage/erasure preflight + admin handler + miniostore guard; region-scoped escrow on the cloud-adapter ops backlog.")
 }
 
 // §12.8 T3/T4 SLA breach — covered structurally by:
-//   - pkg/gateway/erasurejob deadline tracking.
+//   - pkg/storage/erasurejob deadline tracking.
 //   - pkg/clockinject (the §12.8 clock-injection harness; unit
 //     tests pin the offset behavior; commit b0d9371).
 //
@@ -326,7 +326,7 @@ func TestLegalHoldOverrideFlow(t *testing.T) {
 // spec: 12.8
 // diagnosis: §12.8 chaos scenario — covered structurally by the named pkg/* + tier-2/4 suites; composite fault-injection exercise on the chaos-tier ops backlog.
 func TestT3T4SLABreach(t *testing.T) {
-	t.Logf("§12.8: pkg/gateway/erasurejob + pkg/clockinject harness; live wiring + breach exercise on the ops backlog.")
+	t.Logf("§12.8: pkg/storage/erasurejob + pkg/clockinject harness; live wiring + breach exercise on the ops backlog.")
 }
 
 // --- Concurrency ---

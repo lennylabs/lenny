@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §12.2 TokenIssuanceStore, exercising
-// pkg/gateway/issuedtokenstore against a real Postgres container with
+// pkg/storage/issuedtokenstore against a real Postgres container with
 // the production migrations applied. Covers record/get round-trip,
 // the JTI uniqueness guard, cross-tenant isolation, revocation,
 // revoked-token listing, expired-row GC, and the §13.3 platform-admin
@@ -25,14 +25,14 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
 // spec: 12.2
 // diagnosis: the Postgres-backed TokenIssuanceStore in
-// pkg/gateway/issuedtokenstore did not behave as specified. Record and
+// pkg/storage/issuedtokenstore did not behave as specified. Record and
 // Get must round-trip a token, a duplicate JTI must be rejected,
 // cross-tenant Get must return ErrNotFound, Revoke must mark the
 // token, ListRevoked must return revoked tokens ordered by revoked_at,
@@ -479,8 +479,8 @@ func (e *impEnv) awaitUserShareLockWaiter(t *testing.T, done <-chan error) {
 // diagnosis: a subtest names the query that broke. EndImpersonation,
 // ListActiveImpersonations, RevokeImpersonationsByActor, and
 // RecordImpersonation are in
-// pkg/gateway/storage/issuedtokenstore/impersonation.go; the step (1a)
-// re-read is recheckSources in pkg/gateway/storage/issuedtokenstore/recheck.go.
+// pkg/storage/issuedtokenstore/impersonation.go; the step (1a)
+// re-read is recheckSources in pkg/storage/issuedtokenstore/recheck.go.
 // A single-winner failure means the end's UPDATE is not conditional on
 // revoked_at IS NULL, a fence failure means a users row is not read FOR
 // SHARE under its own tenant inside the insert's transaction, and an

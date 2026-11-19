@@ -5,7 +5,7 @@
 // block declares the common ID types, the RedisConcern / StoreType
 // enums, and the Subscription interface as a single block "used by the
 // five scaling extension interfaces". This package owns that block so
-// pkg/storerouter, pkg/podregistry, and pkg/gateway/eventbus share one
+// pkg/storerouter, pkg/podregistry, and pkg/storage/eventbus share one
 // import path rather than each redefining the ID types and casting
 // between string and the typed forms at every boundary.
 //

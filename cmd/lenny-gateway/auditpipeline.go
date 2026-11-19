@@ -21,7 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
+	"github.com/lennylabs/lenny/pkg/storage/eventbus"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

@@ -23,7 +23,7 @@
 // replica.
 //
 // The fan-out reuses the channel and the credential-key encoding the
-// §4.9 credential-deny-list propagator (pkg/gateway/denylist/propagator)
+// §4.9 credential-deny-list propagator (pkg/credential/denylist/propagator)
 // already publishes on, so an emergency revocation and a renewal
 // exhaustion converge through the same Redis pub/sub mechanism the
 // §13.3 token revocation and the §10.3 mTLS certificate revocation use.
@@ -43,9 +43,9 @@ import (
 	"sync"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	denylistprop "github.com/lennylabs/lenny/pkg/gateway/credentials/denylist/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
+	denylistprop "github.com/lennylabs/lenny/pkg/credential/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/storage/pubsub"
 )
 
 // Channel is the Redis pub/sub channel revoked credential keys are

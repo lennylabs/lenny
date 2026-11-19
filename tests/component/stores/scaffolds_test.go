@@ -56,7 +56,7 @@ import "testing"
 // ListByConnector semantics.
 
 // TestTokenIssuanceStoreContract is implemented in
-// issuedtokenstore_test.go against pkg/gateway/issuedtokenstore.
+// issuedtokenstore_test.go against pkg/storage/issuedtokenstore.
 
 // TestArtifactStoreContract — MinIO artifact store. The §12.5
 // ArtifactStore contract is exercised through a set of focused
@@ -100,11 +100,11 @@ func TestArtifactStoreContract(t *testing.T) {
 
 // TestCredentialPoolStoreContract is implemented in
 // credentialpoolstore_test.go, which exercises the Postgres-backed
-// pkg/gateway/credentialpoolstore/pgstore against a real container.
+// pkg/credential/credentialpoolstore/pgstore against a real container.
 
 // TestEvictionStateStoreContract is implemented in
 // evictionstatestore_test.go, which exercises the Postgres-backed
-// pkg/gateway/evictionstatestore/pgstore against a real container.
+// pkg/storage/evictionstatestore/pgstore against a real container.
 
 // TestMemoryStoreContract is implemented in memorystore_test.go, which
 // exercises the Postgres-backed pkg/gateway/memorystore/pgstore. The
@@ -135,7 +135,7 @@ func TestArtifactStoreContract(t *testing.T) {
 // a real Postgres + Redis container.
 
 // TestEventBusContract is implemented in eventstore_test.go, which
-// exercises the TESTING.md §12.3.7 RedisEventBus (pkg/gateway/eventbus) over a
+// exercises the TESTING.md §12.3.7 RedisEventBus (pkg/storage/eventbus) over a
 // real Redis container: the CloudEvents v1.0.2 envelope, the
 // tenant-prefixed channels, and at-most-once delivery isolation.
 

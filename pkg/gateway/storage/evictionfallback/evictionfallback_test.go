@@ -13,7 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionfallback"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
+	"github.com/lennylabs/lenny/pkg/storage/evictionstatestore"
 )
 
 // noRetryBudget disables the §4.4 retry loop in unit tests

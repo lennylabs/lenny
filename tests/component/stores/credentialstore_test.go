@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §4.9 / §15.1 end-user credential registry,
-// exercising the Postgres-backed pkg/gateway/credentialstore/pgstore
+// exercising the Postgres-backed pkg/credential/credentialstore/pgstore
 // against a real container with the production migrations applied.
 // Covers the register/get round-trip, re-registration replacing the
 // secret in place, the sentinel error, cross-tenant isolation, the
@@ -18,8 +18,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
-	credentialpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialstore"
+	credentialpg "github.com/lennylabs/lenny/pkg/credential/credentialstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -49,7 +49,7 @@ func newCredentialStore(t *testing.T) (*credentialpg.Store, kms.Provider, *conta
 
 // spec: 4.9
 // diagnosis: the Postgres-backed end-user credential registry in
-// pkg/gateway/credentialstore/pgstore did not behave as specified —
+// pkg/credential/credentialstore/pgstore did not behave as specified —
 // the Register/Get/Rotate/Revoke/Delete/List lifecycle, the secret
 // round-trip, provider validation, the (tenant, user, provider)
 // re-register reuse, or cross-tenant ErrNotFound isolation.

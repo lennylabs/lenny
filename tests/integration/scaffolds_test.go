@@ -67,7 +67,7 @@ func TestAdminBootstrap(t *testing.T) {
 // §4.4 / §7.1 checkpoint + resume — built and covered by:
 //   - pkg/checkpoint (checkpoint pipeline + property tests)
 //   - pkg/gateway/sessionserver Resume handler in handleResume
-//   - pkg/gateway/storage/retentiongc (retention sweep)
+//   - pkg/storage/retentiongc (retention sweep)
 //   - tier-2 miniostore_test.go (MinIO ArtifactStore round-trip)
 //
 // The composite eviction-checkpoint-then-resume client journey (evict

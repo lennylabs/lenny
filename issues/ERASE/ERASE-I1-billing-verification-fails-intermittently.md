@@ -14,7 +14,7 @@ requirements: []
 
 ## Evidence
 
-- Merge gate run `5fe88e7f64fb9c324fbd3653` (branch `change/0117.S4-seam-model`, commit `8d75a6144`), integration tier: `TestErasureJobJourney/a_legal_hold_blocks_erasure_and_a_platform-admin_override_proceeds` failed with `override erasure job phase = failed, want completed`, the job's error being `billing erasure verification failed: the erasure salt or the original user id survived pseudonymization` (`pkg/gateway/storage/erasurejob/runner.go`, `errBillingVerification`).
+- Merge gate run `5fe88e7f64fb9c324fbd3653` (branch `change/0117.S4-seam-model`, commit `8d75a6144`), integration tier: `TestErasureJobJourney/a_legal_hold_blocks_erasure_and_a_platform-admin_override_proceeds` failed with `override erasure job phase = failed, want completed`, the job's error being `billing erasure verification failed: the erasure salt or the original user id survived pseudonymization` (`pkg/storage/erasurejob/runner.go`, `errBillingVerification`).
 - The same test passed 4 of 4 runs on that commit and 4 of 4 on `main` (`c9e094733`) on a quiet host, and in every earlier gate run. The failing run overlapped other docker-backed tests on the host.
 - The test runs with `t.Parallel()` against a shared datastore.
 

@@ -13,7 +13,7 @@
 // before any upstream call — all within the documented propagation SLO.
 //
 // The two modeled replicas each own a private in-memory deny list wrapped
-// by pkg/gateway/credentials/denylist/propagator.Propagator over its own
+// by pkg/credential/denylist/propagator.Propagator over its own
 // pubsub.Bus client against one miniredis server, so a Revoke published on
 // the origin replica reaches the peer over the same Redis PUBLISH/SUBSCRIBE
 // path the gateway wires in production. The origin replica serves the admin
@@ -39,16 +39,16 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/credential/credcache"
+	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
+	"github.com/lennylabs/lenny/pkg/credential/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/storage/pubsub"
 
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )

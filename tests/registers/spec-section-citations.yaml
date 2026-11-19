@@ -277,6 +277,32 @@ packages:
       count: 8
     - package: pkg/credential
       count: 67
+    - package: pkg/credential/credcache
+      count: 1
+    - package: pkg/credential/credentialpoolstore
+      count: 26
+    - package: pkg/credential/credentialpoolstore/pgstore
+      count: 6
+    - package: pkg/credential/credentialserver
+      count: 21
+    - package: pkg/credential/credentialstore
+      count: 26
+    - package: pkg/credential/credentialstore/pgstore
+      count: 9
+    - package: pkg/credential/denylist
+      count: 5
+    - package: pkg/credential/denylist/propagator
+      count: 2
+    - package: pkg/credential/impersonation
+      count: 50
+    - package: pkg/credential/impersonation/impersonationtest
+      count: 1
+    - package: pkg/credential/revocation
+      count: 7
+    - package: pkg/credential/revocation/propagator
+      count: 2
+    - package: pkg/credential/usercreds
+      count: 14
     - package: pkg/ctl
       count: 6
     - package: pkg/ctlcli
@@ -383,18 +409,6 @@ packages:
       count: 3
     - package: pkg/gateway/credentials/credassign
       count: 81
-    - package: pkg/gateway/credentials/credcache
-      count: 1
-    - package: pkg/gateway/credentials/credentialpoolstore
-      count: 26
-    - package: pkg/gateway/credentials/credentialpoolstore/pgstore
-      count: 6
-    - package: pkg/gateway/credentials/credentialserver
-      count: 21
-    - package: pkg/gateway/credentials/credentialstore
-      count: 26
-    - package: pkg/gateway/credentials/credentialstore/pgstore
-      count: 9
     - package: pkg/gateway/credentials/credfallback
       count: 9
     - package: pkg/gateway/credentials/credleasestore
@@ -405,22 +419,8 @@ packages:
       count: 17
     - package: pkg/gateway/credentials/credrenewal/propagator
       count: 4
-    - package: pkg/gateway/credentials/denylist
-      count: 5
-    - package: pkg/gateway/credentials/denylist/propagator
-      count: 2
-    - package: pkg/gateway/credentials/impersonation
-      count: 50
-    - package: pkg/gateway/credentials/impersonation/impersonationtest
-      count: 1
     - package: pkg/gateway/credentials/leaserevoke
       count: 5
-    - package: pkg/gateway/credentials/revocation
-      count: 7
-    - package: pkg/gateway/credentials/revocation/propagator
-      count: 2
-    - package: pkg/gateway/credentials/usercreds
-      count: 14
     - package: pkg/gateway/drain/drainreadiness
       count: 8
     - package: pkg/gateway/drain/prestop
@@ -563,16 +563,6 @@ packages:
       count: 24
     - package: pkg/gateway/runtime/externaladapterstore
       count: 9
-    - package: pkg/gateway/runtime/poolstore
-      count: 42
-    - package: pkg/gateway/runtime/poolstore/pgstore
-      count: 4
-    - package: pkg/gateway/runtime/runtimecapoverride
-      count: 7
-    - package: pkg/gateway/runtime/runtimestore
-      count: 54
-    - package: pkg/gateway/runtime/runtimestore/pgstore
-      count: 4
     - package: pkg/gateway/runtime/sdkwarm
       count: 4
     - package: pkg/gateway/runtime/slothealth
@@ -641,66 +631,22 @@ packages:
       count: 21
     - package: pkg/gateway/sessionserver
       count: 2954
-    - package: pkg/gateway/storage/deadletterredaction
-      count: 6
     - package: pkg/gateway/storage/derivelock
       count: 11
     - package: pkg/gateway/storage/dualstore
       count: 9
-    - package: pkg/gateway/storage/erasure
-      count: 32
-    - package: pkg/gateway/storage/erasurejob
-      count: 108
-    - package: pkg/gateway/storage/erasurejob/pgstore
-      count: 3
-    - package: pkg/gateway/storage/erasurejob/saltlockpg
-      count: 3
-    - package: pkg/gateway/storage/eventbus
-      count: 37
     - package: pkg/gateway/storage/evictionfallback
       count: 36
-    - package: pkg/gateway/storage/evictionstatestore
-      count: 23
-    - package: pkg/gateway/storage/evictionstatestore/pgstore
-      count: 4
-    - package: pkg/gateway/storage/failopen
-      count: 41
-    - package: pkg/gateway/storage/issuedtokenstore
-      count: 61
     - package: pkg/gateway/storage/leasestore
       count: 15
     - package: pkg/gateway/storage/leasestore/pgstore
       count: 6
-    - package: pkg/gateway/storage/legalholdreconciler
-      count: 23
-    - package: pkg/gateway/storage/partitionmaint
-      count: 11
-    - package: pkg/gateway/storage/pgnotify
-      count: 4
-    - package: pkg/gateway/storage/pgtenant
-      count: 21
-    - package: pkg/gateway/storage/rediskeys
-      count: 3
-    - package: pkg/gateway/storage/redistopology
-      count: 2
-    - package: pkg/gateway/storage/retentiongc
-      count: 27
     - package: pkg/gateway/storage/slotcounter
       count: 125
-    - package: pkg/gateway/storage/sqlitestore
-      count: 10
     - package: pkg/gateway/streamproxy
       count: 16
     - package: pkg/gateway/streamproxy/sessionevents
       count: 25
-    - package: pkg/gateway/upgrade/runtimeupgrade
-      count: 5
-    - package: pkg/gateway/upgrade/runtimeupgradeguard
-      count: 3
-    - package: pkg/gateway/upgrade/runtimeupgradestore
-      count: 2
-    - package: pkg/gateway/upgrade/runtimeupgradestore/pgstore
-      count: 1
     - package: pkg/gateway/uploadhandler
       count: 90
     - package: pkg/idempotency
@@ -901,6 +847,24 @@ packages:
       count: 8
     - package: pkg/runtime/poolstatus
       count: 6
+    - package: pkg/runtime/poolstore
+      count: 42
+    - package: pkg/runtime/poolstore/pgstore
+      count: 4
+    - package: pkg/runtime/runtimecapoverride
+      count: 7
+    - package: pkg/runtime/runtimestore
+      count: 54
+    - package: pkg/runtime/runtimestore/pgstore
+      count: 4
+    - package: pkg/runtime/runtimeupgrade
+      count: 5
+    - package: pkg/runtime/runtimeupgradeguard
+      count: 3
+    - package: pkg/runtime/runtimeupgradestore
+      count: 2
+    - package: pkg/runtime/runtimeupgradestore/pgstore
+      count: 1
     - package: pkg/runtimekit
       count: 21
     - package: pkg/runtimekit/echocore
@@ -925,6 +889,42 @@ packages:
       count: 37
     - package: pkg/spiffeid
       count: 8
+    - package: pkg/storage/deadletterredaction
+      count: 6
+    - package: pkg/storage/erasure
+      count: 32
+    - package: pkg/storage/erasurejob
+      count: 108
+    - package: pkg/storage/erasurejob/pgstore
+      count: 3
+    - package: pkg/storage/erasurejob/saltlockpg
+      count: 3
+    - package: pkg/storage/eventbus
+      count: 37
+    - package: pkg/storage/evictionstatestore
+      count: 23
+    - package: pkg/storage/evictionstatestore/pgstore
+      count: 4
+    - package: pkg/storage/failopen
+      count: 41
+    - package: pkg/storage/issuedtokenstore
+      count: 61
+    - package: pkg/storage/legalholdreconciler
+      count: 23
+    - package: pkg/storage/partitionmaint
+      count: 11
+    - package: pkg/storage/pgnotify
+      count: 4
+    - package: pkg/storage/pgtenant
+      count: 21
+    - package: pkg/storage/rediskeys
+      count: 3
+    - package: pkg/storage/redistopology
+      count: 2
+    - package: pkg/storage/retentiongc
+      count: 27
+    - package: pkg/storage/sqlitestore
+      count: 10
     - package: pkg/storerouter
       count: 36
     - package: pkg/supervisorselftest

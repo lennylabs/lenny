@@ -10,19 +10,19 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
+	"github.com/lennylabs/lenny/pkg/credential/impersonation"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
-	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
 	"github.com/lennylabs/lenny/pkg/mtls"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	"github.com/lennylabs/lenny/pkg/recommendations"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgrade"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 
 // The types below satisfy the admin-router manager interfaces that gate

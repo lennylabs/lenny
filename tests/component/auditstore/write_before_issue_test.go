@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Component test for the §13.3 write-before-issue Postgres
-// transaction: pkg/gateway/issuedtokenstore.Store.RecordWithAudit must
+// transaction: pkg/storage/issuedtokenstore.Store.RecordWithAudit must
 // commit the issued_tokens INSERT and the audit_log INSERT atomically
 // under the §11.7 per-tenant advisory lock. spec: §13.3 /
 // F-4.3.7 / F-4.3.8.
@@ -18,8 +18,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

@@ -14,7 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/storage/failopen"
 )
 
 // togglingCounter fails (forcing fail-open) while fail is true and returns

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -38,7 +38,7 @@ func tenantRowCounts(t *testing.T, ctx context.Context, pg *containers.Postgres,
 // subject or actor token's issued_tokens.revoked_at under the §11.7 lock
 // before writing, so a token revoked after the Token Service's pre-check
 // still produced a child or a replacement. Check lockAndRecheck in
-// pkg/gateway/storage/issuedtokenstore/recheck.go and that both
+// pkg/storage/issuedtokenstore/recheck.go and that both
 // RecordWithAudit and RecordWithRotationAudit call it before any INSERT.
 func TestIssuanceReReadsSourceRevocationUnderLock_spec_13_3(t *testing.T) {
 	t.Parallel()

@@ -8,7 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
 )
 
 // CapabilityRefreshResult is the outcome of a §5.1 connector capability

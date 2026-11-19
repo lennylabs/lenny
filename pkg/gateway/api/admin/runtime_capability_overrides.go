@@ -8,8 +8,8 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // WithRuntimeCapabilityOverrides wires the §5.1 per-tenant

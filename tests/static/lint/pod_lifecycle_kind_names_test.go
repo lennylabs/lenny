@@ -494,7 +494,7 @@ func TestPoolTableExemptionEndsAtTheRenameMigration(t *testing.T) {
 		"migrations/pool_draining_since_test.go":                   true,
 		"migrations/pools_column_test.go":                          false,
 		"tests/component/migrations/prod_columns_test.go":          true,
-		"pkg/gateway/runtime/poolstore/pgstore/pgstore.go":         false,
+		"pkg/runtime/poolstore/pgstore/pgstore.go":                 false,
 		"changes/0137-pod-lifecycle-controller/evidence/notes.sql": true,
 	}
 	for rel, want := range cases {

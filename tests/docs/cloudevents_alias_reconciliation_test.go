@@ -105,7 +105,7 @@ func TestSpecEnvelopeTypesAreNativeStructs_F12621(t *testing.T) {
 // diagnosis: the §12.6 Event or §25.3 OperationalEvent struct in the spec
 // drifted from the shipped envelope-contract attribute set. The spec
 // struct is the sole spec basis for the corresponding native struct in
-// pkg/gateway/storage/eventbus.Event and pkg/events.OperationalEvent; if
+// pkg/storage/eventbus.Event and pkg/events.OperationalEvent; if
 // the spec drops or renames a context attribute (or the OperationalEvent
 // severity extension the event-buffer query filters on), the spec no
 // longer describes the wire-correct code. A failure here means a struct
@@ -123,7 +123,7 @@ func TestSpecEnvelopeStructFieldsMatchEnvelopeContract_F12621(t *testing.T) {
 
 	// The §12.6 Event struct field set mirrors the envelope-contract table
 	// attributes plus the inline payload and the extension map, matching the
-	// shipped pkg/gateway/storage/eventbus.Event. Assert each field-name JSON
+	// shipped pkg/storage/eventbus.Event. Assert each field-name JSON
 	// tag is present (Extensions is `json:"-"`, so assert the Go field name).
 	requireAllContain(t, "§12.6 Event struct fields", eventBlock, []string{
 		`SpecVersion`, `json:"specversion"`,

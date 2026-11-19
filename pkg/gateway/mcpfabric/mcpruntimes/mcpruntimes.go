@@ -34,8 +34,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // Dispatcher reaches a `type: mcp` runtime's MCP client and returns

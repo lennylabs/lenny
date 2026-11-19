@@ -23,7 +23,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	manifestpg "github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
+	"github.com/lennylabs/lenny/pkg/storage/legalholdreconciler"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

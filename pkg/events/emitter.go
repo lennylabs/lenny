@@ -9,7 +9,7 @@ import "context"
 // envelope-contract table and the §25.5 worked event frames, the
 // attribute value is "1.0" (the implemented CloudEvents revision is
 // v1.0.2, but the specversion attribute names the 1.0 line, not the
-// patch revision). This mirrors pkg/gateway/storage/eventbus.SpecVersion.
+// patch revision). This mirrors pkg/storage/eventbus.SpecVersion.
 // spec: §12.6 (CloudEvents envelope contract), §25.5 (event envelope).
 const CloudEventsSpecVersion = "1.0"
 

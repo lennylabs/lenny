@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §5.1 runtime registry, exercising the
-// Postgres-backed pkg/gateway/runtimestore/pgstore against a real
+// Postgres-backed pkg/runtime/runtimestore/pgstore against a real
 // container. Covers CRUD, name validation, the soft-delete lifecycle,
 // and the IncludeDeleted / Type list filters.
 package stores_test
@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	runtimepg "github.com/lennylabs/lenny/pkg/runtime/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -40,7 +40,7 @@ func sampleRuntime(name string) runtimestore.Runtime {
 
 // spec: 5.1
 // diagnosis: the Postgres-backed runtime registry in
-// pkg/gateway/runtimestore/pgstore did not behave as specified. Create
+// pkg/runtime/runtimestore/pgstore did not behave as specified. Create
 // and Get must round-trip a runtime including its jsonb-encoded
 // descriptor blocks, name validation must reject duplicates and
 // invalid names, Update must re-apply and advance updated_at, and the
@@ -510,7 +510,7 @@ func TestRuntimeStoreContract(t *testing.T) {
 //
 // spec: §5.1 (command), §5.2 (recycle.runtimeProcess).
 // diagnosis: the restartable column did not round-trip through
-// pkg/gateway/runtime/runtimestore/pgstore. Check the column in selectList,
+// pkg/runtime/runtimestore/pgstore. Check the column in selectList,
 // the INSERT and UPDATE parameter lists, and scanRuntime, and that
 // migration 0189 applied.
 func TestRuntimeStoreRestartableRoundTrip_spec_5_1(t *testing.T) {

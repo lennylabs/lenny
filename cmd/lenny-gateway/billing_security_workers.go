@@ -10,10 +10,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/billing/billingretention"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 	"github.com/lennylabs/lenny/pkg/pgwritemetrics"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // startBillingAndSecurityWorkers launches the §10.1 coordination-lease

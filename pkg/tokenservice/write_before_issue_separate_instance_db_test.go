@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 

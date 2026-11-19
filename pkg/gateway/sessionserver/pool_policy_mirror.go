@@ -8,7 +8,7 @@ import (
 	"fmt"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 )
 
 // poolPolicyReader adapts the §5.2 poolstore onto the

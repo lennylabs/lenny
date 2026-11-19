@@ -12,9 +12,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/migrations"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/quota/quotabudget"
 	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint/pgstore"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	embpostgres "github.com/lennylabs/lenny/tests/testinfra/embpg"
 )
 

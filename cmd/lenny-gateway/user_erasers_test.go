@@ -9,11 +9,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/storage/erasure"
 )
 
 // eraseCalls records the erasure calls the user-path doubles receive.

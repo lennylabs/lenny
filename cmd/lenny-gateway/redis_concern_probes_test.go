@@ -13,8 +13,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

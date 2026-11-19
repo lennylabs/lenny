@@ -63,7 +63,7 @@ var prodMigrationSchema = []struct {
 	// 0040 adds the §5.2 concurrent-execution-mode columns to the
 	// sandbox_warm_pools registry. concurrency_style is added here too, but the
 	// §5.2 mode collapse retires it: migration 0167 drops the column (coupled
-	// with the pkg/gateway/poolstore ConcurrencyStyle removal per the proposal),
+	// with the pkg/runtime/poolstore ConcurrencyStyle removal per the proposal),
 	// so it does not exist after the full prod chain. concurrency_style is
 	// intentionally absent from this list; the drop is asserted by the 0167
 	// entry below.

@@ -5,9 +5,9 @@
 // Integration test: the §4.9 credential deny-list rejection at the
 // LLM reverse proxy for a user-backed lease. It wires the same production
 // components cmd/lenny-gateway wires — the user-source credential
-// materializer (pkg/gateway/credentials/usercreds), the /v1/credentials
-// revoke endpoint (pkg/gateway/credentials/credentialserver), the
-// per-replica credential deny list (pkg/gateway/credentials/denylist),
+// materializer (pkg/credential/usercreds), the /v1/credentials
+// revoke endpoint (pkg/credential/credentialserver), the
+// per-replica credential deny list (pkg/credential/denylist),
 // and the llmproxy.Handler served over an upstream stub — so a test drives
 // a live agent request through the proxy, revokes the backing user
 // credential through the real POST /v1/credentials/{credentialRef}/revoke
@@ -41,12 +41,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
+	"github.com/lennylabs/lenny/pkg/credential/credcache"
+	"github.com/lennylabs/lenny/pkg/credential/credentialserver"
+	"github.com/lennylabs/lenny/pkg/credential/credentialstore"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
+	"github.com/lennylabs/lenny/pkg/credential/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/usercreds"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"

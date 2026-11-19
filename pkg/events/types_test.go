@@ -37,7 +37,7 @@ func TestOperationalEventSubjectJSONRoundTrip_spec_25_3_19(t *testing.T) {
 func TestOperationalEventExtensionsRoundTrip_spec_25_3_13(t *testing.T) {
 	// spec: §25.3 / §12.6 — CloudEvents extension attributes
 	// flatten into the top-level object and round-trip back into
-	// Extensions, mirroring pkg/gateway/eventbus.Event.
+	// Extensions, mirroring pkg/storage/eventbus.Event.
 	e := OperationalEvent{
 		ID: "evt-1", SpecVersion: "1.0.2", Type: "dev.lenny.session_failed",
 		Subject: "session/abc123",

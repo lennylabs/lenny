@@ -24,7 +24,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/common/seqname"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -74,7 +74,7 @@ func rotate(ctx context.Context, store *issuedtokenstore.Store, tenant, subjectJ
 // something other than subject_token_revoked. Two live replacements mean
 // the step (1a) re-read did not run under the §11.7 lock before the
 // INSERT. Check lockAndRecheck in
-// pkg/gateway/storage/issuedtokenstore/recheck.go and its call order in
+// pkg/storage/issuedtokenstore/recheck.go and its call order in
 // RecordWithRotationAudit.
 func TestConcurrentDoubleRotationCommitsExactlyOne_spec_13_3(t *testing.T) {
 	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: schematest.RepoRoot(t) + "/migrations"})

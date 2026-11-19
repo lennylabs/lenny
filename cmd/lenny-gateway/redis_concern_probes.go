@@ -11,8 +11,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

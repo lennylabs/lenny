@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/redisconn/clustertest"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 )
 
 // spec: §12.4 Redis HA and Failure Modes (Redis Cluster at Tier 3; the

@@ -11,9 +11,9 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction"
 	pkgkms "github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 )
 
 // awsProvider resolves the real AWS KMS adapter against s, as a binary

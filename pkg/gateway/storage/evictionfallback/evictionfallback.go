@@ -40,7 +40,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
+	"github.com/lennylabs/lenny/pkg/storage/evictionstatestore"
 )
 
 // MaxInlineContextBytes is the §4.4 2 KB cutoff for the

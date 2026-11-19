@@ -362,7 +362,7 @@ func leaseToProto(l credential.Lease) *tokensv1.CredentialLease {
 // provider secret the gateway needs to inject into upstream LLM calls
 // from its §4.9 reverse proxy. The mTLS transport between gateway and
 // Token Service protects the secret on the wire; the gateway caches it
-// in `pkg/gateway/credcache` and never persists it.
+// in `pkg/credential/credcache` and never persists it.
 func (s *GRPCServer) leaseToProtoWithSecret(l credential.Lease) *tokensv1.CredentialLease {
 	out := leaseToProto(l)
 	if secret, ok := s.assign.UpstreamCredential(l); ok {

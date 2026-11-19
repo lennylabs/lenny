@@ -11,8 +11,8 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
+	"github.com/lennylabs/lenny/pkg/storage/pubsub"
 )
 
 // fakeFallback is an in-test §4.9 Postgres LISTEN/NOTIFY substitute. It

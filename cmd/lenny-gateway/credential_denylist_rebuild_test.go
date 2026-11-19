@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialstore"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 )
 
 // stubPoolLister is a revokedPoolLister test double: it returns a fixed

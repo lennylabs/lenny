@@ -488,11 +488,11 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 
 	allowed := append(
 		base(),
-		pkg("pkg/gateway/core/admission", "pkg/quota/quotastore", "pkg/policy", "pkg/gateway/credentials/credentialstore"),
+		pkg("pkg/gateway/core/admission", "pkg/quota/quotastore", "pkg/policy", "pkg/credential/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/api/pipeline2", "pkg/auth/authmw"),
 		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/quota/quotastore", "pkg/policy/ratelimit", "pkg/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/api/admintoken", "pkg/connectoroauth", "pkg/mtls/carotation", "pkg/gateway/api/serviceidentity"),
-		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/gateway/storage/issuedtokenstore", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
+		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/platformtools/delegation", "pkg/delegation/delegationpolicystore", "pkg/delegation/delegationpolicystore/pgstore"),
 		pkg("cmd/lenny-gateway/wire", "pkg/policy/interceptor"),
 		pkg("pkg/ops", "pkg/credential/credentialstore"),

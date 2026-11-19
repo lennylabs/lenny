@@ -7,13 +7,13 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
+	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
 	credrenewalprop "github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgnotify"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/storage/pgnotify"
 )
 
 // buildRevocationWiring is the §4.1 composition-root build step (R1) for the

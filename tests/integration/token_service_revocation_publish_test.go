@@ -15,7 +15,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
+	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/tests/testinfra/opsprocess"
 	"github.com/lennylabs/lenny/tests/testinfra/stackkey"

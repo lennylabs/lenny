@@ -15,9 +15,9 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // fakeCore stands in for the session core's side of the upload handler's

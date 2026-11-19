@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // TestApplyCRDFields_DerivesRestartable_spec_5_1 verifies that the

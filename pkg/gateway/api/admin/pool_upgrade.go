@@ -9,8 +9,8 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgrade"
-	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgrade"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgradestore"
 	"github.com/lennylabs/lenny/pkg/runtime/upgrade/state"
 )
 

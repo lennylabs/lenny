@@ -40,7 +40,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/tests/testinfra/mcpschema"
 )
 

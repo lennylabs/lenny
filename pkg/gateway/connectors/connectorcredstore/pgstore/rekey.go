@@ -8,8 +8,8 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 )
 
 // RekeyName identifies this store in the §4.9.1 re-encryption job

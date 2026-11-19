@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // listedRows is a poolstore.Store double whose List returns rows, so a row

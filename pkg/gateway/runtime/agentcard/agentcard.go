@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/common/semver"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // Key is the publishedMetadata key a generated card is stored under.

@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/deadletterredaction"
+	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

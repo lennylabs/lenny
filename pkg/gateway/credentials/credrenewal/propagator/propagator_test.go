@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 )
 
 // fakeRevoker records the pool credential IDs a credential-lease

@@ -43,8 +43,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
@@ -52,6 +50,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/policy"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 

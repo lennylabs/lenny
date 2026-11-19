@@ -5,7 +5,7 @@ package billingstore
 import "encoding/json"
 
 // ExportState and ImportState let the §17.4 Source-Mode embedded-SQLite
-// durability layer (pkg/gateway/storage/sqlitestore) snapshot and restore the
+// durability layer (pkg/storage/sqlitestore) snapshot and restore the
 // in-memory billing-event ledger across a process restart. Only the
 // per-tenant event map is serialized; the injected clock is left intact.
 //

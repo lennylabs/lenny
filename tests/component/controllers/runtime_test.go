@@ -19,7 +19,7 @@ import (
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	runtimecontroller "github.com/lennylabs/lenny/pkg/controller/runtime"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 const digest64 = "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

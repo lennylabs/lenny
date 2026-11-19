@@ -7,7 +7,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 
 // TestFaultedErasureStartFailsInsideTheStore_spec_12_8 arms the start fault
