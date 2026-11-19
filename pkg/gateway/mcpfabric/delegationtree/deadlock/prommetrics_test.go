@@ -38,7 +38,8 @@ lenny_delegation_deadlock_resolution_total{pool="pool-a",resolution="child_cance
 lenny_delegation_deadlock_resolution_total{pool="pool-a",resolution="client_input"} 1
 lenny_delegation_deadlock_resolution_total{pool="pool-b",resolution="timeout"} 1
 `
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(want),
+	if err := testutil.GatherAndCompare(
+		reg, strings.NewReader(want),
 		"lenny_delegation_deadlock_detected_total",
 		"lenny_delegation_deadlock_resolution_total",
 	); err != nil {

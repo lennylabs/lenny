@@ -31,7 +31,8 @@ lenny_orphan_tasks_active 0
 # TYPE lenny_orphan_tasks_terminated counter
 lenny_orphan_tasks_terminated 0
 `
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(atStart),
+	if err := testutil.GatherAndCompare(
+		reg, strings.NewReader(atStart),
 		"lenny_orphan_cleanup_runs_total", "lenny_orphan_tasks_active", "lenny_orphan_tasks_terminated",
 	); err != nil {
 		t.Fatal(err)
@@ -60,7 +61,8 @@ lenny_orphan_tasks_active_per_tenant{tenant_id="globex"} 0
 # TYPE lenny_orphan_tasks_terminated counter
 lenny_orphan_tasks_terminated 3
 `
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(want),
+	if err := testutil.GatherAndCompare(
+		reg, strings.NewReader(want),
 		"lenny_orphan_cleanup_runs_total", "lenny_orphan_tasks_active",
 		"lenny_orphan_tasks_active_per_tenant", "lenny_orphan_tasks_terminated",
 	); err != nil {

@@ -37,7 +37,8 @@ lenny_elicitation_suppressed_total 0
 # TYPE lenny_elicitation_timeout_total counter
 lenny_elicitation_timeout_total 0
 `
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(atStart),
+	if err := testutil.GatherAndCompare(
+		reg, strings.NewReader(atStart),
 		"lenny_elicitation_pending", "lenny_elicitation_suppressed_total", "lenny_elicitation_timeout_total",
 	); err != nil {
 		t.Fatal(err)
@@ -74,7 +75,8 @@ lenny_elicitation_suppressed_total 1
 # TYPE lenny_elicitation_timeout_total counter
 lenny_elicitation_timeout_total 2
 `
-	if err := testutil.GatherAndCompare(reg, strings.NewReader(want),
+	if err := testutil.GatherAndCompare(
+		reg, strings.NewReader(want),
 		"lenny_elicitation_content_tamper_detected_total", "lenny_elicitation_dropped_total",
 		"lenny_elicitation_pending", "lenny_elicitation_suppressed_total", "lenny_elicitation_timeout_total",
 	); err != nil {
