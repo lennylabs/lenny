@@ -8,11 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
 | Ready | 1 |
 | Waiting on decisions | 40 |
 | Blocked | 132 |
-| Landed | 14 |
+| Landed | 15 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -54,7 +53,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0161.S1](0161-create-permission-and-admission/steps.md#0161s1-create-permission-and-admission-gates-on-every-creation-surface) | Create permission and admission gates on every creation surface | Building |  |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Waiting on decisions | 0118 is `Draft` |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0119.S2](0119-agent-runtimes-only/steps.md#0119s2-removal-of-service-mode) | Removal of service mode | Waiting on decisions | 0119 is `Draft` |
@@ -228,6 +226,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
+| [0161.S1](0161-create-permission-and-admission/steps.md#0161s1-create-permission-and-admission-gates-on-every-creation-surface) | Create permission and admission gates on every creation surface | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -272,4 +271,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
-| [0161](0161-create-permission-and-admission/change.md) | Session creation applies the create permission and the admission gates on every surface | `In progress` | 0 of 1 | 0 |
+| [0161](0161-create-permission-and-admission/change.md) | Session creation applies the create permission and the admission gates on every surface | `Implemented` | 1 of 1 | 0 |

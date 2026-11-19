@@ -1,6 +1,6 @@
 # Session creation applies the create permission and the admission gates on every surface
 
-Status: `In progress`, revision 1, 2026-11-19.
+Status: `Implemented`, revision 1, 2026-11-19.
 
 ## Problem
 

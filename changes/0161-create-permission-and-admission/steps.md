@@ -7,7 +7,7 @@ None.
 ## Steps
 
 ### 0161.S1 Create permission and admission gates on every creation surface
-- status: Building
+- status: Landed
 - lanes: [specification, code, documentation]
 - closes: [CAPISES-I1, CAPISES-I2]
 
