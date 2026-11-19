@@ -1345,7 +1345,7 @@ func (s *readyTransitionFailStore) Update(ctx context.Context, tenantID, id stri
 		// Probe the mutation on a copy: when it would set the row to `ready`,
 		// reject the write to simulate a store outage at the exact finalize
 		// finalizing → ready transition that follows AssignCredentials.
-		probe, err := s.Store.Get(ctx, tenantID, id)
+		probe, err := s.Get(ctx, tenantID, id)
 		if err == nil {
 			if perr := mutate(&probe); perr == nil && probe.State == session.StateReady {
 				return sessionstore.Session{}, errInjectedReadyWriteFailure

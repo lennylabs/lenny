@@ -152,8 +152,8 @@ func TestUsageTenantScoped(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Usage: usage})
 
 	// Seed usage for two tenants directly.
-	_ = usage.Record(nil, usagestore.Record{TenantID: "acme", Sessions: 5})
-	_ = usage.Record(nil, usagestore.Record{TenantID: "globex", Sessions: 9})
+	_ = usage.Record(t.Context(), usagestore.Record{TenantID: "acme", Sessions: 5})
+	_ = usage.Record(t.Context(), usagestore.Record{TenantID: "globex", Sessions: 9})
 
 	req := withUsageViewer(httptest.NewRequest(http.MethodGet, "/v1/usage", nil))
 	rr := httptest.NewRecorder()
