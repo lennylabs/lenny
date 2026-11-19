@@ -47,7 +47,7 @@ The import sites in each title are counted over the packages the step moves, as 
 `sessionserver`'s five upload files and their tests to a new package, `pkg/gateway/uploadhandler`, which reaches the core through the session lookup, request forwarding, and workspace write operations of the seam interface, with authorization applied by each route's access check, and registers its routes with the API front. The archive extraction in `podsession` stays until 0153.S3 removes it. The seam interface page gains `GWSEAM-RequestTenant`, served by the API front, and `GWSEAM-VerifyUploadToken`, `GWSEAM-ReserveStorage`, `GWSEAM-AdjustStorage`, and `GWSEAM-AuditUpload`, served by the session core to the upload handler, because the upload token, quota, tenant, and audit packages the handler used stay with the core under GW-R2 (open decisions 31 to 33). `GWSEAM-ForwardRequest` gets an interface of its own, and `GWSEAM-WriteWorkspace` carries each file's mode and names the phase that failed. Until 0117.S8, the session server serves the route registration interface on the mux the client and forward listeners serve, and the upload handler's flags and route registration move out of `cmd/lenny-gateway` (decision 7).
 
 ### 0117.S6 Stream proxy split (69 import sites)
-- status: Building
+- status: Landed
 - lanes: [specification, code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
