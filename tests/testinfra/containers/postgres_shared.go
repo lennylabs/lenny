@@ -107,7 +107,7 @@ func (s *SharedPostgres) start(migrationsDir string) error {
 		return err
 	}
 	s.container = c
-	dsn, err := c.ConnectionString(ctx, "sslmode=disable")
+	dsn, err := postgresDSN(ctx, c)
 	if err != nil {
 		return fmt.Errorf("dsn: %w", err)
 	}

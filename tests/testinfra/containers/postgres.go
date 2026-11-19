@@ -37,6 +37,9 @@ import (
 // need a different image inject a PostgresOptions{Image: …}.
 const defaultImage = "pgvector/pgvector:pg16"
 
+// postgresPort is the container port Postgres listens on.
+const postgresPort = "5432/tcp"
+
 // PostgresOptions configures StartPostgres. Zero value is sensible.
 type PostgresOptions struct {
 	// Image is the container image. Defaults to defaultImage.
@@ -124,9 +127,15 @@ func runPostgres(ctx context.Context, opts PostgresOptions, extra ...testcontain
 		tcpostgres.WithDatabase(opts.Database),
 		tcpostgres.WithUsername(opts.User),
 		tcpostgres.WithPassword(opts.Password),
+		// The mapped-port strategy holds the start until Docker has
+		// published 5432/tcp, so a DSN read right after the start does not
+		// see `port "5432/tcp" not found`. postgresDSN retries the same
+		// error as a second guard.
 		testcontainers.WithWaitStrategy(
 			wait.ForLog("database system is ready to accept connections").
 				WithOccurrence(2).
+				WithStartupTimeout(opts.StartupTimeout),
+			wait.ForMappedPort(postgresPort).
 				WithStartupTimeout(opts.StartupTimeout),
 		),
 	}, extra...)
@@ -147,7 +156,7 @@ func finishPostgres(t testing.TB, ctx context.Context, container *tcpostgres.Pos
 		_ = container.Terminate(stopCtx)
 	})
 
-	dsn, err := container.ConnectionString(ctx, "sslmode=disable")
+	dsn, err := postgresDSN(ctx, container)
 	if err != nil {
 		t.Fatalf("StartPostgres: dsn: %v", err)
 	}
