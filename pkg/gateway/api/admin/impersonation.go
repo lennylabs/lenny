@@ -12,10 +12,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
+	"github.com/lennylabs/lenny/pkg/credential/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // ImpersonationService is the §13.3 platform-admin impersonation issuer

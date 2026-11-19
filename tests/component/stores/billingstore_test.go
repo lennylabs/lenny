@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
 	billingpg "github.com/lennylabs/lenny/pkg/billing/billingstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

@@ -24,11 +24,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/legalholdreconciler"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/partitionmaint"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/legalholdreconciler"
+	"github.com/lennylabs/lenny/pkg/storage/partitionmaint"
+	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
 )
 
 func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags, tokenFlags *admintoken.Flags) {

@@ -5,7 +5,7 @@ package userstore
 import "encoding/json"
 
 // ExportState and ImportState let the §17.4 Source-Mode embedded-SQLite
-// durability layer (pkg/gateway/sqlitestore) snapshot and restore the
+// durability layer (pkg/storage/sqlitestore) snapshot and restore the
 // in-memory user store across a process restart.
 //
 // spec: §17.4 — embedded SQLite for session and metadata storage.

@@ -2,7 +2,7 @@
 
 // Package pgstore is the §13.3 Postgres-backed encrypted TokenStore
 // for §9.3 connector OAuth credentials. Mirrors the §4.9 user-credential
-// envelope pattern in pkg/gateway/credentialstore/pgstore: every token
+// envelope pattern in pkg/credential/credentialstore/pgstore: every token
 // secret is sealed with a per-record DEK wrapped by the per-tenant KMS
 // KEK before it reaches Postgres, and a SHA-256 hash of the access
 // token is stored alongside for the §13.3 revocation-lookup hot path.
@@ -20,9 +20,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 )
 
 // Store is the Postgres-backed §9.3 connector-credential registry

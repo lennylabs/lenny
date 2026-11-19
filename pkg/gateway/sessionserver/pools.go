@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/pagination"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // poolListSortFields / poolListDefaultSort pin the §15.1 sort

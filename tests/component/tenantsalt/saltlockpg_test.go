@@ -13,7 +13,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/saltlockpg"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob/saltlockpg"
 )
 
 // saltKey mirrors the salt lock's key derivation, so the test can probe

@@ -11,7 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 
 // fakeSaltRotator records the tenant ids it was asked to rotate and can

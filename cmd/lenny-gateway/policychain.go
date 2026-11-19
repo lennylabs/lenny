@@ -8,7 +8,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/auditscope"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/policy"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/quota"
@@ -16,6 +15,7 @@ import (
 	quotacheckpointpg "github.com/lennylabs/lenny/pkg/quota/quotacheckpoint/pgstore"
 	"github.com/lennylabs/lenny/pkg/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/quota/quotastore"
+	"github.com/lennylabs/lenny/pkg/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

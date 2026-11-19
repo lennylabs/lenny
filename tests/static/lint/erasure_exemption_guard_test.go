@@ -22,7 +22,7 @@ import (
 // exemption with that reason goes stale the moment a production writer
 // appears, and the store then holds personal data no eraser reaches. This
 // guard fails when the reason stops holding, naming the exemption to
-// revisit in pkg/gateway/storage/erasure (userExempt and tenantExempt).
+// revisit in pkg/storage/erasure (userExempt and tenantExempt).
 
 // exgModulePath is the repository's Go module path.
 const exgModulePath = "github.com/lennylabs/lenny"
@@ -43,8 +43,8 @@ type exgUnwrittenStore struct {
 // exgUnwrittenStores are the packages the redis_caches and eviction_state
 // exemptions rest on.
 var exgUnwrittenStores = []exgUnwrittenStore{
-	{pkg: "pkg/gateway/storage/evictionstatestore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
-	{pkg: "pkg/gateway/storage/evictionstatestore/pgstore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
+	{pkg: "pkg/storage/evictionstatestore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
+	{pkg: "pkg/storage/evictionstatestore/pgstore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
 	{pkg: "pkg/gateway/storage/evictionfallback", exemption: "eviction_state"},
 	{pkg: "pkg/gateway/session/routingcache", exemption: "redis_caches"},
 	// The token service constructs the access-token cache and discards it;
@@ -126,7 +126,7 @@ func exgImportViolations(t *testing.T, root, path string) []string {
 			}
 			out = append(out, filepath.ToSlash(rel)+" imports "+s.pkg+
 				"; the "+s.exemption+" erasure exemption (no production writer) no longer holds: "+
-				"wire an eraser for it on both paths or revisit the exemption in pkg/gateway/storage/erasure")
+				"wire an eraser for it on both paths or revisit the exemption in pkg/storage/erasure")
 		}
 	}
 	return out
@@ -183,7 +183,7 @@ func exgTokenCacheCallViolations(t *testing.T, root string) []string {
 			}
 			out = append(out, rel+" calls "+sel.Sel.Name+" on the access-token cache; "+
 				"the redis_caches erasure exemption (no production writer) no longer holds: "+
-				"wire an eraser for it on both paths or revisit the exemption in pkg/gateway/storage/erasure")
+				"wire an eraser for it on both paths or revisit the exemption in pkg/storage/erasure")
 			return true
 		})
 	}
@@ -293,7 +293,7 @@ func TestErasureExemptionGuardCatchesNewWriters_spec_12_8(t *testing.T) {
 		want []string
 	}{
 		{dir: "clean"},
-		{dir: "importer", want: []string{"pkg/gateway/session/sessionserver/evict.go imports pkg/gateway/storage/evictionstatestore", "eviction_state"}},
+		{dir: "importer", want: []string{"pkg/gateway/session/sessionserver/evict.go imports pkg/storage/evictionstatestore", "eviction_state"}},
 		{dir: "cacheput", want: []string{"cmd/lenny-token-service/exchange.go calls Put on the access-token cache", "redis_caches"}},
 	}
 	for _, tc := range cases {

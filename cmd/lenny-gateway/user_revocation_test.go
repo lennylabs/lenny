@@ -22,8 +22,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/pubsub"
 )
 
 // poolLease returns a valid pool-backed proxy lease bound to session.

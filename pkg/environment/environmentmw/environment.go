@@ -36,7 +36,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // Resolution is the §10.6 environment context the middleware resolves

@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // DelegationPolicyPayload is the §8.3 / §15.1 admin DelegationPolicy

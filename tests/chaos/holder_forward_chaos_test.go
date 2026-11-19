@@ -32,10 +32,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -385,7 +385,7 @@ func (e *lostFanOutErasure) requireCompleted(t *testing.T) {
 // the erasure job deleted the user's stores while that session was still in
 // its post-terminal window, or never deleted them after the peer released
 // the binding or the window cap passed. Check the store_deleting release gate
-// in pkg/gateway/storage/erasurejob/runner_phases.go, admin.ReleasePending in
+// in pkg/storage/erasurejob/runner_phases.go, admin.ReleasePending in
 // pkg/gateway/externalapi/admin/drain.go, and the release marker the peer's
 // terminal binding release records.
 func TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7(t *testing.T) {

@@ -18,10 +18,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
-	erasurepg "github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/pgstore"
 	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	erasurepg "github.com/lennylabs/lenny/pkg/storage/erasurejob/pgstore"
 )
 
 // Transcripts is the part of the transcript store a World uses: seeding a

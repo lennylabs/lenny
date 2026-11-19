@@ -10,8 +10,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/credential/revocation"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // staticTenants lists a fixed tenant set for a revocation rehydration.

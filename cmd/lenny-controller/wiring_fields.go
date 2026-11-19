@@ -15,7 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/controllermetrics"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/events"
-	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
+	runtimepg "github.com/lennylabs/lenny/pkg/runtime/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

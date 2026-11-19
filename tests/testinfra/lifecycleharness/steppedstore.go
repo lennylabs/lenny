@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 )
 
 // steppedStamp is the stepped-clock view of one stored write of a row: the

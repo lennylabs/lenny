@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §5.1 Postgres-backed per-tenant runtime
-// capability override store (pkg/gateway/runtimecapoverride/pgstore)
+// capability override store (pkg/runtime/runtimecapoverride/pgstore)
 // against a real container with the production migrations applied. Covers
 // the JSONB override round-trip, upsert, delete idempotency, list, and
 // the §12.3 tenant-isolation RLS guard (an override written under one
@@ -16,9 +16,9 @@ import (
 	"encoding/hex"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
-	capoverridepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride"
+	capoverridepg "github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride/pgstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

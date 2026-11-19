@@ -27,8 +27,8 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/platform/store"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 )
 
 // The shared ID types and the RedisConcern / StoreType enums live in

@@ -13,9 +13,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache/redisstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/redisconn/clustertest"
 	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 )
 
 func userKey(tenant, user string) semanticcache.Key {

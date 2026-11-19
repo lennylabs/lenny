@@ -35,7 +35,7 @@ import (
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecyclefence"

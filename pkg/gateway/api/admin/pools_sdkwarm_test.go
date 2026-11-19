@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // TestCreatePoolRejectsPreConnectIncompatible_spec_5_2_6_1 covers the §5.2 / §6.1 admission guard on pool creation: an SDK-warm

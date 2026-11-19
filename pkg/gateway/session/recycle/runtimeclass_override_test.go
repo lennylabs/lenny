@@ -9,9 +9,9 @@ import (
 
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

@@ -20,7 +20,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 )
 
 // ptCap is the post-terminal cap the Postgres window tests run with.

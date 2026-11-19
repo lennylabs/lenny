@@ -10,10 +10,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // spec: §15.1 — GET /v1/pools session-facing pool discovery.

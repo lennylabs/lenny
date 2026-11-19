@@ -6,10 +6,10 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 

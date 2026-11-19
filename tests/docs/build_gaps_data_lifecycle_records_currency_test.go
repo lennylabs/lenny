@@ -116,9 +116,9 @@ const (
 	creationFenceFile = "pkg/gateway/session/sessionstore/creation_fence.go"
 	drainFile         = "pkg/gateway/api/admin/drain.go"
 	responsesFile     = "pkg/gateway/environment/translator/open_responses.go"
-	erasurePgFile     = "pkg/gateway/storage/erasurejob/pgstore/pgstore.go"
+	erasurePgFile     = "pkg/storage/erasurejob/pgstore/pgstore.go"
 	terminatorFile    = "cmd/lenny-gateway/tenantdeletion.go"
-	saltLockFile      = "pkg/gateway/storage/erasurejob/saltlockpg/saltlockpg.go"
+	saltLockFile      = "pkg/storage/erasurejob/saltlockpg/saltlockpg.go"
 )
 
 // closedLifecycleFindings are the findings the data-lifecycle work closed,
@@ -130,14 +130,14 @@ var closedLifecycleFindings = []closedLifecycleFinding{
 		holds: fileContains("pkg/gateway/session/sessionstore/pgstore/creation_fence.go", "FOR SHARE"),
 	},
 	{id: "F-12.8.27", file: drainFile, symbol: "DrainSessions", holds: listFilterReadsPrimary},
-	{id: "F-12.8.28", file: "pkg/gateway/storage/erasurejob/runner_phases.go", symbol: "Runner.runDrain"},
+	{id: "F-12.8.28", file: "pkg/storage/erasurejob/runner_phases.go", symbol: "Runner.runDrain"},
 	{id: "F-12.8.31", file: creationFenceFile, symbol: "CreationMarkers.Refusal"},
 	{
 		id: "F-12.8.32", file: drainFile, symbol: "DrainSessions",
 		holds: fileOmits(responsesFile, "DELETE /v1/responses"),
 	},
 	{id: "F-12.8.33", file: terminatorFile, symbol: "tenantSessionTerminator"},
-	{id: "F-12.8.36", file: "pkg/gateway/storage/erasurejob/runner_sweep.go", symbol: "Runner.RunPending"},
+	{id: "F-12.8.36", file: "pkg/storage/erasurejob/runner_sweep.go", symbol: "Runner.RunPending"},
 	{
 		id: "F-12.8.38", file: terminatorFile, symbol: "tenantSessionTerminator",
 		holds: fileContains("cmd/lenny-gateway/adminrouter.go", "Terminator: w.newTenantSessionTerminator("),
@@ -379,7 +379,7 @@ const (
 	usersFile         = "pkg/gateway/api/admin/users.go"
 	tenantErasersFile = "cmd/lenny-gateway/tenant_erasers.go"
 	adminRouterFile   = "cmd/lenny-gateway/adminrouter.go"
-	erasureOrderFile  = "pkg/gateway/storage/erasure/order.go"
+	erasureOrderFile  = "pkg/storage/erasure/order.go"
 	receiptFKDropFile = "migrations/0188_audit_redaction_receipts_drop_fk.up.sql"
 )
 

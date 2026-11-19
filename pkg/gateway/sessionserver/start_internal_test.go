@@ -6,8 +6,8 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 func TestExperimentContextToProtoNil(t *testing.T) {

@@ -19,8 +19,8 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/credential/revocation"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // racingRevokeSource serves fixed rows per tenant. Its read of the last

@@ -20,7 +20,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/storage/pubsub"
 )
 
 // peerReleaser records the requests a peer replica's subscriber applies

@@ -7,8 +7,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // fakePlaygroundCaps mirrors playground.Config's §27.6 effective-cap math

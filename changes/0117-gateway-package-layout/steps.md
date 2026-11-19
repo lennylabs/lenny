@@ -81,11 +81,13 @@ The `audit`, `billing`, `quota`, and `policy` packages, the checkpoint retention
 As built: the moves keep each package's name under `pkg/audit`, `pkg/billing`, `pkg/quota`, `pkg/checkpoint`, `pkg/delegation`, `pkg/events`, `pkg/mtls`, and `pkg/workspaceplan` (decision 6). The policy package and the capacity recommendations service sit at the roots of their concern directories, as `pkg/policy` and `pkg/recommendations`, beside `pkg/policy/interceptor`, `pkg/policy/ratelimit`, and `pkg/recommendations/rules`, rather than at `pkg/policy/policy` and `pkg/recommendations/recommendations`, as `pkg/audit` and `pkg/quota` already hold their concern's own package. Every row naming 0117.S9 in the layout register is cleared, and the wiring register named none. The confined packages keep their confinement at their destinations, where `confined.go` already listed them, and the entries of the directories the moves emptied are dropped. The step crosses no part boundary and adds no seam operation, so no member change gains a line of decision 8.
 
 ### 0117.S10 Domain packages, second group (905 import sites)
-- status: Planned
+- status: Landed
 - lanes: [code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
 The `credentials` packages that 0133 keeps, the `storage` packages outside the core, the runtime and pool stores, `runtimecapoverride`, `capabilityinference`, and the `upgrade` packages to their concern directories. `pkg/controller`, `pkg/tokenservice`, `pkg/mtls`, `pkg/storerouter`, and `cmd/lenny-pool-scaling-controller` take the new paths.
+
+As built: the moves keep each package's name under `pkg/credential`, `pkg/storage`, and `pkg/runtime` (decision 6). The credential packages that 0133 removes (`credassign`, `credfallback`, `credleasestore`, `credrenewal`, and `leaserevoke`) and the storage packages of the session core (`derivelock`, `dualstore`, `evictionfallback`, `leasestore`, and `slotcounter`) stay where they are, so `pkg/gateway/credentials` keeps its confinement entry. Every row naming 0117.S10 in the layout register is cleared, and the wiring register named none. The confined packages keep their confinement at their destinations, where `confined.go` already listed them, and the entries of the directories the moves emptied are dropped. The composition root keeps mounting the credential server on the REST mux, as decision 65 has it, and open decision 81 closes that decision's revisit with the arrangement kept. The runtime upgrade guard's route stays registered by the composition root on the internal listener, as decision 66 has it, because the guard is a domain package rather than a part. The step crosses no part boundary and adds no seam operation, so no member change gains a line of decision 8.
 
 ### 0117.S11 Session core (1,020 import sites)
 - status: Planned

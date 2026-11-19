@@ -601,7 +601,7 @@ type CredentialLease struct {
 	// upstream_credential is the materialized upstream provider secret
 	// (API key, access token) the Token Service resolved for this lease.
 	// The gateway caches it in its in-memory §4.9 credential cache
-	// (`pkg/gateway/credcache`) keyed by the lease's CredentialKey so the
+	// (`pkg/credential/credcache`) keyed by the lease's CredentialKey so the
 	// LLM reverse proxy can inject it into upstream calls. The field
 	// carries credential material and MUST be excluded from gRPC access
 	// log payload capture, OpenTelemetry span attributes, and any

@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
+	"github.com/lennylabs/lenny/pkg/storage/eventbus"
 )
 
 // spec: §25.9 — POST /v1/admin/audit-events/{seq}/republish.

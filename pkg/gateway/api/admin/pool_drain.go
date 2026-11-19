@@ -9,7 +9,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 )
 
 // PoolDrainMetrics records the §15.1

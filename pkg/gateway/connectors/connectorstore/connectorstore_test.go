@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
 )
 
 // TestCapabilityMetadataRoundTrip_spec_9_3_136 verifies the §5.1

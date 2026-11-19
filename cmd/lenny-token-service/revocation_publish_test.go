@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
+	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	"github.com/lennylabs/lenny/tests/testinfra/tlsredis"
 )
 

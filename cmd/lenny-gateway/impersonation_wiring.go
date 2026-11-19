@@ -8,10 +8,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
+	"github.com/lennylabs/lenny/pkg/credential/impersonation"
+	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/impersonation"
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // impersonationCollaborators are the gateway objects the §13.3

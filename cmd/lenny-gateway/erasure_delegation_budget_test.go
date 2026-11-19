@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/storage/erasure"
 )
 
 // budgetEraseCall is one call the delegation budget eraser made, in order.

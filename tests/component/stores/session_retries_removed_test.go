@@ -10,10 +10,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	poolpg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
-	runtimepg "github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	poolpg "github.com/lennylabs/lenny/pkg/runtime/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	runtimepg "github.com/lennylabs/lenny/pkg/runtime/runtimestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )

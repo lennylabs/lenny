@@ -27,9 +27,9 @@ package sessionage
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // Resolver satisfies watchdog.SessionAgeResolver. Either store may be nil;

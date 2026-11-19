@@ -18,8 +18,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // Compile-time assertion that bindReleaseFanOut is the cross-replica

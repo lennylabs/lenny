@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/common/scopes"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // playgroundAllowedScope is the §27.3 / §10.2 playground_allowed_scope

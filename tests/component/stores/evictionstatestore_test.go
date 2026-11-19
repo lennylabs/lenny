@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the TESTING.md §12.2.1 EvictionStateStore, exercising the
-// Postgres-backed pkg/gateway/evictionstatestore/pgstore against a
+// Postgres-backed pkg/storage/evictionstatestore/pgstore against a
 // real container with the production migrations applied. Covers
 // upsert + Get round-trip, MinIO context-key storage, idempotent
 // Delete, the §12.8 DeleteByUser / DeleteByTenant erasure surface,
@@ -18,13 +18,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore"
-	evictionpg "github.com/lennylabs/lenny/pkg/gateway/storage/evictionstatestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/storage/evictionstatestore"
+	evictionpg "github.com/lennylabs/lenny/pkg/storage/evictionstatestore/pgstore"
 )
 
 // spec: 12.2.1
 // diagnosis: the Postgres-backed EvictionStateStore in
-// pkg/gateway/evictionstatestore/pgstore did not behave as specified.
+// pkg/storage/evictionstatestore/pgstore did not behave as specified.
 // Put + Get must round-trip the row, Delete must be idempotent,
 // DeleteByUser and DeleteByTenant must apply the §12.8 erasure
 // contract, and cross-tenant Get must return ErrNotFound under the

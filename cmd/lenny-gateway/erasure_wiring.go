@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 
 // This file holds the gateway-side adapters the §12.8 user-erasure runner

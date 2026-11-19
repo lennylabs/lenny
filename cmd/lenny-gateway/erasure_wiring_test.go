@@ -22,8 +22,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/erasure"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 
 // fakeElector is a gatewayleader.Elector the test drives: acquire hands

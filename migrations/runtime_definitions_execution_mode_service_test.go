@@ -25,7 +25,7 @@ const pgCheckViolation = "23514"
 // execution_mode CHECK to the (session, service) set, adds the
 // agent_pod_state recycle counters, drops the retired
 // sandbox_warm_pools.concurrency_style column (coupled with the
-// pkg/gateway/poolstore ConcurrencyStyle field removal in the same change),
+// pkg/runtime/poolstore ConcurrencyStyle field removal in the same change),
 // and renames the task_policy JSONB columns to session_policy on both
 // registries (the persistence layer now writes the §5.2 sessionPolicy
 // mirror). The down reverses each. The migration issues no COMMENT ON

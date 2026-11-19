@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	auditcatalog "github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // spec: §13.3, §16.7.

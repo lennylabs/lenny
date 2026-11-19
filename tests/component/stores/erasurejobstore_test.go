@@ -15,8 +15,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
-	erasurepg "github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob/pgstore"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	erasurepg "github.com/lennylabs/lenny/pkg/storage/erasurejob/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

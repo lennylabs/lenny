@@ -21,7 +21,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	tapgstore "github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

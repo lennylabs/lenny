@@ -30,7 +30,7 @@ import (
 	"strings"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 )
 
 // DefaultSimilarityThreshold is the §4.9 CachePolicy similarityThreshold

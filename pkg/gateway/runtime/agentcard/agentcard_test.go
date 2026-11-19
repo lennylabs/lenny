@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/agentcard"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 func sampleInterface() runtimestore.AgentInterface {

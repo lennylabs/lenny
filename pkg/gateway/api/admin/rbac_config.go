@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
 )
 
 // allowAllWarning is the §10.6 advisory the lenny-noenvironmentpolicy-audit

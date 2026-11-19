@@ -13,8 +13,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // spec: §5.1 — per-tenant runtime capability override CRUD.

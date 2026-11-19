@@ -31,7 +31,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 )
 
 // Store is the Postgres-backed Environment registry. Construct with

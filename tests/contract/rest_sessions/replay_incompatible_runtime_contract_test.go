@@ -23,9 +23,9 @@ import (
 	"strconv"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // spec: §15.1 (REST API: Session Replay Semantics, Error code catalog), §5.2 (Pool Configuration and Execution Modes)

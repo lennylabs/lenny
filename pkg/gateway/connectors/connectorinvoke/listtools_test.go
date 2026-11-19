@@ -10,7 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
 )
 
 // toolsListResponses is the three-response transcript a tools/list

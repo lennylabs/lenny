@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §5.2 PodSet registry, exercising the
-// Postgres-backed pkg/gateway/poolstore/pgstore against a real
+// Postgres-backed pkg/runtime/poolstore/pgstore against a real
 // container. Covers CRUD, the §5.2 / §5.3 validation, the soft-delete
 // lifecycle, and the IncludeDeleted / RuntimeRef list filters.
 package stores_test
@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	poolpg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	poolpg "github.com/lennylabs/lenny/pkg/runtime/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -28,7 +28,7 @@ func poolName(t *testing.T) string {
 
 // spec: 5.2
 // diagnosis: the Postgres-backed PodSet registry in
-// pkg/gateway/poolstore/pgstore did not behave as specified. Create
+// pkg/runtime/poolstore/pgstore did not behave as specified. Create
 // and Get must round-trip a pool, Create must reject duplicates and
 // the §5.3 standard-isolation guard, Get on a missing name must
 // return ErrNotFound, Update must re-validate and advance updated_at,

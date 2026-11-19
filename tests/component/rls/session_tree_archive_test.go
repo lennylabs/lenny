@@ -28,7 +28,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -22,7 +22,7 @@ import (
 // rotation's step (1a) re-read let the rotation's revoke UPDATE match no
 // live row, and the rotation committed a replacement for an explicitly
 // revoked token. Check revokePrevious and previousRevokedError in
-// pkg/gateway/storage/issuedtokenstore/issuedtokenstore.go.
+// pkg/storage/issuedtokenstore/issuedtokenstore.go.
 func TestRotationRefusesSubjectRevokedAfterReRead_spec_13_3(t *testing.T) {
 	t.Parallel()
 	pg := containers.StartPostgres(t, containers.PostgresOptions{

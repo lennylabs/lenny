@@ -21,9 +21,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 	scredis "github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
+	"github.com/lennylabs/lenny/pkg/storage/eventbus"
+	"github.com/lennylabs/lenny/pkg/storage/pubsub"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 )
 
 // guardedRedis returns a miniredis-backed client with the §12.4 Guard

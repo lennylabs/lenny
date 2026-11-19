@@ -13,7 +13,7 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
+	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/tests/testinfra/tlsredis"
 )

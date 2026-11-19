@@ -4,7 +4,7 @@
 
 // Package poolresume_test is the tier-2 contract for the §4.6.2 item 3
 // condition (c) cross-process resume channel on the Postgres-backed
-// pkg/gateway/poolstore/pgstore. The gateway's resume-reconciliation
+// pkg/runtime/poolstore/pgstore. The gateway's resume-reconciliation
 // handler bumps reconciliation_resume_epoch without changing
 // pool_config_generation; the PoolScalingController reads the same column
 // on its next reconcile tick to clear a stuck pool's denial backoff. The
@@ -18,9 +18,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	poolpg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	poolpg "github.com/lennylabs/lenny/pkg/runtime/poolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"

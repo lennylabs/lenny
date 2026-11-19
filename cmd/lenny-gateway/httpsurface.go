@@ -22,6 +22,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/callercheck"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/credential/credentialserver"
+	"github.com/lennylabs/lenny/pkg/credential/revocation"
+	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
 	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/events"
@@ -38,9 +41,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
 	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -60,13 +60,13 @@ import (
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
-	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard"
-	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgradeguard"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
 )
@@ -354,9 +354,10 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// tools/call scoped to an environment (`?environment=<name>`) by that
 	// environment's mcpRuntimeFilters capability filter. F-10.6.2.
 	clientMux.Handle("POST /mcp/runtimes/{name}", mcpruntimes.New(w.runtimes, nil).WithEnvironments(environments))
-	// The credential server belongs to the credentials subtree, which GW-R2
-	// confines and allows the API front none of, so the composition root
-	// mounts it on the REST mux itself (decision 65 of change 0117, settled by the owner on 2026-11-19).
+	// The credential server sits under pkg/credential, which GW-R2 confines
+	// with no allowance to the API front for this package, so the
+	// composition root mounts it on the REST mux itself (decisions 65 and 81
+	// of change 0117).
 	mux.Handle("/v1/credentials", credServer.Handler())
 	mux.Handle("/v1/credentials/", credServer.Handler())
 

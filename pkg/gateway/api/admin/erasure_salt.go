@@ -10,7 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 
 // ErasureSaltRotator rotates a tenant's §12.8 billing-pseudonymization

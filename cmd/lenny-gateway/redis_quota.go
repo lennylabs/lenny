@@ -21,12 +21,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
 	ratelimitredis "github.com/lennylabs/lenny/pkg/policy/ratelimit/redisstore"
 	"github.com/lennylabs/lenny/pkg/quota/storagequota"
 	storagequotaredis "github.com/lennylabs/lenny/pkg/quota/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storage/redistopology"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

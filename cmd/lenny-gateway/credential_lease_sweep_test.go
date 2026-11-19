@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 )
 
 // poolCredKey is the source-aware deny-list key for a pool-backed

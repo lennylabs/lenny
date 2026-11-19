@@ -74,24 +74,6 @@ packages:
   - package: pkg/gateway/credentials/credassign
     part: removed
     removed-by: '0133'
-  - package: pkg/gateway/credentials/credcache
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/credentialpoolstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/credentialpoolstore/pgstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/credentialserver
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/credentialstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/credentialstore/pgstore
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/credentials/credfallback
     part: removed
     removed-by: '0133'
@@ -107,30 +89,9 @@ packages:
   - package: pkg/gateway/credentials/credrenewal/propagator
     part: removed
     removed-by: '0133'
-  - package: pkg/gateway/credentials/denylist
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/denylist/propagator
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/impersonation
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/impersonation/impersonationtest
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/credentials/leaserevoke
     part: removed
     removed-by: '0133'
-  - package: pkg/gateway/credentials/revocation
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/revocation/propagator
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/credentials/usercreds
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/environment/customrolestore
     part: domain
     step: 0117.S12
@@ -248,30 +209,9 @@ packages:
   - package: pkg/gateway/runtime/agentcard
     part: removed
     removed-by: '0138'
-  - package: pkg/gateway/runtime/capabilityinference
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/runtime/externaladapterstore
     part: removed
     removed-by: '0138'
-  - package: pkg/gateway/runtime/poolstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/runtime/poolstore/pgstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/runtime/runtimecapoverride
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/runtime/runtimecapoverride/pgstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/runtime/runtimestore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/runtime/runtimestore/pgstore
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/runtime/sdkwarm
     part: removed
     removed-by: '0119'
@@ -365,93 +305,24 @@ packages:
   - package: pkg/gateway/sessionserver
     part: core
     step: 0117.S11
-  - package: pkg/gateway/storage/deadletterredaction
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/storage/derivelock
     part: core
     step: 0117.S11
   - package: pkg/gateway/storage/dualstore
     part: core
     step: 0117.S11
-  - package: pkg/gateway/storage/erasure
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/erasurejob
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/erasurejob/pgstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/erasurejob/saltlockpg
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/eventbus
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/storage/evictionfallback
     part: core
     step: 0117.S11
-  - package: pkg/gateway/storage/evictionstatestore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/evictionstatestore/pgstore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/failopen
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/issuedtokenstore
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/storage/leasestore
     part: core
     step: 0117.S11
   - package: pkg/gateway/storage/leasestore/pgstore
     part: core
     step: 0117.S11
-  - package: pkg/gateway/storage/legalholdreconciler
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/partitionmaint
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/pgnotify
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/pgtenant
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/pubsub
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/rediskeys
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/redistopology
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/storage/retentiongc
-    part: domain
-    step: 0117.S10
   - package: pkg/gateway/storage/slotcounter
     part: core
     step: 0117.S11
-  - package: pkg/gateway/storage/sqlitestore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/upgrade/runtimeupgrade
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/upgrade/runtimeupgradeguard
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/upgrade/runtimeupgradestore
-    part: domain
-    step: 0117.S10
-  - package: pkg/gateway/upgrade/runtimeupgradestore/pgstore
-    part: domain
-    step: 0117.S10
 imports:
   - from: cmd/lenny-adapter
     to: pkg/gateway/session/executor

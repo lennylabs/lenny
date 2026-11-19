@@ -44,8 +44,8 @@ import (
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/poolscaling"
 	experimentstorepg "github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore/pgstore"
-	poolstorepg "github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/metrics"
+	poolstorepg "github.com/lennylabs/lenny/pkg/runtime/poolstore/pgstore"
 )
 
 // §4.6.2 leader-election lease parameters, matching the

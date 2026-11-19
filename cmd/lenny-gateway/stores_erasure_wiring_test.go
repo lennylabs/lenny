@@ -16,8 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/sqlitestore"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/sqlitestore"
 )
 
 var erasureWiringAt = time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)

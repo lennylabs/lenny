@@ -17,7 +17,7 @@ type snapshot struct {
 }
 
 // ExportState and ImportState let the §17.4 Source-Mode embedded-SQLite
-// durability layer (pkg/gateway/sqlitestore) snapshot and restore the
+// durability layer (pkg/storage/sqlitestore) snapshot and restore the
 // in-memory session store across a process restart. The session map and the
 // reservation map serialize as one JSON document; the domain Session type is
 // the same value the Postgres backend persists, so the snapshot carries every

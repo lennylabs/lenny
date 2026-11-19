@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §4.9 CredentialPool registry, exercising the
-// Postgres-backed pkg/gateway/credentialpoolstore/pgstore against a
+// Postgres-backed pkg/credential/credentialpoolstore/pgstore against a
 // real container. Covers CRUD, the §4.9 structural validation,
 // cross-tenant isolation, the credential set round-trip, the
 // Update-mutate path, the List filters, and the soft-delete lifecycle.
@@ -15,13 +15,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	credentialpoolpg "github.com/lennylabs/lenny/pkg/credential/credentialpoolstore/pgstore"
 )
 
 // spec: 4.9
 // diagnosis: the Postgres-backed CredentialPool registry in
-// pkg/gateway/credentialpoolstore/pgstore did not behave as specified.
+// pkg/credential/credentialpoolstore/pgstore did not behave as specified.
 // Create and Get must round-trip a pool including its credential set,
 // validation must reject duplicates and malformed pools, cross-tenant
 // Get must return ErrNotFound, Update must re-validate, and the

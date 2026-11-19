@@ -10,8 +10,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialstore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialstore"
 )
 
 // revokedPoolLister enumerates the pool store's revoked credentials for the

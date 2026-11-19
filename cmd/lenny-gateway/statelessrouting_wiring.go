@@ -14,11 +14,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/statelessproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/statelessrouting"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/tenantaffinity"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // labelPool is the §5.2 pod label the WarmPoolController stamps on every

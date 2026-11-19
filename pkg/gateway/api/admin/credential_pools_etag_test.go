@@ -10,8 +10,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 )
 
 // spec: §15.1 — ETag-based optimistic concurrency for the

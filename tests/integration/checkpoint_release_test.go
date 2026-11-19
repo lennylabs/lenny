@@ -38,8 +38,8 @@ import (
 	partialmanifestpg "github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
 	"github.com/lennylabs/lenny/pkg/quota/storagequota/redisstore"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

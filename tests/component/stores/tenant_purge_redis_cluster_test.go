@@ -22,8 +22,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/billing/billingstore/failover/redisstream"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentsticky"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

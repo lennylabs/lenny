@@ -33,9 +33,7 @@ var Confined = []Confinement{
 	// The credential packages: the gateway's credentials subtree, the
 	// shared credential package with its subtree, and the credential
 	// packages outside them.
-	{Path: "pkg/gateway/credentials/credentialpoolstore", APIFront: true},
 	{Path: "pkg/credential/credentialpoolstore", APIFront: true},
-	{Path: "pkg/gateway/credentials/impersonation", APIFront: true},
 	{Path: "pkg/credential/impersonation", APIFront: true},
 	{Path: "pkg/gateway/credentials"},
 	{Path: "pkg/credential", APIFront: true, Exact: true},
@@ -50,7 +48,6 @@ var Confined = []Confinement{
 	{Path: "pkg/auth/introspection"},
 	{Path: "pkg/tokensvcproxy"},
 	{Path: "pkg/gateway/api/admintoken", APIFront: true},
-	{Path: "pkg/gateway/storage/issuedtokenstore", APIFront: true, Playground: true},
 	{Path: "pkg/storage/issuedtokenstore", APIFront: true, Playground: true},
 	{Path: "pkg/uploadtoken"},
 	{Path: "pkg/webhooksig"},

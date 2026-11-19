@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §4.9 / §10.3 / §13.3 security-cache pub/sub
-// substrate, exercising pkg/gateway/pubsub and the three propagators
+// substrate, exercising pkg/storage/pubsub and the three propagators
 // against a real Redis container. The gateway runs as multiple
 // replicas; each security cache is a per-replica in-memory set that
 // must converge across replicas over Redis pub/sub. Each subtest
@@ -18,13 +18,13 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	credentialdenylist "github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
-	credentialdenylistprop "github.com/lennylabs/lenny/pkg/gateway/credentials/denylist/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
-	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/pubsub"
+	credentialdenylist "github.com/lennylabs/lenny/pkg/credential/denylist"
+	credentialdenylistprop "github.com/lennylabs/lenny/pkg/credential/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/credential/revocation"
+	revocationprop "github.com/lennylabs/lenny/pkg/credential/revocation/propagator"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	mtlsdenylistprop "github.com/lennylabs/lenny/pkg/mtls/denylist/propagator"
+	"github.com/lennylabs/lenny/pkg/storage/pubsub"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -43,9 +43,9 @@ func waitFor(t *testing.T, timeout time.Duration, desc string, cond func() bool)
 
 // spec: 13.3
 // diagnosis: the §13.3 token-revocation cache in
-// pkg/gateway/revocation is a per-replica in-memory jti set and
+// pkg/credential/revocation is a per-replica in-memory jti set and
 // Revoke is local-only. A token revoked on one gateway replica must
-// reach every replica's cache; pkg/gateway/revocation/propagator must
+// reach every replica's cache; pkg/credential/revocation/propagator must
 // fan a Revoke out over Redis pub/sub and apply a peer's revocation
 // onto the local cache.
 func TestTokenRevocationPropagation(t *testing.T) {
@@ -128,11 +128,11 @@ func TestMTLSDenylistPropagation(t *testing.T) {
 }
 
 // spec: 4.9
-// diagnosis: the §4.9 credential deny list in pkg/gateway/denylist is
+// diagnosis: the §4.9 credential deny list in pkg/credential/denylist is
 // a per-replica set of revoked credential identities the LLM reverse
 // proxy checks before every upstream call; Revoke is local-only. A
 // credential revoked on one replica must be rejected on every replica.
-// pkg/gateway/denylist/propagator must fan a Revoke out over Redis
+// pkg/credential/denylist/propagator must fan a Revoke out over Redis
 // pub/sub and apply a peer's revocation onto the local deny list.
 func TestCredentialDenylistPropagation(t *testing.T) {
 	t.Parallel()

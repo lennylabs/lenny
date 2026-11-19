@@ -29,8 +29,8 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 )
 
 // Sentinel errors.

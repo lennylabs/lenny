@@ -6,10 +6,10 @@ import (
 	"context"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
+	"github.com/lennylabs/lenny/pkg/credential/credcache"
+	"github.com/lennylabs/lenny/pkg/credential/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credfallback"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/denylist"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"

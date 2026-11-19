@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 )
 
 // Check reports every recorded violation and then runs the end-of-scenario

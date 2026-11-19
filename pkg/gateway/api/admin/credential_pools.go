@@ -14,8 +14,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/billing/billingfanout"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 )
 
 // CredentialPoolPayload is the §4.9 / §15.1 admin CredentialPool wire

@@ -24,9 +24,9 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/storage/rediskeys"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/redisconn"
+	"github.com/lennylabs/lenny/pkg/storage/rediskeys"
 )
 
 // ErrEmptyScope — an erasure primitive was called with an empty tenant

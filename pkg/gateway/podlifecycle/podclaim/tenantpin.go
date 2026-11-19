@@ -14,7 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/admission/label_immutability"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
