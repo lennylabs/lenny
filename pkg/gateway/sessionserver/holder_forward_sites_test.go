@@ -20,8 +20,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
@@ -32,6 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 )
 
@@ -456,10 +456,10 @@ func TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3(t *testing.T) {
 
 // idempotentSite wraps the rig's session handler in the auth and §11.5
 // idempotency middleware, as the public REST listener serves it.
-func idempotentSite(r *siteRig) (http.Handler, *idemmw.MemoryStore) {
-	store := idemmw.NewMemoryStore()
+func idempotentSite(r *siteRig) (http.Handler, *idempotencymw.MemoryStore) {
+	store := idempotencymw.NewMemoryStore()
 	dev := authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}
-	return authmw.Wrap(idemmw.Wrap(asOwner(r.srv.Handler()), store, idemmw.Options{}), dev), store
+	return authmw.Wrap(idempotencymw.Wrap(asOwner(r.srv.Handler()), store, idempotencymw.Options{}), dev), store
 }
 
 // keyedResume posts a held-pod resume with an Idempotency-Key through h.

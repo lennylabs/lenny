@@ -6,7 +6,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 )
 
 // ChainAuditEmitter bridges the playground's audit events into the

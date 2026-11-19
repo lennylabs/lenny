@@ -4564,7 +4564,7 @@ func TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier(t *testing.T)
 		dialect string
 		target  string
 	}{
-		{"served JSON values", "pkg/gateway/externalapi/openapi/openapi.json"},
+		{"served JSON values", "pkg/api/openapi/openapi.json"},
 		{"served tool definitions", "pkg/gateway/platformtools/mcptools/mcptools.go"},
 		{"generated chart schema descriptions", "pkg/chart/values/values.go"},
 	} {
@@ -4597,7 +4597,7 @@ func TestLinePassStripsAServedArtifactAndConvertsEveryOtherCarrier(t *testing.T)
 // artifact is stripped from the text a client reads)
 func TestLinePassStripsTwoAdjacentServedCitationsWithoutCuttingACharacter(t *testing.T) {
 	t.Parallel()
-	const target = "pkg/gateway/externalapi/openapi/openapi.json"
+	const target = "pkg/api/openapi/openapi.json"
 	before := readFixtureFile(t, filepath.Join(fixtureLinePass, "tree", target))
 	if n := len(citation.Find(before)); n < 2 {
 		t.Fatalf("the served fixture %s carries %d citations, so it holds no adjacent pair", target, n)
@@ -4630,7 +4630,7 @@ func TestLinePassStripsTwoAdjacentServedCitationsWithoutCuttingACharacter(t *tes
 // artifact is stripped from the text a client reads)
 func TestLinePassLeavesTheServedTextAStrippedCitationIntroduced(t *testing.T) {
 	t.Parallel()
-	const target = "pkg/gateway/externalapi/openapi/openapi.json"
+	const target = "pkg/api/openapi/openapi.json"
 	root := lineTree(t, "tree")
 	applyLinePass(t, root, "tree.yaml")
 	after := readFixtureFile(t, filepath.Join(root, filepath.FromSlash(target)))
@@ -4865,7 +4865,7 @@ func TestLinePassFailsAStrippedServedCitationWithNoSurvivingTie(t *testing.T) {
 // standing tie to the section it named)
 func TestLinePassFailsAServedJSONStripWithNoSurvivingTie(t *testing.T) {
 	t.Parallel()
-	const target = "pkg/gateway/externalapi/openapi/openapi.json"
+	const target = "pkg/api/openapi/openapi.json"
 	root := lineTree(t, "fail/served-json-no-tie")
 	before := treeSnapshot(t, root)
 	_, err := planLinePass(t, root, "fail-served-json-no-tie.yaml")
@@ -5261,8 +5261,8 @@ func TestTheServedArtifactsAreWritableCarriersOfTheTrackedTree(t *testing.T) {
 	read := scope.DirReader(root)
 	served := line.ServedArtifacts()
 	want := []string{
+		"pkg/api/openapi/openapi.json",
 		"pkg/chart/values/values.go",
-		"pkg/gateway/externalapi/openapi/openapi.json",
 		"pkg/gateway/platformtools/mcptools/mcptools.go",
 	}
 	if !sameStrings(served, want) {

@@ -28,7 +28,7 @@ import (
 
 // openAPIDocumentPath is the authoritative description of the upload
 // request header and the UploadResponse fields.
-var openAPIDocumentPath = []string{"pkg", "gateway", "externalapi", "openapi", "openapi.json"}
+var openAPIDocumentPath = []string{"pkg", "api", "openapi", "openapi.json"}
 
 // mcpClientToolsSourcePath holds the hand-written input schemas of the
 // per-session MCP tools the MCP API page documents.

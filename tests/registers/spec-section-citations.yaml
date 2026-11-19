@@ -293,7 +293,7 @@ packages:
       count: 1
     - package: pkg/gateway/billing/usagestore/pgstore
       count: 6
-    - package: pkg/gateway/callercheck
+    - package: pkg/auth/callercheck
       count: 14
     - package: pkg/gateway/checkpoint/checkpointer
       count: 301
@@ -421,21 +421,21 @@ packages:
       count: 9
     - package: pkg/gateway/experiment/experimentstore/pgstore
       count: 5
-    - package: pkg/gateway/externalapi/admin
+    - package: pkg/gateway/api/admin
       count: 1311
-    - package: pkg/gateway/externalapi/admintoken
+    - package: pkg/gateway/api/admintoken
       count: 25
-    - package: pkg/gateway/externalapi/admintoken/k8ssecret
+    - package: pkg/gateway/api/admintoken/k8ssecret
       count: 1
-    - package: pkg/gateway/externalapi/admintoken/reclaimer
+    - package: pkg/gateway/api/admintoken/reclaimer
       count: 14
-    - package: pkg/gateway/externalapi/errorclassify
+    - package: pkg/api/errorclassify
       count: 85
-    - package: pkg/gateway/externalapi/openapi
+    - package: pkg/api/openapi
       count: 49
-    - package: pkg/gateway/externalapi/openapi/internal/genopsschemas
+    - package: pkg/api/openapi/internal/genopsschemas
       count: 3
-    - package: pkg/gateway/externalapi/pagination
+    - package: pkg/api/pagination
       count: 3
     - package: pkg/gateway/platformtools/inputwaitrecovery
       count: 38
@@ -503,25 +503,25 @@ packages:
       count: 53
     - package: pkg/gateway/meteringproxy/sessionbudget
       count: 28
-    - package: pkg/gateway/middleware/auth
+    - package: pkg/auth/authmw
       count: 82
-    - package: pkg/gateway/middleware/circuitbreaker
+    - package: pkg/gateway/api/circuitbreaker
       count: 11
-    - package: pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore
+    - package: pkg/gateway/api/circuitbreaker/breakerstore/cachingstore
       count: 1
-    - package: pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore
+    - package: pkg/gateway/api/circuitbreaker/breakerstore/redisstore
       count: 5
-    - package: pkg/gateway/middleware/correlation
+    - package: pkg/gateway/api/correlation
       count: 18
-    - package: pkg/gateway/middleware/deprecation
+    - package: pkg/gateway/api/deprecation
       count: 5
-    - package: pkg/gateway/middleware/environment
+    - package: pkg/environment/environmentmw
       count: 2
-    - package: pkg/gateway/middleware/idempotency
+    - package: pkg/idempotency/idempotencymw
       count: 49
-    - package: pkg/gateway/middleware/ratelimit
+    - package: pkg/gateway/api/ratelimit
       count: 49
-    - package: pkg/gateway/middleware/recover
+    - package: pkg/gateway/api/recover
       count: 6
     - package: pkg/gateway/operability/recommendations
       count: 18
@@ -625,7 +625,7 @@ packages:
       count: 7
     - package: pkg/gateway/seam/subsystem
       count: 33
-    - package: pkg/gateway/serviceidentity
+    - package: pkg/gateway/api/serviceidentity
       count: 9
     - package: pkg/gateway/session/budgetstate
       count: 22

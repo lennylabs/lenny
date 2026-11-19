@@ -31,9 +31,9 @@ type apiGenerator struct {
 var apiGenerators = []apiGenerator{
 	{
 		name:    "genopsschemas",
-		pkg:     "./pkg/gateway/externalapi/openapi/internal/genopsschemas",
-		output:  "pkg/gateway/externalapi/openapi/openapi.json",
-		workRel: "pkg/gateway/externalapi/openapi",
+		pkg:     "./pkg/api/openapi/internal/genopsschemas",
+		output:  "pkg/api/openapi/openapi.json",
+		workRel: "pkg/api/openapi",
 		// The generator merges into the committed document, so it reads
 		// the committed copy and must leave it byte-identical.
 		seed: true,

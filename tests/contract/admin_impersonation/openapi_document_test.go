@@ -17,7 +17,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 )
 
 // errorSchemaRef is the shared error envelope every catalogued error

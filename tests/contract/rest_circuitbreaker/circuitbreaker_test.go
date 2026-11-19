@@ -18,7 +18,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/circuitbreaker"
-	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
+	cbmw "github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -57,7 +57,7 @@ func post(t *testing.T, ts *httptest.Server, path string, body any) (*http.Respo
 // diagnosis: Empty registry returned non-201 — the middleware
 //
 //	short-circuit on the no-breakers path is broken. Inspect
-//	registry.Active() in pkg/gateway/middleware/circuitbreaker.
+//	registry.Active() in pkg/gateway/api/circuitbreaker.
 func TestClosedRegistryPassesThrough(t *testing.T) {
 	reg := cbmw.NewMemoryRegistry()
 	ts := newTestServer(t, reg)

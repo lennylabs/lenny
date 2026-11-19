@@ -114,7 +114,7 @@ func TestAdminPlane(t *testing.T) {
 		"its in-memory store via authmw.WithPrincipal and asserts the " +
 		"§15.1 error envelope on the wire.")
 	t.Log("- role-ceiling middleware: pkg/auth + " +
-		"pkg/gateway/middleware/auth unit suites; the admin handler " +
+		"pkg/auth/authmw unit suites; the admin handler " +
 		"unit suites cover the permission-gating end-to-end.")
 	t.Log("- OIDC verifier: pkg/auth/jwt and pkg/auth/oidc suites.")
 	t.Log("The composite OIDC-stub fixture is on the e2e ops backlog; " +

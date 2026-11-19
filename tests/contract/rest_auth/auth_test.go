@@ -19,8 +19,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -126,7 +126,7 @@ func TestSingleTenantIgnoresClaim(t *testing.T) {
 // diagnosis: A 200 / 403 instead of 401 means tenant extraction is
 //
 //	wrong, or the envelope mapping dropped the code. Inspect
-//	resolveTenant in pkg/gateway/middleware/auth.
+//	resolveTenant in pkg/auth/authmw.
 func TestMultiTenantClaimMissingReturns401(t *testing.T) {
 	registry := &fakeRegistry{registered: map[string]bool{"acme": true}}
 	ts, signer := newTestServer(t, authmw.Options{

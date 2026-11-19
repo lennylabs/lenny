@@ -8,10 +8,10 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
-	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 )
@@ -362,7 +362,7 @@ func (s *Server) resolveRuntimes(ctx context.Context, rows []runtimestore.Runtim
 // filterRuntimesByEnvironment narrows a runtime list to the §10.6
 // transparent-filtering view the request principal holds. It reads the
 // Resolution the §10.6 environment-resolver middleware
-// (pkg/gateway/middleware/environment) attached to the request context
+// (pkg/environment/environmentmw) attached to the request context
 // — the single filtering path the §9.1 discovery surfaces share with
 // the MCP discovery tools. When the environment or tenant registry is
 // not wired, or the request carries no principal, the Resolution is not

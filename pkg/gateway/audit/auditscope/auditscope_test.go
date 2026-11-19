@@ -11,8 +11,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
 )
 

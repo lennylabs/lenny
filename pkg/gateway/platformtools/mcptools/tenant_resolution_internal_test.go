@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
 )
 
 // TestCallerTenantIDPrefersPrincipal pins §9.2 / §16.1 / §15.2: when the request carries an authenticated principal, the

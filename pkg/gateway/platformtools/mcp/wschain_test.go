@@ -12,11 +12,11 @@ import (
 
 	"nhooyr.io/websocket"
 
+	correlationmw "github.com/lennylabs/lenny/pkg/gateway/api/correlation"
+	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
+	recovermw "github.com/lennylabs/lenny/pkg/gateway/api/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
-	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
-	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
-	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"

@@ -323,7 +323,7 @@ func TestCircuitBreakerChannelSingleName_0032(t *testing.T) {
 	}
 
 	// (c) The spec literal matches the code constant at cachingstore.go.
-	code := readDoc(t, filepath.Join(root, "pkg", "gateway", "middleware", "circuitbreaker",
+	code := readDoc(t, filepath.Join(root, "pkg", "gateway", "api", "circuitbreaker",
 		"breakerstore", "cachingstore", "cachingstore.go"))
 	if !strings.Contains(code, `channel = "cb:events"`) {
 		t.Errorf("cachingstore.go no longer defines `const channel = \"cb:events\"`; the spec and code channel names diverged again (proposal 0032)")

@@ -6,7 +6,7 @@ import (
 	"context"
 	"errors"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 )
 
 // AdminReconciler adapts *Service to the admin.QuotaReconciler seam behind

@@ -12,8 +12,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
+	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 

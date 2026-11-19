@@ -24,7 +24,8 @@ import (
 const gatewayManifest = "scripts/refactor/manifest"
 
 // ratchetContext is the merge base and the moves a renamed row may map back
-// through: lines of the merge-base manifest whose old path is gone at HEAD.
+// through: lines of the merge-base manifest whose old path exists at the
+// merge base and is gone at HEAD.
 type ratchetContext struct {
 	root  string
 	base  string
@@ -51,7 +52,7 @@ func newRatchetContext(t *testing.T, root string) *ratchetContext {
 	r.moves = gatewaylayout.RenameMoves(moves, baseMoves, func(rel string) bool {
 		_, err := os.Stat(filepath.Join(root, filepath.FromSlash(rel)))
 		return err == nil
-	})
+	}, func(rel string) bool { return r.existsAtBase(t, rel) })
 	return r
 }
 

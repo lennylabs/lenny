@@ -13,17 +13,27 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/alerting/evaluator"
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/auth/callercheck"
 	"github.com/lennylabs/lenny/pkg/auth/introspection"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
+	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	cbmw "github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker"
+	correlationmw "github.com/lennylabs/lenny/pkg/gateway/api/correlation"
+	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/api/deprecation"
+	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
+	recovermw "github.com/lennylabs/lenny/pkg/gateway/api/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/api/requestmetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
-	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
@@ -35,18 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcpruntimes"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	cbmw "github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker"
-	correlationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/correlation"
-	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/middleware/deprecation"
-	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
-	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
-	idempgstore "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency/pgstore"
-	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/middleware/ratelimit"
-	recovermw "github.com/lennylabs/lenny/pkg/gateway/middleware/recover"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health/backends"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
@@ -56,7 +55,6 @@ import (
 	gwadapter "github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry"
-	"github.com/lennylabs/lenny/pkg/gateway/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -65,6 +63,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradeguard"
 	"github.com/lennylabs/lenny/pkg/gateway/upgrade/runtimeupgradestore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
+	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
 )
@@ -670,7 +670,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// AllowedPaths restricts the cache to the §11.5-listed critical
 	// operations so a stray Idempotency-Key on an unrelated route
 	// cannot trap a non-mutating response for 24 hours. spec: §11.5; F-11.5.7.
-	var idemStore idemmw.Store = idemmw.NewMemoryStore()
+	var idemStore idempotencymw.Store = idempotencymw.NewMemoryStore()
 	if w.pgPool != nil {
 		idemStore = idempgstore.New(w.pgPool)
 	}
@@ -692,7 +692,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		},
 		Now: clockinject.Now,
 	})
-	handler = idemmw.Wrap(handler, idemStore, idemmw.Options{
+	handler = idempotencymw.Wrap(handler, idemStore, idempotencymw.Options{
 		Metrics: gwMetrics,
 		// spec: §11.5 — the middleware buffers the request body
 		// to hash and replay it. The default 8 MiB cap covers the

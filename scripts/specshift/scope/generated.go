@@ -91,7 +91,7 @@ var producers = []Producer{
 	},
 	{
 		Command: "go generate ./pkg/gateway/platformtools/mcptools/...",
-		Source:  "pkg/gateway/externalapi/openapi/openapi.json",
+		Source:  "pkg/api/openapi/openapi.json",
 		Outputs: []string{"pkg/gateway/platformtools/mcptools/generated_schemas.go"},
 	},
 	{

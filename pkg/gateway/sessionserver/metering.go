@@ -8,9 +8,9 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/pagination"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 )
 
 // meteringSortField is the only sort key the §11.2.1 billing ledger

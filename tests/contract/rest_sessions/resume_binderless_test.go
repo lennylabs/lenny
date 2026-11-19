@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -68,7 +68,7 @@ func TestResumeAnswersTheNewStateWithNoPodBinder_spec_15_1(t *testing.T) {
 		if errorclassify.Known("RESUME_FAILED") {
 			t.Error("the error catalog still names RESUME_FAILED")
 		}
-		doc, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), "pkg/gateway/externalapi/openapi/openapi.json"))
+		doc, err := os.ReadFile(filepath.Join(schematest.RepoRoot(t), "pkg/api/openapi/openapi.json"))
 		if err != nil {
 			t.Fatalf("read openapi.json: %v", err)
 		}

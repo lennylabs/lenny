@@ -285,7 +285,7 @@ var terminalContextWriters = []tcWriter{
 	{key: "pkg/gateway/platformtools/orphancleanup/orphancleanup.go endOrphan", drive: onSessionTerminalDriver(session.StateExpired)},
 	{key: "pkg/gateway/platformtools/mcptools/mcptools.go cancelNode", drive: afterTerminalWriteDriver},
 	{key: "pkg/gateway/platformtools/mcptools/mcptools_register.go cancelSession", drive: afterTerminalWriteDriver},
-	{key: "pkg/gateway/externalapi/admin/users.go cancelForRevoke", noHook: "the full_revoke write runs AfterRevokeWrite and the revoked-binding release"},
+	{key: "pkg/gateway/api/admin/users.go cancelForRevoke", noHook: "the full_revoke write runs AfterRevokeWrite and the revoked-binding release"},
 	{key: "pkg/gateway/environment/translator/openai_chat.go handleCreateCompletion", noHook: "the translator writes on the none path"},
 	{key: "pkg/gateway/environment/translator/open_responses.go serveCold", noHook: "the translator writes on the none path"},
 	{key: "pkg/gateway/environment/translator/open_responses.go endHeldSession", drive: afterTerminalWriteDriver},

@@ -14,8 +14,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/cachingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore/redisstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore/cachingstore"
+	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore/redisstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

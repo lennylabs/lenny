@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/leaserevoke"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
 var _ admin.UserLeaseRevoker = (*leaserevoke.Revoker)(nil)

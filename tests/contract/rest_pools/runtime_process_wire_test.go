@@ -18,7 +18,7 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
+	"github.com/lennylabs/lenny/pkg/api/openapi"
 )
 
 // diagnosis: the gateway's served /openapi.json does not declare

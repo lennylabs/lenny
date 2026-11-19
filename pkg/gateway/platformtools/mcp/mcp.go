@@ -35,8 +35,8 @@ import (
 	"fmt"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
+	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 

@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 )
 
 // spec: §17.9.1 (Composition Dimensions) "Production mode"; §11.7 (Audit Logging)

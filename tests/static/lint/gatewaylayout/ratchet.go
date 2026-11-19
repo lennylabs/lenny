@@ -88,17 +88,19 @@ func Ratchet(base, current Register, moves []Move, table []Dir) []string {
 }
 
 // RenameMoves returns the moves a renamed row may map back through: the
-// lines the merge-base manifest already holds, whose old path is gone at
-// HEAD because the move ran. A line the branch adds to the manifest, or a
-// move that has not run, maps no row.
-func RenameMoves(moves, baseManifest []Move, existsAtHead func(string) bool) []Move {
+// lines the merge-base manifest already holds whose old path exists at the
+// merge base and is gone at HEAD, because the branch ran the move. A line
+// the branch adds to the manifest, a move that has not run, and a move that
+// ran before the merge base map no row: the merge-base register already
+// names the new path of a move that ran before it.
+func RenameMoves(moves, baseManifest []Move, existsAtHead, existsAtBase func(string) bool) []Move {
 	inBase := map[Move]bool{}
 	for _, m := range baseManifest {
 		inBase[Move{Old: m.Old, New: m.New}] = true
 	}
 	var out []Move
 	for _, m := range moves {
-		if inBase[Move{Old: m.Old, New: m.New}] && !existsAtHead(m.Old) {
+		if inBase[Move{Old: m.Old, New: m.New}] && existsAtBase(m.Old) && !existsAtHead(m.Old) {
 			out = append(out, m)
 		}
 	}

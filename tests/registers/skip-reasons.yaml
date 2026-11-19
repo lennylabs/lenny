@@ -189,62 +189,62 @@ sites:
       site: 1
       call: Skip
       reason: linux is supported unconditionally; this test covers the Docker-absent non-Linux path
-    - path: pkg/gateway/externalapi/admin/audit_query_filter_test.go
+    - path: pkg/gateway/api/admin/audit_query_filter_test.go
       function: TestListAuditEventsCorrelatesLennyOpsOperationID_spec_25_9_3707
       site: 1
       call: Skip
       reason: 'open gap: lenny-ops audit emitters tag rows with camelCase operationId, which the §25.9 payload.operation_id correlation filter never matches'
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_AuditReseedErrorPropagates_spec_11_7
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_ConcurrentCreateRaceIsBenign_spec_15_1
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_CreateDeniedPropagates_spec_15_1
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_CreatesBothSequences_spec_15_1_11_2_1_11_7
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_Idempotent_spec_15_1
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_PrimaryDDLPoolDistinct_spec_12_3_11_7
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_RepeatProvisionNeverRegressesAdvancedSequence_spec_11_2_1
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_ReseedReadErrorPropagates_spec_11_2_1
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_ReseedReadFailsClosedWithoutTenantGUC_spec_11_7
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/admin/tenant_sequence_provision_db_test.go
+    - path: pkg/gateway/api/admin/tenant_sequence_provision_db_test.go
       function: TestProvisionTenantSequences_ReseedUnderRLS_spec_11_2_1_11_7
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/externalapi/openapi/completeness_test.go
+    - path: pkg/api/openapi/completeness_test.go
       function: TestOperabilityResponsesCarrySchemas
       site: 1
       call: Skip

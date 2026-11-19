@@ -5,7 +5,7 @@ package sessionserver
 import (
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 )
 
 // errorEnvelope is the §15.1 error response shape.

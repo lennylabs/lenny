@@ -33,7 +33,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admintoken"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"

@@ -183,7 +183,7 @@ func sweepSurfaces(t *testing.T, root string, roots []string) []string {
 	// The served OpenAPI document is generated rather than authored, so it
 	// is swept by path. A root that already walks it must not yield it
 	// twice, or a sweep reports the same line under two names.
-	openapi := filepath.Join(root, "pkg", "gateway", "externalapi", "openapi", "openapi.json")
+	openapi := filepath.Join(root, "pkg", "api", "openapi", "openapi.json")
 	for _, path := range swept {
 		if path == openapi {
 			return swept

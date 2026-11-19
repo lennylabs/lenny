@@ -12,8 +12,8 @@ import (
 
 	apisession "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionmem "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )

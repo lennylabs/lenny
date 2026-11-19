@@ -41,15 +41,15 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
@@ -1672,7 +1672,7 @@ func resolveDerivedRuntimes(ctx context.Context, store runtimestore.Store, rows 
 
 // environmentResolution returns the §10.6 transparent-filtering
 // Resolution for the request. It prefers the Resolution the
-// environment-resolver middleware (pkg/gateway/middleware/environment)
+// environment-resolver middleware (pkg/environment/environmentmw)
 // attached to the request context — the production path, where the MCP
 // server is mounted under that middleware. When no Resolution is on the
 // context (an MCP tool exercised directly without the HTTP middleware

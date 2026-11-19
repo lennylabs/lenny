@@ -139,7 +139,7 @@ inputs:
     runs:
       - tests/conformance
       - pkg/observability/tracing
-      - pkg/gateway/externalapi/openapi
+      - pkg/api/openapi
     reason: >-
       These packages read specification pages at test time: the intra-pod
       pointer conformance test, the tracing attribute test, and the OpenAPI
@@ -235,7 +235,7 @@ inputs:
       - tests/component/watchdog
       - cmd/lenny-gateway
       - pkg/ctlcli
-      - pkg/gateway/externalapi/admin
+      - pkg/gateway/api/admin
     reason: >-
       These packages apply or read the migration files by path rather than
       through the embedding package: the container, Kind, and lifecycle
@@ -272,7 +272,7 @@ inputs:
       - cmd/lenny-compliance
       - pkg/adapter
       - pkg/audit/ocsf
-      - pkg/gateway/externalapi/openapi
+      - pkg/api/openapi
       - pkg/gateway/mcpfabric/mcpschemagen
       - pkg/workspaceplan
     reason: >-

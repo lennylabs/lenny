@@ -19,9 +19,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 )
 
 // diagnosis: a failure means a secretData write through the failing writer

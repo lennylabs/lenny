@@ -46,7 +46,7 @@ const (
 // into a document the client does not have, so the citation is removed
 // rather than converted.
 var servedArtifacts = map[string]servedKind{
-	"pkg/gateway/externalapi/openapi/openapi.json":   servedDocument,
+	"pkg/api/openapi/openapi.json":                   servedDocument,
 	"pkg/gateway/platformtools/mcptools/mcptools.go": servedToolSchemas,
 	"pkg/chart/values/values.go":                     servedDescTags,
 }
