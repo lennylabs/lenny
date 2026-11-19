@@ -8,6 +8,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
+| Building | 1 |
 | Ready | 1 |
 | Waiting on decisions | 40 |
 | Blocked | 133 |
@@ -53,6 +54,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0160.S1](0160-cli-session-new-starts/steps.md#0160s1-start-the-session-before-delivering-the-prompt) | Start the session before delivering the prompt | Building |  |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Waiting on decisions | 0118 is `Draft` |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0119.S2](0119-agent-runtimes-only/steps.md#0119s2-removal-of-service-mode) | Removal of service mode | Waiting on decisions | 0119 is `Draft` |
@@ -269,3 +271,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
+| [0160](0160-cli-session-new-starts/change.md) | lenny session new starts the session before the prompt | `In progress` | 0 of 1 | 0 |
