@@ -359,13 +359,18 @@ func TestParseScopeAcceptsAllTools(t *testing.T) {
 
 // TestAllToolsMatchesEveryRequiredScope checks that a claim carrying
 // `tools:*` permits every tool, as an absent claim does, while a
-// per-domain wildcard stays confined to its domain.
+// per-domain wildcard stays confined to its domain. A `tools:*` claim
+// is still a present claim: Present reports true and Raw keeps the
+// claim text.
 //
 // spec: §25.1 (Scoped Tokens)
 func TestAllToolsMatchesEveryRequiredScope(t *testing.T) {
-	absent, err := scopes.Parse("")
+	all, err := scopes.Parse("tools:*")
 	if err != nil {
-		t.Fatalf("Parse(empty) returned %v", err)
+		t.Fatalf("Parse(tools:*) returned %v", err)
+	}
+	if !all.Present() || all.Raw != "tools:*" {
+		t.Errorf("Parse(tools:*) = {Present: %v, Raw: %q}, want a present claim with Raw tools:*", all.Present(), all.Raw)
 	}
 	cases := []struct {
 		name    string
@@ -391,11 +396,6 @@ func TestAllToolsMatchesEveryRequiredScope(t *testing.T) {
 			}
 			if got := set.Matches(tc.req); got != tc.matches {
 				t.Errorf("Matches(%q) on claim %q = %v, want %v", tc.req, tc.claim, got, tc.matches)
-			}
-			// tools:* restricts nothing, so it agrees with the absent
-			// claim on every well-formed requirement it grants.
-			if tc.claim == "tools:*" && tc.matches && !absent.Matches(tc.req) {
-				t.Errorf("absent claim refused %q, which tools:* grants", tc.req)
 			}
 		})
 	}
