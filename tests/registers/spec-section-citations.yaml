@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1542
+      count: 1539
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
