@@ -145,7 +145,7 @@ func scanRepo(t *testing.T) (map[string]scannedFunc, *token.FileSet) {
 
 // parseRepoFuncs is scanRepo's uncached parse.
 func parseRepoFuncs() (map[string]scannedFunc, *token.FileSet, error) {
-	root := filepath.Join("..", "..", "..")
+	root := filepath.Join("..", "..", "..", "..", "..")
 	fset := token.NewFileSet()
 	out := map[string]scannedFunc{}
 	for _, dir := range []string{"pkg", "cmd"} {
