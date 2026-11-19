@@ -21,7 +21,7 @@
 // (the same wiring the gateway binary uses) so the security tier exercises
 // the fail-closed boundary the way an external client reaches it. It
 // complements the in-package component cases in
-// pkg/gateway/sessionserver/messages_test.go, asserting the security-tier
+// pkg/gateway/core/session/sessionserver/messages_test.go, asserting the security-tier
 // fail-closed posture on the F-5.1.20 override path and the registry path.
 package security_test
 
@@ -37,11 +37,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"

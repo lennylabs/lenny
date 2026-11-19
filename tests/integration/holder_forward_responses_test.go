@@ -55,7 +55,7 @@ func requireNativeRefusal(t *testing.T, code int, body map[string]any) {
 // Open Responses handler, rather than the turn reaching the REG-COORDLEASE
 // holder over CH-HOLDERFORWARD and running warm on the holder's pod. Check
 // handleCreate in pkg/gateway/environment/translator/open_responses.go,
-// ForwardResponsesTurn in pkg/gateway/sessionserver/holder_forward.go, and
+// ForwardResponsesTurn in pkg/gateway/core/session/sessionserver/holder_forward.go, and
 // the listener's route in cmd/lenny-gateway/holder_forward_listener.go.
 func TestOffHolderResponsesTurnIsServedOnTheHoldersPod_spec_29_3(t *testing.T) {
 	h, coordinator, peer, id, first := newResponsesForwardCompose(t)
@@ -99,7 +99,7 @@ func TestOffHolderResponsesTurnIsServedOnTheHoldersPod_spec_29_3(t *testing.T) {
 // held in the session DLQ, delivered to the runtime, recorded as a response,
 // or answered in the Lenny envelope, rather than refused with 409
 // TARGET_NOT_READY in the adapter's native envelope. Check refuseForward in
-// pkg/gateway/sessionserver/holder_forward.go and writeTargetNotReady in
+// pkg/gateway/core/session/sessionserver/holder_forward.go and writeTargetNotReady in
 // pkg/gateway/environment/translator/openai_chat.go.
 func TestUndeliveredResponsesTurnFailsClosedInTheNativeEnvelope_spec_29_3(t *testing.T) {
 	for _, mode := range undeliveredModes {

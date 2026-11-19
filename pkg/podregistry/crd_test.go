@@ -122,7 +122,7 @@ func TestUpdatePodStateRejectsMismatchedFrom(t *testing.T) {
 // The happy-path ClaimPod assertions (the per-pod claim CREATE plus the
 // `bound` binding-state status patch, the projected claimed record, and the
 // untouched AgentPod.status) write the binding state through the canonical
-// pkg/gateway/podclaim Server-Side Apply PATCH (§4.6.3: the gateway holds
+// WriteBoundStatusAt Server-Side Apply PATCH of claim.go (§4.6.3: the gateway holds
 // `get`/`patch` and no `update` on podclaims/status), which the
 // controller-runtime fake client cannot round-trip. They run against a real
 // API server in the component suite

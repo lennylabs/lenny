@@ -18,12 +18,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken/k8ssecret"
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/api/admintoken/reclaimer"
 	apileaderjobs "github.com/lennylabs/lenny/pkg/gateway/api/leaderjobs"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/adminops"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/leaderjobs"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storage/legalholdreconciler"
@@ -31,7 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
 )
 
-func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags, tokenFlags *admintoken.Flags) {
+func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags, tokenFlags *admintoken.Flags, core *sessionCoreFlags) {
 	f := w.f
 	gatewayLeaderElection := leader.Election
 	gatewayNamespace := f.gatewayNamespace
@@ -42,8 +42,8 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags, to
 	eventBusDuplicateInjectionFactor := f.eventBusDuplicateInjectionFactor
 	eventBusMaxRetryAttempts := f.eventBusMaxRetryAttempts
 	eventBusRetryIntervalSeconds := f.eventBusRetryIntervalSeconds
-	t4KmsProbeIntervalSeconds := f.t4KmsProbeIntervalSeconds
-	t4KmsProbeRateLimit := f.t4KmsProbeRateLimit
+	t4KmsProbeIntervalSeconds := core.leaderJobs.T4KMSProbeIntervalSeconds
+	t4KmsProbeRateLimit := core.leaderJobs.T4KMSProbeRateLimit
 	adminTokenDisabled := tokenFlags.Disabled
 	adminTokenNamespace := tokenFlags.Namespace
 	adminTokenSecretName := tokenFlags.SecretName
@@ -465,8 +465,8 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags, to
 		go w.tenantDeletion.Start(w.watchdogCtx)
 	}
 
-	w.addSuspendedBacklogRecheck(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
-	w.addStaleSlotReaper(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
+	w.addSuspendedBacklogRecheck(core.sessionServer, func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
+	w.addStaleSlotReaper(core.slotReaper, func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
 	w.addOrphanSessionReconciler(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })
 
 	// spec: §12.5 — drive the lenny-gateway-leader election
@@ -566,7 +566,7 @@ func reclaimAbandonedManifests(ctx context.Context, release checkpointer.Backsto
 // pod, and without the coordinator no message is held.
 // spec: §7.2 (Message delivery routing — seven paths, path 6), §12.5
 // (Artifact Store)
-func (w *gatewayWiring) addSuspendedBacklogRecheck(add func(name string, run func(context.Context))) {
+func (w *gatewayWiring) addSuspendedBacklogRecheck(serverFlags *sessionserver.Flags, add func(name string, run func(context.Context))) {
 	if w.podBinder == nil || w.messagingCoord == nil || w.sessionSrv == nil {
 		return
 	}
@@ -579,7 +579,7 @@ func (w *gatewayWiring) addSuspendedBacklogRecheck(add func(name string, run fun
 		Server:   w.sessionSrv,
 		Lister:   lister,
 		Tenants:  tenants.ListTenants,
-		Interval: time.Duration(*w.f.suspendedBacklogRecheckSeconds) * time.Second,
+		Interval: time.Duration(*serverFlags.SuspendedBacklogRecheckSeconds) * time.Second,
 	}
 	add("suspended-backlog-recheck", rechecker.Run)
 }
@@ -590,11 +590,10 @@ func (w *gatewayWiring) addSuspendedBacklogRecheck(add func(name string, run fun
 // reap, and the binder is the releaser that tears a stale slot down before
 // its member is removed.
 // spec: §5.2 (Slot assignment atomicity), §12.5 (Artifact Store)
-func (w *gatewayWiring) addStaleSlotReaper(add func(name string, run func(context.Context))) {
+func (w *gatewayWiring) addStaleSlotReaper(reaperFlags *slotreaper.Flags, add func(name string, run func(context.Context))) {
 	if w.podBinder == nil || w.slotCounter == nil || w.sessions == nil {
 		return
 	}
-	f := w.f
 	reaper, err := slotreaper.New(slotreaper.Config{
 		Pods:     w.sessions,
 		Members:  w.slotCounter,
@@ -603,16 +602,16 @@ func (w *gatewayWiring) addStaleSlotReaper(add func(name string, run func(contex
 		// spec: §12.4 — the pass also reclaims the abandoned slot
 		// reservation records the slot counter writes (F-12.4.38).
 		Reservations: w.sessions,
-		Rate:         *f.slotReaperRate,
-		Interval:     *f.slotReaperInterval,
-		TerminalAge:  *f.slotReaperTerminalAge,
+		Rate:         *reaperFlags.Rate,
+		Interval:     *reaperFlags.Interval,
+		TerminalAge:  *reaperFlags.TerminalAge,
 		Now:          clockinject.Now,
 	})
 	if err != nil {
 		log.Fatalf("lenny-gateway: §5.2 stale-slot reaper: %v", err)
 	}
 	log.Printf("lenny-gateway: §5.2 stale-slot reaper cadence %s, rate %d/s, terminal age %s",
-		*f.slotReaperInterval, *f.slotReaperRate, *f.slotReaperTerminalAge)
+		*reaperFlags.Interval, *reaperFlags.Rate, *reaperFlags.TerminalAge)
 	add("stale-slot-reaper", reaper.Run)
 }
 

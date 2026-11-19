@@ -54,13 +54,13 @@ entries:
     reason: |-
       a skip in the migration tree, outside the classifier trees, whose reason opens with no category
   - member: |-
-      pkg/gateway/checkpoint/checkpointer/uploaddriver.go *uploadDriver.onStreamError (site 1): SkippedEventFunc
+      pkg/gateway/core/checkpoint/checkpointer/uploaddriver.go *uploadDriver.onStreamError (site 1): SkippedEventFunc
     class: skip-reasons
     disposition: excluded
     reason: |-
       a callback that reports a skipped upload rather than a test skip
   - member: |-
-      pkg/gateway/sessionserver/experimentrouter.go *Server.ApplyExperimentRouting (site 1): SkippedAfter
+      pkg/gateway/core/session/sessionserver/experimentrouter.go *Server.ApplyExperimentRouting (site 1): SkippedAfter
     class: skip-reasons
     disposition: excluded
     reason: |-

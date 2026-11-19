@@ -4,9 +4,11 @@ package main
 
 import (
 	"context"
+	"flag"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/quota/storagequota"
 )
 
@@ -96,7 +98,7 @@ func TestBuildRedisAndQuota_ComposesStorageSeamWithoutRedis(t *testing.T) {
 		t.Fatalf("seed manifest row: %v", err)
 	}
 
-	w.buildRedisAndQuota()
+	w.buildRedisAndQuota(coordination.RegisterFlags(flag.NewFlagSet("test", flag.ContinueOnError)))
 
 	if w.storageLiveBytes == nil {
 		t.Fatal("storageLiveBytes is nil after buildRedisAndQuota with a catalog and no Redis: the startup rebuild seam was skipped, so the storage counter would start at zero and fail the quota gate open after a restart")

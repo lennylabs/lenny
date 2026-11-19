@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
@@ -30,7 +31,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
@@ -129,7 +129,7 @@ func routeTableWiring(t *testing.T) (*gatewayWiring, *sessionserver.Server) {
 	attachToolRoutes(sessionSrv, w.apiRoutes, store, nil, toolapproval.NewRegistry(), nil, nil)
 
 	mcpSrv := mcp.NewServer()
-	w.buildHTTPSurface(parts.playground, parts.rateLimit, parts.deprecation, parts.serviceIdentity, parts.idempotency, gwMetrics, sessionSrv,
+	w.buildHTTPSurface(parts.playground, parts.rateLimit, parts.deprecation, parts.serviceIdentity, parts.idempotency, parts.prestop, gwMetrics, sessionSrv,
 		&translator.OpenAIChatHandler{}, w.responsesHandler, credentialserver.New(nil),
 		mcpSrv, nil, nil, discardAppender{}, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, "")

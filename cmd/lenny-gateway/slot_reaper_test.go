@@ -17,23 +17,23 @@ import (
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/tests/testinfra/helm"
 )
 
-// registerReaperFlags registers the storage flags on a fresh command line and
-// parses args.
-func registerReaperFlags(t *testing.T, args ...string) (*gatewayFlags, error) {
+// registerReaperFlags registers the stale-slot reaper's flags on a fresh
+// command line and parses args.
+func registerReaperFlags(t *testing.T, args ...string) (*slotreaper.Flags, error) {
 	t.Helper()
 	savedCmdLine, savedArgs := flag.CommandLine, os.Args
 	t.Cleanup(func() { flag.CommandLine, os.Args = savedCmdLine, savedArgs })
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	flag.CommandLine.SetOutput(&strings.Builder{})
 	os.Args = []string{savedArgs[0]}
-	f := &gatewayFlags{}
-	f.registerStorageFlags()
+	f := slotreaper.RegisterFlags(flag.CommandLine)
 	return f, flag.CommandLine.Parse(args)
 }
 
@@ -50,12 +50,12 @@ func TestSlotReaperFlagDefaults_spec_5_2(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if *f.slotReaperInterval != 60*time.Second || *f.slotReaperRate != 50 || *f.slotReaperTerminalAge != 15*time.Minute {
-		t.Errorf("defaults = %s, %d, %s, want 60s, 50, 15m", *f.slotReaperInterval, *f.slotReaperRate, *f.slotReaperTerminalAge)
+	if *f.Interval != 60*time.Second || *f.Rate != 50 || *f.TerminalAge != 15*time.Minute {
+		t.Errorf("defaults = %s, %d, %s, want 60s, 50, 15m", *f.Interval, *f.Rate, *f.TerminalAge)
 	}
 	if f, err = registerReaperFlags(t, "--slot-reaper-terminal-age=20m", "--slot-reaper-rate=7"); err != nil ||
-		*f.slotReaperTerminalAge != 20*time.Minute || *f.slotReaperRate != 7 {
-		t.Errorf("overrides parsed %s, %d, %v", *f.slotReaperTerminalAge, *f.slotReaperRate, err)
+		*f.TerminalAge != 20*time.Minute || *f.Rate != 7 {
+		t.Errorf("overrides parsed %s, %d, %v", *f.TerminalAge, *f.Rate, err)
 	}
 }
 
@@ -176,7 +176,6 @@ func TestStaleSlotReaperRegistersUnderTheLeaderGate_spec_5_2(t *testing.T) {
 	interval, rate, age := 60*time.Second, 50, 15*time.Minute
 	full := func() *gatewayWiring {
 		w := &gatewayWiring{}
-		w.f = &gatewayFlags{slotReaperInterval: &interval, slotReaperRate: &rate, slotReaperTerminalAge: &age}
 		w.podBinder = &podsession.Binder{}
 		w.slotCounter = slotcounter.New(rc)
 		w.sessions = memstore.New()
@@ -196,7 +195,7 @@ func TestStaleSlotReaperRegistersUnderTheLeaderGate_spec_5_2(t *testing.T) {
 			w := full()
 			tc.mutate(w)
 			var names []string
-			w.addStaleSlotReaper(func(name string, _ func(context.Context)) { names = append(names, name) })
+			w.addStaleSlotReaper(&slotreaper.Flags{Interval: &interval, Rate: &rate, TerminalAge: &age}, func(name string, _ func(context.Context)) { names = append(names, name) })
 			if got := len(names) == 1 && names[0] == "stale-slot-reaper"; got != tc.want {
 				t.Errorf("registered %v, want registration %v", names, tc.want)
 			}
@@ -205,7 +204,7 @@ func TestStaleSlotReaperRegistersUnderTheLeaderGate_spec_5_2(t *testing.T) {
 
 	space := regexp.MustCompile(`\s+`)
 	for _, tc := range []struct{ file, want, seam string }{
-		{"leader_sweeps.go", "w.addStaleSlotReaper(func(name string, run func(context.Context)) { leaderGate.Add(name, run) })", "the reaper's leader-gate registration"},
+		{"leader_sweeps.go", "w.addStaleSlotReaper(core.slotReaper, func(name string, run func(context.Context)) { leaderGate.Add(name, run) })", "the reaper's leader-gate registration"},
 		{"startupgates.go", "validateSlotReaperFlags(", "the reaper's startup gate"},
 		{"sessionsrv.go", "MaxFinalizing: time.Duration(*f.maxFinalizingTimeoutSeconds) * time.Second,", "the launch bound"},
 	} {

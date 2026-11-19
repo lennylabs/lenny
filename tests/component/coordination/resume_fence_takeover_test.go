@@ -13,11 +13,11 @@ import (
 	"google.golang.org/grpc/status"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/coordfixture"
 )

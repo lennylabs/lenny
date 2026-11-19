@@ -32,7 +32,7 @@ const defaultSingleShotReleaseTimeout = 30 * time.Second
 // native envelope.
 //
 // The interface is defined here, at the consumer, because
-// pkg/gateway/sessionserver imports this package; the translator therefore
+// pkg/gateway/core/session/sessionserver imports this package; the translator therefore
 // cannot import sessionserver without an import cycle. The gateway wiring
 // binds this interface to a sessionserver-backed implementation.
 //
@@ -66,7 +66,7 @@ type SingleShotBinding struct {
 // whether the request arrived as a forward from another replica.
 //
 // The interface is defined at the consumer because the translator cannot
-// import pkg/gateway/sessionserver; the gateway wiring binds it to the
+// import pkg/gateway/core/session/sessionserver; the gateway wiring binds it to the
 // session server.
 //
 // spec: §29.3 (Interactive message send) Forwarding; §15 (Open Responses
@@ -97,7 +97,7 @@ type SessionTerminal interface {
 // session the caller may not read answers exactly as an unknown id does.
 //
 // The interface is defined at the consumer because the translator cannot
-// import pkg/gateway/sessionserver; the gateway wiring binds it to the
+// import pkg/gateway/core/session/sessionserver; the gateway wiring binds it to the
 // session server's SessionAccessible.
 //
 // spec: §10.2 (Session ownership) rules 4, 5, and 7; §15 (Open Responses

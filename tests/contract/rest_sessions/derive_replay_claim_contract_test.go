@@ -30,9 +30,9 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -77,7 +77,7 @@ func echoPool(warming bool) []client.Object {
 // than the create path's, left a row behind after the claim failed, or wrote
 // a body the served OpenAPI document does not declare. A 201 means the
 // handler skipped claimForNewRow; check claimDerivedRow in
-// pkg/gateway/sessionserver/derive.go and the 503 responses of the derive
+// pkg/gateway/core/session/sessionserver/derive.go and the 503 responses of the derive
 // and replay operations in pkg/gateway/externalapi/openapi/openapi.json.
 func TestDeriveAndReplayClaimFailureContract_spec_7_1(t *testing.T) {
 	v := newSnapCopyValidator(t)

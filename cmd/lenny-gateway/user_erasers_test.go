@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/credential/credentialstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordlease"
 	"github.com/lennylabs/lenny/pkg/storage/erasure"
 )
 

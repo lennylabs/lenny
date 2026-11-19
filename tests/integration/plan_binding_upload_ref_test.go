@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 )
 
 // spec: 14.1 (WorkspacePlan Schema Versioning), 14 (Workspace Plan Schema)

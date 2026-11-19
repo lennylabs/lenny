@@ -15,6 +15,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorauthz"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionage"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
@@ -23,11 +28,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolbridge"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionage"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 )
 
@@ -61,10 +61,11 @@ func (w *gatewayWiring) buildControlServer(
 	connectorInvoker *connectorinvoke.Invoker,
 	leaseBudgets *leasecontrol.StoreBudgetSource,
 	sessionSrv *sessionserver.Server,
+	core *sessionCoreFlags,
 ) {
 	f := w.f
 	grpcAddr := f.grpcAddr
-	claimHoldTTLSeconds := f.claimHoldTTLSeconds
+	claimHoldTTLSeconds := core.recycle.ClaimHoldTTLSeconds
 	agentNamespace := f.agentNamespace
 	leaseAutoMaxPerMin := f.leaseAutoMaxPerMin
 	adapterTLSCert := f.adapterTLSCert
@@ -72,19 +73,19 @@ func (w *gatewayWiring) buildControlServer(
 	adapterCA := f.adapterCA
 	spiffeTrustDomain := f.spiffeTrustDomain
 	saTokenAudience := f.saTokenAudience
-	maxCreatedStateTimeoutSeconds := f.maxCreatedStateTimeoutSeconds
+	maxCreatedStateTimeoutSeconds := core.watchdog.MaxCreatedStateSeconds
 	maxFinalizingTimeoutSeconds := f.maxFinalizingTimeoutSeconds
-	maxReadyStateTimeoutSeconds := f.maxReadyStateTimeoutSeconds
-	maxStartingStateTimeoutSeconds := f.maxStartingStateTimeoutSeconds
-	maxSessionAgeSeconds := f.maxSessionAgeSeconds
-	maxAwaitingClientActionSeconds := f.maxAwaitingClientActionSeconds
-	maxSuspendedPodHoldSeconds := f.maxSuspendedPodHoldSeconds
+	maxReadyStateTimeoutSeconds := core.watchdog.MaxReadyStateSeconds
+	maxStartingStateTimeoutSeconds := core.watchdog.MaxStartingStateSeconds
+	maxSessionAgeSeconds := core.watchdog.MaxSessionAgeSeconds
+	maxAwaitingClientActionSeconds := core.watchdog.MaxAwaitingClientActionSeconds
+	maxSuspendedPodHoldSeconds := core.watchdog.MaxSuspendedPodHoldSeconds
 	maxResumePendingSeconds := f.maxResumePendingSeconds
-	maxResumingSeconds := f.maxResumingSeconds
+	maxResumingSeconds := core.watchdog.MaxResumingSeconds
 	retryMaxRetries := f.retryMaxRetries
-	maxClientIdleSeconds := f.maxClientIdleSeconds
-	maxSuspendedSessionSeconds := f.maxSuspendedSessionSeconds
-	sessionExpiryWarningSeconds := f.sessionExpiryWarningSeconds
+	maxClientIdleSeconds := core.watchdog.MaxClientIdleSeconds
+	maxSuspendedSessionSeconds := core.watchdog.MaxSuspendedSessionSeconds
+	sessionExpiryWarningSeconds := core.watchdog.ExpiryWarningSeconds
 
 	// ----- §8.6 GatewayControl gRPC server -----
 	// With --grpc-addr the gateway serves the adapter→gateway control

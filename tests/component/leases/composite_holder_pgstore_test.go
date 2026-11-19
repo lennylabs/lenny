@@ -17,11 +17,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease"
-	coordleasepg "github.com/lennylabs/lenny/pkg/gateway/coordination/coordlease/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
-	leasepg "github.com/lennylabs/lenny/pkg/gateway/storage/leasestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordlease"
+	coordleasepg "github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordlease/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	leasepg "github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
@@ -51,9 +51,9 @@ func compositeHolders(t *testing.T) []string {
 // it so that the holder's own Renew or Release no longer matches. Under a
 // Redis outage a peer replica then reads no forward address, and the holder
 // can neither renew nor release its lease. Read the Acquire, Get, Renew, and
-// Release statements in pkg/gateway/storage/leasestore/pgstore and the
+// Release statements in pkg/gateway/core/coordination/leasestore/pgstore and the
 // Upsert and ListHeldByReplica statements in
-// pkg/gateway/coordination/coordlease/pgstore.
+// pkg/gateway/core/coordination/coordlease/pgstore.
 func TestCompositeHolderValueRoundTripsThroughPostgres_spec_10_1_1(t *testing.T) {
 	t.Parallel()
 	ctx := context.Background()

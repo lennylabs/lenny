@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // sessionStartRecorderScript records every inbound frame and answers each
@@ -64,7 +64,7 @@ func TestConcurrentFirstSendsWriteSessionStartFirst_spec_28_5_3(t *testing.T) {
 	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
 		t.Fatalf("write recorder: %v", err)
 	}
-	ex := executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: bin, SendTimeout: 20 * time.Second})
+	ex := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: bin, SendTimeout: 20 * time.Second})
 	ids := make([]string, sessions)
 	var wg sync.WaitGroup
 	for i := range ids {
@@ -88,7 +88,7 @@ func TestConcurrentFirstSendsWriteSessionStartFirst_spec_28_5_3(t *testing.T) {
 }
 
 // runConcurrentSends issues n Sends on sessionID at once.
-func runConcurrentSends(t *testing.T, ex *executor.SubprocessExecutor, sessionID string, n int) {
+func runConcurrentSends(t *testing.T, ex *runtimeexec.SubprocessExecutor, sessionID string, n int) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
@@ -100,7 +100,7 @@ func runConcurrentSends(t *testing.T, ex *executor.SubprocessExecutor, sessionID
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			_, err := ex.Send(ctx, sessionID, []executor.Message{{Content: fmt.Sprintf("m%d", i)}})
+			_, err := ex.Send(ctx, sessionID, []runtimeexec.Message{{Content: fmt.Sprintf("m%d", i)}})
 			errs <- err
 		}(i)
 	}

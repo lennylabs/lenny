@@ -45,7 +45,7 @@ const isolationTenant = "acme"
 // subsystem boundary does not isolate upload saturation from the other
 // subsystems. Either the Upload Handler, with its limiter full, fails to
 // shed load with 503 SUBSYSTEM_UNAVAILABLE (the acquireUploadSlot gate in
-// pkg/gateway/sessionserver/upload.go over the Limiter of
+// pkg/gateway/core/session/sessionserver/upload.go over the Limiter of
 // pkg/gateway/seam/subsystem), or upload saturation starves the Stream Proxy / non-upload
 // paths so they hang or 503 too, or the §16.1 per-subsystem metrics do
 // not reflect the in-flight saturation.

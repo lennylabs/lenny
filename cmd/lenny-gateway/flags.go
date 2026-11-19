@@ -20,8 +20,19 @@ import (
 	deprecationmw "github.com/lennylabs/lenny/pkg/gateway/api/deprecation"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorsecret"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/leaderjobs"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/budgetstate"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotreaper"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
 	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
@@ -32,18 +43,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/tlsprobe"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
@@ -52,7 +57,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
-	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
 // gatewayFlags holds every command-line flag and environment-derived
@@ -109,24 +113,7 @@ type gatewayFlags struct {
 	redisCachePubSubURL                           *string
 	redisSessionDataURL                           *string
 	redisDelegationURL                            *string
-	coordInterval                                 *time.Duration
-	barrierAckTimeoutSeconds                      *int
-	dualStoreMaxSeconds                           *int
-	claimHoldTTLSeconds                           *int
-	slotCounterPostgresFallbackMaxSeconds         *int
-	slotCounterRecoveryProbeInterval              *time.Duration
-	slotReaperInterval                            *time.Duration
-	slotReaperRate                                *int
-	slotReaperTerminalAge                         *time.Duration
-	budgetStateSweepInterval                      *time.Duration
 	shutdownTimeout                               *time.Duration
-	rlPerRuntimePerMin                            *int
-	rlPerPoolPerMin                               *int
-	maxConcSessGlobal                             *int
-	maxConcSessPerUser                            *int
-	maxConcSessPerRuntime                         *int
-	evalRLPerSessionPerMin                        *int
-	evalRLPerTenantPerMin                         *int
 	evalAggregationRefreshSeconds                 *int
 	quotaUserFailOpenFraction                     *float64
 	quotaPerReplicaHardCap                        *int64
@@ -186,14 +173,11 @@ type gatewayFlags struct {
 	auditFlushIntervalMs                          *int
 	auditFlushBatchSize                           *int
 	retryMaxRetries                               *int
-	envVarBlocklistCSV                            *string
 	callbackURLAllowedDomains                     *string
 	maxResumePendingSeconds                       *int
-	maxResumingSeconds                            *int
 	agentNamespace                                *string
 	clusterQPS                                    *float64
 	clusterBurst                                  *int
-	defaultIsolationProfile                       *string
 	standardRuntimeClass                          *string
 	sandboxedRuntimeClass                         *string
 	microvmRuntimeClass                           *string
@@ -202,9 +186,6 @@ type gatewayFlags struct {
 	messagingMaxPerMinute                         *int
 	messagingMaxPerSession                        *int
 	messagingMaxInboundPerMinute                  *int
-	messagingDurableInbox                         *bool
-	messagingMaxInboxSize                         *int
-	messagingMaxDLQSize                           *int
 	toolApprovalTimeout                           *time.Duration
 	streamFailureReportTimeout                    *time.Duration
 	sessionPrimaryReadTimeout                     *time.Duration
@@ -252,26 +233,11 @@ type gatewayFlags struct {
 	minioUseSSL                                   *bool
 	artifactReplicationConfig                     *string
 	artifactReplicationRoleARN                    *string
-	checkpointInterval                            *time.Duration
-	sessionArtifactRetentionSeconds               *int
-	persistDeriveFailureRows                      *bool
 	gcCycleIntervalSeconds                        *int
 	gcTombstoneRetentionSeconds                   *int
-	t4KmsProbeIntervalSeconds                     *int
-	t4KmsProbeRateLimit                           *float64
-	maxCreatedStateTimeoutSeconds                 *int
 	maxDeadlockWaitSeconds                        *int
 	maxFinalizingTimeoutSeconds                   *int
-	maxReadyStateTimeoutSeconds                   *int
-	maxStartingStateTimeoutSeconds                *int
-	maxSessionAgeSeconds                          *int
-	maxAwaitingClientActionSeconds                *int
-	maxSuspendedPodHoldSeconds                    *int
-	maxSuspendedSessionSeconds                    *int
-	maxClientIdleSeconds                          *int
 	delegationBudgetKeyTTLSeconds                 *int
-	suspendedBacklogRecheckSeconds                *int
-	sessionExpiryWarningSeconds                   *int
 	adapterKeepaliveTimeMs                        *int
 	adapterKeepaliveTimeoutMs                     *int
 	delegationUsageQuiescenceTimeoutSeconds       *int
@@ -284,13 +250,9 @@ type gatewayFlags struct {
 	idempotencyGCIntervalSeconds                  *int
 	issuedTokenGCIntervalSeconds                  *int
 	credentialLeaseGCIntervalSeconds              *int
-	checkpointJitterFraction                      *float64
 	objectStorageGCSBucketDefaultCMEK             *string
 	objectStorageAzureDefaultEncryptionScope      *string
 	objectStorageAzureDenyEncryptionScopeOverride *bool
-	checkpointGrantWindow                         *int
-	checkpointCapabilityTTLSeconds                *int
-	partialRecoveryThresholdFraction              *float64
 	noEnvPolicy                                   *string
 	connectorOAuthClientSecretKey                 *string
 	billingCorrectionRateThreshold                *float64
@@ -359,6 +321,48 @@ type partFlags struct {
 	deprecation     *deprecationmw.Flags
 	serviceIdentity *serviceidentity.Flags
 	idempotency     *idempotencymw.Flags
+	// The preStop hook's flags, read only by the build step that wires the
+	// hook.
+	prestop *prestop.Flags
+	// The session core's flags, which several build steps wire.
+	core *sessionCoreFlags
+}
+
+// sessionCoreFlags holds the flags the session core's packages register:
+// the flags only the session core reads. The build steps that wire the core
+// take the whole set, because most of them wire more than one of its
+// packages.
+type sessionCoreFlags struct {
+	coordination  *coordination.Flags
+	dualStore     *dualstore.Flags
+	recycle       *recycle.Flags
+	slotCounter   *slotcounter.Flags
+	slotReaper    *slotreaper.Flags
+	budgetState   *budgetstate.Flags
+	checkpointer  *checkpointer.Flags
+	resumeChunks  *resumechunks.Flags
+	watchdog      *watchdog.Flags
+	sessionServer *sessionserver.Flags
+	sessionInbox  *sessioninbox.Flags
+	leaderJobs    *leaderjobs.Flags
+}
+
+// registerSessionCoreFlags registers the session core's flags on fs.
+func registerSessionCoreFlags(fs *flag.FlagSet) *sessionCoreFlags {
+	return &sessionCoreFlags{
+		coordination:  coordination.RegisterFlags(fs),
+		dualStore:     dualstore.RegisterFlags(fs),
+		recycle:       recycle.RegisterFlags(fs),
+		slotCounter:   slotcounter.RegisterFlags(fs),
+		slotReaper:    slotreaper.RegisterFlags(fs),
+		budgetState:   budgetstate.RegisterFlags(fs),
+		checkpointer:  checkpointer.RegisterFlags(fs),
+		resumeChunks:  resumechunks.RegisterFlags(fs),
+		watchdog:      watchdog.RegisterFlags(fs),
+		sessionServer: sessionserver.RegisterFlags(fs),
+		sessionInbox:  sessioninbox.RegisterFlags(fs),
+		leaderJobs:    leaderjobs.RegisterFlags(fs),
+	}
 }
 
 // registerPartFlags registers the parts' flags on the process-wide flag set.
@@ -380,6 +384,9 @@ func registerPartFlags() *partFlags {
 		deprecation:     deprecationmw.RegisterFlags(flag.CommandLine),
 		serviceIdentity: serviceidentity.RegisterFlags(flag.CommandLine),
 		idempotency:     idempotencymw.RegisterFlags(flag.CommandLine),
+
+		prestop: prestop.RegisterFlags(flag.CommandLine),
+		core:    registerSessionCoreFlags(flag.CommandLine),
 	}
 }
 
@@ -555,61 +562,13 @@ func (f *gatewayFlags) registerCoreFlags() {
 		"§12.4 dedicated Redis URL for the Session-data concern (durable inbox, DLQ). Empty uses the base Redis client. Override via LENNY_REDIS_SESSION_DATA_URL.")
 	f.redisDelegationURL = flag.String("redis-delegation-url", os.Getenv("LENNY_REDIS_DELEGATION_URL"),
 		"§12.4 dedicated Redis URL for the Delegation concern (tree budget keys {root_session_id}:dlg:*). Empty uses the base Redis client. Override via LENNY_REDIS_DELEGATION_URL.")
-	f.coordInterval = flag.Duration("coordination-interval", 15*time.Second,
-		"§10.1 session-coordination lease sweep interval. Each sweep renews this replica's lease on every non-terminal session. Only active when --redis-url is set.")
-	f.barrierAckTimeoutSeconds = flag.Int("checkpoint-barrier-ack-timeout-seconds",
-		envInt("LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS", prestop.DefaultBarrierAckTimeoutSeconds),
-		"§10.1 / §11.3 checkpointBarrierAckTimeoutSeconds: the single wall-clock deadline the preStop CheckpointBarrier fan-out runs under across all coordinated pods. Default 90. Override via LENNY_CHECKPOINT_BARRIER_ACK_TIMEOUT_SECONDS. F-11.3.15.")
-	f.dualStoreMaxSeconds = flag.Int("dual-store-unavailable-max-seconds",
-		envInt("LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS", int(dualstore.DefaultMaxUnavailable/time.Second)),
-		"§10.1 dualStoreUnavailableMaxSeconds: the per-replica window after which sessions with no successful store interaction become eligible for graceful termination once a store recovers. Default 60. The §10.1 dual-store monitor is active only when both --postgres-dsn and --redis-url are set. Override via LENNY_DUAL_STORE_UNAVAILABLE_MAX_SECONDS. F-10.1.3.")
 }
 
 // registerStorageFlags registers the storage, quota, fail-open, audit, billing, and rate-limit flags.
 //
 // spec: §4.1 gateway subsystem seams.
 func (f *gatewayFlags) registerStorageFlags() {
-	f.claimHoldTTLSeconds = flag.Int("claim-hold-ttl-seconds",
-		envInt("LENNY_CLAIM_HOLD_TTL_SECONDS", int(recycle.DefaultClaimHoldTTL/time.Second)),
-		"§4.6.1 reserved-hold TTL: when a recycling pod's occupancy reaches zero the gateway patches the per-pod PodClaim to `reserved` and holds it this many seconds so a back-to-back same-tenant session rebinds (reserved → bound) with no acquisition round trip; on expiry the holder deletes the claim and the pod returns to idle. A reserved pod is counted as occupied for inventory and scaling (§4.6.2), so a high value depresses apparent idle inventory and delays retirement-limit evaluation; the gateway warns at startup when it is set high. Default 10. Override via LENNY_CLAIM_HOLD_TTL_SECONDS.")
-	f.slotCounterPostgresFallbackMaxSeconds = flag.Int("slot-counter-postgres-fallback-max-seconds",
-		envInt("LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS", int(slotcounter.DefaultPostgresFallbackMaxWindow/time.Second)),
-		"§12.4 slotCounterPostgresFallbackMaxSeconds: the bounded window during a Redis outage in which the §5.2 slot counter gates intra-pod capacity on the Postgres fallback (GetActiveSlotsByPod under a per-pod advisory lock). After this window with Redis still unreachable, slot admission fails closed. Default 60. Override via LENNY_SLOT_COUNTER_POSTGRES_FALLBACK_MAX_SECONDS.")
-	f.slotCounterRecoveryProbeInterval = flag.Duration("slot-counter-recovery-probe-interval",
-		envDuration("LENNY_SLOT_COUNTER_RECOVERY_PROBE_INTERVAL", slotcounter.DefaultRecoveryProbeInterval),
-		"§12.4 slot-set recovery probe cadence: how often the gateway probes Redis so that, when an outage ends, a replica with no slot traffic still rebuilds the per-pod slot sets (adds its fallback admissions and leaked marks, and deletes the rehydrated flag of every pod a non-terminal concurrent-workspace session names) before fast-path enforcement resumes. A non-positive value keeps the default. Default 2s. Override via LENNY_SLOT_COUNTER_RECOVERY_PROBE_INTERVAL.")
-	f.slotReaperInterval = flag.Duration("slot-reaper-interval",
-		envDuration("LENNY_SLOT_REAPER_INTERVAL", slotreaper.DefaultInterval),
-		"§5.2 stale-slot reaper cadence: the wait between the end of one leader-run reaper pass and the start of the next. Each pass releases the concurrent-workspace slot set members whose session row has been terminal for longer than --slot-reaper-terminal-age. Default 60s. Override via LENNY_SLOT_REAPER_INTERVAL.")
-	f.slotReaperRate = flag.Int("slot-reaper-rate",
-		envInt("LENNY_SLOT_REAPER_RATE", slotreaper.DefaultRate),
-		"§5.2 stale-slot reaper rate: the most slot set members the reaper releases per second, and the most pods whose release is in flight at once. Must be positive. Default 50. Override via LENNY_SLOT_REAPER_RATE.")
-	f.slotReaperTerminalAge = flag.Duration("slot-reaper-terminal-age",
-		envDuration("LENNY_SLOT_REAPER_TERMINAL_AGE", slotreaper.DefaultTerminalAge),
-		"§5.2 stale-slot reaper terminal age: the gateway's copy of claimOrphanTimeout. A slot set member is released once its session row has been terminal for longer than this. It must equal the controller's --claim-orphan-timeout, and it must be at least one second more than the largest of --max-finalizing-state-timeout-seconds, --max-resuming-seconds, and the §7.1 terminal pipeline budget, which is --workspace-seal-max-duration-seconds plus --stream-failure-report-timeout (the post-terminal slot activity invariant), which the gateway checks at startup. Default 15m. Override via LENNY_SLOT_REAPER_TERMINAL_AGE.")
-	f.budgetStateSweepInterval = flag.Duration("budget-state-sweep-interval",
-		envDuration("LENNY_BUDGET_STATE_SWEEP_INTERVAL", slotreaper.DefaultInterval),
-		"§11.2 per-replica budget state sweep cadence. Every replica resolves the session ids its budget enforcer, usage recorder, and token-usage anomaly detector track, and forgets the per-session state of each session whose row is terminal or absent. Must be positive. Default 60s. Override via LENNY_BUDGET_STATE_SWEEP_INTERVAL.")
 	f.shutdownTimeout = flag.Duration("shutdown-timeout", 5*time.Second, "graceful shutdown timeout")
-	f.rlPerRuntimePerMin = flag.Int("rate-limit-per-runtime-per-min", 0,
-		"§11.1 per-runtime session-creation requests-per-minute admission limit. Zero disables the per-runtime rate limit. F-11.1.2.")
-	f.rlPerPoolPerMin = flag.Int("rate-limit-per-pool-per-min", 0,
-		"§11.1 per-pool session-creation requests-per-minute admission limit (skipped when no warm pool resolves). Zero disables the per-pool rate limit. F-11.1.2.")
-	f.maxConcSessGlobal = flag.Int("max-concurrent-sessions-global",
-		envInt("LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL", 0),
-		"§11.1 global concurrent-session admission cap (non-terminal sessions other than suspended ones across every tenant). A resume of a suspended session is checked against the cap. Zero disables the global scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_GLOBAL. F-11.1.3.")
-	f.maxConcSessPerUser = flag.Int("max-concurrent-sessions-per-user",
-		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_USER", 0),
-		"§11.1 per-user concurrent-session admission cap (non-terminal sessions other than suspended ones a single user holds in their tenant). A resume of a suspended session is checked against the cap. Zero disables the per-user scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_USER. F-11.1.3.")
-	f.maxConcSessPerRuntime = flag.Int("max-concurrent-sessions-per-runtime",
-		envInt("LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME", 0),
-		"§11.1 per-runtime concurrent-session admission cap (non-terminal sessions other than suspended ones targeting a single runtime in a tenant). A resume of a suspended session is checked against the cap. Zero disables the per-runtime scope. Override via LENNY_MAX_CONCURRENT_SESSIONS_PER_RUNTIME. F-11.1.3.")
-	f.evalRLPerSessionPerMin = flag.Int("eval-rate-limit-per-session-per-min",
-		envInt("LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN", sessionserver.DefaultEvalPerSessionPerMin),
-		"§10.7 evalRateLimit.perSessionPerMinute: per-session eval-submission requests-per-minute limit on POST /v1/sessions/{id}/eval. Default 100. Negative disables the per-session scope. Override via LENNY_EVAL_RATE_LIMIT_PER_SESSION_PER_MIN. F-10.7.4.")
-	f.evalRLPerTenantPerMin = flag.Int("eval-rate-limit-per-tenant-per-min",
-		envInt("LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN", sessionserver.DefaultEvalPerTenantPerMin),
-		"§10.7 evalRateLimit.perTenantPerMinute: per-tenant eval-submission requests-per-minute limit across all of a tenant's sessions. Default 10000. Negative disables the per-tenant scope. Override via LENNY_EVAL_RATE_LIMIT_PER_TENANT_PER_MIN. F-10.7.4.")
 	f.evalAggregationRefreshSeconds = flag.Int("eval-aggregation-refresh-seconds",
 		envInt("LENNY_EVAL_AGGREGATION_REFRESH_SECONDS", 0),
 		"§10.7 evalAggregationRefreshSeconds: when 0 (default), the lenny_eval_aggregates materialized view exists but is unused and the §10.7 results API aggregates on read from eval_results. When positive, the gateway routes unfiltered results queries to the matview and schedules REFRESH MATERIALIZED VIEW CONCURRENTLY at this interval. Requires Postgres. Override via LENNY_EVAL_AGGREGATION_REFRESH_SECONDS. F-10.7.12.")
@@ -797,24 +756,17 @@ func (f *gatewayFlags) registerPolicyFlags() {
 		"§12.3 audit.flushBatchSize: the buffered T2 audit-event count that triggers an immediate flush when batching is enabled. Default 100. Override via LENNY_AUDIT_FLUSH_BATCH_SIZE. F-12.3.14.")
 	f.retryMaxRetries = flag.Int("retry-max-retries", envInt("LENNY_RETRY_MAX_RETRIES", policy.DefaultMaxRetries),
 		"§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES.")
-	f.envVarBlocklistCSV = flag.String("env-var-blocklist", os.Getenv("LENNY_ENV_VAR_BLOCKLIST"),
-		"§14 deployer extension to the env-var blocklist applied to a CreateSessionRequest's `env` field, a comma-separated list of exact names or `*` globs (e.g. AWS_SECRET_ACCESS_KEY,*_TOKEN). The platform default blocklist is always merged in first, so an operator can extend but not reduce it. Override via LENNY_ENV_VAR_BLOCKLIST.")
 	f.callbackURLAllowedDomains = flag.String("callback-url-allowed-domains", os.Getenv("LENNY_CALLBACK_URL_ALLOWED_DOMAINS"),
 		"§14 callbackUrlAllowedDomains: a comma-separated allowlist of hostnames (exact or `*.suffix` wildcard) a session callbackUrl may target. When set, only matching hosts are accepted; when empty, the §14 public-DNS / private-range SSRF validation applies. Override via LENNY_CALLBACK_URL_ALLOWED_DOMAINS.")
 	f.maxResumePendingSeconds = flag.Int("max-resume-pending-seconds",
 		envInt("LENNY_MAX_RESUME_PENDING_SECONDS", watchdog.DefaultMaxResumePendingSeconds),
 		"§6.2 wall-clock cap on resume_pending: a session that has waited this long for a pod to become available transitions to awaiting_client_action. Mirrors the per-session retryPolicy.maxResumeWindowSeconds default; the per-session value tightens the platform cap. Default 900s. Override via LENNY_MAX_RESUME_PENDING_SECONDS.")
-	f.maxResumingSeconds = flag.Int("max-resuming-seconds",
-		envInt("LENNY_MAX_RESUMING_SECONDS", watchdog.DefaultMaxResumingSeconds),
-		"§6.2 watchdog on resuming: a session whose resume has not completed within this window branches on retry budget (retries remain → resume_pending; exhausted → awaiting_client_action). Default 300s, matching the setup-command total timeout. Override via LENNY_MAX_RESUMING_SECONDS. The controller's --claim-orphan-timeout, and the gateway's --slot-reaper-terminal-age, must be at least one second more than the largest of this value, --max-finalizing-state-timeout-seconds, and the §7.1 terminal pipeline budget, which is --workspace-seal-max-duration-seconds plus --stream-failure-report-timeout (the §5.2 post-terminal slot activity invariant), which the gateway checks at startup.")
 	f.agentNamespace = flag.String("agent-namespace", os.Getenv("LENNY_AGENT_NAMESPACE"),
 		"Kubernetes namespace the §5 warm pools and AgentPods live in. When set, the gateway places each started session on a warm pod via the §4.7 adapter instead of the in-process executor.")
 	f.clusterQPS = flag.Float64("cluster-qps", envFloat("LENNY_CLUSTER_QPS", 100),
 		"client-go QPS for the cluster client the gateway uses to list/get/patch PodSet / AgentPod / PodClaim. The session-start path issues 5+ API calls per request, so client-go's default of 5 saturates at trivial load. The spec mandates explicit QPS values for the controller (§4.6.1) but leaves the gateway's client throttle to operator tuning; the kube-apiserver's own priority+fairness is the production-bounded gate. Override via LENNY_CLUSTER_QPS.")
 	f.clusterBurst = flag.Int("cluster-burst", envInt("LENNY_CLUSTER_BURST", 200),
 		"client-go burst (token-bucket size) for the cluster client. Pairs with --cluster-qps. Override via LENNY_CLUSTER_BURST.")
-	f.defaultIsolationProfile = flag.String("default-isolation-profile", os.Getenv("LENNY_DEFAULT_ISOLATION_PROFILE"),
-		"§5.3 isolation profile applied to a session that omits isolationProfile on the create body. Defaults to the chart's compiled-in fallback (`sandboxed`); the e2e overlay sets `standard` so every k6 scenario lands on the warm pool the agent-workload defines.")
 	// spec: §17.5, §16.1 — the per-profile RuntimeClass name overrides. The
 	// chart renders these from the same `runtimeClasses.profiles.<profile>.name` values,
 	// with the same flag names, that it renders for the controller, so the
@@ -842,12 +794,6 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§8.3 lenny/send_message per-sender lifetime outbound cap. Override via LENNY_MESSAGING_MAX_PER_SESSION.")
 	f.messagingMaxInboundPerMinute = flag.Int("messaging-max-inbound-per-minute", envInt("LENNY_MESSAGING_MAX_INBOUND_PER_MINUTE", 60),
 		"§8.3 lenny/send_message per-target inbound aggregate limit per minute (the O(N²) sibling-storm brake). Override via LENNY_MESSAGING_MAX_INBOUND_PER_MINUTE.")
-	f.messagingDurableInbox = flag.Bool("messaging-durable-inbox", envBool("LENNY_MESSAGING_DURABLE_INBOX", false),
-		"§7.2 durableInbox: back the session inbox with a Redis list (t:{tenant}:session:{id}:inbox) so undelivered inter-session messages survive coordinator failover. Requires Redis. Default false (in-memory inbox). Override via LENNY_MESSAGING_DURABLE_INBOX.")
-	f.messagingMaxInboxSize = flag.Int("messaging-max-inbox-size", envInt("LENNY_MESSAGING_MAX_INBOX_SIZE", 500),
-		"§7.2 maxInboxSize: per-session inbox capacity before the oldest buffered message is evicted with a message_dropped(inbox_overflow) receipt. Override via LENNY_MESSAGING_MAX_INBOX_SIZE.")
-	f.messagingMaxDLQSize = flag.Int("messaging-max-dlq-size", envInt("LENNY_MESSAGING_MAX_DLQ_SIZE", 500),
-		"§7.2 maxDLQSize: per-session dead-letter-queue capacity before the oldest entry is evicted with a message_dropped(dlq_overflow) receipt. Override via LENNY_MESSAGING_MAX_DLQ_SIZE.")
 	f.toolApprovalTimeout = flag.Duration("tool-approval-timeout", envDuration("LENNY_TOOL_APPROVAL_TIMEOUT", 0),
 		"§7.2 tool-use approval wait: how long a blocked tool_call(approvalRequired) waits for a POST /tool-use/{id}/approve|deny before the gateway treats it as a denial. Zero (default) blocks until the user resolves it or the request context is cancelled. Override via LENNY_TOOL_APPROVAL_TIMEOUT.")
 	f.streamFailureReportTimeout = flag.Duration("stream-failure-report-timeout", envDuration("LENNY_STREAM_FAILURE_REPORT_TIMEOUT", sessionserver.DefaultStreamFailureReportTimeout),
@@ -959,19 +905,6 @@ func (f *gatewayFlags) registerSessionFlags() {
 //
 // spec: §4.1 gateway subsystem seams.
 func (f *gatewayFlags) registerArtifactFlags() {
-	f.checkpointInterval = flag.Duration("checkpoint-interval", 10*time.Minute,
-		"§4.4 periodic-checkpoint cadence (`periodicCheckpointIntervalSeconds`). The gateway snapshots every coordinated session's workspace on this interval; active only with --agent-namespace. Default 10m (600s) matches the §4.4 spec value; the freshness SLO bounds workspace loss on eviction to ≤ one interval.")
-	f.sessionArtifactRetentionSeconds = flag.Int("session-artifact-retention-seconds",
-		envInt("LENNY_SESSION_ARTIFACT_RETENTION_SECONDS", int(sessionserver.DefaultArtifactRetention/time.Second)),
-		"§7.1 default artifact-retention window in seconds. Session workspace snapshots, logs, and transcripts stay GC-eligible until this long after the session reaches a terminal state. Default 7 days (604800s); clients extend per-session via POST /v1/sessions/{id}/extend-retention. Override via LENNY_SESSION_ARTIFACT_RETENTION_SECONDS.")
-	// spec: §7.1 derive rule 2 — gateway.persistDeriveFailureRows (default
-	// false). When true, a /derive that fails after the workspace copy is
-	// attempted persists a terminal failed row with
-	// failureClass=derive_failure for audit, reachable per the §15.1
-	// derive-failure reachability table. F-15.1.14.
-	f.persistDeriveFailureRows = flag.Bool("persist-derive-failure-rows",
-		envFlag("LENNY_PERSIST_DERIVE_FAILURE_ROWS"),
-		"§7.1 derive rule 2 gateway.persistDeriveFailureRows: when true, a POST /v1/sessions/{id}/derive that fails after the workspace copy is attempted persists a terminal failed Session row with failureClass=derive_failure for audit (reachable per §15.1). Default false keeps roll-back-without-persist. Override via LENNY_PERSIST_DERIVE_FAILURE_ROWS.")
 	// spec: §12.5 — gc.cycleIntervalSeconds (default 900, min 60).
 	// Drives both the §7.1 retention sweep and the §12.5 hard-prune
 	// sweep cadence. A value below the floor is clamped up to 60s.
@@ -984,19 +917,6 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.gcTombstoneRetentionSeconds = flag.Int("gc-tombstone-retention-seconds",
 		envInt("LENNY_GC_TOMBSTONE_RETENTION_SECONDS", int(retentiongc.DefaultTombstoneRetention/time.Second)),
 		"§12.5 gc.tombstoneRetentionSeconds: how long a soft-deleted artifact_store row is retained before the hard-prune sweep removes it, in seconds (default 86400 / 24h). Operators may raise it without affecting GC correctness. Override via LENNY_GC_TOMBSTONE_RETENTION_SECONDS.")
-	// spec: §12.5 (STO-021) — the leader-elected continuous T4
-	// KMS availability probe. The cadence floor (60s) and the
-	// token-bucket rate ceiling keep a large T4 fleet from bursting the
-	// KMS backend; both are operator-tunable.
-	f.t4KmsProbeIntervalSeconds = flag.Int("t4-kms-probe-interval-seconds",
-		envInt("LENNY_T4_KMS_PROBE_INTERVAL_SECONDS", int(tenantkms.DefaultProbeInterval/time.Second)),
-		"§12.5 storage.t4KmsProbeInterval: the leader-elected continuous T4 KMS availability probe cadence in seconds (default 300, minimum 60; a smaller value is clamped up to the floor). Override via LENNY_T4_KMS_PROBE_INTERVAL_SECONDS.")
-	f.t4KmsProbeRateLimit = flag.Float64("t4-kms-probe-rate-limit",
-		envFloat("LENNY_T4_KMS_PROBE_RATE_LIMIT", tenantkms.DefaultProbeRateLimit),
-		"§12.5 storage.t4KmsProbeRateLimit: token-bucket ceiling on T4 KMS probe issuance in probes/sec (default 10). A non-positive value disables rate limiting. Override via LENNY_T4_KMS_PROBE_RATE_LIMIT.")
-	f.maxCreatedStateTimeoutSeconds = flag.Int("max-created-state-timeout-seconds",
-		envInt("LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxCreatedStateSeconds),
-		"§7.1 maxCreatedStateTimeoutSeconds: the deadline on the `created` pre-running state. Threaded uniformly into the §7.1 uploadToken TTL and the watchdog's `created`-state budget so the two deadlines never drift. Default 300s. Override via LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS.")
 	f.maxDeadlockWaitSeconds = flag.Int("max-deadlock-wait-seconds",
 		envInt("LENNY_MAX_DEADLOCK_WAIT_SECONDS", 120),
 		"§8.8 maxDeadlockWaitSeconds: the grace window between a subtree deadlock detection and failing the deepest blocked tasks with DEADLOCK_TIMEOUT. Zero disables the detector. Default 120s. Override via LENNY_MAX_DEADLOCK_WAIT_SECONDS.")
@@ -1007,37 +927,9 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.maxFinalizingTimeoutSeconds = flag.Int("max-finalizing-state-timeout-seconds",
 		envInt("LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxFinalizingStateSeconds),
 		"§11.3 maxFinalizingTimeoutSeconds: the deadline on the `finalizing` pre-running state. A session stuck longer than this wall-clock window is transitioned to `failed`. The §6.2 invariant `maxFinalizingTimeoutSeconds ≥ runtime.setupTimeoutSeconds` is enforced at admin registration; raising this flag also raises the gateway-side cap admin uses when validating new runtimes. Default 600s. Override via LENNY_MAX_FINALIZING_STATE_TIMEOUT_SECONDS.")
-	f.maxReadyStateTimeoutSeconds = flag.Int("max-ready-state-timeout-seconds",
-		envInt("LENNY_MAX_READY_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxReadyStateSeconds),
-		"§11.3 maxReadyTimeoutSeconds: the deadline on the `ready` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 300s. Override via LENNY_MAX_READY_STATE_TIMEOUT_SECONDS.")
-	f.maxStartingStateTimeoutSeconds = flag.Int("max-starting-state-timeout-seconds",
-		envInt("LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS", watchdog.DefaultMaxStartingStateSeconds),
-		"§11.3 maxStartingTimeoutSeconds: the deadline on the `starting` pre-running state. A session stuck longer than this is transitioned to `failed`. Default 120s. Override via LENNY_MAX_STARTING_STATE_TIMEOUT_SECONDS.")
-	f.maxSessionAgeSeconds = flag.Int("max-session-age-seconds",
-		envInt("LENNY_MAX_SESSION_AGE_SECONDS", watchdog.DefaultMaxSessionAgeSeconds),
-		"§11.3 / §6.2 platform-wide maxSessionAgeSeconds: the active-time session age cap. Age counts only while the session is starting, running, or input_required, and is paused while it is suspended, resume_pending, resuming, or awaiting_client_action; no age cap expires a suspended session. The per-runtime `runtime.maxSessionAgeSeconds` (and per-session retryPolicy.maxSessionAgeSeconds) tighten this cap; this flag is the floor a runtime without an override inherits. Default 7200s (2h). Override via LENNY_MAX_SESSION_AGE_SECONDS.")
-	f.maxAwaitingClientActionSeconds = flag.Int("max-awaiting-client-action-seconds",
-		envInt("LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS", watchdog.DefaultMaxAwaitingClientActionSeconds),
-		"§11.3 maxAwaitingClientActionSeconds: the deadline on the `awaiting_client_action` state. A session that has waited this long for client action is transitioned to `expired`. Default 900s. Override via LENNY_MAX_AWAITING_CLIENT_ACTION_SECONDS.")
-	// spec: §6.2 (Pod State Machine), §11.3 (Timeouts and Cancellation).
-	f.maxSuspendedPodHoldSeconds = flag.Int("max-suspended-pod-hold-seconds",
-		envInt("LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", watchdog.DefaultMaxSuspendedPodHoldSeconds),
-		"§6.2 / §11.3 maxSuspendedPodHoldSeconds: the wall-clock window an interrupt-suspended session holds its pod. When it ends, the gateway checkpoints the workspace and releases the pod, and the session stays `suspended`. This deploy-wide flag is the only hold source; no per-tenant hold cap applies. Default 900s. Override via LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS.")
-	f.maxSuspendedSessionSeconds = flag.Int("max-suspended-session-seconds",
-		envInt("LENNY_MAX_SUSPENDED_SESSION_SECONDS", watchdog.DefaultMaxSuspendedSessionSeconds),
-		"§6.2 maxSuspendedSessionSeconds: the wall-clock lifetime of a `suspended` session. A session suspended this long, with or without its pod, is transitioned to `expired`. Default 604800s (7 days). Override via LENNY_MAX_SUSPENDED_SESSION_SECONDS.")
-	f.maxClientIdleSeconds = flag.Int("max-client-idle-seconds",
-		envInt("LENNY_MAX_CLIENT_IDLE_SECONDS", watchdog.DefaultMaxIdleSeconds),
-		"§6.2 maxClientIdleSeconds: the platform-default idle bound on a `running` session. A session with no qualifying activity for longer than this is suspended: the gateway seals it on the adapter, checkpoints the workspace, and releases the pod, and the session stays `suspended` until a message or a resume. A session that cannot be suspended (service mode or an MCP runtime) is transitioned to `expired` with reason expired:idle instead. The per-pool `sessionPolicy.maxClientIdleSeconds` and the §27.6 playground idle override tighten this default. Default 900s. Override via LENNY_MAX_CLIENT_IDLE_SECONDS.")
 	f.delegationBudgetKeyTTLSeconds = flag.Int("delegation-budget-key-ttl-seconds",
 		envInt("LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS", int(treebudget.DefaultTTL/time.Second)),
 		"§8.3 delegation budget key TTL: the Redis TTL on a delegation tree's budget counters, re-armed at each transition into or out of `suspended`. Startup fails unless it exceeds --max-suspended-session-seconds, so a suspended session's keys outlive its suspended lifetime. Default 691200s (8 days). Override via LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS.")
-	f.suspendedBacklogRecheckSeconds = flag.Int("suspended-backlog-recheck-seconds",
-		envInt("LENNY_SUSPENDED_BACKLOG_RECHECK_SECONDS", int(sessionserver.DefaultSuspendedBacklogRecheckInterval/time.Second)),
-		"§7.2 suspended backlog re-check interval: how often the gateway leader resumes a podless `suspended` session that holds a message. Minimum 30s. Default 300s. Override via LENNY_SUSPENDED_BACKLOG_RECHECK_SECONDS.")
-	f.sessionExpiryWarningSeconds = flag.Int("session-expiry-warning-seconds",
-		envInt("LENNY_SESSION_EXPIRY_WARNING_SECONDS", watchdog.DefaultExpiryWarningSeconds),
-		"§11.3 session-expiry warning lead time: the gateway sends a `session_expiring_soon` SSE event to the client and a `DEADLINE_APPROACHING` CH-RUNTIMEOPS signal to the pod this many seconds before a session's effective maxSessionAge deadline so the agent can checkpoint and the client can extend or wrap up. Default 300s (5 minutes). Override via LENNY_SESSION_EXPIRY_WARNING_SECONDS.")
 	// spec: §11.3 — grpc.keepaliveTime{,out}Ms on the
 	// adapter client (gateway → pod), operator-tunable. The library
 	// default is no keepalive on the client side, so the §11.3 5s timeout
@@ -1105,23 +997,12 @@ func (f *gatewayFlags) registerArtifactFlags() {
 	f.credentialLeaseGCIntervalSeconds = flag.Int("credential-lease-gc-interval-seconds",
 		envInt("LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS", 3600),
 		"§4.9 credential_leases expired-lease sweep cadence. Every interval the gateway deletes lease rows past ExpiresAt (bounding the credential_leases table) and then reconciles this replica's deny list, dropping a credential's deny entry only when the store definitively reports no remaining active lease for it (failing closed on a store error). Runs on every replica so each replica's in-memory deny list stays bounded within its lifetime. Default 3600s (one hour). Override via LENNY_CREDENTIAL_LEASE_GC_INTERVAL_SECONDS.")
-	f.checkpointJitterFraction = flag.Float64("checkpoint-jitter-fraction", envFloat("LENNY_CHECKPOINT_JITTER_FRACTION", checkpointer.DefaultJitterFraction),
-		"§4.4. Each session's first periodic checkpoint is scheduled at `checkpointInterval + random(0, checkpointInterval × jitterFraction)`, preventing thundering-herd checkpoint storms at Tier 3 scale. Range [0.0, 1.0]; default 0.2 spreads the first checkpoint uniformly across a 120-second window at the default 600-second interval. Override via LENNY_CHECKPOINT_JITTER_FRACTION.")
 	f.objectStorageGCSBucketDefaultCMEK = flag.String("object-storage-gcs-bucket-default-cmek", os.Getenv("LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK"),
 		"§12.5 objectStorage.gcs.bucketDefaultCmek: the per-tenant GCS bucket-default CMEK resource name that a T4 checkpoint PUT inherits (the GCS V4 signed URL cannot carry a per-request CMEK). Required when --object-storage-provider=gcs serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_GCS_BUCKET_DEFAULT_CMEK.")
 	f.objectStorageAzureDefaultEncryptionScope = flag.String("object-storage-azure-default-encryption-scope", os.Getenv("LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE"),
 		"§12.5 objectStorage.azure.defaultEncryptionScope: the Azure container-level default encryption scope a T4 chunk PUT lands under (the SAS carries no encryption scope). Required with --object-storage-azure-deny-encryption-scope-override when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DEFAULT_ENCRYPTION_SCOPE.")
 	f.objectStorageAzureDenyEncryptionScopeOverride = flag.Bool("object-storage-azure-deny-encryption-scope-override", envFlagDefault("LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE", false),
 		"§12.5 objectStorage.azure.denyEncryptionScopeOverride: assert the T4 container sets DenyEncryptionScopeOverride so a chunk PUT cannot land under any other scope. Required with --object-storage-azure-default-encryption-scope when --object-storage-provider=azure serves a workspaceTier T4 tenant. Override via LENNY_OBJECT_STORAGE_AZURE_DENY_ENCRYPTION_SCOPE_OVERRIDE.")
-	f.checkpointGrantWindow = flag.Int("checkpoint-grant-window",
-		envInt("LENNY_CHECKPOINT_GRANT_WINDOW", checkpointer.DefaultGrantWindow),
-		"§10.1.7 / §17.8.1 checkpointGrantWindow: the number of chunk-upload capabilities the gateway keeps outstanding at once while draining a session's workspace checkpoint. It bounds both the pipelining depth and the worst-case unreconciled overage (checkpointGrantWindow × partialChunkSizeBytes) against a backend that ignores the signed Content-Length. Default 4; a pool config value overrides this deployment-wide default. Override via LENNY_CHECKPOINT_GRANT_WINDOW.")
-	f.checkpointCapabilityTTLSeconds = flag.Int("checkpoint-capability-ttl-seconds",
-		envInt("LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS", checkpointer.DefaultCapabilityTTLSeconds),
-		"§13.2 / §17.8.1 checkpointCapabilityTTLSeconds: the expiry, in seconds, of each gateway-minted presigned checkpoint upload or restore capability. Default 30. Override via LENNY_CHECKPOINT_CAPABILITY_TTL_SECONDS.")
-	f.partialRecoveryThresholdFraction = flag.Float64("partial-recovery-threshold-fraction",
-		envFloat("LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION", 0.5),
-		"§10.1.7 / §17.8.1 partialRecoveryThresholdFraction: the minimum fraction of the baseline full-checkpoint bytes a partial checkpoint must have confirmed before the resume path reassembles it rather than falling back to the last full checkpoint. A fraction in [0.0, 1.0]. Default 0.5. Override via LENNY_PARTIAL_RECOVERY_THRESHOLD_FRACTION.")
 	f.noEnvPolicy = flag.String("no-environment-policy", os.Getenv("LENNY_NO_ENVIRONMENT_POLICY"),
 		"§10.6 platform-wide noEnvironmentPolicy (deny-all or allow-all). Required outside --dev-mode.")
 	f.connectorOAuthClientSecretKey = flag.String("connector-oauth-client-secret-key", envOr("LENNY_CONNECTOR_OAUTH_CLIENT_SECRET_KEY", connectorsecret.DefaultSecretKey),

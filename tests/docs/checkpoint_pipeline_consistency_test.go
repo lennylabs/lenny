@@ -1055,7 +1055,7 @@ func TestCheckpointSlotDropCitesTheOwningSpecSections(t *testing.T) {
 // carry the checkpoint persistence surface the slot-column drop re-keys: the
 // session core's checkpoint packages and the checkpoint stores in the
 // checkpoint concern directory.
-var checkpointGoSourceRoots = []string{"pkg/gateway/checkpoint", "pkg/checkpoint"}
+var checkpointGoSourceRoots = []string{"pkg/gateway/core/checkpoint", "pkg/checkpoint"}
 
 // checkpointGoCitationFiles are the checkpoint test files that live outside
 // that subtree. Walking the subtree alone leaves the tier files that pin the

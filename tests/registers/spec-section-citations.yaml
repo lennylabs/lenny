@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1520
+      count: 1515
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -375,10 +375,6 @@ packages:
       count: 9
     - package: pkg/gateway/api/wsbearer
       count: 4
-    - package: pkg/gateway/checkpoint/checkpointer
-      count: 301
-    - package: pkg/gateway/checkpoint/resumechunks
-      count: 24
     - package: pkg/gateway/connectors/connectorauthz
       count: 4
     - package: pkg/gateway/connectors/connectorcredstore
@@ -395,18 +391,70 @@ packages:
       count: 6
     - package: pkg/gateway/connectors/connectortools
       count: 8
-    - package: pkg/gateway/coordination/barrier
+    - package: pkg/gateway/core/checkpoint/barrier
       count: 28
-    - package: pkg/gateway/coordination/coordfence
+    - package: pkg/gateway/core/checkpoint/checkpointer
+      count: 301
+    - package: pkg/gateway/core/checkpoint/evictionfallback
+      count: 36
+    - package: pkg/gateway/core/checkpoint/resumechunks
+      count: 24
+    - package: pkg/gateway/core/coordination/coordfence
       count: 18
-    - package: pkg/gateway/coordination/coordination
+    - package: pkg/gateway/core/coordination/coordination
       count: 75
-    - package: pkg/gateway/coordination/coordlease
+    - package: pkg/gateway/core/coordination/coordlease
       count: 6
-    - package: pkg/gateway/coordination/coordlease/pgstore
+    - package: pkg/gateway/core/coordination/coordlease/pgstore
       count: 1
+    - package: pkg/gateway/core/coordination/dualstore
+      count: 9
+    - package: pkg/gateway/core/coordination/leasestore
+      count: 15
+    - package: pkg/gateway/core/coordination/leasestore/pgstore
+      count: 6
     - package: pkg/gateway/core/leaderjobs
       count: 3
+    - package: pkg/gateway/core/podclaim
+      count: 187
+    - package: pkg/gateway/core/session/adapterclient
+      count: 121
+    - package: pkg/gateway/core/session/bindrelease
+      count: 6
+    - package: pkg/gateway/core/session/budgetstate
+      count: 24
+    - package: pkg/gateway/core/session/derivelock
+      count: 11
+    - package: pkg/gateway/core/session/executor
+      count: 102
+    - package: pkg/gateway/core/session/messagerouting
+      count: 4
+    - package: pkg/gateway/core/session/orphansession
+      count: 30
+    - package: pkg/gateway/core/session/podsession
+      count: 510
+    - package: pkg/gateway/core/session/recycle
+      count: 154
+    - package: pkg/gateway/core/session/routingcache
+      count: 14
+    - package: pkg/gateway/core/session/sessionage
+      count: 10
+    - package: pkg/gateway/core/session/sessioncallback
+      count: 14
+    - package: pkg/gateway/core/session/sessionidle
+      count: 19
+    - package: pkg/gateway/core/session/sessioninbox
+      count: 73
+    - package: pkg/gateway/core/session/sessionserver
+      count: 2954
+    - package: pkg/gateway/core/session/slotcounter
+      count: 125
+    - package: pkg/gateway/core/session/slothealth
+      count: 23
+    - package: pkg/gateway/core/session/slotreaper
+      count: 20
+    - package: pkg/gateway/core/session/watchdog
+      count: 215
     - package: pkg/gateway/credentials/credassign
       count: 81
     - package: pkg/gateway/credentials/credfallback
@@ -539,14 +587,6 @@ packages:
       count: 16
     - package: pkg/gateway/playground
       count: 95
-    - package: pkg/gateway/podlifecycle/bindrelease
-      count: 6
-    - package: pkg/gateway/podlifecycle/podclaim
-      count: 190
-    - package: pkg/gateway/podlifecycle/podsession
-      count: 510
-    - package: pkg/gateway/podlifecycle/slotreaper
-      count: 20
     - package: pkg/gateway/replica/devmode
       count: 4
     - package: pkg/gateway/replica/gatewayleader
@@ -557,24 +597,18 @@ packages:
       count: 7
     - package: pkg/gateway/replica/tlsprobe
       count: 5
-    - package: pkg/gateway/runtime/adapterclient
-      count: 121
     - package: pkg/gateway/runtime/adapterregistry
       count: 24
     - package: pkg/gateway/runtime/externaladapterstore
       count: 9
     - package: pkg/gateway/runtime/sdkwarm
       count: 4
-    - package: pkg/gateway/runtime/slothealth
-      count: 23
     - package: pkg/gateway/runtime/statelessproxy
       count: 7
     - package: pkg/gateway/runtime/statelessrouting
       count: 2
     - package: pkg/gateway/runtime/tenantaffinity
       count: 16
-    - package: pkg/gateway/runtime/watchdog
-      count: 215
     - package: pkg/gateway/scaling/capacityplanning
       count: 1
     - package: pkg/gateway/scaling/gcpause
@@ -583,10 +617,6 @@ packages:
       count: 7
     - package: pkg/gateway/seam/subsystem
       count: 33
-    - package: pkg/gateway/session/budgetstate
-      count: 22
-    - package: pkg/gateway/session/executor
-      count: 150
     - package: pkg/gateway/session/interactionstore
       count: 12
     - package: pkg/gateway/session/interactionstore/pgstore
@@ -595,26 +625,10 @@ packages:
       count: 13
     - package: pkg/gateway/session/memorystore/memorystoretest
       count: 2
-    - package: pkg/gateway/session/messagerouting
-      count: 4
-    - package: pkg/gateway/session/orphansession
-      count: 30
-    - package: pkg/gateway/session/recycle
-      count: 150
-    - package: pkg/gateway/session/routingcache
-      count: 14
-    - package: pkg/gateway/session/sessionage
-      count: 10
-    - package: pkg/gateway/session/sessioncallback
-      count: 14
     - package: pkg/gateway/session/sessioncheckpointmeta
       count: 5
     - package: pkg/gateway/session/sessioncheckpointmeta/pgstore
       count: 2
-    - package: pkg/gateway/session/sessionidle
-      count: 19
-    - package: pkg/gateway/session/sessioninbox
-      count: 73
     - package: pkg/gateway/session/sessionlogstore
       count: 23
     - package: pkg/gateway/session/sessionstore
@@ -629,20 +643,6 @@ packages:
       count: 6
     - package: pkg/gateway/session/tokenanomaly
       count: 21
-    - package: pkg/gateway/sessionserver
-      count: 2954
-    - package: pkg/gateway/storage/derivelock
-      count: 11
-    - package: pkg/gateway/storage/dualstore
-      count: 9
-    - package: pkg/gateway/storage/evictionfallback
-      count: 36
-    - package: pkg/gateway/storage/leasestore
-      count: 15
-    - package: pkg/gateway/storage/leasestore/pgstore
-      count: 6
-    - package: pkg/gateway/storage/slotcounter
-      count: 125
     - package: pkg/gateway/streamproxy
       count: 16
     - package: pkg/gateway/streamproxy/sessionevents
@@ -794,7 +794,7 @@ packages:
     - package: pkg/podlifecycle
       count: 27
     - package: pkg/podregistry
-      count: 42
+      count: 45
     - package: pkg/podsecurity
       count: 12
     - package: pkg/policy
@@ -865,6 +865,8 @@ packages:
       count: 2
     - package: pkg/runtime/runtimeupgradestore/pgstore
       count: 1
+    - package: pkg/runtimeexec
+      count: 48
     - package: pkg/runtimekit
       count: 21
     - package: pkg/runtimekit/echocore

@@ -23,11 +23,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -41,7 +41,7 @@ import (
 // session on a pool it was never granted. A server that grants acme the
 // pool must not answer pool_access_denied, ruling out a blanket rejection.
 // Check the requirePoolSelectable calls in
-// pkg/gateway/sessionserver/derive.go and replay.go.
+// pkg/gateway/core/session/sessionserver/derive.go and replay.go.
 // spec: 4 (pool_tenant_access), 15.1 (REST API: Session Replay Semantics, FORBIDDEN), 7.1 (Normal Flow: Derive session semantics), 14.1 (CreateSessionRequest.pool)
 func TestDeriveAndReplayTargetPoolEnforcesTenantAccess_spec_4(t *testing.T) {
 	cluster := poolAccessCluster(t)

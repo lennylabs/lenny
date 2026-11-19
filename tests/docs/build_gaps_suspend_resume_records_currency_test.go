@@ -43,14 +43,14 @@ type closedSuspendResumeFinding struct {
 // closedSuspendResumeFindings are the findings the suspend and resume work
 // closed.
 var closedSuspendResumeFindings = []closedSuspendResumeFinding{
-	{"F-11.3.35", "pkg/gateway/sessionserver/suspend_release.go", "Server.ReleaseSuspendedPod"},
-	{"F-11.3.36", "pkg/gateway/sessionserver/suspend_release.go", "Server.SuspendIdle"},
-	{"F-15.1.41", "pkg/gateway/sessionserver/resume_driver.go", "Server.DriveResume"},
-	{"F-7.3.29", "pkg/gateway/sessionserver/resume_driver.go", "Server.DriveResume"},
-	{"F-10.1.25", "pkg/gateway/coordination/coordination/coordination.go", "adoptedState"},
-	{"F-7.3.30", "pkg/gateway/sessionserver/resume_driver.go", "Server.DriveResume"},
-	{"F-7.2.27", "pkg/gateway/sessionserver/resume_driver.go", "Server.DriveResume"},
-	{"F-8.10.18", "pkg/gateway/sessionserver/treerecovery.go", "sessionNodeReattacher.ReattachNode"},
+	{"F-11.3.35", "pkg/gateway/core/session/sessionserver/suspend_release.go", "Server.ReleaseSuspendedPod"},
+	{"F-11.3.36", "pkg/gateway/core/session/sessionserver/suspend_release.go", "Server.SuspendIdle"},
+	{"F-15.1.41", "pkg/gateway/core/session/sessionserver/resume_driver.go", "Server.DriveResume"},
+	{"F-7.3.29", "pkg/gateway/core/session/sessionserver/resume_driver.go", "Server.DriveResume"},
+	{"F-10.1.25", "pkg/gateway/core/coordination/coordination/coordination.go", "adoptedState"},
+	{"F-7.3.30", "pkg/gateway/core/session/sessionserver/resume_driver.go", "Server.DriveResume"},
+	{"F-7.2.27", "pkg/gateway/core/session/sessionserver/resume_driver.go", "Server.DriveResume"},
+	{"F-8.10.18", "pkg/gateway/core/session/sessionserver/treerecovery.go", "sessionNodeReattacher.ReattachNode"},
 }
 
 // diagnosis: a finding the suspend and resume work closed no longer matches

@@ -148,7 +148,7 @@ func TestBlackboxFuzzPathTraversalArtifactKeyRejected(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			// url.PathEscape (matching the pkg/gateway/sessionserver
+			// url.PathEscape (matching the pkg/gateway/core/session/sessionserver
 			// blobURL test helper's convention) percent-encodes the
 			// traversal segments and the scheme's doubled slash so
 			// http.ServeMux's path-cleaning redirect never sees a raw
@@ -421,7 +421,7 @@ func nestedJSON(depth int) string {
 }
 
 // decodeErrorEnvelope unmarshals the shared {"error":{"code",...}}
-// envelope (pkg/gateway/sessionserver.errorEnvelope) and returns the
+// envelope (pkg/gateway/core/session/sessionserver.errorEnvelope) and returns the
 // inner error object as a generic map so callers can assert on
 // individual fields without importing the internal type.
 func decodeErrorEnvelope(t *testing.T, raw []byte) map[string]any {

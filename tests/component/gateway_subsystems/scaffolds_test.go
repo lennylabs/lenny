@@ -16,7 +16,7 @@ import "testing"
 // streaming-echo, against real Postgres + Redis + MinIO. The end-to-end
 // flow is already covered at tier 4 (gateway_postgres_e2e_test.go,
 // gateway_redis_e2e_test.go drive cmd/lenny-gateway against real
-// containers), and pkg/gateway/sessionserver does not consume a Redis
+// containers), and pkg/gateway/core/session/sessionserver does not consume a Redis
 // LeaseStore today, so the scaffold's "real Redis LeaseStore" half has
 // no production consumer.
 //
@@ -30,7 +30,7 @@ func TestSessionOrchestrator(t *testing.T) {
 		"Redis + MinIO: tests/integration/gateway_postgres_e2e_test.go " +
 		"and gateway_redis_e2e_test.go drive cmd/lenny-gateway end-to-end.")
 	t.Log("- sessionserver dispatch and lifecycle: " +
-		"pkg/gateway/sessionserver unit suites cover the Handler, " +
+		"pkg/gateway/core/session/sessionserver unit suites cover the Handler, " +
 		"start/derive/replay paths, and Sessions store interactions.")
 	t.Log("- LeaseStore: not consumed by sessionserver today; the §4.9 " +
 		"credleasestore is wired into credassign, not the session " +

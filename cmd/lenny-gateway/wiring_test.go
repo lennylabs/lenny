@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 )
 
 // spec: 4.1 (gateway subsystem seams)

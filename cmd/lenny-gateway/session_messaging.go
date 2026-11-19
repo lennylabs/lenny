@@ -7,6 +7,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	evalpg "github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
@@ -17,14 +20,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	treearchivepg "github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -39,14 +39,14 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §7.2/§7.3 messaging; §8.10 tree
 // archive; §8.2 tree budget; §9.2 interactions; §9.4 memory; §10.7 evals.
-func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.Flags) {
+func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.Flags, inboxFlags *sessioninbox.Flags) {
 	f := w.f
 	evalAggregationRefreshSeconds := f.evalAggregationRefreshSeconds
 	memoryEnabled := f.memoryEnabled
 	memoryMaxPerUser := f.memoryMaxPerUser
-	messagingDurableInbox := f.messagingDurableInbox
-	messagingMaxDLQSize := f.messagingMaxDLQSize
-	messagingMaxInboxSize := f.messagingMaxInboxSize
+	messagingDurableInbox := inboxFlags.DurableInbox
+	messagingMaxDLQSize := inboxFlags.MaxDLQSize
+	messagingMaxInboxSize := inboxFlags.MaxInboxSize
 	toolApprovalTimeout := f.toolApprovalTimeout
 	treeArchiveCacheEntries := f.treeArchiveCacheEntries
 

@@ -13,7 +13,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // captureRuntimeScript is a Basic-level runtime that records every inbound
@@ -67,7 +67,7 @@ func TestSubprocessEnvelopeCarriesTheAddressedSession_spec_28_5_3(t *testing.T) 
 	binPath, capturePath := newCaptureRuntime(t)
 
 	const sessionID = "sess-subprocess-address"
-	ex := executor.NewSubprocessExecutor(executor.SubprocessOptions{
+	ex := runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{
 		BinPath:     binPath,
 		SendTimeout: 10 * time.Second,
 	})
@@ -75,7 +75,7 @@ func TestSubprocessEnvelopeCarriesTheAddressedSession_spec_28_5_3(t *testing.T) 
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()
-	if _, err := ex.Send(ctx, sessionID, []executor.Message{{Role: "user", Content: "hello"}}); err != nil {
+	if _, err := ex.Send(ctx, sessionID, []runtimeexec.Message{{Role: "user", Content: "hello"}}); err != nil {
 		t.Fatalf("Send: %v", err)
 	}
 

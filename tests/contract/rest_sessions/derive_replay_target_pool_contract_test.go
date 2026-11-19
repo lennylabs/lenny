@@ -24,10 +24,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 )
 
@@ -51,7 +51,7 @@ func targetPoolEndpoints(pool string) []snapCopyEndpoint {
 // create path's 400 VALIDATION_ERROR or 403 FORBIDDEN (a 503 means the check
 // is skipped and the claim failed instead), left a row behind, or wrote a
 // body or status the served OpenAPI document does not declare. Check the
-// requirePoolSelectable calls in pkg/gateway/sessionserver/derive.go and
+// requirePoolSelectable calls in pkg/gateway/core/session/sessionserver/derive.go and
 // replay.go, and the 400 and 403 responses of both operations in
 // pkg/gateway/externalapi/openapi/openapi.json.
 func TestDeriveAndReplayTargetPoolSelectionContract_spec_15_1(t *testing.T) {

@@ -21,9 +21,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/orphansession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
-	"github.com/lennylabs/lenny/pkg/gateway/session/orphansession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )

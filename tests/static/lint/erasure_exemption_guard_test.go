@@ -3,6 +3,7 @@
 package lint
 
 import (
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -43,10 +44,10 @@ type exgUnwrittenStore struct {
 // exgUnwrittenStores are the packages the redis_caches and eviction_state
 // exemptions rest on.
 var exgUnwrittenStores = []exgUnwrittenStore{
-	{pkg: "pkg/storage/evictionstatestore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
-	{pkg: "pkg/storage/evictionstatestore/pgstore", allowed: []string{"pkg/gateway/storage/evictionfallback"}, exemption: "eviction_state"},
-	{pkg: "pkg/gateway/storage/evictionfallback", exemption: "eviction_state"},
-	{pkg: "pkg/gateway/session/routingcache", exemption: "redis_caches"},
+	{pkg: "pkg/storage/evictionstatestore", allowed: []string{"pkg/gateway/core/checkpoint/evictionfallback"}, exemption: "eviction_state"},
+	{pkg: "pkg/storage/evictionstatestore/pgstore", allowed: []string{"pkg/gateway/core/checkpoint/evictionfallback"}, exemption: "eviction_state"},
+	{pkg: "pkg/gateway/core/checkpoint/evictionfallback", exemption: "eviction_state"},
+	{pkg: "pkg/gateway/core/session/routingcache", exemption: "redis_caches"},
 	// The token service constructs the access-token cache and discards it;
 	// the call check below keeps it from becoming a writer.
 	{pkg: "pkg/tokenservice/cache", allowed: []string{"cmd/lenny-token-service"}, exemption: "redis_caches"},
@@ -274,9 +275,32 @@ func exgTerminalName(e ast.Expr) string {
 //
 // spec: 12.8 (Compliance Interfaces: Storage backends in erasure scope)
 func TestErasureExemptionsHaveNoProductionWriter_spec_12_8(t *testing.T) {
-	for _, v := range exgExemptionViolations(t, schematest.RepoRoot(t)) {
+	root := schematest.RepoRoot(t)
+	for _, v := range exgMissingWatchedPaths(root) {
 		t.Error(v)
 	}
+	for _, v := range exgExemptionViolations(t, root) {
+		t.Error(v)
+	}
+}
+
+// exgMissingWatchedPaths reports each store, allowed importer, and token
+// service tree the guard names whose directory no longer exists under root.
+// The guard compares import paths with these strings, so a path left behind
+// by a package move would stop watching the store without failing.
+func exgMissingWatchedPaths(root string) []string {
+	paths := append([]string{exgTokenCachePkg}, exgTokenServiceDirs...)
+	for _, s := range exgUnwrittenStores {
+		paths = append(paths, s.pkg)
+		paths = append(paths, s.allowed...)
+	}
+	var out []string
+	for _, p := range paths {
+		if info, err := os.Stat(filepath.Join(root, filepath.FromSlash(p))); err != nil || !info.IsDir() {
+			out = append(out, fmt.Sprintf("%s, which the erasure exemption guard watches, is not a directory under the repository root: update the guard's paths to the package's current directory", p))
+		}
+	}
+	return out
 }
 
 // TestErasureExemptionGuardCatchesNewWriters_spec_12_8 runs the guard over
@@ -293,7 +317,7 @@ func TestErasureExemptionGuardCatchesNewWriters_spec_12_8(t *testing.T) {
 		want []string
 	}{
 		{dir: "clean"},
-		{dir: "importer", want: []string{"pkg/gateway/session/sessionserver/evict.go imports pkg/storage/evictionstatestore", "eviction_state"}},
+		{dir: "importer", want: []string{"pkg/gateway/core/session/sessionserver/evict.go imports pkg/storage/evictionstatestore", "eviction_state"}},
 		{dir: "cacheput", want: []string{"cmd/lenny-token-service/exchange.go calls Put on the access-token cache", "redis_caches"}},
 	}
 	for _, tc := range cases {

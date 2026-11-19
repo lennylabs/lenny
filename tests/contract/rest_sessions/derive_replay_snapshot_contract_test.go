@@ -34,11 +34,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -239,7 +239,7 @@ func (v snapCopyValidator) validate(t *testing.T, path, status string, body []by
 // treats a manifest read error as a missing snapshot; a 201 with no resolver
 // means the copy stores a ref the new session's first bind cannot restore.
 // Check copyWorkspaceSnapshot and writeSnapshotCopyError in
-// pkg/gateway/sessionserver/snapshot_copy.go, and the 503 responses of the
+// pkg/gateway/core/session/sessionserver/snapshot_copy.go, and the 503 responses of the
 // derive and replay operations in pkg/gateway/externalapi/openapi/openapi.json.
 func TestDeriveAndReplaySnapshotCopyErrorContract_spec_7_1(t *testing.T) {
 	v := newSnapCopyValidator(t)

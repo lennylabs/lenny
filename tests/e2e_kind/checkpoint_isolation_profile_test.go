@@ -36,7 +36,7 @@
 //      §4.4 consistency tag is computed by the pure helper
 //      checkpoint.ConsistencyForLevel (pkg/checkpoint/checkpoint.go), but
 //      that helper has no non-test caller: the gateway checkpointer
-//      (pkg/gateway/checkpoint/checkpointer/checkpointer.go) stores only
+//      (pkg/gateway/core/checkpoint/checkpointer/checkpointer.go) stores only
 //      {Ref, Source, Timestamp, Bytes} on the session's WorkspaceSnapshot
 //      and the session_checkpoint_meta table (migration 0148) carries no
 //      consistency column, so there is nothing to assert consistency:

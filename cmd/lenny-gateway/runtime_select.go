@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/runtimeexec"
 )
 
 // resolveExecutor selects the gateway's in-process session executor
@@ -39,7 +40,7 @@ func resolveExecutor(runtimeBin, agentRuntime string) (executor.Executor, string
 			agentRuntime, "echo",
 		)
 	case runtimeBin != "":
-		return executor.NewSubprocessExecutor(executor.SubprocessOptions{BinPath: runtimeBin}),
+		return runtimeexec.NewSubprocessExecutor(runtimeexec.SubprocessOptions{BinPath: runtimeBin}),
 			fmt.Sprintf("runtime binary %s", runtimeBin), nil
 	default:
 		return executor.NewEchoExecutor(), "in-process echo runtime (default)", nil

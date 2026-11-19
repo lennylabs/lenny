@@ -17,7 +17,7 @@
 // `CH-ADAPTEREVENTS` event (the §4.7 `AdapterTerminating` transport, which
 // pkg/adapter/adapterevents.go emits) and the checkpoint trigger (the
 // existing `CheckpointWithTrigger` path in
-// pkg/gateway/checkpoint/checkpointer/checkpointer.go, which references
+// pkg/gateway/core/checkpoint/checkpointer/checkpointer.go, which references
 // `checkpoint.TriggerEviction`). This test pins that the §4.6.1 sentence
 // resolves to those real current surfaces and that its inline anchor links
 // (the §4.7 self-link and the §10.1 cross-file link) point at live headings.
@@ -51,7 +51,7 @@ import (
 //	held lease. A failure here means the §4.6.1 sentence drifted from those
 //	surfaces: it dropped the coordinator-direct route, named a CH-ADAPTEREVENTS
 //	event the §4.7 table and pkg/adapter/adapterevents.go do not carry, named
-//	a checkpoint trigger pkg/gateway/checkpoint/checkpointer does not drive, or
+//	a checkpoint trigger pkg/gateway/core/checkpoint/checkpointer does not drive, or
 //	dropped the fail-closed rule that no unfenced replica drives the
 //	checkpoint.
 func TestEvictionCoordinatorRouteResolvesToSurfaces(t *testing.T) {
@@ -103,8 +103,8 @@ func TestEvictionCoordinatorRouteResolvesToSurfaces(t *testing.T) {
 
 	// The checkpoint trigger the §4.6.1 sentence names is the existing
 	// CheckpointWithTrigger path, which drives checkpoint.TriggerEviction.
-	checkpointer := readDocPage(t, filepath.Join(root, "pkg", "gateway", "checkpoint", "checkpointer", "checkpointer.go"))
-	requireAllContain(t, "pkg/gateway/checkpoint/checkpointer/checkpointer.go", checkpointer, []string{
+	checkpointer := readDocPage(t, filepath.Join(root, "pkg", "gateway", "core", "checkpoint", "checkpointer", "checkpointer.go"))
+	requireAllContain(t, "pkg/gateway/core/checkpoint/checkpointer/checkpointer.go", checkpointer, []string{
 		"func (c *Checkpointer) CheckpointWithTrigger(",
 		"checkpoint.TriggerEviction",
 	})

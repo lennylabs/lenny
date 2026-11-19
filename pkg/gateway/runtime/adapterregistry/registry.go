@@ -27,7 +27,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapter"
 )
 
 // Capabilities is the §15 AdapterCapabilities — re-exported here as

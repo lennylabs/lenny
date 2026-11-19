@@ -110,7 +110,7 @@ func ensureDefaultTenantSeeded(t *testing.T, d *sessiondriver.Driver) {
 // (tests/testinfra/kind/install.sh's idempotent bring-up) an earlier
 // §10.6/§11.1 run can leave the built-in "default" tenant pinned there
 // too. requireEnvironmentAdmission
-// (pkg/gateway/sessionserver/runtimes.go) then rejects any
+// (pkg/gateway/core/session/sessionserver/runtimes.go) then rejects any
 // session-creation request that names no explicit environment with 403
 // FORBIDDEN reason=no_environment_policy_deny_all. A test whose
 // assertions sit on another axis pins the precondition explicitly

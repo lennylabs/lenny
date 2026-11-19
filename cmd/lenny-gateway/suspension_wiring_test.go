@@ -11,12 +11,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // TestSuspensionSeamsAreWiredToTheSessionServer_spec_6_2 pins the production
@@ -122,7 +122,6 @@ func TestSuspendedBacklogRecheckRegistration_spec_7_2(t *testing.T) {
 	recheck := 300
 	full := func() *gatewayWiring {
 		w := &gatewayWiring{}
-		w.f = &gatewayFlags{suspendedBacklogRecheckSeconds: &recheck}
 		w.podBinder = &podsession.Binder{}
 		w.messagingCoord = &sessioninbox.Coordinator{}
 		w.sessionSrv = sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
@@ -143,7 +142,7 @@ func TestSuspendedBacklogRecheckRegistration_spec_7_2(t *testing.T) {
 			w := full()
 			tc.mutate(w)
 			var names []string
-			w.addSuspendedBacklogRecheck(func(name string, _ func(context.Context)) { names = append(names, name) })
+			w.addSuspendedBacklogRecheck(&sessionserver.Flags{SuspendedBacklogRecheckSeconds: &recheck}, func(name string, _ func(context.Context)) { names = append(names, name) })
 			got := len(names) == 1 && names[0] == "suspended-backlog-recheck"
 			if got != tc.want {
 				t.Errorf("registered %v, want registration %v", names, tc.want)

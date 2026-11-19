@@ -72,7 +72,7 @@ func lastAgentActivity(t *testing.T, c *kind.Cluster, pgIP, sessionID string) fl
 // idle stamp; the adapter counts each CH-MSGSOCK message write as activity
 // under its session seal, and the idle suspension moves the idle clock to
 // the adapter's answer instead of suspending. Check sealForIdleSuspension in
-// pkg/gateway/sessionserver/suspend_release.go, the adapter's activity
+// pkg/gateway/core/session/sessionserver/suspend_release.go, the adapter's activity
 // window, and the activity stamper wiring in cmd/lenny-gateway.
 func TestWarmResponsesTurnsKeepTheHeldSessionRunningPastTheIdleBound_spec_15(t *testing.T) {
 	d := sessiondriver.New(t, sessiondriver.Options{HTTPTimeout: 30 * time.Second})

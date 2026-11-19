@@ -26,7 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/prefixlisttest"
 	"github.com/lennylabs/lenny/pkg/blobstore/s3"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

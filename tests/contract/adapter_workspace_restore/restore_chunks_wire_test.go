@@ -33,7 +33,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -143,7 +143,7 @@ func serve(t *testing.T, transport adapter.CheckpointTransport, opts ...grpc.Ser
 // index order or altered a URL or a signed header (the object store rejects an
 // altered signature), restored the source session's session-file tree, or let
 // the snapshot overwrite a plan source. Check chunkGrantsToProto in
-// pkg/gateway/runtime/adapterclient, and restoreSeed and chunkStream in
+// pkg/gateway/core/session/adapterclient, and restoreSeed and chunkStream in
 // pkg/adapter.
 func TestRestoreChunksRoundTripInIndexOrderWithURLsAndHeaders_spec_7_1(t *testing.T) {
 	transport := &recordingTransport{bodies: map[string][]byte{}}
@@ -262,7 +262,7 @@ func (c *finalizeCapture) received() []*adapterv1.FinalizeWorkspaceRequest {
 // diagnosis: the gateway's adapter client put an empty or placeholder grant on
 // the wire for a session with no snapshot, or the adapter seeded the build tree
 // from an empty restore and changed an ordinary session's workspace. Check
-// chunkGrantsToProto in pkg/gateway/runtime/adapterclient and restoreSeed in
+// chunkGrantsToProto in pkg/gateway/core/session/adapterclient and restoreSeed in
 // pkg/adapter.
 func TestEmptyRestoreArrivesAbsentAndMaterializesThePlan_spec_7_1(t *testing.T) {
 	transport := &recordingTransport{bodies: map[string][]byte{}}

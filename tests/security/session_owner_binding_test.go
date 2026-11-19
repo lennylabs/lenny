@@ -19,9 +19,9 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
 
@@ -51,7 +51,7 @@ func postOwnerBindingCreate(t *testing.T, h http.Handler, path, user string) *ht
 // create with no X-Lenny-User-ID was admitted and wrote a session owned by
 // the user its body named, or an authenticated alice created a session owned
 // by bob. The owner must be the principal's subject (ownerFromPrincipal in
-// pkg/gateway/sessionserver/request_identity.go), and a create with no
+// pkg/gateway/core/session/sessionserver/request_identity.go), and a create with no
 // subject must answer 401 UNAUTHORIZED and write no row. Without this, any
 // caller places sessions in another user's quota and erasure scope.
 // spec: 10.2 (Session ownership), 12.8 (Lifecycle fence and drain), 15.1 (UNAUTHORIZED)

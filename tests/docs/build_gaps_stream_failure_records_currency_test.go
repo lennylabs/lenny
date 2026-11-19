@@ -83,8 +83,8 @@ type closedStreamFinding struct {
 
 // closedStreamFindings are the findings the stream-failure work closed.
 var closedStreamFindings = []closedStreamFinding{
-	{id: "F-7.3.28", file: "pkg/gateway/session/executor/podstream.go", symbol: "attachConn"},
-	{id: "F-7.3.27", file: "pkg/gateway/sessionserver/stream_failure.go", symbol: "Server.ReportAttachStreamFailure"},
+	{id: "F-7.3.28", file: "pkg/gateway/core/session/executor/podstream.go", symbol: "attachConn"},
+	{id: "F-7.3.27", file: "pkg/gateway/core/session/sessionserver/stream_failure.go", symbol: "Server.ReportAttachStreamFailure"},
 }
 
 // citedTestFile matches a backticked repository path to a Go test file.
@@ -184,7 +184,7 @@ var filedStreamGaps = []filedStreamGap{
 		id:   "F-10.1.26",
 		what: "the Sweeper's adoption predicate does not admit a starting session",
 		present: func(t testing.TB, root string) bool {
-			file := parseGoFile(t, filepath.Join(root, "pkg", "gateway", "coordination", "coordination", "coordination.go"))
+			file := parseGoFile(t, filepath.Join(root, "pkg", "gateway", "core", "coordination", "coordination", "coordination.go"))
 			return !funcMentionsSelector(t, file, adoptionPredicate, "session", "StateStarting")
 		},
 	},

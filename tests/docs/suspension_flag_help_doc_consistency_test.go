@@ -25,7 +25,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 )
 
 // retiredReaderTerms are the identifiers the change retired: the resume
@@ -114,38 +114,56 @@ func TestGatewayFlagHelpMatchesTheSuspensionContract(t *testing.T) {
 	}
 }
 
-// gatewayFlagUsage parses cmd/lenny-gateway/flags.go and returns the usage
-// string of every flag.Int, flag.String, flag.Bool, and flag.Duration call
-// whose name and usage are string literals.
+// gatewayFlagUsage parses the files that register the gateway's flags,
+// cmd/lenny-gateway/flags.go and the flags.go of each gateway package that
+// registers its own flags (decision 7 of change 0117), and returns the usage
+// string of every flag.Int, flag.String, flag.Bool, and flag.Duration call,
+// and of every such call on a package's flag set fs, whose name and usage are
+// string literals.
 func gatewayFlagUsage(t *testing.T) map[string]string {
 	t.Helper()
-	path := filepath.Join(repoRoot(t), "cmd", "lenny-gateway", "flags.go")
-	file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+	root := repoRoot(t)
+	paths := []string{filepath.Join(root, "cmd", "lenny-gateway", "flags.go")}
+	err := filepath.WalkDir(filepath.Join(root, "pkg", "gateway"), func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if !d.IsDir() && d.Name() == "flags.go" {
+			paths = append(paths, path)
+		}
+		return nil
+	})
 	if err != nil {
-		t.Fatalf("parse %s: %v", path, err)
+		t.Fatalf("walk pkg/gateway: %v", err)
 	}
 	out := map[string]string{}
-	ast.Inspect(file, func(n ast.Node) bool {
-		call, ok := n.(*ast.CallExpr)
-		if !ok || len(call.Args) != 3 {
+	for _, path := range paths {
+		file, err := parser.ParseFile(token.NewFileSet(), path, nil, 0)
+		if err != nil {
+			t.Fatalf("parse %s: %v", path, err)
+		}
+		ast.Inspect(file, func(n ast.Node) bool {
+			call, ok := n.(*ast.CallExpr)
+			if !ok || len(call.Args) != 3 {
+				return true
+			}
+			sel, ok := call.Fun.(*ast.SelectorExpr)
+			if !ok {
+				return true
+			}
+			if recv, ok := sel.X.(*ast.Ident); !ok || (recv.Name != "flag" && recv.Name != "fs") {
+				return true
+			}
+			name, okName := stringLiteral(call.Args[0])
+			help, okHelp := stringLiteral(call.Args[2])
+			if okName && okHelp {
+				out[name] = help
+			}
 			return true
-		}
-		sel, ok := call.Fun.(*ast.SelectorExpr)
-		if !ok {
-			return true
-		}
-		if pkg, ok := sel.X.(*ast.Ident); !ok || pkg.Name != "flag" {
-			return true
-		}
-		name, okName := stringLiteral(call.Args[0])
-		help, okHelp := stringLiteral(call.Args[2])
-		if okName && okHelp {
-			out[name] = help
-		}
-		return true
-	})
+		})
+	}
 	if len(out) == 0 {
-		t.Fatalf("found no flag registrations in %s", path)
+		t.Fatalf("found no flag registrations in %s", strings.Join(paths, ", "))
 	}
 	return out
 }

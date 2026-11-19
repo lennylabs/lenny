@@ -11,14 +11,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/deployenv"
 	"github.com/lennylabs/lenny/pkg/driftmonitor"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordfence"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	memorypg "github.com/lennylabs/lenny/pkg/gateway/session/memorystore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
@@ -41,9 +41,9 @@ import (
 // steps read them back.
 //
 // spec: §4.1 gateway subsystem seams; §16.1 / §16.5 / §25.13 gateway metrics.
-func (w *gatewayWiring) buildMetricsBackfill() {
+func (w *gatewayWiring) buildMetricsBackfill(dualStoreFlags *dualstore.Flags) {
 	f := w.f
-	dualStoreMaxSeconds := f.dualStoreMaxSeconds
+	dualStoreMaxSeconds := dualStoreFlags.MaxUnavailableSeconds
 	maxSessionsPerReplica := f.maxSessionsPerReplica
 	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
 	minReplicas := f.minReplicas

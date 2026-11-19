@@ -5,7 +5,7 @@ package main
 import (
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 )
 
 // spec: §15 built-in adapter single-shot compute model; §7.1 create-and-start

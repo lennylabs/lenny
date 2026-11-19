@@ -40,7 +40,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
 	"github.com/lennylabs/lenny/pkg/gateway/api/wsbearer"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/dualstore"
+	gwadapter "github.com/lennylabs/lenny/pkg/gateway/core/session/adapter"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/drain/drainreadiness"
 	"github.com/lennylabs/lenny/pkg/gateway/drain/prestop"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
@@ -52,14 +56,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	gwadapter "github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
@@ -77,6 +77,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	deprecationFlags *deprecationmw.Flags,
 	serviceIdentityFlags *serviceidentity.Flags,
 	idempotencyFlags *idempotencymw.Flags,
+	prestopFlags *prestop.Flags,
 	gwMetrics *gatewaymetrics.Metrics,
 	sessionSrv *sessionserver.Server,
 	openaiHandler *translator.OpenAIChatHandler,
@@ -105,7 +106,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	devMode := f.devMode
 	deprecatedAPIVersionsCSV := deprecationFlags.Versions
 	adapterTLSCert := f.adapterTLSCert
-	barrierAckTimeoutSeconds := f.barrierAckTimeoutSeconds
+	barrierAckTimeoutSeconds := prestopFlags.BarrierAckTimeoutSeconds
 	idempotencyMaxBodyBytes := idempotencyFlags.MaxBodyBytes
 	failOpenStatePath := f.failOpenStatePath
 	tokenServiceHTTPURL := f.tokenServiceHTTPURL

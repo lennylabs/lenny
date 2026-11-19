@@ -15,7 +15,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 )
 
 // CRDPodRegistry is the §12.6 v1 PodRegistry implementation: it
@@ -208,10 +207,11 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 }
 
 // claimViaPodClaim creates the per-pod PodClaim for sb and writes its
-// first `bound` binding state through the canonical pkg/gateway/podclaim
-// helpers, so this gateway-side path shares one writer with the live S19 claim
-// path: podclaim.CreateClaim performs the spec-only CREATE under the
-// deterministic claim-<podName> name, and podclaim.WriteBoundStatus stamps the
+// first `bound` binding state through the claim-object helpers of claim.go,
+// which the gateway's pod claimer also calls, so this gateway-side path shares
+// one writer with the live S19 claim path: CreateClaim performs the spec-only
+// CREATE under the deterministic claim-<podName> name, and WriteBoundStatus
+// stamps the
 // `bound` binding state plus the binding-state-transition time the §4.6.1
 // orphan GC keys its live-binding-state reclaim on.
 //
@@ -231,14 +231,14 @@ func (r *CRDPodRegistry) ClaimPod(ctx context.Context, opts ClaimOpts) (rec *Pod
 // spec: §4.6.1 (per-pod claim; first `bound` status patch), §4.6.3 (gateway
 // holds patch-only on podclaims/status, no update verb).
 func (r *CRDPodRegistry) claimViaPodClaim(ctx context.Context, sb *lennyv1.AgentPod, tenantID string) error {
-	claim, err := podclaim.CreateClaim(ctx, r.Client, r.Namespace, sb.Name, podclaim.ClaimRequest{TenantID: tenantID})
+	claim, err := CreateClaim(ctx, r.Client, r.Namespace, sb.Name, tenantID)
 	if err != nil {
 		// CreateClaim wraps the API error with %w, so ClaimPod's
 		// apierrors.IsAlreadyExists / IsForbidden race branch still matches
 		// the underlying API status through the error chain.
 		return err
 	}
-	if err := podclaim.WriteBoundStatus(ctx, r.Client, r.Namespace, claim.Name); err != nil {
+	if err := WriteBoundStatus(ctx, r.Client, r.Namespace, claim.Name); err != nil {
 		_ = r.Client.Delete(ctx, claim)
 		return fmt.Errorf("podregistry: write bound status for claim %s: %w", claim.Name, err)
 	}
@@ -262,7 +262,7 @@ func (r *CRDPodRegistry) ReleasePod(ctx context.Context, podID PodID, reason Rel
 	start := time.Now()
 	defer func() { r.recordOp(opRelease, "", start, err) }()
 	_ = reason
-	if err = podclaim.DeleteClaim(ctx, r.Client, r.Namespace, string(podID)); err != nil {
+	if err = DeleteClaim(ctx, r.Client, r.Namespace, string(podID)); err != nil {
 		err = fmt.Errorf("podregistry: release %s: %w", podID, err)
 		return err
 	}

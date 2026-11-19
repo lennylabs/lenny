@@ -15,7 +15,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/routetable"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/dualstore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioncallback"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionidle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
@@ -25,15 +31,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treerecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionlogstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/dualstore"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/policy"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
@@ -84,30 +84,32 @@ func (w *gatewayWiring) buildSessionServer(
 	callbackValidator *sessioncallback.Validator,
 	callbackSeal func(ctx context.Context, tenantID string, plaintext []byte) ([]byte, error),
 	callbackDispatcher *sessioncallback.Dispatcher,
+	core *sessionCoreFlags,
 ) *sessionserver.Server {
 	f := w.f
+	maxSessionAge := time.Duration(*core.watchdog.MaxSessionAgeSeconds) * time.Second
 	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
 	delegationMaxLevelRecoverySeconds := f.delegationMaxLevelRecoverySeconds
 	delegationMaxTreeRecoverySeconds := f.delegationMaxTreeRecoverySeconds
-	maxCreatedStateTimeoutSeconds := f.maxCreatedStateTimeoutSeconds
+	maxCreatedStateTimeoutSeconds := core.watchdog.MaxCreatedStateSeconds
 	agentNamespace := f.agentNamespace
-	rlPerRuntimePerMin := f.rlPerRuntimePerMin
-	rlPerPoolPerMin := f.rlPerPoolPerMin
-	maxConcSessGlobal := f.maxConcSessGlobal
-	maxConcSessPerUser := f.maxConcSessPerUser
-	maxConcSessPerRuntime := f.maxConcSessPerRuntime
-	evalRLPerSessionPerMin := f.evalRLPerSessionPerMin
-	evalRLPerTenantPerMin := f.evalRLPerTenantPerMin
-	defaultIsolationProfile := f.defaultIsolationProfile
+	rlPerRuntimePerMin := core.sessionServer.PerRuntimePerMinute
+	rlPerPoolPerMin := core.sessionServer.PerPoolPerMinute
+	maxConcSessGlobal := core.sessionServer.MaxConcurrentSessionsGlobal
+	maxConcSessPerUser := core.sessionServer.MaxConcurrentSessionsPerUser
+	maxConcSessPerRuntime := core.sessionServer.MaxConcurrentSessionsPerRuntime
+	evalRLPerSessionPerMin := core.sessionServer.EvalPerSessionPerMinute
+	evalRLPerTenantPerMin := core.sessionServer.EvalPerTenantPerMinute
+	defaultIsolationProfile := core.sessionServer.DefaultIsolationProfile
 	devMode := f.devMode
 	multiTenant := f.multiTenant
 	tenancyMode := f.tenancyMode
-	persistDeriveFailureRows := f.persistDeriveFailureRows
-	sessionArtifactRetentionSeconds := f.sessionArtifactRetentionSeconds
+	persistDeriveFailureRows := core.sessionServer.PersistDeriveFailureRows
+	sessionArtifactRetentionSeconds := core.sessionServer.ArtifactRetentionSeconds
 	workspaceSealMaxDurationSeconds := f.workspaceSealMaxDurationSeconds
 	retryMaxRetries := f.retryMaxRetries
 	maxResumePendingSeconds := f.maxResumePendingSeconds
-	envVarBlocklistCSV := f.envVarBlocklistCSV
+	envVarBlocklistCSV := core.sessionServer.EnvVarBlocklist
 
 	// spec: §10.1.7 — the resume path resolves the checkpoint's
 	// chunk set and mints one presigned GET capability per chunk. Every
@@ -118,8 +120,8 @@ func (w *gatewayWiring) buildSessionServer(
 	resumeChunkResolver := newResumeChunkResolver(
 		w.checkpointStore,
 		w.partialManifests,
-		time.Duration(*f.checkpointCapabilityTTLSeconds)*time.Second,
-		*f.partialRecoveryThresholdFraction,
+		time.Duration(*core.checkpointer.CapabilityTTLSeconds)*time.Second,
+		*core.resumeChunks.PartialRecoveryThresholdFraction,
 	)
 
 	// §4.4 / §12.5 GC rule 4 — the resume-path cleaner releases each
@@ -142,7 +144,7 @@ func (w *gatewayWiring) buildSessionServer(
 	// spec: §11.2, §10.1.1 — every replica sweeps the per-session budget
 	// state it holds for sessions that ended on another replica or were
 	// erased; startBackgroundWorkers runs it under the watchdog context.
-	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
+	w.budgetStateSweep = w.buildBudgetStateSweep(*core.budgetState.SweepInterval)
 
 	// §8.10 / §16.1: the platform tools seam registers its tree recovery
 	// collectors on the gateway's metric registry itself.
@@ -371,10 +373,10 @@ func (w *gatewayWiring) buildSessionServer(
 		// applies, and refuses an over-cap row against the watchdog's own
 		// maxSessionAge resolver.
 		MaxResumePending: time.Duration(*f.maxResumePendingSeconds) * time.Second,
-		MaxResuming:      time.Duration(*f.maxResumingSeconds) * time.Second,
+		MaxResuming:      time.Duration(*core.watchdog.MaxResumingSeconds) * time.Second,
 		// spec: §5.2 (Slot assignment atomicity) — the launch bound.
 		MaxFinalizing: time.Duration(*f.maxFinalizingTimeoutSeconds) * time.Second,
-		AgeCap:        w.sessionAgeCap,
+		AgeCap:        sessionAgeCap(func() *watchdog.Watchdog { return w.wd }, maxSessionAge),
 		// §10.7, §16.1 — variant-labelled
 		// rollback-trigger metric family emitted at terminal session
 		// transition and at each built-in eval submission.
@@ -477,15 +479,19 @@ func (w *gatewayWiring) buildSessionServer(
 	return srv
 }
 
-// sessionAgeCap resolves a row's effective maxSessionAge cap through the
-// watchdog's own resolver, so the resume driver and the maxSessionAge sweep
-// apply one value. Before the watchdog is built it applies the platform
-// default. spec: §6.2 (maxSessionAge timer behavior across states).
-func (w *gatewayWiring) sessionAgeCap(ctx context.Context, row sessionstore.Session) time.Duration {
-	if w.wd != nil {
-		return w.wd.AgeCap(ctx, row)
+// sessionAgeCap returns the resolver of a row's effective maxSessionAge cap.
+// It resolves through the watchdog's own resolver, which wd returns once the
+// watchdog is built, so the resume driver and the maxSessionAge sweep apply
+// one value. Before the watchdog is built it applies the platform default,
+// maxSessionAge, which --max-session-age-seconds sets.
+// spec: §6.2 (maxSessionAge timer behavior across states).
+func sessionAgeCap(wd func() *watchdog.Watchdog, maxSessionAge time.Duration) func(context.Context, sessionstore.Session) time.Duration {
+	return func(ctx context.Context, row sessionstore.Session) time.Duration {
+		if d := wd(); d != nil {
+			return d.AgeCap(ctx, row)
+		}
+		return watchdog.EffectiveAgeCap(ctx, nil, maxSessionAge, row)
 	}
-	return watchdog.EffectiveAgeCap(ctx, nil, time.Duration(*w.f.maxSessionAgeSeconds)*time.Second, row)
 }
 
 // suspensionCheckpointer returns the checkpoint service as the session

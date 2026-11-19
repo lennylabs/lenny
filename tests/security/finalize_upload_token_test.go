@@ -19,8 +19,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 )
@@ -88,7 +88,7 @@ func (p *finalizeTokenProbe) create(t *testing.T, tenant string) (string, string
 // another session, a token minted under a key outside the gateway's ring,
 // no token, or a token replayed after the session finalized was accepted.
 // Inspect the verifyUploadToken call at the top of handleFinalize in
-// pkg/gateway/sessionserver/finalize_handler.go.
+// pkg/gateway/core/session/sessionserver/finalize_handler.go.
 func TestFinalizeRefusesForeignAndReplayedUploadTokens_spec_7_4(t *testing.T) {
 	p := newFinalizeTokenProbe(t)
 	victim, victimToken := p.create(t, "acme")

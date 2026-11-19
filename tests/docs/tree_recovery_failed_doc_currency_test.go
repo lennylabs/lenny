@@ -23,7 +23,7 @@ var treeRecoveryFailedDocs = []treeRecoveryFailedDoc{
 	{"pkg/delegation/recovery/recovery.go", ""},
 	{"pkg/delegation/recovery/recovery.go", "OutcomeFailed"},
 	{"pkg/gateway/platformtools/treerecovery/treerecovery.go", "Summary.Failed"},
-	{"pkg/gateway/sessionserver/treerecovery.go", "recoverDelegationTree"},
+	{"pkg/gateway/core/session/sessionserver/treerecovery.go", "recoverDelegationTree"},
 }
 
 // docOf returns the doc comment text of symbol in f.

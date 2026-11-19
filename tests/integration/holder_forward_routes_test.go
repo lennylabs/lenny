@@ -26,14 +26,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolapproval"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -220,7 +220,7 @@ func requireToolRefusal(t *testing.T, res map[string]any) {
 // delivered by the serving replica, rather than forwarded over
 // CH-HOLDERFORWARD to the REG-COORDLEASE holder, which delivers it and
 // answers the receipt. Check forwardMessageBatch in
-// pkg/gateway/sessionserver/messages_delivery.go.
+// pkg/gateway/core/session/sessionserver/messages_delivery.go.
 func TestOffHolderMessageToRunningIsDeliveredByTheCoordinator_spec_29_3(t *testing.T) {
 	h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
 	id := h.StartSession(coordinator)
@@ -250,7 +250,7 @@ func TestOffHolderMessageToRunningIsDeliveredByTheCoordinator_spec_29_3(t *testi
 // the coordinator unreachable, it was refused, held with the default DLQ TTL
 // rather than the recovering-state TTL, written anywhere besides the DLQ, or
 // never delivered when the coordinator next delivered under path 2. Check
-// holdUndeliveredForward in pkg/gateway/sessionserver/messages_delivery.go.
+// holdUndeliveredForward in pkg/gateway/core/session/sessionserver/messages_delivery.go.
 func TestOffHolderMessageToInputRequiredIsBufferedOrHeld_spec_29_3(t *testing.T) {
 	t.Run("coordinator buffers under path 3", func(t *testing.T) {
 		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
@@ -321,7 +321,7 @@ func TestOffHolderMessageToInputRequiredIsBufferedOrHeld_spec_29_3(t *testing.T)
 // held in the DLQ or answered as queued. A held reply never resolves the
 // wait, so the serving replica must fail closed on the presence of
 // inReplyTo. Check messageForwardKind in
-// pkg/gateway/sessionserver/messages_delivery.go.
+// pkg/gateway/core/session/sessionserver/messages_delivery.go.
 func TestOffHolderInReplyToReplyResolvesOrFailsClosed_spec_29_3(t *testing.T) {
 	t.Run("forwarded reply resolves the coordinator's wait", func(t *testing.T) {
 		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
@@ -376,7 +376,7 @@ func TestOffHolderInReplyToReplyResolvesOrFailsClosed_spec_29_3(t *testing.T) {
 // the session answered 409, or wrote running on the serving replica, rather
 // than being forwarded to the coordinator, which resumes the session on its
 // pod; or, with the coordinator unreachable, the serving replica wrote a
-// state. Check resumeHeldPodRequest in pkg/gateway/sessionserver/resume.go.
+// state. Check resumeHeldPodRequest in pkg/gateway/core/session/sessionserver/resume.go.
 func TestOffHolderHeldPodResumeIsWrittenByTheCoordinator_spec_29_3(t *testing.T) {
 	t.Run("forwarded", func(t *testing.T) {
 		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{})
@@ -455,7 +455,7 @@ var terminalRoutes = []struct {
 // looks up only the states a §29.3 row names. With the coordinator
 // unreachable, or a forward whose connection fails after it is established,
 // the serving replica wrote a state rather than answering 409. Check
-// handleTerminalWrite in pkg/gateway/sessionserver/session_transitions.go.
+// handleTerminalWrite in pkg/gateway/core/session/sessionserver/session_transitions.go.
 func TestOffHolderTerminateAndDeleteRunOnTheCoordinator_spec_29_3(t *testing.T) {
 	for _, gs := range terminateGatedStates() {
 		for _, route := range terminalRoutes {
@@ -533,7 +533,7 @@ func (s *staleLeases) Get(ctx context.Context, tenantID, sessionID string) (leas
 // diagnosis: a forward that reached a replica that no longer holds the
 // session's lease was applied there, writing a state or driving the pod, or
 // was forwarded again, rather than refused under the never-forward-twice
-// rule. Check forwardTarget in pkg/gateway/sessionserver/holder_forward.go.
+// rule. Check forwardTarget in pkg/gateway/core/session/sessionserver/holder_forward.go.
 func TestStaleForwardIsRefusedByTheFormerHolder_spec_29_3(t *testing.T) {
 	cases := []struct {
 		name string
@@ -595,7 +595,7 @@ func TestStaleForwardIsRefusedByTheFormerHolder_spec_29_3(t *testing.T) {
 // §15.1 admits running alone. With the coordinator unreachable, or a forward
 // whose connection fails after it is established, the serving replica wrote
 // a state. Check handleUploadToSession and handleInterrupt in
-// pkg/gateway/sessionserver and the interrupt entry in pkg/api/v1/session.
+// pkg/gateway/core/session/sessionserver and the interrupt entry in pkg/api/v1/session.
 func TestOffHolderUploadAndInterruptAreForwarded_spec_29_3(t *testing.T) {
 	t.Run("upload-to-session", func(t *testing.T) {
 		h, coordinator, peer := newForwardCompose(t, lifecycleharness.Options{MidSessionUpload: true})
@@ -676,7 +676,7 @@ func awaitPendingInteraction(t *testing.T, h *lifecycleharness.Harness, id, inte
 // pending wait through the shared interaction store, or was forwarded; or a
 // second resolution posted to the other replica was accepted and changed the
 // blocked call's outcome. Check resolveInteraction in
-// pkg/gateway/sessionserver/interactions_resolution.go and the store poll of
+// pkg/gateway/core/session/sessionserver/interactions_resolution.go and the store poll of
 // ToolApprovalGate.AwaitApproval.
 func TestOffHolderInteractionResolutionWakesTheCoordinator_spec_29_3(t *testing.T) {
 	type outcome struct {
@@ -980,7 +980,7 @@ func awaitForwardListener(t *testing.T, addr string) {
 // peer's word or under the wrong tenant and terminated the session, rather
 // than authenticated and authorized by the coordinator's own handler, which
 // cannot see another tenant's session and answers 404. Check
-// NewHolderForwardHandler in pkg/gateway/sessionserver and the forward
+// NewHolderForwardHandler in pkg/gateway/core/session/sessionserver and the forward
 // listener wiring in cmd/lenny-gateway/holder_forward_listener.go.
 func TestForwardedCrossTenantTerminateIsNotFound_spec_29_3(t *testing.T) {
 	t.Parallel()

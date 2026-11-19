@@ -12,11 +12,11 @@ import (
 	replicationpgstore "github.com/lennylabs/lenny/pkg/blobstore/replication/pgstore"
 	"github.com/lennylabs/lenny/pkg/connectoroauth"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewayleader"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/pdbwatcher"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/scaling/gcpause"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
@@ -33,7 +33,7 @@ import (
 // and the listeners. It produces no value the later steps consume.
 //
 // spec: §4.1 — gateway background subsystems; §10.1 / §11.2 / §12.5 sweeps.
-func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *gatewayleader.Flags, tokenFlags *admintoken.Flags) {
+func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *gatewayleader.Flags, tokenFlags *admintoken.Flags, core *sessionCoreFlags) {
 	f := w.f
 	agentNamespace := f.agentNamespace
 	artifactReplicationConfig := f.artifactReplicationConfig
@@ -216,9 +216,9 @@ func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *ga
 		w.adminRouter = w.adminRouter.WithArtifactReplication(replCtrl)
 	}
 
-	w.startLeaderElectedSweeps(leader, tokenFlags)
+	w.startLeaderElectedSweeps(leader, tokenFlags, core)
 
-	w.startBillingAndSecurityWorkers()
+	w.startBillingAndSecurityWorkers(core.checkpointer)
 	// ----- §16.1 metrics export -----
 	// Refreshes the gauge metrics (storage quota, circuit breakers)
 	// that the §16.5 alerts read.

@@ -26,16 +26,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint/checkpointretention"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/recycle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
@@ -58,7 +58,7 @@ const adapterGRPCPort = 50051
 //
 // spec: §4.1 gateway subsystem seams; §15.1 pod placement; §4.7 binder;
 // §5.2 slot counter; recycle.
-func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretention.Store) {
+func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretention.Store, core *sessionCoreFlags) {
 	f := w.f
 	adapterCA := f.adapterCA
 	adapterKeepaliveTimeMs := f.adapterKeepaliveTimeMs
@@ -66,17 +66,17 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	adapterTLSCert := f.adapterTLSCert
 	adapterTLSKey := f.adapterTLSKey
 	agentNamespace := f.agentNamespace
-	checkpointInterval := f.checkpointInterval
-	checkpointJitterFraction := f.checkpointJitterFraction
-	checkpointGrantWindow := f.checkpointGrantWindow
-	checkpointCapabilityTTLSeconds := f.checkpointCapabilityTTLSeconds
-	claimHoldTTLSeconds := f.claimHoldTTLSeconds
+	checkpointInterval := core.checkpointer.Interval
+	checkpointJitterFraction := core.checkpointer.JitterFraction
+	checkpointGrantWindow := core.checkpointer.GrantWindow
+	checkpointCapabilityTTLSeconds := core.checkpointer.CapabilityTTLSeconds
+	claimHoldTTLSeconds := core.recycle.ClaimHoldTTLSeconds
 	clusterBurst := f.clusterBurst
 	clusterQPS := f.clusterQPS
 	saTokenAudience := f.saTokenAudience
 	adminSATokenAudience := f.adminSATokenAudience
-	slotCounterPostgresFallbackMaxSeconds := f.slotCounterPostgresFallbackMaxSeconds
-	slotCounterRecoveryProbeInterval := f.slotCounterRecoveryProbeInterval
+	slotCounterPostgresFallbackMaxSeconds := core.slotCounter.PostgresFallbackMaxSeconds
+	slotCounterRecoveryProbeInterval := core.slotCounter.RecoveryProbeInterval
 	// slotCounterProbeTimeout bounds one slot-set recovery probe, the 2s
 	// bound the other §12.4 recovery probes use.
 	const slotCounterProbeTimeout = 2 * time.Second

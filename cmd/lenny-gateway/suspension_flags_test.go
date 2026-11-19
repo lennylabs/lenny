@@ -19,7 +19,11 @@ import (
 // spec: 6.2 (maxClientIdleSeconds clock behavior across states), 27.6
 // (Session lifecycle and cleanup)
 func TestSuspensionFlags_spec_6_2(t *testing.T) {
-	register := func(t *testing.T, args ...string) (*gatewayFlags, error) {
+	type flagSets struct {
+		f    *gatewayFlags
+		core *sessionCoreFlags
+	}
+	register := func(t *testing.T, args ...string) (flagSets, error) {
 		t.Helper()
 		savedCmdLine, savedArgs := flag.CommandLine, os.Args
 		t.Cleanup(func() { flag.CommandLine, os.Args = savedCmdLine, savedArgs })
@@ -29,21 +33,22 @@ func TestSuspensionFlags_spec_6_2(t *testing.T) {
 		f := &gatewayFlags{}
 		f.registerArtifactFlags()
 		f.registerOpsFlags()
+		core := registerSessionCoreFlags(flag.CommandLine)
 		playground.RegisterFlags(flag.CommandLine)
-		return f, flag.CommandLine.Parse(args)
+		return flagSets{f: f, core: core}, flag.CommandLine.Parse(args)
 	}
 	type intFlag struct {
 		env  string
-		ptr  func(*gatewayFlags) *int
+		ptr  func(flagSets) *int
 		def  int
 		name string
 	}
 	flags := []intFlag{
-		{"LENNY_MAX_CLIENT_IDLE_SECONDS", func(f *gatewayFlags) *int { return f.maxClientIdleSeconds }, 900, "max-client-idle-seconds"},
-		{"LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", func(f *gatewayFlags) *int { return f.maxSuspendedPodHoldSeconds }, 900, "max-suspended-pod-hold-seconds"},
-		{"LENNY_MAX_SUSPENDED_SESSION_SECONDS", func(f *gatewayFlags) *int { return f.maxSuspendedSessionSeconds }, 604800, "max-suspended-session-seconds"},
-		{"LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS", func(f *gatewayFlags) *int { return f.delegationBudgetKeyTTLSeconds }, 691200, "delegation-budget-key-ttl-seconds"},
-		{"LENNY_SUSPENDED_BACKLOG_RECHECK_SECONDS", func(f *gatewayFlags) *int { return f.suspendedBacklogRecheckSeconds }, 300, "suspended-backlog-recheck-seconds"},
+		{"LENNY_MAX_CLIENT_IDLE_SECONDS", func(s flagSets) *int { return s.core.watchdog.MaxClientIdleSeconds }, 900, "max-client-idle-seconds"},
+		{"LENNY_MAX_SUSPENDED_POD_HOLD_SECONDS", func(s flagSets) *int { return s.core.watchdog.MaxSuspendedPodHoldSeconds }, 900, "max-suspended-pod-hold-seconds"},
+		{"LENNY_MAX_SUSPENDED_SESSION_SECONDS", func(s flagSets) *int { return s.core.watchdog.MaxSuspendedSessionSeconds }, 604800, "max-suspended-session-seconds"},
+		{"LENNY_DELEGATION_BUDGET_KEY_TTL_SECONDS", func(s flagSets) *int { return s.f.delegationBudgetKeyTTLSeconds }, 691200, "delegation-budget-key-ttl-seconds"},
+		{"LENNY_SUSPENDED_BACKLOG_RECHECK_SECONDS", func(s flagSets) *int { return s.core.sessionServer.SuspendedBacklogRecheckSeconds }, 300, "suspended-backlog-recheck-seconds"},
 	}
 	for _, fl := range flags {
 		t.Run(fl.name, func(t *testing.T) {

@@ -13,7 +13,7 @@ var treeBudgetReturnDocFiles = []struct {
 	path string
 	want string
 }{
-	{path: "pkg/gateway/sessionserver/delegation_seams.go", want: "returnTreeBudget"},
+	{path: "pkg/gateway/core/session/sessionserver/delegation_seams.go", want: "returnTreeBudget"},
 	{path: "pkg/gateway/platformtools/treebudget/treebudget.go", want: "post-terminal hook"},
 }
 

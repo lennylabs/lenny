@@ -181,7 +181,7 @@ func assertMissingAnswer(t *testing.T, g *liveGateway, c isoCaller, id string, m
 // platform-managed assignment replaces his bearer's role claim unless
 // clearRoleAssignment removed it.
 // The ownership check is the API front's session check, which reaches
-// authorizeSeamSession and SessionAccessible in pkg/gateway/sessionserver,
+// authorizeSeamSession and SessionAccessible in pkg/gateway/core/session/sessionserver,
 // and the list filter in
 // session_read.go; the custom role reaches the principal through the
 // bearer role claim, and principalHolds resolves it against the

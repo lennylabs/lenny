@@ -14,11 +14,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -98,7 +98,7 @@ func postFinalizeToken(t *testing.T, restURL, id, token string) (int, []byte) {
 // session, or the lenny/finalize_workspace tool answered a different
 // error code than REST for the same token, or a correct token did not
 // finalize the session on either surface. Inspect handleFinalize's
-// verifyUploadToken call in pkg/gateway/sessionserver/finalize_handler.go
+// verifyUploadToken call in pkg/gateway/core/session/sessionserver/finalize_handler.go
 // and extractFinalizeArgs in pkg/gateway/platformtools/mcptools/client_tools.go.
 func TestFinalizeUploadTokenRESTMCPParity_spec_7_4(t *testing.T) {
 	cases := []struct {

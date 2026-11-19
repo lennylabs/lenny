@@ -26,10 +26,10 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/api/openapi"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/scripts/specshift/citation"
@@ -199,7 +199,7 @@ func reportLineCitations(t *testing.T, carrier, content string) {
 }
 
 // sessionServerPathPrefixes are the §15.1 path prefixes
-// pkg/gateway/sessionserver.Server.Handler registers on its own mux
+// pkg/gateway/core/session/sessionserver.Server.Handler registers on its own mux
 // (POST/GET /v1/sessions..., /v1/runtimes, /v1/pools, /v1/models,
 // /v1/usage, /v1/metering/events, /v1/blobs, /internal/runtimes,
 // /v1/environments/{name}/sessions). A documented path under one of
@@ -234,7 +234,7 @@ var pathParamPattern = regexp.MustCompile(`\{[^}]+\}`)
 // live handler — a client following the OpenAPI document (the
 // documented source-of-truth for REST contract tests) would get a
 // route it cannot actually reach. Check whether the path was removed
-// from pkg/gateway/sessionserver.Server.Handler without removing it
+// from pkg/gateway/core/session/sessionserver.Server.Handler without removing it
 // from openapi.json, or added to openapi.json ahead of the handler.
 func TestSessionDomainDocumentedPathsHaveLiveHandlers(t *testing.T) {
 	var parsed map[string]any

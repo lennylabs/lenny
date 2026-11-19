@@ -30,8 +30,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
-	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 
@@ -295,7 +295,7 @@ const (
 // and the adapter's delivered_message_ids set of the §7.2 Explicit ACK row
 // drops the duplicate before it reaches the runtime. The gateway re-reads
 // REG-COORDLEASE before each held entry (ErrHeldDeliveryPreempted in
-// pkg/gateway/sessionserver/held_delivery.go), which leaves only the window
+// pkg/gateway/core/session/sessionserver/held_delivery.go), which leaves only the window
 // between one entry's lease read and its removal. No code implements the
 // adapter's suppression set yet, which is F-7.2.41, so the harness runtime
 // sees that redelivery. The blocked skip keeps the case visible, and
@@ -401,11 +401,11 @@ func checkForwardSends(t *testing.T, h *lifecycleharness.Harness, id string, sen
 // coordinator's next path-2 delivery; or was answered with a status other
 // than a receipt, a 409, or a 500. A double delivery points at a forward
 // whose outcome was unknown being held or retried (forwardMessageBatch in
-// pkg/gateway/sessionserver/messages_delivery.go), or at a stale forward
+// pkg/gateway/core/session/sessionserver/messages_delivery.go), or at a stale forward
 // applied on a former holder (forwardTarget in
-// pkg/gateway/sessionserver/holder_forward.go), or at a former coordinator
+// pkg/gateway/core/session/sessionserver/holder_forward.go), or at a former coordinator
 // delivering held entries after its lease was handed off
-// (heldDeliveryPreempted in pkg/gateway/sessionserver/held_delivery.go). A
+// (heldDeliveryPreempted in pkg/gateway/core/session/sessionserver/held_delivery.go). A
 // 500 answer to a message whose held delivery was preempted points at
 // restDelivery.notCoordinating in the same package. Replay a failing run
 // with LENNY_LIFECYCLE_SEED set to the logged seed.

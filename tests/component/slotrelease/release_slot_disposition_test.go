@@ -22,7 +22,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
+	"github.com/lennylabs/lenny/pkg/gateway/core/podclaim"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 )
 

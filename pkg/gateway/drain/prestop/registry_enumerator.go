@@ -5,7 +5,7 @@ package prestop
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 

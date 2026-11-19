@@ -11,7 +11,7 @@
 // transformed but recoverable per the matrix notes.
 //
 // The translator is pkg/gateway/translator.OpenAIChatHandler; the
-// REST equivalent is pkg/gateway/sessionserver. Both run in-process
+// REST equivalent is pkg/gateway/core/session/sessionserver. Both run in-process
 // against a shared memstore and the same EchoExecutor so the
 // behavioural equivalence the suite asserts is end-to-end against
 // the wire format, with no out-of-band coupling.
@@ -29,11 +29,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
+	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/translator"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 )

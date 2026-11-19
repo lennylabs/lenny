@@ -14,8 +14,8 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
+	"github.com/lennylabs/lenny/pkg/podregistry"
 )
 
 // Compile-time binding of the §17.1 row 9 / §4.6.1 named default
@@ -175,7 +175,7 @@ func (m *CRDPodLifecycleManager) ClaimPod(ctx context.Context, poolName, session
 	// caller retries with a fresh idle pod via ErrClaimConflict.
 	claim := &lennyv1.PodClaim{}
 	claim.Namespace = pod.Namespace
-	claim.Name = podclaim.ClaimName(pod.Name)
+	claim.Name = podregistry.ClaimName(pod.Name)
 	claim.Spec.AgentPodRef = pod.Name
 	// The claim's spec carries agentPodRef and tenantId (§4.6.1
 	// claim-spec contract); stamp the tenant the pod is pinned to.
@@ -190,7 +190,7 @@ func (m *CRDPodLifecycleManager) ClaimPod(ctx context.Context, poolName, session
 	// binding state with a subsequent status patch (the status subresource
 	// is not writable by Create), stamping the binding-state-transition time
 	// the orphan GC keys its live-binding-state reclaim on, matching the
-	// canonical pkg/gateway/podclaim writer's field set. A failure here
+	// canonical pkg/podregistry claim writer's field set. A failure here
 	// deletes the partial claim so a retry is not blocked by a claim with
 	// empty status.
 	statusOriginal := claim.DeepCopy()
@@ -220,7 +220,7 @@ func (m *CRDPodLifecycleManager) ClaimPod(ctx context.Context, poolName, session
 func (m *CRDPodLifecycleManager) ReleasePod(ctx context.Context, handle PodHandle) error {
 	claim := &lennyv1.PodClaim{}
 	claim.Namespace = handle.Namespace
-	claim.Name = podclaim.ClaimName(handle.AgentPodName)
+	claim.Name = podregistry.ClaimName(handle.AgentPodName)
 	if err := m.Client.Delete(ctx, claim); err != nil {
 		if apierrors.IsNotFound(err) {
 			return nil
