@@ -203,11 +203,6 @@ crossings:
     from: pkg/gateway/externalapi/admin
     type: AuditSink
     step: 0117.S8
-  - to: pkg/gateway/mcpfabric/mcptools
-    interface: Deps.TreeCycleObserver
-    from: pkg/gateway/replica/gatewaymetrics
-    type: Metrics
-    step: 0117.S7
   - to: pkg/gateway/serviceidentity
     interface: Config.Verifier
     from: pkg/gateway/mcpfabric/delegationtree/leasecontrol

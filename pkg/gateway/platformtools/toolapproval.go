@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver
+package platformtools
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -22,7 +21,7 @@ import (
 // for an approve POSTed to a different replica, which updates the
 // Postgres-backed store but never reaches this replica's in-memory
 // registry. It mirrors the elicitation await's poll cadence
-// (awaitPollInterval in pkg/gateway/mcptools). spec: §7.2.
+// (awaitPollInterval in mcptools). spec: §7.2.
 const approvalPollInterval = 25 * time.Millisecond
 
 // ToolApprovalGate is the gateway-side §7.2 tool-use approval authority.
@@ -35,7 +34,8 @@ const approvalPollInterval = 25 * time.Millisecond
 // fast path on the coordinating replica) or a poll over the Postgres-backed
 // shared interaction store (the cross-replica fallback for an approve POSTed
 // to a non-coordinator replica, which updates the store but not this
-// replica's in-memory registry). It implements executor.ApprovalGate.
+// replica's in-memory registry). It serves GWSEAM-AwaitApproval to the
+// session core's pod executor.
 // spec: §7.2. F-7.2.9, F-7.2.18, F-IA1.
 type ToolApprovalGate struct {
 	store        sessionstore.Store
@@ -48,7 +48,7 @@ type ToolApprovalGate struct {
 	timeout time.Duration
 }
 
-var _ executor.ApprovalGate = (*ToolApprovalGate)(nil)
+var _ seam.ToolApprovalGate = (*ToolApprovalGate)(nil)
 
 // NewToolApprovalGate builds the §7.2 approval authority. store supplies
 // the session row's owning user (the §15.1 authorization-triple subject
@@ -71,10 +71,12 @@ func NewToolApprovalGate(store sessionstore.Store, interactions interactionstore
 	}
 }
 
-// AwaitApproval implements executor.ApprovalGate.
-func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionID string, call executor.PendingToolCall) (executor.ApprovalDecision, error) {
+// AwaitApproval is GWSEAM-AwaitApproval.
+//
+// spec: GWSEAM-AwaitApproval
+func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionID string, call seam.PendingToolCall) (seam.ApprovalDecision, error) {
 	if g.interactions == nil || g.waits == nil {
-		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: gate is not fully wired")
+		return seam.ApprovalDecision{}, fmt.Errorf("toolapproval: gate is not fully wired")
 	}
 	// The §15.1 triple is (session_id, user_id, interaction_id). The
 	// user the approval is directed at is the session's owning user, so
@@ -82,7 +84,7 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 	// against the same triple.
 	row, err := g.store.Get(ctx, tenantID, sessionID)
 	if err != nil {
-		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: load session %s: %w", sessionID, err)
+		return seam.ApprovalDecision{}, fmt.Errorf("toolapproval: load session %s: %w", sessionID, err)
 	}
 
 	// Register the waiter before recording the interaction so an approve
@@ -90,7 +92,7 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 	// is buffered on the channel rather than lost.
 	ch, err := g.waits.RegisterApproval(sessionID, call.ID)
 	if err != nil {
-		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: register waiter for %s: %w", call.ID, err)
+		return seam.ApprovalDecision{}, fmt.Errorf("toolapproval: register waiter for %s: %w", call.ID, err)
 	}
 
 	// The detail carries no slot address. Every session is bound to a slot
@@ -113,7 +115,7 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 		CreatedAt: g.now().UTC(),
 	}); err != nil {
 		g.waits.CancelApproval(sessionID, call.ID)
-		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: record interaction %s: %w", call.ID, err)
+		return seam.ApprovalDecision{}, fmt.Errorf("toolapproval: record interaction %s: %w", call.ID, err)
 	}
 
 	// spec: §7.2 — tool_use_requested(tool_call_id, tool, args).
@@ -144,20 +146,20 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 			if !ok {
 				// Cancelled (e.g. §11.4 user-revocation dismissal): treat as
 				// a denial so the runtime's tool call does not execute.
-				return executor.ApprovalDecision{Approved: false, Reason: "cancelled"}, nil
+				return seam.ApprovalDecision{Approved: false, Reason: "cancelled"}, nil
 			}
-			return executor.ApprovalDecision{Approved: d.Approved, Reason: d.Reason}, nil
+			return seam.ApprovalDecision{Approved: d.Approved, Reason: d.Reason}, nil
 		case <-timeoutC:
 			g.waits.CancelApproval(sessionID, call.ID)
-			return executor.ApprovalDecision{Approved: false, Reason: "approval_timeout"}, nil
+			return seam.ApprovalDecision{Approved: false, Reason: "approval_timeout"}, nil
 		case <-ctx.Done():
 			g.waits.CancelApproval(sessionID, call.ID)
-			return executor.ApprovalDecision{}, ctx.Err()
+			return seam.ApprovalDecision{}, ctx.Err()
 		case <-ticker.C:
 			d, ok, err := g.pollResolution(ctx, tenantID, sessionID, row.UserID, call.ID)
 			if err != nil {
 				g.waits.CancelApproval(sessionID, call.ID)
-				return executor.ApprovalDecision{}, err
+				return seam.ApprovalDecision{}, err
 			}
 			if ok {
 				g.waits.CancelApproval(sessionID, call.ID)
@@ -178,19 +180,19 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 // a transient triple miss does not abandon the wait; the process-local
 // channel and the configured timeout still bound the block.
 // spec: §7.2 (cross-replica approve/deny wake), F-IA1.
-func (g *ToolApprovalGate) pollResolution(ctx context.Context, tenantID, sessionID, userID, callID string) (executor.ApprovalDecision, bool, error) {
+func (g *ToolApprovalGate) pollResolution(ctx context.Context, tenantID, sessionID, userID, callID string) (seam.ApprovalDecision, bool, error) {
 	cur, err := g.interactions.Get(ctx, tenantID, sessionID, userID, callID)
 	if err != nil {
 		if errors.Is(err, interactionstore.ErrNotFound) {
-			return executor.ApprovalDecision{}, false, nil
+			return seam.ApprovalDecision{}, false, nil
 		}
-		return executor.ApprovalDecision{}, false, fmt.Errorf("toolapproval: poll interaction %s: %w", callID, err)
+		return seam.ApprovalDecision{}, false, fmt.Errorf("toolapproval: poll interaction %s: %w", callID, err)
 	}
 	switch cur.Phase {
 	case interactionstore.PhaseApproved:
-		return executor.ApprovalDecision{Approved: true, Reason: cur.Reason}, true, nil
+		return seam.ApprovalDecision{Approved: true, Reason: cur.Reason}, true, nil
 	case interactionstore.PhaseDenied:
-		return executor.ApprovalDecision{Approved: false, Reason: cur.Reason}, true, nil
+		return seam.ApprovalDecision{Approved: false, Reason: cur.Reason}, true, nil
 	case interactionstore.PhaseDismissed:
 		// A dismissed approval (user revocation or the resolver's timeout
 		// sweep) is a denial: the tool call must not execute. Fail closed.
@@ -198,15 +200,15 @@ func (g *ToolApprovalGate) pollResolution(ctx context.Context, tenantID, session
 		if reason == "" {
 			reason = "dismissed"
 		}
-		return executor.ApprovalDecision{Approved: false, Reason: reason}, true, nil
+		return seam.ApprovalDecision{Approved: false, Reason: reason}, true, nil
 	default:
-		return executor.ApprovalDecision{}, false, nil
+		return seam.ApprovalDecision{}, false, nil
 	}
 }
 
 // publishRequested emits the §7.2 tool_use_requested SSE event
 // on the session's stream. A nil bus is a no-op (the dev posture).
-func (g *ToolApprovalGate) publishRequested(tenantID, sessionID string, call executor.PendingToolCall) {
+func (g *ToolApprovalGate) publishRequested(tenantID, sessionID string, call seam.PendingToolCall) {
 	if g.events == nil {
 		return
 	}

@@ -6,13 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // TestANilBusPublishesNothingWithoutPanicking checks that a session server,
-// a tool approval gate, and an inbox emitter given a nil *sessionevents.Bus
+// and an inbox emitter given a nil *sessionevents.Bus
 // treat it as no bus: they store no event bus and publish nothing, rather
 // than calling the bus through a typed nil.
 //
@@ -26,10 +25,6 @@ func TestANilBusPublishesNothingWithoutPanicking(t *testing.T) {
 	s.publishEvent("acme", "sess-1", "status_change", map[string]string{"state": "running"})
 	s.publishEvent("", "sess-1", "response", map[string]string{"text": "hi"})
 
-	gate := NewToolApprovalGate(memstore.New(), interactionstore.NewMemory(), bus, nil, time.Now, 0)
-	if gate.events != nil {
-		t.Errorf("the tool approval gate stored %#v, want no event bus", gate.events)
-	}
 	if emitter := NewBusEmitter(bus, time.Now); emitter != nil {
 		t.Errorf("the inbox emitter is %#v, want nil for a nil bus", emitter)
 	}

@@ -3,6 +3,7 @@
 package mcptools_test
 
 import (
+	"context"
 	"strings"
 	"testing"
 	"time"
@@ -121,4 +122,33 @@ func TestNilElicitationPromMetricsIgnoreEveryCall(t *testing.T) {
 	m.IncElicitationTimeout()
 	m.IncElicitationSuppressed()
 	m.ObserveElicitationRoundtrip(time.Second)
+	m.OnTreeCycle(context.Background(), mcptools.TreeCycleEvent{TenantID: "acme", Source: "mcp"})
+}
+
+// TestTreeCycleCounterCountsEachWalkerBySource checks that the tree cycle
+// counter, which the REST tree read and the platform tools' tree walks
+// share, carries the tenant and the walker's source and counts each cycle.
+//
+// spec: §16.1 (Metrics), §8.9 (Task Tree)
+func TestTreeCycleCounterCountsEachWalkerBySource(t *testing.T) {
+	reg := prometheus.NewRegistry()
+	m, err := mcptools.NewPromMetrics(reg)
+	if err != nil {
+		t.Fatalf("NewPromMetrics: %v", err)
+	}
+	ctx := context.Background()
+	m.OnTreeCycle(ctx, mcptools.TreeCycleEvent{TenantID: "acme", RootSessionID: "root", CycleNodeID: "a", Source: "rest"})
+	m.OnTreeCycle(ctx, mcptools.TreeCycleEvent{TenantID: "acme", RootSessionID: "root", CycleNodeID: "b", Source: "rest"})
+	m.OnTreeCycle(ctx, mcptools.TreeCycleEvent{TenantID: "acme", Source: "mcp"})
+	m.OnTreeCycle(ctx, mcptools.TreeCycleEvent{TenantID: "globex", Source: "rest"})
+	want := `
+# HELP lenny_delegation_tree_cycle_detected_total Tree walker hit a cycle in the §8.2 ParentSessionID lineage (corrupt store).
+# TYPE lenny_delegation_tree_cycle_detected_total counter
+lenny_delegation_tree_cycle_detected_total{source="mcp",tenant_id="acme"} 1
+lenny_delegation_tree_cycle_detected_total{source="rest",tenant_id="acme"} 2
+lenny_delegation_tree_cycle_detected_total{source="rest",tenant_id="globex"} 1
+`
+	if err := testutil.GatherAndCompare(reg, strings.NewReader(want), "lenny_delegation_tree_cycle_detected_total"); err != nil {
+		t.Fatal(err)
+	}
 }

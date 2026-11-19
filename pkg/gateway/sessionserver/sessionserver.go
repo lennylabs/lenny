@@ -58,7 +58,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -309,7 +308,6 @@ type Server struct {
 	hwmObserver        DelegationHighWatermarkObserver
 	maxOrphanTasks     int
 	evals              evalstore.Store
-	memory             memorystore.Store
 	experiments        experimentstore.Store
 	pools              poolstore.Store
 	experimentReporter ExperimentRejectionReporter
@@ -517,28 +515,6 @@ type Server struct {
 	// the billing and operational-event side effects are unaffected.
 	// spec: §7.1, §16.6.
 	lifecycleAudit LifecycleAuditSink
-
-	// interactionAudit, when set, receives the §7.2 / §11.7 / §16.7
-	// interaction-resolution audit events emitted by the §15.1
-	// tool-use approve/deny and elicitation respond/dismiss endpoints.
-	// Nil disables the emission; the resolution itself proceeds either
-	// way. spec: §7.2 table; §11.7; §16.7. F-7.2.8.
-	interactionAudit InteractionAuditSink
-
-	// toolApprovalWaits, when set, is the §7.2 tool-use approval waiter
-	// registry the approve/deny endpoints signal so a blocked executor
-	// read (the pod runtime awaiting a tool-call verdict) unblocks. Nil
-	// leaves the resolution endpoints recording the interaction phase
-	// only — the dev / non-pod posture where nothing blocks on the
-	// verdict. spec: §7.2. F-7.2.18.
-	toolApprovalWaits seam.ToolApprovals
-
-	// treeCycleObserver, when set, receives a §8.9 cycle observation
-	// whenever the /v1/sessions/{id}/tree walker hits a repeated node
-	// in the ParentSessionID lineage. Nil disables the emission and
-	// the walker still truncates the cycle so the response remains
-	// well-formed. spec: §8.9; F-8.9.10.
-	treeCycleObserver TreeCycleObserver
 
 	// callbackValidator enforces the §14 callbackUrl SSRF mitigations at
 	// admission (HTTPS-only, IP-literal / private-range rejection, DNS
@@ -785,31 +761,6 @@ type Options struct {
 	// appender; nil disables the emission.
 	LifecycleAuditSink LifecycleAuditSink
 
-	// InteractionAuditSink, when set, receives the §7.2 / §11.7 /
-	// §16.7 tool-use approve/deny and elicitation respond/dismiss
-	// audit events emitted by the §15.1 resolution endpoints.
-	// Production wires this to the audit appender; nil disables the
-	// emission and the resolution still proceeds.
-	// spec: §7.2 table. F-7.2.8.
-	InteractionAuditSink InteractionAuditSink
-
-	// ToolApprovalWaits, when set, is the §7.2 tool-use approval waiter
-	// registry shared with the ToolApprovalGate the pod executor calls.
-	// The approve/deny endpoints deliver the verdict onto it so the
-	// blocked runtime tool call unblocks. Nil leaves the endpoints
-	// recording the interaction phase only. spec: §7.2.
-	// F-7.2.18.
-	ToolApprovalWaits seam.ToolApprovals
-
-	// TreeCycleObserver, when set, receives a §8.9 cycle observation
-	// when /v1/sessions/{id}/tree hits a repeated node in the
-	// ParentSessionID lineage. Production wires this to the
-	// `delegation.tree_cycle_detected` audit event plus the §16.1
-	// `lenny_delegation_tree_cycle_detected_total` counter; nil
-	// disables the emission and the walker still truncates the cycle.
-	// spec: §8.9; F-8.9.10.
-	TreeCycleObserver TreeCycleObserver
-
 	// CallbackValidator validates client callbackUrls against the §14 SSRF
 	// mitigations. Nil installs a default validator with no deployer
 	// domain allowlist. spec: §14. F-14.1.11.
@@ -927,11 +878,6 @@ type Options struct {
 	// POST /v1/sessions/{id}/eval. When nil the endpoint returns
 	// `503 EVAL_UNAVAILABLE`.
 	Evals evalstore.Store
-
-	// Memory is the §9.4 MemoryStore backing the
-	// /v1/sessions/{id}/memory REST surface. When nil those
-	// endpoints return `503 MEMORY_UNAVAILABLE`.
-	Memory memorystore.Store
 
 	// Experiments is the §10.7 experiment registry. When set, the
 	// ExperimentRouter assigns a variant at session creation; when nil
@@ -1653,7 +1599,6 @@ func New(store sessionstore.Store, opts Options) *Server {
 		artifacts:                  opts.Artifacts,
 		activityStamper:            opts.ActivityStamper,
 		evals:                      opts.Evals,
-		memory:                     opts.Memory,
 		experiments:                opts.Experiments,
 		pools:                      opts.Pools,
 		experimentReporter:         opts.ExperimentRejections,
@@ -1743,9 +1688,6 @@ func New(store sessionstore.Store, opts Options) *Server {
 		observeStartupPhase:        opts.ObserveStartupPhase,
 		observeTimeToFirstToken:    opts.ObserveTimeToFirstToken,
 		lifecycleAudit:             opts.LifecycleAuditSink,
-		interactionAudit:           opts.InteractionAuditSink,
-		toolApprovalWaits:          opts.ToolApprovalWaits,
-		treeCycleObserver:          opts.TreeCycleObserver,
 		callbackValidator:          opts.CallbackValidator,
 		callbackSeal:               opts.CallbackSeal,
 		callbackDispatcher:         opts.CallbackDispatcher,

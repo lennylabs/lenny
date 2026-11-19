@@ -902,19 +902,6 @@ func (m *Metrics) IncIdempotencyCacheSkipped(tenantID, reason string) {
 	m.idempotencyCacheSkipped.WithLabelValues(tenantID, reason).Inc()
 }
 
-// IncDelegationTreeCycleDetected increments the §8.9
-// `lenny_delegation_tree_cycle_detected_total` counter when a tree
-// walker hits a cycle in the §8.2 ParentSessionID lineage. `source`
-// is `rest` for the /v1/sessions/{id}/tree handler and `mcp` for the
-// lenny/get_task_tree platform-tool and lenny/await_children walks.
-// spec: §8.9; F-8.9.10.
-func (m *Metrics) IncDelegationTreeCycleDetected(tenantID, source string) {
-	if m == nil {
-		return
-	}
-	m.delegationTreeCycleDetected.WithLabelValues(tenantID, source).Inc()
-}
-
 // ObserveDelegationParallelChildrenHighWatermark records the §8.3 maximum simultaneous in-flight children for one delegation tree
 // onto the `lenny_delegation_parallel_children_high_watermark`
 // histogram, sampled once when the tree root settles. `pool` is the

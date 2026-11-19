@@ -1,15 +1,17 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package platformtools_test
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
@@ -29,7 +31,7 @@ func TestToolUseApproveDeniedForDisabledUser_spec_11_4(t *testing.T) {
 		ID: "tc_1", Kind: interactionstore.KindToolUse,
 		SessionID: "sess_1", TenantID: "acme", UserID: "alice",
 	})
-	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us})
+	srv := newServer(t, aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us}, platformtools.Options{})
 
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
@@ -61,7 +63,7 @@ func TestElicitationRespondAllowedForActiveUser_spec_11_4(t *testing.T) {
 		ID: "el_1", Kind: interactionstore.KindElicitation,
 		SessionID: "sess_1", TenantID: "acme", UserID: "alice",
 	})
-	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us})
+	srv := newServer(t, aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store, Users: us}, platformtools.Options{})
 
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/elicitations/el_1/respond",
 		strings.NewReader(`{"response":"yes"}`)))
@@ -123,7 +125,7 @@ func TestInteractionResolutionCallerCheck_spec_12_8(t *testing.T) {
 					ID: "ix_1", Kind: ep.kind, SessionID: "sess_1", TenantID: "acme", UserID: "alice",
 					Phase: interactionstore.PhasePending,
 				})
-				srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: ix, Users: us})
+				srv := newServer(t, aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: ix, Users: us}, platformtools.Options{})
 				req := asAlice(httptest.NewRequest(http.MethodPost, ep.path, strings.NewReader(ep.body)))
 				req.Header.Set("Content-Type", "application/json")
 				rr := httptest.NewRecorder()
@@ -154,4 +156,12 @@ func TestInteractionResolutionCallerCheck_spec_12_8(t *testing.T) {
 			})
 		}
 	}
+}
+
+// erroringUsers is a user store whose reads fail, so the caller check
+// answers its read failure.
+type erroringUsers struct{ userstore.Store }
+
+func (erroringUsers) Get(context.Context, string, string) (userstore.User, error) {
+	return userstore.User{}, errors.New("user registry unavailable")
 }

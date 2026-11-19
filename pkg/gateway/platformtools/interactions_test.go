@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package platformtools_test
 
 import (
 	"context"
@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -24,7 +25,7 @@ import (
 func newInteractionServer(t *testing.T) (*sessionserver.Server, *interactionstore.Memory) {
 	t.Helper()
 	store := interactionstore.NewMemory()
-	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store})
+	srv := newServer(t, aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: store}, platformtools.Options{})
 	return srv, store
 }
 
@@ -232,7 +233,7 @@ func TestKindMismatchReturns404(t *testing.T) {
 }
 
 func TestInteractionsUnavailableWhenUnwired(t *testing.T) {
-	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true})
+	srv := newServer(t, aliceSessions(t), sessionserver.Options{DevTenantHeader: true}, platformtools.Options{})
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_1/tool-use/tc_1/approve", nil))
 	rr := httptest.NewRecorder()
 	asOwner(srv.Handler()).ServeHTTP(rr, req)
@@ -244,10 +245,10 @@ func TestInteractionsUnavailableWhenUnwired(t *testing.T) {
 // captureInteractionAudit records every §7.2 / §11.7 interaction
 // resolution audit event so tests can assert emission. F-7.2.8.
 type captureInteractionAudit struct {
-	events []sessionserver.InteractionResolutionEvent
+	events []platformtools.InteractionResolutionEvent
 }
 
-func (c *captureInteractionAudit) EmitInteractionResolution(_ context.Context, ev sessionserver.InteractionResolutionEvent) {
+func (c *captureInteractionAudit) EmitInteractionResolution(_ context.Context, ev platformtools.InteractionResolutionEvent) {
 	c.events = append(c.events, ev)
 }
 
@@ -311,11 +312,10 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 		t.Run(c.name, func(t *testing.T) {
 			interStore := interactionstore.NewMemory()
 			sink := &captureInteractionAudit{}
-			srv := sessionserver.New(aliceSessions(t), sessionserver.Options{
-				DevTenantHeader:      true,
-				Interactions:         interStore,
-				InteractionAuditSink: sink,
-			})
+			srv := newServer(t, aliceSessions(t), sessionserver.Options{
+				DevTenantHeader: true,
+				Interactions:    interStore,
+			}, platformtools.Options{InteractionAudit: sink})
 			if err := interStore.Put(context.Background(), interactionstore.Interaction{
 				ID: c.interactionID, Kind: c.kind,
 				SessionID: "sess_a", TenantID: "acme", UserID: "alice",
@@ -377,11 +377,10 @@ func TestInteractionResolutionAudit_spec_7_2_8(t *testing.T) {
 func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 	interStore := interactionstore.NewMemory()
 	sink := &captureInteractionAudit{}
-	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{
-		DevTenantHeader:      true,
-		Interactions:         interStore,
-		InteractionAuditSink: sink,
-	})
+	srv := newServer(t, aliceSessions(t), sessionserver.Options{
+		DevTenantHeader: true,
+		Interactions:    interStore,
+	}, platformtools.Options{InteractionAudit: sink})
 	// No interaction seeded.
 	req := asAlice(httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_a/tool-use/tc_x/approve", nil))
 	rr := httptest.NewRecorder()
@@ -399,7 +398,7 @@ func TestInteractionResolutionAuditNotEmittedOnFailure(t *testing.T) {
 // best-effort per the §11.7 sink contract. F-7.2.8.
 func TestInteractionResolutionAuditNilSinkIsSafe(t *testing.T) {
 	interStore := interactionstore.NewMemory()
-	srv := sessionserver.New(aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: interStore})
+	srv := newServer(t, aliceSessions(t), sessionserver.Options{DevTenantHeader: true, Interactions: interStore}, platformtools.Options{})
 	if err := interStore.Put(context.Background(), interactionstore.Interaction{
 		ID: "tc_1", Kind: interactionstore.KindToolUse,
 		SessionID: "sess_a", TenantID: "acme", UserID: "alice",

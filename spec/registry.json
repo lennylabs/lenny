@@ -1701,6 +1701,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-AdmitActiveCaller",
+      "anchor": "gwseam-admitactivecaller",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-AdmitResume",
       "anchor": "gwseam-admitresume",
       "file": "spec/interfaces/gateway-seams.md"

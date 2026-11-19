@@ -531,37 +531,6 @@ func TestIncWarmpoolClaimNilSafe_spec_6_3_F_6_3_6(t *testing.T) {
 	m.IncWarmpoolClaim("pool-a", "runc") // must not panic
 }
 
-// spec: §8.2 / §16.1 — nil receivers are no-ops (caller-side guard).
-func TestDelegationMetricsNilSafe_spec_8_2(t *testing.T) {
-	var m *gatewaymetrics.Metrics
-	// Must not panic. F-8.9.10 nil-safe coverage.
-	m.IncDelegationTreeCycleDetected("acme", "rest")
-}
-
-// spec: §8.9 / §16.1 — lenny_delegation_tree_cycle_detected_total
-// carries (tenant_id, source) labels and increments once per repeated
-// node hit by the tree walker. F-8.9.10.
-func TestIncDelegationTreeCycleDetected_spec_8_9(t *testing.T) {
-	m, err := gatewaymetrics.New()
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
-	m.IncDelegationTreeCycleDetected("acme", "rest")
-	m.IncDelegationTreeCycleDetected("acme", "rest")
-	m.IncDelegationTreeCycleDetected("acme", "mcp")
-	m.IncDelegationTreeCycleDetected("globex", "rest")
-	body := scrapeMetrics(t, m)
-	for _, want := range []string{
-		`lenny_delegation_tree_cycle_detected_total{source="rest",tenant_id="acme"} 2`,
-		`lenny_delegation_tree_cycle_detected_total{source="mcp",tenant_id="acme"} 1`,
-		`lenny_delegation_tree_cycle_detected_total{source="rest",tenant_id="globex"} 1`,
-	} {
-		if !strings.Contains(body, want) {
-			t.Errorf("expected %q in /metrics, body=%q", want, body)
-		}
-	}
-}
-
 // spec: §11.1 — lenny_rate_limit_rejected_total{scope} carries
 // the §11.1 admission scope and bumps once per 429 rejection.
 func TestIncRateLimitRejected_spec_11_1(t *testing.T) {

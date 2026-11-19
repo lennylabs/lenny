@@ -53,7 +53,7 @@ Its guardrail case depends on [SO-2](../0142-security-oversight/change.md#so-2-t
 
 Upsert on invalidate, holds per caller class, refusal at authentication including deleted rows, the impersonation cascade on disables, reinstate as the only reversal, ordering, the permission, and `identityProvider` hardening. It also closes the read half of F-10.6.21 and the address check of F-10.6.22.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-DelegatorRefusal`, the creation fence's refusal of a delegated child that the platform tools seam reads, with the holds per caller class.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-DelegatorRefusal`, the creation fence's refusal of a delegated child that the platform tools seam reads, and `GWSEAM-AdmitActiveCaller`, the user lifecycle check the platform tools seam's tool-use and elicitation resolutions apply, with the holds per caller class and the refusal at authentication.
 
 It has no dependency. 0149.S2's contract refers to it, and either order works. Holds land early, because a stored format, a registered URI, or a shipped enforcement point would otherwise need rework.
 

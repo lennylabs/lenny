@@ -55,6 +55,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/gatewaypki"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -567,6 +568,9 @@ func (h *Harness) AddReplica(name string) *Replica {
 	// The stream proxy serves the session event and log streams, attached
 	// as the gateway attaches it.
 	streamwire.Attach(h.T, r.Server, streamproxy.Options{Events: opts.Events, Clock: opts.Clock})
+	// The platform tools seam serves the memory, interaction resolution,
+	// and tree routes, attached as the gateway attaches them.
+	toolwire.Attach(h.T, r.Server, platformtools.Options{Store: h.Store, Interactions: h.Interactions})
 	// spec: §28.5.1 (Gateway-to-pod) — a failed CH-ATTACH stream is
 	// reported to the replica's session server, as the gateway wires it.
 	exec.SetStreamFailureHandler(r.Server.ReportAttachStreamFailure)

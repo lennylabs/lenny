@@ -32,6 +32,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/openapi"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/middleware/circuitbreaker/breakerstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
@@ -44,6 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/ops/opsserver"
 	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 	"github.com/lennylabs/lenny/tests/testinfra/uploadwire"
 )
 
@@ -483,11 +485,13 @@ func registeredRouteTemplates(t *testing.T) []string {
 	// enumerates the non-admin session routes live the same way the admin and
 	// credential muxes are walked, rather than from a hand-maintained list.
 	sess := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true, Clock: clock})
-	// The upload handler registers the upload and blob routes, and the
-	// stream proxy the event and log stream routes, on the session server's
-	// mux, attached as the gateway attaches them.
+	// The upload handler registers the upload and blob routes, the stream
+	// proxy the event and log stream routes, and the platform tools seam
+	// the memory, interaction resolution, and tree routes, on the session
+	// server's mux, attached as the gateway attaches them.
 	uploadwire.Attach(t, sess, uploadhandler.Options{})
 	streamwire.Attach(t, sess, streamproxy.Options{})
+	toolwire.Attach(t, sess, platformtools.Options{Store: memstore.New()})
 
 	var out []string
 	out = append(out, walkServeMux(t, router.Handler())...)

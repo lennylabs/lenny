@@ -11,6 +11,7 @@ summary: Lists every interface operation with its identifier, method, path, and 
 | Operation | Method | Path | Summary |
 | :-- | :-- | :-- | :-- |
 | [`GWSEAM-AdjustStorage`](../interfaces/gateway-seams.md#gwseam-adjuststorage) | Go method | `seam.StorageQuota` | Adds a signed byte count to a tenant's storage usage, which releases a reservation that GWSEAM-ReserveStorage made or reconciles it to the bytes an upload wrote. |
+| [`GWSEAM-AdmitActiveCaller`](../interfaces/gateway-seams.md#gwseam-admitactivecaller) | Go method | `seam.ActiveCallers` | Checks that the user the request in the context runs as may act, and returns a refusal with the USER_INVALIDATED or ERASURE_IN_PROGRESS code, its message naming the refused action, and its details, for an invalidated user or one with a pending erasure; a caller with no registered user is admitted. |
 | [`GWSEAM-AdmitResume`](../interfaces/gateway-seams.md#gwseam-admitresume) | Go method | `seam.MessageDelivery` | Checks that resuming a session stays within its tenant's limits, and returns the refusal with its message and details when it does not. |
 | [`GWSEAM-AfterRevokeWrite`](../interfaces/gateway-seams.md#gwseam-afterrevokewrite) | Go method | `seam.Revocations` | Drains a session after the API front's revocation write. |
 | [`GWSEAM-AfterTerminalWrite`](../interfaces/gateway-seams.md#gwseam-afterterminalwrite) | Go method | `seam.Terminals` | Runs the terminal pipeline after the caller's terminal write, with the caller's own terminal signals, and returns the session record after the pipeline. |

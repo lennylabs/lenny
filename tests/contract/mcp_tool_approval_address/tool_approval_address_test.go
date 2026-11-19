@@ -36,7 +36,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
-	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 )
@@ -72,7 +71,7 @@ func TestToolUseRequestedAddressesSessionOnly_spec_7_2(t *testing.T) {
 		t.Fatalf("seed session: %v", err)
 	}
 	waits := toolapproval.NewRegistry()
-	gate := sessionserver.NewToolApprovalGate(
+	gate := platformtools.NewToolApprovalGate(
 		store, interactionstore.NewMemory(), bus, platformtools.NewToolApprovals(waits),
 		func() time.Time { return time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC) },
 		0,

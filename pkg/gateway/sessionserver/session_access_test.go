@@ -15,9 +15,11 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 
 const (
@@ -50,11 +52,16 @@ func accessServer(t *testing.T, multiTenant bool) http.Handler {
 	t.Helper()
 	store := memstore.New()
 	seedAccessRows(t, store)
-	return sessionserver.New(store, sessionserver.Options{
+	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
 		MultiTenant:     multiTenant,
 		CustomRoles:     accessRoles(t),
-	}).Handler()
+	})
+	// The platform tools seam's memory, interaction resolution, and tree
+	// routes mount on the session server's mux behind the same access
+	// checks, as the composition root attaches them.
+	toolwire.Attach(t, srv, platformtools.Options{Store: store})
+	return srv.Handler()
 }
 
 // seedAccessRows writes alice's running session sess_alice and bob's

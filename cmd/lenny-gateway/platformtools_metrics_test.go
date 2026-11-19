@@ -27,7 +27,7 @@ func TestPlatformToolsMetricsRegisterBesideTheGatewayMetrics(t *testing.T) {
 	if err != nil {
 		t.Fatalf("newPlatformToolsMetrics: %v", err)
 	}
-	if m.delegation == nil || m.deadlock == nil || m.elicitation == nil ||
+	if m.delegation == nil || m.deadlock == nil || m.tools == nil ||
 		m.leaseExtension == nil || m.orphanCleanup == nil || m.budgetReconstruction == nil {
 		t.Fatalf("a metric set is nil: %+v", m)
 	}
