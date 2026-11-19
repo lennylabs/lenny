@@ -85,7 +85,7 @@ In service mode (`conversationContinuity: none`) every message is self-contained
 
 **Key error codes:** `VALIDATION_ERROR` (400), `FORBIDDEN` (403), `RUNTIME_UNAVAILABLE` (503), `WARM_POOL_EXHAUSTED` (503), `POOL_DRAINING` (503), `QUOTA_EXCEEDED` (429), `CREDENTIAL_POOL_EXHAUSTED` (503), `ERASURE_IN_PROGRESS` (403), `USER_INVALIDATED` (403), `TENANT_SUSPENDED` (403), and `TENANT_NOT_ACTIVE` (403).
 
-The gateway answers `FORBIDDEN` when the caller's role does not grant session creation: the `tenant-viewer` and `billing-viewer` roles, and a custom role without the create permission. It answers `POOL_DRAINING`, with a `Retry-After` header, when the session would run on a pool that an operator is draining. While the gateway's Postgres and Redis are both unreachable, it refuses every new session with `503` and a `Retry-After` header of 10 seconds. None of these refusals creates a session or claims a pod.
+The gateway answers `FORBIDDEN` when the caller's role does not grant `manage_own_sessions` (the "Create / cancel own sessions" permission): the `tenant-viewer` and `billing-viewer` roles, and a custom role without that permission. It answers `POOL_DRAINING`, with a `Retry-After` header, when the session would run on a pool that an operator is draining. While the gateway's Postgres and Redis are both unreachable, it refuses the request with `503` and a `Retry-After` header of 10 seconds. None of these refusals creates a session or claims a pod.
 
 ### POST /v1/sessions/{id}/upload
 
@@ -513,7 +513,7 @@ Create, upload inline files, and start a session in one call. Combines session c
 
 Returns a running session with the first message already delivered.
 
-**Key error codes:** the codes of [`POST /v1/sessions`](#post-v1sessions), under the same conditions, including `FORBIDDEN` (403) for a role that does not grant session creation, `POOL_DRAINING` (503) for a draining pool, and `503` while Postgres and Redis are both unreachable.
+**Key error codes:** the codes of [`POST /v1/sessions`](#post-v1sessions), under the same conditions, including `FORBIDDEN` (403) for a role that does not grant `manage_own_sessions`, `POOL_DRAINING` (503) for a draining pool, and `503` while Postgres and Redis are both unreachable.
 
 ---
 

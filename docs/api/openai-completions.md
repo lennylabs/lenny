@@ -197,6 +197,8 @@ Return OpenAI-format response
 
 For streaming requests, the adapter streams `MessagePart` chunks as they arrive from the runtime, translating each to an OpenAI delta chunk.
 
+The session the request creates passes the same checks as `POST /v1/sessions/start` before any pod is claimed. A caller whose role does not grant `manage_own_sessions`, such as `tenant-viewer` or `billing-viewer`, receives `403 FORBIDDEN`. A request whose session would run on a draining pool receives `503 POOL_DRAINING` with a `Retry-After` header, and while the gateway's Postgres and Redis are both unreachable every request receives `503` with a `Retry-After` header of 10 seconds.
+
 ---
 
 ## Limitations vs. real OpenAI

@@ -164,7 +164,7 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 | Code | When |
 |:-----|:-----|
 | `VALIDATION_ERROR` | Invalid parameters (missing runtime, bad workspace plan) |
-| `FORBIDDEN` | The caller's role does not grant session creation, such as `tenant-viewer` or `billing-viewer` |
+| `FORBIDDEN` | The caller's role does not grant `manage_own_sessions`, such as `tenant-viewer` or `billing-viewer` |
 | `RUNTIME_UNAVAILABLE` | No healthy pods for the requested runtime |
 | `WARM_POOL_EXHAUSTED` | No idle pods in the warm pool |
 | `QUOTA_EXCEEDED` | Tenant session quota exceeded |
@@ -175,6 +175,8 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 | `TENANT_SUSPENDED` | The tenant is suspended |
 | `TENANT_NOT_ACTIVE` | The tenant is not `active`, such as during tenant deletion |
 | `POOL_DRAINING` | The target pool is draining |
+
+While the gateway's Postgres and Redis are both unreachable, the tool refuses the call with the same `503` error and 10-second retry hint that `POST /v1/sessions` returns, and creates no session.
 
 **Example:**
 
