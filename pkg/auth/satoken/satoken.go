@@ -1,6 +1,10 @@
 // SPDX-License-Identifier: MIT
 
-package leasecontrol
+// Package satoken verifies a projected ServiceAccount token through a
+// Kubernetes TokenReview. The platform tools seam's lease-control server
+// and the API front's service identity check both use it, so it is a
+// domain package rather than a part of either.
+package satoken
 
 import (
 	"context"
@@ -9,21 +13,6 @@ import (
 	authnv1 "k8s.io/api/authentication/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 )
-
-// TokenVerifier validates a projected ServiceAccount token's signature,
-// expiry, and audience. The §10.3 "Projected SA token" contract (the
-// gateway validates the signature on every pod→gateway request) is
-// satisfied by the production implementation
-// (TokenReviewVerifier), which delegates the cryptographic check to the
-// kube-apiserver. A nil verifier degrades RequireSATokenInterceptor to the
-// audience-only decode (the local-development path with no cluster client).
-// spec: §10.3 (Projected SA token).
-type TokenVerifier interface {
-	// Verify returns nil when token is a kube-apiserver-issued projected
-	// SA token that is currently valid for audience, and a non-nil error
-	// (one of the sentinels below, or a wrapped transport error) otherwise.
-	Verify(ctx context.Context, token, audience string) error
-}
 
 // TokenReviewer is the subset of the Kubernetes authentication client the
 // SA-token verifier needs. It is satisfied by a clientset's
@@ -51,7 +40,8 @@ type TokenReviewVerifier struct {
 	Reviews TokenReviewer
 }
 
-// Verify implements TokenVerifier. It fails closed: any transport error
+// Verify reports whether token is a valid projected SA token for
+// audience. It fails closed: any transport error
 // reaching the apiserver, an unauthenticated verdict, or an audience that
 // the apiserver did not grant all reject the call.
 func (v TokenReviewVerifier) Verify(ctx context.Context, token, audience string) error {
@@ -99,13 +89,16 @@ const (
 	// ErrSATokenReviewFailed is the fail-closed sentinel for a TokenReview
 	// that could not reach a verdict (apiserver unreachable, RBAC denied,
 	// timeout). The interceptor rejects the call rather than admitting it.
-	ErrSATokenReviewFailed = satokenError("tokenreview request failed")
+	ErrSATokenReviewFailed = Error("tokenreview request failed")
 	// ErrSATokenUnauthenticated is returned when the apiserver reports the
 	// token is not valid (bad signature, expired, revoked SA).
-	ErrSATokenUnauthenticated = satokenError("projected SA token failed signature or expiry validation")
+	ErrSATokenUnauthenticated = Error("projected SA token failed signature or expiry validation")
 	// ErrSATokenAudienceMismatch is returned when the token is authentic
 	// but was not minted for this deployment's audience.
-	ErrSATokenAudienceMismatch = satokenError("projected SA token is not valid for this deployment audience")
+	ErrSATokenAudienceMismatch = Error("projected SA token is not valid for this deployment audience")
 )
 
-var _ TokenVerifier = TokenReviewVerifier{}
+// Error is the type of the verifier's sentinel errors.
+type Error string
+
+func (e Error) Error() string { return string(e) }

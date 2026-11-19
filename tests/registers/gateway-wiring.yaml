@@ -178,13 +178,3 @@ crossings:
     from: pkg/gateway/credentials/revocation/propagator
     type: Propagator
     step: 0117.S8
-  - to: pkg/gateway/api/serviceidentity
-    interface: Config.Verifier
-    from: pkg/gateway/platformtools/leasecontrol
-    type: TokenReviewVerifier
-    step: 0117.S8
-  - to: pkg/gateway/api/serviceidentity
-    interface: SATokenAuthenticator
-    from: pkg/gateway/platformtools/leasecontrol
-    type: TokenReviewVerifier
-    step: 0117.S8

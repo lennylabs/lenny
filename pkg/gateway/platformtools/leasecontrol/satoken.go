@@ -13,7 +13,26 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/metadata"
 	"google.golang.org/grpc/status"
+
+	"github.com/lennylabs/lenny/pkg/auth/satoken"
 )
+
+// TokenVerifier validates a projected ServiceAccount token's signature,
+// expiry, and audience. The §10.3 "Projected SA token" contract (the
+// gateway validates the signature on every pod→gateway request) is
+// satisfied by the production implementation
+// (satoken.TokenReviewVerifier), which delegates the cryptographic check to the
+// kube-apiserver. A nil verifier degrades RequireSATokenInterceptor to the
+// audience-only decode (the local-development path with no cluster client).
+// spec: §10.3 (Projected SA token).
+type TokenVerifier interface {
+	// Verify returns nil when token is a kube-apiserver-issued projected
+	// SA token that is currently valid for audience, and a non-nil error
+	// (one of the satoken sentinels, or a wrapped transport error) otherwise.
+	Verify(ctx context.Context, token, audience string) error
+}
+
+var _ TokenVerifier = satoken.TokenReviewVerifier{}
 
 // RequireSATokenInterceptor returns a unary server interceptor that
 // validates the projected ServiceAccount token on every pod→gateway
@@ -26,7 +45,7 @@ import (
 // The token is carried as an `authorization: Bearer <jwt>` gRPC metadata
 // header by the pod adapter (the gatewaycontrol client's per-RPC
 // credential). When a verifier is configured (the production path, a
-// TokenReviewVerifier backed by the in-cluster authentication client), the
+// satoken.TokenReviewVerifier backed by the in-cluster authentication client), the
 // interceptor submits the token to the kube-apiserver, which validates the
 // signature and expiry against the cluster's service-account issuer and
 // confirms the deployment-specific audience (`lenny-gateway-<cluster>`, the
@@ -61,9 +80,9 @@ func RequireSATokenInterceptor(expectedAudience string, verifier TokenVerifier) 
 			if err := verifier.Verify(ctx, token, expectedAudience); err != nil {
 				reason := "signature_invalid"
 				switch {
-				case errors.Is(err, ErrSATokenAudienceMismatch):
+				case errors.Is(err, satoken.ErrSATokenAudienceMismatch):
 					reason = "audience_mismatch"
-				case errors.Is(err, ErrSATokenReviewFailed):
+				case errors.Is(err, satoken.ErrSATokenReviewFailed):
 					reason = "tokenreview_unavailable"
 				}
 				return nil, status.Errorf(codes.Unauthenticated,

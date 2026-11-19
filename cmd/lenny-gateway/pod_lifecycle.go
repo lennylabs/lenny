@@ -21,6 +21,7 @@ import (
 	agentpodstatepg "github.com/lennylabs/lenny/pkg/agentpodstate/pgstore"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
+	"github.com/lennylabs/lenny/pkg/auth/satoken"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/api/serviceidentity"
@@ -203,7 +204,7 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 			if err != nil {
 				log.Fatalf("lenny-gateway: §10.3 build TokenReview client: %v", err)
 			}
-			verifier := leasecontrol.TokenReviewVerifier{
+			verifier := satoken.TokenReviewVerifier{
 				Reviews: cs.AuthenticationV1().TokenReviews(),
 			}
 			saUserVerifier = verifier
