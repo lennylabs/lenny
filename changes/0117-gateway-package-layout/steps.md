@@ -90,7 +90,7 @@ The `credentials` packages that 0133 keeps, the `storage` packages outside the c
 As built: the moves keep each package's name under `pkg/credential`, `pkg/storage`, and `pkg/runtime` (decision 6). The credential packages that 0133 removes (`credassign`, `credfallback`, `credleasestore`, `credrenewal`, and `leaserevoke`) and the storage packages of the session core (`derivelock`, `dualstore`, `evictionfallback`, `leasestore`, and `slotcounter`) stay where they are, so `pkg/gateway/credentials` keeps its confinement entry. Every row naming 0117.S10 in the layout register is cleared, and the wiring register named none. The confined packages keep their confinement at their destinations, where `confined.go` already listed them, and the entries of the directories the moves emptied are dropped. The composition root keeps mounting the credential server on the REST mux, as decision 65 has it, and open decision 81 closes that decision's revisit with the arrangement kept. The runtime upgrade guard's route stays registered by the composition root on the internal listener, as decision 66 has it, because the guard is a domain package rather than a part. The step crosses no part boundary and adds no seam operation, so no member change gains a line of decision 8.
 
 ### 0117.S11 Session core (1,020 import sites)
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0117.S5, 0117.S6, 0117.S7, 0117.S8, 0137.S5, 0155.S1]
 
