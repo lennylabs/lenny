@@ -853,8 +853,10 @@ packages:
       count: 2
     - package: pkg/session/sessionlogstore
       count: 23
+    - package: pkg/session/sessionrow
+      count: 48
     - package: pkg/session/sessionstore
-      count: 156
+      count: 109
     - package: pkg/session/sessionstore/memstore
       count: 130
     - package: pkg/session/sessionstore/pgstore

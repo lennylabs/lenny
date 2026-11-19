@@ -83,7 +83,7 @@ func fileOmits(rel, unwanted string) func(testing.TB, string) (bool, string) {
 // declares the Primary field that routes a lifecycle listing to the primary.
 func listFilterReadsPrimary(t testing.TB, root string) (bool, string) {
 	t.Helper()
-	const rel = "pkg/session/sessionstore/sessionstore.go"
+	const rel = "pkg/session/sessionstore/store.go"
 	what := rel + " declares ListFilter.Primary"
 	file := parseGoFile(t, filepath.Join(root, filepath.FromSlash(rel)))
 	for _, decl := range file.Decls {
