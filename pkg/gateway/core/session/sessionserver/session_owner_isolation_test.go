@@ -233,6 +233,14 @@ func TestSessionOwnerIsolationInvariant_spec_10_2(t *testing.T) {
 		w.step(r, ids)
 		ids = w.checkOwners()
 	}
+	// A derive or replay succeeds only from a terminal source, so some seeds
+	// reach no success in the first 300 steps. Keep stepping, still checking
+	// the invariant after every step, until one succeeds or the cap is hit,
+	// so the run always exercises owner inheritance.
+	for extra := 0; w.derived == 0 && extra < 3000; extra++ {
+		w.step(r, ids)
+		ids = w.checkOwners()
+	}
 	if w.derived == 0 {
 		t.Fatalf("no derive or replay succeeded; the driver did not exercise owner inheritance; owner refusals: %v", w.ownerRefusals)
 	}
