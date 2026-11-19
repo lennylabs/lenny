@@ -4,7 +4,7 @@ status: open
 kind: spec-defect
 severity: low
 requirements: []
-legacy: [T-27.8.4, T-27.8.8, T-27.8.10]
+legacy: T-27.8.4
 ---
 
 # The playground metrics section names label values the gateway never emits and an alert that does not exist
@@ -15,7 +15,7 @@ legacy: [T-27.8.4, T-27.8.8, T-27.8.10]
 
 §27.8 (Metrics), the `lenny_playground_session_revocation_propagation_seconds` row: "`outcome ∈ {pubsub_delivered, redis_authoritative, resubscribe}`. P99 alert threshold is the 500 ms logout propagation SLO defined in [§27.3.1]".
 
-§27.3.1 (OIDC cookie-to-MCP bearer exchange), **Revocation write.**: "On logout, `user.invalidated` ([§27.3.1] step 4 "OIDC claim invalidation"), or explicit admin revocation, the gateway `DEL`s the `pg:sess:*` key".
+§27.3.1 (OIDC cookie-to-MCP-bearer exchange), **Revocation write.** "On logout, `user.invalidated` ([§27.3.1] step 4 "OIDC claim invalidation"), or explicit admin revocation, the gateway `DEL`s the `pg:sess:*` key".
 
 ## Evidence
 
@@ -23,7 +23,7 @@ legacy: [T-27.8.4, T-27.8.8, T-27.8.10]
 - No admin endpoint revokes a single playground session. `BUILD-GAPS.md` F-27.6.4 (closed) left that surface open under F-27.3.7, and F-27.3.7 closed with only the idle sweep built. F-27.6.12 (closed) kept the unused `oidc_session_ended` constant as informational.
 - The only Go mention of `redis_authoritative` is a comment in `pkg/gateway/playground/auth.go` that explains why the gateway stopped recording it. `BUILD-GAPS.md` F-27.6.6 (closed, commit `88a53d5d`) removed the emission on purpose and left the §27.8 enumeration unchanged.
 - `rg -n "lenny_playground|Playground" pkg/alerting spec/16_observability.md` returns nothing. The §16.5 alert catalog has no playground row, and §27.8 gives no alert name, severity, window, or runbook.
-- Recorded on branch `section-27` as T-27.8.4, T-27.8.8, and T-27.8.10, and checked against `main` at `092ef92f6` on 2026-11-19.
+- Recorded on branch `section-27` as T-27.8.4, T-27.8.8, and T-27.8.10. The `legacy` field carries T-27.8.4, and this issue covers all of them. The findings were checked against `main` at `092ef92f6` on 2026-11-19.
 
 ## Gap
 

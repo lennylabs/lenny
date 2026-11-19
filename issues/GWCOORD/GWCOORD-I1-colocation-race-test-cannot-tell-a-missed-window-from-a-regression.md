@@ -11,7 +11,11 @@ legacy: T-BED.33
 
 ## Specification
 
-§10.1.2 (Coordinator Handoff Protocol): a replica that acquires the coordination lease runs the pre-CAS read, the generation increment, and the fence before it sends any operational RPC to the pod, and a request that lands on the new coordinator before the binding is published does not serve over the unpublished binding.
+§10.1.2 (Coordinator Handoff Protocol), **Coordinator handoff protocol:** "When a replica acquires the coordination lease (Redis or Postgres), it must execute the following sequence before sending any RPCs to the pod".
+
+§10.1.2, step 2 (**Fence announcement (precondition):**): "the new coordinator MUST NOT send any operational RPC to the pod until `CoordinatorFence` returns a successful acknowledgement."
+
+The test's annotation cites §10.1 for "no operational RPC before the fence acknowledges" and §4.6.1 for the coordinating replica holding the lease. It checks that a request reaching the new coordinator before the takeover publishes the binding fails closed.
 
 ## Evidence
 
