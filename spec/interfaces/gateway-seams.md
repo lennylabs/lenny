@@ -133,9 +133,9 @@ kind: operation
 name: MaterializeChild
 method: Go method
 path: seam.ChildSessions
-returns: [ErrChildCredentialAssignment, ErrPoolWarming]
+returns: [ErrChildCredentialAssignment, ErrChildCredentialUnavailable, ErrChildUserCredentialNotFound, ErrPoolWarming, ErrTokenServiceUnavailable]
 requirements: [GW-R1]
-summary: Claims a pod for a delegated child session, assigns its credentials, binds it, and starts it, and returns the child's state.
+summary: Claims a pod for a delegated child session, assigns its credentials, binds it, and starts it, and returns the child's state; a failure names an assignment race, a pool with no assignable credential, a user with no registered credential, a pool still warming, or a Token Service that could not mint the credential.
 ```
 
 <a id="gwseam-checkchildcredentials"></a>
@@ -374,6 +374,155 @@ method: Go method
 path: seam.PodRecycle
 requirements: [GW-R1]
 summary: Retires a pod with a retirement reason, its lifetime counts, and a detail.
+```
+
+## Operations served by the session core to the platform tools seam for policy, credentials, and tenants
+
+The session core serves these operations. The platform tools seam calls them, because the interceptor chain, the caller check, the VCS credential pools, the tenant store, environment access, and the rate limiter stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2). The platform tools seam imports the delegation policy store itself, because it evaluates delegation policies.
+
+<a id="gwseam-intercept"></a>
+
+```lenny-def
+kind: operation
+name: Intercept
+method: Go method
+path: seam.Interception
+requirements: [GW-R1]
+summary: Runs the interceptor chain at a phase the platform tools seam runs, for a tenant, a session, a content, and its metadata, optionally running of the external interceptors only the one a content policy names, and returns whether the content is allowed, modified, or rejected, with the rejection's reason, code, rejecting interceptor, and violated immutable fields; a rejection is recorded as an interceptor rejection audit event before the operation returns.
+```
+
+<a id="gwseam-intercepts"></a>
+
+```lenny-def
+kind: operation
+name: Intercepts
+method: Go method
+path: seam.Interception
+requirements: [GW-R1]
+summary: Reports whether any interceptor is registered at a phase.
+```
+
+<a id="gwseam-failopencooldown"></a>
+
+```lenny-def
+kind: operation
+name: FailOpenCooldown
+method: Go method
+path: seam.InterceptorCooldowns
+requirements: [GW-R1]
+summary: Returns, for a named external interceptor inside a fail-open weakening cooldown, the time of its fail-open transition and the cooldown seconds in force at that transition, or reports that no cooldown applies.
+```
+
+<a id="gwseam-resolveexportscan"></a>
+
+```lenny-def
+kind: operation
+name: ResolveExportScan
+method: Go method
+path: seam.ExportScans
+returns: [ErrExportScanUnavailable]
+requirements: [GW-R1]
+summary: Returns the per-file export scan of the interceptor a content policy names, which is the interceptor registered at the pre-delegation phase, or reports that no such interceptor is registered so the export fails closed.
+```
+
+<a id="gwseam-scanexportfiles"></a>
+
+```lenny-def
+kind: operation
+name: ScanExportFiles
+method: Go method
+path: seam.ExportScan
+requirements: [GW-R1]
+summary: Runs the pre-export-materialization phase of a resolved export scan over the files exported for a delegated child, with the content policy's name, the pool, and the largest file the policy admits, and returns the files as the scan left them with the digest of each final content, or the refusal of the first file the scan refused.
+```
+
+<a id="gwseam-checkcreatingcaller"></a>
+
+```lenny-def
+kind: operation
+name: CheckCreatingCaller
+method: Go method
+path: seam.CallerChecks
+returns: [ErrCallerRefused]
+requirements: [GW-R1]
+summary: Checks the bearer of the caller in the context against its issued-token record before the caller creates a session, and reports a refusal with its reason only once the refusal's audit row is durable.
+```
+
+<a id="gwseam-issuevcstoken"></a>
+
+```lenny-def
+kind: operation
+name: IssueVCSToken
+method: Go method
+path: seam.VCSTokens
+requirements: [GW-R1]
+summary: Issues a short-lived credential for a VCS host from a tenant's VCS credential pool under a lease scope, and returns it, no credential, or a failure naming a host no pool serves, a host several pools serve with the pools that match, or a pool with no usable credential.
+```
+
+<a id="gwseam-tenantelicitationintegrity"></a>
+
+```lenny-def
+kind: operation
+name: TenantElicitationIntegrity
+method: Go method
+path: seam.TenantFacts
+requirements: [GW-R1]
+summary: Returns the elicitation content integrity mode a tenant stored, empty when it stored none.
+```
+
+<a id="gwseam-tenantcredentialproviders"></a>
+
+```lenny-def
+kind: operation
+name: TenantCredentialProviders
+method: Go method
+path: seam.TenantFacts
+requirements: [GW-R1]
+summary: Returns the providers a tenant's credential policy names.
+```
+
+<a id="gwseam-delegatorrefusal"></a>
+
+```lenny-def
+kind: operation
+name: DelegatorRefusal
+method: Go method
+path: seam.TenantFacts
+requirements: [GW-R1]
+summary: Returns the refusal the session creation fence answers for a delegated child of a user in a tenant, from the user's and the tenant's lifecycle markers, or reports that the fence admits it.
+```
+
+<a id="gwseam-listtenants"></a>
+
+```lenny-def
+kind: operation
+name: ListTenants
+method: Go method
+path: seam.TenantDirectory
+requirements: [GW-R1]
+summary: Returns the tenants the platform tools seam's sweeps visit.
+```
+
+<a id="gwseam-resolveenvironments"></a>
+
+```lenny-def
+kind: operation
+name: ResolveEnvironments
+method: Go method
+path: seam.EnvironmentResolver
+requirements: [GW-R1]
+summary: Resolves the environment membership of the caller in the context within the caller's tenant, and returns the context carrying the resolution in the form the shared environment conventions read, or the context unchanged when it carries no caller or environment filtering is not in effect.
+```
+
+<a id="gwseam-incrementrate"></a>
+
+```lenny-def
+kind: operation
+name: IncrementRate
+method: Go method
+path: seam.RateCounter
+requirements: [GW-R1]
+summary: Records one request against a key's current one-minute window and returns the window's running count, from the counter the gateway's admission limits share.
 ```
 
 ## Operations served by the session core to the platform tools seam, the metering proxy, and the API front
@@ -967,6 +1116,19 @@ summary: Returns the tenant that a client request runs as, which the API front's
 ```
 
 ## Operations served by the API front to the platform tools seam
+
+The session core serves [`GWSEAM-RequestCaller`](#gwseam-requestcaller) until the API front holds the request pipeline.
+
+<a id="gwseam-requestcaller"></a>
+
+```lenny-def
+kind: operation
+name: RequestCaller
+method: Go method
+path: seam.CallerIdentity
+requirements: [GW-R1]
+summary: Returns the authenticated caller that the context of a request or a platform tool call carries, with its subject, its tenant, the session a session-scoped caller acts for, its caller type, and its groups, or reports that the context carries no caller.
+```
 
 <a id="gwseam-isbearerrevoked"></a>
 
