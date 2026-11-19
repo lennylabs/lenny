@@ -97,6 +97,29 @@ func (s *Server) permissionGranted(ctx context.Context, perm auth.Permission) bo
 	return s.principalHolds(ctx, p, perm)
 }
 
+// guardPermission applies the permission gate of the API front's request
+// pipeline to a single handler, for the in-process service entry points that
+// call a create handler directly rather than through the pipeline
+// (CreateSessionService and CreateAndStartService). It decides through
+// permissionGranted, the evaluator GWSEAM-AuthorizePermission serves to the
+// pipeline, so it admits and refuses the principals the pipeline admits and
+// refuses on the REST create routes. A refused request receives the 403
+// FORBIDDEN envelope the pipeline writes, and next does not run, so no
+// admission gate, store write, or pod claim follows.
+//
+// spec: §10.2 (Authorization and RBAC) Session creation surfaces; §10.2
+// (Session ownership) rule 7.
+func (s *Server) guardPermission(perm auth.Permission, next http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !s.permissionGranted(r.Context(), perm) {
+			s.writeError(w, http.StatusForbidden, "FORBIDDEN",
+				"this endpoint requires the "+string(perm)+" permission", nil)
+			return
+		}
+		next(w, r)
+	}
+}
+
 // principalHolds reports whether a role assigned to p, built-in or tenant
 // custom, grants perm. It resolves the built-in roles through RolesGrant
 // and every other role name against the §10.2 custom-role registry for

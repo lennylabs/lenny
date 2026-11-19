@@ -57,7 +57,7 @@ The alternatives considered:
 - The SDK's REST `Finalize` and `Start` after the MCP create. This mixes the MCP and REST surfaces on one path and needs the same upload token.
 - REST `POST /v1/sessions/start`. The REST client does not expose it, and it would move the path off the MCP surface that the §24.17 introduction names for session commands.
 
-`lenny/create_and_start_session` keeps the path on MCP and leaves no window in which the CLI holds a session it has not started. Its handler runs the owner binding, quota, concurrency, admission-rate, policy-chain, and environment-admission gates of the two-step create, but not the pool-drain gate or the refusal while both stores are unavailable; issue [CAPISES-I2](../../../issues/CAPISES/CAPISES-I2-create-and-start-skips-drain-and-degraded-gates.md) records the gap, and open decision O2 asks whether this step waits on it.
+`lenny/create_and_start_session` keeps the path on MCP and leaves no window in which the CLI holds a session it has not started. Its handler runs the owner binding, quota, concurrency, admission-rate, policy-chain, and environment-admission gates of the two-step create, but not the pool-drain gate or the refusal while both stores are unavailable; issue [CAPISES-I2](../../../issues/closed/CAPISES/CAPISES-I2-create-and-start-skips-drain-and-degraded-gates.md) records the gap, and open decision O2 asks whether this step waits on it.
 
 Change [0138](../../0138-rest-only-client-api/change.md) (REST-only client API, program v1) maps `lenny session new` to REST `POST /v1/sessions/start` and removes the SDKs' MCP clients in its steps 0138.S4 and 0138.S6, so it replaces this path and `MCPClient.CreateAndStartSession` when it lands. Open decision O1 asks whether 0160 takes the REST path now.
 

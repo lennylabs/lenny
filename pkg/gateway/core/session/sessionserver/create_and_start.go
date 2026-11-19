@@ -51,10 +51,12 @@ type CreateAndStartResponse = CreateSessionResponse
 // "running" so callers receive the uploadToken + sessionIsolationLevel
 // in the same envelope they would from POST /v1/sessions.
 //
-// Workspace plan validation, isolation profile resolution, upload
-// token minting, and the role check all run as in handleCreate; the
-// extra work here is just to advance the row through the §15.1
-// precondition table to running before returning.
+// Workspace plan validation, isolation profile resolution, the admission
+// gates, and upload token minting all run as in handleCreate; the extra
+// work here is to advance the row through the §15.1 precondition table to
+// running before returning. The permission check runs before this handler:
+// in the API front's request pipeline for the REST route, and in
+// guardPermission for CreateAndStartService.
 func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 	// spec: §10.2 (Session ownership) rules 1 and 3 — the owner is the
 	// principal's subject, resolved before any gate, store write, or claim.
@@ -104,7 +106,8 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 }
 
 // createAndStartGates runs the §15.1 admission gates on the combined
-// create-and-start path over the decoded request: the active-user gate, the
+// create-and-start path over the decoded request: the §10.1 dual-store gate,
+// the active-user gate, the
 // §12.8 creation gate over the tenant and the owner, the §12.9 tenant data-classification gate, the §11
 // session-quota gate, the §11.1 concurrency and admission-rate gates, the §4.8
 // PostAuth policy chain, and the §10.6 environment-admission gate. The §11.1
@@ -122,6 +125,12 @@ func (s *Server) handleCreateAndStart(w http.ResponseWriter, r *http.Request) {
 // resolved from the principal.
 // spec: §15.1, §12.8, §12.9, §11, §11.1, §10.6, §4.8, §15.2.1 rule 1, §10.2.
 func (s *Server) createAndStartGates(w http.ResponseWriter, r *http.Request, tenantID, owner string, req CreateAndStartRequest) bool {
+	// The dual-store refusal is the first gate, as on the two-step create
+	// path, so a create-and-start while both stores are unreachable claims no
+	// pod and runs no setup or launch.
+	if !s.requireStoresAvailable(w) {
+		return false
+	}
 	if !s.requireActiveUser(w, r) {
 		return false
 	}
@@ -218,7 +227,10 @@ func (s *Server) decodeCreateAndStartRequest(w http.ResponseWriter, r *http.Requ
 // the §4.8 PostAuth policy chain, so the §4.8 PostAuth-before-PreRoute phase
 // order holds. It returns the built row and the createAndStartBuild the persist
 // and response stages consume, writing the §15.1 error envelope and returning
-// ok=false on any rejection. spec: §27.4, §5.3, §7.1, §14, §7.5, §4.8, §10.7.
+// ok=false on any rejection. The §15.1 pool-drain gate runs on the runtime
+// the PreRoute segment below the pivot selected, and again on a runtime the
+// ExperimentRouter or the later PreRoute segment selected, before any claim.
+// spec: §27.4, §5.3, §7.1, §14, §7.5, §4.8, §10.7.
 func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, tenantID, owner string, req CreateAndStartRequest) (sessionstore.Session, createAndStartBuild, bool) {
 	// spec: §27.5 / §27.9 — parity with handleCreate: an
 	// origin=playground caller may only create against a playground-visible
@@ -265,6 +277,15 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	if !ok {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
+	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
+
+	// Refuse a create-and-start that would select a pool in the `draining`
+	// phase before any pod claim, at the point the two-step create runs the
+	// same gate: on the runtime the PreRoute segment below the pivot selected.
+	// F-15.1.8.
+	if !s.requirePoolNotDraining(w, r, runtimeRef, effProf, req.Pool) {
+		return sessionstore.Session{}, createAndStartBuild{}, false
+	}
 
 	// spec: §7.1 — resolve the pool-derived isolation level
 	// once so executionMode + scrubPolicy can be persisted on the row
@@ -278,7 +299,6 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	// the pool-derived profile on the row so the same-call claim
 	// (claimAtCreate re-resolves from row.IsolationProfile) is consistent
 	// with the pin. F-CS2 (0018).
-	effProf := effectiveRequestedProfile(req.IsolationProfile, isoProf, req.Pool)
 	level := s.resolveIsolationLevel(r.Context(), runtimeRef, effProf, req.Pool)
 	row := sessionstore.Session{
 		ID:               s.idFn(),
@@ -329,6 +349,13 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	// spec: §4.8 — the PreRoute segment at or above the ExperimentRouter
 	// pivot; the two-step create path runs the same segment.
 	if !s.preRouteAfterExperiment(w, r, &row, effProf, req.Pool) {
+		return sessionstore.Session{}, createAndStartBuild{}, false
+	}
+	// The drain gate above judged the runtime before the ExperimentRouter and
+	// the later PreRoute segment ran, so a runtime either one selected is
+	// judged here, before any pod claim, as on the two-step create path.
+	// F-15.1.8.
+	if row.RuntimeRef != runtimeRef && !s.requirePoolNotDraining(w, r, row.RuntimeRef, effProf, req.Pool) {
 		return sessionstore.Session{}, createAndStartBuild{}, false
 	}
 	// spec: §7.5 Setup Commands (Command policy); §5.1 — the client's

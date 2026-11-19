@@ -445,11 +445,13 @@ Errors follow Lenny's standard [error format](index.html#error-format). The adap
 | Lenny error code | HTTP status | Description |
 |:-----------------|:------------|:------------|
 | `VALIDATION_ERROR` | 400 | Invalid request parameters |
+| `FORBIDDEN` | 403 | The caller's role does not grant `manage_own_sessions`, such as `tenant-viewer` or `billing-viewer`, so the request cannot create a session |
 | `RESOURCE_NOT_FOUND` | 404 | Unknown model (runtime) |
 | `RATE_LIMITED` | 429 | Request rate limit exceeded |
 | `QUOTA_EXCEEDED` | 429 | Token or session quota exceeded |
 | `RUNTIME_UNAVAILABLE` | 503 | No pods available for the runtime |
 | `WARM_POOL_EXHAUSTED` | 503 | No idle pods in pool |
+| `POOL_DRAINING` | 503 | The pool the session would run on is draining; the response carries a `Retry-After` header |
 | `INTERNAL_ERROR` | 500 | Unexpected server error |
 
 When streaming, errors that occur mid-stream are delivered as an error event:

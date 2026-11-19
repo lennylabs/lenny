@@ -1,9 +1,12 @@
 ---
 id: CAPISES-I1
-status: open
+status: closed
 kind: build-gap
 severity: high
 requirements: []
+change: 0161.S1
+closed: fixed
+closed-by: 0161.S1
 ---
 
 # Session creation through MCP and the single-shot path skips the create-permission check

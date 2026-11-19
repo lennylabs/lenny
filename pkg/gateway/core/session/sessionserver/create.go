@@ -82,16 +82,7 @@ type createBuild struct {
 // row validation. owner is the session owner createSession resolved from
 // the principal. spec: §15.1, §11.1, §10.1, §10.6, §27.4, §10.2.
 func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, req CreateSessionRequest, tenantID, owner string) bool {
-	// spec: §10.1 item 2 — while both Postgres and Redis are unreachable
-	// a new session.create cannot complete its Postgres INSERT, so reject
-	// it with 503 + Retry-After: 10 before consuming any quota, rate, or
-	// token budget. In-progress sessions are unaffected (they continue on
-	// cached coordination state); only creation is suspended. F-10.1.3.
-	if s.dualStore != nil && s.dualStore.Unavailable() {
-		w.Header().Set("Retry-After", "10")
-		s.writeError(w, http.StatusServiceUnavailable, "PLATFORM_DEGRADED",
-			"session creation is suspended: the platform's coordination stores are temporarily unavailable",
-			map[string]any{"reason": "dual_store_unavailable", "retryAfter": 10})
+	if !s.requireStoresAvailable(w) {
 		return false
 	}
 	if !s.requireActiveUser(w, r) {
@@ -152,6 +143,26 @@ func (s *Server) createAdmissionGates(w http.ResponseWriter, r *http.Request, re
 	// allowedRuntimes filter is an authorization boundary, not just a picker
 	// display filter. A non-playground caller is unaffected. F-27.4.1.
 	return s.requirePlaygroundRuntimeVisible(w, r, req.RuntimeRef)
+}
+
+// requireStoresAvailable refuses a session create while both Postgres and
+// Redis are unreachable, because the create cannot complete its Postgres
+// INSERT. It writes 503 PLATFORM_DEGRADED with Retry-After: 10 and returns
+// false. Both create handlers, handleCreate and handleCreateAndStart, run it
+// as their first admission gate, so a refused create consumes no quota, rate,
+// or token budget and claims no pod. In-progress sessions are unaffected: they
+// continue on cached coordination state. With no gate wired it admits.
+//
+// spec: §10.1.3 (Dual-Store Unavailability) item 2. F-10.1.3.
+func (s *Server) requireStoresAvailable(w http.ResponseWriter) bool {
+	if s.dualStore == nil || !s.dualStore.Unavailable() {
+		return true
+	}
+	w.Header().Set("Retry-After", "10")
+	s.writeError(w, http.StatusServiceUnavailable, "PLATFORM_DEGRADED",
+		"session creation is suspended: the platform's coordination stores are temporarily unavailable",
+		map[string]any{"reason": "dual_store_unavailable", "retryAfter": 10})
+	return false
 }
 
 // validateAndBuildCreateRow runs the §5.3 isolation-profile, §15.1

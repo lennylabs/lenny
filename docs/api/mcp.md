@@ -164,6 +164,7 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 | Code | When |
 |:-----|:-----|
 | `VALIDATION_ERROR` | Invalid parameters (missing runtime, bad workspace plan) |
+| `FORBIDDEN` | The caller's role does not grant `manage_own_sessions`, such as `tenant-viewer` or `billing-viewer` |
 | `RUNTIME_UNAVAILABLE` | No healthy pods for the requested runtime |
 | `WARM_POOL_EXHAUSTED` | No idle pods in the warm pool |
 | `QUOTA_EXCEEDED` | Tenant session quota exceeded |
@@ -173,6 +174,9 @@ For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC P
 | `USER_INVALIDATED` | The caller or the session's owner is invalidated |
 | `TENANT_SUSPENDED` | The tenant is suspended |
 | `TENANT_NOT_ACTIVE` | The tenant is not `active`, such as during tenant deletion |
+| `POOL_DRAINING` | The target pool is draining |
+
+While the gateway's Postgres and Redis are both unreachable, the tool refuses the call with the same `503` error and 10-second retry hint that `POST /v1/sessions` returns, and creates no session.
 
 **Example:**
 
@@ -238,12 +242,11 @@ The task streams output as MCP Task progress notifications.
 
 **Error codes:**
 
-Same as `create_session`, plus:
+Same as `create_session`, under the same conditions, plus:
 
 | Code | When |
 |:-----|:-----|
 | `IMAGE_RESOLUTION_FAILED` | Runtime container image unresolvable |
-| `POOL_DRAINING` | Target pool is draining |
 
 **Example:**
 
