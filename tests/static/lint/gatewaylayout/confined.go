@@ -15,6 +15,9 @@ type Confinement struct {
 	// Playground marks a subtree the web playground may import: the
 	// packages its token mint reads.
 	Playground bool
+	// PlatformTools marks a subtree the platform tools seam may import:
+	// the delegation policy store, whose policies the seam evaluates.
+	PlatformTools bool
 	// Exact matches the directory alone rather than its subtree, as for the
 	// shared credential package, which the API front may import while the
 	// packages under it stay confined.
@@ -89,16 +92,16 @@ var Confined = []Confinement{
 	{Path: "pkg/tenancy/tenantaccessstore", APIFront: true},
 	{Path: "pkg/gateway/environment/customrolestore", APIFront: true},
 	{Path: "pkg/tenancy/customrolestore", APIFront: true},
-	{Path: "pkg/gateway/mcpfabric/delegationpolicystore", APIFront: true},
-	{Path: "pkg/delegation/delegationpolicystore", APIFront: true},
+	{Path: "pkg/gateway/mcpfabric/delegationpolicystore", APIFront: true, PlatformTools: true},
+	{Path: "pkg/delegation/delegationpolicystore", APIFront: true, PlatformTools: true},
 }
 
 // confinedImport reports whether an import from a package of the given kind
 // and part to the repository-relative path to breaks the confinement rule.
 // Only a gateway part is held to it: the session core, the metering proxy,
-// and the composition root import every confined package, the API front
-// and the web playground import the subtrees marked for each, and every
-// other part imports none. A package in transit or outside the gateway is
+// and the composition root import every confined package, the API front,
+// the web playground, and the platform tools seam import the subtrees
+// marked for each, and every other part imports none. A package in transit or outside the gateway is
 // not held to it.
 func confinedImport(kind Kind, part, to string, confined []Confinement) bool {
 	var hit *Confinement
@@ -117,7 +120,13 @@ func confinedImport(kind Kind, part, to string, confined []Confinement) bool {
 	case KindReplica:
 		return part != PartPlayground || !hit.Playground
 	case KindSeam:
-		return part != "metering-proxy"
+		switch part {
+		case "metering-proxy":
+			return false
+		case PartPlatformTools:
+			return !hit.PlatformTools
+		}
+		return true
 	case KindAPIFront:
 		return !hit.APIFront
 	}

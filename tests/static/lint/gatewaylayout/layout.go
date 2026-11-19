@@ -48,6 +48,10 @@ const (
 // packages its token mint reads.
 const PartPlayground = "playground"
 
+// PartPlatformTools is the part of the platform tools seam, which GW-R2
+// allows the delegation policy store its delegation service evaluates.
+const PartPlatformTools = "platform-tools"
+
 // Dir is one row of the directory table: a directory under the module root
 // and the part every package in its subtree belongs to.
 type Dir struct {
@@ -80,7 +84,7 @@ var Layout = []Dir{
 	{Path: "pkg/gateway/seam", Part: "seam-interface", Kind: KindSeamInterface},
 	{Path: "pkg/gateway/streamproxy", Part: "stream-proxy", Kind: KindSeam},
 	{Path: "pkg/gateway/uploadhandler", Part: "upload-handler", Kind: KindSeam},
-	{Path: "pkg/gateway/platformtools", Part: "platform-tools", Kind: KindSeam},
+	{Path: "pkg/gateway/platformtools", Part: PartPlatformTools, Kind: KindSeam},
 	{Path: "pkg/gateway/meteringproxy", Part: "metering-proxy", Kind: KindSeam},
 	{Path: "pkg/gateway/core", Part: "core", Kind: KindCore},
 	{Path: "pkg/gateway/api", Part: "api-front", Kind: KindAPIFront},

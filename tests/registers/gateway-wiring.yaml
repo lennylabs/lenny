@@ -228,16 +228,6 @@ crossings:
     from: pkg/gateway/replica/gatewaymetrics
     type: Metrics
     step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: Options.Policies
-    from: pkg/gateway/mcpfabric/delegationpolicystore
-    type: Memory
-    step: 0117.S7
-  - to: pkg/gateway/mcpfabric/delegation
-    interface: Options.Policies
-    from: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
-    type: Store
-    step: 0117.S7
   - to: pkg/gateway/mcpfabric/delegation/export
     interface: NewMaterializer(2)
     from: pkg/gateway/externalapi/admin
