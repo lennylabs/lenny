@@ -1667,7 +1667,7 @@ func New(store sessionstore.Store, opts Options) *Server {
 		experimentReporter:         opts.ExperimentRejections,
 		stickyCache:                opts.StickyCache,
 		externalProviders:          opts.ExternalProviders,
-		events:                     opts.Events,
+		events:                     seam.EventsOrNil(opts.Events),
 		dualStore:                  opts.DualStore,
 		messaging:                  opts.Messaging,
 		interactions:               opts.Interactions,

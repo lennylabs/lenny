@@ -30,6 +30,7 @@ type busEmitter struct {
 // nil Emitter (event emission is best-effort). The Coordinator tolerates
 // a nil Emitter.
 func NewBusEmitter(bus seam.Events, now func() time.Time) sessioninbox.Emitter {
+	bus = seam.EventsOrNil(bus)
 	if bus == nil {
 		return nil
 	}

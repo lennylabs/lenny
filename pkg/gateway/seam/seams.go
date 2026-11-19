@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"reflect"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
@@ -248,6 +249,24 @@ type Events interface {
 
 	// StreamStats is GWSEAM-StreamStats.
 	StreamStats() StreamStats
+}
+
+// EventsOrNil returns e, or nil when e is nil or holds a nil pointer, such
+// as a nil *sessionevents.Bus assigned to an Events field. A part that
+// stores an Events value normalizes it through EventsOrNil, so its
+// "no event bus" check, a comparison with nil, also catches a typed nil
+// and the part publishes nothing instead of dereferencing it.
+func EventsOrNil(e Events) Events {
+	if e == nil {
+		return nil
+	}
+	switch v := reflect.ValueOf(e); v.Kind() {
+	case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Func, reflect.Chan, reflect.Interface:
+		if v.IsNil() {
+			return nil
+		}
+	}
+	return e
 }
 
 // StreamStats is the result of Events.StreamStats. Utilization is a

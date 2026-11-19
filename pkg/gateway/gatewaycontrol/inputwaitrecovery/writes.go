@@ -150,12 +150,13 @@ func (w Writer) apply(ctx context.Context, tenantID, sessionID string, mutate fu
 // lifecycle transitions send.
 // spec: §7.2 (Session state machine) — status_change(state).
 func (w Writer) publishStatusChange(row sessionstore.Session) {
-	if w.Events == nil {
+	events := seam.EventsOrNil(w.Events)
+	if events == nil {
 		return
 	}
 	data, err := json.Marshal(map[string]any{"state": string(row.State)})
 	if err != nil {
 		return
 	}
-	w.Events.Publish(row.TenantID, row.ID, "status_change", string(data), w.now())
+	events.Publish(row.TenantID, row.ID, "status_change", string(data), w.now())
 }

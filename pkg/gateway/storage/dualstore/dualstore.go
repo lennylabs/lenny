@@ -174,8 +174,8 @@ func (m *Monitor) tick(ctx context.Context) {
 			m.Gauge.SetDualStoreUnavailable(true)
 		}
 		reached := 0
-		if m.Streams != nil {
-			reached = m.Streams.Broadcast(PlatformDegradedEventType, PlatformDegradedData, now)
+		if streams := seam.EventsOrNil(m.Streams); streams != nil {
+			reached = streams.Broadcast(PlatformDegradedEventType, PlatformDegradedData, now)
 		}
 		m.logf("dualstore: Postgres and Redis both unreachable; entering §10.1 degraded mode (PLATFORM_DEGRADED broadcast to %d stream(s), reason=%s)", reached, degradedReason)
 		return

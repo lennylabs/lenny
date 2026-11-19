@@ -65,7 +65,7 @@ func NewToolApprovalGate(store sessionstore.Store, interactions interactionstore
 	return &ToolApprovalGate{
 		store:        store,
 		interactions: interactions,
-		events:       events,
+		events:       seam.EventsOrNil(events),
 		waits:        waits,
 		now:          now,
 		timeout:      timeout,

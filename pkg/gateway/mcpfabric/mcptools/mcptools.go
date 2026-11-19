@@ -914,6 +914,8 @@ type ElicitationLifecycleRecorder interface {
 
 // Register installs the §8.5 tools onto the MCP server.
 func Register(srv *mcp.Server, deps Deps) {
+	// A typed nil bus leaves the event tools off, as a nil one does.
+	deps.Events = seam.EventsOrNil(deps.Events)
 	clock := deps.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }

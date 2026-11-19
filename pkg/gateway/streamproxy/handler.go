@@ -16,8 +16,8 @@ import (
 // the handler reads.
 type Options struct {
 	// Events is the session event bus the event and log streams replay
-	// from and tail. When nil, both endpoints answer
-	// 503 EVENT_STREAM_UNAVAILABLE.
+	// from and tail. When nil, or a typed nil such as a nil bus pointer,
+	// both endpoints answer 503 EVENT_STREAM_UNAVAILABLE.
 	Events seam.Events
 	// Sessions looks up the session a request names (GWSEAM-LookupSession).
 	Sessions seam.Sessions
@@ -58,7 +58,7 @@ func New(opts Options) (*Handler, error) {
 		clock = time.Now
 	}
 	return &Handler{
-		events:   opts.Events,
+		events:   seam.EventsOrNil(opts.Events),
 		sessions: opts.Sessions,
 		frames:   opts.Frames,
 		identity: opts.Identity,

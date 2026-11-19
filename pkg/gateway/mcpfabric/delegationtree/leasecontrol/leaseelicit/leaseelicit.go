@@ -114,7 +114,7 @@ type Config struct {
 // New returns an Elicitor over cfg.
 func New(cfg Config) *Elicitor {
 	var publish Publisher
-	if events := cfg.Events; events != nil {
+	if events := seam.EventsOrNil(cfg.Events); events != nil {
 		// The elicitation event publishes without a tenant scope, as the
 		// requesting session's stream took it before the seam interface.
 		publish = func(sessionID, eventType, data string, now time.Time) {

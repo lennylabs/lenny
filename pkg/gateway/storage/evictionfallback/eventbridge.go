@@ -42,12 +42,13 @@ func (b *SessionEventsBridge) EmitSessionLost(_ context.Context, sessionID, reas
 	if err != nil {
 		body = []byte(`{}`)
 	}
-	if b.Bus == nil {
+	bus := seam.EventsOrNil(b.Bus)
+	if bus == nil {
 		log.Printf("evictionfallback: session.lost (event bus unavailable) session=%s reason=%s payload=%s",
 			sessionID, reason, body)
 		return
 	}
-	b.Bus.Publish("", sessionID, "session.lost", string(body), b.now())
+	bus.Publish("", sessionID, "session.lost", string(body), b.now())
 }
 
 func (b *SessionEventsBridge) now() time.Time {

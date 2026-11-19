@@ -150,3 +150,39 @@ func TestStreamsAnswerAStoreFailureAsAnInternalError(t *testing.T) {
 		}
 	}
 }
+
+// TestStreamsTreatANilBusPointerAsNoBus checks that a handler built with a
+// nil *sessionevents.Bus answers both streams 503 EVENT_STREAM_UNAVAILABLE,
+// as a handler with no bus does, instead of calling the bus through a typed
+// nil.
+//
+// spec: GWSEAM-Subscribe
+func TestStreamsTreatANilBusPointerAsNoBus(t *testing.T) {
+	store := memstore.New()
+	now := time.Now()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		UserID: testOwner, ID: "sess_nilbus", TenantID: "acme", State: session.StateRunning, CreatedAt: now, UpdatedAt: now,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
+	core := srv.StreamSeam()
+	var bus *sessionevents.Bus
+	h, err := streamproxy.New(streamproxy.Options{Events: bus, Sessions: core, Frames: core, Identity: core})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.RegisterRoutes(srv); err != nil {
+		t.Fatal(err)
+	}
+	handler := asOwner(srv.Handler())
+	for _, path := range []string{"/v1/sessions/sess_nilbus/events", "/v1/sessions/sess_nilbus/logs"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != http.StatusServiceUnavailable || !strings.Contains(rr.Body.String(), "EVENT_STREAM_UNAVAILABLE") {
+			t.Errorf("%s = %d %s, want 503 EVENT_STREAM_UNAVAILABLE", path, rr.Code, rr.Body.String())
+		}
+	}
+}

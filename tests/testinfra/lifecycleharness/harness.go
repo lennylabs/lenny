@@ -523,7 +523,6 @@ func (h *Harness) AddReplica(name string) *Replica {
 	r.inputWaitGen = inputwaitrecovery.NewGeneration()
 	opts := sessionserver.Options{
 		DevTenantHeader:            true,
-		Events:                     bus,
 		IDFunc:                     newIDFunc(name),
 		DefaultIsolationProfile:    isolation.ProfileSandboxed,
 		PodBinder:                  binder,
@@ -546,6 +545,11 @@ func (h *Harness) AddReplica(name string) *Replica {
 		WorkspaceSealMaxDuration:   SealWindow,
 		StreamFailureReportTimeout: ReleaseAllowance,
 		Runtimes:                   h.runtimes,
+	}
+	// The session server takes the bus only when the test asked for
+	// events, so a harness without one hands it no typed-nil bus.
+	if bus != nil {
+		opts.Events = bus
 	}
 	h.applyObjectStore(&opts)
 	r.Server = sessionserver.New(h.Store, opts)

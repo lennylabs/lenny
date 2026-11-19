@@ -77,6 +77,8 @@ func (c AttachConfig) now() time.Time {
 // the SSE stream; a non-SSE caller (a WebSocket frame or a plain JSON
 // POST) falls through to the registered snapshot handler. spec: §15.2. F-15.2.2, F-9.1.7.
 func (s *Server) SetAttach(cfg AttachConfig) {
+	// A typed nil bus leaves attach streaming off, as a nil one does.
+	cfg.Events = seam.EventsOrNil(cfg.Events)
 	s.attach = cfg
 }
 
