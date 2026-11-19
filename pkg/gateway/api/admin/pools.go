@@ -43,7 +43,7 @@ type ReconciliationResumer interface {
 // bootstrapping and the empty string otherwise; idlePodCount is the
 // ready-pod count. found is false when no PodSet exists for
 // the pool yet, so the handler omits the live-status fields.
-// The gateway satisfies it with a podsession.PoolStatusLookup.
+// The gateway satisfies it with a poolstatus.Lookup.
 type PoolStatusReader interface {
 	PoolStatus(ctx context.Context, poolName string) (condition string, idlePodCount int, found bool, err error)
 }

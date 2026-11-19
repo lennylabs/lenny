@@ -51,7 +51,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/bindrelease"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
@@ -78,6 +77,7 @@ import (
 	legalholdescrowpg "github.com/lennylabs/lenny/pkg/legalholdescrow/pgstore"
 	"github.com/lennylabs/lenny/pkg/preflight"
 	preflightinfra "github.com/lennylabs/lenny/pkg/preflight/infra"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstatus"
 	"github.com/lennylabs/lenny/pkg/schemamigrate"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
@@ -388,7 +388,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	// agent-namespace deployment). The minimal Postgres-only posture
 	// leaves the reader unwired and the fields are omitted.
 	if w.podBinder != nil && w.podBinder.Client != nil {
-		lookup := podsession.PoolStatusLookup{
+		lookup := poolstatus.Lookup{
 			Reader:    w.podBinder.Client,
 			Namespace: w.podBinder.Namespace,
 		}

@@ -79,11 +79,6 @@ crossings:
     type: Server.OnSessionTerminal
     step: 0117.S8
   - to: pkg/gateway/api/admin
-    interface: Router.WithCRDGenerationReader(0)
-    from: pkg/gateway/podlifecycle/podsession
-    type: PoolStatusLookup
-    step: 0117.S8
-  - to: pkg/gateway/api/admin
     interface: Router.WithElicitationFloorProvider(0)
     from: pkg/gateway/platformtools/elicitationfloor
     type: Provider.Floor
@@ -104,19 +99,9 @@ crossings:
     type: StoreBudgetSource
     step: 0117.S8
   - to: pkg/gateway/api/admin
-    interface: Router.WithPoolBootstrapStatusReader(0)
-    from: pkg/gateway/podlifecycle/podsession
-    type: PoolStatusLookup
-    step: 0117.S8
-  - to: pkg/gateway/api/admin
     interface: Router.WithPoolCredentialRevocation(0)
     from: pkg/gateway/credentials/credrenewal/propagator
     type: Propagator
-    step: 0117.S8
-  - to: pkg/gateway/api/admin
-    interface: Router.WithPoolStatusReader(0)
-    from: pkg/gateway/podlifecycle/podsession
-    type: PoolStatusLookup
     step: 0117.S8
   - to: pkg/gateway/api/admin
     interface: Router.WithRevokeHook(0)

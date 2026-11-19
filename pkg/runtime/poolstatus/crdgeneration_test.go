@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package podsession_test
+package poolstatus_test
 
 import (
 	"context"
@@ -11,7 +11,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/runtime/poolstatus"
 )
 
 // spec: §4.6.2 — CRDGeneration reads the
@@ -32,7 +32,7 @@ func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
 		},
 	}
 	c := fake.NewClientBuilder().WithScheme(newScheme(t)).WithObjects(tmpl).Build()
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
+	l := poolstatus.Lookup{Reader: c, Namespace: ns}
 
 	gen, lastAt, ok, err := l.CRDGeneration(context.Background(), "p")
 	if err != nil || !ok {
@@ -52,7 +52,7 @@ func TestCRDGenerationReadsAnnotations_spec_4_6_2(t *testing.T) {
 func TestCRDGenerationMissingTemplate_spec_4_6_2(t *testing.T) {
 	ns := testNamespace(t)
 	c := fake.NewClientBuilder().WithScheme(newScheme(t)).Build()
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
+	l := poolstatus.Lookup{Reader: c, Namespace: ns}
 	gen, lastAt, ok, err := l.CRDGeneration(context.Background(), "ghost")
 	if err != nil {
 		t.Fatalf("CRDGeneration: %v", err)
@@ -72,7 +72,7 @@ func TestCRDGenerationUnstampedTemplate_spec_4_6_2(t *testing.T) {
 		ObjectMeta: metav1.ObjectMeta{Name: "p", Namespace: ns},
 	}
 	c := fake.NewClientBuilder().WithScheme(newScheme(t)).WithObjects(tmpl).Build()
-	l := podsession.PoolStatusLookup{Reader: c, Namespace: ns}
+	l := poolstatus.Lookup{Reader: c, Namespace: ns}
 	gen, lastAt, ok, err := l.CRDGeneration(context.Background(), "p")
 	if err != nil || !ok {
 		t.Fatalf("CRDGeneration: ok=%v err=%v", ok, err)
