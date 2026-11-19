@@ -24,21 +24,6 @@ type sweepNoopTerminator struct{}
 
 func (sweepNoopTerminator) ExpireSession(string, string) {}
 
-// spec: §11.2
-//
-// A non-positive --budget-state-sweep-interval is refused at startup, and a
-// positive one is accepted.
-func TestValidateBudgetStateSweepInterval_spec_11_2(t *testing.T) {
-	for _, d := range []time.Duration{0, -time.Second} {
-		if err := validateBudgetStateSweepInterval(d); err == nil {
-			t.Fatalf("interval %s accepted, want an error", d)
-		}
-	}
-	if err := validateBudgetStateSweepInterval(time.Minute); err != nil {
-		t.Fatalf("interval 1m refused: %v", err)
-	}
-}
-
 // spec: §11.2, §10.1.1, §8.6
 //
 // The wired sweep reads the union of the enforcer's counters, the usage

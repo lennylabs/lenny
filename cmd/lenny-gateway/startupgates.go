@@ -13,7 +13,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
-	"github.com/lennylabs/lenny/pkg/gateway/core/session/recycle"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
@@ -42,7 +41,7 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §10.3 config validation / TLS probe;
 // §17.4 dev-mode gate; §16.3 tracing; §16.5 SLO warning.
-func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags) {
+func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags, core *sessionCoreFlags) {
 	f := w.f
 	elicitationFloor := f.elicitationFloor
 	devMode := f.devMode
@@ -51,7 +50,7 @@ func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags) {
 	noEnvPolicy := f.noEnvPolicy
 	oidcIssuerURL := f.oidcIssuerURL
 	oidcClientID := f.oidcClientID
-	maxSessionAgeSeconds := f.maxSessionAgeSeconds
+	maxSessionAgeSeconds := core.watchdog.MaxSessionAgeSeconds
 	startupProbeRedisAddr := probe.RedisAddr
 	startupProbePgBouncerAddr := probe.PgBouncerAddr
 	startupProbeCA := probe.CA
@@ -63,7 +62,6 @@ func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags) {
 	delegationUsageQuiescenceTimeoutSeconds := f.delegationUsageQuiescenceTimeoutSeconds
 	delegationCascadeTimeoutSeconds := f.delegationCascadeTimeoutSeconds
 	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
-	claimHoldTTLSeconds := f.claimHoldTTLSeconds
 
 	// spec: §17.2 / §9.2 — the platform-wide elicitation
 	// content-integrity floor is seeded from the
@@ -203,21 +201,21 @@ func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags) {
 	if err := validateErasureMaxConcurrentJobs(*f.erasureMaxConcurrentJobs); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
-	if err := validateSuspensionFlags(*f.maxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *f.suspendedBacklogRecheckSeconds); err != nil {
+	if err := validateSuspensionFlags(*core.watchdog.MaxSuspendedSessionSeconds, *f.delegationBudgetKeyTTLSeconds, *core.sessionServer.SuspendedBacklogRecheckSeconds); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
 	if err := validateSlotReaperFlags(slotReaperSettings{
-		interval:                   *f.slotReaperInterval,
-		rate:                       *f.slotReaperRate,
-		terminalAge:                *f.slotReaperTerminalAge,
+		interval:                   *core.slotReaper.Interval,
+		rate:                       *core.slotReaper.Rate,
+		terminalAge:                *core.slotReaper.TerminalAge,
 		maxFinalizingSeconds:       *f.maxFinalizingTimeoutSeconds,
-		maxResumingSeconds:         *f.maxResumingSeconds,
+		maxResumingSeconds:         *core.watchdog.MaxResumingSeconds,
 		sealSeconds:                *f.workspaceSealMaxDurationSeconds,
 		streamFailureReportTimeout: *f.streamFailureReportTimeout,
 	}); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
-	if err := validateBudgetStateSweepInterval(*f.budgetStateSweepInterval); err != nil {
+	if err := core.budgetState.Validate(); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
 	if err := validateUsageQuiescenceTimeout(*f.delegationUsageQuiescenceTimeoutSeconds, *f.workspaceSealMaxDurationSeconds); err != nil {
@@ -264,9 +262,8 @@ func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags) {
 	// evaluation at the next disposition. Warn at startup when the operator
 	// sets it above the advisory ceiling so the inventory effect is visible in
 	// the logs; the value is honored regardless.
-	if *claimHoldTTLSeconds > recycle.HighClaimHoldTTLWarnSeconds {
-		log.Printf("lenny-gateway: WARNING: claimHoldTTLSeconds=%ds exceeds the advisory ceiling of %ds (§4.6.1); a long reserved hold depresses apparent idle inventory and delays retirement-limit evaluation",
-			*claimHoldTTLSeconds, recycle.HighClaimHoldTTLWarnSeconds)
+	if msg, warn := core.recycle.HoldTTLWarning(); warn {
+		log.Printf("lenny-gateway: %s", msg)
 	}
 }
 

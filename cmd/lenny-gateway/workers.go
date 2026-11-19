@@ -33,7 +33,7 @@ import (
 // and the listeners. It produces no value the later steps consume.
 //
 // spec: §4.1 — gateway background subsystems; §10.1 / §11.2 / §12.5 sweeps.
-func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *gatewayleader.Flags, tokenFlags *admintoken.Flags) {
+func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *gatewayleader.Flags, tokenFlags *admintoken.Flags, core *sessionCoreFlags) {
 	f := w.f
 	agentNamespace := f.agentNamespace
 	artifactReplicationConfig := f.artifactReplicationConfig
@@ -216,7 +216,7 @@ func (w *gatewayWiring) startBackgroundWorkers(pdb *pdbwatcher.Flags, leader *ga
 		w.adminRouter = w.adminRouter.WithArtifactReplication(replCtrl)
 	}
 
-	w.startLeaderElectedSweeps(leader, tokenFlags)
+	w.startLeaderElectedSweeps(leader, tokenFlags, core)
 
 	w.startBillingAndSecurityWorkers()
 	// ----- §16.1 metrics export -----

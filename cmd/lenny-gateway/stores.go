@@ -59,14 +59,14 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §4.2/§4.4/§4.5 stores; §12.3 store
 // router; §4.9 credentials; §15.1 pod placement.
-func (w *gatewayWiring) buildStores(sessionEventFlags *sessionevents.Flags) {
+func (w *gatewayWiring) buildStores(sessionEventFlags *sessionevents.Flags, core *sessionCoreFlags) {
 	// checkpointRetention is constructed by the §4.4/§12.5 retention step
 	// and consumed by the §15.1 pod-lifecycle checkpointer through an
 	// explicit return. It is also recorded on the accumulator because the
 	// §12.8 tenant-deletion Phase 4 eraser must erase the same instance.
 	checkpointRetention := w.buildPersistenceStores()
 	w.checkpointRetention = checkpointRetention
-	w.buildRedisAndQuota()
+	w.buildRedisAndQuota(core.coordination)
 	w.buildStoreRouterAndSecurityBus()
 	// spec: §4.1 / §11.2.1 — build the billing failover pipeline. Records
 	// the ledger, pipeline, fan-out emitter, and resolved audit-retention
@@ -76,8 +76,8 @@ func (w *gatewayWiring) buildStores(sessionEventFlags *sessionevents.Flags) {
 	// surfaces. Records them on the accumulator.
 	w.buildTokenSigningStores(w.tenants)
 	w.buildExecutorAndCredentials()
-	w.buildPodLifecycle(checkpointRetention)
-	w.buildSessionMessaging(sessionEventFlags)
+	w.buildPodLifecycle(checkpointRetention, core)
+	w.buildSessionMessaging(sessionEventFlags, core.sessionInbox)
 }
 
 // buildPersistenceStores constructs the §4.2 session and metadata stores

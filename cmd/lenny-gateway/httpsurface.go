@@ -77,6 +77,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	deprecationFlags *deprecationmw.Flags,
 	serviceIdentityFlags *serviceidentity.Flags,
 	idempotencyFlags *idempotencymw.Flags,
+	prestopFlags *prestop.Flags,
 	gwMetrics *gatewaymetrics.Metrics,
 	sessionSrv *sessionserver.Server,
 	openaiHandler *translator.OpenAIChatHandler,
@@ -105,7 +106,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	devMode := f.devMode
 	deprecatedAPIVersionsCSV := deprecationFlags.Versions
 	adapterTLSCert := f.adapterTLSCert
-	barrierAckTimeoutSeconds := f.barrierAckTimeoutSeconds
+	barrierAckTimeoutSeconds := prestopFlags.BarrierAckTimeoutSeconds
 	idempotencyMaxBodyBytes := idempotencyFlags.MaxBodyBytes
 	failOpenStatePath := f.failOpenStatePath
 	tokenServiceHTTPURL := f.tokenServiceHTTPURL

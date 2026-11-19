@@ -129,7 +129,7 @@ func routeTableWiring(t *testing.T) (*gatewayWiring, *sessionserver.Server) {
 	attachToolRoutes(sessionSrv, w.apiRoutes, store, nil, toolapproval.NewRegistry(), nil, nil)
 
 	mcpSrv := mcp.NewServer()
-	w.buildHTTPSurface(parts.playground, parts.rateLimit, parts.deprecation, parts.serviceIdentity, parts.idempotency, gwMetrics, sessionSrv,
+	w.buildHTTPSurface(parts.playground, parts.rateLimit, parts.deprecation, parts.serviceIdentity, parts.idempotency, parts.prestop, gwMetrics, sessionSrv,
 		&translator.OpenAIChatHandler{}, w.responsesHandler, credentialserver.New(nil),
 		mcpSrv, nil, nil, discardAppender{}, nil, nil,
 		nil, nil, nil, nil, nil, nil, nil, "")

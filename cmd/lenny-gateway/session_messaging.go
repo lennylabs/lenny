@@ -39,14 +39,14 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §7.2/§7.3 messaging; §8.10 tree
 // archive; §8.2 tree budget; §9.2 interactions; §9.4 memory; §10.7 evals.
-func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.Flags) {
+func (w *gatewayWiring) buildSessionMessaging(sessionEventFlags *sessionevents.Flags, inboxFlags *sessioninbox.Flags) {
 	f := w.f
 	evalAggregationRefreshSeconds := f.evalAggregationRefreshSeconds
 	memoryEnabled := f.memoryEnabled
 	memoryMaxPerUser := f.memoryMaxPerUser
-	messagingDurableInbox := f.messagingDurableInbox
-	messagingMaxDLQSize := f.messagingMaxDLQSize
-	messagingMaxInboxSize := f.messagingMaxInboxSize
+	messagingDurableInbox := inboxFlags.DurableInbox
+	messagingMaxDLQSize := inboxFlags.MaxDLQSize
+	messagingMaxInboxSize := inboxFlags.MaxInboxSize
 	toolApprovalTimeout := f.toolApprovalTimeout
 	treeArchiveCacheEntries := f.treeArchiveCacheEntries
 

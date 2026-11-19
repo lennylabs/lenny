@@ -58,7 +58,7 @@ const adapterGRPCPort = 50051
 //
 // spec: §4.1 gateway subsystem seams; §15.1 pod placement; §4.7 binder;
 // §5.2 slot counter; recycle.
-func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretention.Store) {
+func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretention.Store, core *sessionCoreFlags) {
 	f := w.f
 	adapterCA := f.adapterCA
 	adapterKeepaliveTimeMs := f.adapterKeepaliveTimeMs
@@ -67,16 +67,16 @@ func (w *gatewayWiring) buildPodLifecycle(checkpointRetention checkpointretentio
 	adapterTLSKey := f.adapterTLSKey
 	agentNamespace := f.agentNamespace
 	checkpointInterval := f.checkpointInterval
-	checkpointJitterFraction := f.checkpointJitterFraction
-	checkpointGrantWindow := f.checkpointGrantWindow
-	checkpointCapabilityTTLSeconds := f.checkpointCapabilityTTLSeconds
-	claimHoldTTLSeconds := f.claimHoldTTLSeconds
+	checkpointJitterFraction := core.checkpointer.JitterFraction
+	checkpointGrantWindow := core.checkpointer.GrantWindow
+	checkpointCapabilityTTLSeconds := core.checkpointer.CapabilityTTLSeconds
+	claimHoldTTLSeconds := core.recycle.ClaimHoldTTLSeconds
 	clusterBurst := f.clusterBurst
 	clusterQPS := f.clusterQPS
 	saTokenAudience := f.saTokenAudience
 	adminSATokenAudience := f.adminSATokenAudience
-	slotCounterPostgresFallbackMaxSeconds := f.slotCounterPostgresFallbackMaxSeconds
-	slotCounterRecoveryProbeInterval := f.slotCounterRecoveryProbeInterval
+	slotCounterPostgresFallbackMaxSeconds := core.slotCounter.PostgresFallbackMaxSeconds
+	slotCounterRecoveryProbeInterval := core.slotCounter.RecoveryProbeInterval
 	// slotCounterProbeTimeout bounds one slot-set recovery probe, the 2s
 	// bound the other §12.4 recovery probes use.
 	const slotCounterProbeTimeout = 2 * time.Second

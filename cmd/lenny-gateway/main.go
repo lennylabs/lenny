@@ -94,7 +94,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// argument. spec: §4.1.
 
 	// §10.3/§17.4/§16.3/§16.5 startup gates and process-wide providers.
-	w.buildStartupGates(parts.tlsProbe)
+	w.buildStartupGates(parts.tlsProbe, parts.core)
 	elicitationFloorProvider := w.elicitationFloorProvider
 	resolvedNoEnvPolicy := w.resolvedNoEnvPolicy
 
@@ -103,7 +103,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// block so it runs at process shutdown; the §17.4 SQLite flush-loop cancel
 	// stays a synchronous call in runServers (gated on sqliteDB, before
 	// sqliteDB.Close), matching the original timing exactly. F-17.4.2.
-	w.buildStores(parts.sessionEvents)
+	w.buildStores(parts.sessionEvents, parts.core)
 	// §10.3 NET-072 CH-HOLDERFORWARD client and listener TLS, built before
 	// the session server that takes the client.
 	w.buildHolderForwardTransport()
@@ -115,7 +115,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 
 	// §16.1 metric registry plus the back-fill onto the stores built before it
 	// existed, and the §10.1/§13.3/§4.1 monitors.
-	w.buildMetricsBackfill()
+	w.buildMetricsBackfill(parts.core.dualStore)
 	gwMetrics := w.gwMetrics
 	dsMonitor := w.dsMonitor
 
@@ -180,7 +180,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 		customRoles, resolvedNoEnvPolicy, auditSink, w.sessionStickyCache,
 		w.experimentProviders, usage, taskUsageBuilder, quotaCheckpointSvc, policyChain, policyAuditSink,
 		auditAppender, inputWaits, w.uploadSubsystem, w.uploadMetrics, parts.uploads, slotHealth,
-		w.callbackValidator, w.callbackSeal, w.callbackDispatcher,
+		w.callbackValidator, w.callbackSeal, w.callbackDispatcher, parts.core,
 	)
 	// spec: §11.2 — the budget terminator runs the same terminal
 	// pipeline a watchdog or operator force-terminate runs, so an
@@ -231,7 +231,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 
 	// §15.1 REST routes and HTTP server. Records w.httpSrv.
 	w.buildHTTPSurface(
-		parts.playground, parts.rateLimit, parts.deprecation, parts.serviceIdentity, parts.idempotency,
+		parts.playground, parts.rateLimit, parts.deprecation, parts.serviceIdentity, parts.idempotency, parts.prestop,
 		gwMetrics, sessionSrv, w.openaiHandler, w.responsesHandler, w.credServer,
 		mcpSrv, policyChain, auditSink, auditAppender, opsEmitter, environments,
 		w.driftMonitor, dsMonitor, w.failOpenReplicas, w.revCache, revProp, ruStore,
@@ -250,7 +250,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// the §9.1/§9.3 tool bridges, the §4.7 scrub-report service) and the §6.2 /
 	// §11.3 session watchdog.
 	w.buildControlServer(gwMetrics, mcpSrv, auditAppender, slotHealth, w.mtlsDeny,
-		connectorAuthorizer, connectorInvoker, leaseBudgets, sessionSrv)
+		connectorAuthorizer, connectorInvoker, leaseBudgets, sessionSrv, parts.core)
 	// The reserved-hold coordinator and recycle-boundary
 	// coordinator are stopped on shutdown so the in-process timers and
 	// re-warm polls do not run against a draining client. The original
@@ -279,7 +279,7 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// background-worker step (it reads w.sessionSrv and the recorded
 	// propagators to drive the periodic sweepers).
 	w.sessionSrv = sessionSrv
-	w.startBackgroundWorkers(parts.pdbWatcher, parts.leader, parts.adminToken)
+	w.startBackgroundWorkers(parts.pdbWatcher, parts.leader, parts.adminToken, parts.core)
 
 	// §17 — record the LLM proxy server, then hand off to runServers (the
 	// §25.13 alert tracker, the signal handler, and the run-and-shutdown loop).

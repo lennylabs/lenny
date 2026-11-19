@@ -55,10 +55,10 @@ func outstandingReservationSource(m partialmanifeststore.Store) storagequota.Liv
 	return m.SumOutstandingReservations
 }
 
-func (w *gatewayWiring) buildRedisAndQuota() {
+func (w *gatewayWiring) buildRedisAndQuota(coordinationFlags *coordination.Flags) {
 	f := w.f
 	capacityTier := f.capacityTier
-	coordInterval := f.coordInterval
+	coordInterval := coordinationFlags.Interval
 	redisAllowInsecure := f.redisAllowInsecure
 	redisCachePubSubURL := f.redisCachePubSubURL
 	redisClusterAddrs := f.redisClusterAddrs

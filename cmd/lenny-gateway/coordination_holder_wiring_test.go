@@ -26,6 +26,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/coordination"
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
@@ -61,7 +62,7 @@ func wiringWithRedis(t *testing.T, args ...string) *gatewayWiring {
 	}
 	w := &gatewayWiring{f: f}
 	w.sessions = memstore.New()
-	w.buildRedisAndQuota()
+	w.buildRedisAndQuota(coordination.RegisterFlags(flag.NewFlagSet("test", flag.ContinueOnError)))
 	return w
 }
 

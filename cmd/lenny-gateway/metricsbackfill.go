@@ -41,9 +41,9 @@ import (
 // steps read them back.
 //
 // spec: §4.1 gateway subsystem seams; §16.1 / §16.5 / §25.13 gateway metrics.
-func (w *gatewayWiring) buildMetricsBackfill() {
+func (w *gatewayWiring) buildMetricsBackfill(dualStoreFlags *dualstore.Flags) {
 	f := w.f
-	dualStoreMaxSeconds := f.dualStoreMaxSeconds
+	dualStoreMaxSeconds := dualStoreFlags.MaxUnavailableSeconds
 	maxSessionsPerReplica := f.maxSessionsPerReplica
 	delegationMaxOrphanTasksPerTenant := f.delegationMaxOrphanTasksPerTenant
 	minReplicas := f.minReplicas

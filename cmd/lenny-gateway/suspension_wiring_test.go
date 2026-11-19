@@ -122,7 +122,6 @@ func TestSuspendedBacklogRecheckRegistration_spec_7_2(t *testing.T) {
 	recheck := 300
 	full := func() *gatewayWiring {
 		w := &gatewayWiring{}
-		w.f = &gatewayFlags{suspendedBacklogRecheckSeconds: &recheck}
 		w.podBinder = &podsession.Binder{}
 		w.messagingCoord = &sessioninbox.Coordinator{}
 		w.sessionSrv = sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true})
@@ -143,7 +142,7 @@ func TestSuspendedBacklogRecheckRegistration_spec_7_2(t *testing.T) {
 			w := full()
 			tc.mutate(w)
 			var names []string
-			w.addSuspendedBacklogRecheck(func(name string, _ func(context.Context)) { names = append(names, name) })
+			w.addSuspendedBacklogRecheck(&sessionserver.Flags{SuspendedBacklogRecheckSeconds: &recheck}, func(name string, _ func(context.Context)) { names = append(names, name) })
 			got := len(names) == 1 && names[0] == "suspended-backlog-recheck"
 			if got != tc.want {
 				t.Errorf("registered %v, want registration %v", names, tc.want)

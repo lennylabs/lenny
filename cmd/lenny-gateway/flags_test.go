@@ -90,12 +90,12 @@ func TestRegisterArtifactFlagsBindsCredentialLeaseGCInterval(t *testing.T) {
 
 // spec: §12.4 (Redis failure behavior)
 //
-// TestRegisterStorageFlagsBindsSlotCounterRecoveryProbeInterval pins that
-// registerStorageFlags binds --slot-counter-recovery-probe-interval, the
+// TestSlotCounterFlagsBindSlotCounterRecoveryProbeInterval pins that the slot
+// counter's flags bind --slot-counter-recovery-probe-interval, the
 // operator-tunable cadence of the slot-set recovery probe, defaulting to
 // slotcounter.DefaultRecoveryProbeInterval (2s), and that a supplied value
 // overrides it.
-func TestRegisterStorageFlagsBindsSlotCounterRecoveryProbeInterval(t *testing.T) {
+func TestSlotCounterFlagsBindSlotCounterRecoveryProbeInterval(t *testing.T) {
 	savedCmdLine := flag.CommandLine
 	savedArgs := os.Args
 	t.Cleanup(func() {
@@ -105,18 +105,17 @@ func TestRegisterStorageFlagsBindsSlotCounterRecoveryProbeInterval(t *testing.T)
 	flag.CommandLine = flag.NewFlagSet(os.Args[0], flag.ContinueOnError)
 	os.Args = []string{savedArgs[0]}
 
-	f := &gatewayFlags{}
-	f.registerStorageFlags()
-	if f.slotCounterRecoveryProbeInterval == nil {
-		t.Fatal("registerStorageFlags did not bind --slot-counter-recovery-probe-interval")
+	f := slotcounter.RegisterFlags(flag.CommandLine)
+	if f.RecoveryProbeInterval == nil {
+		t.Fatal("slotcounter.RegisterFlags did not bind --slot-counter-recovery-probe-interval")
 	}
-	if got := *f.slotCounterRecoveryProbeInterval; got != slotcounter.DefaultRecoveryProbeInterval {
+	if got := *f.RecoveryProbeInterval; got != slotcounter.DefaultRecoveryProbeInterval {
 		t.Errorf("default = %v, want %v", got, slotcounter.DefaultRecoveryProbeInterval)
 	}
 	if err := flag.CommandLine.Parse([]string{"--slot-counter-recovery-probe-interval=5s"}); err != nil {
 		t.Fatalf("parse: %v", err)
 	}
-	if got := *f.slotCounterRecoveryProbeInterval; got != 5*time.Second {
+	if got := *f.RecoveryProbeInterval; got != 5*time.Second {
 		t.Errorf("overridden value = %v, want 5s", got)
 	}
 }
