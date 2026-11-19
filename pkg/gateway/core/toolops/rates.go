@@ -6,8 +6,8 @@ import (
 	"context"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/ratewindow"
 )
 

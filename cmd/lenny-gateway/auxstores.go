@@ -7,10 +7,11 @@ import (
 
 	"google.golang.org/grpc"
 
+	"github.com/lennylabs/lenny/pkg/billing/usagestore"
+	usagepg "github.com/lennylabs/lenny/pkg/billing/usagestore/pgstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
-	usagepg "github.com/lennylabs/lenny/pkg/gateway/billing/usagestore/pgstore"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	credentialpoolpg "github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
@@ -19,14 +20,13 @@ import (
 	environmentpg "github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	tenantaccesspg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
 	sessionusagepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionusage/pgstore"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/storerouter"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 // buildAuxStores is the §4.1 composition-root build step (R1) for the

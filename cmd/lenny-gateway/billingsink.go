@@ -6,8 +6,8 @@ import (
 	"context"
 	"log"
 
+	"github.com/lennylabs/lenny/pkg/billing/billingsink"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingsink"
 )
 
 // billingSinkDeadLetter logs a §11.2.1 dead-lettered billing-event

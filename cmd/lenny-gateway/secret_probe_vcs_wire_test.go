@@ -23,10 +23,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/tokenservice/secretprobe"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 const vcsWireToken = "ghs_wire_value"

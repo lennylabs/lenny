@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §10.1 checkpoint_manifest store, exercising the
-// Postgres-backed pkg/gateway/checkpoint/partialmanifeststore/pgstore
+// Postgres-backed pkg/checkpoint/partialmanifeststore/pgstore
 // against a real container with the production migrations (0178)
 // applied. Covers the intent-row Put + Get round-trip on the
 // (tenant_id, checkpoint_id) key, the supersede-on-write and fencing
@@ -22,8 +22,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
-	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore/pgstore"
+	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
+	partialmanifestpg "github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 )

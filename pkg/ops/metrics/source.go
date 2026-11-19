@@ -30,8 +30,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/ops/gateway"
+	"github.com/lennylabs/lenny/pkg/recommendations"
 )
 
 // DataPoint is one (timestamp, value) sample returned by a range

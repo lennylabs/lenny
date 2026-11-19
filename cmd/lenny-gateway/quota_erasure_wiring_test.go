@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/quota/quotafailopen"
 )
 
 // spec: §12.8 step 6 — with no quota backend wired the gateway skips the

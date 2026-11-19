@@ -269,27 +269,27 @@ sites:
       site: 1
       call: Skip
       reason: git not on PATH
-    - path: pkg/gateway/provisioning/gitref/clone_test.go
+    - path: pkg/workspaceplan/gitref/clone_test.go
       function: TestCloneMissingRepoFails
       site: 1
       call: Skip
       reason: git not on PATH
-    - path: pkg/gateway/provisioning/gitref/gitref_test.go
+    - path: pkg/workspaceplan/gitref/gitref_test.go
       function: TestResolveMissingRepoIsClassified
       site: 1
       call: Skip
       reason: git not on PATH
-    - path: pkg/gateway/provisioning/gitref/gitref_test.go
+    - path: pkg/workspaceplan/gitref/gitref_test.go
       function: tempRepo
       site: 1
       call: Skip
       reason: git not on PATH
-    - path: pkg/gateway/quota/quotacheckpoint/pgstore/addtenanttotal_test.go
+    - path: pkg/quota/quotacheckpoint/pgstore/addtenanttotal_test.go
       function: TestAddTenantTotal_AtomicIncrement_spec_12_4_268
       site: 1
       call: Skip
       reason: downloads the PostgreSQL bundle; skipped under -short
-    - path: pkg/gateway/quota/quotacheckpoint/pgstore/erasure_test.go
+    - path: pkg/quota/quotacheckpoint/pgstore/erasure_test.go
       function: TestDeleteByUserAndTenant_ErasesCheckpoint_spec_12_8_step6
       site: 1
       call: Skip

@@ -17,8 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota/redisstore"
+	"github.com/lennylabs/lenny/pkg/quota/storagequota"
+	"github.com/lennylabs/lenny/pkg/quota/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )

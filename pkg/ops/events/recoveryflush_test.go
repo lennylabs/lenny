@@ -10,7 +10,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 )
 
 // spec: 25.5 (best-effort recovery flush, eventKey dedup) — on a Redis

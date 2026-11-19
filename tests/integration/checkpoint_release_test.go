@@ -34,12 +34,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/blobstore/cataloging"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
+	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
+	partialmanifestpg "github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
-	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/storagequota/redisstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/quota/storagequota/redisstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

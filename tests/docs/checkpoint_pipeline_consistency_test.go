@@ -43,7 +43,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
+	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 )
 
 // domainColumns are the checkpoint_manifest columns migration 0178 creates

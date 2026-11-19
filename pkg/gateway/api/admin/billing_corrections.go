@@ -12,8 +12,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/correctionstore"
+	"github.com/lennylabs/lenny/pkg/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/billing/correctionstore"
 )
 
 // ApproverNotifier delivers a §11.2.1 dual-control approval

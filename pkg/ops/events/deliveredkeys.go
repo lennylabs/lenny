@@ -2,7 +2,7 @@
 
 package events
 
-import "github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+import "github.com/lennylabs/lenny/pkg/events/eventbuffer"
 
 // bufferReplayWindow is the floor on how many recently delivered eventKeys one
 // SSE connection remembers: enough to cover a replay of the local ring merged

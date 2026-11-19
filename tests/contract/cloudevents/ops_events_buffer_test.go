@@ -9,7 +9,7 @@
 // datacontenttype application/ocsf+json (single-envelope model, no
 // double-wrapping), and that a non-audit event uses application/json with
 // an event-specific JSON payload in `data`. This file drives the
-// production emit path (pkg/gateway/eventbuffer.Emitter records into the
+// production emit path (pkg/events/eventbuffer.Emitter records into the
 // in-process buffer) and reads the records back out through the assembled
 // GET /v1/admin/events/buffer admin endpoint, then validates each record
 // the endpoint serves against the externally published CloudEvents
@@ -38,9 +38,9 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )
 

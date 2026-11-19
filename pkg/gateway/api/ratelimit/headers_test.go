@@ -10,7 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	ratelimitmw "github.com/lennylabs/lenny/pkg/gateway/api/ratelimit"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	rlcounter "github.com/lennylabs/lenny/pkg/policy/ratelimit"
 )
 
 // fireRec sends one request through h and returns the full recorder so

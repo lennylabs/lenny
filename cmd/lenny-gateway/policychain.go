@@ -7,15 +7,15 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditscope"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotabudget"
-	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
+	"github.com/lennylabs/lenny/pkg/audit/auditscope"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/policy"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/quota/quotabudget"
+	quotacheckpointpg "github.com/lennylabs/lenny/pkg/quota/quotacheckpoint/pgstore"
+	"github.com/lennylabs/lenny/pkg/quota/quotafailopen"
+	"github.com/lennylabs/lenny/pkg/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

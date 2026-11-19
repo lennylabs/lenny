@@ -11,8 +11,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/fileexport"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

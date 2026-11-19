@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 // stubVCSResolver is a vcscred.Resolver recording its inputs and

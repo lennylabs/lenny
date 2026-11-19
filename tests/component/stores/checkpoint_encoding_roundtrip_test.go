@@ -21,8 +21,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter/workspace"
 	"github.com/lennylabs/lenny/pkg/blobstore/miniostore"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
-	partialmanifestpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore/pgstore"
+	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
+	partialmanifestpg "github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )

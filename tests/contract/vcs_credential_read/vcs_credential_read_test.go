@@ -37,11 +37,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 const sha = "a1b2c3d4e5f60718293a4b5c6d7e8f9012345678"

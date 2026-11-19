@@ -11,10 +11,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/events"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/circuitbreaker/breakerstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 

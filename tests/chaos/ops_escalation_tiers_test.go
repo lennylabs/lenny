@@ -49,7 +49,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/escalation"
 	escpgstore "github.com/lennylabs/lenny/pkg/ops/escalation/pgstore"
 	escredisstore "github.com/lennylabs/lenny/pkg/ops/escalation/redisstore"

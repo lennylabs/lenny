@@ -26,72 +26,9 @@
 # removal leaves, so the register is empty when the v1 program closes.
 version: 1
 packages:
-  - package: pkg/gateway/audit/auditretention
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/audit/auditscope
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/audit/auditstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/audit/auditstore/auditbatch
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/audit/jwtaudit
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingcheckpoint
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingfanout
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingretention
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingsink
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingstore/failover
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingstore/failover/redisstream
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/billingstore/pgstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/correctionstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/correctionstore/pgstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/usagestore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/billing/usagestore/pgstore
-    part: domain
-    step: 0117.S9
   - package: pkg/gateway/checkpoint/checkpointer
     part: core
     step: 0117.S11
-  - package: pkg/gateway/checkpoint/checkpointretention
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/checkpoint/checkpointretention/pgstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/checkpoint/partialmanifeststore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/checkpoint/partialmanifeststore/pgstore
-    part: domain
-    step: 0117.S9
   - package: pkg/gateway/checkpoint/resumechunks
     part: core
     step: 0117.S11
@@ -245,9 +182,6 @@ packages:
   - package: pkg/gateway/environment/userstore/pgstore
     part: domain
     step: 0117.S12
-  - package: pkg/gateway/eventbuffer
-    part: domain
-    step: 0117.S9
   - package: pkg/gateway/experiment/evalstore
     part: removed
     removed-by: '0141'
@@ -284,30 +218,12 @@ packages:
   - package: pkg/gateway/llmproxy/semanticcache/redisstore
     part: removed
     removed-by: '0132'
-  - package: pkg/gateway/mcpfabric/delegationpolicystore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
-    part: domain
-    step: 0117.S9
   - package: pkg/gateway/mcpfabric/mcpruntimes
     part: removed
     removed-by: '0119'
   - package: pkg/gateway/mcpfabric/mcpschemagen
     part: removed
     removed-by: '0138'
-  - package: pkg/gateway/operability/recommendations
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/pki/carotation
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/pki/carotationstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/pki/carotationstore/pgstore
-    part: domain
-    step: 0117.S9
   - package: pkg/gateway/podlifecycle/bindrelease
     part: core
     step: 0117.S11
@@ -320,57 +236,6 @@ packages:
   - package: pkg/gateway/podlifecycle/slotreaper
     part: core
     step: 0117.S11
-  - package: pkg/gateway/policy/interceptor
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/policy/interceptor/interceptorstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/policy/interceptor/interceptorstore/pgstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/policy/policy
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/policy/ratelimit
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/policy/ratelimit/redisstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/provisioning/envblock
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/provisioning/gitref
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/provisioning/vcscred
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/quotabudget
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/quotacheckpoint
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/quotacheckpoint/pgstore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/quotaerasure
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/quotafailopen
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/quotastore
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/storagequota
-    part: domain
-    step: 0117.S9
-  - package: pkg/gateway/quota/storagequota/redisstore
-    part: domain
-    step: 0117.S9
   - package: pkg/gateway/runtime/adapter
     part: core
     step: 0117.S11

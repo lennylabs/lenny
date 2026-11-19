@@ -11,9 +11,9 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/policy"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 )
 
 // requireSessionQuota enforces the §11.2 per-tenant concurrent-session

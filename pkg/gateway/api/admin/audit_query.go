@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditretention"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/eventbus"
 	auditcat "github.com/lennylabs/lenny/pkg/observability/audit"
 )

@@ -25,9 +25,9 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"

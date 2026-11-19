@@ -31,7 +31,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
+	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 )
 
 // spec: §25.9 (Degraded-mode write semantics) — "Deferred writes are

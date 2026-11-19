@@ -7,7 +7,7 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
+	"github.com/lennylabs/lenny/pkg/recommendations"
 )
 
 // WithRecommendations wires the §25.3 GET /v1/admin/recommendations

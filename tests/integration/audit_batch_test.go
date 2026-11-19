@@ -16,8 +16,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/audit"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore/auditbatch"
+	"github.com/lennylabs/lenny/pkg/audit/auditstore"
+	"github.com/lennylabs/lenny/pkg/audit/auditstore/auditbatch"
 )
 
 // spec: §12.3 — batched T2 inserts seal and chain correctly,

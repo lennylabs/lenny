@@ -4,7 +4,7 @@
 
 // Contract test for the §4.4 / §12.5 session_checkpoints retention
 // catalog, exercising the Postgres-backed
-// pkg/gateway/checkpoint/checkpointretention/pgstore against a real
+// pkg/checkpoint/checkpointretention/pgstore against a real
 // container with the production migrations applied. The package's SQL names
 // its columns in string literals, so the compiler checks none of it: this
 // case is what holds the insert, the rotation, the listing, and the hard
@@ -17,9 +17,9 @@ import (
 	"testing"
 	"time"
 
-	retentionpg "github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention/pgstore"
+	retentionpg "github.com/lennylabs/lenny/pkg/checkpoint/checkpointretention/pgstore"
 
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointretention"
+	"github.com/lennylabs/lenny/pkg/checkpoint/checkpointretention"
 )
 
 // spec: §4.4 (checkpoint catalog durability), §12.5 (the "latest 2"

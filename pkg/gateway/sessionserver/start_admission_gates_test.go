@@ -14,9 +14,9 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	rlcounter "github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	rlcounter "github.com/lennylabs/lenny/pkg/policy/ratelimit"
 )
 
 // spec: §11.1 (concurrency, admission-rate), §10.6 (environment-admission),

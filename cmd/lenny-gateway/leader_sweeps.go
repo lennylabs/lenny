@@ -11,6 +11,7 @@ import (
 	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 
+	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
@@ -18,7 +19,6 @@ import (
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/api/admintoken/reclaimer"
 	apileaderjobs "github.com/lennylabs/lenny/pkg/gateway/api/leaderjobs"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/adminops"
 	"github.com/lennylabs/lenny/pkg/gateway/core/leaderjobs"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/slotreaper"

@@ -11,8 +11,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
+	"github.com/lennylabs/lenny/pkg/recommendations"
 )
 
 func newRecommendationsAdmin(t *testing.T, store *recommendations.WindowStore) *admin.Router {

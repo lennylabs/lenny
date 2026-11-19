@@ -6,7 +6,7 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
+	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 )
 
 // spec: §8.3 — resolveChildContentPolicy applies the

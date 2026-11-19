@@ -13,8 +13,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
-	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/partialmanifeststore"
 )
 
 // fakeChunkCatalog is an in-memory ChunkCatalogReleaser. SoftDeleteRow models

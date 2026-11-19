@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 )
 
 // capturingNotifier records the §11.2.1 approver-notification payload on

@@ -11,10 +11,10 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/gitref"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 	"github.com/lennylabs/lenny/pkg/upload"
 	"github.com/lennylabs/lenny/pkg/upload/archive"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/gitref"
 )
 
 // rewriteExtractedSources rewrites every §14 uploadArchive source and

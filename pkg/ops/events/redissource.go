@@ -16,7 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	gwevents "github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 )
 
 // RedisStreamClient is the client surface the §25.5 read-side Redis source
@@ -205,7 +205,7 @@ func (t *redisTailConn) Close() error {
 
 // redisSource reads the §25.5 platform-scoped Redis stream that every
 // replica (gateway, controllers, peer lenny-ops) XADDs operational events
-// to. It pairs with the producer side (pkg/gateway/eventbuffer.StreamEmitter):
+// to. It pairs with the producer side (pkg/events/eventbuffer.StreamEmitter):
 // the emitter XADDs each event as a single "event" field carrying the
 // marshalled CloudEvents record, and this source reads that field back so
 // the CloudEvents payload the poll envelope and SSE frame carry decodes

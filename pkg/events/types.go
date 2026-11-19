@@ -11,7 +11,7 @@
 // The package is gateway-neutral: it imports only the standard library
 // and pkg/observability/metrics, never pkg/gateway. The concrete §25.3
 // in-process ring buffer and the local and Redis-stream emitters that
-// produce these events live in pkg/gateway/eventbuffer, which imports
+// produce these events live in pkg/events/eventbuffer, which imports
 // this package; the dependency edge is one-way (eventbuffer -> events).
 // spec: §25.3 (operational events), §16.6 (catalogue), §11 (the
 // EventEmitter policy sink).

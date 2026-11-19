@@ -13,12 +13,12 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/pagination"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
-	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
+	"github.com/lennylabs/lenny/pkg/billing/billingfanout"
+	"github.com/lennylabs/lenny/pkg/billing/billingstore"
+	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore"
 )
 
 // InterceptorPayload is the §4.8 / §15.1 admin interceptor-registry wire

@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 )
 
 // spec: §15.1 — ?dryRun=true validates without persisting or

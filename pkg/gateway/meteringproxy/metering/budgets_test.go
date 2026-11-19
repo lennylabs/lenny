@@ -8,7 +8,7 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
+	"github.com/lennylabs/lenny/pkg/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )

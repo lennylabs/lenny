@@ -10,9 +10,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
+	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
 // tokenServiceSecretProber is the gateway side of the §4.9 admin-time

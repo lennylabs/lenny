@@ -19,8 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/audit/siem"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	siemstub "github.com/lennylabs/lenny/tests/testinfra/stubs/siem"
 )
 

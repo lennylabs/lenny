@@ -8,21 +8,21 @@ import (
 	"fmt"
 	"log"
 
+	"github.com/lennylabs/lenny/pkg/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/audit/jwtaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
 	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/quota/quotafailopen"
+	"github.com/lennylabs/lenny/pkg/quota/quotastore"
 )
 
 // tenantEraseFunc is one Phase 4 entry's DeleteByTenant: it erases the

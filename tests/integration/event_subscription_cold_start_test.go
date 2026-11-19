@@ -35,7 +35,7 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/ops/eventsubscription"
 	eventsubpgstore "github.com/lennylabs/lenny/pkg/ops/eventsubscription/pgstore"
 	"github.com/lennylabs/lenny/pkg/ops/opsservice"

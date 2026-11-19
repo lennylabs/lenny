@@ -8,9 +8,9 @@ import (
 	"errors"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/pki/carotation"
-	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
 	"github.com/lennylabs/lenny/pkg/mtls"
+	"github.com/lennylabs/lenny/pkg/mtls/carotation"
+	"github.com/lennylabs/lenny/pkg/mtls/carotationstore"
 )
 
 // CARotationManager drives the §10.3 CA-rotation state machine on a

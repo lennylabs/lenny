@@ -23,7 +23,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/tests/testinfra/stubs/llmprovider"
 )
 

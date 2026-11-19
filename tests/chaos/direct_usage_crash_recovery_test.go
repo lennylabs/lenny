@@ -24,7 +24,7 @@
 //
 // The unit-level fold coverage (the MAX arithmetic against a fake counter, the
 // reader's cumulative pull, the per-pass pull-once invariant) lives in
-// pkg/gateway/quota/quotacheckpoint/podusage_reconcile_test.go and
+// pkg/quota/quotacheckpoint/podusage_reconcile_test.go and
 // cmd/lenny-gateway/direct_usage_recovery_test.go; this chaos test pins the
 // same contract against real Redis with a real meter across a crash.
 
@@ -36,9 +36,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint"
+	"github.com/lennylabs/lenny/pkg/quota/quotastore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

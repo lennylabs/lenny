@@ -21,7 +21,7 @@ type Stamper interface{ Stamp(id string) }
 import (
 	"net/http"
 
-	"example.com/fix/pkg/gateway/quota/quotastore"
+	"example.com/fix/pkg/quota/quotastore"
 	"example.com/fix/pkg/gateway/seam"
 )
 
@@ -59,7 +59,7 @@ type Svc struct{}
 
 func (s *Svc) Set(f func(id string)) {}
 `,
-	"pkg/gateway/quota/quotastore/store.go": `package quotastore
+	"pkg/quota/quotastore/store.go": `package quotastore
 
 type Store struct{}
 `,
@@ -129,7 +129,7 @@ import (
 	"example.com/fix/pkg/gateway/platformtools/extra"
 	"example.com/fix/pkg/gateway/platformtools/obs"
 	"example.com/fix/pkg/gateway/platformtools/tools"
-	"example.com/fix/pkg/gateway/quota/quotastore"
+	"example.com/fix/pkg/quota/quotastore"
 	"example.com/fix/pkg/gateway/replica/metrics"
 	"example.com/fix/pkg/gateway/replica/rr"
 )
@@ -240,12 +240,12 @@ func TestCrossingsFindsEachWiringFormOfACrossing(t *testing.T) {
 		},
 		{"function read from a core struct's field", "", "d.F = srv.Callback", []string{toolsPkg + "Deps.F" + fromServer + ".Callback"}},
 		{"function returned by a core function", "", "d.F = session.MakeHook()", []string{toolsPkg + "Deps.F <- pkg/gateway/core/session MakeHook"}},
-		{"confined value handed to the seam", "", "_ = tools.Deps{Quota: &quotastore.Store{}}", []string{toolsPkg + "Deps.Quota <- pkg/gateway/quota/quotastore Store"}},
+		{"confined value handed to the seam", "", "_ = tools.Deps{Quota: &quotastore.Store{}}", []string{toolsPkg + "Deps.Quota <- pkg/quota/quotastore Store"}},
 		{
 			"confined value held by an adapter",
 			"type reg struct{ q *quotastore.Store }",
 			"_ = tools.Deps{Iface: nil, Name: \"\"}\nvar r reg = reg{q: &quotastore.Store{}}\n(&tools.Svc{}).Set(func(id string) { _ = r })",
-			[]string{toolsPkg + "Svc.Set(0) <- pkg/gateway/quota/quotastore Store"},
+			[]string{toolsPkg + "Svc.Set(0) <- pkg/quota/quotastore Store"},
 		},
 	}
 	for _, tc := range cases {

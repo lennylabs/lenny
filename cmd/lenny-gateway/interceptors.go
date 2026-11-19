@@ -11,13 +11,13 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
-	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
-	quotacheckpointpg "github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint/pgstore"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
+	"github.com/lennylabs/lenny/pkg/policy"
+	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	interceptorv1 "github.com/lennylabs/lenny/pkg/proto/interceptor/v1"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint"
+	quotacheckpointpg "github.com/lennylabs/lenny/pkg/quota/quotacheckpoint/pgstore"
 )
 
 // buildQuotaCheckpoint is the §4.1 composition-root build step (R1) for the

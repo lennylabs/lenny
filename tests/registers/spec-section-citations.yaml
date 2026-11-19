@@ -303,47 +303,47 @@ packages:
       count: 9
     - package: pkg/gateway/api/wsbearer
       count: 4
-    - package: pkg/gateway/audit/auditretention
+    - package: pkg/audit/auditretention
       count: 12
-    - package: pkg/gateway/audit/auditscope
+    - package: pkg/audit/auditscope
       count: 2
-    - package: pkg/gateway/audit/auditstore
+    - package: pkg/audit/auditstore
       count: 71
-    - package: pkg/gateway/audit/auditstore/auditbatch
+    - package: pkg/audit/auditstore/auditbatch
       count: 7
-    - package: pkg/gateway/audit/jwtaudit
+    - package: pkg/audit/jwtaudit
       count: 4
-    - package: pkg/gateway/billing/billingcheckpoint
+    - package: pkg/billing/billingcheckpoint
       count: 2
-    - package: pkg/gateway/billing/billingfanout
+    - package: pkg/billing/billingfanout
       count: 11
-    - package: pkg/gateway/billing/billingretention
+    - package: pkg/billing/billingretention
       count: 4
-    - package: pkg/gateway/billing/billingsink
+    - package: pkg/billing/billingsink
       count: 11
-    - package: pkg/gateway/billing/billingstore
+    - package: pkg/billing/billingstore
       count: 26
-    - package: pkg/gateway/billing/billingstore/failover
+    - package: pkg/billing/billingstore/failover
       count: 20
-    - package: pkg/gateway/billing/billingstore/failover/redisstream
+    - package: pkg/billing/billingstore/failover/redisstream
       count: 19
-    - package: pkg/gateway/billing/billingstore/pgstore
+    - package: pkg/billing/billingstore/pgstore
       count: 20
-    - package: pkg/gateway/billing/correctionstore
+    - package: pkg/billing/correctionstore
       count: 1
-    - package: pkg/gateway/billing/correctionstore/pgstore
+    - package: pkg/billing/correctionstore/pgstore
       count: 4
-    - package: pkg/gateway/billing/usagestore
+    - package: pkg/billing/usagestore
       count: 1
-    - package: pkg/gateway/billing/usagestore/pgstore
+    - package: pkg/billing/usagestore/pgstore
       count: 6
     - package: pkg/gateway/checkpoint/checkpointer
       count: 301
-    - package: pkg/gateway/checkpoint/checkpointretention
+    - package: pkg/checkpoint/checkpointretention
       count: 18
-    - package: pkg/gateway/checkpoint/partialmanifeststore
+    - package: pkg/checkpoint/partialmanifeststore
       count: 48
-    - package: pkg/gateway/checkpoint/partialmanifeststore/pgstore
+    - package: pkg/checkpoint/partialmanifeststore/pgstore
       count: 3
     - package: pkg/gateway/checkpoint/resumechunks
       count: 24
@@ -449,7 +449,7 @@ packages:
       count: 29
     - package: pkg/gateway/environment/userstore/pgstore
       count: 9
-    - package: pkg/gateway/eventbuffer
+    - package: pkg/events/eventbuffer
       count: 8
     - package: pkg/gateway/experiment/evalstore
       count: 9
@@ -471,9 +471,9 @@ packages:
       count: 2
     - package: pkg/gateway/llmproxy/semanticcache/redisstore
       count: 4
-    - package: pkg/gateway/mcpfabric/delegationpolicystore
+    - package: pkg/delegation/delegationpolicystore
       count: 14
-    - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
+    - package: pkg/delegation/delegationpolicystore/pgstore
       count: 3
     - package: pkg/gateway/mcpfabric/mcpruntimes
       count: 18
@@ -485,17 +485,17 @@ packages:
       count: 53
     - package: pkg/gateway/meteringproxy/sessionbudget
       count: 28
-    - package: pkg/gateway/operability/recommendations
+    - package: pkg/recommendations
       count: 18
     - package: pkg/gateway/opsendpoints/health
       count: 46
     - package: pkg/gateway/opsendpoints/health/backends
       count: 19
-    - package: pkg/gateway/pki/carotation
+    - package: pkg/mtls/carotation
       count: 1
-    - package: pkg/gateway/pki/carotationstore
+    - package: pkg/mtls/carotationstore
       count: 1
-    - package: pkg/gateway/pki/carotationstore/pgstore
+    - package: pkg/mtls/carotationstore/pgstore
       count: 1
     - package: pkg/gateway/platformtools
       count: 53
@@ -555,37 +555,37 @@ packages:
       count: 510
     - package: pkg/gateway/podlifecycle/slotreaper
       count: 20
-    - package: pkg/gateway/policy/interceptor
+    - package: pkg/policy/interceptor
       count: 48
-    - package: pkg/gateway/policy/interceptor/interceptorstore
+    - package: pkg/policy/interceptor/interceptorstore
       count: 4
-    - package: pkg/gateway/policy/policy
+    - package: pkg/policy
       count: 31
-    - package: pkg/gateway/policy/ratelimit
+    - package: pkg/policy/ratelimit
       count: 1
-    - package: pkg/gateway/policy/ratelimit/redisstore
+    - package: pkg/policy/ratelimit/redisstore
       count: 1
-    - package: pkg/gateway/provisioning/envblock
+    - package: pkg/workspaceplan/envblock
       count: 1
-    - package: pkg/gateway/provisioning/gitref
+    - package: pkg/workspaceplan/gitref
       count: 2
-    - package: pkg/gateway/provisioning/vcscred
+    - package: pkg/workspaceplan/vcscred
       count: 8
-    - package: pkg/gateway/quota/quotabudget
+    - package: pkg/quota/quotabudget
       count: 16
-    - package: pkg/gateway/quota/quotacheckpoint
+    - package: pkg/quota/quotacheckpoint
       count: 32
-    - package: pkg/gateway/quota/quotacheckpoint/pgstore
+    - package: pkg/quota/quotacheckpoint/pgstore
       count: 6
-    - package: pkg/gateway/quota/quotaerasure
+    - package: pkg/quota/quotaerasure
       count: 4
-    - package: pkg/gateway/quota/quotafailopen
+    - package: pkg/quota/quotafailopen
       count: 16
-    - package: pkg/gateway/quota/quotastore
+    - package: pkg/quota/quotastore
       count: 23
-    - package: pkg/gateway/quota/storagequota
+    - package: pkg/quota/storagequota
       count: 26
-    - package: pkg/gateway/quota/storagequota/redisstore
+    - package: pkg/quota/storagequota/redisstore
       count: 3
     - package: pkg/gateway/replica/devmode
       count: 4

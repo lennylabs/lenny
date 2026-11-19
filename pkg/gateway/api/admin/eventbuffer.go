@@ -9,7 +9,7 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/events"
-	"github.com/lennylabs/lenny/pkg/gateway/eventbuffer"
+	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	corr "github.com/lennylabs/lenny/pkg/observability/correlation"
 )
 
