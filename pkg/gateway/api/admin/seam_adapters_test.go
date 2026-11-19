@@ -44,7 +44,9 @@ func (f *fakeCore) AfterTerminalWrite(_ context.Context, _ state.State, s seam.S
 	return s
 }
 
-func (f *fakeCore) AfterRevokeWrite(_ context.Context, s seam.Session) { f.revoked = append(f.revoked, s) }
+func (f *fakeCore) AfterRevokeWrite(_ context.Context, s seam.Session) {
+	f.revoked = append(f.revoked, s)
+}
 
 func (f *fakeCore) ReclaimRevokedPreRunning(_ context.Context, from state.State, s seam.Session) {
 	f.fromState = append(f.fromState, from)
@@ -57,7 +59,9 @@ func (f *fakeCore) TerminateUserSessions(_ context.Context, _, _ string, ids []s
 
 func (f *fakeCore) PropagateTokenRevocation(jti string) { f.jtis = append(f.jtis, jti) }
 
-func (f *fakeCore) RevokePoolCredentials(_ context.Context, _ string, ids []string) int { return len(ids) }
+func (f *fakeCore) RevokePoolCredentials(_ context.Context, _ string, ids []string) int {
+	return len(ids)
+}
 
 func (f *fakeCore) RevokeUserLeases(_, _ string, ids []string) int { return 2 * len(ids) }
 
