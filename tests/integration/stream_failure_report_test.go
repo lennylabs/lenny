@@ -53,6 +53,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -65,6 +66,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/toolwire"
 )
 
 const (
@@ -194,26 +196,58 @@ func (a *attachCounter) interceptor() grpc.ServerOption {
 }
 
 // recordingPodExecutor is the pod executor with every Release disposition
-// recorded, so a case can assert the failure funnel released the binding
-// with the failed disposition.
+// recorded as the call begins, so a case can assert the failure funnel
+// released the binding with the failed disposition, and with the number of
+// Release calls that have returned, so a case can wait for the release's
+// adapter Shutdown to finish before it reads what the Shutdown wrote.
 type recordingPodExecutor struct {
 	*executor.PodExecutor
 
 	mu       sync.Mutex
 	released []executor.Disposition
+	returned int
 }
 
 func (e *recordingPodExecutor) Release(ctx context.Context, sessionID string, d executor.Disposition) error {
 	e.mu.Lock()
 	e.released = append(e.released, d)
 	e.mu.Unlock()
-	return e.PodExecutor.Release(ctx, sessionID, d)
+	err := e.PodExecutor.Release(ctx, sessionID, d)
+	e.mu.Lock()
+	e.returned++
+	e.mu.Unlock()
+	return err
 }
 
 func (e *recordingPodExecutor) releases() []executor.Disposition {
 	e.mu.Lock()
 	defer e.mu.Unlock()
 	return append([]executor.Disposition(nil), e.released...)
+}
+
+// awaitReleasesReturned waits, bounded by streamFailureWait, until at least
+// one Release call has begun and every Release call that began has returned.
+//
+// The failure funnel commits the row's edge and only then releases the
+// binding, and the release's adapter Shutdown is what writes session_end to
+// the runtime, so a reader that observed the committed row can still see the
+// release in flight.
+func (e *recordingPodExecutor) awaitReleasesReturned(t *testing.T) {
+	t.Helper()
+	deadline := time.Now().Add(streamFailureWait)
+	for {
+		e.mu.Lock()
+		begun, returned := len(e.released), e.returned
+		e.mu.Unlock()
+		if begun > 0 && returned == begun {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("%d Release call(s) begun and %d returned after %s, want at least one begun and all returned",
+				begun, returned, streamFailureWait)
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 // streamFailureFixture is one replica serving one bound pod-backed session.
@@ -276,6 +310,9 @@ func newStreamFailureFixture(t *testing.T, rt adapter.RuntimeProcess, id string,
 		Interactions:            rep.interactions,
 	})
 	f.exec.SetStreamFailureHandler(f.srv.ReportAttachStreamFailure)
+	// The elicitation respond and dismiss routes are the platform tools
+	// seam's, attached as the gateway attaches them.
+	toolwire.Attach(t, f.srv, platformtools.Options{Store: f.store, Interactions: rep.interactions})
 	// spec: §10.2 (Session ownership) — the requests run as the seeded row's owner.
 	hs := httptest.NewServer(ownerprincipal.Wrap(f.srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(hs.Close)
@@ -386,12 +423,15 @@ func (f *streamFailureFixture) post(t *testing.T, content string) (int, map[stri
 // failure reason and one retry counted, the binding is released once with the
 // failed disposition, the adapter wrote session_end, the stream is gone from
 // the adapter, and a later delivery finds no binding and no cached stream.
+// The release follows the row's commit, so the assertions on it run once the
+// release has returned.
 func (f *streamFailureFixture) assertReportedAndReleased(t *testing.T, rt *heartbeatRuntime) {
 	t.Helper()
 	row := f.awaitState(t, session.StateResumePending)
 	if row.FailureReason != string(session.FailureRuntimeCrash) || row.RetryCount != 1 {
 		t.Errorf("row = %q/retries %d, want runtime_crash/1", row.FailureReason, row.RetryCount)
 	}
+	f.exec.awaitReleasesReturned(t)
 	if got := f.exec.releases(); len(got) != 1 || got[0] != executor.DispositionFailed {
 		t.Errorf("releases = %v, want one release with the failed disposition", got)
 	}
