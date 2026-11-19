@@ -31,9 +31,8 @@ const bearerSubprotocolPrefix = "lenny.bearer."
 // gateway-wide as the outermost wrapper. It must run before any access
 // log or audit middleware so the credential is never recorded, and
 // before the auth middleware so the promoted Authorization header is
-// validated on the standard bearer path (§27.3.1 states the
-// gateway validates the bearer "exactly as it would for any non-playground
-// MCP client"). When the caller already presented an Authorization header
+// validated on the standard bearer path, as any other MCP client's bearer
+// is. When the caller already presented an Authorization header
 // (the non-browser upgrade path), the carrier does not overwrite it.
 func Carrier(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

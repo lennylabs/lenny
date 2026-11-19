@@ -44,9 +44,8 @@ func TestToolsSeamCarriesTheStoredRowAcrossTheSeam(t *testing.T) {
 
 // TestToolsSeamCreateSessionDecodesTheBodyAsTheToolDid checks the create
 // operation's refusals and its decode: a body that does not decode and a
-// body that names no runtime are refused with VALIDATION_ERROR, a body that
-// names no environment takes the explicit environment of the request's
-// context, and a refusal of the creation service comes back with its code.
+// body that names no runtime are refused with VALIDATION_ERROR, the
+// connection's explicit environment fills a missing one, and a refusal of the creation service comes back with its code.
 // spec: GWSEAM-CreateSession
 func TestToolsSeamCreateSessionDecodesTheBodyAsTheToolDid(t *testing.T) {
 	srv := New(memstore.New(), Options{IDFunc: func() string { return "sess_new" }})

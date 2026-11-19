@@ -510,9 +510,8 @@ func (t *ToolsSeam) AfterTerminalWrite(ctx context.Context, from state.State, s 
 	return storedSession(t.s.AfterTerminalWrite(ctx, session.State(from), rowOf(s), hook))
 }
 
-// ExportPaths reads the files the export specifications select from the
-// pod of a session bound on this replica, through the binding's adapter
-// client. A session with no binding here returns seam.ErrNoLiveBinding.
+// ExportPaths runs the export RPC of each specification against the
+// adapter client of the session's binding on this replica. A session with no binding here returns seam.ErrNoLiveBinding.
 //
 // spec: GWSEAM-ExportPaths
 func (t *ToolsSeam) ExportPaths(ctx context.Context, sessionID string, specs []seam.ExportSpec) ([]seam.ExportedFile, error) {

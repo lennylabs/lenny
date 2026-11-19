@@ -21,17 +21,17 @@ const (
 	// input request, which fails closed when its forward is not delivered.
 	ForwardMessage ForwardKind = "message"
 	// ForwardMessageNoReplyTo is the forward kind of a message that answers
-	// no input request, which the caller holds when its forward to a
-	// running session is not delivered.
+	// no input request. Such a message is held by its sender when the forward
+	// to a running session does not arrive.
 	ForwardMessageNoReplyTo ForwardKind = "message-no-reply-to"
 )
 
 // TargetNotReady returns the refusal of a tool call whose session's holder
 // replica could not be reached: the TARGET_NOT_READY code with the
 // session's current state. The session core returns it from
-// GWSEAM-ForwardToolCall, and the platform tools seam returns it for a
-// message that a replica which lost the coordination lease did not
-// deliver, so both report the same refusal.
+// GWSEAM-ForwardToolCall, and the platform tools seam returns it when its
+// held delivery finds that another replica now coordinates the session, so
+// both report the same refusal.
 func TargetNotReady(current state.State) *Refusal {
 	return &Refusal{
 		Code:    "TARGET_NOT_READY",

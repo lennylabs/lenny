@@ -261,8 +261,8 @@ type MessageDelivery interface {
 	RouteMessage(st state.State, inputRequired bool) MessageRoute
 }
 
-// MessageRoute is the delivery path the session core's routing rules give
-// a message from another session.
+// MessageRoute names how the session core delivers a message one session
+// sends another.
 type MessageRoute int
 
 // The message routes.
