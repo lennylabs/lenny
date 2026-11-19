@@ -12,9 +12,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/billing/billingcheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/orphansession"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // agentPodStateMirror adapts the §4.6.1 agent_pod_state store to the

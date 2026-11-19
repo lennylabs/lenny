@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // ErrHeldDeliveryPreempted is the error deliverBuffered returns when a

@@ -16,12 +16,12 @@ import (
 	delegationbudgetpg "github.com/lennylabs/lenny/pkg/gateway/platformtools/delegationbudget/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/podlifecycle"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint"
 	"github.com/lennylabs/lenny/pkg/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/recommendations"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

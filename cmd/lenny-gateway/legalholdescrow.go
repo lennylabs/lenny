@@ -15,12 +15,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
 	"github.com/lennylabs/lenny/pkg/controller/tenantdeletion"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
 	"github.com/lennylabs/lenny/pkg/legalholdescrow"
 	"github.com/lennylabs/lenny/pkg/legalholdescrow/blobescrow"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // This file wires the §12.8 Phase 3.5 force-delete override / escrow path

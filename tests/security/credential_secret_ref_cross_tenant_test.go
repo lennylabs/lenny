@@ -34,8 +34,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/credential/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 const crossTenantCredNS = "lenny-credentials"

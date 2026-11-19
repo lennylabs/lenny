@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // recordingLock is a §12.8 advisory-lock seam that records the

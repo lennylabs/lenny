@@ -48,8 +48,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/environment/environmentmw"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwait"
@@ -58,15 +56,17 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	sessionstate "github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/pkg/sessionrecord"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // mcpStateForSession returns the §8.8 MCP-protocol state spelling for

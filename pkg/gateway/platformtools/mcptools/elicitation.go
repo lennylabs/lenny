@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/elicitation"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // ElicitationPerHopForwardingTimeout caps a single forwarding hop on

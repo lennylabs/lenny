@@ -14,9 +14,9 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 func newUserAdmin(t *testing.T) (*admin.Router, userstore.Store, *recordingAudit) {

@@ -20,9 +20,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/policy/ratelimit"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // spec: §10.7 built-in eval endpoint — POST /v1/sessions/{id}/eval.

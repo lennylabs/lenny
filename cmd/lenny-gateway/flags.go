@@ -47,7 +47,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/replica/pdbwatcher"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/tlsprobe"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/tokenanomaly"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
@@ -55,6 +54,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/policy"
 	"github.com/lennylabs/lenny/pkg/quota"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
 )

@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionage"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 func newPool(t *testing.T, s poolstore.Store, name string, maxAgeSeconds int) {

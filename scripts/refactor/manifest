@@ -181,12 +181,12 @@ github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter	github.com/lennylabs/
 
 # 0117.S12
 github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore	github.com/lennylabs/lenny/pkg/tenancy/customrolestore	0117.S12
-github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore	github.com/lennylabs/lenny/pkg/tenancy/deploymentconfigstore	0117.S12
+github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore	github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore	0117.S12
 github.com/lennylabs/lenny/pkg/gateway/environment/envaccess	github.com/lennylabs/lenny/pkg/tenancy/envaccess	0117.S12
 github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore	github.com/lennylabs/lenny/pkg/tenancy/environmentstore	0117.S12
 github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore	github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore	0117.S12
 github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore	github.com/lennylabs/lenny/pkg/tenancy/tenantstore	0117.S12
-github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore	github.com/lennylabs/lenny/pkg/tenancy/transcriptstore	0117.S12
+github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore	github.com/lennylabs/lenny/pkg/session/transcriptstore	0117.S12
 github.com/lennylabs/lenny/pkg/gateway/environment/userstore	github.com/lennylabs/lenny/pkg/tenancy/userstore	0117.S12
 github.com/lennylabs/lenny/pkg/gateway/session/interactionstore	github.com/lennylabs/lenny/pkg/session/interactionstore	0117.S12
 github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta	github.com/lennylabs/lenny/pkg/session/sessioncheckpointmeta	0117.S12

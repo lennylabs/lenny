@@ -22,16 +22,16 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/semanticcache"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/transcriptstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // tenantEraser is the TESTING.md §12.2.1 / TESTING.md §14.10 mandatory-erasure interface.

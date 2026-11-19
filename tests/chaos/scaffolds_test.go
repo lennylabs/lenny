@@ -38,7 +38,7 @@ import "testing"
 // §12.8 Postgres failover — covered by:
 //   - tests/chaos/store_failure_test.go::TestPostgresUnavailable
 //     (live Postgres-down recovery, single-replica).
-//   - pkg/gateway/sessionstore/pgstore (Postgres-backed
+//   - pkg/session/sessionstore/pgstore (Postgres-backed
 //     session store with transaction round-tripping).
 //   - charts/lenny/values.yaml postgres.ha settings (operator-managed
 //     HA Postgres is a deployer-driven topology, not a chaos-tier fault

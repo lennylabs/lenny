@@ -13,7 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // keyRecordingResolver records the full (tenant, session, checkpoint) key a

@@ -32,10 +32,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
 	leasepg "github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )
 

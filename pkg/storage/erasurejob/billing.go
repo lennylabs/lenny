@@ -8,7 +8,7 @@ import (
 	"errors"
 	"fmt"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // erasureSaltBytes is the §12.8 billing-pseudonymization salt length:

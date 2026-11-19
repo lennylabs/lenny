@@ -6,7 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
 )
 
 // handleToolUseApprove implements

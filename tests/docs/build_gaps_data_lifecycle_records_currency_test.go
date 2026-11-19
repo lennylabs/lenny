@@ -83,7 +83,7 @@ func fileOmits(rel, unwanted string) func(testing.TB, string) (bool, string) {
 // declares the Primary field that routes a lifecycle listing to the primary.
 func listFilterReadsPrimary(t testing.TB, root string) (bool, string) {
 	t.Helper()
-	const rel = "pkg/gateway/session/sessionstore/sessionstore.go"
+	const rel = "pkg/session/sessionstore/sessionstore.go"
 	what := rel + " declares ListFilter.Primary"
 	file := parseGoFile(t, filepath.Join(root, filepath.FromSlash(rel)))
 	for _, decl := range file.Decls {
@@ -113,7 +113,7 @@ func listFilterReadsPrimary(t testing.TB, root string) (bool, string) {
 }
 
 const (
-	creationFenceFile = "pkg/gateway/session/sessionstore/creation_fence.go"
+	creationFenceFile = "pkg/session/sessionstore/creation_fence.go"
 	drainFile         = "pkg/gateway/api/admin/drain.go"
 	responsesFile     = "pkg/gateway/environment/translator/open_responses.go"
 	erasurePgFile     = "pkg/storage/erasurejob/pgstore/pgstore.go"
@@ -127,7 +127,7 @@ var closedLifecycleFindings = []closedLifecycleFinding{
 	{id: "F-12.8.20", file: erasurePgFile, symbol: "Store.Start"},
 	{
 		id: "F-12.8.26", file: creationFenceFile, symbol: "CreationMarkers.Refusal",
-		holds: fileContains("pkg/gateway/session/sessionstore/pgstore/creation_fence.go", "FOR SHARE"),
+		holds: fileContains("pkg/session/sessionstore/pgstore/creation_fence.go", "FOR SHARE"),
 	},
 	{id: "F-12.8.27", file: drainFile, symbol: "DrainSessions", holds: listFilterReadsPrimary},
 	{id: "F-12.8.28", file: "pkg/storage/erasurejob/runner_phases.go", symbol: "Runner.runDrain"},

@@ -71,57 +71,9 @@ packages:
   - package: pkg/gateway/credentials/leaserevoke
     part: removed
     removed-by: '0133'
-  - package: pkg/gateway/environment/customrolestore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/customrolestore/pgstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/deploymentconfigstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/deploymentconfigstore/pgstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/envaccess
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/environmentstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/environmentstore/pgstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/tenantaccessstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/tenantaccessstore/pgstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/tenantstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/tenantstore/pgstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/tenantstore/tenantstoretest
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/transcriptstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/transcriptstore/pgstore
-    part: domain
-    step: 0117.S12
   - package: pkg/gateway/environment/translator
     part: removed
     removed-by: '0138'
-  - package: pkg/gateway/environment/userstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/environment/userstore/pgstore
-    part: domain
-    step: 0117.S12
   - package: pkg/gateway/experiment/evalstore
     part: removed
     removed-by: '0141'
@@ -185,12 +137,6 @@ packages:
   - package: pkg/gateway/runtime/tenantaffinity
     part: removed
     removed-by: '0119'
-  - package: pkg/gateway/session/interactionstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/interactionstore/pgstore
-    part: domain
-    step: 0117.S12
   - package: pkg/gateway/session/memorystore
     part: removed
     removed-by: '0123'
@@ -200,30 +146,6 @@ packages:
   - package: pkg/gateway/session/memorystore/pgstore
     part: removed
     removed-by: '0123'
-  - package: pkg/gateway/session/sessioncheckpointmeta
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/sessioncheckpointmeta/pgstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/sessionlogstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/sessionstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/sessionstore/memstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/sessionstore/pgstore
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/sessionusage
-    part: domain
-    step: 0117.S12
-  - package: pkg/gateway/session/sessionusage/pgstore
-    part: domain
-    step: 0117.S12
   - package: pkg/gateway/session/tokenanomaly
     part: removed
     removed-by: '0133'

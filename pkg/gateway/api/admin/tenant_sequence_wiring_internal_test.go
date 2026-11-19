@@ -15,7 +15,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // lazyPool builds a *pgxpool.Pool that never dials: MinConns=0 keeps the

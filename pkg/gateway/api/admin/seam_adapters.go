@@ -8,7 +8,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -163,7 +163,7 @@ func seamRecord(row sessionstore.Session) seam.Session {
 		RuntimeRef:      row.RuntimeRef,
 		Pool:            row.PoolRef,
 		State:           state.State(row.State),
-		Stored:          row,
+		Stored:          &row,
 		PodAssignment:   row.PodAssignment,
 		CreatedAt:       row.CreatedAt,
 		UpdatedAt:       row.UpdatedAt,

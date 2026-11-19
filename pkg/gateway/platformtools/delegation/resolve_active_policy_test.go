@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // spec: §10.6 — defaultDelegationPolicy names the

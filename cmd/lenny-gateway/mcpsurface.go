@@ -7,6 +7,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore"
+	deploymentconfigpg "github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/credential/revocation"
@@ -17,11 +19,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionidle"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
-	deploymentconfigpg "github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation/export"
@@ -37,6 +34,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore"
 	interceptorpg "github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 

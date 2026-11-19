@@ -6,7 +6,7 @@ import (
 	"context"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // RegistryEnumerator adapts the §4.6.1 podsession.Registry to the

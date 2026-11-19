@@ -13,7 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 func newConnectorAdmin(t *testing.T) (*admin.Router, *connectorstore.Memory, *recordingAudit) {

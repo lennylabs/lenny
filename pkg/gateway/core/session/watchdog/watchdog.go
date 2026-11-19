@@ -48,7 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // FailureReason constants — §6.2 / §11.3 pre-running timeouts.

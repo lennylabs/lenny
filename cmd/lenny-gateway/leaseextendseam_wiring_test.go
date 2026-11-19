@@ -11,8 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // These tests pin the proposal 0023 S6 wiring seam that connects the §11.2

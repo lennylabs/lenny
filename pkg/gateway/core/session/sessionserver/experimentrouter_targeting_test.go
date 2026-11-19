@@ -14,7 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // spec: §10.7 / §16.1 — external experiment

@@ -14,7 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/blobstore/replication"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §25.11 — POST/GET

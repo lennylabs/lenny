@@ -16,8 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/coordination/leasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // componentLeaseStore is an in-memory leasestore.LeaseStore for the

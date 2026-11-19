@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // TestANilBusPublishesNothingWithoutPanicking checks that a session server,

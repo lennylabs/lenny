@@ -11,7 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -106,8 +106,7 @@ func TestSeamRevokeHookHandsTheCoreTheRowItWrote(t *testing.T) {
 		t.Errorf("terminal claim = %v, ended %d, want one claim for sess-1, ended once", core.begun, core.ended)
 	}
 	for _, rec := range append(core.revoked, core.reclaimed...) {
-		stored, ok := rec.Stored.(sessionstore.Session)
-		if rec.ID != "sess-1" || rec.TenantID != "acme" || !ok || stored.ID != "sess-1" {
+		if rec.ID != "sess-1" || rec.TenantID != "acme" || rec.Stored == nil || rec.Stored.ID != "sess-1" {
 			t.Errorf("record = %+v, want sess-1 of acme carrying its row", rec)
 		}
 	}
@@ -137,7 +136,7 @@ func (f fakeForce) ForceTerminate(context.Context, string, string) (seam.Session
 func TestSessionTerminatorReadsTheRowTheCoreWrote(t *testing.T) {
 	ctx := context.Background()
 	row := sessionstore.Session{ID: "sess-1", TenantID: "acme", State: session.StateFailed, FailureReason: "FORCE_TERMINATED"}
-	term := admin.SessionTerminator{Force: fakeForce{rec: seam.Session{ID: "sess-1", TenantID: "acme", Stored: row}, prev: state.State(session.StateRunning)}}
+	term := admin.SessionTerminator{Force: fakeForce{rec: seam.Session{ID: "sess-1", TenantID: "acme", Stored: &row}, prev: state.State(session.StateRunning)}}
 	got, prev, transitioned, err := term.ForceTerminate(ctx, "acme", "sess-1")
 	if err != nil || !transitioned || prev != session.StateRunning || got.FailureReason != "FORCE_TERMINATED" {
 		t.Fatalf("ForceTerminate = %+v, %v, %v, %v; want the core's failed row from running", got, prev, transitioned, err)
@@ -149,7 +148,7 @@ func TestSessionTerminatorReadsTheRowTheCoreWrote(t *testing.T) {
 	}
 
 	other := sessionstore.Session{ID: "sess-1", TenantID: "globex"}
-	forged := admin.SessionTerminator{Force: fakeForce{rec: seam.Session{ID: "sess-1", TenantID: "acme", Stored: other}}}
+	forged := admin.SessionTerminator{Force: fakeForce{rec: seam.Session{ID: "sess-1", TenantID: "acme", Stored: &other}}}
 	if _, _, _, err := forged.ForceTerminate(ctx, "acme", "sess-1"); err == nil {
 		t.Error("a record carrying another tenant's row was accepted")
 	}

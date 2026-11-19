@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // keyRecordingPresigner records the object key of every PUT capability it

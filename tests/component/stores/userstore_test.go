@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §10.2 user registry, exercising the
-// Postgres-backed pkg/gateway/userstore/pgstore against a real
+// Postgres-backed pkg/tenancy/userstore/pgstore against a real
 // container. Covers CRUD, tenant/subject/role validation,
 // cross-tenant isolation, the soft-delete lifecycle, and the list
 // filters.
@@ -17,13 +17,13 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/tenancy/userstore/pgstore"
 )
 
 // spec: 10.2
 // diagnosis: the Postgres-backed user registry in
-// pkg/gateway/userstore/pgstore did not behave as specified. Create
+// pkg/tenancy/userstore/pgstore did not behave as specified. Create
 // and Get must round-trip a user, validation must reject duplicates,
 // malformed subjects, and unrecognised roles, cross-tenant Get must
 // return ErrNotFound, Update must re-validate roles, and the

@@ -21,9 +21,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/extractionthreshold"
 	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/pkg/kms/envelope"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 )
 

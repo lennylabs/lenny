@@ -11,7 +11,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // fakeLock blocks the second acquire indefinitely so we can observe the

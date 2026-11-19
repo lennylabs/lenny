@@ -9,7 +9,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // handleResume implements POST /v1/sessions/{id}/resume. The endpoint admits

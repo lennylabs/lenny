@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	mtlsdenylist "github.com/lennylabs/lenny/pkg/mtls/denylist"
 	"github.com/lennylabs/lenny/pkg/policy"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
@@ -18,6 +17,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/quota/quotacheckpoint"
 	quotacheckpointpg "github.com/lennylabs/lenny/pkg/quota/quotacheckpoint/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // buildQuotaCheckpoint is the §4.1 composition-root build step (R1) for the

@@ -20,8 +20,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/resumechunks"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 

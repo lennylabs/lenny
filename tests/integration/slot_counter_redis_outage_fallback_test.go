@@ -46,9 +46,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotreaper"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/lifecycleharness"
 )

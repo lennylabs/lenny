@@ -121,7 +121,7 @@ func loadE2EBearerTrustSigner(t *testing.T, c *kind.Cluster) *jwt.HMACSigner {
 // alice@acme.com), so the gateway's PlatformRoles override
 // (userstore.PlatformRoles.ResolveRoles) finds no stored assignment for
 // (tenant, subject) and leaves the JWT's own `roles` claim — not a
-// stored row — authoritative (pkg/gateway/environment/userstore
+// stored row — authoritative (pkg/tenancy/userstore
 // userstore.PlatformRoles.ResolveRoles returns found=false on a missing
 // row).
 func mintScopedBearer(t *testing.T, signer *jwt.HMACSigner, scope string) string {

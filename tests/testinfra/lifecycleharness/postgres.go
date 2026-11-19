@@ -11,8 +11,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
 )

@@ -11,8 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/openapi"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/ops/me"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 func TestMeReturnsPrincipal(t *testing.T) {

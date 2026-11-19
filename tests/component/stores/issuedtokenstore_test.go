@@ -23,10 +23,10 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/tenancy/userstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

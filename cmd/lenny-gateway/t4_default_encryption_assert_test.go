@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	blobproviderflags "github.com/lennylabs/lenny/pkg/blobstore/providerflags"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // t4AssertFlags builds a gatewayFlags carrying only the object-store fields

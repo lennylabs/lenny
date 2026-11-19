@@ -9,8 +9,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
@@ -45,11 +45,11 @@ func TestAdminSeamReleasesUserBindingsOnlyWhenWired(t *testing.T) {
 // spec: GWSEAM-AfterRevokeWrite, GWSEAM-ReclaimRevokedPreRunning
 func TestRevokedRowUsesOnlyTheRowOfTheNamedSession(t *testing.T) {
 	own := sessionstore.Session{ID: "sess-1", TenantID: "acme", FailureReason: "carried"}
-	if got := revokedRow(seam.Session{ID: "sess-1", TenantID: "acme", Stored: own}); got.FailureReason != "carried" {
+	if got := revokedRow(seam.Session{ID: "sess-1", TenantID: "acme", Stored: &own}); got.FailureReason != "carried" {
 		t.Errorf("own row: FailureReason = %q, want the carried row", got.FailureReason)
 	}
 	other := sessionstore.Session{ID: "sess-1", TenantID: "globex", FailureReason: "carried"}
-	got := revokedRow(seam.Session{ID: "sess-1", TenantID: "acme", UserID: "alice", Stored: other})
+	got := revokedRow(seam.Session{ID: "sess-1", TenantID: "acme", UserID: "alice", Stored: &other})
 	if got.FailureReason != "" || got.TenantID != "acme" || got.UserID != "alice" {
 		t.Errorf("other tenant's row: got %+v, want the record's own fields", got)
 	}
@@ -76,7 +76,7 @@ func TestAdminSeamForceTerminateCarriesTheWrittenRow(t *testing.T) {
 	if err != nil || !transitioned || prev != state.State(session.StateRunning) {
 		t.Fatalf("ForceTerminate = %v, %v, %v", prev, transitioned, err)
 	}
-	if row, ok := rec.Stored.(sessionstore.Session); !ok || rec.ID != "sess-1" || rec.TenantID != "acme" || row.State != session.StateFailed {
+	if rec.Stored == nil || rec.ID != "sess-1" || rec.TenantID != "acme" || rec.Stored.State != session.StateFailed {
 		t.Errorf("record = %+v, want sess-1 of acme carrying its failed row", rec)
 	}
 	if len(piped) != 1 || piped[0].State != session.StateFailed {

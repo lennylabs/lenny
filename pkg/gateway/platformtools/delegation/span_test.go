@@ -12,8 +12,8 @@ import (
 	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/delegation"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // installSpanRecorder swaps the global OTel TracerProvider for an

@@ -9,7 +9,7 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/blobstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // sessionObjectDeleter is the blob-store capability the derive undo needs:

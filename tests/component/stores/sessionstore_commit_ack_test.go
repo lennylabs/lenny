@@ -21,8 +21,8 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/commitfault"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
@@ -100,7 +100,7 @@ func (f commitAckFixture) seedUpdatedAt(t *testing.T, at time.Time) {
 // write runs no terminal pipeline), an aborted write returned success, the
 // read-back ran on the caller's cancelled context, or a failed or slow
 // read-back reported the write applied. Check Store.Update's write
-// identifier and writeApplied in pkg/gateway/session/sessionstore/pgstore.
+// identifier and writeApplied in pkg/session/sessionstore/pgstore.
 func TestSessionStoreLostCommitAckClassifiedByWriteID_spec_12_3(t *testing.T) {
 	t.Parallel()
 

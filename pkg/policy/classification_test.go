@@ -6,8 +6,8 @@ import (
 	"errors"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/policy"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §12.9 — the gateway policy engine validates tenant

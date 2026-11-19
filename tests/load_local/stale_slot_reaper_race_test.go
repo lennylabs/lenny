@@ -25,10 +25,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotcounter"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/slotreaper"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // callerKey is the gRPC metadata key naming which replica sent a Shutdown.

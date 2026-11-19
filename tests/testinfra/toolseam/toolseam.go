@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // Executor returns the session core's message delivery over exec, through

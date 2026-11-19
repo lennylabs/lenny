@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasure"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // defaultUsers are the (tenant, subject) pairs the runner and sampler

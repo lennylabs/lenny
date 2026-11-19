@@ -7,7 +7,7 @@ import (
 	"log"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // expiringSoonPayload is the §11.3 session_expiring_soon SSE event

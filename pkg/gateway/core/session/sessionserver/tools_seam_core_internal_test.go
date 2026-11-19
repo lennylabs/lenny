@@ -11,8 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 )
 
 // TestTerminalRowReadsBackTheStoredRow checks that the terminal pipeline a
@@ -58,14 +58,14 @@ func TestStoredRowIsUsedOnlyForTheSessionTheRecordNames(t *testing.T) {
 	srv := New(store, Options{DevTenantHeader: true})
 	defer srv.Close()
 	carried := sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "pod-carried"}
-	if row := srv.terminalRow(context.Background(), seam.Session{ID: "s1", TenantID: "acme", Stored: carried}); row.PodAssignment != "pod-carried" {
+	if row := srv.terminalRow(context.Background(), seam.Session{ID: "s1", TenantID: "acme", Stored: &carried}); row.PodAssignment != "pod-carried" {
 		t.Errorf("matching carried row: pod = %q, want pod-carried", row.PodAssignment)
 	}
 	for name, other := range map[string]sessionstore.Session{
 		"another session": {ID: "s2", TenantID: "acme", PodAssignment: "pod-other"},
 		"another tenant":  {ID: "s1", TenantID: "globex", PodAssignment: "pod-other"},
 	} {
-		rec := seam.Session{ID: "s1", TenantID: "acme", Stored: other}
+		rec := seam.Session{ID: "s1", TenantID: "acme", Stored: &other}
 		if row := srv.terminalRow(context.Background(), rec); row.ID != "s1" || row.TenantID != "acme" || row.PodAssignment != "pod-1" {
 			t.Errorf("%s: terminal row = %+v, want the stored s1 row", name, row)
 		}

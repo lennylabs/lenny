@@ -41,9 +41,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/events/eventbuffer"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/ops/conventions"
 	"github.com/lennylabs/lenny/pkg/recommendations"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // adminPrincipal authenticates the request as a §10.2 platform-admin so

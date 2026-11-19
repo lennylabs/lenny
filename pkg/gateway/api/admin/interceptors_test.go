@@ -12,8 +12,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor/interceptorstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §4.8 / §8.3 (SEC-013) — the admin

@@ -17,7 +17,7 @@ import (
 	"testing"
 	"time"
 
-	sessionstorepg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	sessionstorepg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 )

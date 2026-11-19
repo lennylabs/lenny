@@ -16,8 +16,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential/impersonation"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // failingImpersonation is an admin.ImpersonationService whose Issue

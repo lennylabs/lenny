@@ -12,8 +12,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
-	userpg "github.com/lennylabs/lenny/pkg/gateway/environment/userstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/tenancy/userstore/pgstore"
 )
 
 // roleLookupLogInterval bounds how often a failed role lookup is logged,

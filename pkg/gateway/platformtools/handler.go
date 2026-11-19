@@ -9,9 +9,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // maxJSONBodyBytes caps a JSON request body the platform tools seam's

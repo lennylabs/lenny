@@ -3,7 +3,7 @@
 // SPDX-License-Identifier: MIT
 
 // Contract test for the §15.1 transcript registry, exercising the
-// Postgres-backed pkg/gateway/transcriptstore/pgstore against a real
+// Postgres-backed pkg/session/transcriptstore/pgstore against a real
 // container. Covers append + monotonic seq assignment, ordered
 // readback, paging, the ErrNotFound sentinel, and cross-tenant
 // isolation.
@@ -17,10 +17,10 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
-	transcriptpg "github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/transcriptstore"
+	transcriptpg "github.com/lennylabs/lenny/pkg/session/transcriptstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
@@ -65,7 +65,7 @@ func entry(role, content string) transcriptstore.Entry {
 
 // spec: 15.1
 // diagnosis: the Postgres-backed transcript registry in
-// pkg/gateway/transcriptstore/pgstore did not behave as specified.
+// pkg/session/transcriptstore/pgstore did not behave as specified.
 // Append must assign continuing monotonic sequence numbers, Get must
 // return entries in order, an empty append must be a no-op, Page must
 // walk the transcript, and cross-tenant Get must return ErrNotFound.
@@ -303,7 +303,7 @@ func storedMaxSeq(t *testing.T, ctx context.Context, pg *containers.Postgres, te
 // transaction that rolled back. An Open Responses turn records Append's return
 // value as its response's end sequence and later cuts the rehydrate prefix at
 // it, so a wrong value replays the wrong history; check the maxSeq handling in
-// pkg/gateway/environment/transcriptstore/pgstore Append.
+// pkg/session/transcriptstore/pgstore Append.
 func TestTranscriptStoreAppendReturnsLastSeq(t *testing.T) {
 	t.Parallel()
 	sess, pg := startStore(t)

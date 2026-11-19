@@ -16,7 +16,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // runParentTerminalRound races delegated child creates under one running

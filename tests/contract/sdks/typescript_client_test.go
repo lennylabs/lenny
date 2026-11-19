@@ -47,9 +47,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/tests/contract/sdks/harness"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"

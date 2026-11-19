@@ -39,7 +39,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/checkpoint"
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // spec: §10.1 — the intent row is partial = true from INSERT and flips to

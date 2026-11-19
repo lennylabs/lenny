@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // TestSessionPrimaryReadTimeoutFlag_spec_12_3 pins the

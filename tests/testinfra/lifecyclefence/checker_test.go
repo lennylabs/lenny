@@ -10,7 +10,7 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/checkpoint/partialmanifeststore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // TestCheckerHoldsDeriveManifestInsideErasureReach_spec_12_8 pins the

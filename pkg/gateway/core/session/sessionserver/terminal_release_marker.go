@@ -6,7 +6,7 @@ import (
 	"context"
 	"log/slog"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // recordPodRelease records on the session row that this replica released the

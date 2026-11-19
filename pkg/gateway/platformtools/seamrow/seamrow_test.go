@@ -10,13 +10,14 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
 // TestRecordAndRowCarryTheRecordsFields checks that a stored row converts
-// to the session record and back with every field the record carries, and
-// that the record's pool falls back to the row's pool name.
+// to the session record and back with every field the record carries, that
+// the record's pool falls back to the row's pool name, and that the record
+// and the caller each hold their own copy of the row.
 //
 // spec: GWSEAM-LookupSession
 func TestRecordAndRowCarryTheRecordsFields(t *testing.T) {
@@ -34,7 +35,7 @@ func TestRecordAndRowCarryTheRecordsFields(t *testing.T) {
 		DelegationDepth: 2, PodAssignment: "pod-1", LastSeq: 9,
 		CreatedAt: at, UpdatedAt: at.Add(time.Second), TerminatedAt: at.Add(2 * time.Second),
 	}
-	if stored, ok := rec.Stored.(sessionstore.Session); !ok || stored.ID != row.ID {
+	if rec.Stored == nil || rec.Stored.ID != row.ID {
 		t.Fatalf("record carries %+v, want the row", rec.Stored)
 	}
 	bare := rec
@@ -45,6 +46,15 @@ func TestRecordAndRowCarryTheRecordsFields(t *testing.T) {
 	if got := seamrow.Row(rec); got.ID != row.ID || got.PodAssignment != row.PodAssignment {
 		t.Fatalf("row of a carrying record = %+v, want the carried row", got)
 	}
+	// The record carries a copy of the row, and Row returns a copy of the
+	// carried row, so a write to either side's row leaves the other's alone.
+	changed := seamrow.Row(rec)
+	changed.PodAssignment = "pod-changed"
+	row.PodAssignment = "pod-changed"
+	if rec.Stored.PodAssignment != "pod-1" {
+		t.Errorf("carried row pod = %q after writes to both rows, want pod-1", rec.Stored.PodAssignment)
+	}
+	row.PodAssignment = "pod-1"
 	back := seamrow.Row(bare)
 	if back.ID != row.ID || back.PoolRef != "pool-a" || back.DelegationDepth != 2 || back.LastSeq != 9 ||
 		back.PodAssignment != "pod-1" || !back.TerminatedAt.Equal(row.TerminatedAt) || back.State != row.State {
@@ -103,13 +113,13 @@ func TestRowIgnoresACarriedRowOfAnotherSession(t *testing.T) {
 		"another session": {ID: "s2", TenantID: "acme", PodAssignment: "pod-other"},
 		"another tenant":  {ID: "s1", TenantID: "globex", PodAssignment: "pod-other"},
 	} {
-		row := seamrow.Row(seam.Session{ID: "s1", TenantID: "acme", PodAssignment: "pod-1", Stored: other})
+		row := seamrow.Row(seam.Session{ID: "s1", TenantID: "acme", PodAssignment: "pod-1", Stored: &other})
 		if row.ID != "s1" || row.TenantID != "acme" || row.PodAssignment != "pod-1" {
 			t.Errorf("%s: row = %+v, want the record's own fields", name, row)
 		}
 	}
 	same := sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "pod-carried"}
-	if row := seamrow.Row(seam.Session{ID: "s1", TenantID: "acme", Stored: same}); row.PodAssignment != "pod-carried" {
+	if row := seamrow.Row(seam.Session{ID: "s1", TenantID: "acme", Stored: &same}); row.PodAssignment != "pod-carried" {
 		t.Errorf("matching carried row: pod = %q, want pod-carried", row.PodAssignment)
 	}
 }

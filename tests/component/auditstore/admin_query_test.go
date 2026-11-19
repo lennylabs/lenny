@@ -25,8 +25,8 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/storage/eventbus"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // adminQueryClock is the fixed gateway clock for the §25.9 query router.

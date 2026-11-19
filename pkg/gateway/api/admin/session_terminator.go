@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // SessionTerminator backs the platform-admin session investigation
@@ -48,9 +48,8 @@ func (t SessionTerminator) ForceTerminate(ctx context.Context, tenantID, id stri
 	if err != nil {
 		return sessionstore.Session{}, "", false, err
 	}
-	row, ok := rec.Stored.(sessionstore.Session)
-	if !ok || row.ID != rec.ID || row.TenantID != rec.TenantID {
+	if rec.Stored == nil || rec.Stored.ID != rec.ID || rec.Stored.TenantID != rec.TenantID {
 		return sessionstore.Session{}, "", false, fmt.Errorf("admin: force-terminate of session %s returned no stored row", id)
 	}
-	return row, session.State(prev), transitioned, nil
+	return *rec.Stored, session.State(prev), transitioned, nil
 }

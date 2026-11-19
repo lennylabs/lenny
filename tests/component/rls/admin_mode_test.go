@@ -19,9 +19,9 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	tapgstore "github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
+	tapgstore "github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore/pgstore"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 

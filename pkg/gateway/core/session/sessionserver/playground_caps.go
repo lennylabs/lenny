@@ -7,8 +7,8 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // originPlayground is the §27.3 origin claim value stamped on every

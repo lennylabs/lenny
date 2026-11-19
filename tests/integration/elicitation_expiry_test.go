@@ -12,8 +12,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	interactionpg "github.com/lennylabs/lenny/pkg/gateway/session/interactionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/interactionstore"
+	interactionpg "github.com/lennylabs/lenny/pkg/session/interactionstore/pgstore"
 )
 
 // elicitationExpiryStore starts Postgres with the production migrations,

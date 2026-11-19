@@ -18,10 +18,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/mtls/spiffe"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // newGatewayControlServer builds the §8.6 GatewayControl gRPC server

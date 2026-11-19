@@ -11,11 +11,11 @@ import (
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/delegation/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantaccessstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantaccessstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // spec: §10.2 RBAC permission matrix; §15.1 admin-API auth requirements.

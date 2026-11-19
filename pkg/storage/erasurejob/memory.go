@@ -9,7 +9,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 // Memory is the in-memory Store, used in the memory and Source Mode

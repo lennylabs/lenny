@@ -11,8 +11,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorcredstore"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/runtime/capabilityinference"
+	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
 )
 
 // dialResponses is the three-response transcript a permitted tools/call

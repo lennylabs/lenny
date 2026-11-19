@@ -9,8 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/storage/erasurejob"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 )
 
 var jobAt = time.Date(2026, 5, 16, 9, 0, 0, 0, time.UTC)

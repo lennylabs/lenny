@@ -5,7 +5,7 @@ package lifecyclefence
 import (
 	"context"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // crashStop is the panic value pathStore raises to stop a production create

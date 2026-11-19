@@ -12,7 +12,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/customrolestore"
+	"github.com/lennylabs/lenny/pkg/tenancy/customrolestore"
 )
 
 // spec: §15.1 — ETag-based optimistic concurrency for the

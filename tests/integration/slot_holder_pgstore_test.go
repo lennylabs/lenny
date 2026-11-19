@@ -16,8 +16,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	sessionpg "github.com/lennylabs/lenny/pkg/session/sessionstore/pgstore"
 )
 
 // slotRow is one seeded session row.

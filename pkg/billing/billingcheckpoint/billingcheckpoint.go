@@ -25,7 +25,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/billing/billingfanout"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionusage"
+	"github.com/lennylabs/lenny/pkg/billing/sessionusage"
 )
 
 // Session is one active session to checkpoint, identified by the tuple

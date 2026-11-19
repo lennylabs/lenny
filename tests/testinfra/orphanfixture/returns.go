@@ -14,8 +14,8 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treebudget"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/redisconn/slotguard"
+	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 )
 
 // Returner is the §8.3 budget-return seam the session server calls;

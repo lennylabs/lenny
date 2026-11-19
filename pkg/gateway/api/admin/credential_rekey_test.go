@@ -9,8 +9,8 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/kms/rekey"
+	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 )
 
 // fakeRekeyer is a CredentialRekeyer test double. Run reports a fixed
