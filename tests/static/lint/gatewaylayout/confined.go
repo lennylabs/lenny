@@ -101,8 +101,8 @@ var Confined = []Confinement{
 // Only a gateway part is held to it: the session core, the metering proxy,
 // and the composition root import every confined package, the API front,
 // the web playground, and the platform tools seam import the subtrees
-// marked for each, and every other part imports none. A package in transit or outside the gateway is
-// not held to it.
+// marked for each, and every other part imports none. A package in transit
+// or outside the gateway is not held to it.
 func confinedImport(kind Kind, part, to string, confined []Confinement) bool {
 	var hit *Confinement
 	for i := range confined {

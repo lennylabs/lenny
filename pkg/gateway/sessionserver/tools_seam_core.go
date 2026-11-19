@@ -15,18 +15,20 @@ import (
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
-// ToolsSeam is the session core's side of the operations the platform tools
-// seam's tree sweeps and tree recovery call: the terminal pipeline, which
-// the orphan cleanup and the deadlock detector run after their own terminal
-// write, and the tree node operations GWSEAM-RecoverTree drives. Server
-// returns it from ToolsSeam. It stays in sessionserver until the session
-// core moves, as UploadSeam does.
+// ToolsSeam is the session core's side of every operation the platform
+// tools seam calls on the core: the terminal pipeline, which the orphan
+// cleanup and the deadlock detector run after their own terminal write, and
+// the tree node operations GWSEAM-RecoverTree drives, declared in this file;
+// and the session lookup, forwarding, child session, message delivery,
+// export, and client route operations declared in tools_seam.go and
+// tools_routes_seam.go. Server returns it from ToolsSeam. It stays in
+// sessionserver until the session core moves, as UploadSeam does.
 type ToolsSeam struct {
 	s *Server
 }
 
-// ToolsSeam returns the core's side of the platform tools seam's tree
-// operations.
+// ToolsSeam returns the core's side of the operations the platform tools
+// seam calls.
 func (s *Server) ToolsSeam() ToolsSeam { return ToolsSeam{s: s} }
 
 var (
@@ -42,8 +44,9 @@ func (t ToolsSeam) BeginTerminal(sessionID string) func() {
 }
 
 // OnSessionTerminal runs the terminal pipeline for the session the
-// caller's write moved to a terminal state. The pipeline reads the stored
-// row, which the core reads back by the record's tenant and identifier.
+// caller's write moved to a terminal state. The pipeline runs on the row
+// the record carries, or, for a record that carries none, on the row read
+// back from the primary by the record's tenant and identifier.
 //
 // spec: GWSEAM-OnSessionTerminal
 func (t ToolsSeam) OnSessionTerminal(ctx context.Context, from state.State, s seam.Session) {
@@ -110,7 +113,9 @@ func recordRow(rec seam.Session) sessionstore.Session {
 }
 
 // ListTree returns the records of every node of the tree rooted at
-// rootSessionID.
+// rootSessionID, each carrying its stored row, so the tree recovery walks
+// the rows it walked before the seam split rather than rows rebuilt from
+// the records' fields.
 //
 // spec: GWSEAM-ListTree
 func (t ToolsSeam) ListTree(ctx context.Context, tenantID, rootSessionID string) ([]seam.Session, error) {
@@ -120,7 +125,7 @@ func (t ToolsSeam) ListTree(ctx context.Context, tenantID, rootSessionID string)
 	}
 	out := make([]seam.Session, len(rows))
 	for i, row := range rows {
-		out[i] = seamSessionOf(row)
+		out[i] = storedSession(row)
 	}
 	return out, nil
 }
