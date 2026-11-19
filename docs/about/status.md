@@ -54,7 +54,7 @@ All 25 of its steps have landed.
 
 Exit criteria: The gateway layout is decided and the package moves have landed. Three pilot persona journeys run, and their cost per run is measured.
 
-6 of its 13 steps have landed, and 0 are being built.
+6 of its 13 steps have landed, and 1 is being built.
 
 ### Areas, one milestone each, ordered once the "Specification structure" change lands
 

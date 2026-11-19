@@ -54,7 +54,7 @@ The import sites in each title are counted over the packages the step moves, as 
 `session/sessionevents` to `pkg/gateway/streamproxy`, and `sessionserver`'s `events.go` and `logs.go` with their tests to a new package there. Every publisher, in the core and in the platform tools seam, reaches the event bus through the publish operation of the seam interface.
 
 ### 0117.S7 Platform tools seam (428 import sites)
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0117.S6, 0137.S5, 0155.S1]
 
