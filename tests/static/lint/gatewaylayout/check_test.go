@@ -490,7 +490,7 @@ func TestConfinedPackagesStayWithTheCoreAndTheMeteringProxy(t *testing.T) {
 		base(),
 		pkg("pkg/gateway/core/admission", "pkg/gateway/quota/quotastore", "pkg/policy/policy", "pkg/gateway/credentials/credentialstore"),
 		pkg("pkg/gateway/meteringproxy/llm", "pkg/gateway/credentials/credleasestore", "pkg/quota", "pkg/tenancy/tenantstore"),
-		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/auth"),
+		pkg("pkg/gateway/api/pipeline2", "pkg/gateway/middleware/auth", "pkg/auth/authmw"),
 		pkg("pkg/gateway/api/admin2", "pkg/gateway/environment/tenantstore", "pkg/gateway/quota/quotastore", "pkg/gateway/policy/ratelimit", "pkg/gateway/policy/interceptor/interceptorstore", "pkg/kms/rekey", "pkg/auth/jwt", "pkg/credential/credentialpoolstore", "pkg/credential", "pkg/gateway/externalapi/admintoken", "pkg/gateway/pki/carotation", "pkg/connectoroauth", "pkg/gateway/serviceidentity"),
 		pkg("pkg/gateway/playground", "pkg/auth/jwt", "pkg/gateway/storage/issuedtokenstore", "pkg/storage/issuedtokenstore", "pkg/gateway/environment/tenantstore", "pkg/tenancy/tenantstore"),
 		pkg("pkg/gateway/platformtools/delegation", "pkg/gateway/mcpfabric/delegationpolicystore", "pkg/gateway/mcpfabric/delegationpolicystore/pgstore", "pkg/delegation/delegationpolicystore"),

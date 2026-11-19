@@ -72,7 +72,7 @@ var Confined = []Confinement{
 	{Path: "pkg/tenantkms"},
 	// The admission packages.
 	{Path: "pkg/gateway/middleware/auth", APIFront: true},
-	{Path: "pkg/auth/auth", APIFront: true},
+	{Path: "pkg/auth/authmw", APIFront: true},
 	{Path: "pkg/gateway/quota", APIFront: true},
 	{Path: "pkg/quota", APIFront: true},
 	{Path: "pkg/gateway/policy/interceptor", APIFront: true},
