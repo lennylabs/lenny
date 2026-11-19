@@ -8,13 +8,16 @@ import (
 
 	sessionapi "github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
-// TenantLister enumerates the tenant ids whose active trees are
-// checkpointed. cmd/lenny-gateway wires the same tenantstore-backed
-// lister it uses for the storage-quota rehydration.
+// TenantLister adapts a function that enumerates tenant ids to the
+// seam's tenant listing.
 type TenantLister func(ctx context.Context) ([]string, error)
+
+// ListTenants calls f.
+func (f TenantLister) ListTenants(ctx context.Context) ([]string, error) { return f(ctx) }
 
 // CounterAdapter bridges a *treebudget.Reserver to the CounterStore seam
 // so the Reconciler reads and restores the tree-wide Redis counters
@@ -51,12 +54,15 @@ var _ CounterStore = CounterAdapter{}
 // trees with real budget state.
 type SessionTreeLister struct {
 	Sessions sessionstore.Store
-	Tenants  TenantLister
+	// Tenants enumerates the tenant ids whose active trees are
+	// checkpointed: the session core's tenant listing (GWSEAM-ListTenants),
+	// the same listing the storage-quota rehydration reads.
+	Tenants seam.TenantDirectory
 }
 
 // ListActiveTrees implements TreeLister.
 func (l SessionTreeLister) ListActiveTrees(ctx context.Context) ([]TreeRef, error) {
-	ids, err := l.Tenants(ctx)
+	ids, err := l.Tenants.ListTenants(ctx)
 	if err != nil {
 		return nil, err
 	}

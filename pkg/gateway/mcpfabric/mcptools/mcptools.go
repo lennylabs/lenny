@@ -45,11 +45,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/envaccess"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
-	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -58,16 +54,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
-	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapter"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
@@ -196,7 +188,7 @@ func errCallerUnauthorized() *mcp.ToolError {
 //
 // spec: §10.2 (Session ownership) rules 3 and 7
 func lookupCallerSession(ctx context.Context, deps Deps, tenant, id string, act, primary bool) (sessionstore.Session, error) {
-	if p, ok := authmw.FromContext(ctx); !ok || p.Subject == "" {
+	if p, ok := requestCaller(ctx, deps); !ok || p.Subject == "" {
 		return sessionstore.Session{}, errCallerUnauthorized()
 	}
 	// A refusal returns the bare sentinel the stores return for a miss, so
@@ -499,13 +491,17 @@ type Deps struct {
 	// the admin user API. spec: §11.4; F-11.4.1.
 	Users userstore.Store
 
-	// CallerCheck carries the issued-token reader and the rejection
-	// auditor of the §10.2 "Signing topology" caller check that
-	// lenny/delegate_task applies to a client-facing caller's bearer
-	// before delegating. A zero value passes every caller, and a pod-path
-	// call carries no jti and passes without a store read.
-	// spec: §10.2 (Signing topology), §13.3.
-	CallerCheck callercheck.Deps
+	// CallerCheck runs, through the session core, the §10.2 "Signing
+	// topology" caller check that lenny/delegate_task applies to a
+	// client-facing caller's bearer before delegating. A nil value passes
+	// every caller, and a pod-path call carries no jti and passes without a
+	// store read.
+	CallerCheck seam.CallerChecks
+
+	// Callers resolves the authenticated caller a tool call's context
+	// carries, through the API front's caller identity operation. A nil
+	// value resolves no caller.
+	Callers seam.CallerIdentity
 
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// lenny/discover_agents tool is not registered.
@@ -518,15 +514,21 @@ type Deps struct {
 	CapabilityOverrides runtimecapoverride.Store
 
 	// Environments is the §10.6 environment registry. Optional — when
-	// set together with Tenants, lenny/discover_agents applies §10.6
-	// transparent filtering, returning only the agent runtimes the
+	// set together with EnvironmentResolver, lenny/discover_agents applies
+	// §10.6 transparent filtering, returning only the agent runtimes the
 	// caller's environment membership authorizes.
 	Environments environmentstore.Store
 
-	// Tenants is the §10.2 tenant registry. Optional — consulted with
-	// Environments to read the caller tenant's noEnvironmentPolicy for
-	// the §10.6 transparent-filtering fallback.
-	Tenants tenantstore.Store
+	// EnvironmentResolver resolves, through the session core, the caller's
+	// §10.6 environment membership for a tool call whose context carries
+	// no resolution from the environment middleware, such as a call from a
+	// session's pod. Optional — when nil, no fallback resolution runs.
+	EnvironmentResolver seam.EnvironmentResolver
+
+	// Tenants reads, through the session core, the tenant facts the tools
+	// act on: the credential policy's providers, the creation fence's
+	// lifecycle refusal, and the elicitation integrity mode. Optional.
+	Tenants seam.TenantFacts
 
 	// Pools is the §5.2 pool registry. Optional — when set,
 	// lenny/delegate_task resolves the child pool's §5.3 isolation
@@ -546,16 +548,11 @@ type Deps struct {
 	// spec: §8.9; F-8.9.10.
 	TreeCycleObserver TreeCycleObserver
 
-	// DefaultNoEnvironmentPolicy is the §10.6 platform-wide
-	// noEnvironmentPolicy applied to a caller whose tenant has set no
-	// per-tenant value. The per-tenant value takes precedence; an empty
-	// default is treated as deny-all by the resolver.
-	DefaultNoEnvironmentPolicy string
-
-	// Interceptors is the §4 RequestInterceptor chain. Optional — when
-	// non-nil, lenny/send_message runs the PreMessageDelivery phase
-	// over the message body before delivery.
-	Interceptors *interceptor.Chain
+	// Interceptors runs the §4 RequestInterceptor chain through the
+	// session core, which records the interceptor.rejected audit row of a
+	// rejection. Optional — when non-nil, lenny/send_message runs the
+	// PreMessageDelivery phase over the message body before delivery.
+	Interceptors seam.Interception
 
 	// ContentPolicies resolves the effective §8.3 contentPolicy
 	// (maxInputSize + interceptorRef) for a session so lenny/delegate_task
@@ -577,12 +574,6 @@ type Deps struct {
 	// interceptors, so the nil default is a no-op. Production wires
 	// *delegation.Service. spec: §4.8; §8.3. F-4.8.17.
 	CooldownChecker InterceptorCooldownChecker
-
-	// PolicyAudit emits the §16.7 interceptor.rejected audit row when a
-	// chain REJECTs at PreDelegation or PreMessageDelivery. Optional —
-	// when nil, a chain REJECT still blocks the request but writes no
-	// audit row. spec: §4.8, §11.7.
-	PolicyAudit *policy.AuditSink
 
 	// Events is the §15.1 session event bus. Optional — when nil, the
 	// lenny/output tool is not registered.
@@ -721,11 +712,11 @@ type Deps struct {
 	MessagingRateLimit MessagingRateLimit
 
 	// MessagingRateCounter is the fixed-window counter backing the
-	// per-minute messaging rate limits. Optional — when nil an
-	// in-process counter is used (the minimal-gateway / test default);
-	// production wires the same cross-replica Redis counter the §11.1
-	// admission limits use. spec: §11.1. F-7.2.6.
-	MessagingRateCounter ratelimit.Counter
+	// per-minute messaging rate limits, which the session core serves.
+	// Optional — when nil an in-process counter is used (the
+	// minimal-gateway / test default); production wires the same
+	// cross-replica Redis counter the §11.1 admission limits use.
+	MessagingRateCounter seam.RateCounter
 
 	// Messaging is the §7.2 session-inbox + DLQ coordinator. When set,
 	// lenny/send_message routes a message to a non-delivering target
@@ -762,9 +753,10 @@ type Deps struct {
 	// for a gitClone/git-over-HTTPS host, resolved against the calling
 	// session's tenant VCS credential pool. The runtime never holds a
 	// long-lived credential; the token is minted per git invocation and
-	// bound to the originating session id. Optional — a nil resolver
-	// leaves the tool unregistered. spec: §26.2; §4.9. F-26.2.5.
-	VCSCreds vcscred.Resolver
+	// bound to the originating session id. The session core issues the
+	// token from the pool. Optional — a nil value leaves the tool
+	// unregistered.
+	VCSCreds seam.VCSTokens
 
 	// VCSLeaseAuditor records the §4.9.2 `credential.leased` event each
 	// time lenny/vcs_token mints a token, bound to the originating
@@ -929,7 +921,9 @@ func Register(srv *mcp.Server, deps Deps) {
 	// authenticated principal; callerTenantID's fallback is then never
 	// reached. F-10.2.21.
 	if !deps.DevTenantFallback {
-		srv.SetToolCallGate(requirePrincipalTenant)
+		srv.SetToolCallGate(func(ctx context.Context) *mcp.ToolError {
+			return requirePrincipalTenant(ctx, deps)
+		})
 	}
 
 	// §7.2 send_message governance shared per-adapter state: the
@@ -1040,12 +1034,12 @@ func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 		// on the principal; a call with no session principal (e.g. a
 		// gateway-edge /mcp caller that is not a pod) cannot mint a
 		// session-bound VCS token. F-26.2.5.
-		sessionID := callerSessionID(ctx, "")
+		sessionID := callerSessionID(ctx, deps, "")
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"lenny/vcs_token requires an in-pod session principal", nil)
 		}
-		tenant := callerTenantID(ctx, defaultTenant)
+		tenant := callerTenantID(ctx, deps, defaultTenant)
 
 		var in struct {
 			Host     string `json:"host"`
@@ -1072,11 +1066,11 @@ func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 		}
 		leaseScope := fmt.Sprintf("vcs.%s.%s", provider, mode)
 
-		cred, err := deps.VCSCreds.Resolve(ctx, tenant, "https://"+host, leaseScope)
+		cred, err := deps.VCSCreds.IssueVCSToken(ctx, tenant, "https://"+host, leaseScope)
 		if err != nil {
 			return mcp.ToolResult{}, vcsTokenError(err)
 		}
-		if cred.IsZero() {
+		if cred.Token == "" {
 			// No pool/credential resolved to a usable token. Treated as a
 			// configuration failure rather than a public clone, because a
 			// helper only calls this tool when git demanded credentials.
@@ -1107,25 +1101,26 @@ func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 	})
 }
 
-// vcsTokenError maps a vcscred.Resolve failure to the §15.1 git-clone
-// auth error code the REST gitClone path uses, so the in-pod token
-// surface and the gateway-side clone surface report identical codes.
+// vcsTokenError maps a GWSEAM-IssueVCSToken failure to the §15.1
+// git-clone auth error code the REST gitClone path uses, so the in-pod
+// token surface and the gateway-side clone surface report identical codes.
 // spec: §15.1; §26.2. F-26.2.5.
 func vcsTokenError(err error) error {
-	var resolveErr *credentialpoolstore.VCSResolveError
-	if errors.As(err, &resolveErr) {
-		if resolveErr.Reason == credentialpoolstore.VCSHostAmbiguous {
+	var tokenErr *seam.VCSTokenError
+	if errors.As(err, &tokenErr) {
+		switch tokenErr.Failure {
+		case seam.VCSHostAmbiguous:
 			return mcp.NewToolError("GIT_CLONE_AUTH_HOST_AMBIGUOUS", err.Error(),
 				map[string]any{
-					"host": resolveErr.Host, "provider": resolveErr.Provider,
-					"matchingPools": resolveErr.MatchingPools,
+					"host": tokenErr.Host, "provider": tokenErr.Provider,
+					"matchingPools": tokenErr.MatchingPools,
 				})
+		case seam.VCSHostUnsupported:
+			return mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST", err.Error(),
+				map[string]any{"host": tokenErr.Host, "provider": tokenErr.Provider})
+		case seam.VCSNoUsableCredential:
+			return mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST", err.Error(), nil)
 		}
-		return mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST", err.Error(),
-			map[string]any{"host": resolveErr.Host, "provider": resolveErr.Provider})
-	}
-	if errors.Is(err, vcscred.ErrNoUsableCredential) {
-		return mcp.NewToolError("GIT_CLONE_AUTH_UNSUPPORTED_HOST", err.Error(), nil)
 	}
 	return mcp.NewToolError("INTERNAL_ERROR", err.Error(), nil)
 }
@@ -1160,7 +1155,6 @@ type taskHandle struct {
 	Depth int `json:"depth"`
 }
 
-// recordChainRejection emits the §16.7 interceptor.rejected audit row
 // childRouteSpec is the §8.2 PreRoute content payload for a
 // delegated child: the augmented TaskSpec the chain inspects before
 // runtime selection. The JSON field names match the PreRoute immutable
@@ -1170,24 +1164,6 @@ type childRouteSpec struct {
 	UserID           string `json:"user_id,omitempty"`
 	RequestedRuntime string `json:"requested_runtime,omitempty"`
 	Input            string `json:"input,omitempty"`
-}
-
-// recordChainRejection emits the §16.7 `interceptor.rejected` audit row
-// when a §4.8 chain REJECTs at a phase run from the MCP fabric
-// (PreDelegation, PreMessageDelivery). The chain stamps Result.RejectedBy
-// with the rejecting interceptor so the audit row identifies it. It is
-// best-effort: a nil PolicyAudit is a no-op, and an append failure is
-// logged-by-omission rather than blocking the rejection, because the
-// caller already fails the request closed. spec: §4.8, §11.7.
-func recordChainRejection(ctx context.Context, deps Deps, tenant, sessionID string, phase interceptor.Phase, res interceptor.Result) {
-	if deps.PolicyAudit == nil {
-		return
-	}
-	_ = deps.PolicyAudit.RecordRejection(ctx, policy.RejectionContext{
-		TenantID:  tenant,
-		SessionID: sessionID,
-		Phase:     phase,
-	}, res)
 }
 
 // preToolResultPayload is the §4.8 PreToolResult content
@@ -1221,15 +1197,14 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 		if err != nil {
 			return result, nil
 		}
-		res := deps.Interceptors.Run(ctx, interceptor.Request{
-			Phase:    interceptor.PhasePreToolResult,
+		res := deps.Interceptors.Intercept(ctx, seam.InterceptRequest{
+			Phase:    seam.InterceptPreToolResult,
 			TenantID: tenant,
 			Content:  raw,
 			Metadata: map[string]string{"tool_name": name},
 		})
 		switch res.Action {
-		case interceptor.ActionReject:
-			recordChainRejection(ctx, deps, tenant, "", interceptor.PhasePreToolResult, res)
+		case seam.InterceptReject:
 			code := res.Code
 			if code == "" {
 				code = "INTERCEPTOR_REJECTED"
@@ -1242,14 +1217,14 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 			// §15.1 catalog row uniformly with the other chain surfaces.
 			// spec: §4.8 (PreToolResult id immutability), §15.1.
 			details := map[string]any{
-				"phase":           string(interceptor.PhasePreToolResult),
+				"phase":           string(seam.InterceptPreToolResult),
 				"interceptor_ref": res.RejectedBy,
 			}
-			if res.Code == interceptor.CodeInterceptorImmutableFieldViolation {
+			if res.Code == seam.CodeInterceptorImmutableFieldViolation {
 				details["violated_fields"] = res.ViolatedFields
 			}
 			return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, details)
-		case interceptor.ActionModify:
+		case seam.InterceptModify:
 			var modified preToolResultPayload
 			if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
 				// A MODIFY that does not deserialize back into the
@@ -1271,7 +1246,7 @@ func buildPreToolResultInterceptor(deps Deps, tenant string) mcp.ResultIntercept
 // non-nil rejection Result when the chain REJECTs; the caller surfaces
 // the rejection to the agent or client. A nil chain or a malformed
 // MODIFY payload leaves the parts unchanged. spec: §4.8.
-func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []executor.MessagePart) ([]executor.MessagePart, *interceptor.Result) {
+func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID string, parts []executor.MessagePart) ([]executor.MessagePart, *seam.InterceptResult) {
 	if deps.Interceptors == nil {
 		return parts, nil
 	}
@@ -1279,17 +1254,16 @@ func applyPostAgentOutput(ctx context.Context, deps Deps, tenant, sessionID stri
 	if err != nil {
 		return parts, nil
 	}
-	res := deps.Interceptors.Run(ctx, interceptor.Request{
-		Phase:     interceptor.PhasePostAgentOutput,
+	res := deps.Interceptors.Intercept(ctx, seam.InterceptRequest{
+		Phase:     seam.InterceptPostAgentOutput,
 		SessionID: sessionID,
 		TenantID:  tenant,
 		Content:   raw,
 	})
 	switch res.Action {
-	case interceptor.ActionReject:
-		recordChainRejection(ctx, deps, tenant, sessionID, interceptor.PhasePostAgentOutput, res)
+	case seam.InterceptReject:
 		return parts, &res
-	case interceptor.ActionModify:
+	case seam.InterceptModify:
 		var modified []executor.MessagePart
 		if err := json.Unmarshal(res.ModifiedContent, &modified); err != nil {
 			return parts, nil
@@ -1323,7 +1297,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the §9.4 memory scope and the session lookup
 		// stay tenant-correct. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.14.
@@ -1338,7 +1312,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				fmt.Sprintf("invalid arguments: %v (metadata values must be strings per §8.5)", err), nil)
 		}
-		sessionID := callerSessionID(ctx, in.SessionID)
+		sessionID := callerSessionID(ctx, deps, in.SessionID)
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
@@ -1385,7 +1359,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the §9.4 user-scoped memory query stays tenant-
 		// correct. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.14.
@@ -1396,7 +1370,7 @@ func registerMemoryTools(srv *mcp.Server, deps Deps, tenant string, _ func() tim
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		sessionID := callerSessionID(ctx, in.SessionID)
+		sessionID := callerSessionID(ctx, deps, in.SessionID)
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
@@ -1521,7 +1495,7 @@ type discoveredAgent struct {
 
 // requireDelegatingBearerAllowed applies the §10.2 session-creation caller
 // check to the bearer that calls lenny/delegate_task, through
-// callercheck.Check. A refusal answers the FORBIDDEN tool error once its
+// GWSEAM-CheckCreatingCaller. A refusal answers the FORBIDDEN tool error once its
 // token.exchanged rejection row is durable; a failed issued_tokens read or
 // rejection write answers INTERNAL_ERROR. A pod-path call over
 // LNK-GWCONTROL carries no jti and passes. It runs before any admission,
@@ -1529,15 +1503,14 @@ type discoveredAgent struct {
 // spec: §10.2 (Signing topology), §13.3 (Credential Flow: Write-before-issue
 // ordering, step (1a)).
 func requireDelegatingBearerAllowed(ctx context.Context, deps Deps, now time.Time) error {
-	principal, ok := authmw.FromContext(ctx)
-	if !ok {
+	if deps.CallerCheck == nil {
 		return nil
 	}
-	err := callercheck.Check(ctx, deps.CallerCheck, principal, now)
+	err := deps.CallerCheck.CheckCreatingCaller(ctx, now)
 	if err == nil {
 		return nil
 	}
-	var refused *callercheck.Refused
+	var refused *seam.CallerRefusal
 	if errors.As(err, &refused) {
 		return mcp.NewToolError("FORBIDDEN",
 			"the presented bearer cannot create sessions: "+refused.Reason, nil)
@@ -1554,29 +1527,26 @@ func requireDelegatingBearerAllowed(ctx context.Context, deps Deps, now time.Tim
 // hard-disabled or fully revoked owner, a restricted owner, and a
 // suspended or non-active tenant refuse. A missing row carries no marker,
 // and an unwired store reads nothing. A marker read error answers the
-// INTERNAL_ERROR tool error. When the parent session is unresolvable the
+// INTERNAL_ERROR tool error. The session core reads the markers and
+// answers the refusal (GWSEAM-DelegatorRefusal). When the parent session is unresolvable the
 // gate stays out of the way so the delegation service returns its
 // canonical PARENT_NOT_FOUND. The fence in the child's insert transaction
 // remains the serialization point.
 // spec: §11.4 (User Invalidation), §12.8 (Lifecycle fence and drain).
 func requireActiveDelegator(ctx context.Context, deps Deps, tenant, parentSessionID string) error {
-	if (deps.Users == nil && deps.Tenants == nil) || deps.Store == nil || parentSessionID == "" {
+	if deps.Tenants == nil || deps.Store == nil || parentSessionID == "" {
 		return nil
 	}
 	parent, err := deps.Store.Get(ctx, tenant, parentSessionID)
 	if err != nil {
 		return nil
 	}
-	m, err := sessionstore.StoreMarkers(deps.Tenants, deps.Users)(ctx, tenant, parent.UserID)
+	ref, err := deps.Tenants.DelegatorRefusal(ctx, tenant, parent.UserID)
 	if err != nil {
 		return mcp.NewToolError("INTERNAL_ERROR",
 			"delegation lifecycle check failed: "+err.Error(), nil)
 	}
-	// The early gate reads no parent row and leaves ParentTerminal unset, so
-	// the child's insert transaction is the only producer of
-	// DELEGATION_PARENT_REVOKED. spec: §12.8 (Lifecycle fence and drain).
-	m.IsDelegatedChild = true
-	if ref := m.Refusal(tenant, parent.UserID); ref != nil {
+	if ref != nil {
 		return mcp.NewToolError(ref.Code, ref.Message, ref.Details)
 	}
 	return nil
@@ -1786,20 +1756,22 @@ func resolveDerivedRuntimes(ctx context.Context, store runtimestore.Store, rows 
 // attached to the request context — the production path, where the MCP
 // server is mounted under that middleware. When no Resolution is on the
 // context (an MCP tool exercised directly without the HTTP middleware
-// chain), it resolves the same Resolution from the Deps registries via
-// the shared environmentmw.Resolve. Either way the §10.6 filtering goes
+// chain, such as a call from a session's pod), the session core resolves
+// the same Resolution through GWSEAM-ResolveEnvironments, which runs the
+// shared environmentmw.Resolve. Either way the §10.6 filtering goes
 // through a single Resolution type and a single envaccess code path.
 func environmentResolution(ctx context.Context, deps Deps) (environmentmw.Resolution, error) {
 	if res := environmentmw.FromContext(ctx); res.Configured {
 		return res, nil
 	}
-	principal, ok := authmw.FromContext(ctx)
-	if !ok {
+	if deps.EnvironmentResolver == nil {
 		return environmentmw.Resolution{}, nil
 	}
-	caller := envaccess.Caller{Subject: principal.Subject, Groups: principal.Groups}
-	return environmentmw.Resolve(ctx, deps.Environments, deps.Tenants,
-		deps.DefaultNoEnvironmentPolicy, caller, principal.TenantID)
+	resolved, err := deps.EnvironmentResolver.ResolveEnvironments(ctx)
+	if err != nil {
+		return environmentmw.Resolution{}, err
+	}
+	return environmentmw.FromContext(resolved), nil
 }
 
 // filterByEnvironmentAccess applies §10.6 transparent filtering to a
@@ -1859,7 +1831,7 @@ func narrowRuntimesToEnvironment(ctx context.Context, deps Deps, runtimes []runt
 // transparent-filter boundary is not in effect and the delegation
 // service remains the authority on the runtime reference.
 func runtimeAuthorizedForCaller(ctx context.Context, deps Deps, runtimeRef string) (bool, error) {
-	if deps.Environments == nil || deps.Tenants == nil || deps.Runtimes == nil {
+	if deps.Environments == nil || deps.EnvironmentResolver == nil || deps.Runtimes == nil {
 		return true, nil
 	}
 	rt, err := deps.Runtimes.Get(ctx, runtimeRef)
@@ -1909,7 +1881,7 @@ func crossEnvReachable(ctx context.Context, deps Deps, tenant, parentSessionID, 
 	if !memberOfEnvironment(res, parent.Environment) {
 		return false, nil
 	}
-	return envaccess.CrossEnvironmentReachable(parent.Environment, rt, res.AllEnvironments), nil
+	return res.CrossEnvironmentReachable(parent.Environment, rt), nil
 }
 
 // crossEnvInheritMismatch runs the §8.3 cross-environment `inherit`
@@ -1961,8 +1933,8 @@ func crossEnvInheritMismatch(ctx context.Context, deps Deps, tenant, parentSessi
 	originRuntime, _ := deps.Runtimes.Get(ctx, origin.RuntimeRef)
 	childRuntime, _ := deps.Runtimes.Get(ctx, targetRef)
 	var providers []string
-	if tnt, terr := deps.Tenants.Get(ctx, tenant); terr == nil {
-		providers = tnt.CredentialPolicy.Providers()
+	if p, terr := deps.Tenants.TenantCredentialProviders(ctx, tenant); terr == nil {
+		providers = p
 	}
 	originProviders := lease.IntersectProviders(providers, originRuntime.SupportedProviders)
 	compat := lease.IntersectProviders(originProviders, childRuntime.SupportedProviders)
@@ -2030,6 +2002,25 @@ func resolvePoolElicitationPolicy(ctx context.Context, deps Deps, poolRef string
 // children's states while waiting for the mode's settle condition.
 const awaitPollInterval = 25 * time.Millisecond
 
+// fallbackCallers resolves the caller of a tool call whose Deps wire no
+// Callers. It is nil in the gateway, whose composition root always wires
+// Deps.Callers; the package's tests set it, so a test that builds Deps
+// reads the principal its context carries.
+var fallbackCallers seam.CallerIdentity
+
+// requestCaller returns the authenticated caller the tool call's context
+// carries, through GWSEAM-RequestCaller.
+func requestCaller(ctx context.Context, deps Deps) (seam.Caller, bool) {
+	callers := deps.Callers
+	if callers == nil {
+		callers = fallbackCallers
+	}
+	if callers == nil {
+		return seam.Caller{}, false
+	}
+	return callers.RequestCaller(ctx)
+}
+
 // callerSessionID resolves the calling session id. It prefers the
 // authenticated principal's SessionID claim (the §15 production path,
 // where every JWT carries the originating session) and falls back to
@@ -2040,8 +2031,8 @@ const awaitPollInterval = 25 * time.Millisecond
 // fallback keeps the v1 tool surface usable in deployments that have
 // not yet rotated to session-bound bearer tokens.
 // spec: §8.5; F-8.5.11, F-8.5.13, F-8.5.14.
-func callerSessionID(ctx context.Context, fallback string) string {
-	if p, ok := authmw.FromContext(ctx); ok && p.SessionID != "" {
+func callerSessionID(ctx context.Context, deps Deps, fallback string) string {
+	if p, ok := requestCaller(ctx, deps); ok && p.SessionID != "" {
 		return p.SessionID
 	}
 	return fallback
@@ -2052,8 +2043,8 @@ func callerSessionID(ctx context.Context, fallback string) string {
 // authenticated principal with a tenant, with the §15.1 UNAUTHORIZED
 // code the REST surface returns for a request without credentials.
 // spec: §10.2 (Authentication); §15.1 (UNAUTHORIZED). F-10.2.21.
-func requirePrincipalTenant(ctx context.Context) *mcp.ToolError {
-	if p, ok := authmw.FromContext(ctx); ok && p.TenantID != "" {
+func requirePrincipalTenant(ctx context.Context, deps Deps) *mcp.ToolError {
+	if p, ok := requestCaller(ctx, deps); ok && p.TenantID != "" {
 		return nil
 	}
 	return mcp.NewToolError("UNAUTHORIZED", "tool call requires an authenticated principal",
@@ -2073,8 +2064,8 @@ func requirePrincipalTenant(ctx context.Context) *mcp.ToolError {
 // is the absolute floor — never an empty tenant id, which would
 // collapse into an unbounded scan on the session store.
 // spec: §9.2 / §16.1 / §15.2; F-9.2.13, F-15.2.15.
-func callerTenantID(ctx context.Context, fallback string) string {
-	if p, ok := authmw.FromContext(ctx); ok && p.TenantID != "" {
+func callerTenantID(ctx context.Context, deps Deps, fallback string) string {
+	if p, ok := requestCaller(ctx, deps); ok && p.TenantID != "" {
 		return p.TenantID
 	}
 	if fallback != "" {

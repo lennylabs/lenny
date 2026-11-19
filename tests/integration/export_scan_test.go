@@ -30,6 +30,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
@@ -147,12 +148,12 @@ func newExportScanTestbed(t *testing.T, handler stubinterceptor.Handler, maxExpo
 	}
 
 	svc := delegation.NewService(sessions, delegation.Options{
-		Clock:                   clock,
-		IDFunc:                  func() string { return "sess_child" },
-		Runtimes:                runtimes,
-		Policies:                pols,
-		ExportMaterializer:      export.NewMaterializer(exportScanExporter{files: files}, exportScanSink{}, nil),
-		ExportScanChainResolver: delegation.NewChainExportScanResolver(chain, nil),
+		Clock:              clock,
+		IDFunc:             func() string { return "sess_child" },
+		Runtimes:           runtimes,
+		Policies:           pols,
+		ExportMaterializer: export.NewMaterializer(exportScanExporter{files: files}, exportScanSink{}, nil),
+		ExportScans:        toolops.NewExportScans(chain, nil),
 	})
 	return exportScanTestbed{svc: svc, parentID: parentID, stub: stub}
 }

@@ -8,8 +8,9 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/ratewindow"
 )
 
 // §8.3 messagingRateLimit defaults. Applied per-field when
@@ -57,22 +58,22 @@ func (l MessagingRateLimit) withDefaults() MessagingRateLimit {
 
 // messagingLimiter enforces the §7.2 / §8.3 lenny/send_message rate
 // limits. The per-minute outbound and inbound caps share a fixed-window
-// ratelimit.Counter under distinct key prefixes; the lifetime
+// seam.RateCounter under distinct key prefixes; the lifetime
 // per-session cap uses an in-process monotonic counter. The lifetime
 // counter is best-effort in v1 — it resets on gateway restart, so the
 // per-session cap is enforced within a process lifetime; durable
 // per-session counters land with the §7.2 inbox persistence (F-7.2.4).
 // spec: §7.2; §8.3. F-7.2.6.
 type messagingLimiter struct {
-	counter  ratelimit.Counter
+	counter  seam.RateCounter
 	limits   MessagingRateLimit
 	mu       sync.Mutex
 	lifetime map[string]int
 }
 
-func newMessagingLimiter(counter ratelimit.Counter, limits MessagingRateLimit) *messagingLimiter {
+func newMessagingLimiter(counter seam.RateCounter, limits MessagingRateLimit) *messagingLimiter {
 	if counter == nil {
-		counter = ratelimit.NewMemory()
+		counter = ratewindow.New()
 	}
 	return &messagingLimiter{
 		counter:  counter,
@@ -100,7 +101,7 @@ func (m *messagingLimiter) allowSender(ctx context.Context, tenant, sender strin
 	if sender == "" {
 		return true, nil
 	}
-	n, err := m.counter.Incr(ctx, "msg:out:"+tenant+":"+sender, now)
+	n, err := m.counter.IncrementRate(ctx, "msg:out:"+tenant+":"+sender, now)
 	if err != nil {
 		return false, err
 	}
@@ -115,7 +116,7 @@ func (m *messagingLimiter) allowSender(ctx context.Context, tenant, sender strin
 // from every sender in the delegation tree.
 // spec: §8.3 (Delegation Policy and Lease), §7.2.
 func (m *messagingLimiter) allowTarget(ctx context.Context, tenant, target string, now time.Time) (bool, error) {
-	n, err := m.counter.Incr(ctx, "msg:in:"+tenant+":"+target, now)
+	n, err := m.counter.IncrementRate(ctx, "msg:in:"+tenant+":"+target, now)
 	if err != nil {
 		return false, err
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -224,14 +225,15 @@ func newCrossEnvInheritCredAvailMCP(t *testing.T, checker mcptools.CredentialAva
 	tenants := tenantstore.NewMemory()
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.SessionAccess{},
-		DevTenantFallback: true,
-		Store:             store,
-		Executor:          executor.NewEchoExecutor(),
-		Runtimes:          runtimes,
-		Environments:      envs,
-		Tenants:           tenants,
-		CredAvailability:  checker,
+		SessionService:      ownerprincipal.SessionAccess{},
+		DevTenantFallback:   true,
+		Store:               store,
+		Executor:            executor.NewEchoExecutor(),
+		Runtimes:            runtimes,
+		Environments:        envs,
+		Tenants:             toolops.NewTenants(tenants, nil, nil),
+		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, ""),
+		CredAvailability:    checker,
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/ratewindow"
 )
 
 // autoExtensionLimiter enforces the §8.6 auto-mode rate limit.
@@ -18,21 +19,22 @@ import (
 // window — the safety valve against a runaway agent draining the entire
 // maxExtendableBudget without human visibility.
 //
-// It reuses the §11.1 ratelimit.Counter, the per-minute fixed-window
+// It reuses the §11.1 request-rate counter, the per-minute fixed-window
 // primitive the request-rate middleware and the §7.2 messaging limiter
-// already use, keyed per tenant and tree. The counter increments on every
+// already use, which the session core serves through the seam interface,
+// keyed per tenant and tree. The counter increments on every
 // auto-mode request; the limit comparison rolls with the window, so once
 // a tree trips the limit it stays in elicitation until the window
 // advances. spec: §8.6.
 type autoExtensionLimiter struct {
-	counter ratelimit.Counter
+	counter seam.RateCounter
 }
 
 // newAutoExtensionLimiter returns a limiter over counter, defaulting to an
 // in-memory counter when none is supplied.
-func newAutoExtensionLimiter(counter ratelimit.Counter) *autoExtensionLimiter {
+func newAutoExtensionLimiter(counter seam.RateCounter) *autoExtensionLimiter {
 	if counter == nil {
-		counter = ratelimit.NewMemory()
+		counter = ratewindow.New()
 	}
 	return &autoExtensionLimiter{counter: counter}
 }
@@ -47,7 +49,7 @@ func (l *autoExtensionLimiter) over(ctx context.Context, tenantID, rootSessionID
 		return false, nil
 	}
 	key := fmt.Sprintf("lease_ext_auto:%s:%s", tenantID, rootSessionID)
-	n, err := l.counter.Incr(ctx, key, now)
+	n, err := l.counter.IncrementRate(ctx, key, now)
 	if err != nil {
 		return false, err
 	}

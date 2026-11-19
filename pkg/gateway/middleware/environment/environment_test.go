@@ -459,3 +459,23 @@ func TestResolutionContextRoundTrip(t *testing.T) {
 		t.Error("FromContext on a bare context must return an unconfigured Resolution")
 	}
 }
+
+// TestResolutionCrossEnvironmentReachableReadsTheTenantsEnvironments checks
+// that the Resolution evaluates a bilateral cross-environment declaration
+// over the tenant's environments it carries, and refuses an environment
+// that is not one of them.
+// spec: §10.6 (Environment Resource and RBAC Model)
+func TestResolutionCrossEnvironmentReachableReadsTheTenantsEnvironments(t *testing.T) {
+	shared := environment.Selector{MatchLabels: map[string]string{"shared": "true"}}
+	res := environmentmw.Resolution{Configured: true, AllEnvironments: []environmentstore.Environment{
+		{Name: "team-a", TenantID: "acme", CrossEnvOutbound: []environmentstore.CrossEnvRule{{Environment: "team-b", Runtimes: shared}}},
+		{Name: "team-b", TenantID: "acme", RuntimeSelector: shared, CrossEnvInbound: []environmentstore.CrossEnvRule{{Environment: "team-a", Runtimes: shared}}},
+	}}
+	tool := runtimestore.Runtime{Name: "shared-tool", Type: runtimestore.TypeAgent, Labels: map[string]string{"shared": "true"}}
+	if !res.CrossEnvironmentReachable("team-a", tool) {
+		t.Error("a bilateral declaration did not make the shared runtime reachable")
+	}
+	if res.CrossEnvironmentReachable("team-c", tool) {
+		t.Error("an environment outside the tenant's reached the runtime")
+	}
+}

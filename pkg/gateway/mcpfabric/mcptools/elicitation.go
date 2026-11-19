@@ -12,7 +12,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
@@ -641,7 +640,7 @@ func resolveElicitationTool(
 	response any,
 	reason string,
 ) (mcp.ToolResult, error) {
-	principal, _ := authmw.FromContext(ctx)
+	principal, _ := requestCaller(ctx, deps)
 	if err := requireActiveResolver(ctx, deps, tenant, principal.Subject); err != nil {
 		return mcp.ToolResult{}, err
 	}

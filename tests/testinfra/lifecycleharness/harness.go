@@ -22,6 +22,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/coordination"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credcache"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
@@ -592,6 +593,7 @@ func (h *Harness) AddReplica(name string) *Replica {
 // replicaMCPDeps is the dependency set of the replica's MCP surface.
 func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
 	return mcptools.Deps{
+		Callers:            toolops.Callers{},
 		DevTenantFallback:  true,
 		HolderForward:      r.Server,
 		Store:              h.Store,
@@ -605,7 +607,7 @@ func (h *Harness) replicaMCPDeps(r *Replica) mcptools.Deps {
 		Clock:              h.Clock.Now,
 		TenantID:           Tenant,
 		MessagingRateLimit: h.msgLimit,
-		Interceptors:       h.interceptors,
+		Interceptors:       toolops.NewInterception(h.interceptors, nil),
 	}
 }
 

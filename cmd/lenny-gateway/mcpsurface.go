@@ -13,11 +13,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/blobstore"
 	"github.com/lennylabs/lenny/pkg/clockinject"
-	"github.com/lennylabs/lenny/pkg/elicitation"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore"
 	deploymentconfigpg "github.com/lennylabs/lenny/pkg/gateway/environment/deploymentconfigstore/pgstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
+	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
@@ -113,7 +115,9 @@ func (w *gatewayWiring) buildMCPSurface(
 	if w.pgPool != nil {
 		interceptors = interceptorpg.New(w.pgPool)
 	}
-	interceptorCooldownResolver := interceptorstore.NewCooldownResolver(interceptors)
+	// The session core serves the weakening cooldowns of the registry to
+	// the platform tools seam (GWSEAM-FailOpenCooldown).
+	interceptorCooldowns := toolops.NewCooldowns(interceptors)
 	// §16.7 deployment-transition audit baseline: the durable last-applied
 	// Helm deployment-scope config the post-upgrade reconciliation endpoint
 	// diffs each render against to emit the gateway.*/platform.*/deployment.*
@@ -150,7 +154,7 @@ func (w *gatewayWiring) buildMCPSurface(
 	// _duration_seconds metrics. A scanExportedFiles: true policy whose
 	// interceptorRef names no registered interceptor still fails closed
 	// with EXPORT_FILE_SCAN_UNAVAILABLE. F-13.5.5.
-	exportScanResolver := delegation.NewChainExportScanResolver(
+	exportScans := toolops.NewExportScans(
 		policyChain,
 		policy.NewExportScanObserver(auditAppender, gwMetrics, nil).WithBilling(w.billingEmitter),
 	)
@@ -159,13 +163,13 @@ func (w *gatewayWiring) buildMCPSurface(
 	// revocation propagator (below) share the one cache instance.
 	revCache := revocation.NewCache()
 	delegationSvc := delegation.NewService(w.sessions, delegation.Options{
-		Experiments:             w.experiments,
-		Runtimes:                w.runtimes,
-		Policies:                delegationPolicies,
-		Clock:                   clockinject.Now,
-		ExportMaterializer:      exportMaterializer,
-		ExportScanChainResolver: exportScanResolver,
-		TreeBudgetReserver:      w.treeBudgetReserver,
+		Experiments:        w.experiments,
+		Runtimes:           w.runtimes,
+		Policies:           delegationPolicies,
+		Clock:              clockinject.Now,
+		ExportMaterializer: exportMaterializer,
+		ExportScans:        exportScans,
+		TreeBudgetReserver: w.treeBudgetReserver,
 		// §8.3 / §8.6 — the reservation's token cap adds the tree's
 		// cumulative extension grant from the delegation_tree_budget row,
 		// and a reservation detection runs the BUDGET_KEYS_EXPIRED tree
@@ -185,7 +189,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		// §4.8 / §8.3 SEC-013 — reject delegate_task whose
 		// effective interceptorRef names an interceptor inside the
 		// fail-closed → fail-open weakening cooldown. F-4.8.17.
-		InterceptorCooldown: interceptorCooldownResolver,
+		InterceptorCooldown: interceptorCooldowns,
 		// §8.2 / §16.1: the delegation service emits
 		// `lenny_delegation_depth` and
 		// `lenny_delegation_would_have_blocked_total` through its own
@@ -225,6 +229,10 @@ func (w *gatewayWiring) buildMCPSurface(
 	if *maxDeadlockWaitSeconds > 0 {
 		deadlockManager = deadlock.NewManager(time.Duration(*maxDeadlockWaitSeconds)*time.Second, ptMetrics.deadlock)
 	}
+	// The tenant facts the platform tools read, which the session core
+	// serves from the tenant and user stores (GWSEAM-DelegatorRefusal and
+	// its neighbours).
+	tools := toolTenants(w.tenants, w.users)
 	mcptools.Register(mcpSrv, mcptools.Deps{
 		Store: w.sessions,
 		// spec: §15.2.1 rule 1 — route lenny/create_session
@@ -251,21 +259,22 @@ func (w *gatewayWiring) buildMCPSurface(
 		// WorkspacePlan, launch, and transition it to running so the
 		// returned handle is a running child the parent can interact with.
 		// Wired to the same *sessionserver.Server that owns the §4.9 engine.
-		ChildMaterializer:          sessionSrv,
-		Executor:                   w.exec,
-		DeadlockTracker:            deadlockTracker,
-		Deadlocks:                  deadlockManager,
-		Delegation:                 delegationSvc,
-		Users:                      w.users,
-		CallerCheck:                sessionCallerCheck(w.pgPool, w.auditValidator),
-		Runtimes:                   w.runtimes,
-		CapabilityOverrides:        w.capOverrides,
-		Environments:               environments,
-		Tenants:                    w.tenants,
-		Pools:                      w.pools,
-		Audit:                      mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
-		DefaultNoEnvironmentPolicy: resolvedNoEnvPolicy,
-		Interceptors:               policyChain,
+		ChildMaterializer:   sessionSrv,
+		Executor:            w.exec,
+		DeadlockTracker:     deadlockTracker,
+		Deadlocks:           deadlockManager,
+		Delegation:          delegationSvc,
+		Users:               w.users,
+		CallerCheck:         toolops.NewCallerCheck(sessionCallerCheck(w.pgPool, w.auditValidator)),
+		Callers:             toolops.Callers{},
+		Runtimes:            w.runtimes,
+		CapabilityOverrides: w.capOverrides,
+		Environments:        environments,
+		EnvironmentResolver: toolops.NewEnvironments(environments, w.tenants, resolvedNoEnvPolicy),
+		Tenants:             tools,
+		Pools:               w.pools,
+		Audit:               mcpDelegationAuditor{sink: auditSink, billing: w.billingEmitter},
+		Interceptors:        toolops.NewInterception(policyChain, policyAuditSink),
 		// spec: §8.3 / §4.8 / §13.5
 		// mitigations 2-3 — lenny/delegate_task and lenny/send_message
 		// resolve the effective contentPolicy.interceptorRef and run only
@@ -277,7 +286,6 @@ func (w *gatewayWiring) buildMCPSurface(
 		// interceptor fail-policy weakening cooldown, mirroring the
 		// delegate_task gate inside the delegation Service. F-4.8.17.
 		CooldownChecker: delegationSvc,
-		PolicyAudit:     policyAuditSink,
 		Events:          w.eventBus,
 		InputWaits:      inputWaits,
 		// spec: §6.2 — keep a parent blocked in await_children
@@ -323,13 +331,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		// off skips the integrity check, detect-only records a divergence
 		// but forwards as received, enforce drops the divergent forward.
 		// A lookup error fails safe to the enforce default. F-9.2.2.
-		ElicitationModeResolver: func(ctx context.Context, tenantID string) elicitation.EnforcementMode {
-			stored := ""
-			if t, err := w.tenants.Get(ctx, tenantID); err == nil {
-				stored = t.ElicitationContentIntegrity
-			}
-			return elicitation.ResolveEffectiveWithDefaults(elicitationFloorProvider.Floor(), stored)
-		},
+		ElicitationModeResolver: mcptools.TenantElicitationModes(elicitationFloorProvider.Floor, tools),
 		// spec: §9.2 / §16.1 / §15.2 — Deps.TenantID is the
 		// fallback for transports without an authenticated principal
 		// (tests, the dev-headers path). Every production handler
@@ -355,7 +357,7 @@ func (w *gatewayWiring) buildMCPSurface(
 			MaxPerSession:       *messagingMaxPerSession,
 			MaxInboundPerMinute: *messagingMaxInboundPerMinute,
 		},
-		MessagingRateCounter: w.rateLimiter,
+		MessagingRateCounter: toolops.NewRateCounter(w.rateLimiter),
 		// §7.2 paths 3/5/6/7 — the same inbox + DLQ coordinator the REST
 		// handler uses, so lenny/send_message buffers a message to a
 		// non-running target instead of forcing it onto the executor.
@@ -374,7 +376,7 @@ func (w *gatewayWiring) buildMCPSurface(
 		// vcscred.Resolver the §14 gateway-side gitClone path uses. The
 		// §4.9.2 credential.leased audit row binds each minted token to
 		// the originating session id. F-26.2.5.
-		VCSCreds:        vcsCreds,
+		VCSCreds:        toolops.NewVCSTokens(vcsCreds),
 		VCSLeaseAuditor: mcpVCSLeaseAuditor{appender: auditAppender, billing: w.billingEmitter},
 	})
 
@@ -446,4 +448,12 @@ func delegationSessionObjects(blobs blobstore.Store) delegation.SessionObjectDel
 		return d
 	}
 	return nil
+}
+
+// toolTenants returns the tenant operations the session core serves to the
+// platform tools seam over the tenant and user stores: the tenant facts its
+// tools read and the tenant listing its sweeps visit, which is the listing
+// the gateway's other background workers read.
+func toolTenants(tenants tenantstore.Store, users userstore.Store) toolops.Tenants {
+	return toolops.NewTenants(tenants, users, tenantsLister{tenants}.ListTenants)
 }

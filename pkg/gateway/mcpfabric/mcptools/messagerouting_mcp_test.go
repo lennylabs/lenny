@@ -16,6 +16,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -415,7 +416,7 @@ func TestSendMessageRouting_SealedAfterDeliveryIsDelivered_spec_7_2_path6(t *tes
 // paths, path 6)
 func TestSendMessageRouting_RefusedPreDeliveryHoldsNothing_spec_7_2_path6(t *testing.T) {
 	srv, store, _, dlq, del := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) {
-		d.Interceptors = rejectingChain(t)
+		d.Interceptors = toolops.NewInterception(rejectingChain(t), nil)
 	})
 	mkSession(t, store, "sess_sus", session.StateSuspended, "")
 

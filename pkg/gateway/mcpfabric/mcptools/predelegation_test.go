@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -63,7 +64,7 @@ func newMCPForDelegate(t *testing.T, exec executor.Executor, chain *interceptor.
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -216,8 +217,7 @@ func TestDelegateTaskPreDelegationRejectAudits(t *testing.T) {
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          newRecordingExecutor(),
-		Interceptors:      chain,
-		PolicyAudit:       policy.NewAuditSink(app, nil),
+		Interceptors:      toolops.NewInterception(chain, policy.NewAuditSink(app, nil)),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

@@ -30,6 +30,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -46,10 +47,9 @@ const (
 	DefaultSweepInterval = 60 * time.Second
 )
 
-// TenantLister enumerates the tenants the sweep covers.
-type TenantLister interface {
-	ListTenants(ctx context.Context) ([]string, error)
-}
+// TenantLister enumerates the tenants the sweep covers. The session core
+// serves it (GWSEAM-ListTenants).
+type TenantLister = seam.TenantDirectory
 
 // StaticTenants is a fixed-slice TenantLister for tests and the
 // minimal gateway.

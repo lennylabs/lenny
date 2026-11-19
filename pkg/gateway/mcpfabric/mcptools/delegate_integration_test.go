@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -136,7 +137,7 @@ func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          exec,
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		Delegation:        svc,
 		Runtimes:          runtimes,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },

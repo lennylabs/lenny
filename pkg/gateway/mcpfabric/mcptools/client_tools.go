@@ -54,7 +54,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 	// carrying the canonical lenny code so the shared errorclassify table
 	// assigns the same (category, retryable) pair on both surfaces.
 	dispatch := func(ctx context.Context, method, target string, body []byte, contentType string, headers map[string]string) (mcp.ToolResult, error) {
-		res, svcErr := svc.ServiceCall(ctx, callerTenantID(ctx, tenant), method, target, body, contentType, headers)
+		res, svcErr := svc.ServiceCall(ctx, callerTenantID(ctx, deps, tenant), method, target, body, contentType, headers)
 		if svcErr != nil {
 			return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
 		}
@@ -224,7 +224,7 @@ func registerClientFacingTools(srv *mcp.Server, deps Deps, tenant string) {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"ref is required", map[string]any{"field": "ref"})
 		}
-		res, svcErr := svc.ServiceCall(ctx, callerTenantID(ctx, tenant), "GET",
+		res, svcErr := svc.ServiceCall(ctx, callerTenantID(ctx, deps, tenant), "GET",
 			"/v1/blobs/"+url.PathEscape(in.Ref), nil, "", nil)
 		if svcErr != nil {
 			return mcp.ToolResult{}, mcp.NewToolError(svcErr.Code, svcErr.Message, svcErr.Details)
