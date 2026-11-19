@@ -30,7 +30,9 @@ func routeKeys(t *testing.T, table *routetable.Table) string {
 	return strings.Join(keys, "\n")
 }
 
-// TestMetricsRegistersTheScrapeEndpointOnTheInternalListener checks that the scrape endpoint registers on the internal listener and serves the registry.
+// TestMetricsRegistersTheScrapeEndpointOnTheInternalListener checks that the
+// scrape endpoint registers on the internal listener and serves the
+// registry.
 //
 // spec: GWSEAM-RegisterRoutes
 func TestMetricsRegistersTheScrapeEndpointOnTheInternalListener(t *testing.T) {

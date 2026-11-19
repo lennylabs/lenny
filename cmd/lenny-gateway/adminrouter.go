@@ -104,6 +104,8 @@ func (w *gatewayWiring) sequenceProvisioningAdminOptions(base admin.Options) adm
 }
 
 func (w *gatewayWiring) buildAdminRouter(
+	adminFlags *admin.Flags,
+	tokenFlags *admintoken.Flags,
 	gwMetrics *gatewaymetrics.Metrics,
 	delegationSvc *delegation.Service,
 	environments environmentstore.Store,
@@ -155,31 +157,31 @@ func (w *gatewayWiring) buildAdminRouter(
 	runtimeBin := f.runtimeBin
 	postgresDSN := f.postgresDSN
 	redisURL := f.redisURL
-	recommendationsDisabledRules := f.recommendationsDisabledRules
-	recommendationsWindowOverrides := f.recommendationsWindowOverrides
-	recommendationsDisableOnOutage := f.recommendationsDisableOnOutage
-	externalAdapterHarnessPath := f.externalAdapterHarnessPath
+	recommendationsDisabledRules := adminFlags.RecommendationsDisabledRules
+	recommendationsWindowOverrides := adminFlags.RecommendationsWindowOverrides
+	recommendationsDisableOnOutage := adminFlags.RecommendationsDisableOnOutage
+	externalAdapterHarnessPath := adminFlags.ExternalAdapterHarnessPath
 	auditPgauditEnabled := f.auditPgauditEnabled
 	auditPgauditSinkEndpoint := f.auditPgauditSinkEndpoint
 	llmSemanticCache := f.llmSemanticCache
 	minioAccessKey := f.minioAccessKey
 	minioEndpoint := f.minioEndpoint
 	minioSecretKey := f.minioSecretKey
-	mtlsCurrentCAID := f.mtlsCurrentCAID
-	adminTokenDisabled := f.adminTokenDisabled
-	adminTokenNamespace := f.adminTokenNamespace
-	adminTokenSecretName := f.adminTokenSecretName
-	adminTokenTenant := f.adminTokenTenant
-	billingApproverWebhookURL := f.billingApproverWebhookURL
-	billingDualControlThreshold := f.billingDualControlThreshold
-	legalHoldEscrowBucket := f.legalHoldEscrowBucket
+	mtlsCurrentCAID := adminFlags.MTLSCurrentCAID
+	adminTokenDisabled := tokenFlags.Disabled
+	adminTokenNamespace := tokenFlags.Namespace
+	adminTokenSecretName := tokenFlags.SecretName
+	adminTokenTenant := tokenFlags.Tenant
+	billingApproverWebhookURL := adminFlags.BillingApproverWebhookURL
+	billingDualControlThreshold := adminFlags.BillingDualControlThreshold
+	legalHoldEscrowBucket := adminFlags.LegalHoldEscrowBucket
 	tenantDeletionInterval := f.tenantDeletionInterval
 	lifecycleTickBudget := f.lifecycleTickBudget
 	minioBucket := f.minioBucket
 	minioUseSSL := f.minioUseSSL
-	opsServiceURL := f.opsServiceURL
+	opsServiceURL := adminFlags.OpsServiceURL
 	billingApproverWebhookSecret := f.billingApproverWebhookSecret
-	legalHoldEscrowEndpoint := f.legalHoldEscrowEndpoint
+	legalHoldEscrowEndpoint := adminFlags.LegalHoldEscrowEndpoint
 	// ----- Admin API -----
 	// delegationPolicies was constructed above so the delegation
 	// admission gate (§8.2 LayerPolicy) and the admin CRUD share one

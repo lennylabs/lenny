@@ -31,7 +31,9 @@ func routeKeys(t *testing.T, table *routetable.Table) string {
 	return strings.Join(keys, "\n")
 }
 
-// TestHandlersRegisterOnTheInternalListener checks that the drain-readiness and forced-drain audit endpoints register on the internal listener, and that the readiness endpoint answers through the table'\”s mux.
+// TestHandlersRegisterOnTheInternalListener checks that the drain-readiness
+// and forced-drain audit endpoints register on the internal listener, and
+// that the readiness endpoint answers through the table'\”s mux.
 //
 // spec: GWSEAM-RegisterRoutes
 func TestHandlersRegisterOnTheInternalListener(t *testing.T) {

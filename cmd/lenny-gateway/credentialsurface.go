@@ -48,12 +48,12 @@ import (
 //
 // spec: §4.1 gateway subsystem seams; §4.9 credential registry / pre-authorized
 // flow; §9.3 connector OAuth.
-func (w *gatewayWiring) buildCredentialSurface(sessionSrv *sessionserver.Server) {
+func (w *gatewayWiring) buildCredentialSurface(adminFlags *admin.Flags, sessionSrv *sessionserver.Server) {
 	f := w.f
 	llmProxyPublicURL := f.llmProxyPublicURL
-	connectorOAuthCallbackURL := f.connectorOAuthCallbackURL
+	connectorOAuthCallbackURL := adminFlags.ConnectorOAuthCallbackURL
 	connectorOAuthClientSecretKey := f.connectorOAuthClientSecretKey
-	connectorOAuthCA := f.connectorOAuthCA
+	connectorOAuthCA := adminFlags.ConnectorOAuthCA
 
 	auditSink := w.auditSink
 

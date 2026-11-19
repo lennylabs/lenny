@@ -28,7 +28,10 @@ func routeKeys(t *testing.T, table *routetable.Table) string {
 	return strings.Join(keys, "\n")
 }
 
-// TestServerRegistersItsTransportsOnTheClientAndForwardListeners checks that the MCP server registers the WebSocket transport and the environment-scoped endpoint on the client listener and the MCP endpoint on the forward listener.
+// TestServerRegistersItsTransportsOnTheClientAndForwardListeners checks the
+// listener of each MCP transport the server registers: the WebSocket and
+// environment-scoped endpoints serve clients, and /mcp serves the forward
+// listener.
 //
 // spec: GWSEAM-RegisterRoutes
 func TestServerRegistersItsTransportsOnTheClientAndForwardListeners(t *testing.T) {

@@ -30,7 +30,9 @@ func routeKeys(t *testing.T, table *routetable.Table) string {
 	return strings.Join(keys, "\n")
 }
 
-// TestRegisterRoutesMountsThePlatformHealthAPIOnTheClientListener checks that the platform health API registers at /v1/admin/health and under it for any method on the client listener.
+// TestRegisterRoutesMountsThePlatformHealthAPIOnTheClientListener checks
+// that the platform health API registers at /v1/admin/health and under it
+// for any method on the client listener.
 //
 // spec: GWSEAM-RegisterRoutes
 func TestRegisterRoutesMountsThePlatformHealthAPIOnTheClientListener(t *testing.T) {

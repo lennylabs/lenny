@@ -632,10 +632,10 @@ func RefusalError(r *seam.Refusal) *ToolError {
 var _ = errInternal
 
 // RegisterRoutes registers the MCP transports the composition root does
-// not mount through the adapter registry: the WebSocket transport and the
-// environment-scoped endpoint on the client listener, and the MCP endpoint
-// on the forward listener, on which another replica forwards a platform
-// tool call to the session's holder replica. Each takes no route check by
+// not mount through the adapter registry. /mcp/v1/ws and
+// /mcp/environments/{name} serve clients; /mcp also serves the forward
+// listener, where the holder replica receives the platform tool calls other
+// replicas forward. Each takes no route check by
 // the API front: the listener's request pipeline authenticates the request,
 // and the MCP server applies its own checks to each call.
 //

@@ -28,7 +28,8 @@ func routeKeys(t *testing.T, table *routetable.Table) string {
 	return strings.Join(keys, "\n")
 }
 
-// TestHookRegistersOnTheInternalListener checks that the preStop hook registers for POST and GET on the internal listener.
+// TestHookRegistersOnTheInternalListener checks that the preStop hook
+// registers for POST and GET on the internal listener.
 //
 // spec: GWSEAM-RegisterRoutes
 func TestHookRegistersOnTheInternalListener(t *testing.T) {

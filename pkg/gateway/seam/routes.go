@@ -20,9 +20,9 @@ type Routes interface {
 // RouteTable is served by the API front to the request pipeline: the
 // routes it mounts behind their access checks.
 type RouteTable interface {
-	// ListenerRoutes returns, in registration order, the routes
-	// registered on listener l whose access check the request pipeline
-	// applies, and closes the registration of such routes on l.
+	// ListenerRoutes returns the routes of listener l that carry an
+	// access check other than AccessHandler, in the order they registered,
+	// and seals l against more of them.
 	ListenerRoutes(l Listener) []Route
 }
 
@@ -34,8 +34,8 @@ type RouteProvider interface {
 
 // Route is one HTTP route a part registers.
 type Route struct {
-	// Listener is the listener that serves the route. A part registers a
-	// route once for each listener that serves it.
+	// Listener is the listener that serves the route. A route that two
+	// listeners serve is registered twice, once with each.
 	Listener Listener
 	// Method is the HTTP method, or MethodAny for a handler that
 	// dispatches by method itself.
@@ -65,10 +65,9 @@ const (
 	// request to the holder replica of a session. It serves only the routes
 	// registered on it.
 	ListenerForward
-	// ListenerInternal is the listener of the drain and ops endpoints that
-	// the admission webhooks, the kubelet probes, and the metrics scrape
-	// call. The gateway serves it on the client listener's port, through
-	// the client listener's mux and request pipeline.
+	// ListenerInternal is the listener of the /internal paths, the
+	// liveness and readiness probes, and the metrics scrape. The gateway
+	// serves it on the client listener's port, mux, and request pipeline.
 	ListenerInternal
 )
 

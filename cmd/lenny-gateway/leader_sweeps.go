@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admintoken/k8ssecret"
 	admintokenreclaimer "github.com/lennylabs/lenny/pkg/gateway/api/admintoken/reclaimer"
 	apileaderjobs "github.com/lennylabs/lenny/pkg/gateway/api/leaderjobs"
@@ -30,7 +31,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/storage/retentiongc"
 )
 
-func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
+func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags, tokenFlags *admintoken.Flags) {
 	f := w.f
 	gatewayLeaderElection := leader.Election
 	gatewayNamespace := f.gatewayNamespace
@@ -43,11 +44,11 @@ func (w *gatewayWiring) startLeaderElectedSweeps(leader *gatewayleader.Flags) {
 	eventBusRetryIntervalSeconds := f.eventBusRetryIntervalSeconds
 	t4KmsProbeIntervalSeconds := f.t4KmsProbeIntervalSeconds
 	t4KmsProbeRateLimit := f.t4KmsProbeRateLimit
-	adminTokenDisabled := f.adminTokenDisabled
-	adminTokenNamespace := f.adminTokenNamespace
-	adminTokenSecretName := f.adminTokenSecretName
-	adminTokenTenant := f.adminTokenTenant
-	adminTokenReclaimIntervalSeconds := f.adminTokenReclaimIntervalSeconds
+	adminTokenDisabled := tokenFlags.Disabled
+	adminTokenNamespace := tokenFlags.Namespace
+	adminTokenSecretName := tokenFlags.SecretName
+	adminTokenTenant := tokenFlags.Tenant
+	adminTokenReclaimIntervalSeconds := tokenFlags.ReclaimIntervalSeconds
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	// ----- §12.5 gateway-leader election (lenny-gateway-leader Lease) -----
 	// spec: §12.5 — the artifact-GC orchestrator and the

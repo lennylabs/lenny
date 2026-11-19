@@ -73,6 +73,10 @@ import (
 
 func (w *gatewayWiring) buildHTTPSurface(
 	pgFlags *playground.Flags,
+	rateLimitFlags *ratelimitmw.Flags,
+	deprecationFlags *deprecationmw.Flags,
+	serviceIdentityFlags *serviceidentity.Flags,
+	idempotencyFlags *idempotencymw.Flags,
 	gwMetrics *gatewaymetrics.Metrics,
 	sessionSrv *sessionserver.Server,
 	openaiHandler *translator.OpenAIChatHandler,
@@ -97,18 +101,18 @@ func (w *gatewayWiring) buildHTTPSurface(
 	addr := f.addr
 	multiTenant := f.multiTenant
 	adminSATokenAudience := f.adminSATokenAudience
-	platformAdminServiceAccounts := f.platformAdminServiceAccounts
+	platformAdminServiceAccounts := serviceIdentityFlags.PlatformAdminServiceAccounts
 	devMode := f.devMode
-	deprecatedAPIVersionsCSV := f.deprecatedAPIVersionsCSV
+	deprecatedAPIVersionsCSV := deprecationFlags.Versions
 	adapterTLSCert := f.adapterTLSCert
 	barrierAckTimeoutSeconds := f.barrierAckTimeoutSeconds
-	idempotencyMaxBodyBytes := f.idempotencyMaxBodyBytes
+	idempotencyMaxBodyBytes := idempotencyFlags.MaxBodyBytes
 	failOpenStatePath := f.failOpenStatePath
 	tokenServiceHTTPURL := f.tokenServiceHTTPURL
-	rlGlobalPerMin := f.rlGlobalPerMin
-	rlPerUserPerMin := f.rlPerUserPerMin
-	rlPerTenantPerMin := f.rlPerTenantPerMin
-	rlFailOpenMaxSeconds := f.rlFailOpenMaxSeconds
+	rlGlobalPerMin := rateLimitFlags.GlobalPerMin
+	rlPerUserPerMin := rateLimitFlags.PerUserPerMin
+	rlPerTenantPerMin := rateLimitFlags.PerTenantPerMin
+	rlFailOpenMaxSeconds := rateLimitFlags.FailOpenMaxSeconds
 	quotaUserFailOpenFraction := f.quotaUserFailOpenFraction
 	quotaPerReplicaHardCap := f.quotaPerReplicaHardCap
 	quotaFailOpenCumulativeMaxSeconds := f.quotaFailOpenCumulativeMaxSeconds
@@ -976,10 +980,9 @@ func (w *gatewayWiring) buildHTTPSurface(
 		Handler:           handler,
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-	// spec: §4.1 — record the wrapped HTTP server on the accumulator. The
-	// §13.4 stateless-routing wiring registers its route on the API front's
-	// route table later, which mounts it on the REST mux; the run loop
-	// serves w.httpSrv.
+	// Record the wrapped HTTP server on the accumulator. The stateless
+	// routing wiring registers its route on the API front's route table
+	// later, which mounts it on the REST mux; the run loop serves w.httpSrv.
 	w.httpSrv = httpSrv
 }
 

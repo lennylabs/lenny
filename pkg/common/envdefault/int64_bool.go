@@ -35,3 +35,17 @@ func Bool(name string, def bool) bool {
 		return def
 	}
 }
+
+// Float64 returns the variable name parsed as a float64, or def when it is
+// unset, blank, or does not parse.
+func Float64(name string, def float64) float64 {
+	v := strings.TrimSpace(os.Getenv(name))
+	if v == "" {
+		return def
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return def
+	}
+	return f
+}

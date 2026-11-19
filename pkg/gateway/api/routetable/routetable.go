@@ -55,10 +55,9 @@ func New() *Table {
 
 // HandleRoute registers r. It refuses, with seam.ErrInvalidRoute, a route
 // that seam.Route.Validate refuses, a route of the pod proxy listener, a
-// route that repeats the method and pattern of a route on a listener sharing
-// its mux, and a route for the request pipeline once ListenerRoutes has
-// returned the pipeline routes of its listener, so no route is silently
-// left unmounted. A route whose handler authenticates the request itself is
+// route whose mux pattern its mux already holds, and a route with a session
+// or tenant check once ListenerRoutes has sealed its listener, so no route
+// is silently left unmounted. A route whose handler authenticates the request itself is
 // mounted on its listener's mux before HandleRoute returns.
 //
 // spec: GWSEAM-HandleRoute
@@ -101,9 +100,9 @@ func mount(mux *http.ServeMux, pattern string, h http.Handler) (err error) {
 	return nil
 }
 
-// ListenerRoutes returns, in registration order, the routes registered on
-// listener l whose access check the request pipeline applies, and closes the
-// registration of such routes on l.
+// ListenerRoutes returns the routes of listener l that carry a session or
+// tenant check, in the order they registered, and seals l against more of
+// them.
 //
 // spec: GWSEAM-ListenerRoutes
 func (t *Table) ListenerRoutes(l seam.Listener) []seam.Route {

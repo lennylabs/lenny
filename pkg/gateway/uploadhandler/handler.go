@@ -130,8 +130,8 @@ func New(opts Options) (*Handler, error) {
 // routes take the manage check on the path's session. The blob read takes
 // only the tenant check, since handleBlob compares the blob URI's tenant
 // with the caller's. Every route serves the client listener, and the
-// mid-session upload also serves the forward listener, on which a replica
-// that does not hold the session forwards it to the holder.
+// mid-session upload also serves the forward listener, where the holder
+// replica receives the uploads other replicas forward to it.
 //
 // spec: GWSEAM-RegisterRoutes
 func (h *Handler) RegisterRoutes(routes seam.Routes) error {
