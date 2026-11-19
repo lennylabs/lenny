@@ -422,7 +422,7 @@ packages:
     - package: pkg/gateway/core/session/bindrelease
       count: 6
     - package: pkg/gateway/core/session/budgetstate
-      count: 22
+      count: 24
     - package: pkg/gateway/core/session/derivelock
       count: 11
     - package: pkg/gateway/core/session/executor
@@ -434,7 +434,7 @@ packages:
     - package: pkg/gateway/core/session/podsession
       count: 510
     - package: pkg/gateway/core/session/recycle
-      count: 150
+      count: 154
     - package: pkg/gateway/core/session/routingcache
       count: 14
     - package: pkg/gateway/core/session/sessionage
