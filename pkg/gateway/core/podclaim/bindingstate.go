@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/ownership"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
+	"github.com/lennylabs/lenny/pkg/podregistry"
 )
 
 // statusFieldOwner is the gateway field manager every PodClaim.status
@@ -26,53 +27,18 @@ import (
 // idempotent and conflict-free without a retry loop.
 const statusFieldOwner = string(ownership.Gateway)
 
-// writeBoundStatus stamps the first binding state (`bound`) on a freshly
-// created per-pod PodClaim. The claim is CREATEd with spec only,
-// because a Kubernetes status subresource is not writable by the resource
-// Create call (§4.6.1); this helper writes that first status. It also stamps the binding-state
-// transition time, which the WarmPoolController orphan GC keys its
-// live-binding-state reclaim predicate on (§4.6.1 / §4.6.3).
-//
-// The write is a status-subresource PATCH via Server-Side Apply under the
-// gateway field manager (§4.6.3 grants the gateway `get`/`patch` on the
-// `podclaims/status` subresource and no `update` verb, so the write
-// must be a PATCH; controller-runtime's Status().Update issues an HTTP PUT
-// the API server authorizes against `update`). The supplied now() clock
-// makes the transition stamp testable.
-//
 // WriteBoundStatus writes the first `bound` binding-state status patch on a
-// freshly created per-pod PodClaim. It is exported for the §4.6.1
-// Postgres-backed fallback claim path, which CREATEs the per-pod claim
-// outside the in-cluster claim path and must write the same first binding
-// state. spec: §4.6.1 (fallback claim path; first `bound` status patch).
+// freshly created per-pod PodClaim through podregistry.WriteBoundStatus,
+// which the §4.6.1 Postgres-backed fallback claim path also calls.
 func WriteBoundStatus(ctx context.Context, cl client.Client, namespace, claimName string) error {
-	return writeBoundStatus(ctx, cl, namespace, claimName, time.Now)
+	return podregistry.WriteBoundStatus(ctx, cl, namespace, claimName)
 }
 
-// spec: §4.6.1 (pod claim mechanism; first `bound` status patch);
-// §4.6.3 (gateway-owned PodClaim.status binding state via the
-// `patch`-only podclaims/status grant).
+// writeBoundStatus stamps the first binding state (`bound`) on a freshly
+// created per-pod PodClaim with the supplied clock, through
+// podregistry.WriteBoundStatusAt.
 func writeBoundStatus(ctx context.Context, cl client.Client, namespace, claimName string, now func() time.Time) error {
-	if now == nil {
-		now = time.Now
-	}
-	// Idempotent: a retry after a partial success finds the claim already
-	// bound and returns without re-stamping the transition time. A NotFound
-	// surfaces as an error so the caller can undo the counter reservation.
-	var cur lennyv1.PodClaim
-	if err := cl.Get(ctx, client.ObjectKey{Namespace: namespace, Name: claimName}, &cur); err != nil {
-		return fmt.Errorf("podclaim: get claim %s for bound status: %w", claimName, err)
-	}
-	if cur.Status.Phase == string(claimstate.Bound) {
-		return nil
-	}
-	patch := statusApplyPatch(namespace, claimName)
-	patch.Status.Phase = string(claimstate.Bound)
-	patch.Status.BindingStateTransitionTime = &metav1.Time{Time: now().UTC()}
-	if err := applyStatus(ctx, cl, patch); err != nil {
-		return fmt.Errorf("podclaim: write bound status on claim %s: %w", claimName, err)
-	}
-	return nil
+	return podregistry.WriteBoundStatusAt(ctx, cl, namespace, claimName, now)
 }
 
 // WriteRecyclingStatus patches a bound claim to `recycling` when occupancy

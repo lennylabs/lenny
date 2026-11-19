@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
-	"github.com/lennylabs/lenny/pkg/gateway/core/podclaim"
 	"github.com/lennylabs/lenny/pkg/podregistry"
 )
 
@@ -38,7 +37,7 @@ func TestClaimPodSkipsPodWhoseClaimAlreadyExists_spec_4_6_1(t *testing.T) {
 	// Seed the idle AgentPod and its already-existing per-pod claim, so the
 	// CREATE in claimViaPodClaim returns AlreadyExists.
 	existing := &lennyv1.PodClaim{
-		ObjectMeta: metav1.ObjectMeta{Name: podclaim.ClaimName("alpha"), Namespace: "lenny-agents"},
+		ObjectMeta: metav1.ObjectMeta{Name: podregistry.ClaimName("alpha"), Namespace: "lenny-agents"},
 		Spec:       lennyv1.PodClaimSpec{AgentPodRef: "alpha", TenantID: "acme"},
 	}
 	r := newRegistry(t, "lenny-agents", seedAgentPod("alpha", "echo-pool", "idle"), existing)

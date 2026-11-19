@@ -22,13 +22,13 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
-	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
+	"github.com/lennylabs/lenny/pkg/podregistry"
 	"github.com/lennylabs/lenny/pkg/sandbox/state"
 )
 
@@ -441,75 +441,28 @@ func (c *Claimer) claimByName(ctx context.Context, claimName string) (*lennyv1.P
 	return &claim, nil
 }
 
-// CreateClaim creates the per-pod occupancy PodClaim (§4.6.1) that
-// records the gateway's acquisition of the named AgentPod pod. The §4.6.1
-// normal claim path and the Postgres-backed fallback claim path share this
-// helper so both create an identical PodClaim: the CRD a fallback claim
-// creates is a real object, so the lenny-podclaim-guard admission
-// webhook's CREATE-time per-pod-uniqueness check guards the fallback
-// exactly as it guards the normal path. The claim name is deterministic
-// per pod (claim-<podName>), so a second CREATE for the same pod collides
-// at CREATE rather than duplicating the binding. The claim is created with
-// spec only; the gateway writes the first binding state with a subsequent
-// status patch (see writeBoundStatus).
+// CreateClaim creates the per-pod occupancy PodClaim (§4.6.1) for the
+// named AgentPod pod in the request's tenant. The claim-object helpers live
+// in pkg/podregistry, which the Postgres-backed fallback claim path and the
+// CRD pool manager call without importing the gateway; this claimer reaches
+// them through CreateClaim, DeleteClaim, ClaimName, and WriteBoundStatus.
 func CreateClaim(ctx context.Context, cl client.Client, namespace, agentPodName string, req ClaimRequest) (*lennyv1.PodClaim, error) {
-	claim := &lennyv1.PodClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName(agentPodName),
-			Namespace: namespace,
-		},
-		Spec: lennyv1.PodClaimSpec{
-			// The per-pod occupancy claim (§4.6.3) carries only agentPodRef
-			// and tenantId; the session-to-pod binding lives on the Postgres
-			// session row's pod_assignment column.
-			AgentPodRef: agentPodName,
-			TenantID:    req.TenantID,
-		},
-	}
-	if err := cl.Create(ctx, claim); err != nil {
-		// The pod is acquired but its binding state is unset; the §4.6.1
-		// orphan-claim garbage collection reclaims it on the
-		// CREATE-before-status predicate.
-		return nil, fmt.Errorf("create pod claim for %s: %w", agentPodName, err)
-	}
-	return claim, nil
+	return podregistry.CreateClaim(ctx, cl, namespace, agentPodName, req.TenantID)
 }
 
-// DeleteClaim deletes the per-pod occupancy PodClaim for podName. It is
-// the gateway's only action when a session-mode occupancy episode ends: the
-// gateway never writes AgentPod.status (§4.6.3 ownership decomposition), so it
-// releases the pod by deleting the claim and the WarmPoolController projects
-// the resulting occupancy phase (§4.6.1 occupancy projection). The delete is
-// idempotent: a missing claim is a no-op so a double release or a claim the
-// orphan GC already collected does not error.
-//
-// spec: §4.6.1 (occupancy projection on claim DELETE); §4.6.3 (gateway is
-// not a writer of AgentPod.status; releases via the claim lifecycle).
+// DeleteClaim deletes the per-pod occupancy PodClaim for podName through
+// podregistry.DeleteClaim; a missing claim is a no-op.
 func DeleteClaim(ctx context.Context, cl client.Client, namespace, podName string) error {
-	claim := &lennyv1.PodClaim{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      claimName(podName),
-			Namespace: namespace,
-		},
-	}
-	if err := cl.Delete(ctx, claim); err != nil && !apierrors.IsNotFound(err) {
-		return fmt.Errorf("podclaim: delete per-pod claim for sandbox %s: %w", podName, err)
-	}
-	return nil
+	return podregistry.DeleteClaim(ctx, cl, namespace, podName)
 }
 
-// claimName is the deterministic PodClaim name for a pod, so a second
-// claim for the same pod collides at CREATE rather than duplicating. The
-// per-pod name (claim-<podName>) replaces the former per-session name now
-// that the PodClaim is a per-pod occupancy claim (§4.6.1).
+// claimName is the deterministic PodClaim name for a pod.
 func claimName(podName string) string {
-	return ClaimName(podName)
+	return podregistry.ClaimName(podName)
 }
 
-// ClaimName is the exported §4.6.1 deterministic PodClaim name for a
-// pod (`claim-<podName>`). The §4.7 recycle disposition driver resolves a
-// pod's claim by this name to patch its binding state, so the mapping lives
-// in one place rather than being re-derived by every caller.
+// ClaimName is the §4.6.1 deterministic PodClaim name for a pod
+// (`claim-<podName>`), as podregistry.ClaimName gives it.
 func ClaimName(podName string) string {
-	return "claim-" + podName
+	return podregistry.ClaimName(podName)
 }
