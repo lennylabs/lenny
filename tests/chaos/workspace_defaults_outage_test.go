@@ -38,6 +38,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -164,6 +165,7 @@ func (e *wsdOutageEnv) delegateServer(t *testing.T, runtimes runtimestore.Store)
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,

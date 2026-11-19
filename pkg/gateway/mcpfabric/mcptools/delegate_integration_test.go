@@ -14,6 +14,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -26,7 +27,7 @@ import (
 
 // fakeMetrics captures §8.2 / §16.1 delegation metric calls so the
 // integration test can assert emission without depending on the
-// prometheus registry. *gatewaymetrics.Metrics is the production
+// prometheus registry. delegation.PromMetrics is the production
 // implementation; this fake satisfies delegation.MetricsRecorder.
 type fakeMetrics struct {
 	depths []depthCall
@@ -138,7 +139,7 @@ func TestDelegateTaskFullFlowIntegration_spec_8_2(t *testing.T) {
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          toolseam.Executor(exec),
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		Delegation:        svc,
 		Runtimes:          runtimes,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },

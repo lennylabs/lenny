@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -340,7 +341,7 @@ func newMCPWithChain(t *testing.T, chain *interceptor.Chain) (*mcp.Server, sessi
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },
 		TenantID:          "acme",

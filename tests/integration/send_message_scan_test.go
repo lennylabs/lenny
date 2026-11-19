@@ -34,6 +34,7 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
@@ -147,13 +148,14 @@ func newScanTestbed(t *testing.T, handler stubinterceptor.Handler, maxInputSize 
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             sessions,
 		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		ContentPolicies:   svc,
 		Clock:             clock,
 		TenantID:          scanTenant,

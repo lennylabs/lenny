@@ -11,10 +11,9 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/mtls/certreload"
 )
 
@@ -62,7 +61,7 @@ func verifyGatewayPeer(cs tls.ConnectionState) error {
 // authenticates the relayed credential as it authenticates a credential
 // presented to it directly, including the §13.3 exp check. A request that
 // carries CallingSessionHeader and no credential is a forwarded platform tool
-// call: it runs under the principal platformtools.WithSessionPrincipal
+// call: it runs under the principal WithSessionPrincipal
 // installs for that session, the one CallPlatformTool installs. The listener
 // accepts no other principal the forwarding replica asserts.
 //
@@ -73,7 +72,7 @@ func verifyGatewayPeer(cs tls.ConnectionState) error {
 //
 // spec: §29.3 (Interactive message send) Forwarding rules 3, 4, and 5, §10.3
 // (mTLS PKI) NET-072
-func NewHolderForwardHandler(inner http.Handler, authOpts authmw.Options, sessions platformtools.SessionResolver) http.Handler {
+func NewHolderForwardHandler(inner http.Handler, authOpts authmw.Options, sessions SessionResolver) http.Handler {
 	marked := forwardedMarker{inner: inner}
 	authed := authmw.Wrap(marked, authOpts)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -89,8 +88,8 @@ func NewHolderForwardHandler(inner http.Handler, authOpts authmw.Options, sessio
 
 // serveCallingSession runs a forwarded platform tool call under the calling
 // session's principal. An unknown session is refused as unauthenticated.
-func serveCallingSession(w http.ResponseWriter, r *http.Request, next http.Handler, sessions platformtools.SessionResolver, sessionID string) {
-	ctx, err := platformtools.WithSessionPrincipal(r.Context(), sessions, sessionID)
+func serveCallingSession(w http.ResponseWriter, r *http.Request, next http.Handler, sessions SessionResolver, sessionID string) {
+	ctx, err := WithSessionPrincipal(r.Context(), sessions, sessionID)
 	if err != nil {
 		writeListenerError(w, err)
 		return
@@ -110,7 +109,7 @@ func serveCallingSession(w http.ResponseWriter, r *http.Request, next http.Handl
 // spec: §15.1 (SERVICE_UNAVAILABLE), §11.5 (Idempotency) Mechanism, §29.3
 // (Interactive message send) Forwarding rule 3
 func writeListenerError(w http.ResponseWriter, err error) {
-	if errors.Is(err, leasecontrol.ErrSessionNotFound) {
+	if errors.Is(err, seam.ErrSessionNotFound) {
 		writeErrorEnvelope(w, http.StatusUnauthorized, "UNAUTHORIZED",
 			"the calling session of the forwarded tool call does not exist", nil)
 		return

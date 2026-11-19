@@ -80,7 +80,7 @@ func TestSessionTreeListerDistinctActiveRoots_spec_11_2_44(t *testing.T) {
 
 	l := delegationbudget.SessionTreeLister{
 		Sessions: store,
-		Tenants:  func(context.Context) ([]string, error) { return []string{"acme"}, nil },
+		Tenants:  delegationbudget.TenantLister(func(context.Context) ([]string, error) { return []string{"acme"}, nil }),
 	}
 	refs, err := l.ListActiveTrees(context.Background())
 	if err != nil {

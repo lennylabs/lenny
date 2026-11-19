@@ -185,19 +185,12 @@ func TestToolsSeamForwardingRefusesAnUnknownKind(t *testing.T) {
 	}
 }
 
-// TestToolsSeamCallerAndAccess checks the caller identity the request
-// context carries and the ownership rule on a record the seam read.
-// spec: GWSEAM-RequestCaller, GWSEAM-SessionAccessible
-func TestToolsSeamCallerAndAccess(t *testing.T) {
+// TestToolsSeamAppliesTheOwnershipRule checks the ownership rule on a record
+// the seam read.
+// spec: GWSEAM-SessionAccessible
+func TestToolsSeamAppliesTheOwnershipRule(t *testing.T) {
 	tools := New(memstore.New(), Options{}).ToolsSeam()
-	if _, ok := tools.RequestCaller(context.Background()); ok {
-		t.Error("a context with no principal carries a caller")
-	}
-	ctx := authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "alice", TenantID: "acme", JTI: "j1", Origin: "playground", Groups: []string{"g"}})
-	c, ok := tools.RequestCaller(ctx)
-	if !ok || c.Subject != "alice" || c.TenantID != "acme" || c.JTI != "j1" || c.Origin != "playground" || len(c.Groups) != 1 {
-		t.Fatalf("caller = %+v, %v", c, ok)
-	}
+	ctx := authmw.WithPrincipal(context.Background(), authmw.Principal{Subject: "alice", TenantID: "acme"})
 	own := seam.Session{ID: "s1", TenantID: "acme", UserID: "alice"}
 	if !tools.SessionAccessible(ctx, own, seam.SessionRead) || !tools.SessionAccessible(ctx, own, seam.SessionManage) {
 		t.Error("the owner may not read or manage its session")

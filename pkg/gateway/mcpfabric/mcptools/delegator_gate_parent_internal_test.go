@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -41,7 +42,7 @@ func TestRequireActiveDelegatorIgnoresTerminalParent_spec_12_8(t *testing.T) {
 			}); err != nil {
 				t.Fatalf("seed parent: %v", err)
 			}
-			deps := Deps{Store: store, Users: users, Tenants: tenants}
+			deps := Deps{Store: store, Users: users, Tenants: toolops.NewTenants(tenants, users, nil)}
 			if err := requireActiveDelegator(ctx, deps, "acme", "sess_parent"); err != nil {
 				t.Fatalf("requireActiveDelegator with a %s parent = %v, want nil", state, err)
 			}

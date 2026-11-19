@@ -58,6 +58,7 @@ func TestLookupSessionCarriesTheSessionRecordAndReportsAMissingSession(t *testin
 	want := seam.Session{
 		ID: "sess-seam", TenantID: "acme", UserID: "bob@acme.com", ParentSessionID: "sess-parent",
 		RootSessionID: "sess-root", RuntimeRef: "rt", Pool: "pool-a", State: "running", LastSeq: 7,
+		CreatedAt: seamTestRow().CreatedAt, UpdatedAt: seamTestRow().UpdatedAt,
 	}
 	if got != want {
 		t.Errorf("record = %+v, want %+v", got, want)

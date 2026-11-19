@@ -15,8 +15,6 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -190,14 +188,14 @@ func TestDelegateTaskMaterializeFailureMapping_spec_8_2(t *testing.T) {
 		},
 		{
 			name:      "pre-claim exhaustion",
-			err:       credrouter.ErrNoCredentialAvailable,
+			err:       seam.ErrChildCredentialUnavailable,
 			wantCode:  "CREDENTIAL_POOL_EXHAUSTED",
 			wantCat:   "POLICY",
 			wantRetry: true,
 		},
 		{
 			name:      "user credential not found",
-			err:       credrouter.ErrUserCredentialNotFound,
+			err:       seam.ErrChildUserCredentialNotFound,
 			wantCode:  "USER_CREDENTIAL_NOT_FOUND",
 			wantCat:   "PERMANENT",
 			wantRetry: false,
@@ -211,7 +209,7 @@ func TestDelegateTaskMaterializeFailureMapping_spec_8_2(t *testing.T) {
 		},
 		{
 			name:      "token service unavailable",
-			err:       credassign.ErrTokenServiceUnavailable,
+			err:       seam.ErrTokenServiceUnavailable,
 			wantCode:  "TOKEN_SERVICE_UNAVAILABLE",
 			wantCat:   "UPSTREAM",
 			wantRetry: true,

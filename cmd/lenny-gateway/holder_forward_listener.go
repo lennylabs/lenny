@@ -13,7 +13,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -102,7 +101,7 @@ func holderForwardInner(sessions, mcpHandler, responses http.Handler) http.Handl
 }
 
 // newHolderForwardServer builds the listener's http.Server.
-func newHolderForwardServer(addr string, cfg *tls.Config, inner http.Handler, authOpts authmw.Options, sessions platformtools.SessionResolver) *http.Server {
+func newHolderForwardServer(addr string, cfg *tls.Config, inner http.Handler, authOpts authmw.Options, sessions sessionserver.SessionResolver) *http.Server {
 	return &http.Server{
 		Addr:              addr,
 		Handler:           sessionserver.NewHolderForwardHandler(inner, authOpts, sessions),

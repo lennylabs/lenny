@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -74,7 +75,7 @@ func newDelegateMCPWithCallerCheck(t *testing.T, deps callercheck.Deps) (*mcp.Se
 		Store:             store,
 		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
-		CallerCheck:       deps,
+		CallerCheck:       toolops.NewCallerCheck(deps),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),

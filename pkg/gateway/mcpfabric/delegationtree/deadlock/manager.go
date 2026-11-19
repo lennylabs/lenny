@@ -27,8 +27,8 @@ const (
 )
 
 // MetricsSink receives the §8.8 deadlock observability signals, each
-// labelled by the deadlocked root's pool (§16.1). The gateway metric set
-// satisfies it; tests pass a fake.
+// labelled by the deadlocked root's pool (§16.1). PromMetrics satisfies
+// it; tests pass a fake.
 type MetricsSink interface {
 	// IncDelegationDeadlockDetected fires once per newly-detected
 	// deadlocked subtree root.

@@ -9,7 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/session/state"
@@ -57,7 +57,7 @@ func (h *hookTerminal) OnSessionTerminal(context.Context, state.State, seam.Sess
 func (h *hookTerminal) AfterTerminalWrite(ctx context.Context, from state.State, s seam.Session,
 	signals func(context.Context, seam.Session),
 ) seam.Session {
-	sess := toolsession.Row(s)
+	sess := seamrow.Row(s)
 	if signals != nil {
 		signals(ctx, s)
 	}

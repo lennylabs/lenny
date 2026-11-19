@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/gateway/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
@@ -46,7 +48,7 @@ func TestSuspensionSeamsAreWiredToTheSessionServer_spec_6_2(t *testing.T) {
 		{"controlserver.go", "if w.podBinder != nil { wd = wd.WithIdleSuspender(sessionSrv) }", "the idle suspender behind the pod-binder guard"},
 		{"controlserver.go", "MaxSuspendedSessionSeconds: *maxSuspendedSessionSeconds,", "the suspended lifetime"},
 		{"sessionsrv.go", "SuspensionCheckpointer: suspensionCheckpointer(w.checkpointSvc),", "the suspension checkpoint"},
-		{"sessionsrv.go", "BudgetKeyRearmer: budgetKeyRearmer(w.treeBudgetConcrete),", "the budget-key re-arm"},
+		{"sessionsrv.go", "TreeBudgets: platformtools.NewTreeBudgets(w.treeBudgetConcrete),", "the budget-key re-arm"},
 		{"session_messaging.go", "time.Duration(*w.f.delegationBudgetKeyTTLSeconds)*time.Second", "the budget-key TTL"},
 		{"startupgates.go", "validateSuspensionFlags(", "the suspension flag validation"},
 		{"llmproxy.go", "llmFallbackDeps, proxyActivityStamper(activityStamper))", "the LLM proxy's activity stamper"},
@@ -99,14 +101,14 @@ func TestSuspensionSeamAdaptersReturnUntypedNil_spec_6_2(t *testing.T) {
 	if got := suspensionCheckpointer(nil); got != nil {
 		t.Errorf("suspensionCheckpointer(nil) = %#v, want untyped nil", got)
 	}
-	if got := budgetKeyRearmer(nil); got != nil {
-		t.Errorf("budgetKeyRearmer(nil) = %#v, want untyped nil", got)
+	if got := platformtools.NewTreeBudgets(nil); got != nil {
+		t.Errorf("platformtools.NewTreeBudgets(nil) = %#v, want untyped nil", got)
 	}
 	if got := suspensionCheckpointer(&checkpointer.Checkpointer{}); got == nil {
 		t.Error("suspensionCheckpointer(svc) = nil, want the service")
 	}
-	if got := budgetKeyRearmer(&treebudget.Reserver{}); got == nil {
-		t.Error("budgetKeyRearmer(r) = nil, want the Reserver")
+	if got := platformtools.NewTreeBudgets(&treebudget.Reserver{}); got == nil {
+		t.Error("platformtools.NewTreeBudgets(r) = nil, want the Reserver's budgets")
 	}
 }
 

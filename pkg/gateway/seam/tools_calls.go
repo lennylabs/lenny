@@ -48,35 +48,6 @@ type SessionAccess interface {
 	SessionAccessible(ctx context.Context, s Session, action SessionAction) bool
 }
 
-// CallerIdentity is served by the API front to the platform tools seam.
-type CallerIdentity interface {
-	// RequestCaller is GWSEAM-RequestCaller. The bool is false when the
-	// context carries no authenticated caller.
-	RequestCaller(ctx context.Context) (Caller, bool)
-}
-
-// Caller is the identity of an authenticated caller, as the API front's
-// authentication resolved it.
-type Caller struct {
-	// Subject is the caller's subject, empty when the credential named
-	// none.
-	Subject string
-	// TenantID is the tenant the caller is bound to, empty when it is
-	// bound to none.
-	TenantID string
-	// SessionID is the session a session-scoped caller, such as an agent's
-	// platform tool call, acts for.
-	SessionID string
-	// CallerType names the kind of caller, such as "agent".
-	CallerType string
-	// Groups are the caller's group memberships.
-	Groups []string
-	// JTI is the identifier of the bearer token the caller presented.
-	JTI string
-	// Origin is the origin claim of that bearer, such as "playground".
-	Origin string
-}
-
 // TreeBudgetExpiry is served by the session core to the platform tools
 // seam's delegation service.
 type TreeBudgetExpiry interface {

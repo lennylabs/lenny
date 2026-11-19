@@ -61,7 +61,7 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/environment/translator/open_responses.go", "endHeldSession", "endHeldSession"},
 	{"cmd/lenny-gateway/session_admin.go", "ForceTerminate", "ForceTerminate"},
 	{"cmd/lenny-gateway/session_budget.go", "terminate", "ExpireSession"},
-	{"cmd/lenny-gateway/reconciler_workers.go", "deadlockFail", "deadlockFail"},
+	{"pkg/gateway/mcpfabric/delegationtree/deadlock/terminal_fail.go", "TerminalFail", "TerminalFail"},
 }
 
 // terminalValueBuilders are functions that build a session value carrying a

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
@@ -47,7 +49,7 @@ func TestToolApprovalGateProducer_spec_7_2_9(t *testing.T) {
 	}
 	defer sub.Close()
 
-	gate := sessionserver.NewToolApprovalGate(store, inter, bus, waits, fixedNow, 0)
+	gate := sessionserver.NewToolApprovalGate(store, inter, bus, platformtools.NewToolApprovals(waits), fixedNow, 0)
 
 	done := make(chan executor.ApprovalDecision, 1)
 	go func() {
@@ -104,7 +106,7 @@ func TestToolApprovalGateApprove_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	seedSession(t, store)
 	waits := toolapproval.NewRegistry()
-	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), waits, fixedNow, 0)
+	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), platformtools.NewToolApprovals(waits), fixedNow, 0)
 
 	out := make(chan executor.ApprovalDecision, 1)
 	go func() {
@@ -124,7 +126,7 @@ func TestToolApprovalGateDeny_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	seedSession(t, store)
 	waits := toolapproval.NewRegistry()
-	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), waits, fixedNow, 0)
+	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), platformtools.NewToolApprovals(waits), fixedNow, 0)
 
 	out := make(chan executor.ApprovalDecision, 1)
 	go func() {
@@ -144,7 +146,7 @@ func TestToolApprovalGateDeny_spec_7_2(t *testing.T) {
 func TestToolApprovalGateTimeout_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	seedSession(t, store)
-	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), toolapproval.NewRegistry(), fixedNow, 20*time.Millisecond)
+	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), platformtools.NewToolApprovals(toolapproval.NewRegistry()), fixedNow, 20*time.Millisecond)
 
 	d, err := gate.AwaitApproval(context.Background(), "acme", "sess_1", executor.PendingToolCall{ID: "tc-1", Name: "x"})
 	if err != nil {
@@ -160,7 +162,7 @@ func TestToolApprovalGateTimeout_spec_7_2(t *testing.T) {
 func TestToolApprovalGateContextCancel_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	seedSession(t, store)
-	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), toolapproval.NewRegistry(), fixedNow, 0)
+	gate := sessionserver.NewToolApprovalGate(store, interactionstore.NewMemory(), sessionevents.NewBus(8), platformtools.NewToolApprovals(toolapproval.NewRegistry()), fixedNow, 0)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	out := make(chan error, 1)
@@ -189,8 +191,8 @@ func TestToolUseApproveUnblocksGate_spec_7_2_18(t *testing.T) {
 	inter := interactionstore.NewMemory()
 	bus := sessionevents.NewBus(8)
 	waits := toolapproval.NewRegistry()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Interactions: inter, ToolApprovalWaits: waits})
-	gate := sessionserver.NewToolApprovalGate(store, inter, bus, waits, fixedNow, 0)
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Interactions: inter, ToolApprovalWaits: platformtools.NewToolApprovals(waits)})
+	gate := sessionserver.NewToolApprovalGate(store, inter, bus, platformtools.NewToolApprovals(waits), fixedNow, 0)
 
 	out := make(chan executor.ApprovalDecision, 1)
 	go func() {
@@ -261,7 +263,7 @@ func runStoreOnlyAwait(t *testing.T, mutate func(*interactionstore.Interaction))
 	store := memstore.New()
 	seedSession(t, store)
 	inter := interactionstore.NewMemory()
-	gate := sessionserver.NewToolApprovalGate(store, inter, sessionevents.NewBus(8), toolapproval.NewRegistry(), fixedNow, 10*time.Second)
+	gate := sessionserver.NewToolApprovalGate(store, inter, sessionevents.NewBus(8), platformtools.NewToolApprovals(toolapproval.NewRegistry()), fixedNow, 10*time.Second)
 
 	out := make(chan executor.ApprovalDecision, 1)
 	go func() {

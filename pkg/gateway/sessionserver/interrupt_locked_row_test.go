@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
@@ -78,7 +80,7 @@ func TestInterruptRevalidatesOnTheLockedRow_spec_7_2(t *testing.T) {
 				}
 			}
 			rearm := &countingRearmer{}
-			srv := sessionserver.New(staleReadStore{base}, sessionserver.Options{DevTenantHeader: true, BudgetKeyRearmer: rearm})
+			srv := sessionserver.New(staleReadStore{base}, sessionserver.Options{DevTenantHeader: true, TreeBudgets: treeseam.Budgets{Rearmer: rearm}})
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s1/interrupt", nil)
 			req.Header.Set("X-Lenny-Tenant-ID", "acme")
 			rr := httptest.NewRecorder()

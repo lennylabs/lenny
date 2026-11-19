@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	sessionpg "github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/pgstore"
@@ -119,7 +121,7 @@ func TestOrphanCapCountReadsPrimaryOverPostgres_spec_8_10(t *testing.T) {
 	store := sessionpg.New(primary.Pool, sessionpg.WithReadPool(replica.Pool))
 	sink := &cascadeAuditSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader: true, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
+		DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
 	})
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+ids["start"]+"/terminate", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", tenant)

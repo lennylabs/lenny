@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
@@ -62,7 +63,7 @@ func newMCPContentPolicy(t *testing.T, chain *interceptor.Chain, cp mcptools.Con
 		DevTenantFallback: true,
 		Store:             store,
 		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		ContentPolicies:   cp,
 		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
 		IDFunc:            func() string { return "sess_mcp" },

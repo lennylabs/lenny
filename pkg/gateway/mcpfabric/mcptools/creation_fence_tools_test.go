@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -53,7 +54,7 @@ func newFencedDelegateMCP(t *testing.T, tenants *tenantstore.Memory, users users
 		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Runtimes:          runtimes,
 		Users:             users,
-		Tenants:           tenants,
+		Tenants:           toolops.NewTenants(tenants, users, nil),
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc: func() string { return "sess_child" },
 		}),
@@ -189,7 +190,7 @@ func TestDelegateTaskMapsFenceRefusal_spec_12_8(t *testing.T) {
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		Store:             store, Executor: toolseam.Executor(executor.NewEchoExecutor()), Runtimes: runtimes,
-		Users: users, Tenants: gateTenants,
+		Users: users, Tenants: toolops.NewTenants(gateTenants, users, nil),
 		Delegation: delegation.NewService(store, delegation.Options{IDFunc: func() string { return "sess_child" }}),
 		IDFunc:     func() string { return "sess_mcp" }, TenantID: "acme",
 	})

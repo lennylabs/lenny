@@ -13,6 +13,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
@@ -51,7 +52,7 @@ func vcsTokenServer(t *testing.T, r vcscred.Resolver, a mcptools.VCSLeaseAuditor
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
 		TenantID:          "fallback",
-		VCSCreds:          r,
+		VCSCreds:          toolops.NewVCSTokens(r),
 		VCSLeaseAuditor:   a,
 	})
 	return srv

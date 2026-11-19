@@ -1776,6 +1776,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-CheckCreatingCaller",
+      "anchor": "gwseam-checkcreatingcaller",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ChildrenReattachedFrame",
       "anchor": "gwseam-childrenreattachedframe",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1793,6 +1798,11 @@
     {
       "id": "GWSEAM-CreateSession",
       "anchor": "gwseam-createsession",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-DelegatorRefusal",
+      "anchor": "gwseam-delegatorrefusal",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -1833,6 +1843,11 @@
     {
       "id": "GWSEAM-FailNode",
       "anchor": "gwseam-failnode",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-FailOpenCooldown",
+      "anchor": "gwseam-failopencooldown",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -1891,6 +1906,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-IncrementRate",
+      "anchor": "gwseam-incrementrate",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-IncrementScrubFailureCount",
       "anchor": "gwseam-incrementscrubfailurecount",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1906,6 +1926,16 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-Intercept",
+      "anchor": "gwseam-intercept",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-Intercepts",
+      "anchor": "gwseam-intercepts",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-InvokeClientAPI",
       "anchor": "gwseam-invokeclientapi",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1913,6 +1943,16 @@
     {
       "id": "GWSEAM-IsBearerRevoked",
       "anchor": "gwseam-isbearerrevoked",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-IssueVCSToken",
+      "anchor": "gwseam-issuevcstoken",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ListTenants",
+      "anchor": "gwseam-listtenants",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
@@ -2001,6 +2041,16 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-RecordPodRetirement",
+      "anchor": "gwseam-recordpodretirement",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RecordScrubFailure",
+      "anchor": "gwseam-recordscrubfailure",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-RecoverTree",
       "anchor": "gwseam-recovertree",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2046,6 +2096,16 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ResolveEnvironments",
+      "anchor": "gwseam-resolveenvironments",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-ResolveExportScan",
+      "anchor": "gwseam-resolveexportscan",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ResolveInputWait",
       "anchor": "gwseam-resolveinputwait",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2086,6 +2146,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ScanExportFiles",
+      "anchor": "gwseam-scanexportfiles",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-SendMessages",
       "anchor": "gwseam-sendmessages",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2118,6 +2183,16 @@
     {
       "id": "GWSEAM-SubtreeTokens",
       "anchor": "gwseam-subtreetokens",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-TenantCredentialProviders",
+      "anchor": "gwseam-tenantcredentialproviders",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-TenantElicitationIntegrity",
+      "anchor": "gwseam-tenantelicitationintegrity",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {

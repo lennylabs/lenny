@@ -19,6 +19,7 @@ import (
 	"github.com/redis/go-redis/v9"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
@@ -84,6 +85,7 @@ func newBudgetDelegateMCP(t *testing.T) (string, *miniredis.Miniredis, *counting
 	cleanup := &countingCleanup{inner: srv}
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store, SessionService: srv.ToolsSeam(), SessionAccess: srv.ToolsSeam(), Executor: toolseam.Executor(exec), Runtimes: runtimes,
 		Delegation: delegation.NewService(store, delegation.Options{

@@ -10,7 +10,6 @@ import (
 	"strconv"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
@@ -22,28 +21,16 @@ import (
 	"github.com/lennylabs/lenny/pkg/session/state"
 )
 
-// ToolsSeam is the session core's side of the seam operations the platform
-// tools seam calls by value: the session lookup and the ownership rule, the
-// tool call forwarding, the child session operations, the message delivery
-// operations, the terminal pipeline, the pod file export, and the tree
-// budget expiry. It also serves the in-process client API and the caller
-// identity, which the session server's request plumbing holds until the
-// API front holds them. The composition root hands it to the platform tools
-// seam through the seam interfaces.
-//
-// An operation that runs the core's logic on a stored row reads the row
-// from the session record's Stored field, which the platform tools seam
-// fills with the row it read or wrote, and returns the row the core's
-// logic produced in the same field.
-type ToolsSeam struct {
-	s *Server
-}
-
-// ToolsSeam returns the session core's side of the platform tools seam's
-// operations.
-func (s *Server) ToolsSeam() *ToolsSeam {
-	return &ToolsSeam{s: s}
-}
+// The methods below are the session core's side of the seam operations the
+// platform tools seam calls by value on ToolsSeam: the session lookup and
+// the ownership rule, the tool call forwarding, the child session
+// operations, the message delivery operations, the pod file export, and the
+// tree budget expiry, with the in-process client API, which the session
+// server's request plumbing serves until the API front holds it. An
+// operation that runs the core's logic on a stored row reads the row from
+// the session record's Stored field, which the platform tools seam fills
+// with the row it read or wrote, and returns the row the core's logic
+// produced in the same field.
 
 // storedSession returns the session record of a stored row, carrying the
 // row in its Stored field.
@@ -59,21 +46,7 @@ func rowOf(s seam.Session) sessionstore.Session {
 	if row, ok := s.Stored.(sessionstore.Session); ok {
 		return row
 	}
-	var lastSeq int64
-	if s.LastSeq > 0 {
-		lastSeq = int64(s.LastSeq)
-	}
-	return sessionstore.Session{
-		ID:              s.ID,
-		TenantID:        s.TenantID,
-		UserID:          s.UserID,
-		ParentSessionID: s.ParentSessionID,
-		RootSessionID:   s.RootSessionID,
-		RuntimeRef:      s.RuntimeRef,
-		PoolRef:         s.Pool,
-		State:           sessionStateOf(s.State),
-		LastSeq:         lastSeq,
-	}
+	return recordRow(s)
 }
 
 // sentinelError is a core error that also matches a seam sentinel under
@@ -98,7 +71,7 @@ func withSentinel(sentinel error, msg string, err error) error {
 // LookupSession is GWSEAM-LookupSession, served as the upload handler's.
 //
 // spec: GWSEAM-LookupSession
-func (t *ToolsSeam) LookupSession(ctx context.Context, tenantID, sessionID string) (seam.Session, error) {
+func (t ToolsSeam) LookupSession(ctx context.Context, tenantID, sessionID string) (seam.Session, error) {
 	return t.s.UploadSeam().LookupSession(ctx, tenantID, sessionID)
 }
 
@@ -106,7 +79,7 @@ func (t *ToolsSeam) LookupSession(ctx context.Context, tenantID, sessionID strin
 // handler's.
 //
 // spec: GWSEAM-AuthorizeSession
-func (t *ToolsSeam) AuthorizeSession(ctx context.Context, tenantID, sessionID string, action seam.SessionAction) (seam.Session, error) {
+func (t ToolsSeam) AuthorizeSession(ctx context.Context, tenantID, sessionID string, action seam.SessionAction) (seam.Session, error) {
 	return t.s.UploadSeam().AuthorizeSession(ctx, tenantID, sessionID, action)
 }
 
@@ -116,7 +89,7 @@ func (t *ToolsSeam) AuthorizeSession(ctx context.Context, tenantID, sessionID st
 //
 // spec: GWSEAM-SessionAccessible; §10.2 (Session ownership) rules 3, 4, 5,
 // and 7.
-func (t *ToolsSeam) SessionAccessible(ctx context.Context, s seam.Session, action seam.SessionAction) bool {
+func (t ToolsSeam) SessionAccessible(ctx context.Context, s seam.Session, action seam.SessionAction) bool {
 	switch action {
 	case seam.SessionRead:
 		return t.s.SessionAccessible(ctx, rowOf(s), false)
@@ -125,27 +98,6 @@ func (t *ToolsSeam) SessionAccessible(ctx context.Context, s seam.Session, actio
 	default:
 		return false
 	}
-}
-
-// RequestCaller returns the principal the auth middleware recorded on the
-// context. The session server's request plumbing serves it until the API
-// front holds the pipeline.
-//
-// spec: GWSEAM-RequestCaller
-func (t *ToolsSeam) RequestCaller(ctx context.Context) (seam.Caller, bool) {
-	p, ok := authmw.FromContext(ctx)
-	if !ok {
-		return seam.Caller{}, false
-	}
-	return seam.Caller{
-		Subject:    p.Subject,
-		TenantID:   p.TenantID,
-		SessionID:  p.SessionID,
-		CallerType: p.CallerType,
-		Groups:     append([]string(nil), p.Groups...),
-		JTI:        p.JTI,
-		Origin:     p.Origin,
-	}, true
 }
 
 // toolForwardKinds maps the seam's forward kinds of tool calls to the
@@ -162,7 +114,7 @@ var toolForwardKinds = map[seam.ForwardKind]ForwardKind{
 // INTERNAL_ERROR and not forwarded.
 //
 // spec: GWSEAM-ForwardToolCall
-func (t *ToolsSeam) ForwardToolCall(ctx context.Context, s seam.Session, kind seam.ForwardKind, tool string, arguments json.RawMessage) (seam.ToolResult, seam.ForwardOutcome, error) {
+func (t ToolsSeam) ForwardToolCall(ctx context.Context, s seam.Session, kind seam.ForwardKind, tool string, arguments json.RawMessage) (seam.ToolResult, seam.ForwardOutcome, error) {
 	k, ok := toolForwardKinds[kind]
 	if !ok {
 		return seam.ToolResult{}, seam.ForwardNotDelivered, &seam.Refusal{
@@ -177,7 +129,7 @@ func (t *ToolsSeam) ForwardToolCall(ctx context.Context, s seam.Session, kind se
 // forward listener.
 //
 // spec: GWSEAM-Forwarded
-func (t *ToolsSeam) Forwarded(ctx context.Context) bool {
+func (t ToolsSeam) Forwarded(ctx context.Context) bool {
 	return Forwarded(ctx)
 }
 
@@ -186,7 +138,7 @@ func (t *ToolsSeam) Forwarded(ctx context.Context) bool {
 // has no row for holds nothing.
 //
 // spec: GWSEAM-HoldsUndelivered
-func (t *ToolsSeam) HoldsUndelivered(s seam.Session, kind seam.ForwardKind) bool {
+func (t ToolsSeam) HoldsUndelivered(s seam.Session, kind seam.ForwardKind) bool {
 	k, ok := toolForwardKinds[kind]
 	return ok && HoldsUndelivered(rowOf(s), k)
 }
@@ -199,7 +151,7 @@ func (t *ToolsSeam) HoldsUndelivered(s seam.Session, kind seam.ForwardKind) bool
 // and details.
 //
 // spec: GWSEAM-CreateSession; §15.2.1 rules 1 and 4.
-func (t *ToolsSeam) CreateSession(ctx context.Context, tenantID string, body json.RawMessage) (seam.CreatedSession, error) {
+func (t ToolsSeam) CreateSession(ctx context.Context, tenantID string, body json.RawMessage) (seam.CreatedSession, error) {
 	var in CreateSessionRequest
 	if err := json.Unmarshal(body, &in); err != nil {
 		return seam.CreatedSession{}, &seam.Refusal{Code: "VALIDATION_ERROR", Message: fmt.Sprintf("invalid arguments: %v", err)}
@@ -227,7 +179,7 @@ func (t *ToolsSeam) CreateSession(ctx context.Context, tenantID string, body jso
 // its error chain.
 //
 // spec: GWSEAM-MaterializeChild
-func (t *ToolsSeam) MaterializeChild(ctx context.Context, tenantID, childID string) (state.State, error) {
+func (t ToolsSeam) MaterializeChild(ctx context.Context, tenantID, childID string) (state.State, error) {
 	st, err := t.s.MaterializeDelegatedChild(ctx, tenantID, childID)
 	if err == nil {
 		return state.State(st), nil
@@ -249,7 +201,7 @@ func (t *ToolsSeam) MaterializeChild(ctx context.Context, tenantID, childID stri
 // user credential seam.ErrChildUserCredentialNotFound.
 //
 // spec: GWSEAM-CheckChildCredentials
-func (t *ToolsSeam) CheckChildCredentials(ctx context.Context, q seam.ChildCredentialQuery) error {
+func (t ToolsSeam) CheckChildCredentials(ctx context.Context, q seam.ChildCredentialQuery) error {
 	err := t.s.CheckDelegationCredentialAvailability(ctx, DelegationCredentialQuery{
 		TenantID:                  q.TenantID,
 		UserID:                    q.UserID,
@@ -272,7 +224,7 @@ func (t *ToolsSeam) CheckChildCredentials(ctx context.Context, q seam.ChildCrede
 // experiment router and returns the routed row in the record.
 //
 // spec: GWSEAM-ApplyExperimentRouting
-func (t *ToolsSeam) ApplyExperimentRouting(ctx context.Context, child *seam.Session) error {
+func (t ToolsSeam) ApplyExperimentRouting(ctx context.Context, child *seam.Session) error {
 	row := rowOf(*child)
 	err := t.s.ApplyExperimentRouting(ctx, &row)
 	*child = storedSession(row)
@@ -283,7 +235,7 @@ func (t *ToolsSeam) ApplyExperimentRouting(ctx context.Context, child *seam.Sess
 // stored row against the deployer caps.
 //
 // spec: GWSEAM-EffectiveMaxRetries
-func (t *ToolsSeam) EffectiveMaxRetries(s seam.Session) int {
+func (t ToolsSeam) EffectiveMaxRetries(s seam.Session) int {
 	return t.s.EffectiveMaxRetries(rowOf(s))
 }
 
@@ -292,7 +244,7 @@ func (t *ToolsSeam) EffectiveMaxRetries(s seam.Session) int {
 // 2xx, with the error code, message, and details of the refusal.
 //
 // spec: GWSEAM-InvokeClientAPI
-func (t *ToolsSeam) InvokeClientAPI(ctx context.Context, call seam.ClientAPICall) (seam.ClientAPIResult, error) {
+func (t ToolsSeam) InvokeClientAPI(ctx context.Context, call seam.ClientAPICall) (seam.ClientAPIResult, error) {
 	res, svcErr := t.s.ServiceCall(ctx, call.TenantID, call.Method, call.Target, call.Body, call.ContentType, call.Headers)
 	if svcErr != nil {
 		return seam.ClientAPIResult{
@@ -311,7 +263,7 @@ func (t *ToolsSeam) InvokeClientAPI(ctx context.Context, call seam.ClientAPICall
 // this replica matches seam.ErrNotBound with the executor's message.
 //
 // spec: GWSEAM-SendMessages
-func (t *ToolsSeam) SendMessages(ctx context.Context, sessionID string, messages []seam.Message) (seam.Response, error) {
+func (t ToolsSeam) SendMessages(ctx context.Context, sessionID string, messages []seam.Message) (seam.Response, error) {
 	if t.s.executor == nil {
 		return seam.Response{}, errors.New("no executor configured")
 	}
@@ -378,7 +330,7 @@ func inboxMessage(m seam.InboxMessage) sessioninbox.Message {
 // messaging coordinator, and returns the message it evicted for room.
 //
 // spec: GWSEAM-EnqueueInbox
-func (t *ToolsSeam) EnqueueInbox(ctx context.Context, tenantID, sessionID string, msg seam.InboxMessage) (*seam.InboxMessage, error) {
+func (t ToolsSeam) EnqueueInbox(ctx context.Context, tenantID, sessionID string, msg seam.InboxMessage) (*seam.InboxMessage, error) {
 	if t.s.messaging == nil {
 		return nil, sessioninbox.ErrMessagingUnavailable
 	}
@@ -397,7 +349,7 @@ func (t *ToolsSeam) EnqueueInbox(ctx context.Context, tenantID, sessionID string
 // LockDelivery takes this replica's delivery lock for the session.
 //
 // spec: GWSEAM-LockDelivery
-func (t *ToolsSeam) LockDelivery(ctx context.Context, sessionID string) (func(), error) {
+func (t ToolsSeam) LockDelivery(ctx context.Context, sessionID string) (func(), error) {
 	return t.s.LockDelivery(ctx, sessionID)
 }
 
@@ -416,7 +368,7 @@ func seamHoldOutcome(o HoldOutcome) seam.HoldOutcome {
 // HoldMessage holds a message in the session's DLQ through HoldMessage.
 //
 // spec: GWSEAM-HoldMessage
-func (t *ToolsSeam) HoldMessage(ctx context.Context, tenantID, sessionID string, msg seam.InboxMessage) (seam.HoldOutcome, state.State, error) {
+func (t ToolsSeam) HoldMessage(ctx context.Context, tenantID, sessionID string, msg seam.InboxMessage) (seam.HoldOutcome, state.State, error) {
 	o, st, err := t.s.HoldMessage(ctx, tenantID, sessionID, inboxMessage(msg))
 	return seamHoldOutcome(o), state.State(st), err
 }
@@ -425,7 +377,7 @@ func (t *ToolsSeam) HoldMessage(ctx context.Context, tenantID, sessionID string,
 // for the session record's stored row.
 //
 // spec: GWSEAM-HoldUndeliveredForward
-func (t *ToolsSeam) HoldUndeliveredForward(ctx context.Context, s seam.Session, msg seam.InboxMessage) (seam.HoldOutcome, state.State, error) {
+func (t ToolsSeam) HoldUndeliveredForward(ctx context.Context, s seam.Session, msg seam.InboxMessage) (seam.HoldOutcome, state.State, error) {
 	o, st, err := t.s.HoldUndeliveredForward(ctx, rowOf(s), inboxMessage(msg))
 	return seamHoldOutcome(o), state.State(st), err
 }
@@ -434,7 +386,7 @@ func (t *ToolsSeam) HoldUndeliveredForward(ctx context.Context, s seam.Session, 
 // row, and maps its errors as SendMessages does.
 //
 // spec: GWSEAM-DeliverHeld
-func (t *ToolsSeam) DeliverHeld(ctx context.Context, s seam.Session) error {
+func (t ToolsSeam) DeliverHeld(ctx context.Context, s seam.Session) error {
 	if err := t.s.DeliverHeld(ctx, rowOf(s)); err != nil {
 		return seamDeliveryError(err)
 	}
@@ -444,7 +396,7 @@ func (t *ToolsSeam) DeliverHeld(ctx context.Context, s seam.Session) error {
 // ResumeSuspended resumes the session record's stored row for a delivery.
 //
 // spec: GWSEAM-ResumeSuspended
-func (t *ToolsSeam) ResumeSuspended(ctx context.Context, s seam.Session) error {
+func (t ToolsSeam) ResumeSuspended(ctx context.Context, s seam.Session) error {
 	return t.s.ResumeSuspended(ctx, rowOf(s))
 }
 
@@ -453,7 +405,7 @@ func (t *ToolsSeam) ResumeSuspended(ctx context.Context, s seam.Session) error {
 // its message and details.
 //
 // spec: GWSEAM-AdmitResume
-func (t *ToolsSeam) AdmitResume(ctx context.Context, s seam.Session) error {
+func (t ToolsSeam) AdmitResume(ctx context.Context, s seam.Session) error {
 	err := t.s.AdmitResume(ctx, rowOf(s))
 	var refusal *CapRefusal
 	if errors.As(err, &refusal) {
@@ -466,7 +418,7 @@ func (t *ToolsSeam) AdmitResume(ctx context.Context, s seam.Session) error {
 // delivery paths.
 //
 // spec: GWSEAM-RouteMessage; §7.2 (Message delivery routing — seven paths)
-func (t *ToolsSeam) RouteMessage(st state.State, inputRequired bool) seam.MessageRoute {
+func (t ToolsSeam) RouteMessage(st state.State, inputRequired bool) seam.MessageRoute {
 	decision := messagerouting.Classify(session.State(st), inputRequired, false, messagerouting.SourceInterSession)
 	switch decision.Action {
 	case messagerouting.ActionRejectTerminal:
@@ -482,39 +434,11 @@ func (t *ToolsSeam) RouteMessage(st state.State, inputRequired bool) seam.Messag
 	}
 }
 
-// BeginTerminal opens the session's terminal claim.
-//
-// spec: GWSEAM-BeginTerminal
-func (t *ToolsSeam) BeginTerminal(sessionID string) (end func()) {
-	return t.s.BeginTerminal(sessionID)
-}
-
-// OnSessionTerminal runs the terminal pipeline for the session record's
-// stored row.
-//
-// spec: GWSEAM-OnSessionTerminal
-func (t *ToolsSeam) OnSessionTerminal(ctx context.Context, from state.State, s seam.Session) {
-	t.s.OnSessionTerminal(ctx, session.State(from), rowOf(s))
-}
-
-// AfterTerminalWrite runs the post-terminal hook on the session record's
-// stored row, with the caller's signals on the record of the row the hook
-// passes them, and returns the record of the row the hook returned.
-//
-// spec: GWSEAM-AfterTerminalWrite
-func (t *ToolsSeam) AfterTerminalWrite(ctx context.Context, from state.State, s seam.Session, signals func(context.Context, seam.Session)) seam.Session {
-	var hook func(context.Context, sessionstore.Session)
-	if signals != nil {
-		hook = func(ctx context.Context, row sessionstore.Session) { signals(ctx, storedSession(row)) }
-	}
-	return storedSession(t.s.AfterTerminalWrite(ctx, session.State(from), rowOf(s), hook))
-}
-
 // ExportPaths runs the export RPC of each specification against the
 // adapter client of the session's binding on this replica. A session with no binding here returns seam.ErrNoLiveBinding.
 //
 // spec: GWSEAM-ExportPaths
-func (t *ToolsSeam) ExportPaths(ctx context.Context, sessionID string, specs []seam.ExportSpec) ([]seam.ExportedFile, error) {
+func (t ToolsSeam) ExportPaths(ctx context.Context, sessionID string, specs []seam.ExportSpec) ([]seam.ExportedFile, error) {
 	if t.s.podRegistry == nil {
 		return nil, seam.ErrNoLiveBinding
 	}
@@ -541,20 +465,20 @@ func (t *ToolsSeam) ExportPaths(ctx context.Context, sessionID string, specs []s
 // budget keys expired, through Server.HandleBudgetKeysExpired.
 //
 // spec: GWSEAM-HandleBudgetKeysExpired
-func (t *ToolsSeam) HandleBudgetKeysExpired(ctx context.Context, tenantID, rootSessionID string) {
+func (t ToolsSeam) HandleBudgetKeysExpired(ctx context.Context, tenantID, rootSessionID string) {
 	t.s.HandleBudgetKeysExpired(ctx, tenantID, rootSessionID)
 }
 
-// The interfaces ToolsSeam serves.
+// The interfaces ToolsSeam serves to the platform tools seam's calls by
+// value; tools_seam_core.go asserts the terminal pipeline and the tree node
+// operations.
 var (
-	_ seam.Sessions         = (*ToolsSeam)(nil)
-	_ seam.SessionAccess    = (*ToolsSeam)(nil)
-	_ seam.CallerIdentity   = (*ToolsSeam)(nil)
-	_ seam.Forwarding       = (*ToolsSeam)(nil)
-	_ seam.ChildSessions    = (*ToolsSeam)(nil)
-	_ seam.ClientAPI        = (*ToolsSeam)(nil)
-	_ seam.MessageDelivery  = (*ToolsSeam)(nil)
-	_ seam.Terminals        = (*ToolsSeam)(nil)
-	_ seam.PodFiles         = (*ToolsSeam)(nil)
-	_ seam.TreeBudgetExpiry = (*ToolsSeam)(nil)
+	_ seam.Sessions         = ToolsSeam{}
+	_ seam.SessionAccess    = ToolsSeam{}
+	_ seam.Forwarding       = ToolsSeam{}
+	_ seam.ChildSessions    = ToolsSeam{}
+	_ seam.ClientAPI        = ToolsSeam{}
+	_ seam.MessageDelivery  = ToolsSeam{}
+	_ seam.PodFiles         = ToolsSeam{}
+	_ seam.TreeBudgetExpiry = ToolsSeam{}
 )

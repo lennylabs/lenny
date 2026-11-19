@@ -12,8 +12,32 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
+
+// chainScan runs the PreExportMaterialization phase of a chain, as the
+// session core's export scan does, so the materializer's scan path is
+// tested against the interceptor package's per-file scan.
+type chainScan struct {
+	chain *interceptor.Chain
+}
+
+func (s chainScan) ScanExportFiles(ctx context.Context, t seam.ExportScanTarget, files []seam.ExportFile) ([]seam.ExportFile, error) {
+	in := make([]interceptor.ExportFile, 0, len(files))
+	for _, f := range files {
+		in = append(in, interceptor.ExportFile{Path: f.Path, Content: f.Content})
+	}
+	out, err := interceptor.RunPreExportMaterialization(ctx, s.chain, interceptor.ExportScanContext{}, t.TenantID, t.SessionID, t.MaxFileSize, in...)
+	if err != nil {
+		return nil, err
+	}
+	scanned := make([]seam.ExportFile, 0, len(out))
+	for _, f := range out {
+		scanned = append(scanned, seam.ExportFile{Path: f.Path, Content: f.Content, SHA256: f.Hash})
+	}
+	return scanned, nil
+}
 
 // fakeExporter returns canned files per source glob, recording the
 // specs it was asked to export so a test can assert the §8.7 declared
@@ -271,7 +295,7 @@ func TestMaterializeScanRejectFailsClosed_spec_8_7(t *testing.T) {
 		ChildSessionID: "child",
 		Specs:          []export.Spec{{Source: "./*"}},
 		Limits:         fileexport.DefaultFileExportLimits,
-		Scan:           export.ContentScan{Enabled: true, Chain: c},
+		Scan:           export.ContentScan{Enabled: true, Scanner: chainScan{chain: c}},
 	})
 	var scanErr *interceptor.ExportScanError
 	if !errors.As(err, &scanErr) || scanErr.Code != interceptor.CodeExportFileScanRejected {
@@ -305,7 +329,7 @@ func TestMaterializeScanModifyPersistsRewritten_spec_8_7(t *testing.T) {
 		ChildSessionID: "child",
 		Specs:          []export.Spec{{Source: "./*"}},
 		Limits:         fileexport.DefaultFileExportLimits,
-		Scan:           export.ContentScan{Enabled: true, Chain: c},
+		Scan:           export.ContentScan{Enabled: true, Scanner: chainScan{chain: c}},
 	})
 	if err != nil {
 		t.Fatalf("Materialize: %v", err)
@@ -323,7 +347,7 @@ func TestMaterializeScanEnabledWithoutChainFailsClosed_spec_8_7(t *testing.T) {
 	_, err := newMat(exp, &fakeSink{}, nil).Materialize(context.Background(), export.Params{
 		Specs:  []export.Spec{{Source: "./*"}},
 		Limits: fileexport.DefaultFileExportLimits,
-		Scan:   export.ContentScan{Enabled: true, Chain: nil},
+		Scan:   export.ContentScan{Enabled: true, Scanner: nil},
 	})
 	if err == nil {
 		t.Fatal("want a fail-closed error for scanExportedFiles:true with no chain")

@@ -39,6 +39,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/delegation/cycle"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -234,6 +235,7 @@ func TestInterceptorWeakeningCooldownComposed_spec_4_8_1058(t *testing.T) {
 	}
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		SessionService:    ownerprincipal.ToolAccess{},
 		SessionAccess:     ownerprincipal.ToolAccess{},
 		DevTenantFallback: true,
@@ -241,7 +243,7 @@ func TestInterceptorWeakeningCooldownComposed_spec_4_8_1058(t *testing.T) {
 		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
 		Delegation:        svc,
 		Runtimes:          runtimes,
-		Interceptors:      chain,
+		Interceptors:      toolops.NewInterception(chain, nil),
 		ContentPolicies:   svc,
 		CooldownChecker:   svc,
 		Clock:             clk.now,

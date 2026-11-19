@@ -14,9 +14,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
@@ -38,13 +36,12 @@ func runPreMessageDelivery(ctx context.Context, deps Deps, tenant, sessionID str
 		return msg, false, nil
 	}
 	text := msg.Text()
-	req := interceptor.Request{
-		Phase:     interceptor.PhasePreMessageDelivery,
+	req := seam.InterceptRequest{
+		Phase:     seam.InterceptPreMessageDelivery,
 		SessionID: sessionID,
 		TenantID:  tenant,
 		Content:   []byte(text),
 	}
-	var res interceptor.Result
 	if deps.ContentPolicies != nil {
 		ref := ""
 		if maxSize, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, sessionID); ok {
@@ -61,18 +58,16 @@ func runPreMessageDelivery(ctx context.Context, deps Deps, tenant, sessionID str
 				}
 			}
 			if maxSize > 0 && len(text) > maxSize {
-				return msg, false, mcp.NewToolError(policy.CodeInputTooLarge,
+				return msg, false, mcp.NewToolError(seam.CodeInputTooLarge,
 					fmt.Sprintf("message body is %d bytes, exceeding the target session's contentPolicy.maxInputSize limit of %d bytes", len(text), maxSize),
-					map[string]any{"phase": string(interceptor.PhasePreMessageDelivery)})
+					map[string]any{"phase": string(seam.InterceptPreMessageDelivery)})
 			}
 		}
-		res = deps.Interceptors.RunPolicyScoped(ctx, req, ref)
-	} else {
-		res = deps.Interceptors.Run(ctx, req)
+		req.PolicyScoped, req.InterceptorRef = true, ref
 	}
+	res := deps.Interceptors.Intercept(ctx, req)
 	switch res.Action {
-	case interceptor.ActionReject:
-		recordChainRejection(ctx, deps, tenant, sessionID, interceptor.PhasePreMessageDelivery, res)
+	case seam.InterceptReject:
 		// spec: §15.2.1 rule 3 — a deliberate REJECT is a policy decision;
 		// a built-in code on the Result is surfaced verbatim.
 		code := "INTERCEPTOR_REJECTED"
@@ -81,7 +76,7 @@ func runPreMessageDelivery(ctx context.Context, deps Deps, tenant, sessionID str
 		}
 		return msg, false, mcp.NewToolError(code,
 			fmt.Sprintf("message delivery rejected by policy: %s", res.Reason), nil)
-	case interceptor.ActionModify:
+	case seam.InterceptModify:
 		return sessionrecord.MessageContentFromText(string(res.ModifiedContent)), true, nil
 	default:
 		return msg, false, nil
@@ -258,7 +253,7 @@ func (m *mcpSend) holdIn(ctx context.Context, row sessionstore.Session, undelive
 	var outcome seam.HoldOutcome
 	var st state.State
 	if undelivered {
-		outcome, st, err = m.deps.Delivery.HoldUndeliveredForward(ctx, toolsession.Record(row), msg)
+		outcome, st, err = m.deps.Delivery.HoldUndeliveredForward(ctx, seamrow.Record(row), msg)
 	} else {
 		outcome, st, err = m.deps.Delivery.HoldMessage(ctx, m.tenant, row.ID, msg)
 	}
@@ -293,7 +288,7 @@ func (m *mcpSend) admitResume(ctx context.Context, row sessionstore.Session) err
 	if m.deps.Delivery == nil {
 		return nil
 	}
-	cerr := m.deps.Delivery.AdmitResume(ctx, toolsession.Record(row))
+	cerr := m.deps.Delivery.AdmitResume(ctx, seamrow.Record(row))
 	if cerr == nil {
 		return nil
 	}
@@ -320,7 +315,7 @@ func (m *mcpSend) holdAndResume(ctx context.Context, row sessionstore.Session) (
 	}
 	m.unlock()
 	row.State = session.StateSuspended
-	if rerr := m.deps.Delivery.ResumeSuspended(ctx, toolsession.Record(row)); rerr != nil {
+	if rerr := m.deps.Delivery.ResumeSuspended(ctx, seamrow.Record(row)); rerr != nil {
 		slog.Info("mcptools: resume a suspended session a message is held for", "session_id", row.ID, "error", rerr)
 	}
 	return res, nil
@@ -355,7 +350,7 @@ func (m *mcpSend) sendNow(ctx context.Context, row sessionstore.Session) (mcp.To
 		return mcp.ToolResult{}, errors.New("no executor configured")
 	}
 	if m.deps.Delivery != nil {
-		if err := m.deps.Delivery.DeliverHeld(ctx, toolsession.Record(row)); err != nil {
+		if err := m.deps.Delivery.DeliverHeld(ctx, seamrow.Record(row)); err != nil {
 			if errors.Is(err, seam.ErrSessionSealed) {
 				return m.rerouteSealed(ctx, row)
 			}
@@ -491,7 +486,7 @@ func deliverChildHeld(ctx context.Context, deps Deps, tenant, childID string) {
 	if child.State != session.StateRunning {
 		return
 	}
-	if err := deps.Delivery.DeliverHeld(ctx, toolsession.Record(child)); err != nil {
+	if err := deps.Delivery.DeliverHeld(ctx, seamrow.Record(child)); err != nil {
 		slog.Warn("mcptools: deliver a delegated child's held messages", "session_id", childID, "error", err)
 	}
 }

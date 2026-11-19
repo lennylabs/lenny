@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treerecovery"
@@ -129,7 +131,7 @@ func runTreeRecovery(t *testing.T, srv *Server, store sessionstore.Store, reatta
 	}
 	orch := treerecovery.New(treerecovery.Config{
 		Lister: store, Reattacher: reattacher, Terminal: sessionTerminalMarker{s: srv},
-		Recoverable: srv.nodeNeedsRecovery, LevelTimeout: 30 * time.Millisecond, TreeTimeout: time.Minute,
+		Recoverable: func(n sessionstore.Session) bool { return n.State == session.StateResumePending }, LevelTimeout: 30 * time.Millisecond, TreeTimeout: time.Minute,
 	})
 	summary, err := orch.RecoverTree(ctx, "acme", "root")
 	if err != nil {
@@ -245,19 +247,6 @@ func TestTreeRecoveryFailRacesResumeEntry_spec_8_10(t *testing.T) {
 	}
 }
 
-// nodeNeedsRecovery is a no-op (no node recoverable) when the pod
-// registry is unwired, so the recovery degrades to a no-op on a gateway
-// without pod binding (dev / unit-test).
-func TestNodeNeedsRecoveryNilRegistry(t *testing.T) {
-	srv := New(memstore.New(), Options{DevTenantHeader: true})
-	if srv.podRegistry != nil {
-		t.Skip("test assumes the bare server has no pod registry")
-	}
-	if srv.nodeNeedsRecovery(sessionstore.Session{UserID: testOwner, ID: "n1", State: session.StateRunning}) {
-		t.Fatal("nodeNeedsRecovery should be false without a pod registry")
-	}
-}
-
 // The resume path's tree-recovery trigger is plumbed end to end: New
 // builds the orchestrator, recoverDelegationTree spawns the detached
 // traversal over the resumed tree, and the completion hook fires. With
@@ -265,9 +254,9 @@ func TestNodeNeedsRecoveryNilRegistry(t *testing.T) {
 // safe no-op that leaves the running children untouched.
 func TestRecoverDelegationTreePlumbing_spec_8_10_1016(t *testing.T) {
 	store := memstore.New()
-	srv := New(store, Options{DevTenantHeader: true})
+	srv := New(store, Options{DevTenantHeader: true, TreeRecovery: platformtools.NewTreeRecovery(platformtools.RecoveryConfig{})})
 	if srv.treeRecovery == nil {
-		t.Fatal("New must build the tree-recovery orchestrator")
+		t.Fatal("New must keep the tree recovery")
 	}
 	ctx := context.Background()
 	rows := []sessionstore.Session{

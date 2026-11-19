@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
@@ -309,7 +311,7 @@ func TestCascadeAppliesOrphanCapFallbackToEveryCancelledNode_spec_8_10(t *testin
 			store := memstore.New()
 			sink := &orphanCapAuditSink{}
 			srv := sessionserver.New(store, sessionserver.Options{
-				DevTenantHeader: true, MaxOrphanTasksPerTenant: tc.cap, LifecycleAuditSink: sink,
+				DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: tc.cap, LifecycleAuditSink: sink,
 			})
 			tc.seed(t, store)
 			terminateAndSettle(t, srv, tc.terminate)
@@ -382,7 +384,7 @@ func TestOrphanCapCountReadsPrimaryPastReplicaLag_spec_8_10(t *testing.T) {
 	store := &staleReplicaListStore{Store: memstore.New()}
 	sink := &orphanCapAuditSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader: true, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
+		DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
 	})
 	capNode(t, store, "live_root", "", 0, session.CascadeCancelAll)
 	capNode(t, store, "start", "live_root", 1, session.CascadeCancelAll)
@@ -409,7 +411,7 @@ func TestOrphanCapCountErrorReportsNotOverCap_spec_8_10(t *testing.T) {
 	inner := memstore.New()
 	sink := &orphanCapAuditSink{}
 	srv := sessionserver.New(capCountErrorStore{Store: inner, watch: "mid"}, sessionserver.Options{
-		DevTenantHeader: true, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
+		DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
 	})
 	capNode(t, inner, "top", "", 0, session.CascadeCancelAll)
 	capNode(t, inner, "mid", "top", 1, session.CascadeDetach)
@@ -461,7 +463,7 @@ func TestCascadeSkipsFallbackForDescendantAnotherWriterEnded_spec_8_10(t *testin
 	store := &preemptingStore{Store: inner, target: "mid"}
 	sink := &orphanCapAuditSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader: true, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
+		DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 1, LifecycleAuditSink: sink,
 	})
 	capNode(t, inner, "top", "", 0, session.CascadeCancelAll)
 	capNode(t, inner, "mid", "top", 1, session.CascadeDetach)
@@ -538,7 +540,7 @@ func TestCascadeUnderStoreFaultsConvergesThroughOrphanCleanup_spec_8_10(t *testi
 		writes := orphanfixture.NewWriteCounter(memstore.New())
 		faults := &cascadeFaultStore{Store: writes, rng: rand.New(rand.NewSource(rng.Int63())), p: 0.35}
 		archive := orphanfixture.NewArchiveCounter()
-		srv := sessionserver.New(faults, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+		srv := sessionserver.New(faults, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 		orphanfixture.Seed(t, writes, sessionstore.Session{UserID: testOwner, TenantID: "acme", RuntimeRef: "echo"}, nodes)
 
 		ctx := context.Background()

@@ -18,7 +18,7 @@ func TestCallerTenantIDPrefersPrincipal_spec_9_2(t *testing.T) {
 	ctx := authmw.WithPrincipal(context.Background(), authmw.Principal{
 		TenantID: "acme", Subject: "user_alice",
 	})
-	if got := callerTenantID(ctx, "default"); got != "acme" {
+	if got := callerTenantID(ctx, Deps{}, "default"); got != "acme" {
 		t.Errorf("callerTenantID = %q, want acme (principal wins over fallback)", got)
 	}
 }
@@ -29,7 +29,7 @@ func TestCallerTenantIDPrefersPrincipal_spec_9_2(t *testing.T) {
 // stays usable in minimal deployments. spec: §9.2 / §16.1;
 // F-9.2.13 / F-15.2.15.
 func TestCallerTenantIDFallsBackWhenUnauthenticated_spec_9_2(t *testing.T) {
-	if got := callerTenantID(context.Background(), "acme"); got != "acme" {
+	if got := callerTenantID(context.Background(), Deps{}, "acme"); got != "acme" {
 		t.Errorf("callerTenantID = %q, want acme (no principal → fallback)", got)
 	}
 }
@@ -44,7 +44,7 @@ func TestCallerTenantIDFallsBackWhenPrincipalHasNoTenant_spec_9_2(t *testing.T) 
 	ctx := authmw.WithPrincipal(context.Background(), authmw.Principal{
 		Subject: "user_alice",
 	})
-	if got := callerTenantID(ctx, "acme"); got != "acme" {
+	if got := callerTenantID(ctx, Deps{}, "acme"); got != "acme" {
 		t.Errorf("callerTenantID = %q, want acme (empty principal tenant → fallback)", got)
 	}
 }
@@ -54,7 +54,7 @@ func TestCallerTenantIDFallsBackWhenPrincipalHasNoTenant_spec_9_2(t *testing.T) 
 // resolve to "default" so the store layer is never asked to scan an
 // unbounded tenant. spec: §9.2 / §16.1; F-9.2.13 / F-15.2.15.
 func TestCallerTenantIDDefaultsToDefaultWhenBothEmpty_spec_9_2(t *testing.T) {
-	if got := callerTenantID(context.Background(), ""); got != "default" {
+	if got := callerTenantID(context.Background(), Deps{}, ""); got != "default" {
 		t.Errorf("callerTenantID = %q, want default (no principal, no fallback)", got)
 	}
 }
@@ -70,7 +70,7 @@ func TestCallerTenantIDPrincipalOverridesNonEmptyFallback_spec_9_2(t *testing.T)
 	ctx := authmw.WithPrincipal(context.Background(), authmw.Principal{
 		TenantID: "globex", Subject: "user_alice",
 	})
-	if got := callerTenantID(ctx, "default"); got != "globex" {
+	if got := callerTenantID(ctx, Deps{}, "default"); got != "globex" {
 		t.Errorf("callerTenantID = %q, want globex (principal beats binary default)", got)
 	}
 }

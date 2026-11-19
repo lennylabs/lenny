@@ -12,7 +12,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/elicitation"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/userstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/observability/audit"
@@ -122,7 +121,7 @@ type elicitationDispatcher struct {
 // ElicitationTamperRecorder is the metric-emission hook the gateway
 // wires into the elicitation dispatcher so the §9.2 chain walker
 // reports tamper detections without depending on the gateway's
-// metrics package directly. *gatewaymetrics.Metrics satisfies it.
+// metrics package directly. PromMetrics satisfies it.
 // originPod is the pod that legitimately originated the elicitation;
 // tamperingPod is the forwarding pod whose re-emission diverged;
 // enforcementMode is the §9.2 effective mode that was in force at the
@@ -641,7 +640,7 @@ func resolveElicitationTool(
 	response any,
 	reason string,
 ) (mcp.ToolResult, error) {
-	principal, _ := authmw.FromContext(ctx)
+	principal, _ := requestCaller(ctx, deps)
 	if err := requireActiveResolver(ctx, deps, tenant, principal.Subject); err != nil {
 		return mcp.ToolResult{}, err
 	}

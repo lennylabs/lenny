@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
@@ -42,56 +43,6 @@ type recordingExportObserver struct {
 
 func (r *recordingExportObserver) ExportFileScanned(_ context.Context, ev interceptor.ExportScanEvent) {
 	r.events = append(r.events, ev)
-}
-
-// spec: §13.5 mitigation 4 / §8.3 — the resolver turns a
-// contentPolicy.interceptorRef into the PreExportMaterialization sub-chain
-// plus an observer-bearing ExportScanContext. F-13.5.5.
-func TestChainExportScanResolverResolves_spec_13_5_5(t *testing.T) {
-	chain := interceptor.NewChain()
-	if err := chain.Register(interceptor.PhasePreDelegation,
-		scanInterceptor{name: "scanner", res: interceptor.Result{Action: interceptor.ActionAllow}}); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	obs := &recordingExportObserver{}
-	r := delegation.NewChainExportScanResolver(chain, obs)
-
-	sub, sc, err := r.ResolveExportScanChain(context.Background(), "acme", "scanner")
-	if err != nil {
-		t.Fatalf("resolve: %v", err)
-	}
-	if sub == nil {
-		t.Fatal("resolved chain is nil")
-	}
-	if sub.Len(interceptor.PhasePreExportMaterialization) != 1 {
-		t.Fatalf("sub export-phase len = %d, want 1", sub.Len(interceptor.PhasePreExportMaterialization))
-	}
-	if sc.InterceptorRef != "scanner" {
-		t.Fatalf("scanCtx.InterceptorRef = %q, want scanner", sc.InterceptorRef)
-	}
-	if sc.Observer == nil {
-		t.Fatal("scanCtx.Observer is nil; the per-file audit/metric emission would be lost")
-	}
-}
-
-// spec: §8.3 rule 1 — a blank ref, an unknown ref, or a nil chain fails
-// closed with ErrExportScanUnavailable rather than admitting unscanned
-// files. F-13.5.5.
-func TestChainExportScanResolverFailsClosed_spec_8_3_rule1(t *testing.T) {
-	chain := interceptor.NewChain()
-	if err := chain.Register(interceptor.PhasePreDelegation, scanInterceptor{name: "scanner"}); err != nil {
-		t.Fatalf("register: %v", err)
-	}
-	r := delegation.NewChainExportScanResolver(chain, nil)
-	for _, ref := range []string{"", "missing"} {
-		if _, _, err := r.ResolveExportScanChain(context.Background(), "acme", ref); !errors.Is(err, delegation.ErrExportScanUnavailable) {
-			t.Fatalf("ref=%q: got %v, want ErrExportScanUnavailable", ref, err)
-		}
-	}
-	rNil := delegation.NewChainExportScanResolver(nil, nil)
-	if _, _, err := rNil.ResolveExportScanChain(context.Background(), "acme", "scanner"); !errors.Is(err, delegation.ErrExportScanUnavailable) {
-		t.Fatalf("nil chain: got %v, want ErrExportScanUnavailable", err)
-	}
 }
 
 // seedScanPolicy stands up a runtime referencing a scanExportedFiles policy
@@ -137,12 +88,12 @@ func TestDelegateExportScanRunsThroughResolver_spec_13_5_5(t *testing.T) {
 	)
 
 	svc := delegation.NewService(store, delegation.Options{
-		Clock:                   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:                  func() string { return "sess_child" },
-		Runtimes:                runtimes,
-		Policies:                policies,
-		ExportMaterializer:      mat,
-		ExportScanChainResolver: delegation.NewChainExportScanResolver(chain, obs),
+		Clock:              func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:             func() string { return "sess_child" },
+		Runtimes:           runtimes,
+		Policies:           policies,
+		ExportMaterializer: mat,
+		ExportScans:        toolops.NewExportScans(chain, obs),
 	})
 	if _, err := svc.Delegate(context.Background(), "acme", delegation.Request{
 		ParentSessionID:  "sess_parent",
@@ -181,12 +132,12 @@ func TestDelegateExportScanRejectFailsClosed_spec_13_5_5(t *testing.T) {
 	)
 
 	svc := delegation.NewService(store, delegation.Options{
-		Clock:                   func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:                  func() string { return "sess_child" },
-		Runtimes:                runtimes,
-		Policies:                policies,
-		ExportMaterializer:      mat,
-		ExportScanChainResolver: delegation.NewChainExportScanResolver(chain, obs),
+		Clock:              func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:             func() string { return "sess_child" },
+		Runtimes:           runtimes,
+		Policies:           policies,
+		ExportMaterializer: mat,
+		ExportScans:        toolops.NewExportScans(chain, obs),
 	})
 	_, err := svc.Delegate(context.Background(), "acme", delegation.Request{
 		ParentSessionID:  "sess_parent",

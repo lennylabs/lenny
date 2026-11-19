@@ -26,6 +26,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/callercheck"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorstore"
 	"github.com/lennylabs/lenny/pkg/gateway/coordination/barrier"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialserver"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/revocation"
 	revocationprop "github.com/lennylabs/lenny/pkg/gateway/credentials/revocation/propagator"
@@ -449,7 +450,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 		// request already carries, and the revocation is checked through
 		// GWSEAM-IsBearerRevoked; non-playground bearers (no origin claim)
 		// are not watched. F-27.5.4.
-		mcpSrv.SetWebSocketAuth(sessionSrv.ToolsSeam(), pg, 0)
+		mcpSrv.SetWebSocketAuth(toolops.Callers{}, pg, 0)
 		// §11.4 / §27.6 — drive the §11.4 user-invalidation
 		// fan-out into the playground revocation primitive so an OIDC
 		// principal invalidation revokes the user's playground sessions.

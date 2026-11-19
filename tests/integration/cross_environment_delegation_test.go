@@ -48,6 +48,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/environment"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -112,14 +113,16 @@ func newCrossEnvFixture(t *testing.T) *crossEnvFixture {
 
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.ToolAccess{},
-		SessionAccess:     ownerprincipal.ToolAccess{},
-		DevTenantFallback: true,
-		Store:             store,
-		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
-		Runtimes:          runtimes,
-		Environments:      envs,
-		Tenants:           tenants,
+		Callers:             toolops.Callers{},
+		SessionService:      ownerprincipal.ToolAccess{},
+		DevTenantFallback:   true,
+		Store:               store,
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
+		Runtimes:            runtimes,
+		Environments:        envs,
+		Tenants:             toolops.NewTenants(tenants, nil, nil),
+		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, ""),
+		SessionAccess:       ownerprincipal.ToolAccess{},
 		Delegation: delegation.NewService(store, delegation.Options{
 			IDFunc:   childIDCounter(),
 			Runtimes: runtimes,

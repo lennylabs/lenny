@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/session/state"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -109,14 +109,14 @@ func (d *dlqDelivery) DeliverHeld(_ context.Context, s seam.Session) error {
 	if d.deliverErr != nil {
 		return d.deliverErr
 	}
-	d.delivered = append(d.delivered, toolsession.Row(s))
+	d.delivered = append(d.delivered, seamrow.Row(s))
 	return nil
 }
 
 func (d *dlqDelivery) ResumeSuspended(_ context.Context, s seam.Session) error {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.resumed = append(d.resumed, toolsession.Row(s))
+	d.resumed = append(d.resumed, seamrow.Row(s))
 	return nil
 }
 

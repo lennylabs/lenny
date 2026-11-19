@@ -186,7 +186,7 @@ func (h *Harness) MCPCall(r *Replica, tool, args string) map[string]any {
 // spec: §29.3 (Interactive message send) Forwarding rule 3
 func (h *Harness) PlatformCall(r *Replica, sessionID, tool, args string) map[string]any {
 	h.T.Helper()
-	out, _, err := platformtools.New(r.MCP, h.Inner).CallPlatformTool(context.Background(), sessionID, tool, []byte(args))
+	out, _, err := platformtools.New(r.MCP, sessionserver.NewCallingSessions(h.Inner)).CallPlatformTool(context.Background(), sessionID, tool, []byte(args))
 	if err != nil {
 		return map[string]any{"_error": err.Error()}
 	}
@@ -213,7 +213,7 @@ func (h *Harness) GatewayControlCall(ctx context.Context, r *Replica, sessionID,
 	srv := mcp.NewServer()
 	mcptools.Register(srv, deps)
 	ctx = inputwaitrecovery.NewContext(ctx, r.inputWaitGen)
-	out, _, err := platformtools.New(srv, h.Store).CallPlatformTool(ctx, sessionID, tool, []byte(args))
+	out, _, err := platformtools.New(srv, sessionserver.NewCallingSessions(h.Store)).CallPlatformTool(ctx, sessionID, tool, []byte(args))
 	if err != nil {
 		return map[string]any{"_error": err.Error()}
 	}

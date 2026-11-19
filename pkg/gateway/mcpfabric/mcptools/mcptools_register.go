@@ -17,16 +17,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/delegation/tracing"
 	"github.com/lennylabs/lenny/pkg/elicitation"
-	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/export"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation/fileexport"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/deadlock"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	environmentmw "github.com/lennylabs/lenny/pkg/gateway/middleware/environment"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
@@ -81,7 +78,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			Description: "Attach to a running session's event stream. Reconnect with Accept: text/event-stream to stream events; optional resumeFromSeq replays buffered events with SeqNum greater than the cursor before live delivery.",
 			InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string"},"resumeFromSeq":{"type":"integer","minimum":0,"description":"§15.2 event-stream resume: replay buffered events with SeqNum greater than this cursor before live delivery."}}}`),
 		}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-			tenant := callerTenantID(ctx, tenant)
+			tenant := callerTenantID(ctx, deps, tenant)
 			var in struct {
 				SessionID string `json:"sessionId"`
 			}
@@ -128,7 +125,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// authenticated principal's, not the Register-time default,
 		// so a multi-tenant deployment scopes the session row to the
 		// caller's tenant. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		// The session core decodes the arguments as the full OpenAPI
 		// CreateSessionRequest and forwards every field to the shared
 		// service, so the MCP create_session path runs the same workspace-
@@ -204,7 +201,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal so the §7.2 topology lookup and the §4 chain payload
 		// stay scoped to the right tenant. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// To is the §8.5 target session id (renamed from the legacy
 			// `sessionId` to match the §8.5 schema). F-8.5.16.
@@ -252,7 +249,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			return mcp.ToolResult{}, mcp.NewToolError("CROSS_TENANT_MESSAGE_DENIED",
 				"target session belongs to a different tenant (§7.2)", nil)
 		}
-		senderID := callerSessionID(ctx, in.FromSessionID)
+		senderID := callerSessionID(ctx, deps, in.FromSessionID)
 		// spec: §10.2 (Session ownership) — sending from a session acts on
 		// it, so the caller must own the sender before the sender's
 		// outbound limit is charged. A sender the caller may not act on
@@ -304,7 +301,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 			}
 			res, outcome, ferr := forwardToolCall(ctx, deps.HolderForward, row, kind, "lenny/send_message", args)
 			switch {
-			case outcome == seam.ForwardNotDelivered && deps.HolderForward.HoldsUndelivered(toolsession.Record(row), kind):
+			case outcome == seam.ForwardNotDelivered && deps.HolderForward.HoldsUndelivered(seamrow.Record(row), kind):
 				undelivered = true
 			case outcome != seam.ForwardLocal:
 				return res, ferr
@@ -387,7 +384,7 @@ func registerSessionLifecycleTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		Description: "Force-cancel a session; marks cancelled (§15.2). REST equivalent: DELETE /v1/sessions/{id}.",
 		InputSchema: json.RawMessage(`{"type":"object","required":["sessionId"],"properties":{"sessionId":{"type":"string","description":"Target session id."},"reason":{"type":"string","description":"§27.6 best-effort hint reason, e.g. playground_client_closed."}}}`),
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			SessionID string `json:"sessionId"`
 			Reason    string `json:"reason"`
@@ -524,7 +521,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// SessionID is the §15.2.1 transport fallback used when the
 			// principal carries no SessionID claim. The spec schema
@@ -537,7 +534,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 				return mcp.ToolResult{}, errInvalidArgs(err)
 			}
 		}
-		sessionID := callerSessionID(ctx, in.SessionID)
+		sessionID := callerSessionID(ctx, deps, in.SessionID)
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
@@ -592,7 +589,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// ParentSessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.15.
@@ -602,7 +599,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		parentSessionID := callerSessionID(ctx, in.ParentSessionID)
+		parentSessionID := callerSessionID(ctx, deps, in.ParentSessionID)
 		if parentSessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no parentSessionId arg)", nil)
@@ -679,7 +676,7 @@ func registerTaskTreeTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			SessionID string   `json:"sessionId"`
 			ChildIDs  []string `json:"childIds"`
@@ -818,7 +815,7 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. spec: §8.3.
@@ -831,7 +828,7 @@ func registerTracingTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// spec: §8.3 / §9.1 — the registration writes the calling
 		// session, resolved from the principal; the argument is only
 		// consulted when the principal carries no session id.
-		sessionID := callerSessionID(ctx, in.SessionID)
+		sessionID := callerSessionID(ctx, deps, in.SessionID)
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
@@ -907,7 +904,7 @@ func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.11.
@@ -917,7 +914,7 @@ func registerOutputTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		sessionID := callerSessionID(ctx, in.SessionID)
+		sessionID := callerSessionID(ctx, deps, in.SessionID)
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
@@ -995,7 +992,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.12.
@@ -1005,7 +1002,7 @@ func registerInputWaitTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		sessionID := callerSessionID(ctx, in.SessionID)
+		sessionID := callerSessionID(ctx, deps, in.SessionID)
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
@@ -1217,7 +1214,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		// principal so the elicitation budget, lookup, and tamper metric
 		// scope to the right tenant in a multi-tenant deployment.
 		// F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			// SessionID is the transport fallback used when the
 			// principal carries no SessionID claim. F-8.5.13.
@@ -1232,7 +1229,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 		if err := json.Unmarshal(args, &in); err != nil {
 			return mcp.ToolResult{}, errInvalidArgs(err)
 		}
-		sessionID := callerSessionID(ctx, in.SessionID)
+		sessionID := callerSessionID(ctx, deps, in.SessionID)
 		if sessionID == "" {
 			return mcp.ToolResult{}, mcp.NewToolError("VALIDATION_ERROR",
 				"caller session is unbound (no principal SessionID, no sessionId arg)", nil)
@@ -1566,7 +1563,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			SessionID     string          `json:"sessionId"`
 			ElicitationID string          `json:"elicitationId"`
@@ -1595,7 +1592,7 @@ func registerInteractionTools(srv *mcp.Server, deps Deps, env registerEnv) {
 	}, func(ctx context.Context, args json.RawMessage) (mcp.ToolResult, error) {
 		// spec: §9.2 / §16.1 / §15.2 — tenant from the caller's
 		// principal. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			SessionID     string `json:"sessionId"`
 			ElicitationID string `json:"elicitationId"`
@@ -1635,7 +1632,7 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// spec: §9.2 / §15.2 — tenant from the caller's
 		// principal so the §8.3 effective-policy lookup stays scoped
 		// to the right tenant. F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			NameContains string `json:"nameContains"`
 			SessionID    string `json:"sessionId"`
@@ -1663,7 +1660,7 @@ func registerRuntimeDiscoveryTools(srv *mcp.Server, deps Deps, env registerEnv) 
 		// A caller whose session resolves no policy (or no
 		// Delegation service is wired) sees every
 		// environment-authorized agent. F-8.5.7.
-		policySessionID, err := discoverySessionID(ctx, deps, tenant, callerSessionID(ctx, in.SessionID))
+		policySessionID, err := discoverySessionID(ctx, deps, tenant, callerSessionID(ctx, deps, in.SessionID))
 		if err != nil {
 			return mcp.ToolResult{}, err
 		}
@@ -1789,7 +1786,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// principal so the §4 chain payload, §8.2 service Delegate, and
 		// §16.7 audit emission all stamp the right tenant.
 		// F-9.2.13 / F-15.2.15.
-		tenant := callerTenantID(ctx, tenant)
+		tenant := callerTenantID(ctx, deps, tenant)
 		var in struct {
 			ParentSessionID string `json:"parentSessionId"`
 			// Target is the §8.2 opaque delegation target id. The
@@ -2055,8 +2052,8 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// the interceptor content and child delivery. F-8.2.1.
 		taskInput := flattenTaskInput(in.Task.Input)
 		if taskInput != "" && deps.Interceptors != nil {
-			req := interceptor.Request{
-				Phase:     interceptor.PhasePreDelegation,
+			req := seam.InterceptRequest{
+				Phase:     seam.InterceptPreDelegation,
 				SessionID: in.ParentSessionID,
 				TenantID:  tenant,
 				Content:   []byte(taskInput),
@@ -2069,18 +2066,15 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			// interceptors the policy does not name are not invoked; a
 			// policy with interceptorRef: null runs no external scan.
 			// F-8.2.9 / F-13.5.2.
-			var res interceptor.Result
 			if deps.ContentPolicies != nil {
 				ref := ""
 				if _, r, ok := deps.ContentPolicies.ResolveContentPolicy(ctx, tenant, in.ParentSessionID); ok {
 					ref = r
 				}
-				res = deps.Interceptors.RunPolicyScoped(ctx, req, ref)
-			} else {
-				res = deps.Interceptors.Run(ctx, req)
+				req.PolicyScoped, req.InterceptorRef = true, ref
 			}
-			if res.Action == interceptor.ActionReject {
-				recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreDelegation, res)
+			res := deps.Interceptors.Intercept(ctx, req)
+			if res.Action == seam.InterceptReject {
 				// spec: §15.2.1 — a manual MCP-only tool
 				// (lenny/delegate_task) must use the shared error
 				// taxonomy. A built-in evaluator that names a canonical
@@ -2098,9 +2092,9 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 				}
 				return mcp.ToolResult{}, mcp.NewToolError(code,
 					res.Reason,
-					map[string]any{"phase": string(interceptor.PhasePreDelegation)})
+					map[string]any{"phase": string(seam.InterceptPreDelegation)})
 			}
-			if res.Action == interceptor.ActionModify {
+			if res.Action == seam.InterceptModify {
 				taskInput = string(res.ModifiedContent)
 			}
 		}
@@ -2111,7 +2105,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 		// child receives. The chain rejects any MODIFY that alters the
 		// authenticated identity (tenant_id/user_id) with
 		// INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION before it is seen here.
-		if deps.Interceptors != nil && deps.Interceptors.Len(interceptor.PhasePreRoute) > 0 {
+		if deps.Interceptors != nil && deps.Interceptors.Intercepts(seam.InterceptPreRoute) {
 			spec := childRouteSpec{
 				TenantID:         tenant,
 				RequestedRuntime: targetRef,
@@ -2121,15 +2115,14 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 			if merr != nil {
 				return mcp.ToolResult{}, fmt.Errorf("child task spec serialization: %w", merr)
 			}
-			res := deps.Interceptors.Run(ctx, interceptor.Request{
-				Phase:     interceptor.PhasePreRoute,
+			res := deps.Interceptors.Intercept(ctx, seam.InterceptRequest{
+				Phase:     seam.InterceptPreRoute,
 				SessionID: in.ParentSessionID,
 				TenantID:  tenant,
 				Content:   payload,
 				Metadata:  map[string]string{"tenant_id": tenant},
 			})
-			if res.Action == interceptor.ActionReject {
-				recordChainRejection(ctx, deps, tenant, in.ParentSessionID, interceptor.PhasePreRoute, res)
+			if res.Action == seam.InterceptReject {
 				// spec: §15.2.1 — see PreDelegation site
 				// above. A deliberate PreRoute reject falls back to
 				// INTERCEPTOR_REJECTED, preserving REST/MCP (category,
@@ -2144,15 +2137,15 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 					code = "INTERCEPTOR_REJECTED"
 				}
 				details := map[string]any{
-					"phase":           string(interceptor.PhasePreRoute),
+					"phase":           string(seam.InterceptPreRoute),
 					"interceptor_ref": res.RejectedBy,
 				}
-				if res.Code == interceptor.CodeInterceptorImmutableFieldViolation {
+				if res.Code == seam.CodeInterceptorImmutableFieldViolation {
 					details["violated_fields"] = res.ViolatedFields
 				}
 				return mcp.ToolResult{}, mcp.NewToolError(code, res.Reason, details)
 			}
-			if res.Action == interceptor.ActionModify {
+			if res.Action == seam.InterceptModify {
 				var modified childRouteSpec
 				if uerr := json.Unmarshal(res.ModifiedContent, &modified); uerr != nil {
 					return mcp.ToolResult{}, fmt.Errorf("child PreRoute MODIFY is not a valid task spec: %w", uerr)
@@ -2565,7 +2558,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 // surfaces here.
 //
 // A post-pod-claim credential-assignment race (seam.ErrChildCredentialAssignment)
-// and a pre-claim pool exhaustion (credrouter.ErrNoCredentialAvailable) both map
+// and a pre-claim pool exhaustion (seam.ErrChildCredentialUnavailable) both map
 // to CREDENTIAL_POOL_EXHAUSTED, matching the top-level create path and the §8.3
 // assignment-race clause. A user-only policy with no registered credential maps
 // to USER_CREDENTIAL_NOT_FOUND, a still-warming pool to RUNTIME_UNAVAILABLE, and
@@ -2578,7 +2571,7 @@ func registerDelegationTool(srv *mcp.Server, deps Deps, env registerEnv) {
 func materializeToolError(err error, childRuntime, childID string) error {
 	details := map[string]any{"childRuntime": childRuntime, "childSessionId": childID}
 	switch {
-	case errors.Is(err, seam.ErrChildCredentialAssignment), errors.Is(err, credrouter.ErrNoCredentialAvailable):
+	case errors.Is(err, seam.ErrChildCredentialAssignment), errors.Is(err, seam.ErrChildCredentialUnavailable):
 		// spec: §8.3 / §4.9 -- a post-pod-claim lease
 		// assignment race (the loser of concurrent delegations that each
 		// passed the point-in-time pre-check) and a pre-claim empty
@@ -2588,7 +2581,7 @@ func materializeToolError(err error, childRuntime, childID string) error {
 		return mcp.NewToolError("CREDENTIAL_POOL_EXHAUSTED",
 			"credential pool exhausted: no assignable credential for the delegated child at materialization time",
 			details)
-	case errors.Is(err, credrouter.ErrUserCredentialNotFound):
+	case errors.Is(err, seam.ErrChildUserCredentialNotFound):
 		// spec: §4.9 / §15.1 -- a user-only policy with no
 		// pre-registered credential for the user and provider, the same
 		// condition the §8.3 pre-check maps to USER_CREDENTIAL_NOT_FOUND
@@ -2602,7 +2595,7 @@ func materializeToolError(err error, childRuntime, childID string) error {
 		// toward idle, the same "Pool Not Ready" condition session start maps
 		// to RUNTIME_UNAVAILABLE (TRANSIENT / 503, retryable).
 		return mcp.NewToolError("RUNTIME_UNAVAILABLE", err.Error(), details)
-	case errors.Is(err, credassign.ErrTokenServiceUnavailable):
+	case errors.Is(err, seam.ErrTokenServiceUnavailable):
 		// spec: §4.3 -- the Token Service could not mint the child's
 		// credential lease, surfaced as TOKEN_SERVICE_UNAVAILABLE (UPSTREAM /
 		// 503, retryable), matching the session-start path.

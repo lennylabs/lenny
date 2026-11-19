@@ -36,9 +36,9 @@ import (
 
 	"google.golang.org/grpc/peer"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 
-	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/leaseextension"
 )
 
@@ -448,7 +448,7 @@ type Service struct {
 }
 
 // MetricEmitter is the §16 counter callback the Service drives on
-// every ExtendLease decision. *gatewaymetrics.Metrics satisfies it.
+// every ExtendLease decision. PromMetrics satisfies it.
 // The interface keeps the leasecontrol package free of a direct
 // gatewaymetrics dependency (which would create an import cycle once
 // gatewaymetrics consumes leasecontrol types). spec: §16;
@@ -659,9 +659,9 @@ type Options struct {
 	// ExtendLease tracks auto-mode extension requests per tree per minute
 	// and falls back to elicitation once a tree exceeds its resolved
 	// maxAutoExtensionsPerMinute. Nil selects an in-memory per-replica
-	// counter; a Redis-backed counter makes the window cross-replica.
-	// F-8.6.7.
-	AutoExtensionCounter ratelimit.Counter
+	// counter; a Redis-backed counter makes the window cross-replica. The
+	// session core serves the counter. F-8.6.7.
+	AutoExtensionCounter seam.RateCounter
 
 	// DefaultAutoMaxPerMinute is the §8.6 deployment-default
 	// maxAutoExtensionsPerMinute. It applies to a tree that does not carry

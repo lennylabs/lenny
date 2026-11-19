@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
@@ -59,6 +60,7 @@ func newParitySurface(t *testing.T, st session.State) *paritySurface {
 	t.Cleanup(rest.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store, SessionService: srv.ToolsSeam(), SessionAccess: srv.ToolsSeam(), Delivery: srv.ToolsSeam(), Executor: toolseam.Executor(exec),
 		Clock: func() time.Time { return now }, TenantID: "acme",

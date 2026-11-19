@@ -7,6 +7,8 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -37,8 +39,11 @@ func (f *fakeHWMObserver) ObserveDelegationParallelChildrenHighWatermark(pool, t
 	f.values = append(f.values, value)
 }
 
-func newHWMServer(reader DelegationHighWatermarkReader, obs DelegationHighWatermarkObserver) *Server {
-	return &Server{hwmReader: reader, hwmObserver: obs}
+func newHWMServer(reader treeseam.HighWatermarks, obs DelegationHighWatermarkObserver) *Server {
+	if reader == nil {
+		return &Server{hwmObserver: obs}
+	}
+	return &Server{treeBudgets: treeseam.Budgets{HighWatermarks: reader}, hwmObserver: obs}
 }
 
 // spec: §8.3 — when a tree root settles, the gateway reads the

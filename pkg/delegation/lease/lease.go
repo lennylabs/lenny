@@ -426,3 +426,12 @@ func IntersectProviders(a, b []string) []string {
 	}
 	return out
 }
+
+// PerNodeMemoryBytes is the §8.2 per-node in-memory footprint estimate
+// (~12 KB: virtual child interface, capped event buffer, elicitation
+// state, task metadata). Each admitted delegation reserves this much of
+// the tree's maxTreeMemoryBytes, and a settled child's budget return gives
+// it back.
+//
+// spec: §8.2.
+const PerNodeMemoryBytes int64 = 12 * 1024

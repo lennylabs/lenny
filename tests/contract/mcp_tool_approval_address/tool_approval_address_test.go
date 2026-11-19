@@ -27,6 +27,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
@@ -70,7 +72,7 @@ func TestToolUseRequestedAddressesSessionOnly_spec_7_2(t *testing.T) {
 	}
 	waits := toolapproval.NewRegistry()
 	gate := sessionserver.NewToolApprovalGate(
-		store, interactionstore.NewMemory(), bus, waits,
+		store, interactionstore.NewMemory(), bus, platformtools.NewToolApprovals(waits),
 		func() time.Time { return time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC) },
 		0,
 	)

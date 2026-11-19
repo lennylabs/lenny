@@ -22,7 +22,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/agentpodstate/memstore"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
@@ -200,7 +199,7 @@ func TestInspectForRecyclePreConnectRecyclingPool_spec_5_2(t *testing.T) {
 	if !policy.PreConnect {
 		t.Error("PreConnect = false, want true")
 	}
-	if policy.OnScrubFailure != podscrub.OnCleanupWarn {
+	if policy.OnScrubFailure != string(podscrub.OnCleanupWarn) {
 		t.Errorf("OnScrubFailure = %q, want warn", policy.OnScrubFailure)
 	}
 	if policy.MaxScrubFailures != 3 || policy.MaxSessionsPerPod != 50 || policy.MaxPodUptimeSeconds != 3600 {
@@ -495,7 +494,7 @@ func concurrentPool(name string, maxConcurrent int) poolstore.Pool {
 // the ledger, one per distinct slot identifier, failing the test on any
 // error. The slots are distinct because the ledger keys its record by slot
 // and a repeated slot counts once.
-func recordNLeaks(t *testing.T, ledger leasecontrol.DrainLedger, podID string, n int) {
+func recordNLeaks(t *testing.T, ledger recycle.DrainLedger, podID string, n int) {
 	t.Helper()
 	for i := 0; i < n; i++ {
 		if err := ledger.RecordLeak(context.Background(), podID, fmt.Sprintf("slot-%d", i)); err != nil {
@@ -517,7 +516,7 @@ func drainRequested(t *testing.T, cl client.Client, podID string) bool {
 
 // mustDrainLedger builds a drain ledger over the supplied client and pool
 // fixtures, failing the test on a construction error.
-func mustDrainLedger(t *testing.T, cl client.Client, pools map[string]poolstore.Pool) leasecontrol.DrainLedger {
+func mustDrainLedger(t *testing.T, cl client.Client, pools map[string]poolstore.Pool) recycle.DrainLedger {
 	t.Helper()
 	ledger, err := recycle.NewDrainLedger(recycle.DrainLedgerOptions{
 		Tracker:   slothealth.New(),
@@ -739,7 +738,7 @@ func perReleasePool(name string, maxConcurrent int, profile runtimestore.Microvm
 // mustSessionRetirer builds a per-release session-count retirer over the
 // supplied client, pool fixtures, and recording sink, with the clock fixed at
 // now.
-func mustSessionRetirer(t *testing.T, cl client.Client, pools map[string]poolstore.Pool, sink recycle.RetirementMetricsSink, now time.Time) leasecontrol.SessionCountRetirer {
+func mustSessionRetirer(t *testing.T, cl client.Client, pools map[string]poolstore.Pool, sink recycle.RetirementMetricsSink, now time.Time) recycle.SessionCountRetirer {
 	t.Helper()
 	r, err := recycle.NewSessionCountRetirer(recycle.SessionCountRetirerOptions{
 		Client:    cl,
@@ -1273,14 +1272,14 @@ func TestClaimDispositionRetireClaimGoneIsNoOp_spec_3_4(t *testing.T) {
 		},
 	})
 	d := mustDispositionDriver(t, cl)
-	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", leasecontrol.PodLifetime{}, "shred timed out"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, "cleanup_fail_policy", recycle.PodLifetime{}, "shred timed out"); err != nil {
 		t.Errorf("Retire with gone claim: err = %v, want nil (no-op)", err)
 	}
 }
 
 // mustDispositionDriver builds a claim disposition driver around an arbitrary
 // client (so an error-injecting interceptor can be passed) with a fixed clock.
-func mustDispositionDriver(t *testing.T, cl client.Client) leasecontrol.ClaimDispositionDriver {
+func mustDispositionDriver(t *testing.T, cl client.Client) recycle.ClaimDispositionDriver {
 	t.Helper()
 	d, err := recycle.NewClaimDispositionDriver(recycle.ClaimDispositionDriverOptions{
 		Client: cl, Namespace: testNS, Now: func() time.Time { return time.Unix(0, 0) },
@@ -1293,14 +1292,14 @@ func mustDispositionDriver(t *testing.T, cl client.Client) leasecontrol.ClaimDis
 
 // mustInspector builds a pod inspector around a fake.WithWatch client and the
 // supplied pool/runtime fixtures, failing the test on a construction error.
-func mustInspector(t *testing.T, cl client.WithWatch, pools map[string]poolstore.Pool, runtimes map[string]runtimestore.Runtime) leasecontrol.PodInspector {
+func mustInspector(t *testing.T, cl client.WithWatch, pools map[string]poolstore.Pool, runtimes map[string]runtimestore.Runtime) recycle.PodInspector {
 	t.Helper()
 	return mustInspectorClient(t, cl, pools, runtimes)
 }
 
 // mustInspectorClient builds a pod inspector around an arbitrary client (so an
 // error-injecting interceptor can be passed) and the supplied fixtures.
-func mustInspectorClient(t *testing.T, cl client.Client, pools map[string]poolstore.Pool, runtimes map[string]runtimestore.Runtime) leasecontrol.PodInspector {
+func mustInspectorClient(t *testing.T, cl client.Client, pools map[string]poolstore.Pool, runtimes map[string]runtimestore.Runtime) recycle.PodInspector {
 	t.Helper()
 	insp, err := recycle.NewPodInspector(recycle.PodInspectorOptions{
 		Client:    cl,

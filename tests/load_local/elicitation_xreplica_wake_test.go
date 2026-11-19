@@ -38,6 +38,7 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
@@ -92,6 +93,7 @@ type elicitReplica struct {
 func newElicitReplica(sessions sessionstore.Store, inter interactionstore.Store, idFn func() string) elicitReplica {
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
+		Callers:            toolops.Callers{},
 		SessionService:     ownerprincipal.ToolAccess{},
 		SessionAccess:      ownerprincipal.ToolAccess{},
 		DevTenantFallback:  true,

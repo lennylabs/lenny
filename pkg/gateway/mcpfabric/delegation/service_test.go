@@ -16,7 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -925,9 +925,9 @@ func (f *fakeExperimentRouter) ApplyExperimentRouting(_ context.Context, child *
 	if f.route == nil {
 		return nil
 	}
-	row := toolsession.Row(*child)
+	row := seamrow.Row(*child)
 	err := f.route(&row)
-	*child = toolsession.Record(row)
+	*child = seamrow.Record(row)
 	return err
 }
 

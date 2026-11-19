@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 	"google.golang.org/grpc/codes"
@@ -122,7 +124,7 @@ func TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1(t *testing.T) {
 	defer sub.Close()
 
 	now := func() time.Time { return time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC) }
-	gate := sessionserver.NewToolApprovalGate(store, inter, bus, waits, now, 250*time.Millisecond)
+	gate := sessionserver.NewToolApprovalGate(store, inter, bus, platformtools.NewToolApprovals(waits), now, 250*time.Millisecond)
 
 	done := make(chan struct{})
 	go func() {

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/environmentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegation"
@@ -70,18 +71,19 @@ func envPolicyHarness(t *testing.T, parentRuntimeRef, envName, envDefaultPolicy 
 	})
 	srv := mcp.NewServer()
 	mcptools.Register(srv, mcptools.Deps{
-		SessionService:    ownerprincipal.ToolAccess{},
-		SessionAccess:     ownerprincipal.ToolAccess{},
-		DevTenantFallback: true,
-		Store:             store,
-		Executor:          toolseam.Executor(executor.NewEchoExecutor()),
-		Runtimes:          runtimes,
-		Delegation:        svc,
-		Environments:      envs,
-		Tenants:           tenants,
-		Clock:             func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		IDFunc:            func() string { return "sess_mcp" },
-		TenantID:          "acme",
+		SessionService:      ownerprincipal.ToolAccess{},
+		DevTenantFallback:   true,
+		Store:               store,
+		Executor:            toolseam.Executor(executor.NewEchoExecutor()),
+		Runtimes:            runtimes,
+		Delegation:          svc,
+		Environments:        envs,
+		Tenants:             toolops.NewTenants(tenants, nil, nil),
+		EnvironmentResolver: toolops.NewEnvironments(envs, tenants, ""),
+		Clock:               func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
+		IDFunc:              func() string { return "sess_mcp" },
+		TenantID:            "acme",
+		SessionAccess:       ownerprincipal.ToolAccess{},
 	})
 	return srv, runtimes, policies
 }

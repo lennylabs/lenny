@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -39,6 +40,7 @@ func newUploadTokenServers(t *testing.T) (*httptest.Server, *httptest.Server, se
 	t.Cleanup(tsREST.Close)
 	mcpSrv := mcp.NewServer()
 	mcptools.Register(mcpSrv, mcptools.Deps{
+		Callers:           toolops.Callers{},
 		DevTenantFallback: true,
 		Store:             store,
 		SessionCreator:    rest.ToolsSeam(),

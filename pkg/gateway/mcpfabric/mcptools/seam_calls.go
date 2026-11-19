@@ -9,7 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/platformtools/toolsession"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools/seamrow"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/state"
@@ -29,16 +29,16 @@ func afterTerminalWrite(ctx context.Context, t seam.Terminals, from session.Stat
 ) sessionstore.Session {
 	var hook func(context.Context, seam.Session)
 	if signals != nil {
-		hook = func(ctx context.Context, s seam.Session) { signals(ctx, toolsession.Row(s)) }
+		hook = func(ctx context.Context, s seam.Session) { signals(ctx, seamrow.Row(s)) }
 	}
-	return toolsession.Row(t.AfterTerminalWrite(ctx, state.State(from), toolsession.Record(row), hook))
+	return seamrow.Row(t.AfterTerminalWrite(ctx, state.State(from), seamrow.Record(row), hook))
 }
 
 // forwardToolCall forwards a tool call on row to the session's holder
 // replica through GWSEAM-ForwardToolCall, and returns the holder's result,
 // or its refusal as the tool error it carries.
 func forwardToolCall(ctx context.Context, f seam.Forwarding, row sessionstore.Session, kind seam.ForwardKind, tool string, args json.RawMessage) (mcp.ToolResult, seam.ForwardOutcome, error) {
-	res, outcome, err := f.ForwardToolCall(ctx, toolsession.Record(row), kind, tool, args)
+	res, outcome, err := f.ForwardToolCall(ctx, seamrow.Record(row), kind, tool, args)
 	if r, ok := seam.IsRefusal(err); ok {
 		return mcp.ToolResult{}, outcome, mcp.RefusalError(r)
 	}

@@ -41,6 +41,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/credential"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credentialpoolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
@@ -271,6 +272,7 @@ func TestCredentialLookupOutageFailsClosed(t *testing.T) {
 	t.Run("delegated child during a tenant-store outage", func(t *testing.T) {
 		mcpSrv := mcp.NewServer()
 		mcptools.Register(mcpSrv, mcptools.Deps{
+			Callers:           toolops.Callers{},
 			SessionService:    ownerprincipal.ToolAccess{},
 			SessionAccess:     ownerprincipal.ToolAccess{},
 			DevTenantFallback: true,

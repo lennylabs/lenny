@@ -30,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 	"github.com/lennylabs/lenny/tests/testinfra/toolseam"
 
@@ -39,6 +41,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
+	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/inputwaitrecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
@@ -134,6 +137,7 @@ func Start(t testing.TB, opts Options) *Server {
 	var ids atomic.Int64
 	tools := mcp.NewServer()
 	mcptools.Register(tools, mcptools.Deps{
+		Callers: toolops.Callers{},
 		// spec: §10.2 (Session ownership) — the platform-tool path runs
 		// under the calling session's principal, whose subject is the
 		// session's owner, so the owner-granting double admits it.
@@ -172,7 +176,7 @@ func Start(t testing.TB, opts Options) *Server {
 		serverOpts = append(serverOpts, tlsOpt)
 	}
 	s.gs = grpc.NewServer(serverOpts...)
-	adapterv1.RegisterGatewayControlServer(s.gs, &controlServer{bridge: platformtools.New(tools, s.store)})
+	adapterv1.RegisterGatewayControlServer(s.gs, &controlServer{bridge: platformtools.New(tools, sessionserver.NewCallingSessions(s.store))})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("inputwaitrig: listen: %v", err)

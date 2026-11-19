@@ -14,7 +14,6 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/session/recycle"
 	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
 )
@@ -22,7 +21,7 @@ import (
 // loggingDispositionDriver builds a claim disposition driver whose terminal
 // status write succeeds without a cluster and whose logger writes JSON records
 // to the returned buffer.
-func loggingDispositionDriver(t *testing.T) (leasecontrol.ClaimDispositionDriver, *bytes.Buffer) {
+func loggingDispositionDriver(t *testing.T) (recycle.ClaimDispositionDriver, *bytes.Buffer) {
 	t.Helper()
 	cl := interceptor.NewClient(fake.NewClientBuilder().Build(), interceptor.Funcs{
 		SubResourcePatch: func(context.Context, client.Client, string, client.Object, client.Patch, ...client.SubResourcePatchOption) error {
@@ -66,7 +65,7 @@ func logRecords(t *testing.T, buf *bytes.Buffer) []map[string]any {
 // leaves no record naming why the pod left the pool.
 func TestClaimDispositionReleasedRetireLogsReasonAtInfo_spec_5_2(t *testing.T) {
 	d, buf := loggingDispositionDriver(t)
-	life := leasecontrol.PodLifetime{SessionsServed: 3, UptimeSeconds: 900}
+	life := recycle.PodLifetime{SessionsServed: 3, UptimeSeconds: 900}
 	if err := d.Retire(context.Background(), "pod-1", false, false, podscrub.ReasonRuntimeNotLive, life, ""); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
@@ -95,7 +94,7 @@ func TestClaimDispositionReleasedRetireLogsReasonAtInfo_spec_5_2(t *testing.T) {
 // changed level or is duplicated by the released-retire Info record.
 func TestClaimDispositionFailedRetireKeepsWarnRecordOnly_spec_5_2(t *testing.T) {
 	d, buf := loggingDispositionDriver(t)
-	if err := d.Retire(context.Background(), "pod-1", true, false, podscrub.ReasonCleanupFailPolicy, leasecontrol.PodLifetime{}, "shred"); err != nil {
+	if err := d.Retire(context.Background(), "pod-1", true, false, podscrub.ReasonCleanupFailPolicy, recycle.PodLifetime{}, "shred"); err != nil {
 		t.Fatalf("Retire: %v", err)
 	}
 	recs := logRecords(t, buf)
