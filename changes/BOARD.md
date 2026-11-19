@@ -8,7 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 2 |
+| Building | 1 |
+| Ready | 1 |
 | Waiting on decisions | 40 |
 | Blocked | 132 |
 | Landed | 13 |
@@ -53,7 +54,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Ready |  |
+| [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Building |  |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Waiting on decisions | 0118 is `Draft` |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0119.S2](0119-agent-runtimes-only/steps.md#0119s2-removal-of-service-mode) | Removal of service mode | Waiting on decisions | 0119 is `Draft` |

@@ -126,7 +126,7 @@ Runs before v1 closes, after the member changes that remove packages listed in t
 Each move step, 0117.S3 to 0117.S13, settles the names of the packages it moves under decision 6, in the same step: a package whose name does not fit its component page or concern is renamed there, with its importers, and none is left for a final pass.
 
 ### 0117.S14 Session row package
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0117.S12]
 
