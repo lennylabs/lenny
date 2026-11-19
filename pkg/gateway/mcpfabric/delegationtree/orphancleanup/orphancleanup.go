@@ -205,13 +205,17 @@ type link struct {
 }
 
 func rowLink(r sessionstore.Session) link {
-	return link{id: r.ID, parent: r.ParentSessionID, terminal: session.IsTerminal(r.State),
-		terminatedAt: r.TerminatedAt, delegated: r.DelegationDepth > 0}
+	return link{
+		id: r.ID, parent: r.ParentSessionID, terminal: session.IsTerminal(r.State),
+		terminatedAt: r.TerminatedAt, delegated: r.DelegationDepth > 0,
+	}
 }
 
 func recordLink(r seam.Session) link {
-	return link{id: r.ID, parent: r.ParentSessionID, terminal: session.IsTerminal(session.State(r.State)),
-		terminatedAt: r.TerminatedAt, delegated: r.DelegationDepth > 0}
+	return link{
+		id: r.ID, parent: r.ParentSessionID, terminal: session.IsTerminal(session.State(r.State)),
+		terminatedAt: r.TerminatedAt, delegated: r.DelegationDepth > 0,
+	}
 }
 
 // orphanedBy is the orphan rule over any session type: it returns the

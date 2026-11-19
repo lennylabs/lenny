@@ -35,6 +35,7 @@ func (s *seamRecycle) RecyclePod(context.Context, string, bool, bool) error {
 	s.recycled = true
 	return nil
 }
+
 func (s *seamRecycle) RetirePod(_ context.Context, _ string, r seam.PodRetirement) error {
 	s.retirement = r
 	return nil
