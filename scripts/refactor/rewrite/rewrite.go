@@ -446,13 +446,19 @@ func hasSplitSegmentRun(content, oldRel, newRel string) bool {
 	// Self-prefix / appended-tail move: splitSegmentForm cannot rewrite it, so
 	// the audit must not abort on its split form either.
 	newSegs := strings.Split(newRel, "/")
-	if commonPrefixLen(oldSegs, newSegs) >= len(oldSegs) {
+	div := commonPrefixLen(oldSegs, newSegs)
+	if div >= len(oldSegs) {
 		return false
 	}
-	leaf := oldSegs[len(oldSegs)-1]
+	// Match the run replaceSegmentRun rewrites: the old tail from the first
+	// differing segment, anchored on the head segment before it. Matching only
+	// "gateway" and the old leaf would flag a correctly rewritten path whose
+	// new group directory carries the old leaf's name, such as
+	// pkg/gateway/gatewaycontrol/platformtools moving beside the packages of
+	// the new pkg/gateway/platformtools group.
 	for _, sep := range []string{", ", ",", ",\n", ",\n\t", ",\n\t\t", ", \n"} {
-		anchor := `"gateway"` + sep + `"` + leaf + `"`
-		if strings.Contains(content, anchor) {
+		run := `"` + oldSegs[div-1] + `"` + sep + joinQuoted(oldSegs[div:], sep)
+		if strings.Contains(content, run) {
 			return true
 		}
 	}

@@ -287,6 +287,23 @@ func TestClassifyGo_SurvivingSplitSegmentAborts(t *testing.T) {
 	}
 }
 
+// warn-vs-abort: a split path-segment run of another move's new path is not a
+// survivor of a move whose old leaf names the new group directory, while the
+// old run itself still aborts.
+func TestClassifyGo_SplitSegmentOfANewGroupNamedForTheOldLeafIsNoSurvivor(t *testing.T) {
+	bridge := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools", New: "github.com/lennylabs/lenny/pkg/gateway/platformtools/toolbridge"}
+	tools := Move{Old: "github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcptools", New: "github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"}
+	all := []Move{bridge, tools}
+	rewritten := `readRepoFile(t, root, "pkg", "gateway", "platformtools", "mcptools", "client_tools.go")`
+	if got := ClassifyGo(rewritten, bridge, all); got != None {
+		t.Errorf("a new path under the platformtools group must not read as a surviving bridge path; got %v", got)
+	}
+	survivor := `readRepoFile(t, root, "pkg", "gateway", "gatewaycontrol", "platformtools", "platformtools.go")`
+	if got := ClassifyGo(survivor, bridge, all); got != Abort {
+		t.Errorf("a surviving split-segment run of the bridge's old path must abort; got %v", got)
+	}
+}
+
 // warn-vs-abort: a path token in a // diagnosis: comment is a Warn, never an
 // Abort, because the driver provably cannot rewrite it and aborting on it would
 // make every C3 group move unsatisfiable (proposal Pass 4).
