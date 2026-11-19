@@ -274,7 +274,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1313
+      count: 1312
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret
@@ -678,7 +678,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 2968
+      count: 2969
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock
