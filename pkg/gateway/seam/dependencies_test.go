@@ -13,7 +13,7 @@ import (
 	"testing"
 )
 
-// TestSeamInterfaceDependenciesExcludeConfinedTenancyCredentialAndSessionStore
+// TestSeamInterfaceDependenciesExcludeTenancyCredentialAndSessionStore
 // checks that no package this package links, directly or through another
 // package, is a tenancy package, a credential package, or the session
 // store. Every part of the gateway imports this package, so a package it
@@ -24,13 +24,14 @@ import (
 // imports pkg/credential. The layout gate refuses only direct imports, so
 // this test holds the indirect reach of this one package.
 //
-// The test reads the import graph from the source with go/build for each
-// target operating system the gateway builds for, without cgo, as the gate
-// builds it. It asserts that the closure includes the session row package,
-// so a walk that stopped early cannot pass.
+// The test reads the import graph from the source with go/build, for linux
+// with cgo enabled and disabled (the gate builds with cgo, and the gateway
+// image builds without it) and for darwin without cgo, so a file that one
+// build excludes cannot hide an import. It asserts that the closure includes
+// the session row package, so a walk that stopped early cannot pass.
 //
 // spec: GW-R2
-func TestSeamInterfaceDependenciesExcludeConfinedTenancyCredentialAndSessionStore(t *testing.T) {
+func TestSeamInterfaceDependenciesExcludeTenancyCredentialAndSessionStore(t *testing.T) {
 	root, module, err := moduleRoot()
 	if err != nil {
 		t.Fatal(err)
@@ -41,11 +42,20 @@ func TestSeamInterfaceDependenciesExcludeConfinedTenancyCredentialAndSessionStor
 		module + "/pkg/credential",
 		module + "/pkg/session/sessionstore",
 	}
-	for _, goos := range []string{"linux", "darwin"} {
-		t.Run(goos, func(t *testing.T) {
+	builds := []struct {
+		name string
+		goos string
+		cgo  bool
+	}{
+		{"linux with cgo", "linux", true},
+		{"linux without cgo", "linux", false},
+		{"darwin without cgo", "darwin", false},
+	}
+	for _, b := range builds {
+		t.Run(b.name, func(t *testing.T) {
 			ctxt := build.Default
-			ctxt.GOOS = goos
-			ctxt.CgoEnabled = false
+			ctxt.GOOS = b.goos
+			ctxt.CgoEnabled = b.cgo
 			closure, err := importClosure(ctxt, root, module, seamPath)
 			if err != nil {
 				t.Fatal(err)
