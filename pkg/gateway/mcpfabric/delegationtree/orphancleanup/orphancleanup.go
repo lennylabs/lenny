@@ -188,7 +188,7 @@ func Orphaned(row sessionstore.Session, byID map[string]sessionstore.Session) (O
 // records, for the session core, which reaches the rule through
 // GWSEAM-Orphaned.
 //
-// spec: §8.10 (Orphan cleanup).
+// spec: GWSEAM-Orphaned
 func OrphanedRecord(node seam.Session, tree map[string]seam.Session) bool {
 	_, _, _, orphan := orphanedBy(node, tree, recordLink)
 	return orphan

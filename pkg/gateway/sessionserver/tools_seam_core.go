@@ -50,9 +50,9 @@ func (t ToolsSeam) OnSessionTerminal(ctx context.Context, from state.State, s se
 	t.s.OnSessionTerminal(ctx, session.State(from), t.s.terminalRow(ctx, s))
 }
 
-// AfterTerminalWrite runs the terminal pipeline after the caller's terminal
-// write with the caller's terminal signals, and returns the session record
-// after the pipeline.
+// AfterTerminalWrite runs the core's post-terminal hook with the caller's
+// own signals over the stored row, and returns the record of the row the
+// hook left.
 //
 // spec: GWSEAM-AfterTerminalWrite
 func (t ToolsSeam) AfterTerminalWrite(ctx context.Context, from state.State, s seam.Session, signals func(context.Context, seam.Session)) seam.Session {

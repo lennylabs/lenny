@@ -143,8 +143,8 @@ func (w *gatewayWiring) buildSessionServer(
 	// erased; startBackgroundWorkers runs it under the watchdog context.
 	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
 
-	// spec: §8.10, §16.1 — the platform tools seam registers its tree
-	// recovery collectors on the gateway's metric registry itself.
+	// §8.10 / §16.1: the platform tools seam registers its tree recovery
+	// collectors on the gateway's metric registry itself.
 	treeRecoveryMetrics, err := treerecovery.NewPromMetrics(gwMetrics.Registerer())
 	if err != nil {
 		log.Fatalf("lenny-gateway: tree recovery metrics: %v", err)
@@ -167,8 +167,8 @@ func (w *gatewayWiring) buildSessionServer(
 		// OrphanTasksPerTenantHigh alert (the scalar() denominator below
 		// is re-emitted from the same flag). F-8.10.10.
 		MaxOrphanTasksPerTenant: *delegationMaxOrphanTasksPerTenant,
-		// spec: §8.10 — the platform tools seam's bottom-up tree-recovery
-		// driver with its per-level and whole-tree budgets, plus the §16.1
+		// §8.10: the platform tools seam's bottom-up tree-recovery driver
+		// with its per-level and whole-tree budgets, plus the §16.1
 		// telemetry it registers itself. F-8.10.1.
 		TreeRecovery: platformtools.NewTreeRecovery(platformtools.RecoveryConfig{
 			Metrics:      treeRecoveryMetrics,
@@ -312,7 +312,7 @@ func (w *gatewayWiring) buildSessionServer(
 		SessionLogHook: &sessionlogstore.CloseHook{Store: w.sessionLogs},
 		TreeArchive:    platformtools.NewTreeArchive(w.treeArchive),
 		TreeRollups:    platformtools.NewTreeRollups(taskUsageBuilder),
-		// spec: §8.3 (Delegation Policy and Lease) — the tree budget
+		// §8.3 (Delegation Policy and Lease): the tree budget
 		// counters return a settled child's budget, re-arm a suspended
 		// tree's budget keys on each transition into or out of suspended,
 		// and read a settled root's parallel-children high-watermark.
