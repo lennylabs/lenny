@@ -1274,8 +1274,6 @@ summary: Returns the tenant that a client request runs as, which the API front's
 
 ## Operations served by the API front to the platform tools seam
 
-The session core serves [`GWSEAM-RequestCaller`](#gwseam-requestcaller) until the API front holds the request pipeline.
-
 <a id="gwseam-requestcaller"></a>
 
 ```lenny-def
