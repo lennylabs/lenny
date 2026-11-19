@@ -178,31 +178,6 @@ crossings:
     from: pkg/gateway/credentials/revocation/propagator
     type: Propagator
     step: 0117.S8
-  - to: pkg/gateway/meteringproxy/llmproxy
-    interface: FallbackAuditSink
-    from: pkg/gateway/api/admin
-    type: AuditSink
-    step: 0117.S8
-  - to: pkg/gateway/meteringproxy/llmproxy
-    interface: Handler.FallbackAudit
-    from: pkg/gateway/api/admin
-    type: AuditSink
-    step: 0117.S8
-  - to: pkg/gateway/platformtools/delegation
-    interface: Options.Auditor
-    from: pkg/gateway/api/admin
-    type: AuditSink
-    step: 0117.S8
-  - to: pkg/gateway/platformtools/delegation/export
-    interface: NewMaterializer(2)
-    from: pkg/gateway/api/admin
-    type: AuditSink
-    step: 0117.S8
-  - to: pkg/gateway/platformtools/mcptools
-    interface: Deps.Audit
-    from: pkg/gateway/api/admin
-    type: AuditSink
-    step: 0117.S8
   - to: pkg/gateway/api/serviceidentity
     interface: Config.Verifier
     from: pkg/gateway/platformtools/leasecontrol
@@ -212,9 +187,4 @@ crossings:
     interface: SATokenAuthenticator
     from: pkg/gateway/platformtools/leasecontrol
     type: TokenReviewVerifier
-    step: 0117.S8
-  - to: pkg/gateway/sessionserver
-    interface: Options.ExperimentRejections
-    from: pkg/gateway/api/admin
-    type: AuditSink
     step: 0117.S8

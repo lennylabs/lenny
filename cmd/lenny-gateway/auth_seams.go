@@ -90,7 +90,7 @@ func tenantRegistered(ctx context.Context, store tenantstore.Store, tenantID str
 // is missing or in deletion (after §12.8 Phase 4 that chain holds only
 // gdpr.* rows). TENANT_CLAIM_INVALID_FORMAT lands on the inferred
 // tenant's chain, and TENANT_CLAIM_MISSING, which carries no tenant,
-// lands on the platform chain (admin.ChainAuditSink defaults the empty
+// lands on the platform chain (adminaudit.ChainSink defaults the empty
 // ActorTenantID to "platform"). spec: §10.2, §11.7, §12.8.
 type authFailureAuditAdapter struct {
 	sink admin.AuditSink

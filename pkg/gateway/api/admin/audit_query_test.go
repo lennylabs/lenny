@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
@@ -25,7 +26,7 @@ func newAuditQueryRouter(t *testing.T) (*admin.Router, *audit.ChainSet) {
 	store := tenantstore.NewMemory()
 	router := admin.NewRouter(store, admin.Options{
 		Clock: func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) },
-		Audit: admin.NewChainAuditSink(chains, func() time.Time {
+		Audit: adminaudit.NewChainSink(chains, func() time.Time {
 			return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 		}),
 	}).WithAuditChains(chains)

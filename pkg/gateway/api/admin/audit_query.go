@@ -172,7 +172,7 @@ type AuditEventEnvelope struct {
 }
 
 // WithAuditChains wires the §25.9 Audit Log Query API onto the
-// Router over an in-memory ChainSet — the same one the ChainAuditSink
+// Router over an in-memory ChainSet — the same one the adminaudit.ChainSink
 // writes to.
 func (r *Router) WithAuditChains(chains *audit.ChainSet) *Router {
 	r.auditLog = chainSetAuditLog{chains: chains, clock: r.clock}

@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/api/pagination"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/credential"
@@ -80,70 +81,12 @@ func rfc3339Nano(t time.Time) string {
 	return t.UTC().Format(time.RFC3339Nano)
 }
 
-// AuditSink receives §11.7 admin audit events. The router emits one
-// event per successful mutation (create / update / soft-delete);
-// reads do not emit. Implementations must be non-blocking — the
-// admin handler does not wait for delivery.
-type AuditSink interface {
-	EmitAdminEvent(ctx context.Context, event AuditEvent)
-}
+// AuditSink receives the admin audit events the router emits, one per
+// successful mutation; adminaudit.Sink states its contract.
+type AuditSink = adminaudit.Sink
 
-// AuditEvent is the §11.7 admin-event payload. Fields match the
-// canonical OCSF mapping used by the §11.7 hash-chain audit
-// pipeline.
-type AuditEvent struct {
-	// Type is the §11.7 event type (e.g., `admin.tenant.created`).
-	Type string
-
-	// ActorSubject is the JWT `sub` of the calling user.
-	ActorSubject string
-
-	// ActorTenantID is the JWT `tenant_id` of the calling user
-	// (usually `platform` for platform-admin calls).
-	ActorTenantID string
-
-	// TargetResource is the resource the operation affects (e.g.,
-	// the tenant id).
-	TargetResource string
-
-	// OperationID is the §11.7 optional correlation
-	// token, sourced from the X-Lenny-Operation-ID request header (via
-	// the correlation context). The OCSF translator projects it onto
-	// metadata.correlation_uid. Empty when the request carried no
-	// header. spec: §11.7.
-	OperationID string
-
-	// CallerKind is the §11.7 optional caller class,
-	// sourced from the OIDC caller_type claim ("human" / "service" /
-	// "agent"). The OCSF translator projects it onto actor.user.type /
-	// type_id, which the §25.9 human-vs-agent reporting reads. Empty
-	// when the token carried no claim. spec: §11.7.
-	CallerKind string
-
-	// AgentName is the §15.1 human-readable agent instance
-	// identifier, sourced from the X-Lenny-Agent-Name request header
-	// (via the correlation context). §15.1 requires it be propagated to
-	// audit records so the §25.9 audit-query API can attribute a
-	// remediation to the operator agent that issued it. Empty when the
-	// request carried no header. spec: §15.1. F-15.1.10.
-	AgentName string
-
-	// TargetTenantID names the tenant an event concerns when the event
-	// is written to a different tenant's chain, such as a platform-chain
-	// row about a refused tenant. ChainAuditSink writes it as the
-	// payload's top-level `target_tenant_id`, which the §11.7
-	// cross-tenant residency gate reads; a value under Detail is never
-	// read by that gate. Empty for events written to the target
-	// tenant's own chain. spec: §11.7.
-	TargetTenantID string
-
-	// Detail carries event-specific fields the auditor records
-	// verbatim in the hash-chain entry.
-	Detail map[string]any
-
-	// At is the gateway clock instant the audit event fired.
-	At time.Time
-}
+// AuditEvent is the admin audit event payload, adminaudit.Event.
+type AuditEvent = adminaudit.Event
 
 // Router is the §15.1 admin sub-router. The minimal admin API wires
 // only the resources the gateway has stores for; future commits add

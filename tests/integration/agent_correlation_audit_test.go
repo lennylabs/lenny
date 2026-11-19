@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
@@ -86,7 +87,7 @@ func TestAgentCorrelationHeadersPropagateToPersistedAuditAndOCSF(t *testing.T) {
 	store := auditstore.New(pg.Router(t))
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: clock,
-		Audit: admin.NewAuditLogSink(store, clock),
+		Audit: adminaudit.NewLogSink(store, clock),
 	}).WithAuditLog(store)
 
 	// The correlation middleware is the production entry point that reads

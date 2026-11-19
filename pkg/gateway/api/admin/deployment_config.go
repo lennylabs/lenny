@@ -376,7 +376,7 @@ func (r *Router) computeFloorClamps(ctx context.Context, oldFloor, newFloor stri
 // appendDeploymentAudit writes one deployment-transition audit row to the
 // chainTenant's §11.7 hash chain and returns the committed row (its ID is
 // the floor-change `paired_platform_event_id`). It mirrors the field
-// wrapping ChainAuditSink.EmitAdminEvent applies so audit-query consumers
+// wrapping adminaudit.ChainSink.EmitAdminEvent applies so audit-query consumers
 // read the spec payload under `detail`; the platform-admin gate on the
 // route authorizes writing both the platform chain and the per-tenant
 // clamp chains. spec: §11.7; §16.7.

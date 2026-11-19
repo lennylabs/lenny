@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
@@ -20,7 +21,7 @@ import (
 
 func TestChainAuditSinkCommitsAdminMutations(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, func() time.Time {
+	sink := adminaudit.NewChainSink(chains, func() time.Time {
 		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	})
 	store := tenantstore.NewMemory()
@@ -58,7 +59,7 @@ func TestChainAuditSinkCommitsAdminMutations(t *testing.T) {
 
 func TestChainAuditSinkChainsMultipleEvents(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, func() time.Time {
+	sink := adminaudit.NewChainSink(chains, func() time.Time {
 		return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
 	})
 	store := tenantstore.NewMemory()
@@ -91,7 +92,7 @@ func TestChainAuditSinkChainsMultipleEvents(t *testing.T) {
 
 func TestChainAuditSinkEmitDirect(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
 		Type:           "admin.tenant.created",
 		ActorSubject:   "admin@acme.com",

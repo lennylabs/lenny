@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 )
@@ -59,7 +60,7 @@ func newMeteredAuditRouter(t *testing.T, rec admin.AuditQueryMetrics) *admin.Rou
 	clock := func() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
 	return admin.NewRouter(store, admin.Options{
 		Clock: clock,
-		Audit: admin.NewChainAuditSink(chains, clock),
+		Audit: adminaudit.NewChainSink(chains, clock),
 	}).WithAuditChains(chains).WithAuditMetrics(rec)
 }
 

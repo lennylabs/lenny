@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 )
 
@@ -31,7 +32,7 @@ type chainAppend struct {
 
 // recordingAuditLog is an admin.AuditLog that records the chain each
 // append lands on and the decoded payload, so a test reads the chain
-// placement the production admin.ChainAuditSink chooses.
+// placement the production adminaudit.ChainSink chooses.
 type recordingAuditLog struct {
 	appends []chainAppend
 }
@@ -92,7 +93,7 @@ func TestChainAuditEmitterRoutesMintToPrincipalChain_spec_27_3_1(t *testing.T) {
 
 // TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8 pins the
 // chain placement of playground.bearer_mint_rejected rows through the
-// production admin.ChainAuditSink. A tenant_not_found rejection is
+// production adminaudit.ChainSink. A tenant_not_found rejection is
 // appended under the platform tenant with the refused tenant as the
 // payload's top-level target_tenant_id, and nothing is appended to the
 // refused tenant's chain. A tenant_claim_invalid_format or
@@ -101,7 +102,7 @@ func TestChainAuditEmitterRoutesMintToPrincipalChain_spec_27_3_1(t *testing.T) {
 // spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle), 11.7 (Audit Logging), 10.2 (Authentication: `tenant_id` extraction)
 func TestRefusedMintForMissingTenantAuditsOnPlatformChain_spec_12_8(t *testing.T) {
 	log := &recordingAuditLog{}
-	e := ChainAuditEmitter{Sink: admin.NewAuditLogSink(log, time.Now)}
+	e := ChainAuditEmitter{Sink: adminaudit.NewLogSink(log, time.Now)}
 	ctx := context.Background()
 	reject := func(tenant, invariant string) {
 		e.EmitMintRejected(ctx, MintRejectedEvent{

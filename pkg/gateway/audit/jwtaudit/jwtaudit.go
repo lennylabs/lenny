@@ -19,7 +19,7 @@ import (
 )
 
 // PlatformTenantID is the tenant scope a platform-wide audit row
-// is committed under. Per pkg/gateway/admin.ChainAuditSink, a
+// is committed under. Per pkg/audit/adminaudit.ChainSink, a
 // platform-admin action with no actor tenant lands on the
 // `platform` chain so a tenant-scoped audit query never returns
 // platform-wide events.

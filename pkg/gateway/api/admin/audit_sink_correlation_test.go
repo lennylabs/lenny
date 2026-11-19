@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
@@ -40,7 +41,7 @@ func firstPayload(t *testing.T, chains *audit.ChainSet, tenant string) map[strin
 
 func TestEmitAdminEventCarriesExplicitCorrelationFields_F11713(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
 		Type:          "admin.tenant.created",
 		ActorTenantID: "acme",
@@ -62,7 +63,7 @@ func TestEmitAdminEventCarriesExplicitCorrelationFields_F11713(t *testing.T) {
 // EmitAdminEvent recovers them from the request context.
 func TestEmitAdminEventFallsBackToContext_F11713(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	ctx := corr.With(context.Background(), corr.Fields{OperationID: "op-ctx"})
 	ctx = authmw.WithPrincipal(ctx, authmw.Principal{TenantID: "acme", CallerType: "agent"})
 	sink.EmitAdminEvent(ctx, admin.AuditEvent{
@@ -82,7 +83,7 @@ func TestEmitAdminEventFallsBackToContext_F11713(t *testing.T) {
 // Explicit event fields take precedence over the context fallback.
 func TestEmitAdminEventExplicitBeatsContext_F11713(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	ctx := corr.With(context.Background(), corr.Fields{OperationID: "op-ctx"})
 	ctx = authmw.WithPrincipal(ctx, authmw.Principal{TenantID: "acme", CallerType: "agent"})
 	sink.EmitAdminEvent(ctx, admin.AuditEvent{
@@ -105,7 +106,7 @@ func TestEmitAdminEventExplicitBeatsContext_F11713(t *testing.T) {
 // context, the payload omits the keys rather than emitting empties.
 func TestEmitAdminEventOmitsEmptyCorrelationFields_F11713(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
 		Type:          "admin.tenant.created",
 		ActorTenantID: "acme",
@@ -124,7 +125,7 @@ func TestEmitAdminEventOmitsEmptyCorrelationFields_F11713(t *testing.T) {
 // records. The explicit AgentName field lands in the payload. F-15.1.10.
 func TestEmitAdminEventCarriesAgentName_spec_15_1_938(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
 		Type:          "admin.tenant.created",
 		ActorTenantID: "acme",
@@ -141,7 +142,7 @@ func TestEmitAdminEventCarriesAgentName_spec_15_1_938(t *testing.T) {
 // from the X-Lenny-Agent-Name correlation context. F-15.1.10.
 func TestEmitAdminEventAgentNameFallsBackToContext_spec_15_1_938(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	ctx := corr.With(context.Background(), corr.Fields{AgentName: "agent-ctx"})
 	sink.EmitAdminEvent(ctx, admin.AuditEvent{
 		Type:          "admin.user.created",
@@ -158,7 +159,7 @@ func TestEmitAdminEventAgentNameFallsBackToContext_spec_15_1_938(t *testing.T) {
 // omits the key. F-15.1.10.
 func TestEmitAdminEventOmitsEmptyAgentName_spec_15_1_938(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	sink.EmitAdminEvent(context.Background(), admin.AuditEvent{
 		Type:          "admin.tenant.created",
 		ActorTenantID: "acme",
@@ -175,7 +176,7 @@ func TestEmitAdminEventOmitsEmptyAgentName_spec_15_1_938(t *testing.T) {
 // operation_id. spec: §15.1. F-15.1.10.
 func TestRouterEmitPopulatesAgentName_spec_15_1_938(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	store := tenantstore.NewMemory()
 	router := admin.NewRouter(store, admin.Options{
 		Clock: func() time.Time { return time.Unix(0, 0).UTC() },
@@ -211,7 +212,7 @@ func TestRouterEmitPopulatesAgentName_spec_15_1_938(t *testing.T) {
 // committed hash-chain row carries both fields.
 func TestRouterEmitPopulatesCorrelationFields_F11713(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := admin.NewChainAuditSink(chains, nil)
+	sink := adminaudit.NewChainSink(chains, nil)
 	store := tenantstore.NewMemory()
 	router := admin.NewRouter(store, admin.Options{
 		Clock: func() time.Time { return time.Unix(0, 0).UTC() },

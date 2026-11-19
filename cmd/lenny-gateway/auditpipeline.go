@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/audit/ocsf"
 	"github.com/lennylabs/lenny/pkg/audit/siem"
 	"github.com/lennylabs/lenny/pkg/clockinject"
@@ -154,7 +155,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 		// with the write-time tenant-scope validator so a forged-tenant
 		// row cannot be injected. Reads stay on the raw chain.
 		auditValidator = auditscope.New(pgAudit, nil)
-		auditSink = admin.NewAuditLogSink(auditValidator, nil)
+		auditSink = adminaudit.NewLogSink(auditValidator, nil)
 		// spec: §25.9 — the Postgres-backed chain serves
 		// the platform-admin cross-tenant scatter-gather and its 5-minute
 		// result cache (opt-out via --audit-scatter-gather-cache-enabled).
@@ -256,7 +257,7 @@ func (w *gatewayWiring) buildAuditPipeline() {
 	} else {
 		auditChains := audit.NewChainSet()
 		auditValidator = auditscope.New(auditscope.NewChainSetChain(auditChains, nil), nil)
-		auditSink = admin.NewAuditLogSink(auditValidator, nil)
+		auditSink = adminaudit.NewLogSink(auditValidator, nil)
 		wireAudit = func(rt *admin.Router) *admin.Router { return rt.WithAuditChains(auditChains) }
 		// In-memory chain — lost on restart, used by the minimal gateway.
 		auditAppender = audit.NewChainSetAppender(auditChains, nil)
