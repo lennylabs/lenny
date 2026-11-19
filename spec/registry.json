@@ -1971,6 +1971,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ListenerRoutes",
+      "anchor": "gwseam-listenerroutes",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-LockDelivery",
       "anchor": "gwseam-lockdelivery",
       "file": "spec/interfaces/gateway-seams.md"

@@ -1358,7 +1358,7 @@ method: Go method
 path: seam.Routes
 returns: [ErrInvalidRoute]
 requirements: [GW-R1]
-summary: Registers one route, given its listener, its method, its path pattern, the access check it requires, and its handler, and refuses a route whose listener or access check is zero or unknown or that lacks a method, a pattern, or a handler.
+summary: Registers one route, given its listener, its method, its path pattern, the access check it requires, and its handler, and refuses a route whose listener or access check is zero or unknown, that lacks a method, a pattern, or a handler, that names the pod proxy listener, that repeats the method and pattern of a route on a listener sharing its mux, or that the request pipeline would mount after it has read the routes of that listener.
 ```
 
 <a id="gwseam-registerroutes"></a>
@@ -1373,13 +1373,29 @@ requirements: [GW-R1]
 summary: Registers every route of one part through GWSEAM-HandleRoute.
 ```
 
-A route names the listener that serves it:
+<a id="gwseam-listenerroutes"></a>
+
+```lenny-def
+kind: operation
+name: ListenerRoutes
+method: Go method
+path: seam.RouteTable
+requirements: [GW-R1]
+summary: Returns, in registration order, the routes registered on one listener whose access check the request pipeline applies, and closes the registration of such routes on that listener.
+```
+
+A route names one listener that serves it, and a part registers a route once for each listener that serves it:
 
 - the client listener, which serves the client and admin APIs;
+- the internal listener, which serves the drain and ops endpoints that the admission webhooks, the kubelet probes, and the metrics scrape call;
 - the pod proxy listener, the pod-facing listener of the metering proxy;
 - the forward listener, on which another replica forwards a request to the session's holder replica.
 
-The metering proxy serves its routes on its own listener and server, as it does today. The API front never mounts a route of the pod proxy listener on the client listener, so the pod-facing endpoint is never reachable from a client.
+The gateway serves the client and internal listeners on one port, through one mux behind one request pipeline, so a method and pattern registered on one of them cannot be registered on the other. The forward listener serves only the routes registered on it, so a part registers on the forward listener each route that another replica forwards to the holder replica, and no other.
+
+The metering proxy serves its routes on its own listener and server, as it does today. The API front refuses a route of the pod proxy listener, so the pod-facing endpoint is never reachable from a client.
+
+A route names an HTTP method, or any method for a handler that dispatches by method itself, as the playground's handlers and the handlers mounted under a path prefix do.
 
 A route names the access check the API front applies before the handler runs, through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession) where the check reads a session:
 
@@ -1390,11 +1406,13 @@ A route names the access check the API front applies before the handler runs, th
 - a resolved tenant and the `view_usage` permission, as the usage route requires;
 - no check by the API front, for a route whose handler authenticates the request itself.
 
-No route takes a default check: a zero or unknown access check is refused at registration.
+No route takes a default check: a zero or unknown access check is refused at registration. Every route on the internal listener leaves authentication to its handler.
 
-The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself.
+The request pipeline mounts each route whose access check reads the tenant or the session on the session paths of its listener, behind that check, and reads those routes through [`GWSEAM-ListenerRoutes`](#gwseam-listenerroutes). The API front mounts each route that leaves authentication to its handler on its listener's mux when the route registers. Until the API front holds the request pipeline, the session server holds it: the session core registers its session paths on the client and forward listeners with no check by the API front, because its handler applies the tenant check itself, and it reads the routes its handler mounts through `GWSEAM-ListenerRoutes`.
 
-The platform tools seam registers its memory write and delete routes and its tool-use and elicitation resolution routes with manage access to the session the path names, and its memory query and delegation tree read routes with read access to it.
+The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself. It registers the mid-session upload on the client and forward listeners, because a replica that does not hold the session forwards it to the holder, and the plain and archive uploads and the blob read on the client listener only.
+
+The platform tools seam registers its memory write and delete routes and its tool-use and elicitation resolution routes with manage access to the session the path names, and its memory query and delegation tree read routes with read access to it, all on the client listener. It registers the MCP WebSocket transport and the environment-scoped MCP endpoint on the client listener and the MCP endpoint on the forward listener, each with no check by the API front.
 
 ## Crossings without an operation
 
