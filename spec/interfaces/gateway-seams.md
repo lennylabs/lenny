@@ -698,6 +698,18 @@ summary: Issues a replacement credential lease from a given pool for a session w
 
 ## Operations served by the session core to the API front
 
+<a id="gwseam-authorizepermission"></a>
+
+```lenny-def
+kind: operation
+name: AuthorizePermission
+method: Go method
+path: seam.Permissions
+returns: [ErrForbidden]
+requirements: [GW-R1]
+summary: Resolves whether the caller in the context holds a permission of the permission matrix, admitting a request with no principal and, in a single-tenant deployment, a principal with no roles, as the session routes' permission gate does; the API front applies it before a route's handler runs.
+```
+
 <a id="gwseam-afterrevokewrite"></a>
 
 ```lenny-def
@@ -1358,7 +1370,7 @@ method: Go method
 path: seam.Routes
 returns: [ErrInvalidRoute]
 requirements: [GW-R1]
-summary: Registers one route, given its listener, its method, its path pattern, the access check it requires, and its handler, and refuses a route whose listener or access check is zero or unknown, that lacks a method, a pattern, or a handler, that names the pod proxy listener, that repeats the method and pattern of a route on a listener sharing its mux, or that the request pipeline would mount after it has read the routes of that listener.
+summary: Registers one route, given its listener, its method, its path pattern, the access check it requires, and its handler, and refuses a route whose listener or access check is zero or unknown, that lacks a method, a pattern, or a handler, that names the pod proxy listener, that repeats the method and pattern of a route on a listener sharing its mux, or that the request pipeline would mount after it has mounted the session paths of that listener.
 ```
 
 <a id="gwseam-registerroutes"></a>
@@ -1371,17 +1383,6 @@ path: seam.RouteProvider
 returns: [ErrInvalidRoute]
 requirements: [GW-R1]
 summary: Registers every route of one part through GWSEAM-HandleRoute.
-```
-
-<a id="gwseam-listenerroutes"></a>
-
-```lenny-def
-kind: operation
-name: ListenerRoutes
-method: Go method
-path: seam.RouteTable
-requirements: [GW-R1]
-summary: Returns, in registration order, the routes registered on one listener whose access check the request pipeline applies, and closes the registration of such routes on that listener.
 ```
 
 A route names one listener that serves it, and a part registers a route once for each listener that serves it:
@@ -1404,11 +1405,17 @@ A route names the access check the API front applies before the handler runs, th
 - manage access to the session the path names;
 - the `session:eval:write` permission, as the evaluation route requires, whose handler applies its own rule for the caller of the session;
 - a resolved tenant and the `view_usage` permission, as the usage route requires;
+- a resolved tenant and the `manage_own_sessions` permission, as the session creation routes require, which name no session;
+- a resolved tenant and the `read_own_sessions` permission, as the session list requires, which names no session;
 - no check by the API front, for a route whose handler authenticates the request itself.
 
 No route takes a default check: a zero or unknown access check is refused at registration. Every route on the internal listener leaves authentication to its handler.
 
-The request pipeline mounts each route whose access check reads the tenant or the session on the session paths of its listener, behind that check, and reads those routes through [`GWSEAM-ListenerRoutes`](#gwseam-listenerroutes). The API front mounts each route that leaves authentication to its handler on its listener's mux when the route registers. Until the API front holds the request pipeline, the session server holds it: the session core registers its session paths on the client and forward listeners with no check by the API front, because its handler applies the tenant check itself, and it reads the routes its handler mounts through `GWSEAM-ListenerRoutes`.
+The API front applies each permission through [`GWSEAM-AuthorizePermission`](#gwseam-authorizepermission) and each session check through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession), both served by the session core, which holds the permission matrix, the custom role registry, and the session store. A refused permission answers 403 `FORBIDDEN` naming the permission, a request with no principal subject on a session check answers 401 `UNAUTHORIZED`, and a session the caller may not read or manage answers as a missing session does.
+
+The API front's request pipeline serves the session paths: on the client listener `/v1/sessions` and the paths under it, the paths under `/v1/blobs/`, `/v1/runtimes` and the paths under it, and `/v1/models`; on the forward listener `/v1/sessions` and the paths under it. It mounts each route with an access check that reads the tenant, the session, or a permission on the session paths of its listener behind that check, and it mounts there also each route under a session path that leaves authentication to its handler. A request on a session path whose route reads the tenant, the session, or a permission is refused with 401 `UNAUTHORIZED` when no tenant resolves for it; a request the session paths do not route answers 404 or 405 with no tenant check. The API front mounts every other route that leaves authentication to its handler on its listener's mux when the route registers. A route with an access check whose path lies outside the session paths is held by the pipeline and reached by no request.
+
+The session core registers its session routes with the access check each requires: session creation with the `manage_own_sessions` permission, the session list with the `read_own_sessions` permission, each read of a named session with read access to it, each action on a named session with manage access to it, the evaluation route with the `session:eval:write` permission, and the runtime and model discovery routes and the routes whose handler applies its own permission with a resolved tenant. The published runtime metadata route leaves authentication to its handler, which serves a public entry with no principal, and the internal runtime metadata route on the internal listener checks its own principal. It registers on the forward listener its routes under `/v1/sessions`.
 
 The upload handler registers its upload routes, the plain, archive, and mid-session uploads, with manage access to the session the path names, and its blob read route with a resolved tenant, because the blob read checks the blob's tenant against the caller's itself. It registers the mid-session upload on the client and forward listeners, because a replica that does not hold the session forwards it to the holder, and the plain and archive uploads and the blob read on the client listener only.
 

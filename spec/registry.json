@@ -1751,6 +1751,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-AuthorizePermission",
+      "anchor": "gwseam-authorizepermission",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-AuthorizeSession",
       "anchor": "gwseam-authorizesession",
       "file": "spec/interfaces/gateway-seams.md"
@@ -1968,11 +1973,6 @@
     {
       "id": "GWSEAM-ListTree",
       "anchor": "gwseam-listtree",
-      "file": "spec/interfaces/gateway-seams.md"
-    },
-    {
-      "id": "GWSEAM-ListenerRoutes",
-      "anchor": "gwseam-listenerroutes",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
