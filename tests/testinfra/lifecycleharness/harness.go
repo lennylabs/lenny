@@ -545,6 +545,7 @@ func (h *Harness) AddReplica(name string) *Replica {
 		SuspensionCheckpointer:     h.Checkpoints,
 		Interactions:               h.Interactions,
 		TreeRecovery:               platformtools.NewTreeRecovery(platformtools.RecoveryConfig{Metrics: h.TreeMetrics}),
+		TreeOrphans:                platformtools.TreeOrphans{},
 		InputWaits:                 platformtools.NewInputWaits(r.InputWaits),
 		Pools:                      h.poolRegistry(),
 		WorkspaceSealMaxDuration:   SealWindow,

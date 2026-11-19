@@ -79,7 +79,10 @@ func (f *recyclePartsFake) IncRetirement(r podscrub.RetireReason, _, _ string) {
 // spec: GWSEAM-IncrementSessionsServed, GWSEAM-IncrementScrubFailureCount, GWSEAM-RecycleCounters, GWSEAM-RecordLeak, GWSEAM-RetireOnSessionCount, GWSEAM-InspectForRecycle, GWSEAM-RecyclePod, GWSEAM-RetirePod, GWSEAM-RecordScrubFailure, GWSEAM-RecordPodRetirement
 func TestPodRecycleServesEachOperationThroughItsSeam(t *testing.T) {
 	f := &recyclePartsFake{}
-	p := recycle.NewPodRecycle(recycle.PodRecycleParts{Counters: f, Ledger: f, SessionRetirer: f, Inspector: f, Driver: f, Metrics: f})
+	p, err := recycle.NewPodRecycle(recycle.PodRecycleParts{Counters: f, Ledger: f, SessionRetirer: f, Inspector: f, Driver: f, Metrics: f})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	if n, found, err := p.IncrementSessionsServed(ctx, "pod"); n != 2 || !found || err != nil {
 		t.Errorf("served = %d %t %v", n, found, err)
@@ -107,6 +110,34 @@ func TestPodRecycleServesEachOperationThroughItsSeam(t *testing.T) {
 		t.Errorf("calls = %v, want one per seam operation", f.calls)
 	}
 	// A pod recycle with no metrics records nothing and does not fail.
-	recycle.NewPodRecycle(recycle.PodRecycleParts{}).RecordScrubFailure("pod", "pool", "rc", 1)
-	recycle.NewPodRecycle(recycle.PodRecycleParts{}).RecordPodRetirement("x", "pool", "rc")
+	bare, err := recycle.NewPodRecycle(recycle.PodRecycleParts{Counters: f, Ledger: f, SessionRetirer: f, Inspector: f, Driver: f})
+	if err != nil {
+		t.Fatal(err)
+	}
+	bare.RecordScrubFailure("pod", "pool", "rc", 1)
+	bare.RecordPodRetirement("x", "pool", "rc")
+}
+
+// TestNewPodRecycleRefusesAMissingRequiredSeam checks that the pod recycle
+// operations refuse parts without the recycle counters, the drain ledger,
+// the per-release retirer, the pod inspector, or the claim disposition, so a
+// missing seam fails at startup rather than on the first scrub report.
+//
+// spec: GWSEAM-RecyclePod
+func TestNewPodRecycleRefusesAMissingRequiredSeam(t *testing.T) {
+	f := &recyclePartsFake{}
+	full := recycle.PodRecycleParts{Counters: f, Ledger: f, SessionRetirer: f, Inspector: f, Driver: f}
+	for name, drop := range map[string]func(*recycle.PodRecycleParts){
+		"counters":  func(p *recycle.PodRecycleParts) { p.Counters = nil },
+		"ledger":    func(p *recycle.PodRecycleParts) { p.Ledger = nil },
+		"retirer":   func(p *recycle.PodRecycleParts) { p.SessionRetirer = nil },
+		"inspector": func(p *recycle.PodRecycleParts) { p.Inspector = nil },
+		"driver":    func(p *recycle.PodRecycleParts) { p.Driver = nil },
+	} {
+		parts := full
+		drop(&parts)
+		if _, err := recycle.NewPodRecycle(parts); err == nil {
+			t.Errorf("parts without the %s were accepted", name)
+		}
+	}
 }

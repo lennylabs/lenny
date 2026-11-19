@@ -43,10 +43,23 @@ func storedSession(row sessionstore.Session) seam.Session {
 // rowOf returns the stored row a session record carries, or the row its
 // fields describe when it carries none.
 func rowOf(s seam.Session) sessionstore.Session {
-	if row, ok := s.Stored.(sessionstore.Session); ok {
+	if row, ok := storedRow(s); ok {
 		return row
 	}
 	return recordRow(s)
+}
+
+// storedRow returns the stored row a session record carries when the row is
+// the session the record names: the same identifier and tenant. A record
+// whose row names another session or tenant is treated as carrying none, so
+// the core acts on the session the record's fields name (decision 52 of
+// change 0117).
+func storedRow(rec seam.Session) (sessionstore.Session, bool) {
+	row, ok := rec.Stored.(sessionstore.Session)
+	if !ok || row.ID != rec.ID || row.TenantID != rec.TenantID {
+		return sessionstore.Session{}, false
+	}
+	return row, true
 }
 
 // sentinelError is a core error that also matches a seam sentinel under

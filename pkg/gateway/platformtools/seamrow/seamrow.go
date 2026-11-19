@@ -51,9 +51,11 @@ func Record(row sessionstore.Session) seam.Session {
 
 // Row returns the session store's row a session record carries, or, for a
 // record that carries none, the row with the fields the record carries. The
-// record's pool becomes the row's pool reference.
+// record's pool becomes the row's pool reference. A carried row that names
+// another session or tenant than the record is ignored, so the row returned
+// is always the session the record names.
 func Row(rec seam.Session) sessionstore.Session {
-	if row, ok := rec.Stored.(sessionstore.Session); ok {
+	if row, ok := rec.Stored.(sessionstore.Session); ok && row.ID == rec.ID && row.TenantID == rec.TenantID {
 		return row
 	}
 	row := sessionstore.Session{

@@ -1573,8 +1573,8 @@ func filterByEffectiveDelegationPolicy(ctx context.Context, deps Deps, tenant, s
 // so the result does not reveal whether that session exists. A caller with
 // no principal subject receives UNAUTHORIZED, and a store failure other
 // than a miss is returned.
-// A deployment wired with no session store or session access cannot
-// resolve the policy, so it refuses rather than dropping the filter,
+// A deployment wired with no session store, session service, or session
+// access cannot resolve the policy, so it refuses rather than dropping the filter,
 // because a delegation policy only restricts (§8.3).
 //
 // spec: §10.2 (Session ownership) rules 3 and 7; §8.3 (Delegation Policy
@@ -1583,7 +1583,7 @@ func discoverySessionID(ctx context.Context, deps Deps, tenant, sessionID string
 	if sessionID == "" {
 		return "", nil
 	}
-	if deps.Store == nil || deps.SessionService == nil {
+	if deps.Store == nil || deps.SessionService == nil || deps.SessionAccess == nil {
 		return "", errSessionLookup(sessionstore.ErrNotFound)
 	}
 	_, err := lookupCallerSession(ctx, deps, tenant, sessionID, false, false)

@@ -299,8 +299,9 @@ func TestElicitationResolutionOwnershipPrecedesTripleCheck_spec_9_2(t *testing.T
 }
 
 // TestDiscoverAgentsRefusesWhenPolicySessionCannotBeResolved_spec_8_3 pins
-// that lenny/discover_agents naming a session refuses when no session service
-// or no store is wired, rather than dropping the delegation-policy filter. A
+// that lenny/discover_agents naming a session refuses when no session service,
+// no session access check, or no store is wired, rather than dropping the
+// delegation-policy filter. A
 // delegation policy only restricts, so a missing dependency cannot widen the
 // result.
 //
@@ -313,6 +314,9 @@ func TestDiscoverAgentsRefusesWhenPolicySessionCannotBeResolved_spec_8_3(t *test
 		"nil session service": {svc: nil},
 		"nil store": {svc: ownerprincipal.ToolAccess{}, mod: func(d *mcptools.Deps) {
 			d.Store = nil
+		}},
+		"nil session access": {svc: ownerprincipal.ToolAccess{}, mod: func(d *mcptools.Deps) {
+			d.SessionAccess = nil
 		}},
 	}
 	for name, m := range mods {

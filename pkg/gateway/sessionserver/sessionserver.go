@@ -1278,8 +1278,9 @@ type Options struct {
 
 	// TreeOrphans classifies the orphaned sessions the §8.10
 	// maxOrphanTasksPerTenant cap counts. Nil counts no orphan, so a
-	// detach-policy session never escalates. The platform tools seam
-	// serves it.
+	// detach-policy session never escalates and the cap is not enforced;
+	// every composer that relies on the cap wires it, as cmd/lenny-gateway
+	// and the lifecycle harness do. The platform tools seam serves it.
 	TreeOrphans seam.TreeOrphans
 
 	// UsageQuiescenceTimeout is the §11.3

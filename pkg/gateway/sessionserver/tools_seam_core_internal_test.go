@@ -42,6 +42,39 @@ func TestTerminalRowReadsBackTheStoredRow(t *testing.T) {
 	}
 }
 
+// TestStoredRowIsUsedOnlyForTheSessionTheRecordNames checks that the core
+// runs on a carried row only when the row is the session the record names,
+// and otherwise reads the named session back, so a record cannot hand the
+// core another session's or another tenant's row.
+//
+// spec: GWSEAM-OnSessionTerminal, GWSEAM-SessionAccessible
+func TestStoredRowIsUsedOnlyForTheSessionTheRecordNames(t *testing.T) {
+	store := memstore.New()
+	if err := store.Create(context.Background(), sessionstore.Session{
+		ID: "s1", TenantID: "acme", UserID: testOwner, State: session.StateRunning, PodAssignment: "pod-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	srv := New(store, Options{DevTenantHeader: true})
+	defer srv.Close()
+	carried := sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "pod-carried"}
+	if row := srv.terminalRow(context.Background(), seam.Session{ID: "s1", TenantID: "acme", Stored: carried}); row.PodAssignment != "pod-carried" {
+		t.Errorf("matching carried row: pod = %q, want pod-carried", row.PodAssignment)
+	}
+	for name, other := range map[string]sessionstore.Session{
+		"another session": {ID: "s2", TenantID: "acme", PodAssignment: "pod-other"},
+		"another tenant":  {ID: "s1", TenantID: "globex", PodAssignment: "pod-other"},
+	} {
+		rec := seam.Session{ID: "s1", TenantID: "acme", Stored: other}
+		if row := srv.terminalRow(context.Background(), rec); row.ID != "s1" || row.TenantID != "acme" || row.PodAssignment != "pod-1" {
+			t.Errorf("%s: terminal row = %+v, want the stored s1 row", name, row)
+		}
+		if row := rowOf(rec); row.ID != "s1" || row.TenantID != "acme" {
+			t.Errorf("%s: rowOf = %+v, want the record's session", name, row)
+		}
+	}
+}
+
 // TestToolsSeamTreeNodesListFailAndSkipAnUnreadableNode checks that the
 // tree node operations list a tree's records, fail a resume_pending node,
 // and start no node whose row cannot be read.

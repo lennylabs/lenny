@@ -93,3 +93,23 @@ func TestTerminalHookHandsTheCoreTheRecordOfTheWrittenRow(t *testing.T) {
 		t.Errorf("pipeline ran from %q on %+v", core.from, core.rec)
 	}
 }
+
+// TestRowIgnoresACarriedRowOfAnotherSession checks that a record carrying a
+// row of another session or tenant converts to the row its own fields name.
+//
+// spec: GWSEAM-LookupSession
+func TestRowIgnoresACarriedRowOfAnotherSession(t *testing.T) {
+	for name, other := range map[string]sessionstore.Session{
+		"another session": {ID: "s2", TenantID: "acme", PodAssignment: "pod-other"},
+		"another tenant":  {ID: "s1", TenantID: "globex", PodAssignment: "pod-other"},
+	} {
+		row := seamrow.Row(seam.Session{ID: "s1", TenantID: "acme", PodAssignment: "pod-1", Stored: other})
+		if row.ID != "s1" || row.TenantID != "acme" || row.PodAssignment != "pod-1" {
+			t.Errorf("%s: row = %+v, want the record's own fields", name, row)
+		}
+	}
+	same := sessionstore.Session{ID: "s1", TenantID: "acme", PodAssignment: "pod-carried"}
+	if row := seamrow.Row(seam.Session{ID: "s1", TenantID: "acme", Stored: same}); row.PodAssignment != "pod-carried" {
+		t.Errorf("matching carried row: pod = %q, want pod-carried", row.PodAssignment)
+	}
+}

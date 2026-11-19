@@ -4,6 +4,7 @@ package recycle
 
 import (
 	"context"
+	"errors"
 
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
@@ -75,9 +76,24 @@ type PodRecycle struct {
 	parts PodRecycleParts
 }
 
-// NewPodRecycle returns the pod recycle operations over parts.
-func NewPodRecycle(parts PodRecycleParts) *PodRecycle {
-	return &PodRecycle{parts: parts}
+// NewPodRecycle returns the pod recycle operations over parts. It refuses
+// parts that lack a required seam, so a missing seam fails at startup, as the
+// scrub reporter that composes these operations refused it, rather than on
+// the first scrub report.
+func NewPodRecycle(parts PodRecycleParts) (*PodRecycle, error) {
+	switch {
+	case parts.Counters == nil:
+		return nil, errors.New("recycle: PodRecycle Counters is required")
+	case parts.Ledger == nil:
+		return nil, errors.New("recycle: PodRecycle Ledger is required")
+	case parts.SessionRetirer == nil:
+		return nil, errors.New("recycle: PodRecycle SessionRetirer is required")
+	case parts.Inspector == nil:
+		return nil, errors.New("recycle: PodRecycle Inspector is required")
+	case parts.Driver == nil:
+		return nil, errors.New("recycle: PodRecycle Driver is required")
+	}
+	return &PodRecycle{parts: parts}, nil
 }
 
 var _ seam.PodRecycle = (*PodRecycle)(nil)

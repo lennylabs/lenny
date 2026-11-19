@@ -71,7 +71,7 @@ func (t ToolsSeam) AfterTerminalWrite(ctx context.Context, from state.State, s s
 //
 // spec: GWSEAM-OnSessionTerminal
 func (s *Server) terminalRow(ctx context.Context, rec seam.Session) sessionstore.Session {
-	if row, ok := rec.Stored.(sessionstore.Session); ok {
+	if row, ok := storedRow(rec); ok {
 		return row
 	}
 	row, err := s.readPrimary(ctx, rec.TenantID, rec.ID)
