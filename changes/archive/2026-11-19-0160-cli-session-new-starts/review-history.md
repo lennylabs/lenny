@@ -9,3 +9,4 @@
   - Left as it is: the §24.17 row and the operator page say `--attach` opens an MCP stream, while the CLI reads the REST event stream. The text predates the branch, and change 0138 rewrites the row's stream mapping.
   - Noted for the owner: CLIINST-I1 sits under CLIINST although §24.17 is content of CLIADM; issues do not move between codes, so it stays and closes when 0160.S1 lands. The SDK's retry of `SendMessages` after a transport error can deliver the prompt twice; it applies to every caller of the SDK, so the branch leaves it.
 - 2026-11-19, build. 0160.S1 landed and CLIINST-I1 closed; the gate run is named in the merge commit. The change stays unarchived until the owner settles open decisions O1 and O2.
+- 2026-11-19, decisions. The owner settled O1 and O2, each as its recommendation and as built. The change is archived.

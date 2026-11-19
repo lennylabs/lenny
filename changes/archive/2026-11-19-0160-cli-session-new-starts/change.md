@@ -4,14 +4,14 @@ Status: `Implemented`, revision 2, 2026-11-19.
 
 ## Problem
 
-`lenny session new --runtime <name> "prompt"` creates a session and then fails to deliver the prompt. The gateway answers `TARGET_NOT_READY` because the session is still in `created`. Issue [CLIINST-I1](../../issues/CLIINST/CLIINST-I1-session-new-prompt-before-start.md) records the failure.
+`lenny session new --runtime <name> "prompt"` creates a session and then fails to deliver the prompt. The gateway answers `TARGET_NOT_READY` because the session is still in `created`. Issue [CLIINST-I1](../../../issues/CLIINST/CLIINST-I1-session-new-prompt-before-start.md) records the failure.
 
 Evidence from the tree:
 
 - The 0157 pilot journey `end-user-first-session`, run `20261118T165838Z-1ae96b`, trial 1, failed. The agent ran `lenny-ctl session new --runtime echo-runtime-sidecar "hello-<nonce>"`. The command created the session and exited with `deliver prompt: lenny: TARGET_NOT_READY (TRANSIENT): session has not yet entered running state; retry after start`, and the session stayed in `created`.
 - `pkg/embedded/localcli/session.go`, `cmdSessionNew`: without `--workspace` or `--file`, it calls the SDK's `MCP().CreateSession`, which invokes the MCP tool `lenny/create_session`, and then `SendMessages`, with no finalize or start in between. The `--workspace` and `--file` path (`createSessionWithWorkspace`) finalizes and starts before the prompt is sent.
-- [§15.2](../../spec/15_external-api-surface.md#152-mcp-api) and [§15.2.1](../../spec/15_external-api-surface.md#1521-restmcp-consistency-contract) make `lenny/create_session` the counterpart of `POST /v1/sessions`, which leaves the session in `created` until finalize and start run.
-- The `lenny session new` row of the session command table in [§24.17](../../spec/24_lenny-ctl-command-reference.md#2417-session-operations) (Session Operations) maps the command to MCP `lenny/create_session` without `--workspace`. It does not name the positional prompt, and it does not say whether the command starts the session, so neither the CLI nor the documentation can be checked against it.
+- [§15.2](../../../spec/15_external-api-surface.md#152-mcp-api) and [§15.2.1](../../../spec/15_external-api-surface.md#1521-restmcp-consistency-contract) make `lenny/create_session` the counterpart of `POST /v1/sessions`, which leaves the session in `created` until finalize and start run.
+- The `lenny session new` row of the session command table in [§24.17](../../../spec/24_lenny-ctl-command-reference.md#2417-session-operations) (Session Operations) maps the command to MCP `lenny/create_session` without `--workspace`. It does not name the positional prompt, and it does not say whether the command starts the session, so neither the CLI nor the documentation can be checked against it.
 - No `lenny session` verb starts a session that is in `created`, so a session the command leaves there cannot be used from the CLI. `lenny session send` to it fails the same way.
 
 The contract test `TestGoClientMCP` in `tests/contract/sdks` did not catch the defect, because its gateway wires a session creator that starts the session on `lenny/create_session`.
@@ -26,7 +26,7 @@ The change leaves the other `lenny session` verbs, the gateway, and the MCP tool
 
 | Term | Meaning |
 | :-- | :-- |
-| `lenny/create_and_start_session` | The MCP tool of [§15.2](../../spec/15_external-api-surface.md#152-mcp-api) that creates a session and starts it in one call. The gateway runs it as REST `POST /v1/sessions/start` through the shared service layer ([§15.2.1](../../spec/15_external-api-surface.md#1521-restmcp-consistency-contract) rule 1), and its result is the REST response body, a session in `running` with its identifier in the `id` field. |
+| `lenny/create_and_start_session` | The MCP tool of [§15.2](../../../spec/15_external-api-surface.md#152-mcp-api) that creates a session and starts it in one call. The gateway runs it as REST `POST /v1/sessions/start` through the shared service layer ([§15.2.1](../../../spec/15_external-api-surface.md#1521-restmcp-consistency-contract) rule 1), and its result is the REST response body, a session in `running` with its identifier in the `id` field. |
 | Positional prompt | The command's positional arguments joined with spaces. The command sends it as the session's first user message. |
 
 ## High-level design
@@ -57,9 +57,9 @@ The alternatives considered:
 - The SDK's REST `Finalize` and `Start` after the MCP create. This mixes the MCP and REST surfaces on one path and needs the same upload token.
 - REST `POST /v1/sessions/start`. The REST client does not expose it, and it would move the path off the MCP surface that the §24.17 introduction names for session commands.
 
-`lenny/create_and_start_session` keeps the path on MCP and leaves no window in which the CLI holds a session it has not started. Its handler runs the owner binding, quota, concurrency, admission-rate, policy-chain, and environment-admission gates of the two-step create, but not the pool-drain gate or the refusal while both stores are unavailable; issue [CAPISES-I2](../../issues/CAPISES/CAPISES-I2-create-and-start-skips-drain-and-degraded-gates.md) records the gap, and open decision O2 asks whether this step waits on it.
+`lenny/create_and_start_session` keeps the path on MCP and leaves no window in which the CLI holds a session it has not started. Its handler runs the owner binding, quota, concurrency, admission-rate, policy-chain, and environment-admission gates of the two-step create, but not the pool-drain gate or the refusal while both stores are unavailable; issue [CAPISES-I2](../../../issues/CAPISES/CAPISES-I2-create-and-start-skips-drain-and-degraded-gates.md) records the gap, and open decision O2 asks whether this step waits on it.
 
-Change [0138](../0138-rest-only-client-api/change.md) (REST-only client API, program v1) maps `lenny session new` to REST `POST /v1/sessions/start` and removes the SDKs' MCP clients in its steps 0138.S4 and 0138.S6, so it replaces this path and `MCPClient.CreateAndStartSession` when it lands. Open decision O1 asks whether 0160 takes the REST path now.
+Change [0138](../../0138-rest-only-client-api/change.md) (REST-only client API, program v1) maps `lenny session new` to REST `POST /v1/sessions/start` and removes the SDKs' MCP clients in its steps 0138.S4 and 0138.S6, so it replaces this path and `MCPClient.CreateAndStartSession` when it lands. Open decision O1 asks whether 0160 takes the REST path now.
 
 ### CT-2 Specification row
 
@@ -67,7 +67,7 @@ The `lenny session new` row of §24.17 names the positional prompt in the comman
 
 ## Specification and non-specification changes
 
-- [§24.17](../../spec/24_lenny-ctl-command-reference.md#2417-session-operations): the `lenny session new` row.
+- [§24.17](../../../spec/24_lenny-ctl-command-reference.md#2417-session-operations): the `lenny session new` row.
 - `sdks/client/go/lenny/mcp.go`: `MCPClient.CreateAndStartSession` and its result type.
 - `pkg/embedded/localcli/session.go`: `cmdSessionNew` and a new helper, `createStartedSession`.
 - `tests/registers/spec-section-citations.yaml`: the section-citation counts of the packages whose annotations change.
@@ -81,7 +81,7 @@ The `lenny session new` row of §24.17 names the positional prompt in the comman
 - `docs/client-guide/index.md`: the CLI block captures the session ID with `SESSION_ID=$(lenny session new ...)`, so the following commands have it.
 - `docs/getting-started/quickstart.md` already shows the working form and needs no edit.
 
-The other drift found on these pages, verbs and flags the CLI does not implement, the curl example of the tutorial's Path C, and the `=` flag form in the specification's examples, is filed as issue [CLIADM-I2](../../issues/CLIADM/CLIADM-I2-session-docs-name-absent-verbs-and-flags.md) rather than fixed here.
+The other drift found on these pages, verbs and flags the CLI does not implement, the curl example of the tutorial's Path C, and the `=` flag form in the specification's examples, is filed as issue [CLIADM-I2](../../../issues/CLIADM/CLIADM-I2-session-docs-name-absent-verbs-and-flags.md) rather than fixed here.
 
 ## Tests
 
