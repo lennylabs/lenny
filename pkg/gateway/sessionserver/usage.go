@@ -5,6 +5,7 @@ package sessionserver
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"log"
 	"log/slog"
 	"net/http"
@@ -15,14 +16,13 @@ import (
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/blobstore/artifactcatalog"
+	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/errorclassify"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/orphancleanup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -442,7 +442,7 @@ func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Ses
 	// long-running gateway from accumulating entries for sessions
 	// whose rows are gone. F-8.8.10.
 	if s.inputWaits != nil {
-		s.inputWaits.ForgetSession(sess.ID)
+		s.inputWaits.ForgetInputWaits(sess.ID)
 	}
 	// spec: §11.2 — on session completion the final cumulative
 	// token usage is written to Postgres as the authoritative value so a
@@ -591,14 +591,14 @@ func (s *Server) archiveSettledChild(ctx context.Context, sess sessionstore.Sess
 	// a newer replica knows a later schema therefore cannot silently
 	// rewrite a record an older replica created. F-8.8.11.
 	existingVer := 0
-	if prev, err := s.treeArchive.GetByNode(ctx, sess.TenantID, sess.ID); err == nil {
+	if prev, err := s.treeArchive.ArchivedNodeFor(ctx, sess.TenantID, sess.ID); err == nil {
 		var prevResult sessionrecord.Result
 		if json.Unmarshal([]byte(prev.Result), &prevResult) == nil {
 			existingVer = prevResult.SchemaVersion
 		}
 	}
 	result, _ := json.Marshal(s.materializeTaskResult(ctx, sess, existingVer))
-	_ = s.treeArchive.Archive(ctx, treearchive.ArchivedNode{
+	_ = s.treeArchive.ArchiveNode(ctx, seam.ArchivedNode{
 		TenantID:        sess.TenantID,
 		RootSessionID:   sess.RootSessionID,
 		NodeSessionID:   sess.ID,
@@ -633,7 +633,7 @@ func UsageQuiescenceTimeoutFor(v time.Duration) time.Duration {
 // child's own key set.
 // spec: §8.3 (Return on completion), §7.1 (Terminal pipeline context)
 func (s *Server) treeBudgetReturnAdmitted(sess sessionstore.Session) bool {
-	if s.treeBudgetReturner == nil || sess.DelegationDepth == 0 {
+	if s.treeBudgets == nil || sess.DelegationDepth == 0 {
 		return false
 	}
 	if sess.RootSessionID == "" || sess.RootSessionID == sess.ID {
@@ -667,15 +667,15 @@ func (s *Server) returnTreeBudget(ctx context.Context, sess sessionstore.Session
 			"session_id", sess.ID, "root_session_id", sess.RootSessionID, "error", ctx.Err())
 		return
 	}
-	r := treebudget.Reservation{
+	r := seam.BudgetReturn{
 		RootSessionID:         sess.RootSessionID,
 		ParentSessionID:       sess.ParentSessionID,
 		TreeSizeDelta:         1,
-		TreeMemoryDelta:       treebudget.PerNodeMemoryBytes,
+		TreeMemoryDelta:       lease.PerNodeMemoryBytes,
 		ParallelChildrenDelta: 1,
 		TokenDelta:            s.unusedTokens(ctx, sess),
 	}
-	if err := s.treeBudgetReturner.Return(ctx, r); err != nil {
+	if err := s.treeBudgets.ReturnBudget(ctx, r); err != nil {
 		slog.Warn("sessionserver: delegation tree budget return failed; the reservation stays counted",
 			"session_id", sess.ID, "root_session_id", sess.RootSessionID, "error", err)
 	}
@@ -689,13 +689,26 @@ func (s *Server) unusedTokens(ctx context.Context, sess sessionstore.Session) in
 	if sess.DelegationLease == nil || sess.DelegationLease.MaxTokenBudget <= 0 {
 		return 0
 	}
-	used, err := s.taskUsage.SubtreeTokens(ctx, sess)
+	used, err := s.subtreeTokens(ctx, sess)
 	if err != nil {
 		slog.Warn("sessionserver: subtree token read failed; the budget return credits no tokens",
 			"session_id", sess.ID, "root_session_id", sess.RootSessionID, "error", err)
 		return 0
 	}
 	return max(0, sess.DelegationLease.MaxTokenBudget-used)
+}
+
+// errSubtreeTokensUnwired is the subtree token read's error on a server with
+// no usage rollups wired, which credits no tokens.
+var errSubtreeTokensUnwired = errors.New("sessionserver: subtree token read needs the usage rollups")
+
+// subtreeTokens reads the tokens sess's subtree used through the usage
+// rollups, or reports errSubtreeTokensUnwired when none are wired.
+func (s *Server) subtreeTokens(ctx context.Context, sess sessionstore.Session) (int64, error) {
+	if s.treeRollups == nil {
+		return 0, errSubtreeTokensUnwired
+	}
+	return s.treeRollups.SubtreeTokens(ctx, seamSession(sess))
 }
 
 // awaitUsageQuiescence waits until terminatedAt plus the usage quiescence
@@ -735,7 +748,7 @@ func (s *Server) awaitUsageQuiescence(ctx context.Context, terminatedAt time.Tim
 // Best-effort: a Redis or read failure never fails the transition that
 // triggered it. spec: §8.3; §16.1. F-8.9.6.
 func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore.Session) {
-	if s.hwmReader == nil || s.hwmObserver == nil {
+	if s.treeBudgets == nil || s.hwmObserver == nil {
 		return
 	}
 	// A tree root is a parentless session that is its own root. A
@@ -747,7 +760,7 @@ func (s *Server) observeTreeHighWatermark(ctx context.Context, sess sessionstore
 	if sess.RootSessionID != "" && sess.RootSessionID != sess.ID {
 		return
 	}
-	value, found, err := s.hwmReader.ObserveHighWatermark(ctx, sess.ID)
+	value, found, err := s.treeBudgets.ObserveHighWatermark(ctx, sess.ID)
 	if err != nil || !found {
 		return
 	}
@@ -945,10 +958,18 @@ func (s *Server) detachExceedsOrphanCap(ctx context.Context, tenantID string) bo
 	if err != nil {
 		return false
 	}
-	byID := orphancleanup.IndexByID(all)
+	if s.treeOrphans == nil {
+		return false
+	}
+	tree := make(map[string]seam.Session, len(all))
+	records := make([]seam.Session, len(all))
+	for i, r := range all {
+		records[i] = seamSession(r)
+		tree[r.ID] = records[i]
+	}
 	orphans := 0
-	for _, r := range all {
-		if _, ok := orphancleanup.Orphaned(r, byID); ok {
+	for _, r := range records {
+		if s.treeOrphans.Orphaned(r, tree) {
 			orphans++
 		}
 	}
@@ -1005,7 +1026,7 @@ func (s *Server) subtreeSessionIDs(ctx context.Context, tenantID string, root se
 		if rootID == "" {
 			rootID = s.treeRoot(ctx, root)
 		}
-		if nodes, err := s.treeArchive.Replay(ctx, tenantID, rootID); err == nil {
+		if nodes, err := s.treeArchive.ArchivedNodes(ctx, tenantID, rootID); err == nil {
 			for _, n := range nodes {
 				addEdge(n.ParentSessionID, n.NodeSessionID)
 			}
@@ -1056,9 +1077,9 @@ func (s *Server) materializeTaskResult(ctx context.Context, sess sessionstore.Se
 	} else {
 		res.Error = taskErrorForSession(sess, s.EffectiveMaxRetries(sess))
 	}
-	if s.taskUsage != nil {
-		res.Usage = s.taskUsage.Usage(ctx, sess)
-		res.TreeUsage = s.taskUsage.TreeUsage(ctx, sess, res.Usage)
+	if s.treeRollups != nil {
+		res.Usage = s.treeRollups.NodeUsage(ctx, seamSession(sess))
+		res.TreeUsage = s.treeRollups.TreeUsage(ctx, seamSession(sess), res.Usage)
 	}
 	return res
 }

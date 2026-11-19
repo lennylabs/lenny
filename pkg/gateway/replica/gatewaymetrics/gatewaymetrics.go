@@ -1474,29 +1474,6 @@ func (m *Metrics) SetOrphanTasksActivePerTenant(tenantID string, value int) {
 	m.orphanTasksActivePerTenant.WithLabelValues(tenantID).Set(float64(value))
 }
 
-// ObserveTreeRecoveryDuration records one wall-clock duration on the
-// §8.10 / §16.1
-// histogram. `pool` is the root session's pool; `outcome` is one of
-// `full_success`, `partial_failure`, or `total_timeout`. spec: §8.10 /
-// §16.1; F-8.10.7.
-func (m *Metrics) ObserveTreeRecoveryDuration(pool, outcome string, seconds float64) {
-	if m == nil {
-		return
-	}
-	m.treeRecoveryDuration.WithLabelValues(pool, outcome).Observe(seconds)
-}
-
-// IncTreeRecoveryTimeout increments the §8.10 / §16.1
-// `lenny_delegation_tree_recovery_timeout_total{pool, timeout_type}`
-// counter. `timeout_type` is `level` (one tree-level budget exhausted)
-// or `tree` (the whole-tree budget exhausted). spec: §8.10 / §16.1; F-8.10.7.
-func (m *Metrics) IncTreeRecoveryTimeout(pool, timeoutType string) {
-	if m == nil {
-		return
-	}
-	m.treeRecoveryTimeout.WithLabelValues(pool, timeoutType).Inc()
-}
-
 // RecordElicitationDrop increments the §9.1 lenny_elicitation_dropped_total
 // counter for the given drop reason (for example `budget_exceeded`).
 func (m *Metrics) RecordElicitationDrop(reason string) {

@@ -365,15 +365,14 @@ type PodLifetime struct {
 // pool, runtime_class), §5.2 (onScrubFailure: warn increments both
 // scrub-failure series on every failure).
 type RetirementMetrics interface {
-	// IncScrubFailureTotal increments the aggregate scrub-failure counter
-	// (lenny_pod_scrub_failure_total) on every failed whole-pod scrub,
+	// RecordScrubFailure increments the aggregate scrub-failure counter
+	// (lenny_pod_scrub_failure_total) and reports the pod's cumulative
+	// scrub-failure count (lenny_pod_scrub_failure_count gauge, labeled by
+	// k8s_pod_name, pool, runtime_class) on every failed whole-pod scrub,
 	// independent of whether the failure retires the pod. spec: §5.2
-	// (lenny_pod_scrub_failure_total aggregate counter).
-	IncScrubFailureTotal(pool, runtimeClass string)
-	// SetScrubFailureCount reports the pod's cumulative scrub-failure count
-	// (lenny_pod_scrub_failure_count gauge, labeled by k8s_pod_name, pool,
-	// runtime_class). spec: §16.1 (lenny_pod_scrub_failure_count).
-	SetScrubFailureCount(podID, pool, runtimeClass string, count int)
+	// (lenny_pod_scrub_failure_total aggregate counter), §16.1
+	// (lenny_pod_scrub_failure_count).
+	RecordScrubFailure(podID, pool, runtimeClass string, count int)
 	// IncRetirement records one gateway-decided pod retirement by reason
 	// (lenny_gateway_pod_retirement_total{reason, pool, runtime_class}). The
 	// caller emits it only for a gateway-owned reason in the frozen §16.1
@@ -575,8 +574,7 @@ func (r *ScrubReporter) advanceScrubCounters(ctx context.Context, podID string, 
 		// §5.2: a failed whole-pod scrub increments BOTH the aggregate
 		// counter and the per-pod gauge, independent of whether the failure
 		// goes on to retire the pod.
-		r.metrics.IncScrubFailureTotal(pool, runtimeClass)
-		r.metrics.SetScrubFailureCount(podID, pool, runtimeClass, count)
+		r.metrics.RecordScrubFailure(podID, pool, runtimeClass, count)
 		scrubFailureCount = count
 	}
 	served, scrub, found, readErr := r.counters.RecycleCounters(ctx, podID)
@@ -707,8 +705,7 @@ func scrubInput(failed bool) podscrub.ScrubResult {
 // when no RetirementMetrics is supplied.
 type noopRetirementMetrics struct{}
 
-func (noopRetirementMetrics) IncScrubFailureTotal(string, string)              {}
-func (noopRetirementMetrics) SetScrubFailureCount(string, string, string, int) {}
+func (noopRetirementMetrics) RecordScrubFailure(string, string, string, int) {}
 func (noopRetirementMetrics) IncRetirement(podscrub.RetireReason, string, string) {
 }
 

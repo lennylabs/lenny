@@ -227,7 +227,11 @@ type ToolApprovals interface {
 
 	// ResolveApproval delivers a decision on an approval wait.
 	ResolveApproval(sessionID, toolCallID string, d ApprovalDecision) error
+}
 
+// ToolApprovalGate is served by the platform tools seam to the session
+// core's executor: the hold of a runtime's tool call until its approval.
+type ToolApprovalGate interface {
 	// AwaitApproval is GWSEAM-AwaitApproval. It blocks until the decision
 	// arrives or ctx ends.
 	AwaitApproval(ctx context.Context, tenantID, sessionID string, call PendingToolCall) (ApprovalDecision, error)

@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// orphanMetrics holds the §8.10 / §10.1 orphan-cleanup, tree-recovery, and pod-state-mirror metrics.
+// orphanMetrics holds the §8.10 / §10.1 orphan-cleanup and pod-state-mirror metrics.
 type orphanMetrics struct {
 	// maxOrphanTasksPerTenant is the §8.10 deployer-configured
 	// orphan-cap exposed as an unlabeled gauge so the §16.5
@@ -22,16 +22,13 @@ type orphanMetrics struct {
 	// counts the per-sweep terminated-orphan count (in lockstep with the
 	// existing log line). orphanTasksActive is the fleet-wide active orphan
 	// gauge (sum over tenants); orphanTasksActivePerTenant is the per-tenant
-	// gauge the OrphanTasksPerTenantHigh alert reads. treeRecoveryDuration
-	// observes one wall-clock duration per tree-recovery operation;
-	// treeRecoveryTimeout counts the per-timeout-type rollups.
+	// gauge the OrphanTasksPerTenantHigh alert reads. The platform tools
+	// seam registers the tree-recovery collectors itself.
 	// spec: §8.10; §16.1. F-8.10.7.
 	orphanCleanupRuns          prometheus.Counter
 	orphanTasksTerminated      prometheus.Counter
 	orphanTasksActive          prometheus.Gauge
 	orphanTasksActivePerTenant *prometheus.GaugeVec
-	treeRecoveryDuration       *prometheus.HistogramVec
-	treeRecoveryTimeout        *prometheus.CounterVec
 	// §10.1 orphan-session reconciler observability.
 	// orphanSessionReconciliations counts each session the §10.1.4
 	// reconciler forces to `failed` after its bound pod terminated with
@@ -94,37 +91,18 @@ func newOrphanMetrics(reg *prometheus.Registry) (orphanMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	treeRecoveryDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
-		Name:    "lenny_delegation_tree_recovery_duration_seconds",
-		Help:    "Delegation tree-recovery wall-clock duration by outcome (§8.10 / §16.1).",
-		Buckets: []float64{0.5, 1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800},
-	}, []string{"pool", "outcome"})
-	if err != nil {
-		return m, err
-	}
-	treeRecoveryTimeout, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_delegation_tree_recovery_timeout_total",
-		Help: "Delegation tree-recovery timeouts by timeout type (`level` | `tree`) (§8.10 / §16.1).",
-	}, []string{"pool", "timeout_type"})
-	if err != nil {
-		return m, err
-	}
 	reg.MustRegister(maxOrphanTasksPerTenant,
 		orphanCleanupRuns,
 		orphanTasksTerminated,
 		orphanTasksActive,
 		orphanTasksActivePerTenant,
 		orphanSessionReconciliations,
-		agentPodStateMirrorLag,
-		treeRecoveryDuration,
-		treeRecoveryTimeout)
+		agentPodStateMirrorLag)
 	m.maxOrphanTasksPerTenant = maxOrphanTasksPerTenant.WithLabelValues()
 	m.orphanCleanupRuns = orphanCleanupRuns
 	m.orphanTasksTerminated = orphanTasksTerminated
 	m.orphanTasksActive = orphanTasksActive.WithLabelValues()
 	m.orphanTasksActivePerTenant = orphanTasksActivePerTenant
-	m.treeRecoveryDuration = treeRecoveryDuration
-	m.treeRecoveryTimeout = treeRecoveryTimeout
 	m.orphanSessionReconciliations = orphanSessionReconciliations
 	m.agentPodStateMirrorLag = agentPodStateMirrorLag
 	return m, nil

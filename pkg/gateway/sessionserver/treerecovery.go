@@ -13,11 +13,11 @@ import (
 )
 
 // This file wires the gateway's resume machinery to the §8.10
-// bottom-up delegation-tree recovery driver (pkg/gateway/treerecovery).
-// The orchestrator owns the traversal — depth grouping, level/tree
-// budgets, terminal disposition — and calls back into these adapters
-// for the per-node reattach, the terminal transition, and the
-// orphaned-node predicate.
+// bottom-up delegation-tree recovery, which the platform tools seam serves
+// as GWSEAM-RecoverTree. The traversal owns the depth grouping, the
+// level and tree budgets, the selection of resume_pending nodes, and the
+// terminal disposition, and calls back through ToolsSeam into these
+// adapters for the per-node restore and the terminal transition.
 
 // treeRecoveryPollInterval is how often ReattachNode reads a node's row from
 // the primary while it waits for the node's restore to finish.
@@ -100,20 +100,6 @@ func (a sessionTerminalMarker) FailNode(ctx context.Context, node sessionstore.S
 	a.s.failSession(ctx, node.TenantID, node.ID)
 }
 
-// nodeNeedsRecovery reports whether a delegation node is selected for §8.10
-// recovery: exactly the resume_pending nodes. A node is selected by its row
-// state rather than by its absence from this replica's pod registry, because
-// the registry holds only this replica's bindings and a node bound on a peer
-// is not orphaned. Tree recovery therefore never drives a node that is
-// running, suspended, awaiting_client_action, or bound on a peer replica,
-// and failSession fails a selected node only while its locked row is still
-// in resume_pending.
-//
-// spec: §8.10 (Delegation Tree Recovery).
-func (s *Server) nodeNeedsRecovery(node sessionstore.Session) bool {
-	return node.State == session.StateResumePending
-}
-
 // recoverDelegationTree runs the §8.10 bottom-up recovery for the tree
 // rooted at rootID. The resume driver's commit tail calls it after a node of
 // the tree resumed, so the tree's resume_pending descendants are driven
@@ -129,7 +115,7 @@ func (s *Server) recoverDelegationTree(_ context.Context, tenantID, rootID strin
 	}
 	ctx := s.lifetime()
 	go func() {
-		if _, err := s.treeRecovery.RecoverTree(ctx, tenantID, rootID); err != nil {
+		if _, err := s.treeRecovery.RecoverTree(ctx, tenantID, rootID, s.ToolsSeam()); err != nil {
 			log.Printf("sessionserver: tree recovery for root %s failed: %v", rootID, err)
 		}
 		if s.treeRecoveryHook != nil {

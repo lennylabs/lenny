@@ -66,7 +66,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 	emitted := make(map[string]bool, len(childRows))
 	if s.treeArchive != nil && parentFound {
 		root := s.treeRoot(ctx, parent)
-		if nodes, rerr := s.treeArchive.Replay(ctx, tenantID, root); rerr == nil {
+		if nodes, rerr := s.treeArchive.ArchivedNodes(ctx, tenantID, root); rerr == nil {
 			for _, n := range nodes {
 				if n.ParentSessionID != parentID || emitted[n.NodeSessionID] {
 					continue
@@ -133,7 +133,7 @@ func (s *Server) emitChildrenReattached(ctx context.Context, tenantID, parentID 
 // unwired the function is a no-op. spec: §7.2. F-7.2.16.
 func (s *Server) lookupPendingRequest(ctx context.Context, tenantID, sessionID string) string {
 	if s.inputWaits != nil {
-		if ids := s.inputWaits.PendingForSession(sessionID); len(ids) > 0 {
+		if ids := s.inputWaits.PendingInputWaits(sessionID); len(ids) > 0 {
 			sort.Strings(ids)
 			return ids[0]
 		}
@@ -182,7 +182,7 @@ func (s *Server) buildHandoffChildrenReattached(ctx context.Context, tenantID, p
 	missedCompletion := false
 	if s.treeArchive != nil && parentFound {
 		root := s.treeRoot(ctx, parent)
-		if nodes, rerr := s.treeArchive.Replay(ctx, tenantID, root); rerr == nil {
+		if nodes, rerr := s.treeArchive.ArchivedNodes(ctx, tenantID, root); rerr == nil {
 			for _, n := range nodes {
 				if n.ParentSessionID != parentID || emitted[n.NodeSessionID] {
 					continue

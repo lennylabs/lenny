@@ -35,6 +35,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/redis/go-redis/v9"
@@ -208,12 +211,12 @@ func (st *dlgLossStack) newReplica(t *testing.T) *dlgLossReplica {
 	enforcer := sessionbudget.New(dlgLossTerminator{}, nil, nil)
 	archive := archivepg.New(st.pg.Pool, nil)
 	srv := sessionserver.New(st.sessions, sessionserver.Options{
-		TreeArchive:                    archive,
+		TreeArchive:                    platformtools.NewTreeArchive(archive),
 		Interactions:                   st.interactions,
 		OpsEmitter:                     st.events,
 		IncDelegationBudgetKeysExpired: m.IncDelegationBudgetKeysExpired,
-		TreeBudgetReturner:             returns,
-		TaskUsage:                      resultrollup.New(st.sessions, sessionusage.NewMemory(), archive, nil),
+		TreeBudgets:                    treeseam.Budgets{Returner: returns},
+		TreeRollups:                    platformtools.NewTreeRollups(resultrollup.New(st.sessions, sessionusage.NewMemory(), archive, nil)),
 		UsageQuiescenceTimeout:         dlgLossQuiescence,
 		BudgetTracking:                 metering.NewBudgets(enforcer),
 	})

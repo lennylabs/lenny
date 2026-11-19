@@ -893,7 +893,7 @@ summary: Delivers the decision, approved or denied with a reason, on the approva
 kind: operation
 name: AwaitApproval
 method: Go method
-path: seam.ToolApprovals
+path: seam.ToolApprovalGate
 requirements: [GW-R1]
 summary: Holds a runtime's tool call until the session's user approves or denies it, and returns the decision; the session core's executor calls it.
 ```

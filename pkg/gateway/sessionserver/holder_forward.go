@@ -25,7 +25,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/adapter/gatewaycontrol"
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	idemmw "github.com/lennylabs/lenny/pkg/gateway/middleware/idempotency"
@@ -446,7 +445,7 @@ func setForwardIdentity(ctx context.Context, h http.Header) {
 		}
 		return
 	}
-	if p, ok := authmw.FromContext(ctx); ok && p.CallerType == platformtools.AgentCallerType && p.SessionID != "" {
+	if p, ok := authmw.FromContext(ctx); ok && p.CallerType == AgentCallerType && p.SessionID != "" {
 		h.Set(CallingSessionHeader, p.SessionID)
 	}
 }

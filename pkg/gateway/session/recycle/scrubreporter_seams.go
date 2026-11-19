@@ -30,11 +30,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/agentpodstate"
 	lennyv1 "github.com/lennylabs/lenny/pkg/apis/lenny/v1alpha1"
 	"github.com/lennylabs/lenny/pkg/controller/warmpool"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podclaim"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	claimstate "github.com/lennylabs/lenny/pkg/podclaim/state"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/sandbox/podscrub"
@@ -63,7 +63,7 @@ const HighClaimHoldTTLWarnSeconds = 60
 // CounterStore is the agent_pod_state subset the §4.7 recycle-counter seam
 // needs. *agentpodstate.Store (and its memstore/pgstore implementations)
 // satisfy it directly: the three methods are the same recycle-counter
-// surface leasecontrol.RecycleCounterStore declares, so NewCounterStore is
+// surface RecycleCounterStore declares, so NewCounterStore is
 // an adapter that maps agentpodstate.RecycleCounters onto the leasecontrol
 // return tuple.
 type CounterStore interface {
@@ -73,7 +73,7 @@ type CounterStore interface {
 }
 
 // recycleCounterStore adapts a CounterStore (agentpodstate.Store) onto the
-// leasecontrol.RecycleCounterStore seam. The increment methods already
+// RecycleCounterStore seam. The increment methods already
 // match; only RecycleCounters needs the struct-to-tuple unpacking.
 type recycleCounterStore struct {
 	store CounterStore
@@ -82,7 +82,7 @@ type recycleCounterStore struct {
 // NewRecycleCounterStore wraps an agent_pod_state store as the §4.7
 // recycle-counter seam the ScrubReporter writes. spec: §4.7
 // (sessionsServed / scrubFailureCount increments), §5.2.
-func NewRecycleCounterStore(store CounterStore) leasecontrol.RecycleCounterStore {
+func NewRecycleCounterStore(store CounterStore) RecycleCounterStore {
 	return &recycleCounterStore{store: store}
 }
 
@@ -147,7 +147,7 @@ type DrainLedgerOptions struct {
 
 // NewDrainLedger builds the §5.2 unhealthy-threshold drain ledger. Tracker,
 // Client, Namespace, and Pools are required.
-func NewDrainLedger(opts DrainLedgerOptions) (leasecontrol.DrainLedger, error) {
+func NewDrainLedger(opts DrainLedgerOptions) (DrainLedger, error) {
 	if opts.Tracker == nil {
 		return nil, errors.New("recycle: DrainLedger Tracker is required")
 	}
@@ -306,7 +306,7 @@ type SessionCountRetirerOptions struct {
 
 // NewSessionCountRetirer builds the §5.2 per-release maxSessionsPerPod
 // retirer. Client, Namespace, Pools, and Runtimes are required.
-func NewSessionCountRetirer(opts SessionCountRetirerOptions) (leasecontrol.SessionCountRetirer, error) {
+func NewSessionCountRetirer(opts SessionCountRetirerOptions) (SessionCountRetirer, error) {
 	if opts.Client == nil {
 		return nil, errors.New("recycle: SessionCountRetirer Client is required")
 	}
@@ -554,7 +554,7 @@ type PodInspectorOptions struct {
 
 // NewPodInspector builds the `spec/06_warm-pod-model.md` §6.2 / §5.2 recycle pod inspector. Client,
 // Namespace, Pools, and Runtimes are required.
-func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error) {
+func NewPodInspector(opts PodInspectorOptions) (PodInspector, error) {
 	if opts.Client == nil {
 		return nil, errors.New("recycle: PodInspector Client is required")
 	}
@@ -593,14 +593,14 @@ func NewPodInspector(opts PodInspectorOptions) (leasecontrol.PodInspector, error
 // §6.2. spec: §6.2 (host-node schedulability read via Pods get), §5.2
 // (recycle policy resolution), §4.7 (skip when the pod or claim is
 // gone).
-func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (leasecontrol.PodRecyclePolicy, bool, error) {
+func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (seam.PodRecyclePolicy, bool, error) {
 	var pod corev1.Pod
 	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podID}, &pod); err != nil {
 		if client.IgnoreNotFound(err) == nil {
 			// The pod is gone: nothing to recycle.
-			return leasecontrol.PodRecyclePolicy{}, false, nil
+			return seam.PodRecyclePolicy{}, false, nil
 		}
-		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get pod %s: %w", podID, err)
+		return seam.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get pod %s: %w", podID, err)
 	}
 
 	// The claim can be reclaimed independently of the Pod object: a racing
@@ -615,9 +615,9 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 	var claim lennyv1.PodClaim
 	if err := i.cl.Get(ctx, client.ObjectKey{Namespace: i.namespace, Name: podclaim.ClaimName(podID)}, &claim); err != nil {
 		if client.IgnoreNotFound(err) == nil {
-			return leasecontrol.PodRecyclePolicy{}, false, nil
+			return seam.PodRecyclePolicy{}, false, nil
 		}
-		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get claim for pod %s: %w", podID, err)
+		return seam.PodRecyclePolicy{}, false, fmt.Errorf("recycle: get claim for pod %s: %w", podID, err)
 	}
 
 	poolName := pod.Labels[warmpool.LabelPool]
@@ -625,16 +625,16 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 		// A managed agent pod with no pool label cannot be evaluated against
 		// a recycle policy; fail closed rather than recycle against a guessed
 		// policy. spec: §4.6.1 (pool label), §5.2.
-		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: pod %s carries no %s label", podID, warmpool.LabelPool)
+		return seam.PodRecyclePolicy{}, false, fmt.Errorf("recycle: pod %s carries no %s label", podID, warmpool.LabelPool)
 	}
 	pool, err := i.pools.Get(ctx, poolName)
 	if err != nil {
 		if errors.Is(err, poolstore.ErrNotFound) {
 			// The pool was deleted: the pod is being retired with it, nothing
 			// to recycle into.
-			return leasecontrol.PodRecyclePolicy{}, false, nil
+			return seam.PodRecyclePolicy{}, false, nil
 		}
-		return leasecontrol.PodRecyclePolicy{}, false, fmt.Errorf("recycle: resolve pool %s for pod %s: %w", poolName, podID, err)
+		return seam.PodRecyclePolicy{}, false, fmt.Errorf("recycle: resolve pool %s for pod %s: %w", poolName, podID, err)
 	}
 
 	recycle := poolRecyclePolicy(pool)
@@ -643,15 +643,15 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 		// recycle candidate (one-session-per-pod), so the disposition is a
 		// no-op and the pod retires on session end through the session path.
 		// spec: §5.2.
-		return leasecontrol.PodRecyclePolicy{}, false, nil
+		return seam.PodRecyclePolicy{}, false, nil
 	}
 
 	preConnect, runtimeProfile, err := i.resolveRuntime(ctx, pool.RuntimeRef)
 	if err != nil {
-		return leasecontrol.PodRecyclePolicy{}, false, err
+		return seam.PodRecyclePolicy{}, false, err
 	}
 
-	return leasecontrol.PodRecyclePolicy{
+	return seam.PodRecyclePolicy{
 		PreConnect: preConnect,
 		// spec: spec/05 §5.2 step 7 — a vm-restart pool retires the pod at the
 		// recycle boundary and the warm pool provisions a fresh replacement (a
@@ -659,7 +659,7 @@ func (i *podInspector) InspectForRecycle(ctx context.Context, podID string) (lea
 		// its runtime store, so the disposition retires rather than reusing the
 		// pod without a fresh guest (fail-open); the wire report stays binary.
 		VMRestart:         recycle.ScrubProfile == runtimestore.MicrovmScrubVMRestart,
-		OnScrubFailure:    onScrubFailure(recycle.OnScrubFailure),
+		OnScrubFailure:    string(onScrubFailure(recycle.OnScrubFailure)),
 		MaxScrubFailures:  recycle.MaxScrubFailures,
 		MaxSessionsPerPod: recycle.MaxSessionsPerPod,
 		// MaxConcurrentSessions lets applyDisposition suppress the
@@ -841,7 +841,7 @@ type ClaimDispositionDriverOptions struct {
 
 // NewClaimDispositionDriver builds the claim disposition driver.
 // Client and Namespace are required.
-func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (leasecontrol.ClaimDispositionDriver, error) {
+func NewClaimDispositionDriver(opts ClaimDispositionDriverOptions) (ClaimDispositionDriver, error) {
 	if opts.Client == nil {
 		return nil, errors.New("recycle: ClaimDispositionDriver Client is required")
 	}
@@ -987,7 +987,7 @@ func (d *claimDispositionDriver) signalBoundary(podID string, preConnect bool) {
 // terminals), §6.2 (cordon-drain retains the scrub_warning marker), §5.2
 // (the failed pod's metadata is retained in the audit log; Pod retirement
 // policy, Runtime not live).
-func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, lifetime leasecontrol.PodLifetime, detail string) error {
+func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, failed, scrubWarning bool, reason podscrub.RetireReason, lifetime PodLifetime, detail string) error {
 	// The §6.2 cordon-drain-under-warn path retains the residual-state
 	// marker on the draining pod; stamp it before the terminal write so the
 	// audit trail sees the annotation on the pod. A stamp failure aborts the
@@ -1038,7 +1038,7 @@ func (d *claimDispositionDriver) Retire(ctx context.Context, podID string, faile
 // host_unschedulable, or vm_restart_reprovision is visible, with the pod's
 // lifetime session count and uptime to tell an early retire from a limit.
 // spec: §5.2 (Pod retirement policy, Runtime not live).
-func (d *claimDispositionDriver) logReleasedRetire(ctx context.Context, podID string, reason podscrub.RetireReason, lifetime leasecontrol.PodLifetime) {
+func (d *claimDispositionDriver) logReleasedRetire(ctx context.Context, podID string, reason podscrub.RetireReason, lifetime PodLifetime) {
 	d.log.LogAttrs(
 		ctx, slog.LevelInfo, "recycle: pod retired at the recycle boundary",
 		slog.String("pod_id", podID),
@@ -1058,7 +1058,7 @@ type RetirementMetricsSink interface {
 }
 
 // retirementMetrics adapts a RetirementMetricsSink onto the
-// leasecontrol.RetirementMetrics seam, mapping the typed RetireReason onto
+// RetirementMetrics seam, mapping the typed RetireReason onto
 // the string label the metric sink records.
 type retirementMetrics struct {
 	sink RetirementMetricsSink
@@ -1068,7 +1068,7 @@ type retirementMetrics struct {
 // metrics seam. A nil sink returns nil so the ScrubReporter falls back to
 // its no-op metrics. spec: §16.1 (lenny_pod_scrub_failure_total,
 // lenny_pod_scrub_failure_count, lenny_gateway_pod_retirement_total).
-func NewRetirementMetrics(sink RetirementMetricsSink) leasecontrol.RetirementMetrics {
+func NewRetirementMetrics(sink RetirementMetricsSink) RetirementMetrics {
 	if sink == nil {
 		return nil
 	}
@@ -1087,14 +1087,14 @@ func (m *retirementMetrics) IncRetirement(reason podscrub.RetireReason, pool, ru
 	m.sink.IncRetirement(string(reason), pool, runtimeClass)
 }
 
-// Compile-time assertions that the concrete seams satisfy the leasecontrol
-// consumer interfaces.
+// Compile-time assertions that the concrete seams satisfy the interfaces
+// the pod recycle operations compose.
 var (
-	_ leasecontrol.RecycleCounterStore    = (*recycleCounterStore)(nil)
-	_ leasecontrol.DrainLedger            = (*drainLedger)(nil)
-	_ leasecontrol.SessionCountRetirer    = (*sessionCountRetirer)(nil)
-	_ leasecontrol.PodInspector           = (*podInspector)(nil)
-	_ leasecontrol.ClaimDispositionDriver = (*claimDispositionDriver)(nil)
-	_ leasecontrol.RetirementMetrics      = (*retirementMetrics)(nil)
-	_ recycleBoundarySignal               = (*RecycleBoundaryCoordinator)(nil)
+	_ RecycleCounterStore    = (*recycleCounterStore)(nil)
+	_ DrainLedger            = (*drainLedger)(nil)
+	_ SessionCountRetirer    = (*sessionCountRetirer)(nil)
+	_ PodInspector           = (*podInspector)(nil)
+	_ ClaimDispositionDriver = (*claimDispositionDriver)(nil)
+	_ RetirementMetrics      = (*retirementMetrics)(nil)
+	_ recycleBoundarySignal  = (*RecycleBoundaryCoordinator)(nil)
 )

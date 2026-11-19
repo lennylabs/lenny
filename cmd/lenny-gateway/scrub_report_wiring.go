@@ -89,14 +89,16 @@ func newScrubReportService(cl client.Client, counters recycle.CounterStore, pool
 	if err != nil {
 		return nil, fmt.Errorf("build claim disposition driver: %w", err)
 	}
-	reporter, err := leasecontrol.NewScrubReporter(leasecontrol.ScrubReporterOptions{
+	// The scrub report service of the platform tools seam reaches these
+	// recycle seams through the session core's pod recycle operations.
+	reporter, err := leasecontrol.NewScrubReporterForRecycle(recycle.NewPodRecycle(recycle.PodRecycleParts{
 		Counters:       recycle.NewRecycleCounterStore(counters),
 		Ledger:         ledger,
 		SessionRetirer: sessionRetirer,
 		Inspector:      inspector,
 		Driver:         driver,
 		Metrics:        recycle.NewRetirementMetrics(metrics),
-	})
+	}))
 	if err != nil {
 		return nil, fmt.Errorf("build scrub reporter: %w", err)
 	}

@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/tests/testinfra/treeseam"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
@@ -120,7 +122,7 @@ func TestAdminAndBudgetTerminatorsReturnTheChildOnce_spec_8_3(t *testing.T) {
 				}
 			}
 			ret := countingReturner{calls: make(chan treebudget.Reservation, 8)}
-			srv := sessionserver.New(store, sessionserver.Options{TreeBudgetReturner: ret, UsageQuiescenceTimer: firedTimer})
+			srv := sessionserver.New(store, sessionserver.Options{TreeBudgets: treeseam.Budgets{Returner: ret}, UsageQuiescenceTimer: firedTimer})
 			defer srv.Close()
 			tc.drive(store, srv)
 			// The budget terminator opens no session-server claim before its

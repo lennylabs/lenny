@@ -46,11 +46,16 @@ func (s *Server) SetUploadWindows(u seam.UploadWindows) {
 }
 
 // seamSession returns the session record that crosses the seam interface
-// for a stored session.
+// for a stored session. The record's pool is the row's pool reference, or
+// its pool name when the row records no reference.
 func seamSession(row sessionstore.Session) seam.Session {
 	var lastSeq uint64
 	if row.LastSeq > 0 {
 		lastSeq = uint64(row.LastSeq)
+	}
+	pool := row.PoolRef
+	if pool == "" {
+		pool = row.Pool
 	}
 	return seam.Session{
 		ID:              row.ID,
@@ -59,9 +64,14 @@ func seamSession(row sessionstore.Session) seam.Session {
 		ParentSessionID: row.ParentSessionID,
 		RootSessionID:   row.RootSessionID,
 		RuntimeRef:      row.RuntimeRef,
-		Pool:            row.PoolRef,
+		Pool:            pool,
 		State:           state.State(row.State),
 		LastSeq:         lastSeq,
+		DelegationDepth: int(row.DelegationDepth),
+		PodAssignment:   row.PodAssignment,
+		CreatedAt:       row.CreatedAt,
+		UpdatedAt:       row.UpdatedAt,
+		TerminatedAt:    row.TerminatedAt,
 	}
 }
 

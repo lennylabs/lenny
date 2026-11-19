@@ -465,7 +465,6 @@ type gatewayWiringFields struct {
 	expectedAuds      []string
 	experiments       experimentstore.Store
 	holdCoordinator   *recycle.HoldCoordinator
-	hwmReader         sessionserver.DelegationHighWatermarkReader
 	inProcessAssign   *credassign.Service
 	interactions      interactionstore.Store
 	jwtKeySet         *jwt.KeySet
