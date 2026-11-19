@@ -90,7 +90,10 @@ func New() *Table {
 
 // HandleRoute registers r. It refuses, with seam.ErrInvalidRoute, a route
 // that seam.Route.Validate refuses, a route of the pod proxy listener, a
-// route whose mux pattern its mux already holds, and a route the request
+// pattern that does not begin with a slash, such as one that names a host,
+// a route of the internal listener under a session path of the client
+// listener, which shares its mux and would take precedence over the
+// request pipeline there, a route whose mux pattern its mux already holds, and a route the request
 // pipeline mounts once PipelineRoutes has sealed its listener, so no route
 // is silently left unmounted. A route whose handler authenticates the
 // request itself and whose path lies outside the session paths is mounted
@@ -107,6 +110,12 @@ func (t *Table) HandleRoute(r seam.Route) error {
 	}
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	if !strings.HasPrefix(r.Pattern, "/") {
+		return fmt.Errorf("%w: %s %s: a pattern begins with a slash and names no host", seam.ErrInvalidRoute, r.Method, r.Pattern)
+	}
+	if r.Listener == seam.ListenerInternal && underSessionPaths(seam.ListenerClient, r.Pattern) {
+		return fmt.Errorf("%w: %s %s: the internal listener shares the client listener's mux, whose session paths the request pipeline serves", seam.ErrInvalidRoute, r.Method, r.Pattern)
+	}
 	pattern := r.MuxPattern()
 	if t.mounted[mux][pattern] {
 		return fmt.Errorf("%w: %s is already registered on a listener sharing the mux of listener %d", seam.ErrInvalidRoute, pattern, r.Listener)

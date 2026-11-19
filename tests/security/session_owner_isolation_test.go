@@ -180,8 +180,9 @@ func assertMissingAnswer(t *testing.T, g *liveGateway, c isoCaller, id string, m
 // A refused read for custom-role bob first rules out the fixture: bob's
 // platform-managed assignment replaces his bearer's role claim unless
 // clearRoleAssignment removed it.
-// The ownership check is requireSessionAccess and SessionAccessible in
-// pkg/gateway/sessionserver/rbac_gate.go and the list filter in
+// The ownership check is the API front's session check, which reaches
+// authorizeSeamSession and SessionAccessible in pkg/gateway/sessionserver,
+// and the list filter in
 // session_read.go; the custom role reaches the principal through the
 // bearer role claim, and principalHolds resolves it against the
 // custom-role store cmd/lenny-gateway wires into the session server. Every refusal must be the missing-session 404,

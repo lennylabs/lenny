@@ -35,7 +35,7 @@ func Attach(t testing.TB, srv *sessionserver.Server, opts platformtools.Options)
 		opts.Sessions = core
 	}
 	if opts.Identity == nil {
-		opts.Identity = core
+		opts.Identity = pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()}
 	}
 	if opts.ActiveCallers == nil {
 		opts.ActiveCallers = core

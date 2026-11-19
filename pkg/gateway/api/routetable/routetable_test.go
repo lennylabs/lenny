@@ -130,8 +130,9 @@ func TestPipelineRoutesReturnsHeldRoutesAndClosesTheirRegistration(t *testing.T)
 // TestHandleRouteRefusesRoutesTheAPIFrontCannotServe checks the refusals:
 // an invalid route, a route of the pod proxy listener, a repeated method
 // and pattern on the listener that registered it and on the listener that
-// shares its mux, and a malformed pattern; and that a refused route is not
-// registered.
+// shares its mux, a malformed pattern, a pattern that names a host, and a
+// route of the internal listener under a session path of the client
+// listener; and that a refused route is not registered.
 // spec: GWSEAM-HandleRoute
 func TestHandleRouteRefusesRoutesTheAPIFrontCannotServe(t *testing.T) {
 	table := routetable.New()
@@ -145,6 +146,9 @@ func TestHandleRouteRefusesRoutesTheAPIFrontCannotServe(t *testing.T) {
 		"repeat":            base,
 		"repeat on sharing": {Listener: seam.ListenerInternal, Method: http.MethodGet, Pattern: "/metrics", Access: seam.AccessHandler, Handler: marker("metrics")},
 		"malformed":         {Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "no-slash", Access: seam.AccessHandler, Handler: marker("bad")},
+		"host pattern":      {Listener: seam.ListenerClient, Method: http.MethodGet, Pattern: "evil.example/v1/sessions/{id}", Access: seam.AccessHandler, Handler: marker("host")},
+		"internal session":  {Listener: seam.ListenerInternal, Method: http.MethodGet, Pattern: "/v1/sessions/{id}/x", Access: seam.AccessHandler, Handler: marker("internal")},
+		"internal models":   {Listener: seam.ListenerInternal, Method: http.MethodGet, Pattern: "/v1/models", Access: seam.AccessHandler, Handler: marker("internal")},
 	}
 	for name, r := range cases {
 		t.Run(name, func(t *testing.T) {

@@ -290,3 +290,25 @@ func TestMountServesEachListenersRoutesOnItsSessionPaths(t *testing.T) {
 		t.Errorf("a second Mount = %v, want ErrInvalidRoute", err)
 	}
 }
+
+// TestIdentityResolvesTheTenantAsTheTenantCheckDoes checks that the request
+// identity the API front hands the parts returns the principal's tenant,
+// under the dev header posture the header's tenant, and outside it no
+// tenant.
+//
+// spec: GWSEAM-RequestTenant
+func TestIdentityResolvesTheTenantAsTheTenantCheckDoes(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "/v1/x", nil)
+	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "bob@acme.com", TenantID: "acme"}))
+	if got := (pipeline.Identity{}).RequestTenant(req); got != "acme" {
+		t.Errorf("principal tenant = %q, want acme", got)
+	}
+	dev := httptest.NewRequest(http.MethodGet, "/v1/x", nil)
+	dev.Header.Set("X-Lenny-Tenant-ID", "globex")
+	if got := (pipeline.Identity{DevTenantHeader: true}).RequestTenant(dev); got != "globex" {
+		t.Errorf("dev header tenant = %q, want globex", got)
+	}
+	if got := (pipeline.Identity{}).RequestTenant(dev); got != "" {
+		t.Errorf("dev header outside dev mode = %q, want empty", got)
+	}
+}

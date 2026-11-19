@@ -6,7 +6,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
@@ -17,11 +16,8 @@ import (
 
 // StreamSeam is the session core's side of the seam operations the stream
 // proxy calls: the session lookup and authorization, the frames a reader
-// attaching after a coordinator handoff receives, and the request identity
-// operation, which the test harnesses take from it while the composition
-// root hands the stream proxy the API front's pipeline.Identity. The
-// composition root hands it to the stream proxy through the seam
-// interfaces. The operations every seam calls run in
+// attaching after a coordinator handoff receives. The composition root
+// hands it to the stream proxy through the seam interfaces. The operations every seam calls run in
 // methods of Server that each seam's adapter shares.
 type StreamSeam struct {
 	s *Server
@@ -29,9 +25,8 @@ type StreamSeam struct {
 
 // The stream proxy reaches the session core through these interfaces.
 var (
-	_ seam.Sessions        = (*StreamSeam)(nil)
-	_ seam.StreamFrames    = (*StreamSeam)(nil)
-	_ seam.RequestIdentity = (*StreamSeam)(nil)
+	_ seam.Sessions     = (*StreamSeam)(nil)
+	_ seam.StreamFrames = (*StreamSeam)(nil)
 )
 
 // StreamSeam returns the session core's side of the stream proxy's seam
@@ -50,11 +45,6 @@ func (c *StreamSeam) LookupSession(ctx context.Context, tenantID, sessionID stri
 // the stream proxy does not call it today.
 func (c *StreamSeam) AuthorizeSession(ctx context.Context, tenantID, sessionID string, action seam.SessionAction) (seam.Session, error) {
 	return c.s.authorizeSeamSession(ctx, tenantID, sessionID, action)
-}
-
-// RequestTenant is GWSEAM-RequestTenant for the stream proxy.
-func (c *StreamSeam) RequestTenant(r *http.Request) string {
-	return c.s.requestSeamTenant(r)
 }
 
 // ResumedFrame returns the session.resumed frame a reader attaching after a
@@ -164,12 +154,4 @@ func (s *Server) authorizeSeamSession(ctx context.Context, tenantID, sessionID s
 		return seam.Session{}, fmt.Errorf("session %s: %w", sessionID, seam.ErrSessionNotFound)
 	}
 	return seamSessionOf(row), nil
-}
-
-// requestSeamTenant returns the tenant a request runs as, as the session
-// routes resolve it.
-//
-// spec: GWSEAM-RequestTenant
-func (s *Server) requestSeamTenant(r *http.Request) string {
-	return s.resolveTenant(r)
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 )
 
@@ -19,7 +20,8 @@ import (
 func attachUploads(t *testing.T, srv *Server, opts uploadhandler.Options) *uploadhandler.Handler {
 	t.Helper()
 	core := srv.UploadSeam()
-	opts.Sessions, opts.Identity, opts.Forwarding, opts.Workspaces = core, core, core, core
+	opts.Sessions, opts.Forwarding, opts.Workspaces = core, core, core
+	opts.Identity = pipeline.Identity{DevTenantHeader: srv.devTenantHeader}
 	opts.Tokens, opts.Quota, opts.Audit = core, core, core
 	up, err := uploadhandler.New(opts)
 	if err != nil {

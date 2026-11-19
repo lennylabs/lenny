@@ -14,6 +14,7 @@ package uploadwire
 import (
 	"testing"
 
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/uploadhandler"
 	"github.com/lennylabs/lenny/tests/testinfra/apifront"
@@ -32,7 +33,7 @@ func Attach(t testing.TB, srv *sessionserver.Server, opts uploadhandler.Options)
 		opts.Sessions = core
 	}
 	if opts.Identity == nil {
-		opts.Identity = core
+		opts.Identity = pipeline.Identity{DevTenantHeader: srv.DevTenantHeader()}
 	}
 	if opts.Forwarding == nil {
 		opts.Forwarding = core

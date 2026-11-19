@@ -43,7 +43,7 @@ func TestNewRefusesOptionsWithoutARequiredOperation(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	core := srv.ToolsSeam()
 	full := platformtools.Options{
-		Sessions: core, Identity: core, Callers: pipeline.Callers{}, ActiveCallers: core, Store: memstore.New(),
+		Sessions: core, Identity: pipeline.Identity{}, Callers: pipeline.Callers{}, ActiveCallers: core, Store: memstore.New(),
 	}
 	if _, err := platformtools.New(full); err != nil {
 		t.Fatalf("New with every required operation: %v", err)
@@ -72,7 +72,7 @@ func TestRegisterRoutesDeclaresEachRouteWithItsAccessCheck(t *testing.T) {
 	srv := sessionserver.New(memstore.New(), sessionserver.Options{})
 	core := srv.ToolsSeam()
 	h, err := platformtools.New(platformtools.Options{
-		Sessions: core, Identity: core, Callers: pipeline.Callers{}, ActiveCallers: core, Store: memstore.New(),
+		Sessions: core, Identity: pipeline.Identity{}, Callers: pipeline.Callers{}, ActiveCallers: core, Store: memstore.New(),
 	})
 	if err != nil {
 		t.Fatal(err)

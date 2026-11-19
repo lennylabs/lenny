@@ -18,7 +18,11 @@ type serviceTenantKey struct{}
 // ServiceCall. An empty tenant leaves ctx unchanged, so the request resolves
 // only through its principal. A tenant that fails the §10.2 format check is
 // not recorded either, so a malformed value fails closed instead of
-// reaching a store query.
+// reaching a store query. Only an in-process service entry point that runs
+// on behalf of an already-authenticated request calls it, with the tenant
+// that request resolved; a tenant a client supplied never reaches it,
+// because the tenant gate then resolves that tenant for a request with no
+// principal.
 func WithServiceTenant(ctx context.Context, tenant string) context.Context {
 	if tenant == "" || auth.ValidateTenantID(tenant) != nil {
 		return ctx

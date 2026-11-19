@@ -315,24 +315,3 @@ func TestAuditUploadWritesTheSessionUploadEventUnderTheSessionsTenant(t *testing
 	quiet := sessionserver.New(memstore.New(), sessionserver.Options{}).UploadSeam()
 	quiet.AuditUpload(context.Background(), seam.UploadAuditEvent{Session: seam.Session{ID: "sess-a"}})
 }
-
-// TestRequestTenantResolvesTheTenantAsTheSessionRoutesDo checks that the
-// request identity operation returns the principal's tenant, and under the
-// dev header posture the header's tenant.
-//
-// spec: GWSEAM-RequestTenant
-func TestRequestTenantResolvesTheTenantAsTheSessionRoutesDo(t *testing.T) {
-	req := httptest.NewRequest(http.MethodGet, "/v1/x", nil)
-	req = req.WithContext(authmw.WithPrincipal(req.Context(), authmw.Principal{Subject: "bob@acme.com", TenantID: "acme"}))
-	if got := sessionserver.New(memstore.New(), sessionserver.Options{}).UploadSeam().RequestTenant(req); got != "acme" {
-		t.Errorf("principal tenant = %q, want acme", got)
-	}
-	dev := httptest.NewRequest(http.MethodGet, "/v1/x", nil)
-	dev.Header.Set("X-Lenny-Tenant-ID", "globex")
-	if got := sessionserver.New(memstore.New(), sessionserver.Options{DevTenantHeader: true}).UploadSeam().RequestTenant(dev); got != "globex" {
-		t.Errorf("dev header tenant = %q, want globex", got)
-	}
-	if got := sessionserver.New(memstore.New(), sessionserver.Options{}).UploadSeam().RequestTenant(dev); got != "" {
-		t.Errorf("dev header outside dev mode = %q, want empty", got)
-	}
-}

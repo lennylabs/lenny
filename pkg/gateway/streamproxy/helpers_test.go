@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/gateway/api/pipeline"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
@@ -45,7 +46,7 @@ func newStreamServer(t *testing.T, store sessionstore.Store, opts sessionserver.
 		Events:   opts.Events,
 		Sessions: core,
 		Frames:   core,
-		Identity: core,
+		Identity: pipeline.Identity{DevTenantHeader: opts.DevTenantHeader},
 		Clock:    opts.Clock,
 	})
 	if err != nil {

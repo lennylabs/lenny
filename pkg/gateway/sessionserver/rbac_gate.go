@@ -51,8 +51,8 @@ import (
 // admission reaches a session: the ownership step that follows refuses
 // a request with no principal subject with 401 UNAUTHORIZED on every
 // {id} route, on list, and on create, and it limits a role-less
-// principal to its own sessions (requireSessionAccess,
-// SessionAccessible, and ownerFromPrincipal).
+// principal to its own sessions (authorizeSeamSession, which serves
+// GWSEAM-AuthorizeSession, SessionAccessible, and ownerFromPrincipal).
 //
 // Multi-tenant fail-closed (F-10.2.4): when the server was constructed
 // with `MultiTenant=true` (mirroring auth.multiTenant), an authenticated
