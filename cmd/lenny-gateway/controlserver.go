@@ -16,11 +16,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectorinvoke"
 	"github.com/lennylabs/lenny/pkg/gateway/connectors/connectortools"
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
-	"github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
+	toolbridge "github.com/lennylabs/lenny/pkg/gateway/gatewaycontrol/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol/leaseelicit"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/watchdog"
@@ -123,7 +124,7 @@ func (w *gatewayWiring) buildControlServer(
 	// intra-pod platform tool calls (over GatewayControl) to the same
 	// platform tool surface the gateway-edge /mcp endpoint serves,
 	// scoped to the calling session. F-9.1.1.
-	platformToolBridge := platformtools.New(mcpSrv, w.sessions)
+	platformToolBridge := toolbridge.New(mcpSrv, sessionserver.NewCallingSessions(w.sessions))
 	// §9.3 — the connector bridge resolves a session's
 	// policy-permitted connectors and forwards a type:agent runtime's
 	// intra-pod per-connector tool calls (over GatewayControl) to the
@@ -226,7 +227,7 @@ func (w *gatewayWiring) buildControlServer(
 		ExpiryWarningSeconds:           *sessionExpiryWarningSeconds,
 	}, nil).
 		WithBilling(w.billing).
-		WithTreeArchive(w.treeArchive).
+		WithTreeArchive(platformtools.NewTreeArchive(w.treeArchive)).
 		WithTerminalHook(sessionSrv).
 		// spec: §11.3 — the maxSessionAge sweep honours a
 		// deployer's per-runtime `limits.maxSessionAgeSeconds` / per-pool
@@ -270,40 +271,12 @@ func (w *gatewayWiring) buildControlServer(
 	w.watchdogCancel = watchdogCancel
 }
 
-// leaseExtendSeam adapts leasecontrol.Service.ExtendForBudget into the
-// sessionbudget.ExtendOnExhaustion the enforcer consults at the
-// exhaustion boundary. It threads both contexts through to the two-context
-// ExtendForBudget (reqCtx for the Pending-vs-Terminal discrimination,
-// waitCtx for the in-path deadline) and maps the returned
-// leasecontrol.Outcome onto the enforcer's own tri-state so the two
-// packages stay decoupled with no import cycle. The extension does not
-// carry a budget/consumed amount: budget exhaustion asks for as much
-// headroom as the §8.6 ceiling allows, which ExtendForBudget derives from
-// the tree budget, so the seam ignores those parameters. The seam threads
-// the tenant the enforcer holds into the dispatch, which reads the session
-// rows under it (§8.6 Extension state). A dispatch error
-// fails closed to Terminal: an unresolvable or errored extension denies
-// and terminates the session rather than silently granting tokens. spec:
-// §8.6; proposal 0023 S6.
+// leaseExtendSeam returns the enforcer's extension seam over the lease
+// control service's side of GWSEAM-ExtendForBudget. The mapping of the
+// extension's outcome onto the enforcer's tri-state, which fails a dispatch
+// error closed to Terminal, is sessionbudget.ExtendVia's.
 func leaseExtendSeam(svc *leasecontrol.Service) sessionbudget.ExtendOnExhaustion {
-	return func(reqCtx, waitCtx context.Context, tenantID, sessionID string, _, _ int64) sessionbudget.Outcome {
-		outcome, err := svc.ExtendForBudget(reqCtx, waitCtx, tenantID, sessionID)
-		if err != nil {
-			// Fail closed: a transport fault, an unresolvable session, or a
-			// missing tree budget denies and terminates (§8.6 fail-closed
-			// posture), the same as an explicit CEILING_REACHED/REJECTED.
-			return sessionbudget.Terminal
-		}
-		switch outcome {
-		case leasecontrol.OutcomeGranted:
-			return sessionbudget.Granted
-		case leasecontrol.OutcomePending:
-			return sessionbudget.Pending
-		default:
-			// OutcomeTerminal and any unknown value fail closed.
-			return sessionbudget.Terminal
-		}
-	}
+	return sessionbudget.ExtendVia(svc.BudgetExtensions())
 }
 
 // scrubReportServiceWired reports whether the §4.7 scrub-report service is

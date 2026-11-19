@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -539,8 +541,8 @@ func (h *Harness) AddReplica(name string) *Replica {
 		MaxResuming:                MaxResuming,
 		SuspensionCheckpointer:     h.Checkpoints,
 		Interactions:               h.Interactions,
-		TreeRecoveryMetrics:        h.TreeMetrics,
-		InputWaits:                 r.InputWaits,
+		TreeRecovery:               platformtools.NewTreeRecovery(platformtools.RecoveryConfig{Metrics: h.TreeMetrics}),
+		InputWaits:                 platformtools.NewInputWaits(r.InputWaits),
 		Pools:                      h.poolRegistry(),
 		WorkspaceSealMaxDuration:   SealWindow,
 		StreamFailureReportTimeout: ReleaseAllowance,

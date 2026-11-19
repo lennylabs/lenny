@@ -593,3 +593,30 @@ func (m *episodeManager) fanOut(members map[string]*member, resolved map[string]
 		}
 	}
 }
+
+// BudgetExtensions returns the service's side of GWSEAM-ExtendForBudget,
+// which the metering proxy's budget enforcer calls when a session exhausts
+// its token budget.
+func (s *Service) BudgetExtensions() seam.BudgetExtensions { return budgetExtensions{s: s} }
+
+// budgetExtensions maps ExtendForBudget's outcome onto the seam's.
+type budgetExtensions struct{ s *Service }
+
+// ExtendForBudget requests a budget extension and waits for it within
+// waitCtx. An unknown outcome maps to seam.BudgetTerminal.
+//
+// spec: GWSEAM-ExtendForBudget
+func (b budgetExtensions) ExtendForBudget(reqCtx, waitCtx context.Context, tenantID, sessionID string) (seam.BudgetExtension, error) {
+	outcome, err := b.s.ExtendForBudget(reqCtx, waitCtx, tenantID, sessionID)
+	if err != nil {
+		return seam.BudgetTerminal, err
+	}
+	switch outcome {
+	case OutcomeGranted:
+		return seam.BudgetGranted, nil
+	case OutcomePending:
+		return seam.BudgetPending, nil
+	default:
+		return seam.BudgetTerminal, nil
+	}
+}

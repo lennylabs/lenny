@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
@@ -99,7 +101,7 @@ func endSeededSession(t *testing.T, store sessionstore.Store, id string) {
 func TestTerminateArchivesChildToTreeArchive(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
@@ -120,7 +122,7 @@ func TestTerminateArchivesChildToTreeArchive(t *testing.T) {
 func TestCancelArchivesChildToTreeArchive(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
@@ -141,7 +143,7 @@ func TestCancelArchivesChildToTreeArchive(t *testing.T) {
 func TestTerminateDoesNotArchiveRootSession(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 	seedTreeSession(t, store, "sess_root", "")
 
 	rr := sessionRequest(t, asOwner(srv.Handler()), http.MethodPost, "/v1/sessions/sess_root/terminate")
@@ -238,7 +240,7 @@ func TestCascadeRespectsPerNodePolicy(t *testing.T) {
 
 func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 1})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 1})
 	now := time.Now()
 	// A pre-existing orphan: a running child of an already-terminal root.
 	if err := store.Create(context.Background(), sessionstore.Session{
@@ -278,7 +280,7 @@ func TestDetachFallsBackToCancelAllOverOrphanCap(t *testing.T) {
 // orphan under the live root and let the detach stand.
 func TestOrphanCapCountsChildrenOfTerminalMidTreeSession_spec_8_10(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 2})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 2})
 	seedTreeSession(t, store, "live_root", "")
 	seedDelegatedSession(t, store, "mid", "live_root")
 	for _, id := range []string{"mid_kid_a", "mid_kid_b"} {
@@ -330,9 +332,9 @@ func TestDetachFallbackEmitsCascadeAppliedAudit_spec_8_10_1103(t *testing.T) {
 	store := memstore.New()
 	sink := &orphanCapAuditSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader:         true,
-		MaxOrphanTasksPerTenant: 1,
-		LifecycleAuditSink:      sink,
+		DevTenantHeader: true,
+		TreeOrphans:     platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 1,
+		LifecycleAuditSink: sink,
 	})
 	now := time.Now()
 	// Pre-existing orphan to push the tenant over the cap.
@@ -391,9 +393,9 @@ func TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103(t *testing.T) {
 	store := memstore.New()
 	sink := &orphanCapAuditSink{}
 	srv := sessionserver.New(store, sessionserver.Options{
-		DevTenantHeader:         true,
-		MaxOrphanTasksPerTenant: 100,
-		LifecycleAuditSink:      sink,
+		DevTenantHeader: true,
+		TreeOrphans:     platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 100,
+		LifecycleAuditSink: sink,
 	})
 	seedCascadeSession(t, store, "sess_parent", "", session.CascadeDetach)
 	seedTreeSession(t, store, "sess_child", "sess_parent")
@@ -411,7 +413,7 @@ func TestDetachUnderCapDoesNotEmitFallbackAudit_spec_8_10_1103(t *testing.T) {
 
 func TestDetachProceedsUnderOrphanCap(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, MaxOrphanTasksPerTenant: 10})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeOrphans: platformtools.TreeOrphans{}, MaxOrphanTasksPerTenant: 10})
 	now := time.Now()
 	if err := store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -441,7 +443,7 @@ func TestDetachProceedsUnderOrphanCap(t *testing.T) {
 func TestCascadeArchivesCancelledChildren(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 	seedTreeSession(t, store, "sess_parent", "")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
 
@@ -557,7 +559,7 @@ func TestResumeChildrenReattachedCarriesPendingRequestIDFromInputWait(t *testing
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
 		Events:          bus,
-		InputWaits:      reg,
+		InputWaits:      platformtools.NewInputWaits(reg),
 	})
 	seedAwaitingParent(t, store, "sess_parent")
 	seedTreeSession(t, store, "sess_child", "sess_parent")
@@ -692,7 +694,7 @@ func TestResumeChildrenReattachedPendingRequestIDAbsentWhenIdle(t *testing.T) {
 func TestTreeArchiveResolvesTheTreeRoot(t *testing.T) {
 	store := memstore.New()
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, TreeArchive: platformtools.NewTreeArchive(archive)})
 	// A three-level tree: root → mid → leaf.
 	seedTreeSession(t, store, "sess_root", "")
 	seedTreeSession(t, store, "sess_mid", "sess_root")

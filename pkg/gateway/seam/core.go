@@ -106,10 +106,24 @@ type Terminals interface {
 	// caller's own terminal signals inside the pipeline; the result is the
 	// session record after the pipeline.
 	AfterTerminalWrite(ctx context.Context, from state.State, s Session, signals func(context.Context, Session)) Session
+}
 
+// ForceTerminations is served by the session core to the API front: the
+// operator's force-terminate of a session.
+type ForceTerminations interface {
 	// ForceTerminate is GWSEAM-ForceTerminate. It reports the session
 	// after the write, the state it left, and whether this call moved it.
 	ForceTerminate(ctx context.Context, tenantID, sessionID string) (s Session, previous state.State, transitioned bool, err error)
+}
+
+// CallingSessions is served by the session core to the platform tools
+// seam's bridge of the platform tool calls a session's pod makes over
+// LNK-GWCONTROL. The core's forward listener resolves a forwarded tool
+// call's calling session the same way.
+type CallingSessions interface {
+	// AttachCallingSession is GWSEAM-AttachCallingSession. It returns
+	// ErrSessionNotFound for an unknown calling session.
+	AttachCallingSession(ctx context.Context, sessionID string) (context.Context, error)
 }
 
 // Revocations is served by the session core to the API front: the session
@@ -345,6 +359,14 @@ type PodRecycle interface {
 
 	// RetirePod retires a pod.
 	RetirePod(ctx context.Context, podID string, r PodRetirement) error
+
+	// RecordScrubFailure is GWSEAM-RecordScrubFailure. count is the pod's
+	// cumulative count of failed scrubs after this one.
+	RecordScrubFailure(podID, pool, runtimeClass string, count int)
+
+	// RecordPodRetirement is GWSEAM-RecordPodRetirement. reason is a
+	// retirement reason of the pod scrub contract.
+	RecordPodRetirement(reason, pool, runtimeClass string)
 }
 
 // PodRecyclePolicy is what InspectForRecycle returns for one pod. The

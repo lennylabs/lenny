@@ -82,7 +82,7 @@ func (s *Server) parseMessageBatch(w http.ResponseWriter, r *http.Request, row s
 	deliverIdx := make([]int, 0, len(req.Messages))
 	for i, m := range req.Messages {
 		if m.InReplyTo != "" && s.inputWaits != nil {
-			if err := s.inputWaits.Resolve(row.ID, m.InReplyTo, m.Content.Text()); err == nil {
+			if err := s.inputWaits.ResolveInputWait(row.ID, m.InReplyTo, m.Content.Text()); err == nil {
 				continue
 			}
 			// A non-matching inReplyTo falls through to normal
@@ -276,7 +276,7 @@ type restDelivery struct {
 func (d *restDelivery) route(row sessionstore.Session, msgs []executor.Message, deliverIdx []int) (deliveryOutcome, bool) {
 	s := d.s
 	inputRequired := row.State == session.StateInputRequired ||
-		(s.inputWaits != nil && len(s.inputWaits.PendingForSession(row.ID)) > 0)
+		(s.inputWaits != nil && len(s.inputWaits.PendingInputWaits(row.ID)) > 0)
 	decision := messagerouting.Classify(row.State, inputRequired, d.immediate(deliverIdx), messagerouting.SourceExternal)
 	switch decision.Action {
 	case messagerouting.ActionDeliver:

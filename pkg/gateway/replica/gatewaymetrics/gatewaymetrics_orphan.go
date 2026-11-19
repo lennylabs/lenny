@@ -8,7 +8,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/metrics"
 )
 
-// orphanMetrics holds the §8.10 / §10.1 orphan-cap, tree-recovery, orphan-session, and pod-state-mirror metrics.
+// orphanMetrics holds the §8.10 / §10.1 orphan-cap, orphan-session, and pod-state-mirror metrics.
 type orphanMetrics struct {
 	// maxOrphanTasksPerTenant is the §8.10 deployer-configured
 	// orphan-cap exposed as an unlabeled gauge so the §16.5
@@ -16,13 +16,6 @@ type orphanMetrics struct {
 	// `scalar(lenny_max_orphan_tasks_per_tenant)` to the live ceiling.
 	// F-8.10.13.
 	maxOrphanTasksPerTenant prometheus.Gauge
-	// §8.10 / §16.1 tree-recovery observability. treeRecoveryDuration
-	// observes one wall-clock duration per tree-recovery operation;
-	// treeRecoveryTimeout counts the per-timeout-type rollups. The
-	// orphan-cleanup sweep registers its own run, terminated, and active
-	// metrics. spec: §8.10; §16.1. F-8.10.7.
-	treeRecoveryDuration *prometheus.HistogramVec
-	treeRecoveryTimeout  *prometheus.CounterVec
 	// §10.1 orphan-session reconciler observability.
 	// orphanSessionReconciliations counts each session the §10.1.4
 	// reconciler forces to `failed` after its bound pod terminated with
@@ -61,29 +54,10 @@ func newOrphanMetrics(reg *prometheus.Registry) (orphanMetrics, error) {
 	if err != nil {
 		return m, err
 	}
-	treeRecoveryDuration, err := metrics.NewHistogram(prometheus.HistogramOpts{
-		Name:    "lenny_delegation_tree_recovery_duration_seconds",
-		Help:    "Delegation tree-recovery wall-clock duration by outcome (§8.10 / §16.1).",
-		Buckets: []float64{0.5, 1, 5, 10, 30, 60, 120, 300, 600, 1200, 1800},
-	}, []string{"pool", "outcome"})
-	if err != nil {
-		return m, err
-	}
-	treeRecoveryTimeout, err := metrics.NewCounter(prometheus.CounterOpts{
-		Name: "lenny_delegation_tree_recovery_timeout_total",
-		Help: "Delegation tree-recovery timeouts by timeout type (`level` | `tree`) (§8.10 / §16.1).",
-	}, []string{"pool", "timeout_type"})
-	if err != nil {
-		return m, err
-	}
 	reg.MustRegister(maxOrphanTasksPerTenant,
 		orphanSessionReconciliations,
-		agentPodStateMirrorLag,
-		treeRecoveryDuration,
-		treeRecoveryTimeout)
+		agentPodStateMirrorLag)
 	m.maxOrphanTasksPerTenant = maxOrphanTasksPerTenant.WithLabelValues()
-	m.treeRecoveryDuration = treeRecoveryDuration
-	m.treeRecoveryTimeout = treeRecoveryTimeout
 	m.orphanSessionReconciliations = orphanSessionReconciliations
 	m.agentPodStateMirrorLag = agentPodStateMirrorLag
 	return m, nil

@@ -44,9 +44,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/evalstore"
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentstore"
 	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/credrouter"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treerecovery"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
@@ -60,14 +57,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/slothealth"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioncallback"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/leasestore"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
@@ -296,9 +291,13 @@ type Server struct {
 	// manifest row after the derive path copies the parent's chunks into
 	// the derived prefix.
 	checkpointManifestWriter CheckpointManifestWriter
-	treeArchive              treearchive.Store
-	taskUsage                *resultrollup.Builder
-	treeBudgetReturner       TreeBudgetReturner
+	// treeArchive, treeRollups, and treeBudgets are the platform tools
+	// seam's delegation tree operations the core calls; each is nil when
+	// the gateway does not run that part.
+	treeArchive seam.TreeArchive
+	treeRollups seam.TreeRollups
+	treeBudgets seam.TreeBudgets
+	treeOrphans seam.TreeOrphans
 	// usageQuiescenceTimeout is the §8.3 usage quiescence wait before a
 	// delegated child's budget return, resolved by UsageQuiescenceTimeoutFor.
 	usageQuiescenceTimeout time.Duration
@@ -307,7 +306,6 @@ type Server struct {
 	quiescenceTimer    func(time.Duration) <-chan time.Time
 	quotaCheckpointer  QuotaFinalCheckpointer
 	hwmObserver        DelegationHighWatermarkObserver
-	hwmReader          DelegationHighWatermarkReader
 	maxOrphanTasks     int
 	evals              evalstore.Store
 	memory             memorystore.Store
@@ -347,7 +345,7 @@ type Server struct {
 	// treeRecovery drives the §8.10 bottom-up delegation-tree recovery
 	// from the resume path. Nil leaves resume's per-session behavior
 	// unchanged (no descendant reattach traversal).
-	treeRecovery *treerecovery.Orchestrator
+	treeRecovery seam.TreeRecovery
 	// treeRecoveryHook, when set, is called with the tree root id once a
 	// detached recoverDelegationTree goroutine finishes. Tests use it to
 	// await the async recovery deterministically; nil in production.
@@ -441,10 +439,6 @@ type Server struct {
 	// release without a checkpoint would lose the workspace. spec: §6.2
 	// (Pod State Machine).
 	suspensionCheckpointer SuspensionCheckpointer
-	// budgetRearmer re-arms the TTL of a suspended session's delegation
-	// budget keys on each committed transition into or out of suspended.
-	// Nil re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
-	budgetRearmer BudgetKeyRearmer
 	// sealerFor returns the runtime adapter's session seal for a binding.
 	// Nil uses the binding's adapter client; a unit test replaces it with a
 	// fake. spec: §4.7.1 (Role and Gateway RPC Contract).
@@ -536,7 +530,7 @@ type Server struct {
 	// leaves the resolution endpoints recording the interaction phase
 	// only — the dev / non-pod posture where nothing blocks on the
 	// verdict. spec: §7.2. F-7.2.18.
-	toolApprovalWaits *toolapproval.Registry
+	toolApprovalWaits seam.ToolApprovals
 
 	// treeCycleObserver, when set, receives a §8.9 cycle observation
 	// whenever the /v1/sessions/{id}/tree walker hits a repeated node
@@ -569,7 +563,7 @@ type Server struct {
 	// registry is shared with the MCP `lenny/send_message` /
 	// `lenny/request_input` pair so the two transports route to the
 	// same blocked tool call. spec: §7.2.
-	inputWaits *inputwait.Registry
+	inputWaits seam.InputWaits
 
 	// deriveLock, when set, serializes concurrent /v1/sessions/{id}/derive
 	// calls on the same source session per §7.1. The session-
@@ -804,7 +798,7 @@ type Options struct {
 	// blocked runtime tool call unblocks. Nil leaves the endpoints
 	// recording the interaction phase only. spec: §7.2.
 	// F-7.2.18.
-	ToolApprovalWaits *toolapproval.Registry
+	ToolApprovalWaits seam.ToolApprovals
 
 	// TreeCycleObserver, when set, receives a §8.9 cycle observation
 	// when /v1/sessions/{id}/tree hits a repeated node in the
@@ -831,13 +825,13 @@ type Options struct {
 	CallbackDispatcher *sessioncallback.Dispatcher
 
 	// InputWaits is the shared §8.5 `lenny/request_input` pending-call
-	// registry. When set, the REST POST /v1/sessions/{id}/messages
-	// handler resolves a §7.2 path 1 `inReplyTo` directly against the
-	// registry instead of routing through the executor. Production
-	// wires the same `*inputwait.Registry` instance into both the
-	// sessionserver and the MCP tools deps; tests can leave it nil for
-	// pre-F-7.2.14 behaviour. spec: §7.2. F-7.2.14.
-	InputWaits *inputwait.Registry
+	// registry, which the platform tools seam serves. When set, the REST
+	// POST /v1/sessions/{id}/messages handler resolves a §7.2 path 1
+	// `inReplyTo` directly against the registry instead of routing
+	// through the executor. Production wires the registry the MCP tools
+	// use; tests can leave it nil for pre-F-7.2.14 behaviour. spec:
+	// §7.2. F-7.2.14.
+	InputWaits seam.InputWaits
 
 	// DefaultRetention overrides the §7.1 default artifact-
 	// retention window. A non-positive value selects
@@ -1207,11 +1201,6 @@ type Options struct {
 	// spec: §6.2 (Pod State Machine).
 	SuspensionCheckpointer SuspensionCheckpointer
 
-	// BudgetKeyRearmer re-arms the TTL of a session tree's delegation budget
-	// keys on each committed transition into or out of suspended. Nil
-	// re-arms nothing. spec: §8.3 (Delegation Policy and Lease).
-	BudgetKeyRearmer BudgetKeyRearmer
-
 	// IncSessionPodReleasedDuringSuspension and
 	// IncSessionSuspensionCheckpointFailed, when set, increment the §16.1
 	// lenny_session_pod_released_during_suspension_total and
@@ -1320,21 +1309,32 @@ type Options struct {
 	// TreeArchive, when set, receives a §8.10 archive record for every
 	// child session (a session with a parent) that reaches a terminal
 	// state, so a resumed parent can replay the outcome. Nil disables
-	// delegation-tree archiving.
-	TreeArchive treearchive.Store
+	// delegation-tree archiving. The platform tools seam serves it.
+	TreeArchive seam.TreeArchive
 
-	// TaskUsage, when set, assembles the §8.8 TaskResult.usage and
-	// TaskResult.treeUsage rollups stamped on every materialized result.
-	// Nil leaves both absent (the pre-metering behaviour).
-	// spec: §8.8.
-	TaskUsage *resultrollup.Builder
+	// TreeRollups, when set, assembles the §8.8 TaskResult.usage and
+	// TaskResult.treeUsage rollups stamped on every materialized result,
+	// and reads the subtree tokens of a child's budget return. Nil leaves
+	// both rollups absent (the pre-metering behaviour). The platform tools
+	// seam serves it.
+	TreeRollups seam.TreeRollups
 
-	// TreeBudgetReturner, when set, releases the §12.4 delegation tree
-	// budget a settled child consumed: the §8.2 maxTreeMemoryBytes
-	// offload decrement and the per-parent parallel_children decrement
-	// fire once per child as it reaches a terminal state. Nil disables
-	// the decrement (developer mode without Redis-backed counters).
-	TreeBudgetReturner TreeBudgetReturner
+	// TreeBudgets, when set, holds the delegation tree budget counters:
+	// the budget return of a settled child (the §8.2 maxTreeMemoryBytes
+	// offload decrement and the per-parent parallel_children decrement,
+	// once per child as it reaches a terminal state), the re-arm of a
+	// tree's budget keys on each committed transition into or out of
+	// suspended, and the §8.3 per-tree parallel-children high-watermark
+	// read when a tree's root settles. Nil disables all three (developer
+	// mode without Redis-backed counters). The platform tools seam serves
+	// it.
+	TreeBudgets seam.TreeBudgets
+
+	// TreeOrphans classifies the orphaned sessions the §8.10
+	// maxOrphanTasksPerTenant cap counts. Nil counts no orphan, so a
+	// detach-policy session never escalates. The platform tools seam
+	// serves it.
+	TreeOrphans seam.TreeOrphans
 
 	// UsageQuiescenceTimeout is the §11.3
 	// delegation.usageQuiescenceTimeoutSeconds: how long after a delegated
@@ -1355,12 +1355,10 @@ type Options struct {
 	// (developer mode without the Postgres checkpoint store).
 	QuotaCheckpointer QuotaFinalCheckpointer
 
-	// HighWatermarkReader and HighWatermarkObserver wire the §8.3 per-tree parallel-children high-watermark observation: when a
-	// delegation tree's root session settles, the gateway reads the
-	// recorded maximum simultaneous in-flight children and observes it
-	// onto the §16.1 histogram. Both nil disables the observation.
-	// F-8.9.6.
-	HighWatermarkReader   DelegationHighWatermarkReader
+	// HighWatermarkObserver observes the §8.3 per-tree parallel-children
+	// high-watermark that TreeBudgets reads when a delegation tree's root
+	// session settles onto the §16.1 histogram. Nil, or a nil TreeBudgets,
+	// disables the observation. F-8.9.6.
 	HighWatermarkObserver DelegationHighWatermarkObserver
 
 	// MaxOrphanTasksPerTenant caps a tenant's active orphan tasks per
@@ -1376,18 +1374,12 @@ type Options struct {
 	// spec: §4.2 — "Resume eligibility and window".
 	ResumeWindow time.Duration
 
-	// TreeRecoveryLevelTimeout and TreeRecoveryTreeTimeout are the §8.10
-	// maxLevelRecoverySeconds / maxTreeRecoverySeconds budgets the
-	// bottom-up delegation-tree recovery applies when a tree is resumed.
-	// A non-positive value selects the §8.10 recovery-package default
-	// (120s / 600s). spec: §8.10.
-	TreeRecoveryLevelTimeout time.Duration
-	TreeRecoveryTreeTimeout  time.Duration
-
-	// TreeRecoveryMetrics records the §16.1 tree-recovery
-	// telemetry. *gatewaymetrics.Metrics satisfies it. Nil drops the
-	// observations.
-	TreeRecoveryMetrics treerecovery.Metrics
+	// TreeRecovery runs the §8.10 bottom-up delegation-tree recovery when
+	// a node of a tree resumes, through the tree node operations the
+	// server serves. The platform tools seam serves it, with the
+	// recovery budgets and metrics. Nil leaves resume's per-session
+	// behavior unchanged.
+	TreeRecovery seam.TreeRecovery
 
 	// Runtimes is the §5.1 runtime registry. Optional — when nil, the
 	// §9.1 GET /v1/runtimes discovery endpoint returns an empty list.
@@ -1715,12 +1707,13 @@ func New(store sessionstore.Store, opts Options) *Server {
 		checkpointManifests:        opts.CheckpointManifestReader,
 		checkpointManifestWriter:   opts.CheckpointManifestWriter,
 		treeArchive:                opts.TreeArchive,
-		taskUsage:                  opts.TaskUsage,
-		treeBudgetReturner:         opts.TreeBudgetReturner,
+		treeRollups:                opts.TreeRollups,
+		treeBudgets:                opts.TreeBudgets,
+		treeOrphans:                opts.TreeOrphans,
+		treeRecovery:               opts.TreeRecovery,
 		usageQuiescenceTimeout:     UsageQuiescenceTimeoutFor(opts.UsageQuiescenceTimeout),
 		quiescenceTimer:            opts.UsageQuiescenceTimer,
 		quotaCheckpointer:          opts.QuotaCheckpointer,
-		hwmReader:                  opts.HighWatermarkReader,
 		hwmObserver:                opts.HighWatermarkObserver,
 		maxOrphanTasks:             opts.MaxOrphanTasksPerTenant,
 		runtimes:                   opts.Runtimes,
@@ -1798,7 +1791,6 @@ func New(store sessionstore.Store, opts Options) *Server {
 	}
 	s.primaryReadTimeout = opts.PrimaryReadTimeout
 	s.suspensionCheckpointer = opts.SuspensionCheckpointer
-	s.budgetRearmer = opts.BudgetKeyRearmer
 	s.incPodReleasedDuringSuspension = opts.IncSessionPodReleasedDuringSuspension
 	s.incSuspensionCheckpointFailed = opts.IncSessionSuspensionCheckpointFailed
 	s.maxResumePending = opts.MaxResumePending
@@ -1849,21 +1841,6 @@ func New(store sessionstore.Store, opts Options) *Server {
 	if s.resumeWindow <= 0 {
 		s.resumeWindow = DefaultResumeWindow
 	}
-	// spec: §8.10 — the bottom-up delegation-tree
-	// recovery driver. The required seams (lister, reattacher, terminal
-	// marker) are always available here, so the orchestrator is built
-	// unconditionally. nodeNeedsRecovery selects a node by its row state,
-	// resume_pending, because the pod registry holds only this replica's
-	// bindings and a node bound on a peer is not orphaned.
-	s.treeRecovery = treerecovery.New(treerecovery.Config{
-		Lister:       store,
-		Reattacher:   sessionNodeReattacher{s: s},
-		Terminal:     sessionTerminalMarker{s: s},
-		Metrics:      opts.TreeRecoveryMetrics,
-		Recoverable:  s.nodeNeedsRecovery,
-		LevelTimeout: opts.TreeRecoveryLevelTimeout,
-		TreeTimeout:  opts.TreeRecoveryTreeTimeout,
-	})
 	if s.uploadIssuer == nil {
 		// Default to a freshly-generated random key so the server is
 		// useful in tests. Production callers always wire their own

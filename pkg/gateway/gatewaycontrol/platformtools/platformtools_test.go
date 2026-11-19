@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 )
 
 // fakeDispatcher records the context it is dispatched under so a test can
@@ -51,7 +52,7 @@ func (f fakeSessions) GetByID(_ context.Context, id string) (sessionstore.Sessio
 func TestBridgeCallInstallsSessionPrincipal_spec_9_1(t *testing.T) {
 	disp := &fakeDispatcher{ok: true, result: mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}}
 	sessions := fakeSessions{"sess_1": {ID: "sess_1", TenantID: "acme", UserID: "alice"}}
-	b := platformtools.New(disp, sessions)
+	b := platformtools.New(disp, sessionserver.NewCallingSessions(sessions))
 
 	resultJSON, isErr, err := b.CallPlatformTool(context.Background(), "sess_1", "lenny/delegate_task", json.RawMessage(`{}`))
 	if err != nil {
@@ -85,7 +86,7 @@ func TestBridgeCallInstallsSessionPrincipal_spec_9_1(t *testing.T) {
 // not as a routing error.
 func TestBridgeCallToolErrorIsIsErrorResult_spec_9_1(t *testing.T) {
 	disp := &fakeDispatcher{ok: true, result: mcp.ToolResult{IsError: true, Content: []mcp.ToolContent{{Type: "text", Text: "bad"}}}}
-	b := platformtools.New(disp, fakeSessions{"s": {ID: "s", TenantID: "t"}})
+	b := platformtools.New(disp, sessionserver.NewCallingSessions(fakeSessions{"s": {ID: "s", TenantID: "t"}}))
 	_, isErr, err := b.CallPlatformTool(context.Background(), "s", "lenny/output", nil)
 	if err != nil {
 		t.Fatalf("err = %v, want nil for a tool-level failure", err)
@@ -96,7 +97,7 @@ func TestBridgeCallToolErrorIsIsErrorResult_spec_9_1(t *testing.T) {
 }
 
 func TestBridgeCallUnknownSession_spec_9_1(t *testing.T) {
-	b := platformtools.New(&fakeDispatcher{ok: true}, fakeSessions{})
+	b := platformtools.New(&fakeDispatcher{ok: true}, sessionserver.NewCallingSessions(fakeSessions{}))
 	_, _, err := b.CallPlatformTool(context.Background(), "ghost", "lenny/output", nil)
 	if !errors.Is(err, leasecontrol.ErrSessionNotFound) {
 		t.Errorf("err = %v, want ErrSessionNotFound", err)
@@ -105,7 +106,7 @@ func TestBridgeCallUnknownSession_spec_9_1(t *testing.T) {
 
 func TestBridgeCallUnknownTool_spec_9_1(t *testing.T) {
 	disp := &fakeDispatcher{ok: false} // DispatchTool reports the tool is not registered.
-	b := platformtools.New(disp, fakeSessions{"s": {ID: "s", TenantID: "t"}})
+	b := platformtools.New(disp, sessionserver.NewCallingSessions(fakeSessions{"s": {ID: "s", TenantID: "t"}}))
 	_, _, err := b.CallPlatformTool(context.Background(), "s", "lenny/nope", nil)
 	if !errors.Is(err, leasecontrol.ErrPlatformToolNotFound) {
 		t.Errorf("err = %v, want ErrPlatformToolNotFound", err)
@@ -119,36 +120,12 @@ func TestBridgeListCatalog_spec_9_1(t *testing.T) {
 		{Name: "lenny/delegate_task", Description: "delegate", InputSchema: json.RawMessage(`{"type":"object"}`)},
 		{Name: "lenny/memory_query"},
 	}}
-	b := platformtools.New(disp, fakeSessions{})
+	b := platformtools.New(disp, sessionserver.NewCallingSessions(fakeSessions{}))
 	tools, err := b.ListPlatformTools(context.Background(), "sess_1")
 	if err != nil {
 		t.Fatalf("ListPlatformTools err = %v", err)
 	}
 	if len(tools) != 2 || tools[0].Name != "lenny/delegate_task" || string(tools[0].InputSchema) != `{"type":"object"}` {
 		t.Errorf("tools = %+v, want the gateway catalog", tools)
-	}
-}
-
-// spec: 9.1 (Platform tools), 29.3 (Interactive message send) Forwarding rule 3
-func TestWithSessionPrincipalIsThePrincipalCallPlatformToolInstalls_spec_29_3(t *testing.T) {
-	sessions := fakeSessions{"sess_1": {ID: "sess_1", TenantID: "acme", UserID: "alice"}}
-	ctx, err := platformtools.WithSessionPrincipal(context.Background(), sessions, "sess_1")
-	if err != nil {
-		t.Fatalf("WithSessionPrincipal err = %v", err)
-	}
-	got, ok := authmw.FromContext(ctx)
-	want := authmw.Principal{Subject: "alice", TenantID: "acme", SessionID: "sess_1", CallerType: platformtools.AgentCallerType}
-	if !ok || got.Subject != want.Subject || got.TenantID != want.TenantID || got.SessionID != want.SessionID || got.CallerType != want.CallerType {
-		t.Fatalf("principal = %+v, want %+v", got, want)
-	}
-	disp := &fakeDispatcher{ok: true}
-	if _, _, err := platformtools.New(disp, sessions).CallPlatformTool(context.Background(), "sess_1", "lenny/x", nil); err != nil {
-		t.Fatalf("CallPlatformTool err = %v", err)
-	}
-	if disp.gotPrinc.SessionID != got.SessionID || disp.gotPrinc.CallerType != got.CallerType || disp.gotPrinc.Subject != got.Subject {
-		t.Errorf("CallPlatformTool principal = %+v, want the WithSessionPrincipal principal %+v", disp.gotPrinc, got)
-	}
-	if _, err := platformtools.WithSessionPrincipal(context.Background(), sessions, "absent"); !errors.Is(err, leasecontrol.ErrSessionNotFound) {
-		t.Errorf("unknown session err = %v, want ErrSessionNotFound", err)
 	}
 }

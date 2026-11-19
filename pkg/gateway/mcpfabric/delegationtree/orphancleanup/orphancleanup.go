@@ -179,48 +179,92 @@ type Orphan struct {
 //
 // spec: §8.10 (Orphan cleanup).
 func Orphaned(row sessionstore.Session, byID map[string]sessionstore.Session) (Orphan, bool) {
-	if session.IsTerminal(row.State) || row.DelegationDepth <= 0 {
-		return Orphan{}, false
-	}
-	parent, present := lookup(byID, row.ParentSessionID)
-	o := Orphan{Parent: parent, ParentPresent: present}
-	if !present {
-		return o, true
-	}
-	anchor, terminal, broken := walkAncestors(row.ID, parent, byID)
-	o.Anchor = anchor
-	return o, terminal || broken
+	parent, present, anchor, orphan := orphanedBy(row, byID, rowLink)
+	return Orphan{Parent: parent, ParentPresent: present, Anchor: anchor}, orphan
 }
 
-// walkAncestors follows the ParentSessionID chain up from parent through
-// byID to its end. It returns the minimum non-zero TerminatedAt among the
-// terminal ancestors, whether any ancestor is terminal, and whether the chain
-// ends at a delegated ancestor whose own parent is absent. The visited set,
-// seeded with the row's own id, stops the walk on a cyclic chain.
-func walkAncestors(rowID string, parent sessionstore.Session, byID map[string]sessionstore.Session) (anchor time.Time, terminal, broken bool) {
+// OrphanedRecord applies the rule of Orphaned to the seam's session
+// records, for the session core, which reaches the rule through
+// GWSEAM-Orphaned.
+//
+// spec: GWSEAM-Orphaned
+func OrphanedRecord(node seam.Session, tree map[string]seam.Session) bool {
+	_, _, _, orphan := orphanedBy(node, tree, recordLink)
+	return orphan
+}
+
+// link is what the orphan rule reads of one session: its identifier, its
+// parent's identifier, whether it is terminal and when it terminated, and
+// whether it is a delegated session.
+type link struct {
+	id, parent   string
+	terminal     bool
+	terminatedAt time.Time
+	delegated    bool
+}
+
+func rowLink(r sessionstore.Session) link {
+	return link{
+		id: r.ID, parent: r.ParentSessionID, terminal: session.IsTerminal(r.State),
+		terminatedAt: r.TerminatedAt, delegated: r.DelegationDepth > 0,
+	}
+}
+
+func recordLink(r seam.Session) link {
+	return link{
+		id: r.ID, parent: r.ParentSessionID, terminal: session.IsTerminal(session.State(r.State)),
+		terminatedAt: r.TerminatedAt, delegated: r.DelegationDepth > 0,
+	}
+}
+
+// orphanedBy is the orphan rule over any session type: it returns the
+// direct parent and whether byID holds it, the minimum non-zero
+// TerminatedAt among the terminal ancestors, and whether row is an active
+// orphan.
+func orphanedBy[T any](row T, byID map[string]T, of func(T) link) (parent T, present bool, anchor time.Time, orphan bool) {
+	r := of(row)
+	if r.terminal || !r.delegated {
+		return parent, false, time.Time{}, false
+	}
+	parent, present = lookup(byID, r.parent)
+	if !present {
+		return parent, false, time.Time{}, true
+	}
+	anchor, terminal, broken := walkAncestors(r.id, parent, byID, of)
+	return parent, true, anchor, terminal || broken
+}
+
+// walkAncestors follows the parent chain up from parent through byID to its
+// end. It returns the minimum non-zero TerminatedAt among the terminal
+// ancestors, whether any ancestor is terminal, and whether the chain ends at
+// a delegated ancestor whose own parent is absent. The visited set, seeded
+// with the row's own id, stops the walk on a cyclic chain.
+func walkAncestors[T any](rowID string, parent T, byID map[string]T, of func(T) link) (anchor time.Time, terminal, broken bool) {
 	visited := map[string]bool{rowID: true}
-	cur := parent
+	cur := of(parent)
 	for {
-		visited[cur.ID] = true
-		if session.IsTerminal(cur.State) {
+		visited[cur.id] = true
+		if cur.terminal {
 			terminal = true
-			anchor = earliest(anchor, cur.TerminatedAt)
+			anchor = earliest(anchor, cur.terminatedAt)
 		}
-		next, ok := lookup(byID, cur.ParentSessionID)
+		next, ok := lookup(byID, cur.parent)
 		if !ok {
-			return anchor, terminal, cur.DelegationDepth > 0
+			return anchor, terminal, cur.delegated
 		}
-		if visited[next.ID] {
+		n := of(next)
+		if visited[n.id] {
 			return anchor, terminal, false
 		}
-		cur = next
+		cur = n
 	}
 }
 
 // lookup returns the row byID holds for id; an empty id names no row.
-func lookup(byID map[string]sessionstore.Session, id string) (sessionstore.Session, bool) {
+func lookup[T any](byID map[string]T, id string) (T, bool) {
+	var zero T
 	if id == "" {
-		return sessionstore.Session{}, false
+		return zero, false
 	}
 	row, ok := byID[id]
 	return row, ok

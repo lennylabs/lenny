@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1540
+      count: 1531
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -230,7 +230,7 @@ packages:
     - package: pkg/delegation/cycle
       count: 3
     - package: pkg/delegation/lease
-      count: 22
+      count: 23
     - package: pkg/delegation/recovery
       count: 7
     - package: pkg/deployenv
@@ -438,7 +438,7 @@ packages:
     - package: pkg/gateway/gatewaycontrol/inputwaitrecovery
       count: 38
     - package: pkg/gateway/gatewaycontrol/platformtools
-      count: 9
+      count: 4
     - package: pkg/gateway/llmproxy/credrouter
       count: 19
     - package: pkg/gateway/llmproxy/proxycache
@@ -464,7 +464,7 @@ packages:
     - package: pkg/gateway/mcpfabric/delegationpolicystore/pgstore
       count: 3
     - package: pkg/gateway/mcpfabric/delegationtree/deadlock
-      count: 29
+      count: 31
     - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol
       count: 259
     - package: pkg/gateway/mcpfabric/delegationtree/leasecontrol/denialpg
@@ -480,9 +480,9 @@ packages:
     - package: pkg/gateway/mcpfabric/delegationtree/treearchive/pgstore
       count: 7
     - package: pkg/gateway/mcpfabric/delegationtree/treebudget
-      count: 61
+      count: 60
     - package: pkg/gateway/mcpfabric/delegationtree/treerecovery
-      count: 14
+      count: 16
     - package: pkg/gateway/mcpfabric/elicitationfloor
       count: 8
     - package: pkg/gateway/mcpfabric/mcp
@@ -500,7 +500,7 @@ packages:
     - package: pkg/gateway/meteringproxy/metering
       count: 53
     - package: pkg/gateway/meteringproxy/sessionbudget
-      count: 27
+      count: 28
     - package: pkg/gateway/middleware/auth
       count: 82
     - package: pkg/gateway/middleware/circuitbreaker
@@ -532,6 +532,8 @@ packages:
     - package: pkg/gateway/pki/carotationstore
       count: 1
     - package: pkg/gateway/pki/carotationstore/pgstore
+      count: 1
+    - package: pkg/gateway/platformtools
       count: 1
     - package: pkg/gateway/playground
       count: 95
@@ -674,7 +676,7 @@ packages:
     - package: pkg/gateway/session/tokenanomaly
       count: 21
     - package: pkg/gateway/sessionserver
-      count: 3037
+      count: 3032
     - package: pkg/gateway/storage/deadletterredaction
       count: 6
     - package: pkg/gateway/storage/derivelock

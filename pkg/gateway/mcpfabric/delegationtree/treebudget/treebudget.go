@@ -32,6 +32,7 @@ import (
 	"github.com/redis/go-redis/v9"
 	"go.opentelemetry.io/otel/attribute"
 
+	"github.com/lennylabs/lenny/pkg/delegation/lease"
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/redisconn"
 )
@@ -57,13 +58,9 @@ const DefaultTTL = 8 * 24 * time.Hour
 // spec: §8.2.
 const DefaultMaxTreeMemoryBytes int64 = 2097152
 
-// PerNodeMemoryBytes is the §8.2 per-node in-memory footprint estimate
-// (~12 KB: virtual child interface, capped event buffer, elicitation
-// state, task metadata). Each admitted delegation reserves this much
-// of the tree's maxTreeMemoryBytes.
-//
-// spec: §8.2.
-const PerNodeMemoryBytes int64 = 12 * 1024
+// PerNodeMemoryBytes is lease.PerNodeMemoryBytes, the per-node in-memory
+// footprint each admitted delegation reserves.
+const PerNodeMemoryBytes = lease.PerNodeMemoryBytes
 
 // Reservation is the budget a single delegation admission consumes.
 // Each axis carries the cap from the resolved lease (0 means no limit

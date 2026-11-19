@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/transcriptstore"
@@ -722,7 +724,7 @@ func TestMessagesInReplyToResolvesPendingRequestInput(t *testing.T) {
 		DevTenantHeader: true,
 		Executor:        executor.NewEchoExecutor(),
 		Transcripts:     transcriptstore.NewMemory(),
-		InputWaits:      reg,
+		InputWaits:      platformtools.NewInputWaits(reg),
 	})
 	seedRunningSession(t, store, "sess_rr")
 	ch, err := reg.Register("sess_rr", "req_alpha", nil)
@@ -768,7 +770,7 @@ func TestMessagesInReplyToFallsThroughOnNoMatch(t *testing.T) {
 		DevTenantHeader: true,
 		Executor:        executor.NewEchoExecutor(),
 		Transcripts:     transcriptstore.NewMemory(),
-		InputWaits:      reg,
+		InputWaits:      platformtools.NewInputWaits(reg),
 	})
 	seedRunningSession(t, store, "sess_fall")
 

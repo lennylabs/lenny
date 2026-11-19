@@ -19,6 +19,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
@@ -1801,7 +1803,7 @@ func TestResumeOfChildWithNoPoolNeitherFailsNorArchives_spec_7_3(t *testing.T) {
 		PodBinder:               podBindBinder(t, cluster, podBindAdapterDialer(t, adapterSrv)),
 		PodRegistry:             podsession.NewRegistry(),
 		AgentNamespace:          testNS(t),
-		TreeArchive:             archive,
+		TreeArchive:             platformtools.NewTreeArchive(archive),
 	})
 
 	seedAwaitingSession(t, store, sessionstore.Session{

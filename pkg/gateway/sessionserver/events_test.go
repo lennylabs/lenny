@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
@@ -473,7 +475,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, TreeArchive: platformtools.NewTreeArchive(archive)})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,

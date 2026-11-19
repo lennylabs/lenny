@@ -30,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"google.golang.org/grpc"
@@ -172,7 +174,7 @@ func Start(t testing.TB, opts Options) *Server {
 		serverOpts = append(serverOpts, tlsOpt)
 	}
 	s.gs = grpc.NewServer(serverOpts...)
-	adapterv1.RegisterGatewayControlServer(s.gs, &controlServer{bridge: platformtools.New(tools, s.store)})
+	adapterv1.RegisterGatewayControlServer(s.gs, &controlServer{bridge: platformtools.New(tools, sessionserver.NewCallingSessions(s.store))})
 	lis, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("inputwaitrig: listen: %v", err)

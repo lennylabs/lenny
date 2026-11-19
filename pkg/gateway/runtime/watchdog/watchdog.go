@@ -46,7 +46,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
@@ -544,7 +544,7 @@ type Watchdog struct {
 	cfg          Config
 	clock        func() time.Time
 	billing      billingstore.Store
-	archive      treearchive.Store
+	archive      seam.TreeArchive
 	terminal     TerminalHook
 	messaging    DLQSweeper
 	ageResolver  SessionAgeResolver
@@ -581,9 +581,10 @@ func (w *Watchdog) WithBilling(b billingstore.Store) *Watchdog {
 	return w
 }
 
-// WithTreeArchive wires the §8.10 session_tree_archive so the watchdog
-// archives a child session it forces to a terminal state.
-func (w *Watchdog) WithTreeArchive(a treearchive.Store) *Watchdog {
+// WithTreeArchive wires the §8.10 session_tree_archive, which the platform
+// tools seam serves, so the watchdog archives a child session it forces to a
+// terminal state.
+func (w *Watchdog) WithTreeArchive(a seam.TreeArchive) *Watchdog {
 	w.archive = a
 	return w
 }
@@ -1829,7 +1830,7 @@ func (w *Watchdog) archiveChild(ctx context.Context, sess sessionstore.Session) 
 			"message": "child session ended in state " + string(sess.State),
 		},
 	})
-	_ = w.archive.Archive(ctx, treearchive.ArchivedNode{
+	_ = w.archive.ArchiveNode(ctx, seam.ArchivedNode{
 		TenantID:        sess.TenantID,
 		RootSessionID:   w.treeRoot(ctx, sess),
 		NodeSessionID:   sess.ID,

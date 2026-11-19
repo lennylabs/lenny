@@ -393,11 +393,8 @@ func newRecordingRetireMetrics() *recordingRetireMetrics {
 	return &recordingRetireMetrics{gauges: map[string]scrubGauge{}}
 }
 
-func (m *recordingRetireMetrics) IncScrubFailureTotal(pool, runtimeClass string) {
+func (m *recordingRetireMetrics) RecordScrubFailure(podID, pool, runtimeClass string, count int) {
 	m.totals = append(m.totals, scrubTotal{pool, runtimeClass})
-}
-
-func (m *recordingRetireMetrics) SetScrubFailureCount(podID, pool, runtimeClass string, count int) {
 	m.gauges[podID] = scrubGauge{pool, runtimeClass, count}
 }
 

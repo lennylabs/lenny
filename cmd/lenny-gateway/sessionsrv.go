@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
@@ -19,7 +20,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/experiment/experimentprovider"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/resultrollup"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treebudget"
+	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treerecovery"
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/gitref"
@@ -141,6 +143,13 @@ func (w *gatewayWiring) buildSessionServer(
 	// erased; startBackgroundWorkers runs it under the watchdog context.
 	w.budgetStateSweep = w.buildBudgetStateSweep(*w.f.budgetStateSweepInterval)
 
+	// §8.10 / §16.1: the platform tools seam registers its tree recovery
+	// collectors on the gateway's metric registry itself.
+	treeRecoveryMetrics, err := treerecovery.NewPromMetrics(gwMetrics.Registerer())
+	if err != nil {
+		log.Fatalf("lenny-gateway: tree recovery metrics: %v", err)
+	}
+
 	srv := sessionserver.New(w.sessions, sessionserver.Options{
 		// spec: §6.2 — stamp agent_output / tool_use events
 		// published on the session bus as idle-timer activity. F-11.3.7.
@@ -158,13 +167,16 @@ func (w *gatewayWiring) buildSessionServer(
 		// OrphanTasksPerTenantHigh alert (the scalar() denominator below
 		// is re-emitted from the same flag). F-8.10.10.
 		MaxOrphanTasksPerTenant: *delegationMaxOrphanTasksPerTenant,
-		// spec: §8.10 — the bottom-up tree-recovery
-		// driver's per-level and whole-tree budgets, plus the §16.1 telemetry sink. F-8.10.1.
-		TreeRecoveryLevelTimeout: time.Duration(*delegationMaxLevelRecoverySeconds) * time.Second,
-		TreeRecoveryTreeTimeout:  time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
-		TreeRecoveryMetrics:      gwMetrics,
-		UploadTokenIssuer:        w.uploadIssuer,
-		UploadTokenVerifier:      w.uploadVerifier,
+		// §8.10: the platform tools seam's bottom-up tree-recovery driver
+		// with its per-level and whole-tree budgets, plus the §16.1
+		// telemetry it registers itself. F-8.10.1.
+		TreeRecovery: platformtools.NewTreeRecovery(platformtools.RecoveryConfig{
+			Metrics:      treeRecoveryMetrics,
+			LevelTimeout: time.Duration(*delegationMaxLevelRecoverySeconds) * time.Second,
+			TreeTimeout:  time.Duration(*delegationMaxTreeRecoverySeconds) * time.Second,
+		}),
+		UploadTokenIssuer:   w.uploadIssuer,
+		UploadTokenVerifier: w.uploadVerifier,
 		// F-7.4.7: §7.1 TTL = maxCreatedStateTimeoutSeconds.
 		UploadTokenTTL: time.Duration(*maxCreatedStateTimeoutSeconds) * time.Second,
 		Blobs:          w.blobs,
@@ -182,7 +194,7 @@ func (w *gatewayWiring) buildSessionServer(
 		DualStore:                  dsMonitor,
 		Messaging:                  w.messagingCoord,
 		Interactions:               w.interactions,
-		ToolApprovalWaits:          w.toolApprovalWaits,
+		ToolApprovalWaits:          platformtools.NewToolApprovals(w.toolApprovalWaits),
 		Evals:                      w.evals,
 		Experiments:                w.experiments,
 		Pools:                      w.pools,
@@ -297,10 +309,15 @@ func (w *gatewayWiring) buildSessionServer(
 		// the §4.5 follow-on wiring lands a MinIO uploader). The
 		// close-hook fires from the gateway's session-completion path;
 		// the SessionLogStore drops or persists best-effort.
-		SessionLogHook:     &sessionlogstore.CloseHook{Store: w.sessionLogs},
-		TreeArchive:        w.treeArchive,
-		TaskUsage:          taskUsageBuilder,
-		TreeBudgetReturner: w.treeBudgetReserver,
+		SessionLogHook: &sessionlogstore.CloseHook{Store: w.sessionLogs},
+		TreeArchive:    platformtools.NewTreeArchive(w.treeArchive),
+		TreeRollups:    platformtools.NewTreeRollups(taskUsageBuilder),
+		// §8.3 (Delegation Policy and Lease): the tree budget
+		// counters return a settled child's budget, re-arm a suspended
+		// tree's budget keys on each transition into or out of suspended,
+		// and read a settled root's parallel-children high-watermark.
+		TreeBudgets: platformtools.NewTreeBudgets(w.treeBudgetConcrete),
+		TreeOrphans: platformtools.TreeOrphans{},
 		// spec: §8.3 (Usage quiescence before budget return), §11.3 — the
 		// wait before a delegated child's budget return.
 		UsageQuiescenceTimeout: time.Duration(*f.delegationUsageQuiescenceTimeoutSeconds) * time.Second,
@@ -308,14 +325,9 @@ func (w *gatewayWiring) buildSessionServer(
 		// spec: §6.2 (Pod State Machine) — the suspension release checkpoints
 		// the workspace before it releases a suspended session's pod; with no
 		// checkpoint service the pod stays held.
-		SuspensionCheckpointer: suspensionCheckpointer(w.checkpointSvc),
-		// spec: §8.3 (Delegation Policy and Lease) — re-arm a suspended
-		// tree's delegation budget keys on each transition into or out of
-		// suspended.
-		BudgetKeyRearmer:                      budgetKeyRearmer(w.treeBudgetConcrete),
+		SuspensionCheckpointer:                suspensionCheckpointer(w.checkpointSvc),
 		IncSessionPodReleasedDuringSuspension: gwMetrics.IncSessionPodReleasedDuringSuspension,
 		IncSessionSuspensionCheckpointFailed:  gwMetrics.IncSessionSuspensionCheckpointFailed,
-		HighWatermarkReader:                   w.hwmReader,
 		HighWatermarkObserver:                 gwMetrics,
 		Interceptors:                          policyChain,
 		PolicyAuditSink:                       policyAuditSink,
@@ -336,7 +348,7 @@ func (w *gatewayWiring) buildSessionServer(
 		// §7.2 — shared inputwait registry so REST inReplyTo
 		// resolves the same pending `lenny/request_input` MCP registers.
 		// F-7.2.14.
-		InputWaits: inputWaits,
+		InputWaits: platformtools.NewInputWaits(inputWaits),
 		// §7.1 — per-source-session advisory lock that serializes
 		// concurrent /derive calls across replicas. Wired with Redis when
 		// available (cross-replica serialization); a process-local
@@ -479,14 +491,4 @@ func suspensionCheckpointer(svc *checkpointer.Checkpointer) sessionserver.Suspen
 		return nil
 	}
 	return svc
-}
-
-// budgetKeyRearmer returns the delegation budget Reserver as the session
-// server's BudgetKeyRearmer, or an untyped nil for a nil Reserver.
-// spec: §8.3 (Delegation Policy and Lease).
-func budgetKeyRearmer(r *treebudget.Reserver) sessionserver.BudgetKeyRearmer {
-	if r == nil {
-		return nil
-	}
-	return r
 }

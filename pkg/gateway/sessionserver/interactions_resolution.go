@@ -7,8 +7,8 @@ import (
 	"errors"
 	"net/http"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 )
 
 // interactionResolution captures the parameters of a resolve call.
@@ -92,7 +92,7 @@ func (s *Server) resolveInteraction(w http.ResponseWriter, r *http.Request, res 
 	// blocked, or the non-pod posture) is ignored: the phase update above
 	// is the authoritative record. F-7.2.18.
 	if res.kind == interactionstore.KindToolUse && s.toolApprovalWaits != nil {
-		_ = s.toolApprovalWaits.Resolve(sessionID, interactionID, toolapproval.Decision{
+		_ = s.toolApprovalWaits.ResolveApproval(sessionID, interactionID, seam.ApprovalDecision{
 			Approved: res.phase == interactionstore.PhaseApproved,
 			Reason:   res.reason,
 		})

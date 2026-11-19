@@ -33,7 +33,7 @@ The operations are grouped by the party that serves them and the parties that ca
 - **Context.** Every operation that reads or writes state, blocks, or reaches another replica takes the caller's context and honors its cancellation. An operation that returns at once and runs its work on the serving part's own context, such as [`GWSEAM-StampActivity`](#gwseam-stampactivity) and [`GWSEAM-ExpireSession`](#gwseam-expiresession), takes no caller context.
 - **Errors.** An operation reports a failure the caller branches on as one of the errors the `returns` field of its block names. The package `pkg/gateway/seam` declares each of them. A `Refusal` carries a client API error code with its message and details. It is not transient: the caller reports it as it came and does not retry the operation. Any other error is a transient failure the caller reports as such.
 - **Authorization.** An operation trusts the identity that its caller's context carries. A seam that serves a client request resolves the caller's authorization through [`GWSEAM-AuthorizeSession`](#gwseam-authorizesession) before it reads or writes the session.
-- **Values.** The operations carry values that the package `pkg/gateway/seam` declares or that packages outside the gateway declare, and no value that a package of another part declares. A session crosses the boundary as a session record: its identifier, tenant, owning user, parent and root sessions, runtime, pool, state, and the sequence number of its last event.
+- **Values.** The operations carry values that the package `pkg/gateway/seam` declares or that packages outside the gateway declare, and no value that a package of another part declares. A session crosses the boundary as a session record: its identifier, tenant, owning user, parent and root sessions, runtime, pool, state, the sequence number of its last event, its depth in its delegation tree, the pod it is bound to, and the times it was created, last written, and moved to a terminal state.
 
 ## Operations served by the session core to every seam
 
@@ -376,6 +376,44 @@ requirements: [GW-R1]
 summary: Retires a pod with a retirement reason, its lifetime counts, and a detail.
 ```
 
+<a id="gwseam-recordscrubfailure"></a>
+
+```lenny-def
+kind: operation
+name: RecordScrubFailure
+method: Go method
+path: seam.PodRecycle
+requirements: [GW-R1]
+summary: Counts one failed whole-pod scrub of a pod, with the pod's cumulative count of failed scrubs, by pool and runtime class, in the session core's pod recycle metrics.
+```
+
+<a id="gwseam-recordpodretirement"></a>
+
+```lenny-def
+kind: operation
+name: RecordPodRetirement
+method: Go method
+path: seam.PodRecycle
+requirements: [GW-R1]
+summary: Counts one pod retirement that the gateway decided, by its reason, pool, and runtime class, in the session core's pod recycle metrics.
+```
+
+The scrub report service decides which retirements it counts, and the session core owns the pod recycle metrics, which its own per-release retirement also counts.
+
+The bridge of the platform tool calls that a session's pod makes over `LNK-GWCONTROL` resolves the calling session through [`GWSEAM-AttachCallingSession`](#gwseam-attachcallingsession). The session core's forward listener resolves the calling session of a forwarded tool call through the same rule.
+
+<a id="gwseam-attachcallingsession"></a>
+
+```lenny-def
+kind: operation
+name: AttachCallingSession
+method: Go method
+path: seam.CallingSessions
+returns: [ErrSessionNotFound]
+requirements: [GW-R1]
+summary: Returns a context that carries the principal of a session's agent caller, for a platform tool call that the session's pod made or that another replica forwarded on its behalf.
+```
+
 ## Operations served by the session core to the platform tools seam for policy, credentials, and tenants
 
 The session core serves these operations. The platform tools seam calls them, because the interceptor chain, the caller check, the VCS credential pools, the tenant store, environment access, and the rate limiter stay with the session core under [GW-R2](../components/gateway/index.md#gw-r2). The platform tools seam imports the delegation policy store itself, because it evaluates delegation policies.
@@ -568,7 +606,7 @@ summary: Runs the terminal pipeline after the caller's terminal write, with the 
 kind: operation
 name: ForceTerminate
 method: Go method
-path: seam.Terminals
+path: seam.ForceTerminations
 returns: [ErrSessionNotFound]
 requirements: [GW-R1]
 summary: Moves a session to a terminal state on an operator request and runs the terminal pipeline, and returns the session record, the state it left, and whether this call moved it.
@@ -760,13 +798,15 @@ summary: Counts an archive extraction that the session core's workspace material
 
 The platform tools seam serves these operations. The session core calls them. The session core's watchdog also calls [`GWSEAM-ArchiveNode`](#gwseam-archivenode).
 
+Each delegation tree operation is declared on one of the narrower interfaces `seam.TreeBudgets`, `seam.TreeArchive`, `seam.TreeRollups`, `seam.TreeOrphans`, and `seam.TreeRecovery`, which `seam.DelegationTree` combines. The session core holds each one it calls, and a gateway that does not run a part, such as the tree budget counters without Redis, hands the core none for that part.
+
 <a id="gwseam-returnbudget"></a>
 
 ```lenny-def
 kind: operation
 name: ReturnBudget
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeBudgets
 requirements: [GW-R1]
 summary: Returns the budget a delegation tree node held to its tree when the node reaches a terminal state.
 ```
@@ -777,7 +817,7 @@ summary: Returns the budget a delegation tree node held to its tree when the nod
 kind: operation
 name: RearmBudget
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeBudgets
 requirements: [GW-R1]
 summary: Restores the expiry of the budget keys of a delegation tree and its parent nodes.
 ```
@@ -788,7 +828,7 @@ summary: Restores the expiry of the budget keys of a delegation tree and its par
 kind: operation
 name: ObserveHighWatermark
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeBudgets
 requirements: [GW-R1]
 summary: Returns the highest count of parallel children a delegation tree reached, or reports that none is recorded.
 ```
@@ -799,7 +839,7 @@ summary: Returns the highest count of parallel children a delegation tree reache
 kind: operation
 name: ArchiveNode
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeArchive
 requirements: [GW-R1]
 summary: Records a settled delegation tree node in the tree archive.
 ```
@@ -810,7 +850,7 @@ summary: Records a settled delegation tree node in the tree archive.
 kind: operation
 name: ArchivedNodes
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeArchive
 requirements: [GW-R1]
 summary: Returns the archived nodes of a delegation tree in the order they settled.
 ```
@@ -821,7 +861,7 @@ summary: Returns the archived nodes of a delegation tree in the order they settl
 kind: operation
 name: ArchivedNodeFor
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeArchive
 returns: [ErrSessionNotFound]
 requirements: [GW-R1]
 summary: Returns the archived node of one session.
@@ -833,7 +873,7 @@ summary: Returns the archived node of one session.
 kind: operation
 name: NodeUsage
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeRollups
 requirements: [GW-R1]
 summary: Returns the usage of one delegation tree node.
 ```
@@ -844,7 +884,7 @@ summary: Returns the usage of one delegation tree node.
 kind: operation
 name: TreeUsage
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeRollups
 requirements: [GW-R1]
 summary: Returns the usage of a delegation subtree rolled up from its live and archived nodes.
 ```
@@ -855,7 +895,7 @@ summary: Returns the usage of a delegation subtree rolled up from its live and a
 kind: operation
 name: SubtreeTokens
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeRollups
 requirements: [GW-R1]
 summary: Returns the tokens the live and archived descendants of a session used.
 ```
@@ -866,7 +906,7 @@ summary: Returns the tokens the live and archived descendants of a session used.
 kind: operation
 name: Orphaned
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeOrphans
 requirements: [GW-R1]
 summary: Reports whether a session's chain of ancestors, among a set of session records, is terminal or broken.
 ```
@@ -877,7 +917,7 @@ summary: Reports whether a session's chain of ancestors, among a set of session 
 kind: operation
 name: RecoverTree
 method: Go method
-path: seam.DelegationTree
+path: seam.TreeRecovery
 requirements: [GW-R1]
 summary: Recovers a delegation tree from its leaves to its root through the tree node operations the session core serves, and returns a summary of the recovery.
 ```
@@ -928,7 +968,7 @@ requirements: [GW-R1]
 summary: Moves a delegation tree node that cannot be recovered to a failed state with a reason.
 ```
 
-The platform tools seam also serves the registries of the waits a session's runtime opens through platform tools, and the resolution of the calling session of a forwarded tool call.
+The platform tools seam also serves the registries of the waits a session's runtime opens through platform tools.
 
 <a id="gwseam-pendinginputwaits"></a>
 
@@ -1002,22 +1042,11 @@ summary: Delivers the decision, approved or denied with a reason, on the approva
 kind: operation
 name: AwaitApproval
 method: Go method
-path: seam.ToolApprovals
+path: seam.ToolApprovalGate
 requirements: [GW-R1]
 summary: Holds a runtime's tool call until the session's user approves or denies it, and returns the decision; the session core's executor calls it.
 ```
 
-<a id="gwseam-attachcallingsession"></a>
-
-```lenny-def
-kind: operation
-name: AttachCallingSession
-method: Go method
-path: seam.CallingSessions
-returns: [ErrSessionNotFound]
-requirements: [GW-R1]
-summary: Returns a context that carries the principal of the session that made a forwarded tool call.
-```
 
 ## Operations served by the platform tools seam to the metering proxy and the API front
 

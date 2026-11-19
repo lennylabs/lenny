@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
@@ -58,7 +60,7 @@ func TestTreeRecoverySelectsExactlyResumePendingNodes_spec_8_10(t *testing.T) {
 				t.Run(name, func(t *testing.T) {
 					store := memstore.New()
 					reg := podsession.NewRegistry()
-					srv := New(store, Options{DevTenantHeader: true, PodRegistry: reg})
+					srv := New(store, Options{DevTenantHeader: true, PodRegistry: reg, TreeRecovery: platformtools.NewTreeRecovery(platformtools.RecoveryConfig{})})
 					srv.treePollInterval = 2 * time.Millisecond
 					ctx := context.Background()
 					rows := []sessionstore.Session{
@@ -79,7 +81,7 @@ func TestTreeRecoverySelectsExactlyResumePendingNodes_spec_8_10(t *testing.T) {
 					if root != "root" {
 						t.Fatalf("treeRoot(%s) = %q, want root", trigger, root)
 					}
-					if _, err := srv.treeRecovery.RecoverTree(ctx, "acme", root); err != nil {
+					if _, err := srv.treeRecovery.RecoverTree(ctx, "acme", root, srv.ToolsSeam()); err != nil {
 						t.Fatalf("RecoverTree: %v", err)
 					}
 					srv.WaitResumeIdle("node")

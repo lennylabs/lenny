@@ -9,11 +9,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 )
 
 // approvalPollInterval is the cadence at which AwaitApproval re-reads the
@@ -42,7 +42,7 @@ type ToolApprovalGate struct {
 	store        sessionstore.Store
 	interactions interactionstore.Store
 	events       *sessionevents.Bus
-	waits        *toolapproval.Registry
+	waits        seam.ToolApprovals
 	now          func() time.Time
 	// timeout bounds how long a blocked tool call waits for resolution.
 	// Zero blocks until the user resolves it or the context is done.
@@ -58,7 +58,7 @@ var _ executor.ApprovalGate = (*ToolApprovalGate)(nil)
 // §15.1 resolution endpoints deliver the verdict onto; now stamps the
 // interaction; timeout bounds the block (zero = unbounded). F-7.2.9,
 // F-7.2.18.
-func NewToolApprovalGate(store sessionstore.Store, interactions interactionstore.Store, events *sessionevents.Bus, waits *toolapproval.Registry, now func() time.Time, timeout time.Duration) *ToolApprovalGate {
+func NewToolApprovalGate(store sessionstore.Store, interactions interactionstore.Store, events *sessionevents.Bus, waits seam.ToolApprovals, now func() time.Time, timeout time.Duration) *ToolApprovalGate {
 	if now == nil {
 		now = time.Now
 	}
@@ -89,7 +89,7 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 	// Register the waiter before recording the interaction so an approve
 	// that races in immediately after the interaction becomes resolvable
 	// is buffered on the channel rather than lost.
-	ch, err := g.waits.Register(sessionID, call.ID)
+	ch, err := g.waits.RegisterApproval(sessionID, call.ID)
 	if err != nil {
 		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: register waiter for %s: %w", call.ID, err)
 	}
@@ -113,7 +113,7 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 		Detail:    detail,
 		CreatedAt: g.now().UTC(),
 	}); err != nil {
-		g.waits.Cancel(sessionID, call.ID)
+		g.waits.CancelApproval(sessionID, call.ID)
 		return executor.ApprovalDecision{}, fmt.Errorf("toolapproval: record interaction %s: %w", call.ID, err)
 	}
 
@@ -149,19 +149,19 @@ func (g *ToolApprovalGate) AwaitApproval(ctx context.Context, tenantID, sessionI
 			}
 			return executor.ApprovalDecision{Approved: d.Approved, Reason: d.Reason}, nil
 		case <-timeoutC:
-			g.waits.Cancel(sessionID, call.ID)
+			g.waits.CancelApproval(sessionID, call.ID)
 			return executor.ApprovalDecision{Approved: false, Reason: "approval_timeout"}, nil
 		case <-ctx.Done():
-			g.waits.Cancel(sessionID, call.ID)
+			g.waits.CancelApproval(sessionID, call.ID)
 			return executor.ApprovalDecision{}, ctx.Err()
 		case <-ticker.C:
 			d, ok, err := g.pollResolution(ctx, tenantID, sessionID, row.UserID, call.ID)
 			if err != nil {
-				g.waits.Cancel(sessionID, call.ID)
+				g.waits.CancelApproval(sessionID, call.ID)
 				return executor.ApprovalDecision{}, err
 			}
 			if ok {
-				g.waits.Cancel(sessionID, call.ID)
+				g.waits.CancelApproval(sessionID, call.ID)
 				return d, nil
 			}
 		}

@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/platformtools"
+
 	"github.com/alicebob/miniredis/v2"
 	"github.com/redis/go-redis/v9"
 
@@ -89,7 +91,7 @@ func newSiteRig(t *testing.T, m *gatewaypki.Material, coordinatorAddr string, ro
 		ReplicaID:              "gw-a.00@127.0.0.1:1",
 		HolderForwardClient:    testForwardClient(t, m, 2*time.Second),
 		Executor:               r.exec,
-		InputWaits:             r.waits,
+		InputWaits:             platformtools.NewInputWaits(r.waits),
 		Runtimes:               runtimes,
 		Clock:                  func() time.Time { return r.now },
 		Messaging: sessioninbox.NewCoordinator(sessioninbox.Config{
