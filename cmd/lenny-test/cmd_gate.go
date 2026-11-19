@@ -185,12 +185,7 @@ func runGate(args []string) int {
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
 	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
-	capDefault, err := gateGoCacheCapDefault(os.Getenv)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
-		return 2
-	}
-	capGB := fs.Int("gocache-cap-gb", capDefault, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (10^9 bytes); 0 turns the check off; the default is "+gateEnvGoCacheCap+" when set, else "+strconv.Itoa(defaultGateGoCacheCapGB)+"; a --here run does not use the volume and skips the check")
+	capGB := fs.Int("gocache-cap-gb", defaultGateGoCacheCapGB, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (1 GB is 10^9 bytes) and no running container uses it; 0 turns the check off; without the flag, "+gateEnvGoCacheCap+" sets the cap when it is set; a --here run does not use the volume and skips the check")
 	flagArgs, err := gateCommandArgs(args)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
@@ -204,10 +199,6 @@ func runGate(args []string) int {
 		fs.Usage()
 		return 2
 	}
-	if *capGB < 0 {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: --gocache-cap-gb=%d is negative; pass 0 to turn the check off\n", *capGB)
-		return 2
-	}
 	root := repoRoot()
 	if *here {
 		env, envErr := gateEnvironment(root, gateImageMarker, os.Getenv)
@@ -218,7 +209,14 @@ func runGate(args []string) int {
 	if *all {
 		passArgs = append(passArgs, "--all")
 	}
-	return runGateInContainer(root, passArgs, *rebuild, !*noSocket, *capGB)
+	capFlagSet := false
+	fs.Visit(func(f *flag.Flag) { capFlagSet = capFlagSet || f.Name == "gocache-cap-gb" })
+	cacheCap, err := resolveGateGoCacheCap(capFlagSet, *capGB, os.Getenv)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		return 2
+	}
+	return runGateInContainer(root, passArgs, *rebuild, !*noSocket, cacheCap)
 }
 
 // gateCommandArgs splits the arguments of `lenny-test gate [merge]
