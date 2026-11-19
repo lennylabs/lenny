@@ -1,6 +1,6 @@
 # lenny session new starts the session before the prompt
 
-Status: `In progress`, revision 1, 2026-11-19.
+Status: `In progress`, revision 2, 2026-11-19.
 
 ## Problem
 
@@ -33,7 +33,7 @@ The change leaves the other `lenny session` verbs, the gateway, and the MCP tool
 
 On the MCP path, the command calls `lenny/create_and_start_session` in place of `lenny/create_session`. The gateway creates the session, runs the finalize step with an empty workspace plan and the setup commands, and starts the runtime in that one call, so the session is `running` when the call returns. The command then sends the positional prompt, prints the session identifier, and attaches when `--attach` is set or stdout is a terminal. The staging path keeps its sequence of create, upload, finalize, and start over REST, which already starts the session before the prompt.
 
-When the create-and-start call fails, the command reports the error, sends no prompt, prints no session identifier, and exits with status 1.
+When the create-and-start call fails, the command reports the error, sends no prompt, prints no session identifier, and exits with status 1. When the session has started and the prompt cannot be delivered, the command exits with status 1 and names the running session in its error, so the caller can resend the prompt with `lenny session send` or release the session with `lenny session cancel`.
 
 ## Requirements
 
@@ -57,11 +57,13 @@ The alternatives considered:
 - The SDK's REST `Finalize` and `Start` after the MCP create. This mixes the MCP and REST surfaces on one path and needs the same upload token.
 - REST `POST /v1/sessions/start`. The REST client does not expose it, and it would move the path off the MCP surface that the §24.17 introduction names for session commands.
 
-`lenny/create_and_start_session` keeps the path on MCP, runs the same admission gates as the two-step create, and leaves no window in which the CLI holds a session it has not started.
+`lenny/create_and_start_session` keeps the path on MCP and leaves no window in which the CLI holds a session it has not started. Its handler runs the owner binding, quota, concurrency, admission-rate, policy-chain, and environment-admission gates of the two-step create, but not the pool-drain gate or the refusal while both stores are unavailable; issue [CAPISES-I2](../../issues/CAPISES/CAPISES-I2-create-and-start-skips-drain-and-degraded-gates.md) records the gap, and open decision O2 asks whether this step waits on it.
+
+Change [0138](../0138-rest-only-client-api/change.md) (REST-only client API, program v1) maps `lenny session new` to REST `POST /v1/sessions/start` and removes the SDKs' MCP clients in its steps 0138.S4 and 0138.S6, so it replaces this path and `MCPClient.CreateAndStartSession` when it lands. Open decision O1 asks whether 0160 takes the REST path now.
 
 ### CT-2 Specification row
 
-The `lenny session new` row of §24.17 names the positional prompt in the command, states that the command starts the session on both paths and delivers a positional prompt after the session has started, and maps the MCP path to `lenny/create_and_start_session` and the prompt to REST `POST /v1/sessions/{id}/messages`.
+The `lenny session new` row of §24.17 names the positional prompt in the command, states that the command starts the session on both paths and delivers a positional prompt after the session has started, states what the command reports when the start or the delivery fails, and maps the MCP path to `lenny/create_and_start_session` and the prompt to REST `POST /v1/sessions/{id}/messages`.
 
 ## Specification and non-specification changes
 
@@ -75,9 +77,11 @@ The `lenny session new` row of §24.17 names the positional prompt in the comman
 - `docs/operator-guide/lenny-ctl.md` (operator): the `lenny session new` row of the session command table gains the positional prompt and states that the command starts the session before it delivers the prompt.
 - `docs/tutorials/first-session.md` (client developer): step 1 of the CLI path uses the positional prompt with `--attach`, the form the CLI accepts, in place of the absent `--message` flag, and describes the output the command produces.
 - `docs/client-guide/index.md` (client developer), `docs/runtime-author-guide/index.md`, `docs/runtime-author-guide/local-development.md`, and `docs/runtime-author-guide/echo-runtime.md` (runtime author): each `lenny session new ... --message "..."` example becomes a positional prompt.
-- `docs/index.md` and `docs/getting-started/quickstart.md` already show the positional form and need no edit.
+- `README.md` and `docs/index.md` (operator and client developer): the local-trial example uses `--runtime echo`, because the CLI refuses the `--runtime=echo` form.
+- `docs/client-guide/index.md`: the CLI block captures the session ID with `SESSION_ID=$(lenny session new ...)`, so the following commands have it.
+- `docs/getting-started/quickstart.md` already shows the working form and needs no edit.
 
-The other drift that the review of `docs/tutorials/first-session.md` found, verbs and flags the CLI does not implement, is filed as an issue rather than fixed here.
+The other drift found on these pages, verbs and flags the CLI does not implement, the curl example of the tutorial's Path C, and the `=` flag form in the specification's examples, is filed as issue [CLIADM-I2](../../issues/CLIADM/CLIADM-I2-session-docs-name-absent-verbs-and-flags.md) rather than fixed here.
 
 ## Tests
 
@@ -86,6 +90,7 @@ Unit tier, each citing §24.17 (Session Operations):
 - `pkg/embedded/localcli`: a fake gateway that refuses a message to a session that is not `running` shows that `lenny session new` with a prompt and no `--workspace` starts the session before it sends the prompt, through `lenny/create_and_start_session` and never `lenny/create_session`;
 - `pkg/embedded/localcli`: without a prompt, the command still starts the session and sends no message;
 - `pkg/embedded/localcli`: when `lenny/create_and_start_session` fails, the command exits with status 1, reports the gateway's error, sends no prompt, and prints no session identifier;
+- `pkg/embedded/localcli`: when the session starts and the prompt is refused, the command exits with status 1 and names the started session and the gateway's reason;
 - `sdks/client/go/lenny`: `CreateAndStartSession` decodes the `id` and `state` of the tool result, returns a tool failure as an error, and returns a JSON-RPC error as an error.
 
 Contract tier, in `tests/contract/sdks`: the SDK's `CreateAndStartSession` against the gateway's in-process MCP server returns a `running` session, and a message sent to it reaches the runtime. The test cites §15.2 (MCP API).

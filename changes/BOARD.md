@@ -271,4 +271,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 16 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
-| [0160](0160-cli-session-new-starts/change.md) | lenny session new starts the session before the prompt | `In progress` | 0 of 1 | 0 |
+| [0160](0160-cli-session-new-starts/change.md) | lenny session new starts the session before the prompt | `In progress` | 0 of 1 | 2 |
