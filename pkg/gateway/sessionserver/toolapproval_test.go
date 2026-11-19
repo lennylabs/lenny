@@ -12,11 +12,11 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 func fixedNow() time.Time { return time.Date(2026, 6, 2, 12, 0, 0, 0, time.UTC) }
@@ -41,7 +41,7 @@ func TestToolApprovalGateProducer_spec_7_2_9(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	waits := toolapproval.NewRegistry()
 
-	sub, err := bus.SubscribeForTenant("acme", "sess_1", 0, 8)
+	sub, err := bus.Subscribe("acme", "sess_1", 0, 8)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -59,7 +59,7 @@ func TestToolApprovalGateProducer_spec_7_2_9(t *testing.T) {
 
 	// The SSE event proves the producer published before blocking.
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != "tool_use_requested" {
 			t.Fatalf("event type = %q, want tool_use_requested", ev.Type)
 		}

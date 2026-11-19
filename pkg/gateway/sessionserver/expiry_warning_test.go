@@ -10,10 +10,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // spec: §11.3 — OnSessionExpiringSoon performs both halves: it emits
@@ -40,7 +40,7 @@ func TestOnSessionExpiringSoonEmitsEventAndSignalsPod_spec_11_3_240(t *testing.T
 
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, PodRegistry: reg})
 
-	sub, err := bus.SubscribeForTenant("acme", "sess_warn", 0, 8)
+	sub, err := bus.Subscribe("acme", "sess_warn", 0, 8)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -50,7 +50,7 @@ func TestOnSessionExpiringSoonEmitsEventAndSignalsPod_spec_11_3_240(t *testing.T
 
 	// SSE half: a session_expiring_soon event with the documented payload.
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != "session_expiring_soon" {
 			t.Fatalf("event type = %q, want session_expiring_soon", ev.Type)
 		}
@@ -103,7 +103,7 @@ func TestOnSessionExpiringSoonEmitsEventWithoutBinding_spec_11_3_240(t *testing.
 	}
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, PodRegistry: podsession.NewRegistry()})
 
-	sub, err := bus.SubscribeForTenant("acme", "sess_nb", 0, 8)
+	sub, err := bus.Subscribe("acme", "sess_nb", 0, 8)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -112,7 +112,7 @@ func TestOnSessionExpiringSoonEmitsEventWithoutBinding_spec_11_3_240(t *testing.
 	srv.OnSessionExpiringSoon(context.Background(), sess, 7200, 120)
 
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != "session_expiring_soon" {
 			t.Errorf("event type = %q, want session_expiring_soon", ev.Type)
 		}

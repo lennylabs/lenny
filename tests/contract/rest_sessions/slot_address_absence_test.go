@@ -44,12 +44,12 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/toolapproval"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/slotcounter"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/envtest"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
@@ -115,7 +115,7 @@ func TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1(t *testing.T) {
 	bus := sessionevents.NewBus(64)
 	waits := toolapproval.NewRegistry()
 
-	sub, err := bus.SubscribeForTenant("acme", "sess_tool_1", 0, 8)
+	sub, err := bus.Subscribe("acme", "sess_tool_1", 0, 8)
 	if err != nil {
 		t.Fatalf("subscribe: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestToolApprovalPayloadsCarryNoSlotAddress_spec_4_1(t *testing.T) {
 	}()
 
 	select {
-	case ev := <-sub.Events():
+	case ev := <-sub.Events:
 		if ev.Type != "tool_use_requested" {
 			t.Fatalf("event type = %q, want tool_use_requested", ev.Type)
 		}

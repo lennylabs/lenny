@@ -47,11 +47,11 @@ The import sites in each title are counted over the packages the step moves, as 
 `sessionserver`'s five upload files and their tests to a new package, `pkg/gateway/uploadhandler`, which reaches the core through the session lookup, request forwarding, and workspace write operations of the seam interface, with authorization applied by each route's access check, and registers its routes with the API front. The archive extraction in `podsession` stays until 0153.S3 removes it. The seam interface page gains `GWSEAM-RequestTenant`, served by the API front, and `GWSEAM-VerifyUploadToken`, `GWSEAM-ReserveStorage`, `GWSEAM-AdjustStorage`, and `GWSEAM-AuditUpload`, served by the session core to the upload handler, because the upload token, quota, tenant, and audit packages the handler used stay with the core under GW-R2 (open decisions 31 to 33). `GWSEAM-ForwardRequest` gets an interface of its own, and `GWSEAM-WriteWorkspace` carries each file's mode and names the phase that failed. Until 0117.S8, the session server serves the route registration interface on the mux the client and forward listeners serve, and the upload handler's flags and route registration move out of `cmd/lenny-gateway` (decision 7).
 
 ### 0117.S6 Stream proxy split (69 import sites)
-- status: Planned
-- lanes: [code]
+- status: Landed
+- lanes: [specification, code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
-`session/sessionevents` to `pkg/gateway/streamproxy`, and `sessionserver`'s `events.go` and `logs.go` with their tests to a new package there. Every publisher, in the core and in the platform tools seam, reaches the event bus through the publish operation of the seam interface.
+`session/sessionevents` to `pkg/gateway/streamproxy`, and `sessionserver`'s `events.go` and `logs.go` with their tests to a new package there. Every publisher, in the core and in the platform tools seam, reaches the event bus through the publish operation of the seam interface. The event bus serves the seam's event operations itself, and the platform tools seam's attach stream, the dual-store monitor's broadcast, and the eviction bridge reach it through them too. The event and log streams reach the core through the session lookup, the handoff frame operations, and `GWSEAM-RequestTenant`, which 0117.S5 also adds, and register their routes through the session server's interim route registration, as 0117.S5 arranges it. `GWSEAM-Subscribe` returns the retained events with the live channel, which the attach stream and the event and log streams replay before they tail. The replay buffer depth flag moves into the bus's package (decision 7).
 
 ### 0117.S7 Platform tools seam (428 import sites)
 - status: Planned

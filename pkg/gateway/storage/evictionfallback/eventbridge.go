@@ -8,21 +8,21 @@ import (
 	"log"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
-// SessionEventsBridge adapts a *sessionevents.Bus to the EventEmitter
+// SessionEventsBridge adapts the session event bus to the EventEmitter
 // interface so the gateway can publish §4.4
 // events onto the regular session event stream. It is a thin
-// translation layer; production callers wire the gateway's
-// sessionevents.Bus into the Writer's Events field via this bridge.
+// translation layer; production callers wire the stream proxy's bus,
+// reached through GWSEAM-Publish, into the Writer's Events field via
+// this bridge.
 //
-// spec: §4.4 — "Emit a session.lost event on the session's
-// event stream".
+// spec: §4.4 (Event / Checkpoint Store)
 type SessionEventsBridge struct {
 	// Bus is the §15.1 session event bus the gateway publishes onto.
 	// Required. A nil Bus makes EmitSessionLost a logged no-op.
-	Bus *sessionevents.Bus
+	Bus seam.Events
 	// Now overrides time.Now for tests. Nil selects time.Now.
 	Now func() time.Time
 }
@@ -42,12 +42,13 @@ func (b *SessionEventsBridge) EmitSessionLost(_ context.Context, sessionID, reas
 	if err != nil {
 		body = []byte(`{}`)
 	}
-	if b.Bus == nil {
+	bus := seam.EventsOrNil(b.Bus)
+	if bus == nil {
 		log.Printf("evictionfallback: session.lost (event bus unavailable) session=%s reason=%s payload=%s",
 			sessionID, reason, body)
 		return
 	}
-	b.Bus.Publish(sessionID, "session.lost", string(body), b.now())
+	bus.Publish("", sessionID, "session.lost", string(body), b.now())
 }
 
 func (b *SessionEventsBridge) now() time.Time {

@@ -12,7 +12,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 )
 
 // AttachToolName is the §15.2 MCP tool. The
@@ -39,29 +39,16 @@ var attachKeepAliveInterval = 20 * time.Second
 // back-pressure policy for OutboundChannel implementations".
 var attachSendTimeout = 100 * time.Millisecond
 
-// SessionEventSource is the read side of the §15.1 session event bus the
-// §15.2 Streamable HTTP SSE channel streams from. *sessionevents.Bus
-// satisfies it. Defining the interface here keeps the transport coupled
-// only to the subscribe + eviction-cursor surface it needs.
-type SessionEventSource interface {
-	// SubscribeForTenant registers a tenant-bound subscriber, returning
-	// the retained backlog (events with Seq > afterSeq) plus a live
-	// channel. A tenant id that does not match the session's frozen
-	// binding returns an error so a foreign caller cannot attach.
-	SubscribeForTenant(tenantID, sessionID string, afterSeq uint64, bufferSize int) (*sessionevents.Subscription, error)
-	// OldestRetainedSeq reports the smallest Seq still in the replay
-	// buffer, used to detect the §15.2 eviction case.
-	OldestRetainedSeq(sessionID string) (uint64, bool)
-}
-
 // AttachConfig wires the §15.2 Streamable HTTP SSE channel into the MCP
 // transport. A zero config (Events == nil) leaves attach streaming off,
 // so a `lenny/attach_session` tools/call falls through to the registered
 // snapshot handler on every transport.
 type AttachConfig struct {
 	// Events is the §15.1 session event bus the stream replays from and
-	// tails. Required to enable streaming.
-	Events SessionEventSource
+	// tails, which the stream proxy serves through the seam interface
+	// (GWSEAM-Subscribe and GWSEAM-OldestRetainedSeq). Required to enable
+	// streaming.
+	Events seam.Events
 	// TenantFromRequest resolves the caller's tenant from the upgraded
 	// request so the bus enforces the §7.2 tenant binding. A nil resolver
 	// streams under the empty tenant (the legacy untenanted bus path).
@@ -90,6 +77,8 @@ func (c AttachConfig) now() time.Time {
 // the SSE stream; a non-SSE caller (a WebSocket frame or a plain JSON
 // POST) falls through to the registered snapshot handler. spec: §15.2. F-15.2.2, F-9.1.7.
 func (s *Server) SetAttach(cfg AttachConfig) {
+	// A typed nil bus leaves attach streaming off, as a nil one does.
+	cfg.Events = seam.EventsOrNil(cfg.Events)
 	s.attach = cfg
 }
 
@@ -179,7 +168,7 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 
 	// §7.2 defense-in-depth: the bus enforces the tenant binding even if
 	// the Authorize precheck above is unwired.
-	sub, err := s.attach.Events.SubscribeForTenant(tenant, in.SessionID, afterSeq, 64)
+	sub, err := s.attach.Events.Subscribe(tenant, in.SessionID, afterSeq, 64)
 	if err != nil {
 		s.WriteLennyError(w, req.ID, errInvalidParams, "RESOURCE_NOT_FOUND", "session not found", nil)
 		return
@@ -234,7 +223,7 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 		select {
 		case <-ctx.Done():
 			return
-		case ev, open := <-sub.Events():
+		case ev, open := <-sub.Events:
 			if !open {
 				return
 			}
@@ -265,7 +254,7 @@ func (s *Server) handleAttachStream(w http.ResponseWriter, r *http.Request, req 
 // closed SessionEventKind enum. The write is bounded by attachSendTimeout
 // (see writeBoundedSSEFrame); a non-nil return means the subscriber's read
 // loop is behind and the caller must close the connection. spec: §15.2; §15 OutboundChannel bounded-error policy.
-func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) error {
+func writeMCPSessionEvent(w http.ResponseWriter, ev seam.Event) error {
 	b := marshalMCPSessionEvent(ev)
 	if b == nil {
 		return nil
@@ -279,7 +268,7 @@ func writeMCPSessionEvent(w http.ResponseWriter, ev sessionevents.Event) error {
 // client classifies an event the same way regardless of transport. The
 // per-kind projection itself lives in projection.go. A marshal failure
 // returns nil and the caller drops the frame. spec: §15.2. F-15.2.13, F-15.2.14.
-func marshalMCPSessionEvent(ev sessionevents.Event) []byte {
+func marshalMCPSessionEvent(ev seam.Event) []byte {
 	return projectMCPSessionEvent(ev)
 }
 

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: MIT
 
-package sessionserver_test
+package streamproxy_test
 
 import (
 	"bufio"
@@ -15,10 +15,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/pagination"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 // paginationMint is a one-liner around pagination.MintCursor so test
@@ -34,7 +34,7 @@ func paginationMint(field, direction, key, tiebreak string, issued time.Time) st
 func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := newStreamServer(t, store, sessionserver.Options{
 		DevTenantHeader: true,
 		Executor:        executor.NewEchoExecutor(),
 		Events:          bus,
@@ -69,8 +69,8 @@ func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 	// Publish events by injecting a message in a goroutine.
 	go func() {
 		time.Sleep(50 * time.Millisecond)
-		bus.Publish("sess_ev", "message_delivered", `{"content":"hello"}`, time.Now())
-		bus.Publish("sess_ev", "response", `{"text":"echo hello"}`, time.Now())
+		bus.Publish("", "sess_ev", "message_delivered", `{"content":"hello"}`, time.Now())
+		bus.Publish("", "sess_ev", "response", `{"text":"echo hello"}`, time.Now())
 	}()
 
 	// Read SSE frames until we see the response event.
@@ -107,7 +107,7 @@ func TestEventsStreamReceivesMessageEvents(t *testing.T) {
 
 func TestEventsStreamMissingSession(t *testing.T) {
 	store := memstore.New()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: sessionevents.NewBus(0)})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: sessionevents.NewBus(0)})
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_missing/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -125,7 +125,7 @@ func TestEventsStreamUnavailableWhenBusUnwired(t *testing.T) {
 		ID:     "sess_x", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: now, UpdatedAt: now,
 	})
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true}) // no Events bus
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true}) // no Events bus
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_x/events", nil)
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
 	rr := httptest.NewRecorder()
@@ -138,7 +138,7 @@ func TestEventsStreamUnavailableWhenBusUnwired(t *testing.T) {
 func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -146,9 +146,9 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	// Pre-publish 3 events.
-	bus.Publish("sess_bk", "e1", `{}`, now)
-	bus.Publish("sess_bk", "e2", `{}`, now)
-	bus.Publish("sess_bk", "e3", `{}`, now)
+	bus.Publish("", "sess_bk", "e1", `{}`, now)
+	bus.Publish("", "sess_bk", "e2", `{}`, now)
+	bus.Publish("", "sess_bk", "e3", `{}`, now)
 
 	ts := httptest.NewServer(asOwner(srv.Handler()))
 	defer ts.Close()
@@ -200,7 +200,7 @@ func TestEventsStreamReplaysBacklogWithCursor(t *testing.T) {
 func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(3) // small replay buffer
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -209,7 +209,7 @@ func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 	})
 	// Publish 10 events; maxHistory=3 keeps seqs 8,9,10.
 	for i := 0; i < 10; i++ {
-		bus.Publish("sess_gap", "e", `{}`, now)
+		bus.Publish("", "sess_gap", "e", `{}`, now)
 	}
 
 	ts := httptest.NewServer(asOwner(srv.Handler()))
@@ -271,7 +271,7 @@ func TestEventsStreamEmitsGapAndCheckpointMarkers_spec_7_2(t *testing.T) {
 func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(10)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -279,7 +279,7 @@ func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 5; i++ {
-		bus.Publish("sess_ok", "e", `{}`, now)
+		bus.Publish("", "sess_ok", "e", `{}`, now)
 	}
 
 	ts := httptest.NewServer(asOwner(srv.Handler()))
@@ -322,7 +322,7 @@ func TestEventsStreamOmitsGapMarkersWhenCursorWithinBuffer_spec_7_2(t *testing.T
 func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(3)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -330,7 +330,7 @@ func TestEventsStreamOmitsGapMarkersOnFreshConnect_spec_7_2(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 10; i++ {
-		bus.Publish("sess_fresh", "e", `{}`, now)
+		bus.Publish("", "sess_fresh", "e", `{}`, now)
 	}
 
 	ts := httptest.NewServer(asOwner(srv.Handler()))
@@ -415,7 +415,7 @@ func indexOfLine(lines []string, want string) int {
 func TestEventsStreamSynthesizesHandoffReattach_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0) // no events published → no local history
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -473,7 +473,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
 	archive := treearchive.NewMemory()
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus, TreeArchive: archive})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -529,7 +529,7 @@ func TestEventsStreamHandoffSynthesisStreamsChildren_spec_10_4(t *testing.T) {
 func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(10)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -538,7 +538,7 @@ func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) 
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 5; i++ {
-		bus.PublishForTenant("acme", "sess_local", "e", `{}`, now)
+		bus.Publish("acme", "sess_local", "e", `{}`, now)
 	}
 
 	ts := httptest.NewServer(asOwner(srv.Handler()))
@@ -563,7 +563,7 @@ func TestEventsStreamNoHandoffSynthesisWithLocalHistory_spec_10_4(t *testing.T) 
 func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(0)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -597,7 +597,7 @@ func TestEventsStreamNoHandoffSynthesisOnFreshConnect_spec_10_4(t *testing.T) {
 func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(16)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -605,7 +605,7 @@ func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 5; i++ {
-		bus.PublishForTenant("acme", "sess_json", "response", `{"text":"x"}`, now)
+		bus.Publish("acme", "sess_json", "response", `{"text":"x"}`, now)
 	}
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/sessions/sess_json/events", nil)
@@ -634,7 +634,7 @@ func TestEventsJSONListReturnsCanonicalEnvelope_spec_15_1_1228(t *testing.T) {
 func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(16)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	srv := newStreamServer(t, store, sessionserver.Options{DevTenantHeader: true, Events: bus})
 	now := time.Now()
 	_ = store.Create(context.Background(), sessionstore.Session{
 		UserID: testOwner,
@@ -642,7 +642,7 @@ func TestEventsJSONListPaginates_spec_15_1_1253(t *testing.T) {
 		CreatedAt: now, UpdatedAt: now,
 	})
 	for i := 0; i < 7; i++ {
-		bus.PublishForTenant("acme", "sess_pag", "response", `{}`, now)
+		bus.Publish("acme", "sess_pag", "response", `{}`, now)
 	}
 
 	get := func(query string) (int, string) {
@@ -673,7 +673,7 @@ func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 	store := memstore.New()
 	bus := sessionevents.NewBus(8)
 	fixed := time.Date(2026, 5, 28, 12, 0, 0, 0, time.UTC)
-	srv := sessionserver.New(store, sessionserver.Options{
+	srv := newStreamServer(t, store, sessionserver.Options{
 		DevTenantHeader: true,
 		Events:          bus,
 		Clock:           func() time.Time { return fixed },
@@ -683,7 +683,7 @@ func TestEventsJSONListRejectsExpiredCursor_spec_15_1_1253(t *testing.T) {
 		ID:     "sess_exp", TenantID: "acme", State: session.StateRunning,
 		CreatedAt: fixed, UpdatedAt: fixed,
 	})
-	bus.PublishForTenant("acme", "sess_exp", "response", `{}`, fixed)
+	bus.Publish("acme", "sess_exp", "response", `{}`, fixed)
 
 	expired := paginationMint("seq", "asc", "1", "1", fixed.Add(-25*time.Hour))
 

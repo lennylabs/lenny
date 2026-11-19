@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 )
 
@@ -25,12 +25,6 @@ type PendingLister interface {
 	PendingDetailsForSession(sessionID string) []inputwait.PendingRequest
 }
 
-// EventPublisher publishes a session event under a tenant. *sessionevents.Bus
-// satisfies it.
-type EventPublisher interface {
-	PublishForTenant(tenantID, sessionID, eventType, data string, now time.Time) sessionevents.Event
-}
-
 // Writer applies the row writes that keep a session's persisted
 // input_required state on a live wait: the entry write, the exit write, and
 // the recovery write. Each write that changes the row's state publishes one
@@ -40,8 +34,9 @@ type Writer struct {
 	Store Updater
 	// Waits is this replica's input-wait registry.
 	Waits PendingLister
-	// Events receives status_change. Nil publishes nothing.
-	Events EventPublisher
+	// Events receives status_change through GWSEAM-Publish. Nil publishes
+	// nothing.
+	Events seam.Events
 	// Clock stamps LastAgentActivityAt and the event time. Nil uses
 	// time.Now.
 	Clock func() time.Time
@@ -155,12 +150,13 @@ func (w Writer) apply(ctx context.Context, tenantID, sessionID string, mutate fu
 // lifecycle transitions send.
 // spec: §7.2 (Session state machine) — status_change(state).
 func (w Writer) publishStatusChange(row sessionstore.Session) {
-	if w.Events == nil {
+	events := seam.EventsOrNil(w.Events)
+	if events == nil {
 		return
 	}
 	data, err := json.Marshal(map[string]any{"state": string(row.State)})
 	if err != nil {
 		return
 	}
-	w.Events.PublishForTenant(row.TenantID, row.ID, "status_change", string(data), w.now())
+	events.Publish(row.TenantID, row.ID, "status_change", string(data), w.now())
 }

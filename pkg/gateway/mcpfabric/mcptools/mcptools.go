@@ -68,11 +68,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/runtimestore"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/executor"
 	"github.com/lennylabs/lenny/pkg/gateway/session/inputwait"
 	"github.com/lennylabs/lenny/pkg/gateway/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessioninbox"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
@@ -584,9 +584,10 @@ type Deps struct {
 	// audit row. spec: §4.8, §11.7.
 	PolicyAudit *policy.AuditSink
 
-	// Events is the §15.1 session event bus. Optional — when nil, the
-	// lenny/output tool is not registered.
-	Events *sessionevents.Bus
+	// Events is the §15.1 session event bus, which the stream proxy
+	// serves through GWSEAM-Publish. Optional — when nil, the lenny/output
+	// tool is not registered.
+	Events seam.Events
 
 	// InputWaits is the §8.5 lenny/request_input pending-call registry.
 	// Optional — when nil, lenny/request_input is not registered.
@@ -913,6 +914,8 @@ type ElicitationLifecycleRecorder interface {
 
 // Register installs the §8.5 tools onto the MCP server.
 func Register(srv *mcp.Server, deps Deps) {
+	// A typed nil bus leaves the event tools off, as a nil one does.
+	deps.Events = seam.EventsOrNil(deps.Events)
 	clock := deps.Clock
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }

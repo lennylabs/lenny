@@ -30,12 +30,14 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterclient"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
+	"github.com/lennylabs/lenny/tests/testinfra/streamwire"
 )
 
 // seedReadySession creates a ready row for alice.
@@ -140,7 +142,9 @@ func TestStartStreamsStartingBeforeRunning_spec_7_2(t *testing.T) {
 	store := memstore.New()
 	const id = "sess_start_stream"
 	seedReadySession(t, store, id)
-	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: sessionevents.NewBus(64)})
+	bus := sessionevents.NewBus(64)
+	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true, Events: bus})
+	streamwire.Attach(t, srv, streamproxy.Options{Events: bus})
 	ts := httptest.NewServer(ownerprincipal.Wrap(srv.Handler(), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 

@@ -15,7 +15,7 @@
 // emitters stay in the gateway tree because §25.3 scopes the buffer to
 // the gateway, which reads in-process state.
 //
-// This package is distinct from pkg/gateway/session/sessionevents, which
+// This package is distinct from pkg/gateway/streamproxy/sessionevents, which
 // is the session event bus backing the §15.1 session SSE stream.
 // Operational events are platform-level (alerts, pool transitions,
 // upgrades) and follow the §25.3 / §12.6 CloudEvents envelope.

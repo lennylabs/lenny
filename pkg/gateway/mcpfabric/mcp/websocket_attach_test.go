@@ -13,7 +13,7 @@ import (
 	"nhooyr.io/websocket"
 
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/mcp"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 )
 
 func attachTS() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
@@ -73,8 +73,8 @@ func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) 
 	// closed SessionEventKind enum), so this transport test exercises the
 	// ack / backlog / live ordering independent of the §15.2.1 per-kind
 	// projection (covered in projection_test.go). F-15.2.13.
-	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"role":"user","content":"a"}`, attachTS())
-	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"role":"user","content":"b"}`, attachTS())
+	bus.Publish("acme", "sess-1", "message_delivered", `{"role":"user","content":"a"}`, attachTS())
+	bus.Publish("acme", "sess-1", "message_delivered", `{"role":"user","content":"b"}`, attachTS())
 
 	ctx, conn, _, teardown := dialTestServer(t, attachWiredServer(bus, nil))
 	defer teardown()
@@ -99,7 +99,7 @@ func TestWebSocketAttachStreamsBacklogThenLive_spec_15_2_F_27_4_7(t *testing.T) 
 	}
 
 	// Live: publish after the subscription is active (ack already read).
-	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"role":"user","content":"world"}`, attachTS())
+	bus.Publish("acme", "sess-1", "message_delivered", `{"role":"user","content":"world"}`, attachTS())
 	live := sessionEventParams(t, ctx, conn)
 	if live["seq"].(float64) != 3 {
 		t.Fatalf("live frame seq = %v, want 3", live["seq"])
@@ -118,7 +118,7 @@ func TestWebSocketAttachGapDetected_spec_15_2(t *testing.T) {
 	for i := 0; i < 4; i++ {
 		// generic-projection event so the post-gap frame is a
 		// notifications/lenny/sessionEvent the helper can read. F-15.2.13.
-		bus.PublishForTenant("acme", "sess-1", "message_delivered", `{}`, attachTS())
+		bus.Publish("acme", "sess-1", "message_delivered", `{}`, attachTS())
 	}
 	// history now holds seq 3,4; oldest retained = 3.
 
@@ -194,7 +194,7 @@ func TestWebSocketAttachInterleavesWithRequestResponse(t *testing.T) {
 	}
 
 	// A live session event then pushes over the same socket.
-	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"content":"streamed"}`, attachTS())
+	bus.Publish("acme", "sess-1", "message_delivered", `{"content":"streamed"}`, attachTS())
 	live := sessionEventParams(t, ctx, conn)
 	if live["data"].(map[string]any)["content"] != "streamed" {
 		t.Fatalf("live frame = %v", live)
@@ -253,7 +253,7 @@ func TestWebSocketAttachRedactsPlaygroundEgress_spec_27_9_251(t *testing.T) {
 		t.Fatal("expected attach ack")
 	}
 
-	bus.PublishForTenant("acme", "sess-1", "message_delivered", `{"content":"ok","access_token":"sk-secret"}`, attachTS())
+	bus.Publish("acme", "sess-1", "message_delivered", `{"content":"ok","access_token":"sk-secret"}`, attachTS())
 	live := sessionEventParams(t, ctx, conn)
 	data := live["data"].(map[string]any)
 	if data["access_token"] != "[REDACTED]" {

@@ -25,10 +25,10 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionevents"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
+	"github.com/lennylabs/lenny/pkg/gateway/streamproxy/sessionevents"
 	"github.com/lennylabs/lenny/pkg/tenantkms"
 )
 
@@ -165,7 +165,7 @@ func TestExportHPAGaugesUpdatesAllGauges(t *testing.T) {
 	}
 
 	bus := sessionevents.NewBus(0)
-	sub := bus.Subscribe("s1", 0, 4)
+	sub, _ := bus.Subscribe("", "s1", 0, 4)
 	defer sub.Close()
 
 	m, err := gatewaymetrics.New()
