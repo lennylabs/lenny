@@ -246,7 +246,7 @@ regexes = ['''^(0123456789abcdef|sk-live-abc123|tier4-scope-probe-secret-materia
 #   docs/operator-guide/security.md:184
 #   proposals/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre/0112_fix_credential-secrets-in-a-dedicated-namespace-addable-by-secre.spec-changes.md:43,49,69
 #   tests/integration/drift_gatewayreader_http_test.go:131
-#   pkg/gateway/externalapi/admin/credential_pools_test.go:37
+#   pkg/gateway/api/admin/credential_pools_test.go:37
 [[allowlists]]
 description = "Kubernetes Secret names in credential pool examples"
 condition = "AND"
