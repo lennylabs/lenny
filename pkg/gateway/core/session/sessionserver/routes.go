@@ -123,9 +123,9 @@ func (s *Server) RegisterRoutes(routes seam.Routes) error {
 // overlapping REST operation in-process: the API front's request pipeline
 // of the client listener, so an in-process call passes the same tenant,
 // permission, and session checks as a client request. CreateSessionService
-// and CreateAndStartService call the create handlers directly behind the
-// tenant check alone, as before the pipeline moved (open decision 71). Call
-// it before the server serves.
+// and CreateAndStartService call the create handlers directly, behind the
+// permission gate of the create routes (guardPermission) and the tenant
+// check (guardTenant). Call it before the server serves.
 func (s *Server) SetServiceHandler(h http.Handler) {
 	s.serviceHandler = h
 }

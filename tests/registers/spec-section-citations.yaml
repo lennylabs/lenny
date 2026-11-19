@@ -452,7 +452,7 @@ packages:
     - package: pkg/gateway/core/session/sessioninbox
       count: 73
     - package: pkg/gateway/core/session/sessionserver
-      count: 2954
+      count: 2963
     - package: pkg/gateway/core/session/slotcounter
       count: 125
     - package: pkg/gateway/core/session/slothealth

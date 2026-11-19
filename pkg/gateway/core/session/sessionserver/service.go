@@ -9,6 +9,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+
+	"github.com/lennylabs/lenny/pkg/auth"
 )
 
 // ServiceError is the typed result a session-service call returns to a
@@ -168,6 +170,12 @@ func (s *Server) ServiceCall(ctx context.Context, tenantID, method, target strin
 // and writes no row. spec: §10.2 (Session ownership) rules 1 and 3.
 // F-10.2.21.
 //
+// The permission gate of the REST create route runs first, through
+// guardPermission and ahead of the tenant check, so a principal whose roles
+// do not grant manage_own_sessions, such as a tenant-viewer or a
+// billing-viewer, is refused with the 403 FORBIDDEN that `POST /v1/sessions`
+// returns, before any gate runs or any row is written.
+//
 // spec: §15.2.1 rule 1; §15.1 session-creation flow. F-15.2.4.
 func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
 	body, err := json.Marshal(req)
@@ -182,7 +190,7 @@ func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req 
 	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions", bytes.NewReader(body)).WithContext(contextWithServiceTenant(ctx, tenantID))
 	httpReq.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	s.guardTenant(s.handleCreate)(rec, httpReq)
+	s.guardPermission(auth.PermManageOwnSessions, s.guardTenant(s.handleCreate))(rec, httpReq)
 
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		var resp CreateSessionResponse
@@ -245,6 +253,11 @@ func (s *Server) CreateSessionService(ctx context.Context, tenantID string, req 
 // UNAUTHORIZED and claims no pod. spec: §10.2 (Session ownership) rules 1
 // and 3. F-10.2.21.
 //
+// The permission gate of the REST create-and-start route runs first, through
+// guardPermission and ahead of the tenant check, so a principal whose roles
+// do not grant manage_own_sessions is refused with the 403 FORBIDDEN that
+// `POST /v1/sessions/start` returns and claims no pod.
+//
 // spec: §15.2.1 rule 1; §7.1 create-and-start atomicity.
 func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req CreateSessionRequest) (CreateSessionResponse, *ServiceError) {
 	body, err := json.Marshal(req)
@@ -259,7 +272,7 @@ func (s *Server) CreateAndStartService(ctx context.Context, tenantID string, req
 	httpReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/start", bytes.NewReader(body)).WithContext(contextWithServiceTenant(ctx, tenantID))
 	httpReq.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
-	s.guardTenant(s.handleCreateAndStart)(rec, httpReq)
+	s.guardPermission(auth.PermManageOwnSessions, s.guardTenant(s.handleCreateAndStart))(rec, httpReq)
 
 	if rec.Code == http.StatusCreated || rec.Code == http.StatusOK {
 		var resp CreateSessionResponse
