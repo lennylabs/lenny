@@ -7,9 +7,9 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/erasurejob"
 )
@@ -68,7 +68,7 @@ func (l erasureSessionLister) List(ctx context.Context, tenantID, userID string)
 //
 // spec: §12.8 (Processing restriction during erasure (GDPR Article 18)).
 type erasureReceiptSink struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 }
 
 // WriteReceipt appends the receipt of j, which carries its ReceiptAt.

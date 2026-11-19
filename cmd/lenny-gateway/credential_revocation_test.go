@@ -301,7 +301,7 @@ func TestRevocationRotateThroughPropagatorPicksDifferentCredential(t *testing.T)
 		leases:      leases,
 		markRevoked: svc.RevokeCredential,
 		rotate: func(l credential.Lease, nextPool string, trigger credential.RotationTrigger) {
-			// The production rotate is proxyFallbackRotator.Rotate, which
+			// The production rotate is proxyFallbackRotator.rotateLease, which
 			// mints from nextPool via the same Assign path used here.
 			next, aerr := svc.Assign(nextPool, l.SessionID, "", "", 0)
 			if aerr != nil {

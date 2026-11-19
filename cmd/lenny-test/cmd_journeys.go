@@ -5,8 +5,10 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -20,8 +22,8 @@ import (
 )
 
 // tierJourneys names the persona journey tier. It is not in allTiers: it
-// is not a go test tier, it spends money on every run, and --max-tier and
-// the merge gate never reach it. It runs at the area and release gates
+// is not a go test tier, it spends money on every run, and no --gate bound,
+// --tier list, or merge gate reaches it. It runs at the area and release gates
 // (TESTING.md, "Persona journeys").
 const tierJourneys = "journeys"
 
@@ -247,25 +249,33 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 	if err := os.MkdirAll(resultsDir, 0o700); err != nil {
 		return journeysFail(err)
 	}
+	// The probe's records are written through the redactor's record
+	// files, like a trial's.
+	red := journeys.NewRedactor(agentCfg.Token)
 	transcriptPath := filepath.Join(resultsDir, "probe-"+runID+".jsonl")
-	transcript, err := os.OpenFile(transcriptPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	transcript, err := red.Create(transcriptPath)
 	if err != nil {
 		return journeysFail(err)
 	}
-	defer transcript.Close()
 	stderrPath := filepath.Join(resultsDir, "probe-"+runID+".stderr.log")
-	stderr, err := os.OpenFile(stderrPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
+	stderr, err := red.Create(stderrPath)
 	if err != nil {
+		_ = transcript.Close()
 		return journeysFail(err)
 	}
-	defer stderr.Close()
 	home, _ := os.UserHomeDir()
 	target := journeys.NewKindTarget(root, runID)(filepath.Join(scratch, "probe", "target"))
 	rep, code, probeErr := journeys.RunProbe(ctx, agentCfg, journeys.ProbeInput{
 		Target: target, RunID: runID, Scratch: filepath.Join(scratch, "probe"), HostHome: home,
 		HostContexts: journeys.HostContexts(filepath.Join(home, ".kube", "config")),
-		Transcript:   transcript, Stderr: stderr, Redactor: journeys.NewRedactor(agentCfg.Token), Log: os.Stdout,
+		Transcript:   transcript, Stderr: stderr, Redactor: red, Log: os.Stdout,
 	}, ledger)
+	// Closing writes each stream's held last line, so a failure there
+	// leaves a record incomplete and fails the probe run.
+	if err := closeProbeRecords(red, transcript, stderr, transcriptPath, stderrPath); err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test: journeys: probe records: %v\n", err)
+		code = 2
+	}
 	out, _ := json.MarshalIndent(rep, "", "  ")
 	fmt.Println(string(out))
 	fmt.Printf("Transcript: %s\nAgent standard error: %s\n", transcriptPath, stderrPath)
@@ -276,6 +286,22 @@ func runJourneysProbe(ctx context.Context, root, resultsDir, scratch, runID stri
 		fmt.Fprintf(os.Stderr, "lenny-test: journeys: probe: %v\n", probeErr)
 	}
 	return code
+}
+
+// closeProbeRecords closes the probe's record streams and reads the
+// records back, as a run's records are (journeys.SweepRecords).
+func closeProbeRecords(red *journeys.Redactor, transcript, stderr io.Closer, paths ...string) error {
+	if err := errors.Join(transcript.Close(), stderr.Close()); err != nil {
+		return err
+	}
+	rewritten, err := journeys.SweepRecords(red, paths...)
+	if err != nil {
+		return err
+	}
+	if len(rewritten) > 0 {
+		return fmt.Errorf("records held credentials after they were written and were redacted again: %v", rewritten)
+	}
+	return nil
 }
 
 func printJourneysDryRun(selected []*journeys.Scenario, agentCfg journeys.AgentConfig, f journeysFlags) int {

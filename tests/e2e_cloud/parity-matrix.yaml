@@ -12,7 +12,7 @@
 #   planned: capability is documented but the test does not yet exist
 #   skip: capability is intentionally not validated against the provider (with reason)
 #
-# Validation invariants (enforced by cmd/lenny-test validate-maps):
+# Validation invariants (enforced by cmd/lenny-test validate):
 #   - Every capability has at least one `validated` provider.
 #   - Every provider listed across rows is in the allow-list (gke, eks, aks).
 #   - Every `skip` carries a `reason`.

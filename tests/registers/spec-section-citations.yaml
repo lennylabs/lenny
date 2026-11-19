@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1595
+      count: 1542
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -54,7 +54,7 @@ packages:
     - package: cmd/lenny-preflight
       count: 25
     - package: cmd/lenny-test
-      count: 10
+      count: 8
     - package: cmd/lenny-tier-promote
       count: 1
     - package: cmd/lenny-token-service
@@ -138,7 +138,7 @@ packages:
     - package: pkg/apis/lenny/v1alpha1
       count: 39
     - package: pkg/audit
-      count: 46
+      count: 47
     - package: pkg/audit/integrity
       count: 45
     - package: pkg/audit/jcs
@@ -255,6 +255,8 @@ packages:
       count: 19
     - package: pkg/experiment
       count: 10
+    - package: pkg/gateway/api/requestmetrics
+      count: 6
     - package: pkg/gateway/audit/auditretention
       count: 12
     - package: pkg/gateway/audit/auditscope
@@ -327,12 +329,8 @@ packages:
       count: 6
     - package: pkg/gateway/coordination/coordlease/pgstore
       count: 1
-    - package: pkg/gateway/coordination/gatewayleader
-      count: 5
-    - package: pkg/gateway/coordination/pdbwatcher
-      count: 10
-    - package: pkg/gateway/core/subsystem
-      count: 33
+    - package: pkg/gateway/core/leaderjobs
+      count: 3
     - package: pkg/gateway/credentials/credassign
       count: 81
     - package: pkg/gateway/credentials/credcache
@@ -373,8 +371,10 @@ packages:
       count: 2
     - package: pkg/gateway/credentials/usercreds
       count: 14
-    - package: pkg/gateway/deployment/devmode
-      count: 5
+    - package: pkg/gateway/drain/drainreadiness
+      count: 8
+    - package: pkg/gateway/drain/prestop
+      count: 47
     - package: pkg/gateway/environment/customrolestore
       count: 7
     - package: pkg/gateway/environment/customrolestore/pgstore
@@ -441,8 +441,6 @@ packages:
       count: 9
     - package: pkg/gateway/llmproxy/credrouter
       count: 19
-    - package: pkg/gateway/llmproxy/llmproxy
-      count: 64
     - package: pkg/gateway/llmproxy/proxycache
       count: 1
     - package: pkg/gateway/llmproxy/semanticcache
@@ -497,16 +495,12 @@ packages:
       count: 678
     - package: pkg/gateway/mcpfabric/mcptools/internal/genmcpschemas
       count: 1
-    - package: pkg/gateway/mcpfabric/playground
-      count: 93
-    - package: pkg/gateway/metrics/capacityplanning
-      count: 1
-    - package: pkg/gateway/metrics/extractionthreshold
-      count: 7
-    - package: pkg/gateway/metrics/gatewaymetrics
-      count: 238
-    - package: pkg/gateway/metrics/gcpause
-      count: 7
+    - package: pkg/gateway/meteringproxy/llmproxy
+      count: 71
+    - package: pkg/gateway/meteringproxy/metering
+      count: 53
+    - package: pkg/gateway/meteringproxy/sessionbudget
+      count: 27
     - package: pkg/gateway/middleware/auth
       count: 82
     - package: pkg/gateway/middleware/circuitbreaker
@@ -527,30 +521,26 @@ packages:
       count: 49
     - package: pkg/gateway/middleware/recover
       count: 6
-    - package: pkg/gateway/operability/health
-      count: 46
-    - package: pkg/gateway/operability/health/backends
-      count: 19
     - package: pkg/gateway/operability/recommendations
       count: 18
+    - package: pkg/gateway/opsendpoints/health
+      count: 46
+    - package: pkg/gateway/opsendpoints/health/backends
+      count: 19
     - package: pkg/gateway/pki/carotation
       count: 1
     - package: pkg/gateway/pki/carotationstore
       count: 1
     - package: pkg/gateway/pki/carotationstore/pgstore
       count: 1
-    - package: pkg/gateway/pki/tlsprobe
-      count: 5
+    - package: pkg/gateway/playground
+      count: 95
     - package: pkg/gateway/podlifecycle/bindrelease
       count: 6
-    - package: pkg/gateway/podlifecycle/drainreadiness
-      count: 8
     - package: pkg/gateway/podlifecycle/podclaim
       count: 190
     - package: pkg/gateway/podlifecycle/podsession
       count: 516
-    - package: pkg/gateway/podlifecycle/prestop
-      count: 49
     - package: pkg/gateway/podlifecycle/slotreaper
       count: 20
     - package: pkg/gateway/policy/interceptor
@@ -585,6 +575,16 @@ packages:
       count: 26
     - package: pkg/gateway/quota/storagequota/redisstore
       count: 3
+    - package: pkg/gateway/replica/devmode
+      count: 4
+    - package: pkg/gateway/replica/gatewayleader
+      count: 4
+    - package: pkg/gateway/replica/gatewaymetrics
+      count: 228
+    - package: pkg/gateway/replica/pdbwatcher
+      count: 7
+    - package: pkg/gateway/replica/tlsprobe
+      count: 5
     - package: pkg/gateway/runtime/adapterclient
       count: 121
     - package: pkg/gateway/runtime/adapterregistry
@@ -613,6 +613,14 @@ packages:
       count: 16
     - package: pkg/gateway/runtime/watchdog
       count: 215
+    - package: pkg/gateway/scaling/capacityplanning
+      count: 1
+    - package: pkg/gateway/scaling/gcpause
+      count: 7
+    - package: pkg/gateway/seam/extractionthreshold
+      count: 7
+    - package: pkg/gateway/seam/subsystem
+      count: 33
     - package: pkg/gateway/serviceidentity
       count: 9
     - package: pkg/gateway/session/budgetstate
@@ -639,8 +647,6 @@ packages:
       count: 14
     - package: pkg/gateway/session/sessionage
       count: 10
-    - package: pkg/gateway/session/sessionbudget
-      count: 29
     - package: pkg/gateway/session/sessioncallback
       count: 14
     - package: pkg/gateway/session/sessioncheckpointmeta
@@ -946,7 +952,7 @@ packages:
     - package: scripts/refactor/rewrite
       count: 2
     - package: scripts/specshift
-      count: 157
+      count: 156
     - package: scripts/specshift/anchor
       count: 5
     - package: scripts/specshift/gate
@@ -1172,13 +1178,13 @@ packages:
     - package: tests/contract/workspaceplan
       count: 15
     - package: tests/docs
-      count: 1191
+      count: 1187
     - package: tests/e2e_cloud
       count: 77
     - package: tests/e2e_kind
       count: 236
     - package: tests/integration
-      count: 731
+      count: 734
     - package: tests/load_cloud
       count: 13
     - package: tests/load_kind
@@ -1212,7 +1218,7 @@ packages:
     - package: tests/static/lint
       count: 20
     - package: tests/static/structure
-      count: 132
+      count: 100
     - package: tests/testinfra/ackruntime
       count: 2
     - package: tests/testinfra/admission

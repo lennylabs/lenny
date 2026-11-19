@@ -15,7 +15,7 @@ import (
 
 // TestTerminalPipelineForgetsBudgetAccounting_spec_11_2 proves the §11.2
 // mid-session budget accounting is reclaimed when a session settles: the
-// terminal-side-effects pipeline calls the BudgetForget hook with the
+// terminal-side-effects pipeline calls the metering budgets' ForgetBudget with the
 // session id so the LLM-proxy enforcer's per-session map does not grow
 // without bound.
 func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
@@ -24,7 +24,7 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 	var forgotten []string
 	srv := sessionserver.New(store, sessionserver.Options{
 		DevTenantHeader: true,
-		BudgetForget:    func(sessionID string) { forgotten = append(forgotten, sessionID) },
+		BudgetTracking:  forgetBudgets(func(sessionID string) { forgotten = append(forgotten, sessionID) }),
 	})
 	row := sessionstore.Session{
 		UserID: testOwner,
@@ -40,11 +40,11 @@ func TestTerminalPipelineForgetsBudgetAccounting_spec_11_2(t *testing.T) {
 	}
 
 	if len(forgotten) != 1 || forgotten[0] != "s_1" {
-		t.Fatalf("BudgetForget calls = %v, want [s_1]", forgotten)
+		t.Fatalf("ForgetBudget calls = %v, want [s_1]", forgotten)
 	}
 }
 
-// A nil BudgetForget hook leaves the terminal pipeline unaffected.
+// Nil metering budgets leave the terminal pipeline unaffected.
 func TestTerminalPipelineNilBudgetForgetIsSafe_spec_11_2(t *testing.T) {
 	ctx := context.Background()
 	store := memstore.New()
@@ -62,3 +62,10 @@ func TestTerminalPipelineNilBudgetForgetIsSafe_spec_11_2(t *testing.T) {
 		t.Fatalf("WaitTerminalWork: %v", err)
 	}
 }
+
+// forgetBudgets is a seam.BudgetTracking whose ForgetBudget calls the
+// function; the terminal pipeline calls no other operation.
+type forgetBudgets func(sessionID string)
+
+func (f forgetBudgets) ForgetBudget(sessionID string) { f(sessionID) }
+func (forgetBudgets) TrackedBudgetSessions() []string { return nil }

@@ -1816,6 +1816,11 @@
       "file": "spec/interfaces/gateway-seams.md"
     },
     {
+      "id": "GWSEAM-ExpireSession",
+      "anchor": "gwseam-expiresession",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
       "id": "GWSEAM-ExportPaths",
       "anchor": "gwseam-exportpaths",
       "file": "spec/interfaces/gateway-seams.md"
@@ -2058,6 +2063,11 @@
     {
       "id": "GWSEAM-ReturnBudget",
       "anchor": "gwseam-returnbudget",
+      "file": "spec/interfaces/gateway-seams.md"
+    },
+    {
+      "id": "GWSEAM-RotateCredential",
+      "anchor": "gwseam-rotatecredential",
       "file": "spec/interfaces/gateway-seams.md"
     },
     {

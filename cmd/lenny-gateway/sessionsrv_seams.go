@@ -8,12 +8,12 @@ import (
 
 	"github.com/redis/go-redis/v9"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/events"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/storage/derivelock"
 )
@@ -106,7 +106,7 @@ func (a deriveDowngradeBillingAuditor) EmitDeriveIsolationDowngrade(ctx context.
 // tenant is taken from the session-derived event, satisfying the §11.7 write-time tenant-validation rule. The OCSF mapping maps
 // these event types to API Activity (6003).
 type sessionLifecycleAuditor struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 }
 
 func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev sessionserver.SessionLifecycleEvent) {
@@ -157,7 +157,7 @@ func (a sessionLifecycleAuditor) EmitSessionLifecycle(ctx context.Context, ev se
 // tenant-validation rule. The OCSF mapping maps these event types to
 // API Activity (6003). spec: §7.2. F-7.2.8.
 type interactionResolutionAuditor struct {
-	appender policy.AuditAppender
+	appender audit.Appender
 }
 
 func (a interactionResolutionAuditor) EmitInteractionResolution(ctx context.Context, ev sessionserver.InteractionResolutionEvent) {

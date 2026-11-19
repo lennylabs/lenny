@@ -53,8 +53,8 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/tests/testinfra/loadgen"
 	"github.com/lennylabs/lenny/tests/testinfra/scenkit"
 )
@@ -116,7 +116,7 @@ func (s *Scenario) Setup(_ context.Context) error {
 	}))
 
 	// The enforcer is the real §11.2 mid-session gate and the
-	// leasecontrol.SessionReclaimer the episode fan-out calls. Its Allow
+	// the metering proxy's budgets the episode fan-out calls. Its Allow
 	// method satisfies llmproxy.BudgetGate directly.
 	s.enforcer = sessionbudget.New(nopTerminator{}, nil, nil)
 
@@ -218,7 +218,7 @@ func (s *Scenario) Run(_ context.Context, vu, iter int) error {
 		}
 	case 1:
 		// Out-of-band fan-out grant: raise the session's budget and clear its
-		// deny flag, as the episode fan-out does through the SessionReclaimer.
+		// deny flag, as the episode fan-out does through the metering proxy's budgets.
 		s.enforcer.RaiseBudget(sessionID(j), 1000)
 		s.counters.Inc("raised")
 	default:
@@ -297,4 +297,4 @@ func (fixedKey) UpstreamCredential(credential.Lease) (string, bool) {
 // deny flag directly through the gate, not the terminal pipeline.
 type nopTerminator struct{}
 
-func (nopTerminator) TerminateSession(_ /*sessionID*/, _ /*reason*/ string) {}
+func (nopTerminator) ExpireSession(_ /*sessionID*/, _ /*reason*/ string) {}

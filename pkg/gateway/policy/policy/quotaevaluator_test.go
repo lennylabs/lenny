@@ -299,7 +299,7 @@ func TestQuotaEvaluator_RollingWindowUsesSlidingRead(t *testing.T) {
 
 func TestAuditSink_RecordsRejection(t *testing.T) {
 	chains := audit.NewChainSet()
-	sink := NewAuditSink(NewChainSetAppender(chains, nil), nil)
+	sink := NewAuditSink(audit.NewChainSetAppender(chains, nil), nil)
 	err := sink.RecordRejection(
 		context.Background(),
 		RejectionContext{TenantID: "acme", CallerSub: "alice", Phase: interceptor.PhasePostAuth},

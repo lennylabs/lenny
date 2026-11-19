@@ -20,7 +20,7 @@
 # - `reason`: how the targets read the paths.
 #
 # A changed path that no package owns and no row matches selects the static
-# tier only, and the selection notes name it. `lenny-test validate-maps`
+# tier only, and the selection notes name it. `lenny-test validate`
 # fails a row whose pattern matches no tracked file or whose target is
 # neither a tier name nor a Go package directory. TESTING.md, "Selection
 # algorithm", describes the sources of a selection.
@@ -130,7 +130,7 @@ inputs:
       - tests/testinfra/chaos
       - tests/testinfra/kind/imagetag
       - pkg/alerting/rules
-      - pkg/gateway/operability/health
+      - pkg/gateway/opsendpoints/health
     reason: >-
       The platform image copies the runbooks for the e2e_kind runbook index
       test; the runbook component test, the chaos helper's runbook map, the alert
@@ -168,26 +168,11 @@ inputs:
       - "tests/groups.yaml"
       - "tests/groups.subsets.yaml"
       - "tests/flake-budget.yaml"
-      - "tests/change-graph.json"
-      - "tests/change-graph-pending.txt"
-      - "tests/spec-map.json"
-      - "tests/spec-map-exceptions.yaml"
-      - "tests/spec-map-pending.txt"
     runs:
       - cmd/lenny-test
     reason: >-
-      The harness's tests read the committed selection files, maps, and flake
+      The harness's tests read the committed selection files and the flake
       budget, and its secret-scan coverage test reads the gate image's Dockerfile.
-  - paths: ["tests/change-graph.json", "tests/spec-map.json"]
-    runs:
-      - scripts/refactor
-      - scripts/specshift/scope
-    reason: The package-move tooling rewrites the maps, and the shared read domain lists them.
-  - paths: ["tests/spec-map.json"]
-    runs:
-      - docs
-      - tests/contract/ocsf_audit
-    reason: A documentation-tier test and the OCSF audit contract read the spec map.
   - paths: ["tests/flake-budget.yaml"]
     runs:
       - integration

@@ -14,7 +14,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 )
 
 // hardFailSigner is a jwt.Signer whose every Sign fails with an error

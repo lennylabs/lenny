@@ -12,7 +12,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/playground"
+	"github.com/lennylabs/lenny/pkg/gateway/playground"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
 

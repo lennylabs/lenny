@@ -795,7 +795,7 @@ func TestManifestReasonAndPartialCounterDomainsAgree(t *testing.T) {
 
 	// Code emitter registration: the counter carries exactly the pool,
 	// recovered, manifest_reason, trigger labels §16.1 declares.
-	emitter, err := os.ReadFile(filepath.Join(root, "pkg", "gateway", "metrics", "gatewaymetrics", "gatewaymetrics_podlifecycle.go"))
+	emitter, err := os.ReadFile(filepath.Join(root, "pkg", "gateway", "replica", "gatewaymetrics", "gatewaymetrics_podlifecycle.go"))
 	if err != nil {
 		t.Fatalf("read gatewaymetrics_podlifecycle.go: %v", err)
 	}

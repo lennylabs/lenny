@@ -22,8 +22,8 @@ import (
 	"github.com/google/uuid"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/budgetstate"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
@@ -40,7 +40,17 @@ const (
 
 type sweepNoopTerminator struct{}
 
-func (sweepNoopTerminator) TerminateSession(string, string) {}
+func (sweepNoopTerminator) ExpireSession(string, string) {}
+
+// sweepBudgets adapts a tracked-ids function and a forget function to the
+// seam.BudgetTracking the sweep reads.
+type sweepBudgets struct {
+	tracked func() []string
+	forget  func(string)
+}
+
+func (b sweepBudgets) TrackedBudgetSessions() []string { return b.tracked() }
+func (b sweepBudgets) ForgetBudget(id string)          { b.forget(id) }
 
 // sweepClock is a monotonic fake clock every goroutine of a round shares.
 type sweepClock struct{ ns atomic.Int64 }
@@ -95,14 +105,13 @@ func runSweepInterleavingRound(t *testing.T, rng *rand.Rand) {
 		enf := sessionbudget.New(sweepNoopTerminator{}, nil, nil)
 		replicas[i] = replica{enf: enf, sweep: budgetstate.New(budgetstate.Config{
 			Sessions: store,
-			Tracked:  enf.TrackedSessions,
-			Forget: func(id string) {
+			Budgets: sweepBudgets{tracked: enf.TrackedSessions, forget: func(id string) {
 				if liveForgotten(id) {
 					violations.Add(1)
 					t.Errorf("sweep forgot non-terminal session %s", id)
 				}
 				enf.Forget(id)
-			},
+			}},
 			Interval:  time.Minute,
 			BatchSize: 1 + rng.Intn(16),
 			Now:       clock.Now,

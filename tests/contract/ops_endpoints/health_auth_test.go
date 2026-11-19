@@ -4,7 +4,7 @@
 
 // Contract test pinning the §25.3 access-control contract of the
 // gateway-side Platform Health API. The health handler
-// (pkg/gateway/operability/health.Handler) is mounted at /v1/admin/health*
+// (pkg/gateway/opsendpoints/health.Handler) is mounted at /v1/admin/health*
 // on the gateway's main port and wrapped by the shared admin-API auth
 // middleware, exactly as cmd/lenny-gateway/httpsurface.go wires it. This
 // test drives that composed surface through httptest.
@@ -18,7 +18,7 @@ import (
 
 	pkgauth "github.com/lennylabs/lenny/pkg/auth"
 	authmw "github.com/lennylabs/lenny/pkg/gateway/middleware/auth"
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 )
 
 // healthAuthSurface composes the §25.3 health handler behind the admin-API
@@ -63,7 +63,7 @@ func healthAuthSurface() http.Handler {
 func TestHealthEndpointsRequireAdminRole(t *testing.T) {
 	// Kept as the spec-faithful assertion for the still-open TEST-GAPS
 	// health-auth finding: the gateway currently serves /v1/admin/health*
-	// unauthenticated (pkg/gateway/operability/health/handler.go) and the
+	// unauthenticated (pkg/gateway/opsendpoints/health/handler.go) and the
 	// chaos probes depend on that access, so §25.3 and the
 	// implementation disagree. The reconciliation direction (enforce the
 	// admin role on the health surface, or amend the spec to make the

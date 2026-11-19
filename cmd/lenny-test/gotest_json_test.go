@@ -168,7 +168,7 @@ func TestPackageRelDirStripsTheModulePrefix(t *testing.T) {
 }
 
 func TestRecordTierWithResultPropagatesCounts(t *testing.T) {
-	v := newVerdict(selector{tier: "unit"})
+	v := newVerdict(selector{tiers: []string{"unit"}})
 	r := &tierResult{
 		Total: 47, Passed: 45, Failed: 2, Skipped: 0,
 		Failures: []failureEntry{

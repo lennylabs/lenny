@@ -18,7 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credrenewal"
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	adapterv1 "github.com/lennylabs/lenny/pkg/proto/adapter/v1"
 )
 
@@ -92,7 +92,7 @@ type credRenewalWiring struct {
 	// session here with the expired:lease reason rather than into the
 	// Fallback Flow, so a permanently-open breaker tears the session down
 	// without re-minting against the still-open breaker. spec: §4.9.
-	terminator sessionbudget.Terminator
+	terminator seam.SessionExpiry
 
 	mu sync.Mutex
 	// pools maps a tracked lease ID to the pool/provider it was minted
@@ -108,7 +108,7 @@ type credRenewalWiring struct {
 // emission without affecting the renewal lifecycle. leases is the §4.9
 // credential-lease store the LLM Proxy reads (the proxy-mode extension
 // target); terminator drives the §4.9 cumulative-extension-cap teardown.
-func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter events.EventEmitter, leases credleasestore.LeaseStore, terminator sessionbudget.Terminator) *credRenewalWiring {
+func newCredRenewalWiring(assign credassign.Assigner, registry *podsession.Registry, emitter events.EventEmitter, leases credleasestore.LeaseStore, terminator seam.SessionExpiry) *credRenewalWiring {
 	if assign == nil {
 		return nil
 	}
@@ -399,7 +399,7 @@ func (w *credRenewalWiring) onExtensionCapReached(lease credrenewal.Lease) {
 	w.mu.Lock()
 	delete(w.pools, lease.LeaseID)
 	w.mu.Unlock()
-	w.terminator.TerminateSession(lease.SessionID, string(sessionapi.FailureExpiredLease))
+	w.terminator.ExpireSession(lease.SessionID, string(sessionapi.FailureExpiredLease))
 }
 
 // emitCredentialRotated publishes the §16.6 credential_rotated event

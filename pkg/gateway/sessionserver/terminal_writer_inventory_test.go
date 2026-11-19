@@ -60,7 +60,7 @@ var terminalWriterInventory = []terminalWriter{
 	{"pkg/gateway/environment/translator/open_responses.go", "serveCold", ""},
 	{"pkg/gateway/environment/translator/open_responses.go", "endHeldSession", "endHeldSession"},
 	{"cmd/lenny-gateway/session_admin.go", "ForceTerminate", "ForceTerminate"},
-	{"cmd/lenny-gateway/session_budget.go", "terminate", "TerminateSession"},
+	{"cmd/lenny-gateway/session_budget.go", "terminate", "ExpireSession"},
 	{"cmd/lenny-gateway/reconciler_workers.go", "deadlockFail", "deadlockFail"},
 }
 
@@ -313,7 +313,7 @@ func TestTerminalWriterInventoryMatchesTheCode_spec_7_2(t *testing.T) {
 			continue
 		}
 		// A claim function that is not the writer reaches the Update through
-		// a call to the writer, as TerminateSession calls terminate.
+		// a call to the writer, as ExpireSession calls terminate.
 		reachesWrite := func(n string) bool { return isWrite(n) || (w.claim != w.writer && n == w.writer) }
 		claim, write := firstCall(cf.decl, isClaim), firstCall(cf.decl, reachesWrite)
 		if !claim.IsValid() || !write.IsValid() || claim > write {

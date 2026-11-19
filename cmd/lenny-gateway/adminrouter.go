@@ -46,7 +46,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationpolicystore"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/delegationtree/leasecontrol"
 	"github.com/lennylabs/lenny/pkg/gateway/mcpfabric/elicitationfloor"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/operability/recommendations"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/carotation"
 	"github.com/lennylabs/lenny/pkg/gateway/pki/carotationstore"
@@ -55,11 +54,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/podlifecycle/podsession"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor/interceptorstore"
-	"github.com/lennylabs/lenny/pkg/gateway/policy/policy"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/ratelimit"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotacheckpoint"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotafailopen"
 	"github.com/lennylabs/lenny/pkg/gateway/quota/quotastore"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/externaladapterstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
 	sessioncheckpointmetapg "github.com/lennylabs/lenny/pkg/gateway/session/sessioncheckpointmeta/pgstore"
@@ -111,7 +110,7 @@ func (w *gatewayWiring) buildAdminRouter(
 	credentialRekeyJob *rekey.Job,
 	policyChain *interceptor.Chain,
 	auditSink admin.AuditSink,
-	auditAppender policy.AuditAppender,
+	auditAppender audit.Appender,
 	wireAudit func(*admin.Router) *admin.Router,
 	adminStickyFlusher admin.StickyFlusher,
 	erasureSticky *experimentsticky.RedisCache,

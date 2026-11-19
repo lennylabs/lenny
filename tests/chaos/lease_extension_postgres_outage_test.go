@@ -61,7 +61,7 @@ func (r *outageReclaimer) RaiseBudget(string, int64) {
 	r.mu.Unlock()
 }
 
-func (r *outageReclaimer) TerminateSession(string) {}
+func (r *outageReclaimer) TerminateForBudget(string) {}
 
 func (r *outageReclaimer) count() int {
 	r.mu.Lock()

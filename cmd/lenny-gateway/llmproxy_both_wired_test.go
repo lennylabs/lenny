@@ -16,8 +16,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/usagestore"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credleasestore"
-	"github.com/lennylabs/lenny/pkg/gateway/llmproxy/llmproxy"
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/llmproxy"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/metering"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/gateway/session/sessionstore/memstore"
 )
@@ -27,7 +28,7 @@ import (
 // record path. The proxy Handler consumes the resolved Outcome the recorder
 // surfaces through RecordUsage and drives its write branch off it, never
 // issuing its own second ExtendForBudget call. These tests wire the full
-// production stack — enforcer(seam) -> proxyUsageRecorder -> llmproxy.Handler
+// production stack — enforcer(seam) -> metering.Recorder -> llmproxy.Handler
 // with BOTH the enforcer seam and the proxy fed from the same request — so a
 // regression that re-introduces a handler-side second dispatch fails here
 // (the seam would fire twice per exhaustion). The pre-fix handler dispatched
@@ -55,7 +56,7 @@ func (s *countingSeam) fn(_, _ context.Context, _, sessionID string, _, _ int64)
 }
 
 // bothWiredStack builds the production wiring: a sessionbudget.Enforcer whose
-// seam is the counting seam, a proxyUsageRecorder fed by that enforcer, and an
+// seam is the counting seam, a metering.Recorder fed by that enforcer, and an
 // llmproxy.Handler whose Usage is that recorder and whose BudgetGate is that
 // same enforcer. A single request through the handler therefore drives exactly
 // one extension dispatch through the enforcer seam.
@@ -81,7 +82,7 @@ func bothWiredStack(t *testing.T, seamOutcome sessionbudget.Outcome, budget int6
 	enforcer := sessionbudget.New(nopBudgetTerminator{}, seam.fn, nil)
 	seam.e = enforcer
 
-	rec := newProxyUsageRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
+	rec := metering.NewRecorder(usagestore.NewMemory(), sessions, nil, nil, nil, enforcer)
 
 	leases := credleasestore.New()
 	if err := leases.Put(credential.Lease{
@@ -192,9 +193,9 @@ func (bothWiredKey) UpstreamCredential(credential.Lease) (string, bool) {
 	return "sk-ant-real-upstream-key", true
 }
 
-// nopBudgetTerminator is a sessionbudget.Terminator that does nothing; the
+// nopBudgetTerminator is a seam.SessionExpiry that does nothing; the
 // both-wired tests assert the deny flag through the enforcer's pre-flight gate
 // rather than the terminal pipeline.
 type nopBudgetTerminator struct{}
 
-func (nopBudgetTerminator) TerminateSession(_ /*sessionID*/, _ /*reason*/ string) {}
+func (nopBudgetTerminator) ExpireSession(_ /*sessionID*/, _ /*reason*/ string) {}

@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/credential"
-	"github.com/lennylabs/lenny/pkg/gateway/core/subsystem"
 	"github.com/lennylabs/lenny/pkg/gateway/credentials/credassign"
 	"github.com/lennylabs/lenny/pkg/gateway/externalapi/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/provisioning/vcscred"
+	"github.com/lennylabs/lenny/pkg/gateway/seam/subsystem"
 	tokensv1 "github.com/lennylabs/lenny/pkg/proto/tokenservice/v1"
 )
 
@@ -106,12 +106,15 @@ func (p *tokenServiceSecretProber) secretAccess(ctx context.Context, req *tokens
 // and no earlier value served, so the read fails closed and the caller
 // surfaces the TRANSIENT category.
 //
-// The RPC alone runs inside Do on the token_service subsystem, so an open
-// breaker refuses with no RPC made. The closure returns only the gRPC
-// error, so a definitive verdict, NOT_FOUND and DENIED included, counts as
-// a breaker success rather than a failure. A silent Token Service ends at the
-// call deadline, so the hang reaches the caller as the TRANSIENT category and
-// counts as a breaker failure.
+// The RPC alone runs between Admit and its done call on the token_service
+// subsystem, so an open breaker refuses with no RPC made. done receives
+// only the gRPC error, so a definitive verdict, NOT_FOUND and DENIED
+// included, counts as a breaker success rather than a failure. A silent
+// Token Service ends at the call deadline, so the hang reaches the caller as
+// the TRANSIENT category and counts as a breaker failure. The prober runs
+// the RPC itself rather than handing it to the subsystem as a function, so
+// the seam model never receives the Token Service client, which GW-R2
+// confines.
 //
 // spec: §4.9 (Token Service secret resolution), §4.3, §14.
 func (p *tokenServiceSecretProber) Resolve(ctx context.Context, ref string) (string, error) {
@@ -119,17 +122,14 @@ func (p *tokenServiceSecretProber) Resolve(ctx context.Context, ref string) (str
 	if err != nil {
 		return "", fmt.Errorf("%w: secretRef refused: %w", vcscred.ErrNoUsableCredential, err)
 	}
-	var resp *tokensv1.ProbeSecretAccessResponse
-	call := func(ctx context.Context) error {
-		r, err := p.secretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name, Key: vcsTokenKey})
-		resp = r
-		return err
-	}
+	done := func(error) {}
 	if p.tokenService != nil {
-		err = p.tokenService.Do(ctx, call)
-	} else {
-		err = call(ctx)
+		if done, err = p.tokenService.Admit(ctx); err != nil {
+			return "", fmt.Errorf("read VCS token Secret %q through the Token Service: %w", name, err)
+		}
 	}
+	resp, err := p.secretAccess(ctx, &tokensv1.ProbeSecretAccessRequest{SecretName: name, Key: vcsTokenKey})
+	done(err)
 	if err != nil {
 		return "", fmt.Errorf("read VCS token Secret %q through the Token Service: %w", name, err)
 	}

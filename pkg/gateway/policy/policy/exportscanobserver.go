@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingfanout"
 	"github.com/lennylabs/lenny/pkg/gateway/billing/billingstore"
 	"github.com/lennylabs/lenny/pkg/gateway/policy/interceptor"
@@ -38,7 +39,7 @@ type ExportScanMetrics interface {
 // dropped rather than failing the export. The §11.7 hash-chain integrity
 // check surfaces a persistent audit-backend fault.
 type ExportScanObserver struct {
-	appender AuditAppender
+	appender audit.Appender
 	metrics  ExportScanMetrics
 	clock    func() time.Time
 	// billing tees the §11.2.1 delegation.export_file_scan_rejected /
@@ -52,7 +53,7 @@ type ExportScanObserver struct {
 // NewExportScanObserver returns an observer backed by appender and
 // metrics. Either may be nil to disable that emission. clock overrides
 // time.Now; pass nil in production.
-func NewExportScanObserver(appender AuditAppender, metrics ExportScanMetrics, clock func() time.Time) *ExportScanObserver {
+func NewExportScanObserver(appender audit.Appender, metrics ExportScanMetrics, clock func() time.Time) *ExportScanObserver {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}

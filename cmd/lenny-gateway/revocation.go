@@ -123,7 +123,7 @@ func (w *gatewayWiring) buildRevocationWiring() {
 			directRotator := &directModeRevocationRotator{
 				leases:      ls,
 				markRevoked: w.inProcessAssign.RevokeCredential,
-				rotate:      proxyFallbackRotator{assign: w.credAssign, registry: w.podRegistry}.Rotate,
+				rotate:      proxyFallbackRotator{assign: w.credAssign, registry: w.podRegistry}.rotateLease,
 			}
 			credDenyPropOpts = append(credDenyPropOpts,
 				credrenewalprop.WithRevokeHook(directRotator.onRevoke))

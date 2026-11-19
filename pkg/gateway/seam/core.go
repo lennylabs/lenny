@@ -139,6 +139,36 @@ type Activity interface {
 	StampActivity(tenantID, sessionID string)
 }
 
+// SessionExpiry is served by the session core to the metering proxy.
+type SessionExpiry interface {
+	// ExpireSession is GWSEAM-ExpireSession. reason is the failure reason
+	// the expired session records. It returns at once: the state write and
+	// the terminal pipeline run on the session core's own context.
+	ExpireSession(sessionID, reason string)
+}
+
+// CredentialRotations is served by the session core to the metering proxy.
+type CredentialRotations interface {
+	// RotateCredential is GWSEAM-RotateCredential. A failure to mint the
+	// replacement or to push it to the pod is the core's to record; the
+	// caller has no outcome to branch on.
+	RotateCredential(ctx context.Context, r CredentialRotation)
+}
+
+// CredentialRotation names the faulted credential lease of a session and
+// the pool its replacement comes from. Provider and Trigger carry the
+// provider and rotation trigger strings of the credential lease contract.
+type CredentialRotation struct {
+	TenantID  string
+	SessionID string
+	Provider  string
+	// CoordinationGeneration is the coordination generation the faulted
+	// lease recorded, which the replacement records too.
+	CoordinationGeneration int64
+	NextPool               string
+	Trigger                string
+}
+
 // CreatedSession is what CreateSession returns.
 type CreatedSession struct {
 	ID          string

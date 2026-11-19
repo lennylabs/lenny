@@ -6,7 +6,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/lennylabs/lenny/pkg/gateway/operability/health"
+	"github.com/lennylabs/lenny/pkg/gateway/opsendpoints/health"
 )
 
 // spec: §10.4 — the readiness probe precedence rules. F-10.4.6.

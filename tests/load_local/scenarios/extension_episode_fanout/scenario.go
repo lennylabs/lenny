@@ -543,7 +543,7 @@ func (r *countingReclaimer) RaiseBudget(sessionID string, delta int64) {
 	r.mu.Unlock()
 }
 
-func (r *countingReclaimer) TerminateSession(sessionID string) {
+func (r *countingReclaimer) TerminateForBudget(sessionID string) {
 	r.mu.Lock()
 	r.terminated[sessionID]++
 	r.mu.Unlock()

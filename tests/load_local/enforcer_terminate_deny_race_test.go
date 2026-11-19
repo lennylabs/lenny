@@ -21,14 +21,14 @@ import (
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/gateway/session/sessionbudget"
+	"github.com/lennylabs/lenny/pkg/gateway/meteringproxy/sessionbudget"
 )
 
 // nopBudgetTerminator stands in for the gateway's force-terminate path; the
 // test reads the deny flag through Allow rather than the terminal pipeline.
 type nopBudgetTerminator struct{}
 
-func (nopBudgetTerminator) TerminateSession(_ /*sessionID*/, _ /*reason*/ string) {}
+func (nopBudgetTerminator) ExpireSession(_ /*sessionID*/, _ /*reason*/ string) {}
 
 // yieldJitter yields the scheduler a random number of times so the goroutines of
 // one round interleave differently from round to round.

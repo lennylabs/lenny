@@ -12,7 +12,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore"
 	tenantpg "github.com/lennylabs/lenny/pkg/gateway/environment/tenantstore/pgstore"
-	"github.com/lennylabs/lenny/pkg/gateway/metrics/gatewaymetrics"
+	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
@@ -217,7 +217,7 @@ func (o *kmsBreakerObserver) OnRejected() {
 // spec: §16.1 (JWT sign requests).
 func (o *kmsBreakerObserver) OnOutcome(outcome string) {
 	if m := o.metrics(); m != nil {
-		m.RecordJWTSignRequest(outcome)
+		m.RecordJWTSignRequest(jwt.SignComponentGateway, outcome)
 	}
 }
 

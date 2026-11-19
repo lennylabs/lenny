@@ -20,59 +20,19 @@ import (
 // (IsKnownEventType) without listing it in Catalog(). spec: §11.7. F-11.7.18.
 const EventTypeInterceptorRejected = "interceptor.rejected"
 
-// AuditAppender is the §11.7 per-tenant audit hash-chain surface the
-// policy audit sink writes to. Both the Postgres-backed
-// pkg/gateway/auditstore.Store and an adapter over the in-memory
-// audit.ChainSet satisfy it, so the gateway swaps the audit backend
-// without changing the sink.
-type AuditAppender interface {
-	// Append commits an audit event to the tenant's chain and returns
-	// the sealed row.
-	Append(ctx context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error)
-}
-
-// ChainSetAppender adapts an in-memory audit.ChainSet to
-// AuditAppender. It backs the minimal gateway (no Postgres); the
-// chain is lost on a process restart, which §11.7 permits only for
-// the non-durable in-memory mode.
-type ChainSetAppender struct {
-	chains *audit.ChainSet
-	clock  func() time.Time
-}
-
-// NewChainSetAppender returns an AuditAppender backed by chains. clock
-// overrides time.Now; pass nil in production.
-func NewChainSetAppender(chains *audit.ChainSet, clock func() time.Time) *ChainSetAppender {
-	if clock == nil {
-		clock = func() time.Time { return time.Now().UTC() }
-	}
-	return &ChainSetAppender{chains: chains, clock: clock}
-}
-
-// Append implements AuditAppender.
-func (a *ChainSetAppender) Append(_ context.Context, tenantID, eventType string, payload json.RawMessage, at time.Time) (audit.Row, error) {
-	if at.IsZero() {
-		at = a.clock()
-	}
-	return a.chains.Append(tenantID, eventType, payload, at), nil
-}
-
-// Ensure ChainSetAppender satisfies AuditAppender at compile time.
-var _ AuditAppender = (*ChainSetAppender)(nil)
-
 // AuditSink emits the §16.7 `interceptor.rejected` audit row to a
 // tenant's §11.7 hash chain when a §4.8 interceptor chain REJECTs a
 // request. The append is gateway-originated, so per §11.7 it is
 // synchronous: RecordRejection blocks until the row is committed (or
 // the append fails), and the caller holds the response until then.
 type AuditSink struct {
-	appender AuditAppender
+	appender audit.Appender
 	clock    func() time.Time
 }
 
 // NewAuditSink returns an AuditSink backed by appender. clock overrides
 // time.Now; pass nil in production.
-func NewAuditSink(appender AuditAppender, clock func() time.Time) *AuditSink {
+func NewAuditSink(appender audit.Appender, clock func() time.Time) *AuditSink {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}

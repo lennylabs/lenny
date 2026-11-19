@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/common/envdefault"
 )
 
 func splitCSV(raw string) []string {
@@ -15,35 +17,6 @@ func splitCSV(raw string) []string {
 		if p := strings.TrimSpace(part); p != "" {
 			out = append(out, p)
 		}
-	}
-	return out
-}
-
-// parseKeyValueCSV splits a comma-separated key=value flag value into
-// a map. Trimmed empty entries and entries without `=` are skipped.
-// An empty input yields a nil map. The §27.2
-// playground.sessionLabels flag uses this encoding so a Helm value
-// like `{origin: playground, env: stage}` renders to
-// `--playground-session-labels=origin=playground,env=stage`.
-func parseKeyValueCSV(raw string) map[string]string {
-	var out map[string]string
-	for _, part := range strings.Split(raw, ",") {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		k, v, ok := strings.Cut(part, "=")
-		if !ok {
-			continue
-		}
-		k, v = strings.TrimSpace(k), strings.TrimSpace(v)
-		if k == "" {
-			continue
-		}
-		if out == nil {
-			out = make(map[string]string)
-		}
-		out[k] = v
 	}
 	return out
 }
@@ -117,30 +90,14 @@ func envOr(name, def string) string {
 // var is unset or does not parse. Used to default the §27.2
 // playground integer flags.
 func envInt(name string, def int) int {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return def
-	}
-	n, err := strconv.Atoi(v)
-	if err != nil {
-		return def
-	}
-	return n
+	return envdefault.Int(name, def)
 }
 
 // envDuration mirrors envInt for time.Duration-valued flags. Accepts
 // any value time.ParseDuration parses ("60s", "5m", "1h"); returns def
 // on missing or unparseable env vars.
 func envDuration(name string, def time.Duration) time.Duration {
-	v := strings.TrimSpace(os.Getenv(name))
-	if v == "" {
-		return def
-	}
-	d, err := time.ParseDuration(v)
-	if err != nil {
-		return def
-	}
-	return d
+	return envdefault.Duration(name, def)
 }
 
 // envBool returns the env var parsed as a bool, or def when the var is

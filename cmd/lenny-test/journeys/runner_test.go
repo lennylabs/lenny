@@ -24,19 +24,21 @@ type fakeTarget struct {
 	cost, maxCost           float64
 	setupSeen               string
 	verifyCalledAfterDelete bool
+	// leak is written to the creation and deletion logs.
+	leak string
 }
 
 func (f *fakeTarget) Name() string       { return "fake" }
 func (f *fakeTarget) Kubeconfig() string { return filepath.Join(f.dir, "kubeconfig") }
 func (f *fakeTarget) Create(_ context.Context, setup string, log io.Writer) error {
-	_, _ = io.WriteString(log, "Authorization: Bearer provision-bearer-secret\n")
+	_, _ = io.WriteString(log, "Authorization: Bearer provision-bearer-secret\n"+f.leak)
 	f.created++
 	f.setupSeen = setup
 	return f.createErr
 }
 
 func (f *fakeTarget) Delete(_ context.Context, log io.Writer) error {
-	_, _ = io.WriteString(log, "Authorization: Bearer teardown-bearer-secret\n")
+	_, _ = io.WriteString(log, "Authorization: Bearer teardown-bearer-secret\n"+f.leak)
 	f.deleted++
 	return f.deleteErr
 }
@@ -59,6 +61,8 @@ type fakeAgent struct {
 	result AgentResult
 	runs   []AgentRun
 	panics bool
+	// leak is written to the transcript and the standard error.
+	leak string
 }
 
 func (a *fakeAgent) Run(_ context.Context, run AgentRun) (AgentResult, error) {
@@ -68,6 +72,10 @@ func (a *fakeAgent) Run(_ context.Context, run AgentRun) (AgentResult, error) {
 	}
 	_, _ = run.Transcript.Write([]byte(`{"type":"result","note":"token: kubeconfig-token-secret Bearer abcdefghijklmnop"}` + "\n"))
 	_, _ = run.Stderr.Write([]byte("LENNY_API_TOKEN=admin-token-secret\n"))
+	if a.leak != "" {
+		_, _ = run.Transcript.Write([]byte(a.leak))
+		_, _ = run.Stderr.Write([]byte(a.leak))
+	}
 	return a.result, nil
 }
 

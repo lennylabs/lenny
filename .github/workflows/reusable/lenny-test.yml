@@ -28,11 +28,11 @@ on:
         required: false
         type: string
       tier:
-        description: 'Single tier (alternative to group).'
+        description: 'Comma-separated tiers (alternative to group).'
         required: false
         type: string
-      max_tier:
-        description: 'Run all tiers up to and including this one.'
+      gate:
+        description: 'Run the tiers of this gate: merge, area, or release (alternative to group).'
         required: false
         type: string
       runner:
@@ -79,11 +79,11 @@ jobs:
           elif [[ -n "${{ inputs.tier }}" ]]; then
             echo "args=--tier ${{ inputs.tier }}" >> "$GITHUB_OUTPUT"
             echo "label=tier=${{ inputs.tier }}" >> "$GITHUB_OUTPUT"
-          elif [[ -n "${{ inputs.max_tier }}" ]]; then
-            echo "args=--max-tier ${{ inputs.max_tier }}" >> "$GITHUB_OUTPUT"
-            echo "label=max-tier=${{ inputs.max_tier }}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ inputs.gate }}" ]]; then
+            echo "args=--gate ${{ inputs.gate }}" >> "$GITHUB_OUTPUT"
+            echo "label=gate=${{ inputs.gate }}" >> "$GITHUB_OUTPUT"
           else
-            echo "::error::reusable/lenny-test.yml requires group, tier, or max_tier"
+            echo "::error::reusable/lenny-test.yml requires group, tier, or gate"
             exit 2
           fi
       - name: Run lenny-test

@@ -36,7 +36,7 @@ import (
 
 	// Proposal 0023 S3/S4: the §11.2/§8.6 sessionbudget.Enforcer under
 	// concurrent Record/Allow/RaiseBudget/TerminateSession/Forget — the
-	// out-of-band SessionReclaimer fan-out races the in-path record/gate,
+	// out-of-band fan-out through the metering proxy's budgets races the in-path record/gate,
 	// with no deadlock, no lost deny-flag clear, and budget monotonicity,
 	// -race clean.
 	_ "github.com/lennylabs/lenny/tests/load_local/scenarios/raisebudget_enforcer_race"

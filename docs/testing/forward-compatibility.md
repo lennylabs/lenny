@@ -52,21 +52,21 @@ The current §6 TaskRecord is request/response with checkpoints. Hours-long batc
 
 The §11 policy engine ships a fixed set of evaluators. Pluggable policy is v2.
 
-## Spec-map exceptions
+## Deferred behavior and coverage
 
-The `tests/spec-map-exceptions.yaml` file lists every section explicitly exempt from the "every leaf section has at least one test" rule. Most exceptions are non-normative sections (executive summary, goals, architecture diagram). The forward-compat sections are marked `reason: forward-compat-deferred-to-v2` so the exception model surfaces them.
+The coverage view (`lenny-test coverage --spec`) lists every numbered section and requirement with the tests whose `// spec:` annotations cite it, and reports a section no test cites as uncovered. A section that defers its behavior to v2 shows there with no citing test, and the reader judges it against this page. A requirement that a v1 change adds with no test yet is recorded as an issue under `issues/<CODE>/`, which lists the requirement in its `requirements` front matter, and the coverage gate accepts that issue in place of a test.
 
 ## When to update this page
 
 Add an entry when:
 - A new spec section is added that explicitly defers behaviour to v2.
 - A test surface explicitly tests a v1-only invariant (so v2 contributors know to revisit).
-- A `spec-map-exceptions.yaml` entry is added with `reason: forward-compat-deferred-to-v2`.
+- An issue is filed for a requirement whose behavior waits on v2.
 
 Remove an entry when v2 ships the feature and the corresponding tests land.
 
 ## Cross-references
 
 - TESTING.md §23 — the canonical list
-- `tests/spec-map-exceptions.yaml` — machine-readable exemptions
+- `issues/` — the issue records, including the requirements that have no test yet
 - spec/ — the design documents that motivate each exemption

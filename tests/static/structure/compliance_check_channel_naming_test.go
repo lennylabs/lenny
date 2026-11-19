@@ -3,7 +3,6 @@
 package structure
 
 import (
-	"encoding/json"
 	"go/ast"
 	"go/parser"
 	"go/token"
@@ -132,54 +131,5 @@ func TestComplianceFullChecksNamedForTheirChannel(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("no Full-level case registers %s, so the CH-RUNTIMEOPS capability handshake check is absent or named for something other than its channel", runtimeOpsCheckFunc)
-	}
-}
-
-// spec: 15.4.6 (Full-level test categories), 28.1 (channel naming law)
-// diagnosis: tests/spec-map.json names a check symbol in
-//
-//	cmd/lenny-compliance/full.go that the file does not declare.
-//	A rename that moved the symbol without rewriting the
-//	references leaves the spec map pointing at nothing, and the
-//	section it indexes is covered by a test the harness cannot
-//	resolve.
-func TestSpecMapComplianceCheckReferencesResolve(t *testing.T) {
-	t.Parallel()
-
-	declared, _ := complianceFullDecls(t)
-
-	root := schematest.RepoRoot(t)
-	body, err := os.ReadFile(filepath.Join(root, "tests", "spec-map.json"))
-	if err != nil {
-		t.Fatalf("read tests/spec-map.json: %v", err)
-	}
-	var doc struct {
-		Sections map[string]struct {
-			Tests []string `json:"tests"`
-		} `json:"sections"`
-	}
-	if err := json.Unmarshal(body, &doc); err != nil {
-		t.Fatalf("parse tests/spec-map.json: %v", err)
-	}
-
-	prefix := complianceFullPath + "::"
-	references := 0
-	for id, section := range doc.Sections {
-		for _, ref := range section.Tests {
-			if !strings.HasPrefix(ref, prefix) {
-				continue
-			}
-			references++
-			symbol := strings.TrimPrefix(ref, prefix)
-			if !declared[symbol] {
-				t.Errorf("section %s names %s, which %s does not declare", id, ref, complianceFullPath)
-			}
-			if strings.Contains(symbol, retiredChannelStem) {
-				t.Errorf("section %s names %s, whose symbol carries the spelling the §28.3 naming table retires for CH-RUNTIMEOPS", id, ref)
-			}
-		}
-	}
-	if references == 0 {
-		t.Fatalf("tests/spec-map.json names no %s symbol, so this test asserts nothing", complianceFullPath)
 	}
 }

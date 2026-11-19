@@ -120,8 +120,8 @@ func testsForTier(tier string) []string {
 }
 
 // testsForSpec resolves identifiers, page codes, and numbered sections
-// to the tests the annotation index and the spec map name for them (see
-// specModel.selectFor). A query that neither knows is an error.
+// to the tests the annotation index names for them (see
+// specModel.testsFor). A query the index does not know is an error.
 func testsForSpec(specs string) ([]string, error) {
 	m, err := loadSpecModel(context.Background(), repoRoot())
 	if err != nil {
@@ -131,20 +131,19 @@ func testsForSpec(specs string) ([]string, error) {
 }
 
 // testsForSpecIn is testsForSpec over a loaded model: the index's tests
-// as `path::Name`, then the spec map's entries as the map writes them.
+// as `path::Name`.
 func testsForSpecIn(m *specModel, queries []string) ([]string, error) {
 	out := []string{}
 	var unknown []string
 	for _, q := range queries {
-		sel, ok := m.selectFor(q)
+		tests, ok := m.testsFor(q)
 		if !ok {
 			unknown = append(unknown, q)
 			continue
 		}
-		for _, t := range sel.tests {
+		for _, t := range tests {
 			out = append(out, t.String())
 		}
-		out = append(out, sel.mapped...)
 	}
 	if len(unknown) > 0 {
 		return nil, unknownSpecQueries(unknown)

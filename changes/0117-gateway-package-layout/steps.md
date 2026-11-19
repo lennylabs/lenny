@@ -26,18 +26,18 @@ The import sites in each title are counted over the packages the step moves, as 
 `pkg/gateway/seam` with the interfaces of "SP-2", including the route registration interface, which the later steps implement; the tier-0 layout gate of "SP-3" with its fixtures; `tests/registers/gateway-layout.yaml` with every violation and every package awaiting removal that exists when it lands; `scripts/refactor` with 0117's manifest and the register rewrites of "SP-4", the retirement of the layout tests in `scripts/refactor/manifest_layout_test.go`, `pkg/gateway/ARCHITECTURE.md` rewritten as the map of "SP-1", and the bullet in `code-best-practices.md`. It follows 0155.S1 so the gate is written in the renamed static tier. Under decision 9, GW-R1 states the wiring form of the rule, and a static check of `cmd/lenny-gateway` refuses a value of one part passed where another part expects an interface not declared in `pkg/gateway/seam`, with today's crossings in `tests/registers/gateway-wiring.yaml`, which only shrinks. Under decision 10, GW-R2 confines the credential and admission packages, and the layout gate holds it, with today's other importers in `tests/registers/gateway-layout.yaml`.
 
 ### 0117.S3 Metering proxy (51 import sites)
-- status: Planned
-- lanes: [code]
-- depends-on: [0117.S2, 0137.S5, 0155.S1]
-
-`llmproxy/llmproxy` and `session/sessionbudget` to `pkg/gateway/meteringproxy`. The removed `llmproxy` packages of 0132 and 0133 stay where they are. 0133.S2 then edits the proxy at its new path.
-
-### 0117.S4 Seam model, replica-level parts, and the playground (108 import sites)
-- status: Planned
+- status: Landed
 - lanes: [specification, code]
 - depends-on: [0117.S2, 0137.S5, 0155.S1]
 
-`core/subsystem` and `metrics/extractionthreshold` to `pkg/gateway/seam`; `core/semver` to `pkg/common`; the drain, scaling, ops endpoint, and replica packages of "SP-1"; and `mcpfabric/playground` to `pkg/gateway/playground`. §4.0 takes the new path of `operability/health`. The tier-0 tests that name these paths take the new ones.
+`llmproxy/llmproxy` and `session/sessionbudget` to `pkg/gateway/meteringproxy`. The removed `llmproxy` packages of 0132 and 0133 stay where they are. 0133.S2 then edits the proxy at its new path. The seam interface page gains `GWSEAM-ExpireSession` and `GWSEAM-RotateCredential`, served by the session core to the metering proxy (decision 20, settled by the owner on 2026-11-18,), and the metering proxy's budget operations split into one interface per caller. The usage recorder leaves `cmd/lenny-gateway` for a new package, `pkg/gateway/meteringproxy/metering`, with the per-session budget state the proxy serves through the seam interface, and the proxy's flags and route registration move into `llmproxy` (decision 7).
+
+### 0117.S4 Seam model, replica-level parts, and the playground (108 import sites)
+- status: Landed
+- lanes: [specification, code]
+- depends-on: [0117.S2, 0137.S5, 0155.S1]
+
+`core/subsystem` and `metrics/extractionthreshold` to `pkg/gateway/seam`; `core/semver` to `pkg/common`; the drain, scaling, ops endpoint, and replica packages of "SP-1"; and `mcpfabric/playground` to `pkg/gateway/playground`. §4.0 takes the new path of `operability/health`. The tier-0 tests that name these paths take the new ones. The step routes the crossings its moves leave: the seam model gates the Token Service read through `Subsystem.Admit` and receives no Token Service value; the request-metrics middleware moves to the API front as `pkg/gateway/api/requestmetrics`; the audit appender moves from the policy package to `pkg/audit`; the T4 KMS probe runs from the session core's `pkg/gateway/core/leaderjobs`; the metering proxy registers its own metric collectors; and GW-R2 allows the playground the packages its token mint reads (decisions 21 to 25). The flags only the playground, the startup TLS probe, the disruption budget watcher, and the leader election read move into those packages under decision 7.
 
 ### 0117.S5 Upload handler split
 - status: Building
