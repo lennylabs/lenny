@@ -6,7 +6,8 @@
 // write-before-issue transaction.
 //
 // Invariants enforced:
-//   - Scope narrowing: issued.scope ⊆ subject.scope (RFC 8693)
+//   - Scope narrowing: issued.scope ⊆ subject.scope (RFC 8693); a
+//     request without scope issues subject.scope
 //   - Tenant match: issued.tenant_id == subject.tenant_id == caller.tenant_id
 //   - delegation_depth: child = parent + 1 (with actor_token);
 //     rotation preserves
@@ -219,9 +220,9 @@ func Validate(r Request) (Issued, error) {
 		}
 	}
 
-	// §13.3 scope narrowing: requested ⊆ subject.
-	if !isSubset(r.Requested.Scope, r.Subject.Scope) {
-		return Issued{}, &ExchangeError{Code: "invalid_scope", Reason: "scope_not_subset"}
+	issuedScope, err := resolveIssuedScope(r.Requested.Scope, r.Subject.Scope)
+	if err != nil {
+		return Issued{}, err
 	}
 
 	// §13.3 audience: cannot broaden — every requested audience MUST
@@ -246,7 +247,7 @@ func Validate(r Request) (Issued, error) {
 		authorizedTools = r.Requested.AuthorizedTools
 	}
 	if r.Actor != nil && len(authorizedTools) > 0 {
-		authorizedTools = intersect(authorizedTools, r.Requested.Scope)
+		authorizedTools = intersect(authorizedTools, issuedScope)
 	}
 
 	// §13.3 caller_type: cannot elevate.
@@ -301,7 +302,7 @@ func Validate(r Request) (Issued, error) {
 		SessionID:       r.Subject.SessionID,
 		CallerType:      defaultString(r.Requested.CallerType, r.Subject.CallerType),
 		DelegationDepth: depth,
-		Scope:           r.Requested.Scope,
+		Scope:           issuedScope,
 		Audience:        r.Requested.Audience,
 		AuthorizedTools: authorizedTools,
 		Typ:             issuedTyp,
@@ -310,6 +311,24 @@ func Validate(r Request) (Issued, error) {
 		// `actor_token` is present".
 		Act: actorOf(r.Actor),
 	}, nil
+}
+
+// resolveIssuedScope returns the scope an exchange issues: the requested
+// scope when the request names one and every value is in the subject's
+// scope, and the subject's scope when the request names none. An empty
+// issued scope becomes an empty claim, which carries no restriction, so
+// the default keeps the issued token no broader than its subject. The
+// result is a copy and shares no backing array with the request.
+//
+// spec: §13.3 (Credential Flow) "Scope narrowing enforcement."
+func resolveIssuedScope(requested, subject []string) ([]string, error) {
+	if len(requested) == 0 {
+		return append([]string(nil), subject...), nil
+	}
+	if !isSubset(requested, subject) {
+		return nil, &ExchangeError{Code: "invalid_scope", Reason: "scope_not_subset"}
+	}
+	return append([]string(nil), requested...), nil
 }
 
 // isExpired implements the §13.3 ±1s skew: a token is expired iff

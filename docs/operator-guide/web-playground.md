@@ -43,6 +43,13 @@ The gateway reads each value as a `--playground-*` flag. `allowedRuntimes` is a 
 
 Every minted token carries the `origin: playground` claim. The gateway uses that claim, rather than the auth mode, to apply the session caps below.
 
+The minted token's `scope` claim is the intersection of the signed-in identity's `scope` claim with the scopes a playground token may carry: `tools:sessions:*`, `tools:me:read`, `tools:runtimes:read`, `tools:pools:read`, `tools:operations:read`, and `tools:events:read`. The identity is the ID token's principal in `oidc` mode and the pasted bearer in `apiKey` mode. An identity with no `scope` claim receives the full playground set. The gateway refuses the mint in the following cases, so a playground token never carries an empty `scope` claim, which would leave it limited only by the identity's roles:
+
+- An identity whose `scope` claim holds a value outside the `tools:<domain>:<action>` form, such as the raw OAuth value `openid profile` that some identity providers place in their tokens, receives `401 UNAUTHORIZED` with `details.reason: subject_scope_invalid`. In `oidc` mode, configure the identity provider to omit the `scope` claim from the ID token or to issue scopes in the `tools:` form.
+- An identity whose `scope` claim parses but holds none of the playground scopes, such as a token narrowed to `tools:health:read`, receives `403 SCOPE_FORBIDDEN`. `details.activeScope` names the identity's scopes, and `details.requiredScope` lists the playground scopes.
+
+The playground UI shows either refusal as an error and does not retry. A silent refresh of the token runs the same check.
+
 ## Session limits
 
 The playground binds two limits on every session it starts, identified by the `origin: playground` claim.
