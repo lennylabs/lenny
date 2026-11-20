@@ -258,7 +258,6 @@ packages:
     - package: pkg/tokenservice
       linters:
         staticcheck: 1
-        unused: 1
     - package: pkg/upload/archive
       linters:
         staticcheck: 2
