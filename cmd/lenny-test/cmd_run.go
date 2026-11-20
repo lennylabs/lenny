@@ -802,7 +802,7 @@ func runStaticTier(base string) (string, string, *tierResult) {
 		}},
 		// A finding on a line the branch changes fails the tier. The
 		// findings elsewhere, which predate the check, are a warning until
-		// they reach zero (CONV-I1, lint_changed.go).
+		// they reach zero (GATE-I1, lint_changed.go).
 		{name: "golangci-lint run", run: newGolangciLint(repoRoot(), base).run, classify: classifyGolangciLint},
 		{name: "scripts/lint-schema.sh (R-01)", run: func() (string, error) {
 			script := filepath.Join(repoRoot(), "scripts", "lint-schema.sh")

@@ -621,3 +621,39 @@ func TestCheckReportsACodeThatBreaksTheGrammar(t *testing.T) {
 		t.Errorf("got %d grammar findings, want the five broken codes:\n%s", len(got), all)
 	}
 }
+
+func TestCheckReportsAPageThatTakesAReservedIssueCode(t *testing.T) {
+	dir := t.TempDir()
+	page := func(code string, extra string) string {
+		return "---\ncode: " + code + "\ntype: capability\nsummary: s\n" + extra + "---\n\n# Page\n"
+	}
+	writeFile(t, dir, "spec/a.md", page("GATE", ""))
+	writeFile(t, dir, "spec/b.md", page("GATES", ""))
+	writeFile(t, dir, "spec/c.md", page("GAT", ""))
+	writeFile(t, dir, "spec/d.md", page("POOL", "aliases: [GATE]\n"))
+	writeFile(t, dir, "spec/e.md", page("GATEWAY", ""))
+	findings, err := Check(context.Background(), fixtureTree(dir, nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, f := range findings {
+		if strings.Contains(f.Message, "reserved") {
+			got = append(got, f.String())
+		}
+	}
+	all := strings.Join(got, "\n")
+	for _, want := range []string{
+		"spec/a.md:2: code GATE is reserved for the issues about",
+		"spec/b.md:2: code GATES differs from the reserved issue code GATE only by a suffix",
+		"spec/c.md:2: code GAT differs from the reserved issue code GATE only by a suffix",
+		"spec/d.md:2: code GATE is reserved",
+	} {
+		if !strings.Contains(all, want) {
+			t.Errorf("missing finding %q in:\n%s", want, all)
+		}
+	}
+	if len(got) != 4 || strings.Contains(all, "GATEWAY") {
+		t.Errorf("got %d reserved-code findings, want four and none for GATEWAY:\n%s", len(got), all)
+	}
+}

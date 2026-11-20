@@ -12,6 +12,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/lennylabs/lenny/scripts/specshift/annotation"
+	"github.com/lennylabs/lenny/scripts/specshift/ref"
 	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
@@ -179,7 +180,8 @@ func citingTests(ctx context.Context, r repo, wanted []string) (map[string][]str
 // and the records it did not count, each with the reason. A record is
 // `issues/<CODE>/<file>.md`, where CODE is a page code or an alias the
 // specification registers; the README, the generated index, and the
-// records under issues/closed/ are left out. A record with no status is
+// records under issues/closed/ and under a reserved issue code
+// (ref.ReservedCodes) are left out. A record with no status is
 // open, as the coverage view of lenny-test reads it. A record that is a
 // symbolic link, or whose front matter does not parse, covers nothing and
 // is reported, so it fails closed for the requirements it names. An error
@@ -197,6 +199,11 @@ func issuesListing(ctx context.Context, r repo, pages map[string]PageInfo) (map[
 			continue
 		}
 		if _, ok := pages[parts[1]]; !ok {
+			// A reserved issue code belongs to no page, so its records
+			// name no requirement and are left out without a report.
+			if ref.IsReservedCode(parts[1]) {
+				continue
+			}
 			skipped = append(skipped, fmt.Sprintf("%s: %s is not a page code the specification registers", p, parts[1]))
 			continue
 		}

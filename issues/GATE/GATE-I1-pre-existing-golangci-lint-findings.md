@@ -1,5 +1,5 @@
 ---
-id: CONV-I1
+id: GATE-I1
 status: open
 kind: build-gap
 severity: low
@@ -10,7 +10,7 @@ requirements: []
 
 ## Specification
 
-No specification page owns the merge gate, which `TESTING.md` ("Merge gate") and `.claude/rules/test-coverage.md` ("Gates") define. The issue is filed under the conventions page, whose structure gates run in the same static tier. The rule in question is in `.claude/rules/code-best-practices.md` ("How to apply when editing"): "Run `gofumpt`, `goimports`, and the static tier; resolve every linter finding rather than suppressing it."
+No specification page owns the merge gate, which `TESTING.md` ("Merge gate") and `.claude/rules/test-coverage.md` ("Gates") define. The issue is filed under `GATE`, the issue code that `issues/README.md` ("Codes outside the specification") assigns to the merge gate. It was filed as CONV-I1 and moved to this code on 2026-11-19, by the owner's answer to GT-1 of the review of the changed-line lint. The rule in question is in `.claude/rules/code-best-practices.md` ("How to apply when editing"): "Run `gofumpt`, `goimports`, and the static tier; resolve every linter finding rather than suppressing it."
 
 The owner settled question S-4 of the M3 readiness review on 2026-11-19 with option (b): golangci-lint findings on the lines a branch changes fail the merge gate now, and the existing findings stay a warning.
 

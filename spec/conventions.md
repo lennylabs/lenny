@@ -513,7 +513,7 @@ The owner defines the register in a `register` block.
 
 Numbers are never reused. A retired requirement keeps its number with a successor pointer.
 
-**Issues.** An issue about a requirement of a page is identified `<CODE>-I<n>` and lives under `issues/<CODE>/` as `<CODE>-I<n>-<slug>.md`. Issue numbers are never reused within a code.
+**Issues.** An issue about a requirement of a page is identified `<CODE>-I<n>` and lives under `issues/<CODE>/` as `<CODE>-I<n>-<slug>.md`. Issue numbers are never reused within a code. An issue about a part of the repository that no page owns, such as the merge gate, is identified under a reserved issue code that `issues/README.md` lists, and no page takes a reserved code or a code that differs from one by a one-letter suffix.
 
 **Operations.** An interface operation has the identifier `<CODE>-<operation name>`, where the operation name is the interface's own: the gRPC method name (`ADAPTERRPC-ReportPodScrub`), the OpenAPI `operationId` (`ADMPOOLS-createPool`), the Kubernetes API verb (`KPCLAIM-create`, `KPCLAIM-updateStatus`), the CLI command words (`CLIPOOL-poolCreate`), or, on an interface page between parts of one process, the Go method that declares the operation (`GWSEAM-LookupSession`), whose block's `method` is `Go method` and whose `path` names the Go interface (`seam.Sessions`). Its anchor is the identifier lower-cased (`kpclaim-create`). Each REST operation has an `operationId` in the specification, and the generated OpenAPI document and SDKs use it.
 

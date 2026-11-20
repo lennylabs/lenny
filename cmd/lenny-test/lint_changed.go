@@ -24,13 +24,13 @@ import (
 // the integration branch, and any such finding fails the tier. The second
 // run reports the findings of the whole tree, which include the findings
 // that predate the check, as a non-fatal warning. The whole-tree run
-// becomes fatal when the pre-existing findings that CONV-I1 lists reach
+// becomes fatal when the pre-existing findings that GATE-I1 lists reach
 // zero. The check is contributor tooling, so this file carries no
 // specification annotation.
 
 // lintDebtIssue tracks the pre-existing golangci-lint findings that keep
 // the whole-tree run a warning.
-const lintDebtIssue = "CONV-I1"
+const lintDebtIssue = "GATE-I1"
 
 // golangciLintTimeout bounds the analysis of each golangci-lint run. A run
 // that exceeds it exits non-zero, which fails the changed-line run rather
