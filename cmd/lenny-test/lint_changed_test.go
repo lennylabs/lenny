@@ -1237,6 +1237,10 @@ func TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest(t *testing.T
 	t.Setenv("GOFLAGS", "-buildvcs=false")
 	l := newGolangciLint(r.root, "main")
 	l.version = func(context.Context, string, string) error { return nil }
+	// The module has no binary under cmd/, which the product package
+	// listing refuses; TestLintFindsProductPackagesOutsideDotDotDot runs
+	// that listing with the go command.
+	l.deps = func(context.Context, string) ([]string, error) { return nil, nil }
 
 	r.commit("clean.go", "package m\n\n// Clean returns one.\nfunc Clean() int { return 1 }\n", "clean change")
 	out, err := l.run()
