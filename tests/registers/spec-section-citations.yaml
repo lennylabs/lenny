@@ -938,7 +938,7 @@ packages:
     - package: pkg/tierpromotion
       count: 25
     - package: pkg/tokenexchange
-      count: 10
+      count: 9
     - package: pkg/tokenservice
       count: 179
     - package: pkg/tokenservice/cache
@@ -1160,7 +1160,7 @@ packages:
     - package: tests/contract/multiprotocol_journey
       count: 4
     - package: tests/contract/oauth_token
-      count: 36
+      count: 37
     - package: tests/contract/ocsf_audit
       count: 29
     - package: tests/contract/ops_endpoints

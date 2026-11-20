@@ -5,7 +5,11 @@
 package oauth_token_test
 
 import (
+	"encoding/json"
+	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth"
@@ -28,7 +32,7 @@ func TestExchangeScopeDefaultsToTheSubjectAndNarrowsOnlyBySubset(t *testing.T) {
 		wantError  string
 		wantScope  string
 	}{
-		{name: "no scope parameter", scope: "", wantStatus: http.StatusOK, wantScope: subjectScope},
+		{name: "empty scope value", scope: "", wantStatus: http.StatusOK, wantScope: subjectScope},
 		{name: "subset", scope: "sessions:read", wantStatus: http.StatusOK, wantScope: "sessions:read"},
 		{name: "value outside the subject", scope: "sessions:read tools:pool:write", wantStatus: http.StatusBadRequest, wantError: "invalid_scope"},
 	}
@@ -109,5 +113,58 @@ func TestExchangeWithoutScopeFromAnUnscopedSubjectIssuesNoScopeClaim(t *testing.
 	}
 	if claims.Scope != "" {
 		t.Errorf("issued scope claim = %q, want absent", claims.Scope)
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: a form-encoded exchange whose body carries no scope key did
+// not receive the narrowed subject token's scope. An absent parameter and
+// an empty one must both issue the subject's scope; anything else is either
+// an unrestricted (empty) claim or a scope the subject never held.
+func TestFormExchangeWithoutAScopeKeyIssuesTheSubjectScope(t *testing.T) {
+	ts, signer := newTestServer(t)
+	const subjectScope = "tools:health:read"
+	caller := mint(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-caller",
+		Typ: auth.TokenUserBearer, Scope: subjectScope,
+	})
+	subject := mint(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-subject",
+		Typ: auth.TokenUserBearer, Scope: subjectScope,
+	})
+	form := url.Values{
+		"grant_type":         {"urn:ietf:params:oauth:grant-type:token-exchange"},
+		"subject_token":      {subject},
+		"subject_token_type": {"urn:ietf:params:oauth:token-type:jwt"},
+		"audience":           {"lenny-gateway"},
+	}
+	req, err := http.NewRequest(http.MethodPost, ts.URL+"/v1/oauth/token", strings.NewReader(form.Encode()))
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+caller)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %s)", resp.StatusCode, raw)
+	}
+	var out tokenservice.Response
+	if err := json.Unmarshal(raw, &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Scope != subjectScope {
+		t.Errorf("response scope = %q, want %q", out.Scope, subjectScope)
+	}
+	claims, err := signer.Verify(out.AccessToken)
+	if err != nil {
+		t.Fatalf("verify issued token: %v", err)
+	}
+	if claims.Scope != subjectScope {
+		t.Errorf("issued scope claim = %q, want %q", claims.Scope, subjectScope)
 	}
 }

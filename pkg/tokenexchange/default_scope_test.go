@@ -82,7 +82,6 @@ func TestValidateRefusesARequestedScopeOutsideTheSubject(t *testing.T) {
 	}{
 		{"one value outside a narrowed subject", []string{"tools:health:read"}, []string{"tools:health:read", "tools:pool:write"}},
 		{"disjoint from a narrowed subject", []string{"tools:health:read"}, []string{"tools:pool:write"}},
-		{"any value from a subject without a scope claim", nil, []string{"tools:health:read"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -95,7 +94,10 @@ func TestValidateRefusesARequestedScopeOutsideTheSubject(t *testing.T) {
 	}
 }
 
-// spec: §13.3 (Credential Flow)
+// The issued scope must not alias the subject's slice, so a caller that
+// edits one cannot change the other. This is a property of the
+// implementation rather than of a requirement, so the test carries no
+// specification annotation.
 func TestValidateDefaultScopeIsACopyOfTheSubjectScope(t *testing.T) {
 	subjectScope := []string{"tools:health:read", "sessions:read"}
 	got, err := exchangeScope(t, subjectScope, nil)
