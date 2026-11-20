@@ -14,6 +14,8 @@ No specification page owns the merge gate, which `TESTING.md` ("Merge gate") and
 
 The owner settled question S-4 of the M3 readiness review on 2026-11-19 with option (b): golangci-lint findings on the lines a branch changes fail the merge gate now, and the existing findings stay a warning.
 
+On 2026-11-20 the owner kept one rule set for test files and other code (GT-6), so the findings in test files are fixed under this issue rather than excluded by a path rule in `.golangci.yml`, and kept the register as counts per package and linter (GT-13), so a branch that removes one finding and adds another of the same linter in the same package off its changed lines passes.
+
 ## Evidence
 
 - `cmd/lenny-test/lint_changed.go` runs golangci-lint twice in the static tier. The run with `--new-from-patch`, over the diff of the working tree against the branch's merge base, fails the tier on a finding. The whole-tree run counts its findings per package and linter and compares the counts with the register `tests/registers/golangci-lint-findings.yaml`: a count above the register fails the tier, and the findings within it are a non-fatal warning that names this issue (owner's answer to GT-3, 2026-11-19).
