@@ -244,8 +244,8 @@ func TestLintEnvDropsThePatchOverrideAndTargetsLinuxAmd64(t *testing.T) {
 			t.Errorf("environment keeps %s:\n%s", bad, strings.Join(env, "\n"))
 		}
 	}
-	if target := lintTargetEnv(nil); !slices.Equal(target, lintTargetEnvVars) {
-		t.Errorf("an empty environment gives %v; want %v", target, lintTargetEnvVars)
+	if target, want := lintTargetEnv(nil), lintTargetEnvVars(lintBuildTarget); !slices.Equal(target, want) {
+		t.Errorf("an empty environment gives %v; want %v", target, want)
 	}
 }
 
@@ -471,8 +471,14 @@ func stubLint(t *testing.T, f *fakeLint, b lintBase, resolveErr error) golangciL
 		baseRegister: func(context.Context, string, string) (map[lintKey]int, bool, error) {
 			return map[lintKey]int{{pkg: "pkg/b", linter: "unused"}: 1}, true, nil
 		},
-		deps: func(context.Context, string) ([]string, error) { return nil, nil },
+		deps: stubLintDeps,
 	}
+}
+
+// stubLintDeps is a coverage check that lists the lint's own build and
+// finds every product package inside ./....
+func stubLintDeps(context.Context, string) (lintDepsResult, error) {
+	return lintDepsResult{targets: []lintTarget{lintBuildTarget}}, nil
 }
 
 // runLintCheck runs the check through the static tier's classifier and
@@ -901,16 +907,25 @@ func TestLintReadsTheRegisterAtTheMergeBase(t *testing.T) {
 func TestLintFailsOnAProductPackageOutsideTheLint(t *testing.T) {
 	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
 	l := stubLint(t, f, testLintBase, nil)
-	l.deps = func(context.Context, string) ([]string, error) {
-		return []string{"github.com/lennylabs/lenny/pkg/x/testdata/fixture"}, nil
+	l.deps = func(context.Context, string) (lintDepsResult, error) {
+		return lintDepsResult{
+			targets: []lintTarget{lintBuildTarget, {goos: "darwin", goarch: "arm64"}},
+			outside: []string{"github.com/lennylabs/lenny/pkg/x/testdata/fixture (built for darwin/arm64)"},
+		}, nil
 	}
 	status, out := runLintCheck(l)
-	if status != verdictstatus.Fail || !strings.Contains(out, "pkg/x/testdata/fixture") {
-		t.Errorf("status %q; want fail naming the package (output %q)", status, out)
+	if status != verdictstatus.Fail || !strings.Contains(out, "pkg/x/testdata/fixture (built for darwin/arm64)") || !strings.Contains(out, "linux/amd64, darwin/arm64") {
+		t.Errorf("status %q; want fail naming the package and the builds (output %q)", status, out)
 	}
-	l.deps = func(context.Context, string) ([]string, error) { return nil, errors.New("go list: exit status 1") }
+	l.deps = func(context.Context, string) (lintDepsResult, error) {
+		return lintDepsResult{}, errors.New("go list: exit status 1")
+	}
 	if status, out := runLintCheck(l); status != verdictstatus.Fail || !strings.Contains(out, "did not finish") {
 		t.Errorf("a listing that fails: status %q; want fail (output %q)", status, out)
+	}
+	l.deps = func(context.Context, string) (lintDepsResult, error) { return lintDepsResult{}, nil }
+	if status, out := runLintCheck(l); status != verdictstatus.Fail || !strings.Contains(out, "listed no build") {
+		t.Errorf("a listing of no build: status %q; want fail (output %q)", status, out)
 	}
 }
 
@@ -973,6 +988,125 @@ func TestLintFindsProductPackagesOutsideDotDotDot(t *testing.T) {
 	noMain := writeLintModule(t, map[string]string{"cmd/lib/l.go": "package lib\n"})
 	if _, err := productPackagesOutsideLint(context.Background(), noMain, execGoList); err == nil || !strings.Contains(err.Error(), "no main package") {
 		t.Errorf("a module with no main package under cmd/: err %v; want an error", err)
+	}
+}
+
+// TestLintFindsProductPackagesPerReleaseTarget checks the listing with the
+// go command in more than one build target: a package that only the
+// darwin build of a binary imports is outside ./... in that build alone,
+// and the check names it with that build; a package every build imports
+// is named once with every build.
+func TestLintFindsProductPackagesPerReleaseTarget(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("blocked: go is not on PATH")
+	}
+	root := writeLintModule(t, map[string]string{
+		"cmd/app/main.go":        "package main\n\nimport _ \"example.com/m/_all/a\"\n\nfunc main() {}\n",
+		"cmd/app/main_darwin.go": "package main\n\nimport _ \"example.com/m/_mac/m\"\n",
+		"_all/a/a.go":            "package a\n",
+		"_mac/m/m.go":            "package m\n",
+	})
+	linux, mac := lintBuildTarget, lintTarget{goos: "darwin", goarch: "arm64"}
+	res, err := packagesOutsideLintPerTarget(context.Background(), root, []lintTarget{linux, mac}, execGoListFor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"example.com/m/_all/a (built for linux/amd64, darwin/arm64)", "example.com/m/_mac/m (built for darwin/arm64)"}
+	if !slices.Equal(res.outside, want) || !slices.Equal(res.targets, []lintTarget{linux, mac}) {
+		t.Errorf("result %+v; want outside %v in both builds", res, want)
+	}
+	failMac := func(ctx context.Context, root string, tg lintTarget, args ...string) (string, error) {
+		if tg == mac {
+			return "", errors.New("go list: exit status 1")
+		}
+		return execGoListFor(ctx, root, tg, args...)
+	}
+	if _, err := packagesOutsideLintPerTarget(context.Background(), root, []lintTarget{linux, mac}, failMac); err == nil || !strings.Contains(err.Error(), "darwin/arm64") {
+		t.Errorf("a listing that fails in one build: err %v; want an error naming the build", err)
+	}
+}
+
+// TestReleaseTargetsReadsTheReleaseWorkflow checks the reading of build
+// targets from a release workflow: matrix include entries with goos and
+// goarch, a matrix of goos and goarch lists, and a platforms input with a
+// variant, sorted and without duplicates, and the errors for a form the
+// reading does not know.
+func TestReleaseTargetsReadsTheReleaseWorkflow(t *testing.T) {
+	body := `
+jobs:
+  images:
+    strategy:
+      matrix:
+        include:
+          - { image: a }
+    steps:
+      - uses: docker/build-push-action@x
+        with:
+          platforms: linux/amd64,linux/arm/v7
+  cli:
+    strategy:
+      matrix:
+        include:
+          - { goos: darwin, goarch: arm64 }
+          - { goos: linux, goarch: amd64 }
+  cross:
+    strategy:
+      matrix:
+        goos: [freebsd]
+        goarch: [amd64, arm64]
+  plain:
+    steps:
+      - run: echo
+`
+	got, err := releaseTargets([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tg := range got {
+		names = append(names, tg.String())
+	}
+	if want := []string{"darwin/arm64", "freebsd/amd64", "freebsd/arm64", "linux/amd64", "linux/arm"}; !slices.Equal(names, want) {
+		t.Errorf("targets %v; want %v", names, want)
+	}
+	for name, bad := range map[string]string{
+		"no target":            "jobs:\n  a:\n    steps:\n      - run: echo\n",
+		"an expression matrix": "jobs:\n  a:\n    strategy:\n      matrix: ${{ fromJSON(x) }}\n",
+		"goos alone":           "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - { goos: linux }\n",
+		"goarch list alone":    "jobs:\n  a:\n    strategy:\n      matrix:\n        goarch: [amd64]\n",
+		"a bad platform":       "jobs:\n  a:\n    steps:\n      - with:\n          platforms: linux\n",
+		"a templated goos":     "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - { goos: ${{ x }}, goarch: amd64 }\n",
+	} {
+		if _, err := releaseTargets([]byte(bad)); err == nil {
+			t.Errorf("%s: no error", name)
+		}
+	}
+}
+
+// TestLintDepsTargetsFollowTheReleaseDefinition checks the targets the
+// coverage check lists for this repository: the lint's own build first,
+// then the builds .github/workflows/release.yml names for the images and
+// the CLI archives. A change of the workflow's form that drops a target
+// from the reading fails here.
+func TestLintDepsTargetsFollowTheReleaseDefinition(t *testing.T) {
+	got, err := lintDepsTargets(repoRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var names []string
+	for _, tg := range got {
+		names = append(names, tg.String())
+	}
+	for _, want := range []string{"linux/amd64", "linux/arm64", "darwin/amd64", "darwin/arm64", "windows/amd64"} {
+		if !slices.Contains(names, want) {
+			t.Errorf("targets %v lack %s", names, want)
+		}
+	}
+	if len(names) == 0 || names[0] != lintBuildTarget.String() {
+		t.Errorf("targets %v do not open with the lint's own build %s", names, lintBuildTarget)
+	}
+	if _, err := lintDepsTargets(t.TempDir()); err == nil {
+		t.Error("a checkout with no release definition: no error")
 	}
 }
 
@@ -1245,7 +1379,7 @@ func TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest(t *testing.T
 	// The module has no binary under cmd/, which the product package
 	// listing refuses; TestLintFindsProductPackagesOutsideDotDotDot runs
 	// that listing with the go command.
-	l.deps = func(context.Context, string) ([]string, error) { return nil, nil }
+	l.deps = stubLintDeps
 
 	r.commit("clean.go", "package m\n\n// Clean returns one.\nfunc Clean() int { return 1 }\n", "clean change")
 	out, err := l.run()

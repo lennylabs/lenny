@@ -244,9 +244,10 @@ type golangciLint struct {
 	// baseRegister reads the register as a commit holds it, reporting
 	// false when the commit carries none (loadBaseLintRegister).
 	baseRegister func(ctx context.Context, root, commit string) (map[lintKey]int, bool, error)
-	// deps lists the module's packages that the product binaries import
-	// and that ./... does not match (lint_deps.go).
-	deps func(ctx context.Context, root string) ([]string, error)
+	// deps lists, for every build target it checks, the module's packages
+	// that the product binaries import and that ./... does not match
+	// (lint_deps.go).
+	deps func(ctx context.Context, root string) (lintDepsResult, error)
 }
 
 // newGolangciLint returns the check wired to the installed linter, git,
@@ -274,9 +275,7 @@ func newGolangciLint(root, base string) golangciLint {
 		scan:    scanLintSources,
 
 		baseRegister: loadBaseLintRegister,
-		deps: func(ctx context.Context, root string) ([]string, error) {
-			return productPackagesOutsideLint(ctx, root, execGoList)
-		},
+		deps:         releasePackagesOutsideLint,
 	}
 }
 
@@ -364,42 +363,66 @@ func golangciLintEnv(env []string, root, userCache string) []string {
 	return out
 }
 
-// lintTargetEnvVars is the build the lint reads, for both golangci-lint
-// runs and the listing of the product packages (lint_deps.go), on every
-// host.
+// lintTarget is a build target, an operating system and an architecture.
+type lintTarget struct{ goos, goarch string }
+
+// String names the target as GOOS/GOARCH.
+func (t lintTarget) String() string { return t.goos + "/" + t.goarch }
+
+// lintBuildTarget is the build both golangci-lint runs read on every host:
+// linux/amd64 (owner's answer to GT-12, 2026-11-20). The merge gate's
+// container is Linux, and a file behind an operating system or
+// architecture constraint is read only in the build it names, so a target
+// that followed the host would count other findings on another host and
+// fail the register there. A package that builds only on Linux would also
+// report a type-checking error on another operating system that the gate
+// never sees. The listing of the product packages (lint_deps.go) reads
+// this build and every build the release definition names (owner's answer
+// to GT-17, 2026-11-20).
+var lintBuildTarget = lintTarget{goos: "linux", goarch: "amd64"}
+
+// lintFixedEnvVars are the settings every build the lint reads shares,
+// whatever its target:
 //
-//   - GOOS and GOARCH name linux/amd64 (owner's answer to GT-12,
-//     2026-11-20). The merge gate's container is Linux, and a file behind
-//     an operating system or architecture constraint is read only in the
-//     build it names, so a target that followed the host would count
-//     other findings on another host and fail the register there. A
-//     package that builds only on Linux would also report a type-checking
-//     error on another operating system that the gate never sees.
 //   - CGO_ENABLED is 0. The go command turns cgo off by default when it
 //     builds for another architecture than the host's, so an inherited or
 //     default setting would read cgo files on an amd64 host and not on an
-//     arm64 one.
+//     arm64 one. The release builds its binaries with cgo off as well.
 //   - GOWORK is off, so a go.work file in the checkout or above it cannot
 //     add modules to the build or replace the module's own requirements
 //     (owner's answer to GT-10, 2026-11-20).
-var lintTargetEnvVars = []string{"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOWORK=off"}
+var lintFixedEnvVars = []string{"CGO_ENABLED=0", "GOWORK=off"}
+
+// lintTargetEnvVars returns the variables that select the build t with
+// the settings of lintFixedEnvVars.
+func lintTargetEnvVars(t lintTarget) []string {
+	return append([]string{"GOOS=" + t.goos, "GOARCH=" + t.goarch}, lintFixedEnvVars...)
+}
 
 // lintTargetEnv returns env with every variable lintTargetEnvVars names
-// set to the lint's value, whatever env carries.
+// set to the value of the lint's own build, lintBuildTarget, whatever env
+// carries.
 func lintTargetEnv(env []string) []string {
+	return targetEnv(env, lintBuildTarget)
+}
+
+// targetEnv returns env with every variable lintTargetEnvVars names set to
+// the value of the build t, whatever env carries.
+func targetEnv(env []string, t lintTarget) []string {
+	vars := lintTargetEnvVars(t)
 	drop := map[string]bool{}
-	for _, kv := range lintTargetEnvVars {
+	for _, kv := range vars {
 		name, _, _ := strings.Cut(kv, "=")
 		drop[name] = true
 	}
-	out := make([]string, 0, len(env)+len(lintTargetEnvVars))
+	out := make([]string, 0, len(env)+len(vars))
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		if !drop[name] {
 			out = append(out, kv)
 		}
 	}
-	return append(out, lintTargetEnvVars...)
+	return append(out, vars...)
 }
 
 // golangciLintCache returns the cache directory of the checkout at root:
