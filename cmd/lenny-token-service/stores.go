@@ -9,6 +9,9 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storerouter"
+	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
+	userpg "github.com/lennylabs/lenny/pkg/tenancy/userstore/pgstore"
+	"github.com/lennylabs/lenny/pkg/tokenservice"
 	"github.com/lennylabs/lenny/pkg/tokenservice/promemit"
 )
 
@@ -68,4 +71,15 @@ func (w *tokenServiceWiring) buildStores() {
 		fatalf("store router: %v", err)
 	}
 	w.auditor = auditstore.New(auditRouter)
+}
+
+// platformRoles returns the platform-managed role resolver over the users
+// table the Token Service shares with the gateway, or nil when no Postgres
+// is wired, which leaves the caller token's roles claim authoritative. A
+// failed lookup is returned, so the revocation request fails closed.
+func (w *tokenServiceWiring) platformRoles() tokenservice.PlatformRoleResolver {
+	if w.pgPool == nil {
+		return nil
+	}
+	return userstore.PlatformRoles{Store: userpg.New(w.pgPool)}
 }

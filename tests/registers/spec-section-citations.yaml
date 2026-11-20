@@ -940,7 +940,7 @@ packages:
     - package: pkg/tokenexchange
       count: 24
     - package: pkg/tokenservice
-      count: 190
+      count: 192
     - package: pkg/tokenservice/cache
       count: 16
     - package: pkg/tokenservice/promemit

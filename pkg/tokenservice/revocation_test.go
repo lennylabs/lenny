@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
@@ -286,5 +287,87 @@ func TestHandlerRecursiveRevocationRefusesARevokedCaller(t *testing.T) {
 	}
 	if len(revokedPayloads(t, auditor.snapshot())) != 0 {
 		t.Errorf("a refused revocation wrote token.revoked rows")
+	}
+}
+
+// fakePlatformRoles is a PlatformRoleResolver with one fixed answer that
+// counts its lookups.
+type fakePlatformRoles struct {
+	roles   []auth.Role
+	found   bool
+	err     error
+	lookups int
+}
+
+func (f *fakePlatformRoles) ResolveRoles(context.Context, string, string) ([]auth.Role, bool, error) {
+	f.lookups++
+	return f.roles, f.found, f.err
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// The caller's administrator role for a recursive-revocation request is
+// its platform-managed assignment when one exists: an assignment without
+// tenant-admin refuses a caller whose roles claim lists it, and an
+// assignment with tenant-admin admits a caller whose claim lists none. No
+// assignment leaves the claim authoritative. A failed lookup refuses the
+// request without revoking: 503 token_store_unavailable for a Postgres
+// outage and 500 token_exchange_failed otherwise. The token's own user is
+// accepted without a lookup.
+func TestHandlerRecursiveRevocationResolvesThePlatformRoleAssignment(t *testing.T) {
+	cases := []struct {
+		name       string
+		callerSub  string
+		claim      []auth.Role
+		resolver   *fakePlatformRoles
+		wantStatus int
+		wantError  string
+		wantLookup int
+	}{
+		{"assignment demotes a claimed tenant-admin", "bob@acme.com", []auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{roles: []auth.Role{auth.RoleUser}, found: true}, http.StatusForbidden, "unauthorized_client", 1},
+		{"empty assignment demotes a claimed platform-admin", "bob@acme.com", []auth.Role{auth.RolePlatformAdmin},
+			&fakePlatformRoles{found: true}, http.StatusForbidden, "unauthorized_client", 1},
+		{"assignment grants tenant-admin", "carol@acme.com", nil,
+			&fakePlatformRoles{roles: []auth.Role{auth.RoleTenantAdmin}, found: true}, http.StatusOK, "", 1},
+		{"no assignment keeps the claim", "carol@acme.com", []auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{}, http.StatusOK, "", 1},
+		{"Postgres outage fails closed", "carol@acme.com", []auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{err: &pgconn.PgError{Code: "08006"}}, http.StatusServiceUnavailable, "token_store_unavailable", 1},
+		{"other lookup failure fails closed", "carol@acme.com", []auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{err: errors.New("decode failed")}, http.StatusInternalServerError, "token_exchange_failed", 1},
+		{"the token's own user needs no lookup", "alice@acme.com", nil,
+			&fakePlatformRoles{err: errors.New("unreachable")}, http.StatusOK, "", 0},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &fakeRevocationStore{revoked: []issuedtokenstore.RevokedToken{{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true}}}
+			signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
+			srv := mustNewServer(t, Options{
+				CapabilityTokenTTL: 15 * time.Minute,
+				Signer:             jwtsign.HMAC(signer),
+				Verifier:           signer,
+				Issuer:             "https://lenny.dev.test/token",
+				IssuedTokens:       store,
+				Auditor:            &recordingAuditor{},
+				PlatformRoles:      c.resolver,
+			})
+			caller := mintToken(t, signer, jwt.Claims{Subject: c.callerSub, TenantID: "acme", JWTID: "caller-jti", Typ: auth.TokenUserBearer, Roles: c.claim})
+			subject := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "root-jti", Typ: auth.TokenUserBearer})
+
+			status, env := decodeExchange(t, doExchange(t, srv, caller, Request{GrantType: grantTypeExchange, SubjectToken: subject, RequestedTokenType: revokedTokenType}))
+			if status != c.wantStatus {
+				t.Fatalf("status %d body %v, want %d", status, env, c.wantStatus)
+			}
+			if c.wantError != "" && env["error"] != c.wantError {
+				t.Errorf("error = %v, want %s", env["error"], c.wantError)
+			}
+			if (status == http.StatusOK) != (store.gotRoot == "root-jti") {
+				t.Errorf("store reached with root %q on status %d", store.gotRoot, status)
+			}
+			if c.resolver.lookups != c.wantLookup {
+				t.Errorf("role lookups = %d, want %d", c.resolver.lookups, c.wantLookup)
+			}
+		})
 	}
 }

@@ -80,7 +80,11 @@ func (w *tokenServiceWiring) buildServer() {
 		CapabilityTokenTTL: time.Duration(*w.f.capabilityTokenTTL) * time.Second,
 		IssuedTokens:       w.issuedTokens,
 		Auditor:            w.auditor,
-		Metrics:            w.metricsEmitter,
+		// The recursive-revocation request resolves the caller's
+		// administrator role through the platform-managed assignment, as
+		// the gateway does. Nil without Postgres.
+		PlatformRoles: w.platformRoles(),
+		Metrics:       w.metricsEmitter,
 		RateLimit: tokenservice.RateLimitOptions{
 			CallerPerSecond: *w.f.rlCallerPerSec,
 			CallerPerMinute: *w.f.rlCallerPerMin,

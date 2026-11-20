@@ -159,6 +159,19 @@ type Server struct {
 	// `postgres_only` on a nil propagator or a publish error — peers
 	// then fall back to the authoritative Postgres check). F-16.7.5.
 	revocationPropagator func(ctx context.Context, tenantID, jti string) error
+
+	// platformRoles resolves the caller's platform-managed role
+	// assignment for the recursive-revocation request. Nil leaves the
+	// caller token's roles claim authoritative.
+	platformRoles PlatformRoleResolver
+}
+
+// PlatformRoleResolver returns the platform-managed role assignment of
+// (tenantID, subject), and whether one exists, so the assignment replaces
+// the token's roles claim. It returns the store error on a failed lookup.
+// userstore.PlatformRoles satisfies it, as it does the gateway's.
+type PlatformRoleResolver interface {
+	ResolveRoles(ctx context.Context, tenantID, subject string) (roles []auth.Role, found bool, err error)
 }
 
 // Options configures the Server.
@@ -180,6 +193,13 @@ type Options struct {
 	// the IdP token as a caller credential only. Nil uses Verifier.
 	CallerVerifier jwt.Verifier
 	Issuer         string
+
+	// PlatformRoles, when set, resolves the caller's platform-managed
+	// role assignment for the recursive-revocation request, and the
+	// assignment replaces the caller token's roles claim. Production
+	// passes userstore.PlatformRoles over the users table. Nil leaves the
+	// roles claim authoritative.
+	PlatformRoles PlatformRoleResolver
 
 	// PerDialectCap is the §13.3 per-dialect lifetime ceiling keyed
 	// by audience. Empty map means no cap (the validator falls
@@ -289,6 +309,7 @@ func NewServer(opts Options) (*Server, error) {
 		driftDegraded:      opts.DriftDegraded,
 
 		revocationPropagator: opts.RevocationPropagator,
+		platformRoles:        opts.PlatformRoles,
 	}
 	if s.callerVerifier == nil {
 		s.callerVerifier = s.verifier
@@ -1218,7 +1239,12 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 		finish("invalid_grant")
 		return
 	}
-	if !authorizeRevocation(caller, subject) {
+	allowed, err := s.authorizeRevocation(r.Context(), caller, subject)
+	if err != nil {
+		writeRoleLookupError(w, finish, err)
+		return
+	}
+	if !allowed {
 		writeOAuthError(w, http.StatusForbidden, "unauthorized_client",
 			"a revocation request is accepted only from the token's own user or a tenant administrator")
 		finish("unauthorized_client")
@@ -1265,17 +1291,54 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 }
 
 // authorizeRevocation reports whether the caller may revoke the subject
-// token: the caller is the subject's own principal, or its token carries
-// the tenant-admin or platform-admin role. The tenant check runs before
-// it, so an administrator acts only within its own tenant.
+// token: the caller is the subject's own principal, or it holds the
+// tenant-admin or platform-admin role. The caller's roles are its
+// platform-managed assignment when one exists, and its token's roles
+// claim otherwise; a failed lookup returns the error, and the caller
+// refuses the request. The tenant check runs before it, so an
+// administrator acts only within its own tenant.
 //
 // spec: §13.3 (Credential Flow) "Recursive-revocation request
 // authorization."
-func authorizeRevocation(caller, subject jwt.Claims) bool {
+func (s *Server) authorizeRevocation(ctx context.Context, caller, subject jwt.Claims) (bool, error) {
 	if caller.Subject != "" && caller.Subject == subject.Subject {
-		return true
+		return true, nil
 	}
-	return caller.HasRole(auth.RoleTenantAdmin) || caller.HasRole(auth.RolePlatformAdmin)
+	roles := caller.Roles
+	if s.platformRoles != nil && caller.Subject != "" {
+		assigned, found, err := s.platformRoles.ResolveRoles(ctx, caller.TenantID, caller.Subject)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			roles = assigned
+		}
+	}
+	for _, r := range roles {
+		if r == auth.RoleTenantAdmin || r == auth.RolePlatformAdmin {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// writeRoleLookupError refuses a revocation request whose caller role
+// lookup failed: 503 token_store_unavailable during a Postgres outage, and
+// 500 token_exchange_failed otherwise.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
+func writeRoleLookupError(w http.ResponseWriter, finish func(string), err error) {
+	if pgtenant.IsUnavailable(err) {
+		w.Header().Set("Retry-After", "5")
+		writeOAuthError(w, http.StatusServiceUnavailable, "token_store_unavailable",
+			"the caller's role assignment cannot be read during a Postgres outage")
+		finish("token_store_unavailable")
+		return
+	}
+	writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
+		"the caller's role assignment lookup failed: "+err.Error())
+	finish("token_exchange_failed")
 }
 
 // emitTokenRevoked writes the §16.7 token.revoked audit row for one
