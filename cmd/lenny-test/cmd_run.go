@@ -457,7 +457,7 @@ type tierStep struct {
 // Building the table here keeps execute()'s loop body small and the
 // per-tier wiring readable from one place.
 func tierSteps() map[string]tierStep {
-	wrapStatic := func(_ tierPlan) (string, string, *tierResult) { return runStaticTier() }
+	wrapStatic := func(_ tierPlan) (string, string, *tierResult) { return runStaticTier("") }
 	return map[string]tierStep{
 		tierStatic: {
 			name: tierStatic, exec: wrapStatic, useSynthesize: true,
@@ -684,8 +684,10 @@ func goTestCheck(pattern string) func() (string, error) {
 // independent, so they run concurrently, and every check runs whatever
 // the others report: a failure early in the table does not hide the
 // checks after it. The result carries one failure entry per failed
-// check.
-func runStaticTier() (string, string, *tierResult) {
+// check. base is the ref the branch merges into, which the changed-line
+// lint compares with; empty selects the default integration refs
+// (resolveLintBase).
+func runStaticTier(base string) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return verdictstatus.Skipped, "go not on PATH", nil
 	}
@@ -798,27 +800,10 @@ func runStaticTier() (string, string, *tierResult) {
 			}
 			return "goimports: import ordering clean", nil
 		}},
-		{name: "golangci-lint run", run: func() (string, error) {
-			// Prefer the binary at $GOPATH/bin since the install script
-			// puts it there (TESTING_DEPENDENCIES.md §5). Fall back to
-			// PATH lookup; skip if neither resolves.
-			path := resolveGoBin("golangci-lint")
-			if path == "" {
-				return "golangci-lint not found; skipping (run scripts/setup-dev.sh)", nil
-			}
-			out, err := exec.Command(path, "run", "--timeout=2m").CombinedOutput()
-			if err != nil {
-				// golangci-lint is pinned to the v2 series (v1.x aborts on
-				// Go 1.26 export-data). It now runs, but surfaces
-				// pre-existing findings that were masked while the binary
-				// could not load packages. Surface the output for
-				// visibility without failing the tier; the check flips to
-				// hard-fail once those findings are burned down (bd
-				// lenny-vgl).
-				return fmt.Sprintf("WARNING (non-fatal, see .golangci.yml):\n%s", out), nil
-			}
-			return string(out), nil
-		}},
+		// A finding on a line the branch changes fails the tier. The
+		// findings elsewhere, which predate the check, are a warning until
+		// they reach zero (CONV-I1, lint_changed.go).
+		{name: "golangci-lint run", run: newGolangciLint(repoRoot(), base).run, classify: classifyGolangciLint},
 		{name: "scripts/lint-schema.sh (R-01)", run: func() (string, error) {
 			script := filepath.Join(repoRoot(), "scripts", "lint-schema.sh")
 			if _, err := os.Stat(script); err != nil {
