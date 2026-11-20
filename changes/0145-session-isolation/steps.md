@@ -207,9 +207,20 @@ us-west-2, one `m8i.2xlarge` x86_64 node with nested virtualization, Amazon Linu
 - status: Planned
 - aliases: [SI-A, SI-1, SI-2, SI-4, SI-7]
 - lanes: [specification, code, documentation]
-- depends-on: [0118.S1]
+- depends-on: [0118.S1, 0118.S3, 0119.S1, 0119.S2]
+- closes: [T-4.7.5]
 
-Slot containers, per-slot names for runtime and tool connections, two-way checks, the listener drain, dead slots and the recorded slot count, per-slot credentials and manifests, the canary, and the webhook rules. PL-B ([0118.S4](../0118-agent-pod-layout/steps.md#steps)) lands in the same release, because PL-B renders the per-slot volumes.
+Slot containers, per-slot names for runtime and tool connections, two-way checks, the listener drain, the adapter's per-slot not-live state ("SI-4"), the recorded slot count, per-slot credentials and manifests, the per-slot canary check of the start-up order, and the webhook rules. [0118.S4](../0118-agent-pod-layout/steps.md#steps) renders the per-slot volumes that the slot containers mount and the canary order, and how this step is ordered against it is open decision O17 in `decisions.md`. Which step builds the gateway's `CH-ADAPTEREVENTS` consumer (issue CHPODGW-I3) and the gateway half of dead slots is O15, who adds `spec.slotCount` is O19, and whether this step is split is O23. It depends on [0119.S1](../0119-agent-runtimes-only/steps.md#steps) and [0119.S2](../0119-agent-runtimes-only/steps.md#steps), because every pod it renders slot containers for is an agent pod only once `type: mcp` runtimes and service mode are removed.
+
+The step lands the list of what a shared pod's slots still share in the `acknowledgeSharedPod` refusal and in `sessionIsolationLevel.residualStateWarning`, as [PL-9](../0118-agent-pod-layout/change.md#pl-9-pool-settings-and-renames) states it, because that list is true only once slot containers exist. It needs [0118.S3](../0118-agent-pod-layout/steps.md#steps) for the renamed fields.
+
+It closes T-4.7.5 with the `security` test of the per-slot credential file of "SI-7", which replaces the delivery contract that test gap describes.
+
+The gateway packages it changes are `pkg/gateway/core/session/slotcounter` and `pkg/gateway/core/session/podsession/slotbinder.go` for the reservation against the recorded count, and `pkg/gateway/core/session/slothealth` and `pkg/gateway/platformtools/leasecontrol/scrubreport_server.go` for the whole-pod trigger over the recorded count.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes: `GWSEAM-InspectForRecycle`, whose `PodRecyclePolicy` serves the pod's recorded slot count in place of the pool's concurrency for the whole-pod trigger (SIR-16). [0118.S3](../0118-agent-pod-layout/steps.md#steps) renames the same field first.
+
+It writes one manifest per slot with its own `connectionNonce` in place of `mcpNonce` ("SI-7") under manifest version 1, with the matching change to the runtime SDKs and `pkg/runtimekit`, as [RP-6](../0139-runtime-protocol/change.md#rp-6-what-the-adapter-enforces), **The version 2 field set and where each change lands.**, orders it; [0139.S1](../0139-runtime-protocol/steps.md#steps) raises the version to 2 afterwards.
 
 RP's tool connections follow this step. They land in RP-B ([0139.S2](../0139-runtime-protocol/steps.md#steps)).
 
@@ -217,17 +228,22 @@ RP's tool connections follow this step. They land in RP-B ([0139.S2](../0139-run
 - status: Planned
 - aliases: [SI-B, SI-5, SI-6]
 - lanes: [specification, code, documentation]
-- depends-on: [0145.S1]
+- depends-on: [0145.S1, 0118.S4]
 
-The supervisor broker with `statat`, the parallel stat walk's broker rules, and the adapter's checkpoint, restore, export, and tracker through it, with the `metadata_only` record. IC's matching changes land in the same release.
+The supervisor broker with `statat`, the parallel stat walk's broker rules, and the adapter's checkpoint, restore, export, and tracker through it, with the `metadata_only` record. The `--fs-root` arguments name the paths of PL-3, which [0118.S4](../0118-agent-pod-layout/steps.md#steps) lands. IC's matching changes are [0131.S1](../0131-incremental-checkpoint/steps.md#steps) and [0131.S5](../0131-incremental-checkpoint/steps.md#steps), which capture and restore through this step's broker and depend on it. From which run in a slot the adapter treats broker replies as untrusted (SIR-22) is open decision O24. Whether this step closes F-8.7.17, the race in `ExportPaths` that the broker's descriptors remove, is O27.
 
 ### 0145.S3 Asynchronous worker and the CH-SUPERVISE protocol
 - status: Planned
 - aliases: [SI-C, SI-3]
 - lanes: [specification, code, documentation]
-- depends-on: [0145.S1]
+- depends-on: [0145.S1, 0118.S4]
+- closes: [F-7.5.17]
 
-The asynchronous worker and the whole `CH-SUPERVISE` protocol, the release with the Sweep fixes and the emptiness check, the launch at bind, and the retirement of `keep`. WM's helper lands in the same release.
+The asynchronous worker and the whole `CH-SUPERVISE` protocol, the release with the Sweep fixes and the emptiness check, the launch at bind, and the retirement of `keep`. The Sweep covers the writable slot volumes of PL-3, which [0118.S4](../0118-agent-pod-layout/steps.md#steps) lands. This step owns the launch at bind, and [0118.S2](../0118-agent-pod-layout/steps.md#steps) points to it. Which step owns the worker and its refusal rule against [0153.S1](../0153-workspace-materialization/steps.md#steps) is O20, how the release maps onto `Shutdown` is O16, and whether the release ends with an End after `prestage` is O18. Whether [0135.S1](../0135-message-delivery/steps.md#steps) depends on 0145.S1 and this step is O26.
+
+[0131.S1](../0131-incremental-checkpoint/steps.md#steps) and [0131.S5](../0131-incremental-checkpoint/steps.md#steps) depend on this step, because the capture copy and the restore run through its worker. WM's helper runs land after this step: the helper runs of the bind (step 2 of "SI-3") with [0153.S2](../0153-workspace-materialization/steps.md#steps), and the `prestage` run of the release (step 9) with [0153.S8](../0153-workspace-materialization/steps.md#steps), each of which depends on this step through 0153.S1.
+
+It closes F-7.5.17: setup commands run in the slot container as the slot UID through `setup` (D6, SIR-14), so no setup command runs in the adapter's container or reaches the projected service account token or another slot's credential file.
 
 ### 0145.S4 Resource mapping and detection
 - status: Planned
@@ -235,7 +251,7 @@ The asynchronous worker and the whole `CH-SUPERVISE` protocol, the release with 
 - lanes: [specification, code, documentation]
 - depends-on: [0145.S1, 0121.S1]
 
-The resource mapping and detection of "SI-9". It needs the billing design's container mapping, which BR-1 lands.
+The detection of "SI-9", the pod-level CPU limit it renders where pod-level resources are enforced, and the fallback where they are not. The container mapping onto the slot containers is the billing design's, which BR-1 ([0121.S1](../0121-billing-resource-attribution/steps.md#steps)) lands in the fallback form, with each slot's CPU limit equal to its request and no pod-level `spec.resources`. This step raises `k8s.io/api` from v0.31.4, which the tree pins and which has no pod-level `spec.resources` field, to a version that carries it, and renders the pod-level CPU limit together with its detection. The `go.mod` change is reviewed under the merge-gate review rule of `.claude/rules/git-workflow.md`. The chart keys of the platform containers' requests and the memory limits of the mapping are O25. How the detection result reaches the controller is part of O15.
 
 ### 0145.S5 User namespaces on runc pools
 - status: Planned
@@ -243,14 +259,21 @@ The resource mapping and detection of "SI-9". It needs the billing design's cont
 - lanes: [specification, code, documentation]
 - depends-on: [0145.S1, 0136.S3]
 
-User namespaces on runc pools by default, the `uid_map` check, and the Kata `block-plain` volume GID. It needs PM's rendering of `hostUsers`, which PM-C lands.
+User namespaces on runc pools by default and the adapter's `uid_map` check, which this step owns and [0136-placement](../0136-placement/change.md) points to. It needs PM's rendering of `hostUsers`, which PM-C lands. The Kata `block-plain` volume GID and its `fsGroup` exception are rendered by [0118.S4](../0118-agent-pod-layout/steps.md#steps).
 
 ### 0145.S6 Recycling after the release
 - status: Planned
 - aliases: [SI-F]
 - lanes: [specification, code, documentation]
-- depends-on: [0145.S1, 0145.S3]
+- depends-on: [0145.S1, 0145.S3, 0136.S1, 0118.S2, 0139.S1 (part)]
+- closes: [F-5.2.60, F-5.2.55 (part), F-5.2.45 (part), T-6.2.3 (part)]
 
-Recycling after the release: the one-slot disposition, the **Runtime refused** retirement in place of "Runtime not live", dead slots in place of `leaked` slots with `agent_pod_state.dead_slots` and their rehydration, and the scrub profiles `standard` and `vm-restart` (D36 to D39). PM-A's removal of `allowCrossTenantReuse` lands in the same release.
+Recycling after the release: the one-slot disposition, the **Runtime refused** retirement in place of "Runtime not live", dead slots in place of `leaked` slots with `agent_pod_state.dead_slots` and their rehydration, and the scrub profiles `standard` and `vm-restart` (D36 to D39). O15 decides whether the dead-slot part stays in this step or moves to 0145.S1 with these closes entries, O14 decides the boundary at which a pod with a dead slot scrubs and retires, and O21 decides whether transient failures still count toward the trigger.
+
+It removes `in-place` after PM-A's removal of `allowCrossTenantReuse` ([0136.S1](../0136-placement/steps.md#steps)), because `in-place` existed for pools with `allowCrossTenantReuse`, and the two edits to the scrub profile paragraph land in that order. The **Runtime refused** retirement and its test wait for RP-1's handshake refusal, which [0139.S1](../0139-runtime-protocol/steps.md#steps) lands; the rest of the step can land first. The step builds on `GWSEAM-InspectForRecycle` and `GWSEAM-RecyclePod` as [0118.S2](../0118-agent-pod-layout/steps.md#steps) leaves them, with `PodRecyclePolicy.PreConnect` and the `preConnect` argument removed.
+
+It closes F-5.2.60, because a dead slot retires a pod with one slot under D36 and no `leaked` state remains; the `leaked:` member residue of F-5.2.55, because rehydration restores the recorded dead slots (SIR-42); the persistent half of F-5.2.45, because dead slots live in the slot set every replica reads; and the part of T-6.2.3 that the `e2e_kind` test of a pod with two slots and a dead slot covers.
+
+The gateway packages it changes are `pkg/gateway/core/session/recycle/scrubreporter_seams.go` for the leak drain and the recycle disposition, `pkg/gateway/platformtools/leasecontrol/scrubreport_server.go` for the scrub reports, `pkg/gateway/core/session/slotcounter`, `pkg/gateway/core/session/slotreaper`, and `pkg/gateway/core/session/podsession/slotbinder.go` for the `dead:<n>` members and rehydration, `pkg/gateway/core/session/sessionserver/isolationlevel.go` and `pkg/session/sessionrow` for `best-effort-in-place`, and `pkg/sandbox/podscrub`, `pkg/runtime/poolstore`, `pkg/runtime/runtimestore`, `pkg/controller/poolscaling/poolstoresource.go`, and `pkg/gateway/api/admin` for the scrub profiles.
 
 Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes the pod recycle operations (`GWSEAM-IncrementSessionsServed`, `GWSEAM-IncrementScrubFailureCount`, `GWSEAM-RecycleCounters`, `GWSEAM-RecordLeak`, `GWSEAM-RetireOnSessionCount`, `GWSEAM-InspectForRecycle`, `GWSEAM-RecyclePod`, `GWSEAM-RetirePod`, `GWSEAM-RecordScrubFailure`, and `GWSEAM-RecordPodRetirement`) for the dead slot and the pod-wide scrub (D37 to D39).

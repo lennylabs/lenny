@@ -14,29 +14,29 @@ No `EG-` proposal depends on a `UC-` proposal, and the hooks sit inside [EG-1](.
 - status: Planned
 - aliases: [UC-1]
 - lanes: [specification, code, documentation]
-- depends-on: [0127.S9]
-- closes: [F-4.9.46, F-13.3.26 (part)]
+- depends-on: [0127.S9, 0133.S2]
+- closes: [F-4.9.46, F-4.9.47 (part), F-13.3.26 (part)]
 
-The design is in [UC-1](change.md#uc-1-credential-types-and-the-registered-source), which covers the types, the `registered` source, and the token trust record. It needs the single write path of 0127.S9 (EG-9). It builds the digest format and `token_trust_records`, which 0151.S2 uses. It can land with no delivery. It closes the `/v1/credentials` half of F-13.3.26.
+The design is in [UC-1](change.md#uc-1-credential-types-and-the-registered-source), which covers the types, the `registered` source, and the token trust record. It needs the single write path of 0127.S9 (EG-9). It builds the digest format and `token_trust_records`, which 0151.S2 uses. It can land with no delivery. It closes the `/v1/credentials` half of F-13.3.26. It depends on 0133.S2, which removes the `provider` path and, with it, the LLM credential router that the path feeds, so the refusal of a body naming `provider` never breaks a working user LLM credential. It closes its part of F-4.9.47 with the wire names that open decision 46 settles, and 0133.S2 closes the rest. 0143.S1 (SA-6) adds the `~svc~` and `~agt~` namespace refusal to the admin write route this step builds, and the refusal of a security role holder lands with whichever of this step and 0142.S1 (SO-1) lands second.
 
 ### 0151.S2 The oauth2Link source and account linking
 - status: Planned
 - aliases: [UC-2]
 - lanes: [specification, code, documentation]
-- depends-on: [0123.S1, 0151.S1, 0127.S1, 0127.S2, 0127.S9, 0149.S6, 0148.S1, 0148.S2]
+- depends-on: [0123.S1, 0151.S1, 0127.S1, 0127.S2, 0127.S9, 0149.S6, 0148.S1 (part), 0148.S2 (part), 0141.S1, 0150.S1 (part)]
 
-The design is in [UC-2](change.md#uc-2-the-oauth2link-source-and-account-linking), which covers `oauth2Link`, the link flow, and stored links. It needs the mint path of 0127.S2 (EG-2), 0149.S6 (TS-6) for the login path, and 0148.S1 and 0148.S2 (OC-1 and OC-2) for a private host. The flow's mechanics come from 0123.S1 (CA-0), which lands first and closes F-9.3.18. The digest format and `token_trust_records`, the single write path, and the route to every link provider endpoint come from the others. The interceptor contract proposal of [`0141-runtime-routing`](../0141-runtime-routing/steps.md#steps), step 0141.S1, places the link check at the post-chain point, and this step answers it with the combined missing-links response, which [CA-4](../0123-connector-authorization-and-external-memory/change.md#ca-4-link-check) defined before the removal of connectors withdrew it. It keys on a provider name, so an added kind needs no rework.
+The design is in [UC-2](change.md#uc-2-the-oauth2link-source-and-account-linking), which covers `oauth2Link`, the link flow, and stored links. It needs the mint path of 0127.S2 (EG-2) and 0149.S6 (TS-6) for the login path. Link providers on private hosts are the part that waits on 0148.S1 and 0148.S2 (OC-1 and OC-2), and a link provider on a public host can land before them. It writes `user_links` and the pending-revocation record into §12.9 in the Secret class, and that part waits on the class renames of 0150.S1 (TSS-A). It adds the account link rows to the `pending_revocations` table, which 0127.S2 creates. The flow's mechanics come from 0123.S1 (CA-0), which lands first and closes F-9.3.18, and open decision 50 asks whether 0124.S1 (CR-A) closes that defect instead. The digest format and `token_trust_records`, the single write path, and the route to every link provider endpoint come from the others. The interceptor contract proposal of [`0141-runtime-routing`](../0141-runtime-routing/steps.md#steps), step 0141.S1, places the link check at the post-chain point, and this step answers it with the combined missing-links response, which [CA-4](../0123-connector-authorization-and-external-memory/change.md#ca-4-link-check) defined before the removal of connectors withdrew it. It keys on a provider name, so an added kind needs no rework.
 
 ### 0151.S3 The userCredential binding
 - status: Planned
 - aliases: [UC-3]
 - lanes: [specification, code, documentation]
-- depends-on: [0151.S1, 0127.S4, 0127.S2, 0149.S4]
+- depends-on: [0151.S1, 0127.S4, 0127.S2, 0149.S4, 0141.S1, 0145.S3]
 - closes: [F-13.3.26 (part)]
 
-The design is in [UC-3](change.md#uc-3-the-usercredential-binding), which covers the `userCredential` binding and `inject`. It needs 0127.S2 (EG-2) with the requests under ["Changes requested of other designs"](change.md#changes-requested-of-other-designs), and 0149.S4 (TS-4) for the invalidation level. The dependencies cover bindings, the pod credential API, and `pkg/binding`. It addresses the session input half of F-13.3.26. It also builds the session input check and `retireOnRelease`, which 0152.S2 (UG-2) uses. 0124.S2 (CR-B) of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps) extends the check to the `identityAssertion` binding.
+The design is in [UC-3](change.md#uc-3-the-usercredential-binding), which covers the `userCredential` binding and `inject`. It needs 0127.S2 (EG-2) with the requests under ["Changes requested of other designs"](change.md#changes-requested-of-other-designs), and 0149.S4 (TS-4) for the invalidation level. The dependencies cover bindings, the pod credential API, and `pkg/binding`. It addresses the session input half of F-13.3.26. It also builds the session input check and `retireOnRelease`, which 0152.S2 (UG-2) uses. 0124.S2 (CR-B) of [`0124-connector-removal`](../0124-connector-removal/steps.md#steps) extends the check to the `identityAssertion` binding. It runs the pod refusal and reads the pool's attribution status at the post-chain point of 0141.S1 (RT-2), and the refusal of recycling and used pods rests on the per-slot release of 0145.S3 (SI-3). A pool with no recorded attribution status counts as the union scope, so the step refuses every pod with several slots there. The session input check covers the REST session input routes and, until 0138.S6 lands, the MCP session tools and the translator handlers through `GWSEAM-SessionAccessible`. It adds the plan's `userCredential` binding entries, and whichever of this step and 0138.S2 (RO-4) lands second tags them `credential-use`.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-AuthorizeSession` and `GWSEAM-SessionAccessible`, which applies the same ownership rule to a session record the platform tools seam read, with the session input check (UCP-3). It also reshapes the route access checks of "Route registration" and `GWSEAM-HandleRoute`, because from 0117.S8 the manage check of a session route runs in the API front's request pipeline, which passes `GWSEAM-AuthorizeSession` no route identity, so the routes the input check exempts (`DELETE`, terminate, and interrupt) need an access check or a session action of their own.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-AuthorizeSession` and `GWSEAM-SessionAccessible`, which applies the same ownership rule to a session record the platform tools seam read, with the session input check (UCP-3). It also reshapes the route access checks of "Route registration" and `GWSEAM-HandleRoute`, because from 0117.S8 the manage check of a session route runs in the API front's request pipeline, which passes `GWSEAM-AuthorizeSession` no route identity, so the routes the input check exempts (`DELETE`, terminate, and interrupt) need an access check or a session action of their own. UC-3 **Impersonation.** places the check there: a session route declares its input status in its access check, and the message seam operations keep their shape. It also reshapes `GWSEAM-MaterializeChild` and `GWSEAM-CheckChildCredentials`, which claim and check a delegated child's pod and credentials, for the lease's `userCredentialBindings` and the child pod test of UC-3 **Delegation.**
 
 ### 0151.S4 Request rules and presets
 - status: Planned
@@ -44,7 +44,7 @@ Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this st
 - lanes: [specification, code, documentation]
 - depends-on: [0151.S3, 0127.S4]
 
-The design is in [UC-4](change.md#uc-4-request-rules-and-presets). It needs the stage of 0127.S4 (EG-4).
+The design is in [UC-4](change.md#uc-4-request-rules-and-presets). It needs the stage of 0127.S4 (EG-4). It creates the chart path `charts/lenny/files/request-presets/` for the presets the platform ships, to which the add-ons' preset steps add their files.
 
 ### 0151.S5 File delivery
 - status: Planned
@@ -52,7 +52,7 @@ The design is in [UC-4](change.md#uc-4-request-rules-and-presets). It needs the 
 - lanes: [specification, code, documentation]
 - depends-on: [0151.S3, 0127.S4, 0127.S9]
 
-The design is in [UC-5](change.md#uc-5-delivery-file), which covers `delivery: file`. It needs the `file` delivery of 0127.S4 (EG-4) for the mechanics and the grant under 0127.S9 (EG-9). The `allowRuntimeHeldCredentials` setting of the [VCS layer](../0152-user-git-identity/change.md), with its refusal and attach rule, builds on it.
+The design is in [UC-5](change.md#uc-5-delivery-file), which covers `delivery: file`. It needs the `file` delivery of 0127.S4 (EG-4) for the mechanics and the grant under 0127.S9 (EG-9). The `allowRuntimeHeldCredentials` setting of the [VCS layer](../0152-user-git-identity/change.md), with its refusal and attach rule, builds on it. Whichever of this step and 0149.S1 (TS-1) lands second adds the refusal of `egressLockHosts` on a pod with no per-session policy, which reads the lock this step adds. The lock case of check 2 in 0149.S11, which reads the same lock, lands with whichever of this step and 0149.S11 lands second.
 
 ### 0151.S6 Leak scanning
 - status: Planned

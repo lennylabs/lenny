@@ -28,3 +28,49 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Revision 14 (2026-11-16)
 
 The owner accepted three resolutions of conflicts between steps that the conversion of the moved designs into steps found (0113.S4). 0136.S5 adds SO-4a's offering grant mirror and the posture's `placementOffering` and `placementConfigured` fields, and 0136.S6 adds the tenant security record's `placement` section and the posture's placement fields. Both steps land after 0142.S2 and 0142.S4. Before this, 0142.S2 and 0136.S6 each waited on the other, and the chain through 0150.S2 and 0136.S4 made landing them together impossible.
+
+## Revision 15 (2026-11-19)
+
+2026-11-19, review, M3 readiness review. Revision 15, from the readiness review of `change.md` revision 14, the skeptic's verdict on its High finding (0136-F1, downgraded to Medium), and the consistency reports of the pod-structure, program, and tenancy-security clusters. Applied 24, raised as open decisions 9 (O9 to O17, from ten sources), returned as issues 0, dropped 2. The status stays `Draft`. O1 to O8 move under "Decisions" as "Settled open decisions O1 to O8", and "Open decisions" holds O9 to O17.
+
+- Applied 0136-F3: PM-6 applies the webhook on Pod `CREATE` and `UPDATE`, as the tree registers it, with the toleration, tenant, and node rules on `UPDATE`; `POD_PLACEMENT_CLASS_MISMATCH` requires the class selector, and on a dedicated pool the tenant selector, in every `nodeSelectorTerm`; the new label `POD_PLACEMENT_NODE_NAME` refuses `spec.nodeName` outside a capture Job; "Current state" states the tree's `CREATE` and `UPDATE` scope; the `security` tier gains the three bypass cases.
+- Applied 0136-F6 and pod-structure-C7: the adapter's `uid_map` check is 0145.S5's, and each pool's `diskQuota`, the `lenny_quota_agent_*` series, and `QuotaAgentUnavailable` are 0118.S6's, built into this change's continuous-check pass; PM-6 and "Non-specification changes" say so.
+- Applied 0136-F7: the agent priority class per class, the class quotas, and the drop of `lenny-agents-kata` move from 0136.S2 to 0136.S3; 0136.S2 provides a chart helper with which each component's own step renders its row of "PM-8"; 0136.S3 splits into 0136.S3 (classes, presets, and rendering), 0136.S7 (admission and named node agents, with the T4 removal), and 0136.S8 (preflight and the continuous check); 0136.S4 depends on 0136.S8, and "Notes on the steps" states the order.
+- Applied 0136-F8: "Specification changes" drops the `change-proposal` sentence and states, under the program's "Order", that the area changes discharge the lane, with the content of the new section landing on the `PLACE` page, PMR-1 to PMR-14 as its `PLACE-R` identifiers, the component, admission, label, `PodSet`, and preflight content on their pages, and §12.10 read as 0150's tenant settings page; the §18 item is moot; the test tiers carry their names in "Terms" and "Tests".
+- Applied 0136-F12: an environment's pending versions are rows of `environment_placement_versions`, which the tenant security record's applier activates as a third kind of record; the instruction to 0142, the Admin API row, and 0136.S6 say so. What a pending version holds is O13.
+- Applied 0136-F13: `POD_NAMED_AGENT_ONLY` pins the collector's template (no capability, no `privileged` or privilege escalation, no host namespace, non-root, and its socket directory alone) and the capture Job's image digest and host paths, and PM-5 no longer admits a named node agent by label alone; the instruction to 0128 asks FE-5 to name both; the `security` tier gains the cases.
+- Applied 0136-F14: PM-6 states that `lenny-quota-agent-node-label` fails closed without the node-name claim, as PL-10 states, and preflight gains the check "Quota agent policy", which fails while `quotaAgent.mode` is `auto` on an API server that does not serve ValidatingAdmissionPolicy; "Validation owed" names 0136.S7 and 0118.S6 as waiting on the claim and the API.
+- Applied 0136-F15, pod-structure-C12, and program-C8: 0136.S1 lists its code sites, the column `sandbox_warm_pools.allow_cross_tenant_reuse` and its drop, the `scrubPolicy` derivation, and the tests, and states that 0145.S6 depends on it.
+- Applied 0136-L1: 0136.S1 closes T-5.2.6, 0136.S3 closes part of T-5.3.9, 0136.S7 closes T-12.9.11, and 0136.S6 closes part of T-12.8.7.
+- Applied 0136-L2: "Documentation" lists each page by path and reader, with the placement chapter at `docs/operator-guide/placement.md`, the error catalog, metrics and events catalogs, runbooks, and the client guide's session lifecycle and error handling pages.
+- Applied 0136-L3, in part: the `static`, `unit`, `component`, and `security` tiers gain the cases for the fixes applied here. The cases for resume (O12), a preset switch with stored offerings (O14), and the loss of every webhook replica (O15) wait on those decisions.
+- Applied 0136-L4: `platform.placement_config_changed` is keyed on the ConfigMap's `resourceVersion`, so one change writes one event.
+- Applied 0136-L5 and pod-structure-C13: "Current state" names `pkg/gateway/api/admin/pools.go` and `pkg/runtime/poolstore`; PM-6 has the WarmPoolController record `PlacementUnschedulable` on the `PodSet`; the evidence path reads `evidence/`; the tag table defines **[documented]**.
+- Applied 0136-L6: a class quota accepts `pods` and the CPU and memory resources alone.
+- Applied 0136-L7: "Limits" names the WarmPoolController as the owner of the drift drain, and `lenny-ops` gains cluster-wide `get` and `list` on `pods` for the continuous check.
+- Applied 0136-L8: the offering that `placement.defaultPoolOffering` names cannot be deleted.
+- Applied 0136-L9: offering and pool writes lock the offering's row, and a security settings write to `dedicated` and a pool access grant lock the tenant's row.
+- Applied 0136-L11: the worked example uses the tenant identifier as the node label value and in the path.
+- Applied 0136-L13: 0136.S6 states that, of it and the 0140 step that lands RV-1 and RV-3, whichever lands second adds the case.
+- Applied program-C5: O1 to O8, all settled, move out of "Open decisions", so the board counts only open entries.
+- Raised O9 (0136-F1): where the removal of the T4 placement mechanism lands against 0150.S3.
+- Raised O10 (0136-F4): one residency region per deployment against §12.8's per-region storage routing, with 0150 and 0128.
+- Raised O11 (0136-F5): which step lands the reserved overlay's field, with 0147.
+- Raised O12 (0136-F11): whether a session that moves to a new pod is checked again.
+- Raised O13 (tenancy-security-C4): what a pending version of an environment's `placementRequirements` holds, with 0142 and 0150.
+- Raised O14 (0136-F9): how stored offerings, pools, and tenant settings follow a change to the Helm classes.
+- Raised O15 (0136-F2 and 0136-L12): how the widened `lenny-pod-security` avoids locking out `lenny-system`, and whether it covers `observability.otlpNamespace`. PM-6 states which rules apply in which namespace, which needed no decision.
+- Raised O16 (the review's status assessment): the 1 KiB bound on `lenny.dev/quota-agent-status`, with 0118.
+- Raised O17 (0136-L10): whether Lenny's system priority classes preempt other pods.
+- Dropped program-C4: `PLACE` already lists this change among its sources, and regenerating the placeholder lists is the area changes' work rather than an edit to this change.
+- Dropped tenancy-security-C9: PM-9 and `POD_NAMED_AGENT_ONLY` already admit both named node agents in `lenny-node-agents`; the half that changes is 0128's rule and test.
+
+Second pass, 2026-11-19, requests from other changes. Seven requests: already done 2, applied 3, raised as open decisions 1, already open as decisions 1, dropped 0.
+
+- Already done (0118, pod-structure-C7): the quota agent's metrics, alert, and `diskQuota` point to 0118.S6, and the `uid_map` check to 0145.S5.
+- Already done (0145, pod-structure-C12): 0136.S1 states that 0145.S6 depends on it.
+- Applied (0147, 0147-p1-F10 and 0147-p2-F5): 0136.S5 applies `placement.reservedOverlay` to the reserved pods that 0147.S9 marks and carries the overlay's tests, which join the `component` tier; O11 records that 0147.S9 no longer uses the field and gains option (c), the arrangement both changes' steps now state, as its recommendation.
+- Applied (0148, 0148-L7): "PM-8" states that each exclusive gateway group of OC-4 takes the `lenny-outbound-gateway` row, rendered by 0148.S4, and 0136.S2 states that whichever of it and 0148.S1 lands second renders the outbound gateway's rows.
+- Applied (0150, 0150-F15 and 0150-F7): 0136.S4 checks every tenant's stored `placement.nodeTenancy` under PM-2 through the preflight check "Dedicated tenants"; O9 records that 0150 dropped its "until then" and "together with" statements and names 0150's O17 as the matching decision; 0136.S1 and "Removals" state the successor pointer to **Tenant pinning** to which 0150.S3 adds §12.10. The part on §17.10 was not applied, because "Specification changes" already places that content on the `PLACE` page under the program's "Order" (0136-F8).
+- Already open (0142, tenancy-security-C4): O13 records what a pending version holds, and now names 0142's decision 40 and 0150's O14 and states that PM-4 cites the rule once SO-2 states it.
+- Raised O18 (0142, its decision 41): which step of 0142 the edges of 0136.S5 and 0136.S6 name if 0142.S2 splits.

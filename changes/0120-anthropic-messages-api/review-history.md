@@ -37,3 +37,50 @@ Change 0113 moved this design from `designs/anthropic-messages-api-design.md` in
 Change 0113 shortened the status line of `change.md` to the status, revision, date, and program, and moved the rest here as it stood:
 
 > after one adversarial review. Revision 12 applies the owner's decision of 2026-11-15 to remove connectors ("Yes, let's drop connectors.") under [`0124-connector-removal`](../0124-connector-removal/change.md) revision 2: the `lenny` object loses `deferConnectors`, the link refusal carries `details.userLinks` alone, and runtime tools and approvals name platform tools alone. Revision 11 aligns "Warm and cold" with the conditional send, R16 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) revision 3, under its O12: a follow-up to a `dormant` session continues warm. The owner settled O11 and O12 on 2026-11-13, and no decision is open. The owner chose on 2026-11-13 to move every client protocol adapter, this one included, out of Lenny into a separate first-party repository with an optional Helm subchart in front of the REST API (decision O13); [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) governs what leaves. Revision 10 applies two of that design's decisions, which the owner settled on 2026-11-14. Under O8, in the owner's words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", the banner below and a mark under each part state which sections still govern Lenny and which move to the Anthropic adapter project, and nothing is deleted or moved. Under the simplified O3, which the owner answered "yes", the held-session concept leaves: the adapter creates ordinary sessions, may shorten their idle timeout, and routes follow-ups by conversation fingerprint ("Session lifetime"). Nothing here is built or staged. It reads against [`0141-runtime-routing`](../0141-runtime-routing/change.md) revision 19, [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) revision 21, [`0134-mcp-protocol-upgrade`](../0134-mcp-protocol-upgrade/change.md) revision 10, [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) revision 77, [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md) revision 42, [`0142-security-oversight`](../0142-security-oversight/change.md) revision 58, [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) revision 20, [`0124-connector-removal`](../0124-connector-removal/change.md) revision 7, [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) revision 21, [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) revision 40, [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) revision 12, [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md) revision 7, [`0135-message-delivery`](../0135-message-delivery/change.md) revision 23, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) revision 12, and [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). "Decisions" lists what the project rules and the owner settle and what remains open. The design stages no specification edit. The changes go through `change-proposal` after review. Parts of the design carry the label AM-n, requirements carry the label AMR-n, and the proposals that land them carry AM-A to AM-C under "Proposal split and order". "Review history" at the end records the revisions. The owner's final cross-review of the moved designs is pending, so the status is `Draft`.
+
+## M3 readiness review (2026-11-19)
+
+Revision 13, 2026-11-19. Trigger: review. The M3 readiness review read revision 12 against `main` at `092ef92f6`, with a skeptic's verdict on its High finding and the consistency reports of the program's clusters. Counts: 19 applied, 9 raised as open decisions, 1 returned as an issue, and 0 dropped. The skeptic downgraded 0120-F1 to Medium and corrected its fix, and this entry follows the correction. Edits that belong to other changes, to the specification pages, or to the adapter project are returned to the review rather than made here.
+
+Applied:
+
+- 0120-F1: the 0120.S1 entry states the settled scope of the banner and O8 of 0138: the executor half of DF-1, with `closes: [F-15.1.80 (part)]`, and no translator move and no DF-3 or DF-4 refusals. "AM-4" gains the subsection "Executor", which states the executor change in Lenny's part of the section. The opening of "Decisions" states that D2's second sentence and O3's translator clause move with the translators.
+- 0120-F3 and client-api-sessions-C3: "Envelope member" names the REST client under R15 as the writer, "Validation" refuses a member with no marked `user` entry and an `input` that differs from it with `400 VALIDATION_ERROR`, and accepts `instructions` as written. The rest of 0120-F3 is O16 and O17.
+- 0120-F6: "Custody and redelivery" keeps `conversation` with the message under custody, erases it with the message, redelivers it, decides the rendering at delivery, and delivers it again after a restore before consumption. Point 3 is O19.
+- 0120-F7 and client-api-sessions-C2: "Envelope member" states the entry schema (`role`, `content`, `new`, `clientToolCalls`, and `toolResults`), states that an entry carries no `from`, and places `clientTools` and `toolChoice` inside `conversation` on REST.
+- 0120-F8 and client-api-sessions-C15: under B5 of 0135, the runtime-facing documentation rules drop `REQUEST_INPUT_UNAVAILABLE`, and "Specification changes" marks the §7.2 row and the code in the §15.1 row as withdrawn.
+- 0120-F10: "Capability" and "Non-specification changes" name `CapabilityOverride` in `pkg/runtime/runtimestore` and `pkg/runtime/runtimecapoverride`, the validation item on the override is answered from the tree, and the instruction to 0140 asks it to list the two keys.
+- 0120-F11: the 0120.S1 entry, the §5.1 row, and the instruction to 0140 state what S1 does when it lands before 0139.S1 and 0140.S1, and that it leaves `sessionId` to 0139.S1. The order against 0135.S1 is O15.
+- 0120-F12: "Current state" and "Non-specification changes" name the current paths (`pkg/gateway/core/session/executor`, `pkg/runtimeexec` with `ResolveFromBlock`, `pkg/gateway/core/session/sessionserver`, `pkg/auth/authmw`, and `pkg/gateway/meteringproxy/llmproxy`), add `pkg/adapter`, the three runtime SDK directories, and the translator tests that observe the executor change, the tests and the "Test tiers" term use the tier names of change 0155, and the S1 entry carries its decision-8 line for `GWSEAM-SendMessages`.
+- 0120-F13: requirements AMR-14 to AMR-21 state AM-4's behaviour for Lenny, and AMR-19 states AMR-9 as a property of Lenny's sessions.
+- 0120-L1: the banner and the opening of "Decisions" list O9 as Lenny's, and O13 carries a dated note pointing to O8 of 0138 and to O21.
+- 0120-L2: a "Documentation" section names the pages S1 edits with their readers, and states that the correction to `docs/getting-started/architecture.md` lands outside this change.
+- 0120-L3: the tests gain `unit`, `integration`, `chaos`, and `security` rows for 0120.S1 that cite AMR-14 to AMR-21.
+- 0120-L6: each item of "Validation owed" names 0120.S1 or the Anthropic adapter project.
+- 0120-L7: the instruction to 0149 withdraws the TS-1 request for `/v1/messages`. M8 and the 0135 instructions for AM-5 and AM-6 are returned as edits elsewhere.
+- 0120-L8: the AM-4 example drops `clientTools` and `toolChoice`, which a turn without client tools does not carry.
+- 0120-L9: "Scope", "Specification changes", "Non-specification changes", and "Tests" state which items stay with Lenny.
+
+Raised as open decisions:
+
+- O14: the in-tree OpenAI translators until 0138.S6, and what 0120.S1 closes (0120-F1, client-api-sessions-C12).
+- O15: the order of 0120.S1 and 0135.S1 on the executor (0120-F11).
+- O16: the validation rules for a client-written `conversation` that "Validation" leaves open (0120-F3, client-api-sessions-C3).
+- O17: enforced parameters on REST, their refusal, and the path back from the runtime (0120-F3, 0120-F4).
+- O18: the size bound for a send that carries `conversation` (0120-F5).
+- O19: whether the session transcript records the unmarked entries and `instructions` (0120-F6).
+- O20: whether `PreRoute` interceptors see `conversation` (0120-F9).
+- O21: the status of 0120.S2 and 0120.S3 (0120-F2).
+- O22: cold continuation of a client tool round trip over REST (client-api-sessions-C1).
+
+Returned as an issue:
+
+- `docs/getting-started/architecture.md` gives the LLM proxy's path as `/v1/messages`, where the tree mounts `/llm-proxy/v1/messages` (0120-L2).
+
+Dropped: none.
+
+Second pass. The pass closed the requests that the fix agents of 0122, 0135, and 0138 returned to this change. Counts: 2 already done, 1 already recorded as an open decision, 0 applied, 0 raised, and 0 dropped.
+
+- Already done (0122 and 0138, client-api-sessions-C2 and C3): "AM-4", "Envelope member" defines one entry schema with `clientToolCalls` on `assistant` entries and `toolResults` on `user` entries, places REST `clientTools` and `toolChoice` inside `conversation`, and names R15 of 0138 as the member's only source, which AMR-17 states; "Validation" validates a client-written member.
+- Already done (0135, client-api-sessions-C2): "Envelope member" states that an entry carries no `from` member.
+- Already recorded (0135): O14 records the question that O17 of 0135 asks, and now names O17 of 0135 as its counterpart.

@@ -1,5 +1,101 @@
 # Decisions: 0136 Placement
 
+## Open decisions
+
+The M3 readiness review of 2026-11-19 raised O9 to O18. O1 to O8 are settled and sit under "Decisions", in "Settled open decisions O1 to O8".
+
+**O9. Where the removal of the T4 placement mechanism lands.**
+
+0136.S7 removes the `lenny-t4-node-isolation` webhook with its alert, its preflight check, and its `features.compliance` gate, and the pod builder's `applyT4NodeIsolation` (D10, "Removals" in `change.md`). [`0150-tenant-security-settings`](../0150-tenant-security-settings/steps.md#steps) stated in 0150.S2 that the T4 webhook keeps reading the Runtime's field until 0150.S3, and in 0150.S3 that it lands together with this change's removal of the T4 webhook, while 0150.S3 depends on 0136.S4 and 0136.S6, which land after the removal. 0150's revision of the M3 readiness review dropped both statements, and 0150.S2 and 0150.S3 now leave the step to 0150's O17, which records this question. 0150's `change.md` (its scope, inventory row I22, and its non-specification changes) leaves the removal to this change.
+
+- (a) Keep the removal in 0136.S7. §6.4's **T4 dedicated-node requirement** becomes its successor pointer in 0136.S7's specification lane, so the specification and the code change in one step. Between 0136.S7 and 0150.S3, a T4 pool runs on its profile's class with shared tenancy, on unreleased `main` only.
+- (b) Move the removal into a step of this change that shares a branch with 0150.S3. The T4 label, taint, webhook, and `applyT4NodeIsolation` then stay beside the class rendering from 0136.S3 to 0136.S6, and T4 pods carry both the class and the T4 selectors and tolerations.
+
+**Recommendation: (a).** It matches 0150's `change.md`, D10, and the program's rule against transition modes, and the interval exists only on unreleased `main`. (b) needs both mechanisms to coexist over four steps, and no step states who makes them coexist. It blocks 0136.S7 and 0150.S3. The other change is [`0150-tenant-security-settings`](../0150-tenant-security-settings/decisions.md), whose O17 is the matching decision. (raised by the M3 readiness review, 2026-11-19; sources: 0136-F1)
+
+**O10. One residency region per deployment against per-region storage routing.**
+
+D24 and PM-7 **Residency across regions (D24).** state that a deployment serves one residency region and that every component of it runs there. [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces) **Data residency** item 2 keeps the `StorageRouter`, which routes each residency tenant's Postgres, MinIO, and Redis writes to per-region backends from the `storage.regions` map, with per-region KMS, backups, and legal-hold escrow. This change edits item 1 only, so the target state holds two residency models. [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) places the tenant key at `storage.regions.<region>.kmsEndpoint`, and [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) reuses `storage.regions.<region>.legalHoldEscrow`.
+
+- (a) Keep per-region storage routing, and narrow PM-7 to state that the data stored through the Kubernetes API (pod specs, Secrets, and custom resources) stays in the control plane's region. A residency claim that covers that data needs the control plane in the tenant's region, and `storage.regions` stays for deployments that accept that limit.
+- (b) Retire per-region storage routing in favour of one deployment per region, through a change that edits §12.8, the backup and escrow paths, 0150, and 0128.
+
+**Recommendation: (a)** for v1, because (b) is a removal that no member change scopes. It blocks 0136.S6 and this change's edit of §12.8. The other changes are [`0150-tenant-security-settings`](../0150-tenant-security-settings/decisions.md) and [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0136-F4)
+
+**O11. Which step lands the reserved overlay's field.**
+
+0136.S5 adds `placement.reservedOverlay` and depends on [0147.S9](../0147-tenant-derived-runtimes/steps.md#steps). When this decision was raised, 0147.S9 built reservations "with the use of the placement design's reserved overlay" and had no edge to any step of this change, and `reservedPlacement` does not exist in the tree, so 0147.S9 landed before the field it used. 0147's revision of the M3 readiness review changed 0147.S9: it depends on 0136.S2, renders no node placement for reserved pods, and leaves the overlay, its application to the pods it marks, and the overlay's tests to 0136.S5 (0147-p1-F10, 0147-p2-F5). That arrangement is option (c) below.
+
+- (a) The overlay field and its validation against the pool's class land in a step of this change after 0136.S3, which 0147.S9 depends on. 0136.S5 keeps the tenant affinity and toleration of a dedicated pool's reserved pods, and its edge to 0147.S9 only if that part needs it.
+- (b) 0147.S9 lands `placement.reservedOverlay` with this change's validation rules of "PM-3", and 0136.S5 keeps its edge to 0147.S9 for the dedicated pool's reserved pods.
+- (c) 0136.S5 lands the overlay field, its validation, and its application to the reserved pods that 0147.S9 marks, with the overlay's tests, and keeps its edge to 0147.S9. Between 0147.S9 and 0136.S5, reserved pods take the pool's class placement alone, on unreleased `main` only.
+
+**Recommendation: (c).** Both changes' steps now state it, no step uses the field before it exists, and the overlay's validation stays in the change that defines the classes it reads. (a) would need 0147.S9 to change again. Either way 0147.S9 depends on 0136.S2 for `placement.priorityClasses.reserved`, which its steps now state. It blocks 0136.S5 and 0147.S9. The other change is [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0136-F5)
+
+**O12. Placement checks when a session moves to a new pod.**
+
+PM-4 checks the offering and the effective requirements at the post-chain point at creation, and `sessionIsolationLevel` is "populated from the pool and pod set at creation and unchanged for the session's life". The change does not say what happens when a session resumes on a new pod after pod loss, eviction, suspension, or a node drain. Between creation and the resume, an operator can change the offering's `nodePlacement`, a requirement can be added, which "applies at once", or the tenant's settings can move to `dedicated`.
+
+- (a) Every claim of a new pod for an existing session reruns the offering and requirement checks with the current values, refuses with the same codes, and updates `sessionIsolationLevel` to the new pod's placement.
+- (b) The decision made at creation holds for the session's life. An added requirement applies to new sessions only, and the documentation states it.
+
+**Recommendation: (a).** A requirement is a security constraint, and under (b) a resumed session can run on placement that its current requirements refuse. It blocks 0136.S6. (raised by the M3 readiness review, 2026-11-19; sources: 0136-F11)
+
+**O13. What a pending version of an environment's `placementRequirements` holds.**
+
+Under D18 a relaxation of an environment's `placementRequirements` is held as a pending version that the tenant security record's applier activates at its `effectiveAt`. Neither this change nor [`0142-security-oversight`](../0142-security-oversight/change.md) nor [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) states what a pending version holds, whether a write is refused while one is pending, or what a later tightening does to it. If a pending version is the full stored state, its activation undoes a requirement added during the delay, with no justification, event, or delay.
+
+- (a) A pending version holds only the relaxed requirements and is applied onto the active version at `effectiveAt`. A later write that tightens a pending requirement cancels that requirement's relaxation. An environment has at most one pending version, and `If-Match` compares the active version.
+- (b) Every write to an environment's `placementRequirements` is refused while a relaxation is pending, except a cancel.
+
+**Recommendation: (a)**, stated once in 0142's SO-2 and referenced from this change and from 0150. Once the owner settles it, PM-4 cites the rule as SO-2 states it rather than restating it. It blocks 0136.S6. The other changes are [`0142-security-oversight`](../0142-security-oversight/decisions.md) (its decision 40) and [`0150-tenant-security-settings`](../0150-tenant-security-settings/decisions.md) (its O14), which record the same question for their records. (raised by the M3 readiness review, 2026-11-19; sources: tenancy-security-C4)
+
+**O14. How stored offerings, pools, and tenant settings follow a change to the Helm classes.**
+
+Offerings name classes (`classes: [sandboxed, microvm]`) and live in Postgres, and classes come from Helm values. A switch from `strict` to `compact` replaces `standard`, `sandboxed`, and `microvm` with `agents`, and every stored offering, the seeded `shared` offering included, then names classes that no longer exist, so every pool fails `offering_class_mismatch`. A class tenancy moved to `dedicated` makes every multi-tenant pool of the class invalid under `dedicated_requires_single_tenant`, and the reverse move leaves a dedicated tenant with access to pools of shared tenancy, against PMR-6. A change to a pool's `placement.tenantId` after its pods exist is undefined. Admission validates API writes only, and preflight checks nodes rather than stored records.
+
+- (a) Offerings name members (`members: [sandboxed, microvm]`), which no preset renames, and a pool matches through its isolation profile's member. Preflight fails an upgrade whose class tenancy contradicts a stored pool or a tenant's `placement.nodeTenancy`. `placement.tenantId` is immutable after the pool is created.
+- (b) Offerings keep class names. Preflight fails an upgrade that renames or removes a class that a stored offering names, or whose class tenancy contradicts a stored pool or a tenant's setting. A change to `placement.tenantId` replaces the pool's pods.
+
+**Recommendation: (a).** Members are fixed by the platform, so a stored offering survives every preset switch, and an immutable tenant avoids defining a replacement of pods. It blocks 0136.S3, 0136.S4, and 0136.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0136-F9)
+
+**O15. How the widened `lenny-pod-security` avoids locking out `lenny-system`.**
+
+PM-6 widens the fail-closed webhook to `lenny-system`, where its own Deployment runs. When every replica is down, no pod in that namespace can be created, the webhook's own replacement included, and recovery needs a manual deletion of the webhook configuration. Every webhook in the tree is scoped to agent namespaces today (`charts/lenny/templates/admission-policies/pod-security-webhook.yaml` selects `lenny.dev/agent-namespace`). The OpenTelemetry collector in `observability.otlpNamespace` takes the system selector ("PM-5") and sits outside the widened scope, and that namespace may hold the deployer's own workloads.
+
+- (a) A second, fail-closed webhook entry covers the system namespaces, with an `objectSelector` that leaves out the pods of the `lenny-pod-security` Deployment. The continuous check reports a pod that carries that Deployment's labels and is not one of its pods. `observability.otlpNamespace` stays outside the webhook, and the continuous check's system-pod rule covers the collector.
+- (b) The entry for the system namespaces uses `failurePolicy: Ignore`, the entry for the agent namespaces stays fail-closed, and the continuous check reports what the webhook did not see.
+- (c) One fail-closed scope as written, with the manual recovery in a runbook.
+
+**Recommendation: (a).** It keeps every other system pod checked at admission, and the label exemption it adds is visible to the continuous check. (b) leaves system pods unchecked during any outage, and (c) needs a manual step to recover the platform. Each option adds a `chaos` case in which every webhook replica is lost and the release recovers. It blocks 0136.S7. (raised by the M3 readiness review, 2026-11-19; sources: 0136-F2, 0136-L12)
+
+**O16. The size bound on the annotation `lenny.dev/quota-agent-status`.**
+
+D23 records the owner's answer "3: ok" for the annotation. Its bound of 1 KiB, which `lenny-quota-agent-node-label` enforces ("PM-6"), was the orchestrator's choice for the owner's review, as revision 9 in `review-history.md` and the D29 entry of [`0118-agent-pod-layout`'s review history](../0118-agent-pod-layout/review-history.md) record. Neither change records an answer.
+
+- (a) 1 KiB.
+- (b) Another bound.
+
+**Recommendation: (a)**, because the annotation holds one small JSON object with `detection`, `landlock`, `volumesBound`, `assignmentErrors`, and `writtenAt`. It blocks 0118.S6, which renders the policy. The other change is [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md), which owns the annotation as its D29. (raised by the M3 readiness review, 2026-11-19; sources: the review's status assessment of 0136)
+
+**O17. Whether Lenny's system priority classes preempt other pods.**
+
+`lenny-system-critical` and `lenny-system` use `PreemptLowerPriority` ("PM-8"). The system class carries no taint by default, so an operator add-on that shares system nodes, such as an ingress controller, can be preempted by a Lenny pod. Under `single-node`, a system pod can preempt an agent pod, and a preemption bypasses the eviction API and the drain-readiness checks that DR-10 relies on.
+
+- (a) `lenny-system` takes `preemptionPolicy: Never`, `lenny-system-critical` keeps `PreemptLowerPriority`, and under `single-node` both take `Never`.
+- (b) Both keep `PreemptLowerPriority`, and the operator documentation states that Lenny's system pods can preempt add-ons on system nodes and agent pods under `single-node`.
+
+**Recommendation: (a).** The components that keep the platform reachable still preempt, and the rest wait for capacity as other workloads do. It blocks 0136.S2. (raised by the M3 readiness review, 2026-11-19; sources: 0136-L10)
+
+**O18. Which step of 0142 this change's edges name if 0142.S2 splits.**
+
+0136.S5 and 0136.S6 depend on [0142.S2](../0142-security-oversight/steps.md#steps). 0136.S5 reads it for the posture's `placementOffering` and `placementConfigured` fields, and 0136.S6 reads it for the tenant security record, its write path, `weakeningDelaySeconds`, and the applier, and adds the record's `placement` section and the posture's placement fields. Decision 41 of [`0142-security-oversight`](../0142-security-oversight/decisions.md) asks whether 0142.S2 splits into the record and applier step, a guardrail step, and a posture step.
+
+- (a) If 0142.S2 splits, 0136.S5's edge moves to the posture step, and 0136.S6 keeps its edge on 0142.S2, which then carries the record and the applier, and gains an edge on the posture step.
+- (b) 0142.S2 stays one step, and both edges stay as written.
+
+**Recommendation: (a)**, which follows 0142's recommendation on its decision 41, so each edge names the step that carries what this change reads. The edge of 0136.S5 on 0142.S4 is unaffected. It blocks the edges of 0136.S5 and 0136.S6 on 0142.S2. The other change is [`0142-security-oversight`](../0142-security-oversight/decisions.md) (its decision 41). (raised by the M3 readiness review, 2026-11-19; requested by change 0142)
+
 ## Decisions
 
 The owner's decisions of 2026-11-12, worded as the decision brief records them.
@@ -33,9 +129,9 @@ The owner's decisions of 2026-11-12, worded as the decision brief records them.
 
 The related decisions of the same day that this design builds on: runc pools require `hostUsers: false` so each pod gets its own host UID range ([`0145-session-isolation`](../0145-session-isolation/change.md), cross-pod kernel UID sharing, option a); runc is described factually and `allowStandardIsolation` stays; the pod layout moved to [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md); Kata block-plain pools may set an `fsGroup` with a dedicated GID; and [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) replaces `workspaceTier` with explicit tenant settings, including the tenant's node tenancy.
 
-## Open decisions
+### Settled open decisions O1 to O8
 
-The owner settled every open decision on 2026-11-12 (D11 to D14). Each entry keeps its options and reasoning as a record and states the option taken.
+The owner settled O1 to O8 on 2026-11-12 (D11 to D14). Each entry keeps its options and reasoning as a record and states the option taken.
 
 **O1. Confirmation of classes and presets as the override form.**
 

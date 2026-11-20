@@ -1,5 +1,125 @@
 # Decisions: 0146 Session lifecycle
 
+## Open decisions
+
+The M3 readiness review of 2026-11-19 raised SL-Q3 to SL-Q14, which continue the numbering of SL-Q1 and SL-Q2; its second pass, which closed the requests of other changes, raised SL-Q13 and SL-Q14. Each moves to "Decisions" with the owner's answer as the next L entry.
+
+**SL-Q3. Whether a paused session that keeps its pod under `checkpointPolicy: sealOnly` or `none` counts against the concurrency caps. Open.**
+
+[IC-8](../0131-incremental-checkpoint/change.md#ic-8-checkpoint-policy-interval-and-change-tracker) of `0131-incremental-checkpoint` keeps a suspended session's pod under `sealOnly` and `none` and does not take the release after `maxSuspendedPodHoldSeconds`, which revision 13 states in "SL-1", "SL-4", and "SL-10". "SL-10" and SLR-12 exclude `suspended` and `blocked` from the caps. Read together, a user can suspend sessions and start more, and each suspended session holds a pod or a slot for up to `maxSuspendedSessionSeconds`, 7 days by default, without counting against the user, runtime, or tenant cap. On a tenant-derived runtime the pods come from the tenant's owned pool, so the user crowds out other users of the same tenant; on a shared pool the policy is set by the operator or a platform admin, and the pool's size bounds the total.
+
+- (a) A paused session counts against the caps while its row carries a pod reference: SLR-12 counts the non-terminal sessions outside `dormant`, and outside `suspended` and `blocked` without a pod, and `countedStatePredicate` reads the pod reference for the paused states. This amends SLR-2, under which the state alone decides whether a session counts, and revisits the reasoning of L14 and of "The pod as a row property for every state" in "Alternatives rejected".
+- (b) Under `sealOnly` and `none`, a paused session that keeps its pod ends as `expired` after its seal at `maxSuspendedPodHoldSeconds`, as L30 ends an idle one at the idle timeout. SLR-2 holds, and such a suspension lasts 900 seconds by default.
+- (c) `POST /v1/sessions/{id}/suspend` refuses a session under `sealOnly` or `none`.
+- (d) The pod stays, and a per-tenant cap bounds the paused sessions that hold a pod.
+
+**Recommendation: (a).** It keeps the pod hold that IC-8 promises the runtime author, closes the path with the caps that already exist, and is the recommendation that `0131-incremental-checkpoint` records as D29. It needs the owner to amend SLR-2 and revisit L14, and (b) is the option that keeps both. Whichever option is taken, IC-8's table and the timer table of "SL-10" state the same outcome. It blocks 0146.S1 (SL-1, SL-10) and 0131.S8. The other change is [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md) (D29). (raised by the M3 readiness review, 2026-11-19; sources: 0146-F1, 0146-F3, checkpoint-workspace-C1)
+
+**SL-Q4. What 0146.S1 does to the in-gateway client MCP tools and the other surfaces that 0138.S6 removes. Open.**
+
+0138.S1 depends on 0146.S1, and 0138.S6 removes the client MCP tools, the translators, and the A2A surface last. When 0146.S1 lands, `lenny/interrupt_session`, `lenny/terminate_session`, and `lenny/resume_session` are still registered in `pkg/gateway/platformtools/mcptools/client_tools.go`, and "Non-specification changes" renames them to `suspend_session` and `close_session`, while the banner says those tools move to the MCP adapter. The program allows no transition mode for behavior a member change removes.
+
+- (a) 0146.S1 deletes or stubs the client tools that call the routes it renames, builds no `suspend_session` or `close_session` in Lenny, and drops the generated MCP tools from its `contract` test; 0138.S6 removes what remains.
+- (b) 0146.S1 renames the tools as "Non-specification changes" states, and 0138.S6 deletes them later.
+
+**Recommendation: (a).** No code is written for a surface the target state removes, which matches the recommendations of O17 of `0135-message-delivery` and O20 of `0138-rest-only-client-api` on the same question. It blocks 0146.S1's code list and its `contract` test. The other changes are [`0138-rest-only-client-api`](../0138-rest-only-client-api/decisions.md) (O20) and [`0135-message-delivery`](../0135-message-delivery/decisions.md) (O17). (raised by the M3 readiness review, 2026-11-19; sources: 0146-F11, client-api-sessions-C12)
+
+**SL-Q5. How the rollout drain of `0140-runtime-revisions` treats sessions that wait or pause. Open.**
+
+"SL-6" pauses `maxSessionAge` in `dormant`, so a session that alternates between `idle` and `dormant` can outlive `maxSessionAge` in wall-clock time by up to `maxSuspendedSessionSeconds` per pause. `0140-runtime-revisions` defaults `rollout.drainTimeoutSeconds` to the runtime's `maxSessionAge`, states that "No session outlives `maxSessionAge`", reports only suspended sessions before `Contracting`, and ends "the remaining ones" at the drain timeout without saying in which state an `idle` or `dormant` session ends. This change's instruction to 0140 said "no change".
+
+- (a) 0140's `Draining`, the D7 move, and the options report name `idle`, `dormant`, `suspended`, and `blocked`, `drainTimeoutSeconds` stops relying on `maxSessionAge` as a wall-clock bound, and 0140 states whether the drain ends a waiting session, and in which state, or moves it to the new revision at its next resume.
+- (b) `maxSessionAge` keeps running in `dormant`, which changes "SL-6", "SL-10", and the instruction that the timers apply to `dormant` as they apply to an idle-suspended session today.
+
+**Recommendation: (a).** `dormant` replaces the idle suspension, whose `maxSessionAge` pauses today, and the drain is the mechanism that reads the bound. It blocks the instruction to 0140 in "Instructions for reviewers of other designs" and 0140's rollout step. The other change is [`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0146-F13)
+
+**SL-Q6. The `turn_end.status` of a cut turn, and what the turn interrupt writes to `last_turn_end`. Open.**
+
+"MD-20" of `0135-message-delivery` gives `turn_end.status` the values `completed`, `failed`, `interrupted`, and `runtime_exit`. R3 of `0138-rest-only-client-api` reports `cut` with its cause. This change records `last_turn_end: cut` for a suspension, an idle cut, and a pod loss, reports `turn_end` with `error: "idle_timeout"` or `error: "turn_lost"`, and records `completed` at a close only when `last_turn_end` is `message`. R19, the turn interrupt, ends the turn `interrupted` and leaves the session `idle`, and nothing states what it writes to `last_turn_end`, so a close after an interrupt can record `completed` with the interrupted output.
+
+- (a) `turn_end.status` gains `cut`, with `error` naming the cause, R3 uses the same set, and R19 writes `last_turn_end: cut`, so a close after an interrupt records `cancelled` and R16 refuses a continuation until a later turn completes.
+- (b) As (a), except that R19 writes `last_turn_end: message`, so a close records `completed` and R16 accepts the interrupted turn.
+
+**Recommendation: (a).** One vocabulary across the three changes lets a client read a cut from the event alone, and an interrupted turn did not finish its work, which the close rule reads. It matches O12 (a) of `0135-message-delivery` and O18 (a) of `0138-rest-only-client-api`. It blocks 0146.S1 ("SL-1" **Row fields**, "SL-3", and "SL-7"), 0135.S1, 0135.S4, and 0138.S1. The other changes are [`0135-message-delivery`](../0135-message-delivery/decisions.md) (O12) and [`0138-rest-only-client-api`](../0138-rest-only-client-api/decisions.md) (O18). (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C6)
+
+**SL-Q7. Whether the pod hold of a suspended session extends past `maxSuspendedPodHoldSeconds` for exports already running. Open.**
+
+"MD-18" **Suspension** of `0135-message-delivery` releases the pod only after the exports already started end, at most `exportTimeoutSeconds` (900 s) after the hold ends. The state table of "SL-1" and "SL-4" **Pods and timers.** release the pod when the hold ends. Both changes edit §6.2.
+
+- (a) "SL-1" and "SL-4" state the extension for exports already started, bounded by `exportTimeoutSeconds`.
+- (b) At the end of the hold the gateway fails running exports with `suspend_hold_expired`, as "MD-18" already does for a suspension that releases the pod at once, and the runtime emits the files again after the resume.
+
+**Recommendation: (a).** "MD-18" is the more specific text, and failing an export at the end of the hold discards an upload that is nearly done. It matches O11 (a) of `0135-message-delivery`. It blocks 0146.S1 (SL-1, SL-4, SL-10) and 0135.S4. The other change is [`0135-message-delivery`](../0135-message-delivery/decisions.md) (O11). (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C8)
+
+**SL-Q8. How a session under `checkpointPolicy: sealOnly` or `none` resumes after it loses its pod. Open.**
+
+IC-8 of `0131-incremental-checkpoint` states that a pod failure or an eviction resumes such a session with `resumeMode: conversation_only` and `workspaceLost: true` from the §4.4.5 minimal-state record. That record is written only when an eviction checkpoint cannot be persisted, which these policies never attempt, so §7.3 step 3e, "SL-6" of this change, WM-13 of `0153-workspace-materialization`, and D19 of `0140-runtime-revisions` send such a session through the snapshotless rebuild, which reruns setup commands and carries no conversation state.
+
+- (a) Under `sealOnly` and `none`, the preStop path and the pod-failure path write the minimal-state record without a checkpoint, so IC-8's statement holds, and "SL-6" names the case.
+- (b) IC-8 adopts the snapshotless rebuild for these policies and drops `conversation_only` from its table.
+
+**Recommendation: (a).** It keeps the conversation that a runtime author who chose `sealOnly` expects to survive, and it matches D30 (a) of `0131-incremental-checkpoint`. It blocks 0146.S1 (SL-6) and 0131.S8. The other changes are [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md) (D30) and `0153-workspace-materialization` (O18). `0140-runtime-revisions` records no counterpart, because its "RV-6" sends a session with neither a checkpoint nor a minimal-state record through the snapshotless rebuild, which holds under either option. (raised by the M3 readiness review, 2026-11-19; sources: checkpoint-workspace-C4)
+
+**SL-Q9. The outcome of a paused session on a pod quarantined with `sessionDisposition: fail`. Open.**
+
+FE-1 of `0128-forensics-evidence-preservation` fails a quarantined pod's sessions with the existing reason `orphan_pod_terminated`, so that the tenant receives no signal that a quarantine happened (its decision 6). After this change, a paused session whose pod is lost stays paused with its pod reference cleared (SLR-16, the §10.1.4 row) and never reaches that terminal state, so a quarantine on a pod that holds a `suspended` or `blocked` session produces an outcome that only a quarantine produces.
+
+- (a) Under `fail`, a paused session on the quarantined pod takes the lost-pod outcome of SLR-16: it stays paused with its pod reference cleared, and its resume restores it elsewhere.
+- (b) A paused session fails with `orphan_pod_terminated`, and 0128 records the signal as an exception under its decision 6.
+
+**Recommendation: (a).** It reuses an existing outcome and keeps decision 6 of 0128 intact. It blocks 0146.S1 (the §10.1.4 row) and 0128's quarantine step. The other change is [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/decisions.md) (O9). (raised by the M3 readiness review, 2026-11-19; sources: checkpoint-workspace-C6)
+
+**SL-Q10. Whether 0146.S1 is split. Open.**
+
+0146.S1 carries "SL-1" to "SL-7" and "SL-9" to "SL-11": about 25 specification rows, a store migration, the routes, the watchdog, the cascade, and the adapter. In the tree, 23 non-test Go files under `pkg/` and `cmd/` read `StateRunning`, 19 read `StateSuspended`, and 17 read `StateInputRequired`. Revision 13 moves only the helper-run cancellation into 0146.S3. Steps of other changes depend on 0146.S1 as a whole: 0122.S1, 0124.S3, 0124.S4 (part), 0135.S5, 0138.S1, and 0139.S1.
+
+- (a) Split 0146.S1 into states, the store migration, and the caps ("SL-1", "SL-10"), which shares the branch of 0135.S1; suspension and tree suspension ("SL-3", "SL-4", "SL-5"); idle and dormancy ("SL-6"); and close and cascade ("SL-7", "SL-9"), each listing the packages it touches, and re-point each edge that other changes hold on 0146.S1 to the step it needs.
+- (b) Keep 0146.S1 as one step on one branch with 0135.S1.
+
+**Recommendation: (a).** Smaller branches are reviewable, and the edges of other changes then wait only for the part they read. Splitting needs edits to the steps of 0122, 0124, 0135, 0138, and 0139. It blocks 0146.S1. (raised by the M3 readiness review, 2026-11-19; sources: 0146-F15)
+
+**SL-Q11. What DLQ overflow does to child events and to messages held without a TTL. Open.**
+
+"SL-5" keeps the DLQ's `maxDLQSize` cap for messages held for a `dormant`, `suspended`, or `blocked` session, and states that a child event never expires while its parent lives (SLR-14). §7.2's dead-letter table drops the oldest entry on overflow and orders entries by acceptance time plus the TTL. A parent in `awaiting_client_action` or paused, whose children keep running, can therefore lose its oldest child events, an `ended` event among them, and a held message that takes no TTL has no defined order.
+
+- (a) The DLQ evicts held child events last: it evicts other held messages first, never evicts an `ended`, `end_of_turn`, or `awaiting_client_action` child event, and orders a message held without a TTL by its acceptance time.
+- (b) At the cap the DLQ refuses new messages from senders other than the gateway's child events, with a refusal the sender sees, and evicts nothing that SLR-14 protects.
+- (c) Keep the drop and weaken SLR-14 to "while the DLQ has room".
+
+**Recommendation: (a).** It keeps SLR-14 and the exactly-once delivery of each child event, and it follows the protection that O13 of `0135-message-delivery` recommends for the inbox. It blocks 0146.S1 (the dead-letter rows of §7.2). The related decision is [`0135-message-delivery`](../0135-message-delivery/decisions.md) O13, which covers the inbox cap. (raised by the M3 readiness review, 2026-11-19; sources: 0146-F17)
+
+**SL-Q12. Which gates resume admission runs, and how a tree resume is admitted. Open.**
+
+§11.1 **Resume admission.** runs "the check that session creation runs", described there as the concurrency caps over the tenant, the user, and the runtime. Session creation in the tree runs further gates (`createAdmissionGates` in `pkg/gateway/core/session/sessionserver/create.go`: the store-availability check, the lifecycle fence of §12.8, the admission-rate limit, the policy chain, and environment admission, with the pool-drain gate that `0161` added to create-and-start). This change makes resume admission frequent, at every wake from `dormant` and at every descendant of a tree resume, and §11.1 **Concurrent admissions.** lets concurrent admissions overshoot a cap by the number in flight.
+
+- (a) Resume admission runs the caps alone, as §11.1 describes it today.
+- (b) Resume admission runs every creation gate.
+- (c) Resume admission runs the caps, the store-availability check, and the lifecycle fence, and not the admission-rate limit, the policy chain, environment admission, or the pool-drain gate.
+
+Separately, a tree resume either admits its descendants one at a time, so it cannot overshoot a cap, or admits them concurrently under §11.1 **Concurrent admissions.**
+
+**Recommendation: (c), with a tree resume that admits its descendants one at a time.** A resume needs the stores and must respect a tenant's deletion fence, while a wake from `dormant` is not a new session and would otherwise spend the creation rate budget. It blocks 0146.S1 (SL-10, the §11.1 row). (raised by the M3 readiness review, 2026-11-19; sources: 0146-F18)
+
+**SL-Q13. What the slot's runtime does while the disk watch's trip takes its best-effort checkpoint, and how that checkpoint starts and queues. Open.**
+
+"SL-2" **Disk watch [design].** ends a session `failed` with `workspace_size_limit` after a best-effort checkpoint under `full`, and defers the checkpoint's start and deadline to IC-1 and IC-8 of `0131-incremental-checkpoint`, which do not yet state them or what the runtime does while the checkpoint runs. Every checkpoint of 0131 starts from the gateway's `CheckpointStart` and waits in the pod-wide queue under the attempt deadline, 300 seconds by default. On a pod with several slots, and on a volume that no project quota bounds, a session can write past the threshold while its checkpoint waits, and the kubelet then evicts the pod and ends every slot's session, which the trip exists to prevent.
+
+- (a) The adapter ends the slot's runtime processes with the release's first End, the gateway then starts the best-effort checkpoint of the quiesced volumes as a `disk_watch` trigger that skips the queue and runs under a short time cap, and the session ends `failed`. "SL-2" states the order by reference to IC-1 and IC-8.
+- (b) As (a), with the slot frozen in place of ending its runtime processes.
+- (c) The checkpoint keeps its order and queues like any other trigger with a short deadline, and is abandoned when use passes a second threshold.
+- (d) Accept the eviction risk and state it in "Limits" of `0118-agent-pod-layout`.
+
+**Recommendation: (a).** A runtime that has ended cannot write past the threshold, and an End is already the release's first step. It blocks the `failed` transition of "SL-2" in 0146.S1, 0118.S4, and 0131.S1 and 0131.S8. The other changes are [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md) (O12) and [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md) (D36). (raised by the M3 readiness review, 2026-11-19; requested by change 0118; sources: 0118-F5, checkpoint-workspace-C5)
+
+**SL-Q14. What "Limits" and the lifecycle page state about the egress halt on a pool with `egressProfile: internet`. Open.**
+
+Step 1 of "SL-3" halts the slot's egress through `netagent` when a suspension cannot take hold, and "Limits" names one exception, the pool without slot attribution. `0127-egress-and-git` keeps raw sockets on a pool with `egressProfile: internet`, so a slot's traffic there does not pass `netagent`, and the halt stops proxied connections alone while `HaltSessionEgress` answers `halted`. A runtime on such a pool that does not stop at a suspension keeps calling a model provider or an operator service on a direct socket until the pod is released, or under `sealOnly` or `none` until the session resumes or ends.
+
+- (a) "Limits", "SL-3", and the session lifecycle page name the pool with `egressProfile: internet` beside the pool without slot attribution, and the halt's outcome on such a pool reports that it covered proxied connections alone, as CR-4 of `0124-connector-removal` states it.
+- (b) The halt is enforced outside `netagent` on such pools, which needs a per-slot network control that no member change designs, and "Limits" stays as written.
+
+**Recommendation: (a)**, as `0124-connector-removal` recommends, because no member change designs a per-slot control outside `netagent`. It blocks the "Limits" entry and the documentation row of 0146.S1, and 0124.S3. The other change is [`0124-connector-removal`](../0124-connector-removal/decisions.md) (O19), which also names `0127-egress-and-git`. (raised by the M3 readiness review, 2026-11-19; requested by change 0124; sources: 0124-F2)
+
 ## Decisions
 
 Settled by the owner on 2026-11-11, in a review of the combined lifecycle of a parent and its children after revision 9 of the message delivery design. The rows quote the owner.

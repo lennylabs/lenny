@@ -51,3 +51,42 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Revision 9 (2026-11-16)
 
 The review of [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md) found that D6's `details.field` differs from §15.1's `details.fields[].field`, and raised it as an open decision here, in 0132, and in 0133.
+
+## Revision 10 (2026-11-19)
+
+- Date: 2026-11-19. Trigger: review. Name: M3 readiness review (`scratchpad/m3-readiness/reviews/0119.md`, and the consistency reports pod-structure, program, connectors-llm-billing, removals, and runtime-contract). The review found no High finding, so no skeptic verdict applies.
+- Counts: 24 applied, 4 raised as open decisions (and open decision 1 extended), 1 returned as an issue, 2 dropped. Three conflicts (program-C6, runtime-contract-C4, and runtime-contract-C13) need edits only in other folders and are returned as edits needed elsewhere; program-C5 is open decision 1, which was already open.
+- Applied:
+  - 0119-F2 (the parts that need no owner choice): the refusal names the pool field the tree has, `maxConcurrent`, in place of `maxConcurrentRequestsPerPod`, which never shipped; it adds the environment's `mcpRuntimeFilters` under D6; it keys the list by resource and JSON path, so a live `type` member elsewhere is accepted; and "AR-4" **Which step refuses which field.** gives 0119.S1 and 0119.S2 the refusal of the field each removes, under D6. Changed in "Terms", the high-level design, ARR-3, "AR-2", "AR-4", the documentation entry, and the tests.
+  - 0119-F4: "AR-4" **Stored data.** adds `runtime_definitions.restartable`, `pools.execution_mode`, and `sessions.conversation_continuity`; the new **Phase 3 gate.** paragraph states the preflight block and the down file; the migrations bullet and the `component` test row follow.
+  - 0119-F5 and pod-structure-C8: 0119.S4 gains `0118.S1 (part)`, `0118.S2 (part)`, and `0145.S3 (part)` for the `restartable` removal, and "AR-5" states why.
+  - 0119-F6 and runtime-contract-C8: 0119.S4 no longer lists the `registered` check of O8; ARR-10, the `integration` test row, and the step state that 0147.S4 delivers and tests it.
+  - 0119-F7 and runtime-contract-C5: 0119.S3 carries the `startId` removal and RPR-21's `startId` clause, and leaves the `sessionId` rule of O5 to 0139.S1; the ARR-6 test rows name 0139.S1.
+  - 0119-F8: 0119.S2 depends on 0119.S1, because both edit the same files; the notes record the edges asked of the other changes' steps.
+  - 0119-F10: the Tests table gains a step column; ARR-7, ARR-8, the dormancy half of ARR-9, the second sentence of ARR-10, and the `e2e_kind` blueprint row name the step of the other change that delivers and tests them; 0119.S1 keeps a test that the idle watchdog exempts no session by runtime type.
+  - 0119-F11: the Tests table uses the tier names of `.claude/rules/test-coverage.md`; the code bullet names `pkg/gateway/api/admin`; the moved test path `tests/e2e_kind/execution_modes_test.go` is named; the notes in `steps.md` give the manifest translation, the test directories, the retired records, the files missing from the inventory, the register edits and their review, and the `sdkwarm` register row that this change does not remove. The inventory keeps its dated wording.
+  - 0119-F12: 0119.S1 closes 23.1-INFO-007, T-2.5, T-9.1.4, T-9.1.10, T-10.6.5, and T-8.5.4 and T-9.1.6 in part; 0119.S2 closes F-15.1.76 in part, T-5.2.5, and T-5.2.13. Each body was read.
+  - 0119-F13: the `static` lint exempts the "Planned after v1" entry of `docs/about/status.md` that O2 keeps and adds the missing terms; the pool's `maxConcurrent` is left to the `contract` row because gateway subsystem settings keep the name.
+  - 0119-F14: "Specification changes" gains the §16.1 and §16.1.1 rows with the label set the three changes state together, the `agent_pod_state` DDL in the §12.6 row, and the `targetRuntime` bullet of **Session Replay Semantics** in the §15.1 row; the documentation section names the missing pages, the root `CHANGELOG.md`, and each page's reader.
+  - 0119-F15: "AR-3" drops a `session_started` that arrives before `session_start` with the same warning and bounds the warning to once per session; the `unit` row follows.
+  - 0119-F16: each "Validation owed" item names the step that waits on it; the item on `docs/assets/diagrams/recycle-lifecycle.svg` is resolved and removed, because the diagram's text elements name no service mode, stateless routing, or MCP; ARR-4 states the `404` answer.
+  - 0119-F17: the Tests table adds the update body, the derived-runtime write, the accepted nested `type` members, `lenny-ctl runtime validate`, the bootstrap seed, the migration gate and down file, the early `session_started`, and the tenant pinning regression after `pinned.go` loses `ModeService`. The Kubernetes path's test follows open decision 4.
+  - 0119-F18 and connectors-llm-billing-C9: open decision 1 is extended to name 0124 and the other changes that repeat `details.field`, and the seed's per-entry `207` answer.
+  - 0119-F19 (first and third points): the §4.7.6 row and 0119.S1 state that `runtimeMcpServers` leaves manifest version 1 with the compliance fixture; "Specification changes" states that a step landing after its area migrates edits the page that received the content.
+  - removals-C3: the §5.1 row states that whichever of 0119.S1 and 0124.S1 lands first removes **Capability Inference from MCP `ToolAnnotations`**.
+  - program-C7: the notes in `steps.md` state that this change does not remove `pkg/gateway/runtime/sdkwarm`.
+  - program-C12: "Specification changes" states that an edit to §18 or §23 applies to its successor under "Reading the program".
+  - runtime-contract-C12: 0119.S1 removes `runtimeMcpServers` under manifest version 1, which is this change's half of the field set that 0139 states for version 2.
+  - 0119-F1, 0119-F3, and 0119-F9: "AR-1", "AR-4", and the §4.7.9 and §5.2 rows point to the open decisions raised for them.
+- Raised as open decisions:
+  - Open decision 2, the `types` member of delegation targets and environment selectors (0119-F1; names 0124).
+  - Open decision 3, strict decoding of admin writes and seeds against a per-resource list (0119-F2, with issue `ADMIN-I1`).
+  - Open decision 4, the Kubernetes write path of a removed field (0119-F3).
+  - Open decision 5, whether O7's heading renames stand under the successor-stub rule of `spec/conventions.md` (0119-F9; names 0127 and 0139).
+- Returned as an issue: the admin handlers write `details.field` (`pkg/gateway/api/admin/runtimes.go`) against §15.1's `details.fields[]` (0119-F18).
+- Dropped:
+  - 0119-F19, second point (0119.S2 is large for one branch): the review states that one branch is workable for a deletion, and no record is wrong.
+  - 0119-F19, fourth point (ARR-1 to ARR-12 are labels): identifiers are assigned when the pages land, as the transition rules state, so the labels are the expected form for a `Draft` change.
+- Second pass (requests from other changes): 7 requests, of which 6 were already held by this change's records, 1 was applied, none was raised as an open decision, and none was dropped.
+  - Already done: the `0118.S1 (part)`, `0118.S2 (part)`, and `0145.S3 (part)` edges on 0119.S4 for the `restartable` removal (requested by 0118 and 0145, pod-structure-C8); 0119.S4 removing SD-P4 and `target_unsupervised` alone, with the `registered` check left to 0147.S4 (requested by 0141 and 0147, runtime-contract-C8); 0119.S3 owning the `startId` removal (requested by 0135, runtime-contract-C5); and 0119.S1 removing `runtimeMcpServers` under manifest version 1, with the edges on 0139.S1 recorded in the notes (requested by 0139).
+  - Applied: 0119.S2 states that 0144.S1 also removes the derive's equality check, `requireReplayRuntimeCompatible`, `INCOMPATIBLE_RUNTIME`, and `tests/contract/rest_sessions/replay_incompatible_runtime_contract_test.go`, that whichever of the two steps lands second skips the removal, and how the two steps split F-15.1.76 (requested by 0144, 0144-F16).

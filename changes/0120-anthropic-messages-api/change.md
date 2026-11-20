@@ -1,10 +1,10 @@
 # Anthropic Messages API compatibility
 
-Status: `Draft`, revision 12, 2026-11-15. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 13, 2026-11-19. Programs: [v1](../programs/v1.md).
 
 > **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the Anthropic Messages protocol mapping moves to the Anthropic adapter's repository, `lenny-adapter-anthropic-messages`. Only the sections marked as Lenny's still govern Lenny. The sections marked as moving belong to the Anthropic adapter project: they stay in this file unchanged until that repository takes them, govern the adapter rather than Lenny, and stage no edit to Lenny's specification. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved.
 >
-> - **Lenny's:** "AM-4", apart from its subsection **OpenAI translators**, with that design's R15 carrying the `conversation` member on REST sends; requirement AMR-9; decisions D2 and O3 as they govern "AM-4"; and proposal AM-A, apart from the OpenAI translators' move onto conversation input, which happens in their own adapters.
+> - **Lenny's:** "AM-4", apart from its subsection **OpenAI translators**, with that design's R15 carrying the `conversation` member on REST sends; requirements AMR-9 and AMR-14 to AMR-21; decisions D2 and O3 as they govern "AM-4", and O9, whose aliases reach a runtime through RT-4; and proposal AM-A, apart from the OpenAI translators' move onto conversation input, which happens in their own adapters.
 > - **Moving to the Anthropic adapter project:** the request mapping of "AM-1" to "AM-3", with the `x-api-key` handling of "AM-2"; "AM-5" to "AM-10"; the decisions that govern them; requirements AMR-1 to AMR-8 and AMR-10 to AMR-13; and proposals AM-B and AM-C. The tables, digest key, and forwarding of "AM-5" are replaced by the conditional send and the client references of that design's R16 and R17, as its "RO-10" states.
 > - **Mixed:** a section without a mark, such as "High-level design", "Worked example", "Limits", "Specification changes", or "Tests", keeps its rows about conversation input in Lenny, and its other rows move.
 
@@ -33,6 +33,8 @@ The Messages API and Lenny disagree on these points, which the translator has to
 Verifying the existing translators against the tree found defects that this surface would inherit if it copied them ("Defects found while verifying"). The most consequential is that every message in a request's history reaches the runtime as a separate client turn with its role dropped, so a cold continuation re-runs earlier user turns and presents earlier assistant replies as client input.
 
 ## Scope
+
+Under the banner, the items of this section that still govern Lenny are the conversation input member and its capability ("AM-4") under **Added**, and the executor's one envelope per delivery, which replaces one turn per message (the executor half of DF-1, F-15.1.80), under **Changed** and **Removed**. Every other item belongs to the Anthropic adapter project or, for the OpenAI translators' history delivery and `echo` default, to the OpenAI adapter projects, and 0138.S6 removes the translators from Lenny.
 
 **Added:**
 
@@ -118,7 +120,7 @@ Verifying the existing translators against the tree found defects that this surf
 | Impersonation bearer and F-13.3.26 | A token a `platform-admin` obtains to act as a user ([§13.3](../../spec/13_security-model.md#133-credential-flow), **Platform-admin impersonation**). F-13.3.26 is the `BUILD-GAPS.md` finding, recorded in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md), that session input routes and the OpenAI translators admit one. |
 | Tool-use approval | A platform tool call held at the gateway until an approver resolves it ([`0142-security-oversight`, SO-5a](../0142-security-oversight/change.md#so-5a-tool-use-approvals)), and the §7.2 approval gate the executor runs today. Approvals for the tools of an operator service are the service's. |
 | `LLM_UPSTREAM_NOT_CONFIGURED` and `BUDGET_EXHAUSTED` | Two codes of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), which removes LLM credential pools and `CREDENTIAL_POOL_EXHAUSTED`. `422 LLM_UPSTREAM_NOT_CONFIGURED` refuses a session creation whose LLM upstream list serves none of its runtime's formats, a check on configuration alone at the post-chain point. `BUDGET_EXHAUSTED` answers a runtime's model call through the LLM proxy when a credit budget refuses its reservation and no extension is granted, with `details.limitType` naming the scope. |
-| Test tiers | The stages of the test suite that `.claude/rules/test-coverage.md` defines: 0 static checks, 1 unit, 3 contract, 4 integration, 5 end to end on Kind, 7a local concurrency, 8 chaos, 9 security, 10 runtime adapter conformance, and 11 documentation. |
+| Test tiers | The tiers of the test suite that `.claude/rules/test-coverage.md` names: `static`, `unit`, `contract`, `integration`, `e2e_kind` (end to end on Kind), `load_local` (local concurrency), `chaos`, `security`, `conformance` (runtime adapter conformance), and `docs`. Change 0155 replaced the former numbers 0, 1, 3, 4, 5, 7a, 8, 9, 10, and 11 with these names. |
 
 ### Labels from other designs
 
@@ -196,7 +198,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 ## Requirements
 
-Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), AMR-1 to AMR-8 and AMR-10 to AMR-13 move to the Anthropic adapter project, and AMR-9 is Lenny's.
+Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), AMR-1 to AMR-8 and AMR-10 to AMR-13 move to the Anthropic adapter project, and AMR-9 is Lenny's. AMR-14 to AMR-21 state the behaviour of "AM-4" that Lenny's gateway carries under R15 of that design, and step 0120.S1 cites them. AMR-19 states AMR-9 as a property of Lenny's sessions, and the adapter project keeps AMR-9's wording for its own sessions.
 
 | ID | Requirement |
 | :-- | :-- |
@@ -213,28 +215,38 @@ Under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md
 | AMR-11 | A retry of a request whose turn is running receives that turn's result and starts no second turn, when the retry arrives after the turn is reserved. |
 | AMR-12 | The gateway never logs, echoes, or forwards a value presented in `x-api-key`, and never forwards an Anthropic API key to any component. |
 | AMR-13 | A turn that no client request caused carries no client tools and never appears in a Messages response. A Messages response carries only output of the turn that consumed the request's own message, from the point of that consumption. |
+| AMR-14 | The gateway delivers `conversation` on a runtime's `message` envelope only when the session's chosen revision, after any per-tenant capability override, declares `capabilities.conversationInput`, and delivers the transcript rendering of "AM-4" to any other revision. |
+| AMR-15 | A runtime never receives an unmarked entry of `conversation` as new input, and every entry it receives keeps the role the client gave it. |
+| AMR-16 | An enforced parameter in `conversation.parameters` reaches only a runtime whose chosen revision declares it in `capabilities.conversationParameters`. Open decision O17 settles the refusal and the reporting path. |
+| AMR-17 | Only a message a client sends through R15 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) carries `conversation`. A message from another session, a platform tool, or the gateway itself never carries it. |
+| AMR-18 | A per-tenant capability override can clear `capabilities.conversationInput` and narrow `capabilities.conversationParameters`, and never adds either. |
+| AMR-19 | A session whose messages carry `conversation` is billed, audited, and owned as any session is, and no member of `conversation` changes the billed tenant or owner. |
+| AMR-20 | A message that the gateway holds, redelivers, or delivers again after a restore carries the `conversation` it was accepted with. |
+| AMR-21 | A client-written `conversation` with no marked `user` entry, or whose final marked `user` entry differs from the message's `input`, is refused with `400 VALIDATION_ERROR` naming the member. |
 
 ## Current state
 
 ### Lenny
 
+The paths below name the tree's layout on 2026-11-19, after the gateway packages moved under `pkg/gateway` (change 0117) and the executor's message types moved to `pkg/runtimeexec` (decision 92 of 0117). The behaviour they describe was read on 2026-11-09.
+
 **Adapter inventory [source].** §15 "Built-in adapter inventory" lists `MCPAdapter` at `/mcp`, `OpenAICompletionsAdapter` at `/v1/chat/completions`, and `OpenResponsesAdapter` at `/v1/responses` for v1, and `A2AAdapter` and `AgentProtocolAdapter` for later. No specification section, document under `docs/api/`, or handler on the client listener names a client-facing Anthropic surface. `cmd/lenny-gateway/httpsurface.go` registers the OpenAI translators through `adapterregistry.NewSimpleAdapter` with their `gwadapter.Capabilities` and mounts the registry on the client mux.
 
-**LLM proxy [source].** `cmd/lenny-gateway/llmproxy_server.go` mounts `POST /llm-proxy/v1/messages` on a separate server bound to `--llm-proxy-addr`. `pkg/gateway/llmproxy/llmproxy/translator.go` defines `DialectAnthropic` and the `anthropic_direct` translator, and `sse.go` reads Anthropic stream events for token usage. The proxy authenticates the pod's lease token and never sees a client bearer. `docs/getting-started/architecture.md` describes the proxy's path as `/v1/messages`, which a reader can mistake for a client surface.
+**LLM proxy [source].** `cmd/lenny-gateway/llmproxy_server.go` mounts `POST /llm-proxy/v1/messages` on a separate server bound to `--llm-proxy-addr`. `pkg/gateway/meteringproxy/llmproxy/translator.go` defines `DialectAnthropic` and the `anthropic_direct` translator, and `sse.go` reads Anthropic stream events for token usage. The proxy authenticates the pod's lease token and never sees a client bearer. `docs/getting-started/architecture.md` describes the proxy's path as `/v1/messages`, which a reader can mistake for a client surface.
 
 **Translators [source].** `pkg/gateway/environment/translator` holds `OpenAIChatHandler` (`openai_chat.go`) and `OpenResponsesHandler` (`open_responses.go`). Both call `SingleShotBinder.BindSingleShot`, which `sessionSingleShotBinder` in `cmd/lenny-gateway/credentialsurface.go` implements over `sessionserver.CreateAndStartService`, and both release through `releaseSingleShot`. The binder reports `Hold` when the session's `conversationContinuity` is `"platform"` and its runtime declares `multi_turn` with injection. `OpenResponsesHandler` keeps response records on the session row (`Session.Responses`, `ContinuationParentID`), serves warm turns under the reservation and generation rules of §15 "Open Responses conversation sessions", forwards warm turns to the coordinating replica through `HolderForwarder`, and rebuilds a cold continuation's context from the transcript in `continuity.rehydrate`. Both handlers run the turn's `exec.Send` on the HTTP request's context, so a dropped client connection cancels the gateway's wait for the turn.
 
-**Forwarding [source].** `HolderForwarder.ForwardResponsesTurn` reaches `Server.ForwardResponsesTurn` in `pkg/gateway/sessionserver/holder_forward.go`. `newForwardRequest` copies only the headers in `forwardRequestHeaders`, `Content-Type` and `Accept`, and `setForwardIdentity` writes the credential that the auth middleware recorded on the request context (`authmw.CredentialFrom`). A header the middleware did not record as the credential, such as `x-api-key`, and every other client header, such as `anthropic-version`, does not reach the coordinating replica.
+**Forwarding [source].** `HolderForwarder.ForwardResponsesTurn` reaches `Server.ForwardResponsesTurn` in `pkg/gateway/core/session/sessionserver/holder_forward.go`. `newForwardRequest` copies only the headers in `forwardRequestHeaders`, `Content-Type` and `Accept`, and `setForwardIdentity` writes the credential that the auth middleware recorded on the request context (`authmw.CredentialFrom`). A header the middleware did not record as the credential, such as `x-api-key`, and every other client header, such as `anthropic-version`, does not reach the coordinating replica.
 
 **Request handling [source].** `OpenAIChatCompletionsRequest` models `model`, `messages`, `stream`, and `user`, with `content` as a string. `OpenResponsesRequest` models `model`, `input`, `previous_response_id`, `stream`, and `user`. Both decode with `encoding/json` and no `DisallowUnknownFields`, so `tools` and sampling parameters are dropped without an error (F-15.1.82). `normalizeInput` reads an Open Responses item's `content` as a string, so multi-part content becomes empty text without an error. A Chat Completions message with multi-part content fails the decode into the string field and is refused with `400 invalid_request_error`, whose message calls the body invalid JSON. Both cap the body at 1 MiB. A model named `environments/{name}/{model}` scopes the session to an environment (`splitEnvModel`).
 
-**Delivery to the runtime [source].** `executor.Executor.Send(ctx, sessionID, []Message)` is synchronous and returns the turn's output parts. `PodExecutor.Send` in `pkg/gateway/session/executor/pod.go` writes each `Message` as its own `message` envelope with one text part and calls `runTurn` for each, so a request with several messages runs several turns (F-15.1.80). `Message.Role` is never written to the envelope: `resolveFromBlock` sets `from` to `client`/`client_gateway`, and no code in the executor package reads `Role`. The `MessageEnvelope` of §15.4.1 has no role field.
+**Delivery to the runtime [source].** `executor.Executor.Send(ctx, sessionID, []Message)` is synchronous and returns the turn's output parts. `PodExecutor.Send` in `pkg/gateway/core/session/executor/pod.go` writes each `Message` as its own `message` envelope with one text part and calls `attachConn.runTurn` (`podstream.go`) for each, so a request with several messages runs several turns (F-15.1.80). `Message.Role` is never written to the envelope: `ResolveFromBlock` in `pkg/runtimeexec` sets `from` to `client`/`client_gateway`, and no code in the executor reads `Role`. `MessageEnvelope`, `Message`, and `SubprocessExecutor.Send` are in `pkg/runtimeexec` (`subprocess.go` and `message.go`). The `MessageEnvelope` of §15.4.1 has no role field.
 
 **Streaming [source].** `writeOpenAIStream` and `writeOpenResponsesStream` run after the turn has completed and split the text on whitespace into synthetic deltas. Usage counts in both translators are zeros.
 
-**Authentication [source].** `pkg/gateway/middleware/auth/auth.go` reads `Authorization: Bearer` and, under dev mode only, the `X-Lenny-*` headers. It reads no `x-api-key`. §10.2 states that no dedicated API-key primitive exists in v1 and that a pasted "API key" in the playground is a Lenny bearer. §13.3 states that `POST /v1/oauth/token` follows RFC 6749 and RFC 8693, authenticates its caller by `Authorization: Bearer`, and accepts an upstream OIDC ID token as the bootstrap credential. It names no RFC 7523 `jwt-bearer` grant.
+**Authentication [source].** `pkg/auth/authmw/auth.go` reads `Authorization: Bearer` and, under dev mode only, the `X-Lenny-*` headers. It reads no `x-api-key`. §10.2 states that no dedicated API-key primitive exists in v1 and that a pasted "API key" in the playground is a Lenny bearer. §13.3 states that `POST /v1/oauth/token` follows RFC 6749 and RFC 8693, authenticates its caller by `Authorization: Bearer`, and accepts an upstream OIDC ID token as the bootstrap credential. It names no RFC 7523 `jwt-bearer` grant.
 
-**Discovery [source].** `GET /v1/models` has one handler, `handleListModels` in `pkg/gateway/sessionserver/runtimes.go`, which returns OpenAI model objects for the runtimes the caller's environment access authorizes and selects the `adapterCapabilities` it reports by the `?adapter=` query parameter. §9.1 "Runtime Discovery" lists `GET /v1/models` for both OpenAI translators.
+**Discovery [source].** `GET /v1/models` has one handler, `handleListModels` in `pkg/gateway/core/session/sessionserver/runtimes.go`, which returns OpenAI model objects for the runtimes the caller's environment access authorizes and selects the `adapterCapabilities` it reports by the `?adapter=` query parameter. §9.1 "Runtime Discovery" lists `GET /v1/models` for both OpenAI translators.
 
 **Runtime tools and approvals [source].** §28.5.3 limits stdin `tool_call` and `tool_result` frames to adapter-local tools. Platform and connector tools travel over the runtime's MCP client. `PodExecutor.maybeGateToolCall` holds a runtime `tool_call` that carries `approvalRequired` until the §7.2 approval gate decides, then relays the call or a denial.
 
@@ -374,7 +386,7 @@ Large inline parts follow the §28.5.3 rule that stages a large blob to the arti
 
 #### Envelope member
 
-The `MessageEnvelope` of §15.4.1 gains an optional, gateway-written `conversation` member **[design, O3]**:
+The `MessageEnvelope` of §15.4.1 gains an optional `conversation` member **[design, O3]**. A REST client writes it in the body of `POST /v1/sessions/{id}/messages` and of the first message of `POST /v1/sessions/start`, under R15 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), and the gateway validates it ("Validation") and copies it onto the envelope. The example shows a turn with no client tools:
 
 ```json
 {
@@ -391,28 +403,54 @@ The `MessageEnvelope` of §15.4.1 gains an optional, gateway-written `conversati
       { "role": "user", "new": true, "content": [{ "type": "text", "inline": "And the refund window for EU orders?" }] },
       { "role": "system", "new": true, "content": [{ "type": "text", "inline": "Answer in one sentence." }] }
     ],
-    "parameters": { "maxTokens": 1024, "thinking": { "type": "adaptive" } },
-    "clientTools": [],
-    "toolChoice": { "type": "auto" }
+    "parameters": { "maxTokens": 1024, "thinking": { "type": "adaptive" } }
   }
 }
 ```
 
 - `entries` holds, in order, every entry of the conversation that the runtime has not seen, each with `role` (`user`, `assistant`, or `system`) and `content` as `MessagePart` entries. The entries that form the turn's new input carry `new: true`. On a cold turn the unmarked entries are the whole earlier conversation. On a warm turn every entry is new, and the list holds the final user content and any `system` message around it. A `system` message that follows the final user message, which the Messages API allows as the last entry **[external]**, is a marked entry after the user entry, so it has a position the runtime can read. Revision 2 had no place for it.
 - `input` carries the content of the final marked `user` entry, so a runtime that reads only `input` receives the new user content.
-- `instructions` holds the request's top-level `system` text. It is present on the first envelope of a session. The digest includes it, so it does not change on a warm turn.
-- `parameters` holds the hints of "AM-3", and the enforced parameters the chosen revision declares. It is present on every envelope the adapter sends.
-- `clientTools` and `toolChoice` are the members of [`0122-client-tools`](../0122-client-tools/change.md), present on every turn of a request that declares client tools (T1). A `message` that carries client tool results carries them in that design's `toolResults` member.
+- `instructions` holds the client's top-level instructions, such as a Messages request's `system` text. The gateway accepts it as written on any message that carries it and delivers it with that message.
+- `parameters` holds the hints of "AM-3", and the enforced parameters the chosen revision declares. It is present on every envelope whose message carries it. Open decision O17 settles the refusal of an enforced parameter on REST and how the runtime reports one back.
+- `clientTools` and `toolChoice` are the members of [`0122-client-tools`](../0122-client-tools/change.md), present on every turn of a request that declares client tools (T1). On a REST send they sit inside `conversation`, beside `entries`. A turn with no client tools carries neither member. A `message` that carries client tool results carries them in that design's `toolResults` member.
+
+Each entry of `entries` has these members, and no other:
+
+- `role`: `user`, `assistant`, or `system`.
+- `content`: the entry's `MessagePart` entries.
+- `new`: `true` on the entries that form the turn's new input, and absent otherwise.
+- `clientToolCalls`: on an `assistant` entry, the client tool calls that entry made, in the form of [`0122-client-tools`](../0122-client-tools/change.md), CT-1.
+- `toolResults`: on a `user` entry, the client tool results that entry returned, in the same form.
+
+An entry carries no `from` member. A cold history built by the gateway leaves Lenny with the provider adapters under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), so every entry is the client's assertion and the envelope's server-stamped `from` attributes the whole message. Open decision O22 settles whether a new session's first message may carry `toolResults` that answer the calls of its last `assistant` entry.
 
 The envelope carries no `sessionId`. Under decision O5 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md), settled by the owner on 2026-11-13, no frame carries `sessionId` except `session_start`, because a frame's session is the session of the slot whose connection carries it.
 
 A runtime treats every entry of `conversation` as client input. An entry with `role: assistant` is the client's assertion of what an assistant said, because a Messages client controls its whole history. The gateway marks `from.kind: client` on the envelope as for any client message.
 
-Other sources of a `message` envelope, such as REST delivery and MCP `lenny/send_message`, never set `conversation`.
+Only a client message sent through R15 carries `conversation`. A message from another session, a platform tool such as `lenny/send_message`, or the gateway itself never carries it (AMR-17).
+
+#### Validation
+
+The gateway validates a client-written `conversation` before it accepts the message **[design]**:
+
+- A member with no marked `user` entry is refused with `400 VALIDATION_ERROR` naming `conversation.entries`.
+- The message's `input` and the content of the final marked `user` entry agree. A message whose `input` differs from that content is refused with `400 VALIDATION_ERROR` naming `input`.
+- `instructions` is accepted as written.
+
+Open decision O16 settles the remaining rules: an entry whose `role` is outside the three values, unmarked entries on a send to a session that already ran turns, and unknown keys in `parameters`. Open decision O18 settles the size bound.
+
+#### Custody and redelivery
+
+`conversation` is part of the message the gateway keeps in custody under MDR-3 of [`0135-message-delivery`](../0135-message-delivery/change.md) **[design]**. The gateway stores it with the message while the message is held or queued, erases it with the message, and delivers it again with a redelivered message. The choice between the member and the transcript rendering is made at delivery, against the session's effective capabilities at that time. After a restore to a checkpoint taken before the runtime consumed the message, the runtime receives the stored `conversation` again with the message (AMR-20). Open decision O19 settles whether the session transcript records the unmarked entries and `instructions`.
+
+#### Executor
+
+The executor writes one `message` envelope per delivery call **[design, O3]**. `PodExecutor.Send` in `pkg/gateway/core/session/executor` and `SubprocessExecutor.Send` in `pkg/runtimeexec` take the call's messages in order: the entries after the last `assistant` message are marked `new`, the final `user` content is also written to `input`, and every message keeps its `Message.Role` as the entry's `role`. A call with several messages runs one turn. This is the executor half of DF-1 (F-15.1.80), which stays with Lenny under 0138's "Root records and tests". The OpenAI translators' half, their own history delivery, leaves with the translators (**OpenAI translators** below). Open decisions O14 and O15 settle what happens to the in-tree translators until 0138.S6 removes them, and the order of this change against 0135.S1, which replaces `Send` with `Deliver`.
 
 #### Capability
 
-A runtime declares `capabilities.conversationInput: true` to receive the member, and `capabilities.conversationParameters` to receive enforced parameters **[design]**. Both are versioned fields under RV-1, so the chosen revision decides. A per-tenant capability override can only clear `conversationInput` and narrow `conversationParameters`, as RV-1 lets an override narrow `capabilities.interaction`.
+A runtime declares `capabilities.conversationInput: true` to receive the member, and `capabilities.conversationParameters` to receive enforced parameters **[design]**. Both are versioned fields under RV-1, so the chosen revision decides. A per-tenant capability override can only clear `conversationInput` and narrow `conversationParameters`, as RV-1 lets an override narrow `capabilities.interaction` (AMR-18). The override's type today, `CapabilityOverride` in `pkg/runtime/runtimestore/capoverride.go`, has typed fields for `interaction` and `injection` and none for a new key, so 0120.S1 adds a field for each key there and its validation in `pkg/runtime/runtimecapoverride`.
 
 #### Transcript rendering
 
@@ -688,16 +726,18 @@ Alice, a user of tenant `acme`, uses the Anthropic Python SDK with `base_url` se
 
 ## Specification changes
 
+Under the banner, the rows that stage an edit to Lenny's specification are the `conversation` member of the §15.4.1 row ("`MessageEnvelope` — Unified Message Format") and the §5.1 row. Every other row, and the Anthropic Messages column of the §15.4.1 row, belongs to the Anthropic adapter project and stages no edit to Lenny's specification. The `REQUEST_INPUT_UNAVAILABLE` code of the §15.1 row and the §7.2 row are withdrawn: decision B5 of [`0135-message-delivery`](../0135-message-delivery/decisions.md), settled by the owner on 2026-11-10, removes `lenny/request_input` (MD-22), so no surface has the tool to refuse.
+
 | Section (by heading) | Change |
 | :-- | :-- |
 | §15 External API Surface, "Built-in adapter inventory" and "Three tiers of pluggability" | Add `AnthropicMessagesAdapter` at `/v1/messages`, protocol `anthropic-messages`, V1. Add a paragraph "Anthropic Messages conversation sessions" stating AM-3 to AM-7, in the form of "Open Responses conversation sessions", and reference that paragraph's warm conditions, reservation write, and hold rule. Add the protocol identifier to the `AdapterCapabilities.Protocol` examples. |
-| §15.1 REST API | Add `OUTPUT_SCHEMA_MISMATCH` and `REQUEST_INPUT_UNAVAILABLE` to the error catalog. `GET /v1/models` and `GET /v1/models/{model_id}` answer in the Anthropic format when the request carries `anthropic-version` or `?adapter=anthropic-messages`, with `Vary: anthropic-version`. |
+| §15.1 REST API | Add `OUTPUT_SCHEMA_MISMATCH` and `REQUEST_INPUT_UNAVAILABLE` (withdrawn under B5 of 0135, as stated above) to the error catalog. `GET /v1/models` and `GET /v1/models/{model_id}` answer in the Anthropic format when the request carries `anthropic-version` or `?adapter=anthropic-messages`, with `Vary: anthropic-version`. |
 | §15.2.1 REST/MCP Consistency Contract | Add the adapter to the contract-testing list of built-in adapters. |
-| §15.4.1 Message Format and Binary I/O Requirements, "Translation Fidelity Matrix" and "`MessageEnvelope` — Unified Message Format" | Add the Anthropic Messages column. Add the `conversation` member with `entries`, the `new` mark, `instructions`, and `parameters`, and its rules from AM-4, referencing the client tool members of [`0122-client-tools`](../0122-client-tools/change.md). |
+| §15.4.1 Message Format and Binary I/O Requirements, "Translation Fidelity Matrix" and "`MessageEnvelope` — Unified Message Format" | Add the Anthropic Messages column. Add the `conversation` member with `entries` and the entry schema, the `new` mark, `instructions`, and `parameters`, and its rules from AM-4, including the validation, custody, and executor rules, referencing the client tool members of [`0122-client-tools`](../0122-client-tools/change.md). |
 | §15.5 API Versioning and Stability | State the accepted `anthropic-version` values, the refusal of an unknown newer version, and the rule for adopting a new Anthropic version. |
-| §5.1 Runtime | Add `capabilities.conversationInput` and `capabilities.conversationParameters`, as versioned fields, to the capability catalog that [`0139-runtime-protocol`, RP-2](../0139-runtime-protocol/change.md#rp-2-capabilities-and-their-dependencies) adds. Neither has a dependency, and an absent declaration degrades as RP-2's catalog rows state. |
+| §5.1 Runtime | Add `capabilities.conversationInput` and `capabilities.conversationParameters`, as versioned fields, to the capability catalog that [`0139-runtime-protocol`, RP-2](../0139-runtime-protocol/change.md#rp-2-capabilities-and-their-dependencies) adds. Neither has a dependency, and an absent declaration degrades as RP-2's catalog rows state. When 0120.S1 lands before 0139.S1, it adds the two keys to the `capabilities` block of §5.1 as that section stands, and 0139.S1 moves them into the catalog. |
 | §28.5.3 Intra-pod | Add the Anthropic column of the canonical type registry. |
-| §7.2 Interactive Session Model | State that `lenny/request_input` fails at once with `REQUEST_INPUT_UNAVAILABLE` in a session whose surface cannot carry the question. |
+| §7.2 Interactive Session Model | Withdrawn under B5 of 0135, as stated above. The row read: state that `lenny/request_input` fails at once with `REQUEST_INPUT_UNAVAILABLE` in a session whose surface cannot carry the question. |
 | §9.1 Runtime Discovery | Add the Anthropic entry. |
 | §10.2 Authentication | State `x-api-key` on the adapter's routes and the models routes, its normalization into the request's credential and its removal, the refusal of an `sk-ant-` value without echo, and the conflicting-headers refusal. |
 | §10.6 Environment Resource and RBAC Model | Add the scoped model namespace on `/v1/messages`. |
@@ -707,12 +747,16 @@ Alice, a user of tenant `acme`, uses the Anthropic Python SDK with `base_url` se
 
 ## Non-specification changes
 
+Under the banner, the items that stay with Lenny are the executor packages, `pkg/runtime/runtimestore` and `pkg/runtime/runtimecapoverride`, the runtime adapter and the runtime SDKs, the tests named below that observe the executor change, and the runtime-facing documentation rules. Every other item belongs to the Anthropic adapter project. The paths below name the tree's layout on 2026-11-19.
+
 - `pkg/gateway/environment/translator`: the adapter in its own files, the shared conversation input builder and transcript renderer that the OpenAI translators use as well, the keyed digest and its canonicalization, the in-flight join, and the request records.
-- `pkg/gateway/session/executor`: one envelope per turn with `conversation`, and a turn whose completion does not depend on the HTTP request's context.
-- `pkg/gateway/middleware/auth`: `x-api-key` on the adapter's routes, its normalization and removal, the `sk-ant-` refusal, and the protocol-aware unauthenticated envelope.
-- `pkg/gateway/sessionserver/holder_forward.go`: the forward of a Messages warm turn adds `anthropic-version` to the copied headers.
-- `pkg/gateway/sessionserver/runtimes.go`: the Anthropic models format, the `?adapter=` selector, `Vary`, and the single-model route.
-- The runtime adapter and the runtime SDKs under `sdks/`: the `conversation` member and the capability flags.
+- `pkg/gateway/core/session/executor` (`PodExecutor.Send` in `pod.go`, `attachConn.runTurn` in `podstream.go`) and `pkg/runtimeexec` (`SubprocessExecutor.Send`, `MessageEnvelope`, `Message`, and `ResolveFromBlock` in `subprocess.go` and `message.go`): one envelope per delivery call with `conversation` ("AM-4", "Executor"), and a turn whose completion does not depend on the HTTP request's context.
+- `pkg/runtime/runtimestore` (`CapabilityOverride` in `capoverride.go`) and `pkg/runtime/runtimecapoverride`: the two capability keys on the runtime record, and the override fields that clear `conversationInput` and narrow `conversationParameters`, with their validation (AMR-18).
+- The tests that pin the translators' present delivery, in `tests/component/translators/`, `tests/load_local/open_responses_conversation_invariant_test.go`, and `tests/testinfra/lifecycleharness/responses.go`, observe the executor change and are updated with it.
+- `pkg/auth/authmw`: `x-api-key` on the adapter's routes, its normalization and removal, the `sk-ant-` refusal, and the protocol-aware unauthenticated envelope.
+- `pkg/gateway/core/session/sessionserver/holder_forward.go`: the forward of a Messages warm turn adds `anthropic-version` to the copied headers.
+- `pkg/gateway/core/session/sessionserver/runtimes.go`: the Anthropic models format, the `?adapter=` selector, `Vary`, and the single-model route.
+- The runtime adapter in `pkg/adapter` and the runtime SDKs in `sdks/runtime/go`, `sdks/runtime/python`, and `sdks/runtime/typescript`: the `conversation` member with its entry schema, and the capability flags.
 - `migrations/`: `conversation_turns` and `messages_requests`.
 - `cmd/lenny-gateway`: registration, and flags with Helm values for `anthropicMessages.maxRequestBytes`, `pingIntervalSeconds`, and the reference to `digestKey`.
 - Documentation. `docs/api/anthropic-messages.md` is a new page, and a tutorial for the Anthropic SDKs and a correction to `docs/getting-started/architecture.md`, which names the LLM proxy's path as `/llm-proxy/v1/messages`, go with it. The pages state every item below:
@@ -721,7 +765,20 @@ Alice, a user of tenant `acme`, uses the Anthropic Python SDK with `base_url` se
   - Continuity: the warm conditions, the cold fallback, the in-flight join of a retry, the `request-id` and its request record, the session lifetime of "Session lifetime", and the `lenny-session-id` and `lenny-runtime-revision` response headers.
   - Failure modes: the error mapping table and `error.details.error_code` of "AM-8", the `x-should-retry` classes, `REQUEST_INPUT_UNAVAILABLE` and the immediate `decline` of elicitation, `OUTPUT_SCHEMA_MISMATCH`, client tool validation failures, and the refused endpoints of "AM-9".
   - Limits: every item of "Limits", including edited history running cold, summed usage and early compaction, the 10-minute bound on non-streaming requests, per-part streaming, retries before the reservation, and unverified thinking signatures.
-  - Runtime-facing rules, in the runtime author guide and the adapter contract page: the `conversation` member with `entries`, the `new` mark, `instructions`, and `parameters`; `capabilities.conversationInput` and `capabilities.conversationParameters` with the enforced parameters `maxTokens`, `stopSequences`, and `thinkingDisplay`; transcript rendering and its `lenny.conversationRendering: transcript` annotation for a runtime that declares neither; the `REQUEST_INPUT_UNAVAILABLE` tool error with `details.surface`; and the turns another session's message causes, which carry no client tools.
+  - Runtime-facing rules, in the runtime author guide and the adapter contract page: the `conversation` member with `entries`, the `new` mark, `instructions`, and `parameters`; `capabilities.conversationInput` and `capabilities.conversationParameters` with the enforced parameters `maxTokens`, `stopSequences`, and `thinkingDisplay`; transcript rendering and its `lenny.conversationRendering: transcript` annotation for a runtime that declares neither; and the turns another session's message causes, which carry no client tools. The `REQUEST_INPUT_UNAVAILABLE` tool error is withdrawn from this list under B5 of [`0135-message-delivery`](../0135-message-delivery/decisions.md), which removes `lenny/request_input`. "Documentation" names the pages that carry these rules.
+
+## Documentation
+
+The pages that 0120.S1 edits, with their readers:
+
+| Page | Reader | Change |
+| :-- | :-- | :-- |
+| `docs/api/internal.md` | Runtime authors and platform contributors | The `conversation` member of the `message` envelope: `entries` with the entry schema and the `new` mark, `instructions`, and `parameters`, and that only a client message carries it. |
+| `docs/runtime-author-guide/runtime-configuration.md` | Runtime authors | `capabilities.conversationInput` and `capabilities.conversationParameters` with the enforced parameters, and the per-tenant override that clears or narrows them. |
+| `docs/runtime-author-guide/runtime-sdk.md` | Runtime authors | Reading `conversation` through the runtime SDKs, and the transcript rendering with its `lenny.conversationRendering: transcript` annotation for a runtime that declares neither key. |
+| `docs/runtime-author-guide/platform-tools.md` | Runtime authors | That a message a platform tool sends, such as `lenny/send_message`, carries no `conversation`. |
+
+The client-facing rules of R15 are documented by [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). The correction to `docs/getting-started/architecture.md`, which gives the LLM proxy's path as `/v1/messages` where the tree mounts `/llm-proxy/v1/messages`, changes no requirement and lands as a plain commit outside this change.
 
 ## Defects found while verifying
 
@@ -736,23 +793,29 @@ These are defects in the current tree. Revision 2 files each in `BUILD-GAPS.md`,
 
 ## Tests
 
+Under the banner, the rows marked 0120.S1 and the coverage of conversation input in the other rows stay with Lenny, and the rest belongs to the Anthropic adapter project. The `integration` row's item "the OpenAI translators' history delivery" depends on open decision O14.
+
 | Tier | Coverage |
 | :-- | :-- |
-| 1 | Field and block dispositions for both API versions, including the beta per-message fields and the enforced-parameter rules by declaration. The RFC 8785 canonical form, the merging of consecutive same-role messages and adjacent text blocks, the exclusion of `lenny.labels`, the inclusion of `metadata.user_id`, and the keyed digest. The ordered entries with the new input marked, including a trailing `system` message, and transcript rendering. Output mapping, `stop_reason` by declaration, error mapping with `error.details.error_code`, `x-should-retry` by class, and `tool_use` id mapping. The `sk-ant-` refusal and its message without the value. |
-| 3 | The official Anthropic Python, TypeScript, and Go SDKs at their current majors, and one release that sends `2023-06-01`, run against the gateway for create, streaming, client tools, errors, and the models routes, with the SDKs' typed parse of `error.details`, their handling of `x-should-retry: false`, and the models routes with `Vary`. Recorded SSE streams are checked against the event order of AM-6. The envelope's `conversation` member against the runtime SDKs. |
-| 4 | A child's message to a session the adapter created, between client requests, delivered on arrival, whose envelope carries no `conversation.clientTools`, whose output reaches the REST event stream and no response, and after which the next request's digest still matches; that request written into the running turn on a `steer` runtime with its client tools, and waiting for the turn's end-of-turn `message` on another runtime, each answered with the output from the consumption of its own message. Warm and cold turns on the compose stack, a digest after an idle release, owner, tenant, and `metadata.user_id` separation, a warm turn whose `lenny.labels` changed, `lenny.runtimeOptions`, a link refusal, a retried request that joins its running turn, the request record behind a `request-id`, and the OpenAI translators' history delivery. |
-| 5 | A session the adapter created, on Kind through several turns and a move to `dormant`, a follow-up that wakes the `dormant` session and runs warm, a follow-up after a recovery to a checkpoint older than the last completed turn that runs cold, a warm turn forwarded to the coordinating replica with a bearer sent in `x-api-key` and with `anthropic-version` intact, a client tool round trip under [`0122-client-tools`](../0122-client-tools/change.md), and an immediate `REQUEST_INPUT_UNAVAILABLE` for a runtime that calls `lenny/request_input`. |
-| 7a | Concurrent continuations of one conversation: one warm reservation wins and the other goes cold. Concurrent digest writes for identical conversations. Concurrent retries of one request: one turn runs and every retry joins it. |
-| 8 | Pod loss during a turn, with the next request served cold from history. Replica loss during a forwarded warm turn. A dropped client connection during a turn, after which the turn completes and a retry joins it. |
-| 9 | `x-api-key` validation, its removal before handlers and logs, conflicting credential headers, an `sk-ant-` value refused without echo in the body, logs, audit, and metrics, a digest match across owners, tenants, and user identifiers, the absence of a digest test without the key, and an impersonation bearer. |
-| 10 | Conformance cases for `conversationInput` and `conversationParameters`: entry roles and marks, instructions, hints, and the enforced parameters a runtime declares. |
-| 11 | The new API page and tutorial against the gateway. |
+| `unit` | Field and block dispositions for both API versions, including the beta per-message fields and the enforced-parameter rules by declaration. The RFC 8785 canonical form, the merging of consecutive same-role messages and adjacent text blocks, the exclusion of `lenny.labels`, the inclusion of `metadata.user_id`, and the keyed digest. The ordered entries with the new input marked, including a trailing `system` message, and transcript rendering. Output mapping, `stop_reason` by declaration, error mapping with `error.details.error_code`, `x-should-retry` by class, and `tool_use` id mapping. The `sk-ant-` refusal and its message without the value. |
+| `contract` | The official Anthropic Python, TypeScript, and Go SDKs at their current majors, and one release that sends `2023-06-01`, run against the gateway for create, streaming, client tools, errors, and the models routes, with the SDKs' typed parse of `error.details`, their handling of `x-should-retry: false`, and the models routes with `Vary`. Recorded SSE streams are checked against the event order of AM-6. The envelope's `conversation` member against the runtime SDKs. |
+| `integration` | A child's message to a session the adapter created, between client requests, delivered on arrival, whose envelope carries no `conversation.clientTools`, whose output reaches the REST event stream and no response, and after which the next request's digest still matches; that request written into the running turn on a `steer` runtime with its client tools, and waiting for the turn's end-of-turn `message` on another runtime, each answered with the output from the consumption of its own message. Warm and cold turns on the compose stack, a digest after an idle release, owner, tenant, and `metadata.user_id` separation, a warm turn whose `lenny.labels` changed, `lenny.runtimeOptions`, a link refusal, a retried request that joins its running turn, the request record behind a `request-id`, and the OpenAI translators' history delivery. |
+| `e2e_kind` | A session the adapter created, on Kind through several turns and a move to `dormant`, a follow-up that wakes the `dormant` session and runs warm, a follow-up after a recovery to a checkpoint older than the last completed turn that runs cold, a warm turn forwarded to the coordinating replica with a bearer sent in `x-api-key` and with `anthropic-version` intact, a client tool round trip under [`0122-client-tools`](../0122-client-tools/change.md), and an immediate `REQUEST_INPUT_UNAVAILABLE` for a runtime that calls `lenny/request_input`. |
+| `load_local` | Concurrent continuations of one conversation: one warm reservation wins and the other goes cold. Concurrent digest writes for identical conversations. Concurrent retries of one request: one turn runs and every retry joins it. |
+| `chaos` | Pod loss during a turn, with the next request served cold from history. Replica loss during a forwarded warm turn. A dropped client connection during a turn, after which the turn completes and a retry joins it. |
+| `security` | `x-api-key` validation, its removal before handlers and logs, conflicting credential headers, an `sk-ant-` value refused without echo in the body, logs, audit, and metrics, a digest match across owners, tenants, and user identifiers, the absence of a digest test without the key, and an impersonation bearer. |
+| `conformance` | Conformance cases for `conversationInput` and `conversationParameters`: entry roles and marks, instructions, hints, and the enforced parameters a runtime declares. |
+| `docs` | The new API page and tutorial against the gateway. |
+| `unit` (0120.S1) | A revision without `conversationInput` receives no member and the transcript rendering, including the line for a non-text part (AMR-14). A tenant override that clears `conversationInput` or narrows `conversationParameters`, and one that tries to add either, which is refused (AMR-18). The executor writes one envelope per delivery call, with the entries after the last `assistant` message marked and every entry's role kept (AMR-15). The refusals of "Validation": no marked `user` entry, and `input` that differs from the final marked `user` entry (AMR-21). |
+| `integration` (0120.S1) | A message from another session and a message a platform tool sends carry no `conversation` (AMR-17). A message held while the session is busy, and one queued for a `dormant` session that resumes, are delivered with the `conversation` they were accepted with (AMR-20). A session whose messages carry `conversation` is billed and owned as any session (AMR-19). |
+| `chaos` (0120.S1) | A restore to a checkpoint taken before the runtime consumed a message delivers the stored `conversation` again with the message (AMR-20). |
+| `security` (0120.S1) | A tenant whose override clears `conversationInput` receives the transcript rendering on every path, and no member of `conversation` changes the billed tenant or owner (AMR-14, AMR-18, and AMR-19). |
 
 ## Instructions for reviewers of other designs
 
-- [`0141-runtime-routing`](../0141-runtime-routing/change.md): revision 12 states O9 in RT-4: a route's requested name may name no runtime, and the models list shows the caller's aliases. Its reviewer confirms that the OpenAI translators resolve an alias as this adapter does. The `PreRoute` payload's input for a create from this adapter is the final user content, with the earlier entries in a separate member that an interceptor cannot change.
-- [`0140-runtime-revisions`](../0140-runtime-revisions/change.md): RV-1's field classes should list `capabilities.conversationInput` and `capabilities.conversationParameters` as versioned, gateway-read fields, and the per-tenant capability override should narrow both.
-- [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md): TS-1's explicit paths and the list of root creators that write a resolved delegation value gain `/v1/messages`. M8: its reviewer considers an RFC 7523 `jwt-bearer` grant on `POST /v1/oauth/token` that accepts the body the Anthropic SDKs send under workload identity federation (`assertion`, `federation_rule_id`, `organization_id`, `service_account_id`, and an optional `workspace_id`), maps the federation rule to a tenant and a principal, and returns a Lenny bearer as `access_token`, so an SDK that points its base URL at the gateway refreshes its credential without a static key.
+- [`0141-runtime-routing`](../0141-runtime-routing/change.md): revision 12 states O9 in RT-4: a route's requested name may name no runtime, and the models list shows the caller's aliases. Its reviewer confirms that the OpenAI translators resolve an alias as this adapter does. The `PreRoute` payload's input for a create from this adapter is the final user content, with the earlier entries in a separate member that an interceptor cannot change. 0141's RT-2 payload does not carry `conversation` today, and open decision O20 settles whether interceptors see it.
+- [`0140-runtime-revisions`](../0140-runtime-revisions/change.md): RV-1's field classes should list `capabilities.conversationInput` and `capabilities.conversationParameters` as versioned, gateway-read fields, and the per-tenant capability override should narrow both. 0140's "Per-tenant capability override" names only `capabilities.interaction` and `capabilities.injection` today, and should list the two keys: `conversationInput` may be cleared, and `conversationParameters` narrowed to a subset. When 0120.S1 lands before 0140.S1, S1 reads the two keys from the runtime record, and 0140.S1 moves the read to the chosen revision.
+- [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md): TS-1's explicit paths and the list of root creators that write a resolved delegation value gain `/v1/messages`. This request is withdrawn on 2026-11-19, because RO-11 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) removes the path from Lenny. M8: its reviewer considers an RFC 7523 `jwt-bearer` grant on `POST /v1/oauth/token` that accepts the body the Anthropic SDKs send under workload identity federation (`assertion`, `federation_rule_id`, `organization_id`, `service_account_id`, and an optional `workspace_id`), maps the federation rule to a tenant and a principal, and returns a Lenny bearer as `access_token`, so an SDK that points its base URL at the gateway refreshes its credential without a static key.
 - [`0122-client-tools`](../0122-client-tools/change.md): it replaces revision 2's AM-7 bridge. Its reviewer confirms the Messages mapping of "AM-7", the `x-should-retry: false` on a validation failure, and that its members sit in this design's `conversation` member beside `entries`.
 - [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): its reviewer instruction to this design is applied in revision 7. AM-8 maps `422 LLM_UPSTREAM_NOT_CONFIGURED` to `invalid_request_error` and, under decision O11, `BUDGET_EXHAUSTED` to `rate_limit_error`, each with `x-should-retry: false`, AM-6 reads `usage` from the session's usage records with the summed `input_tokens` of decision O12, and "Scope" keeps the proxy's `anthropic-messages` route.
 - [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md): no change. The instruction of earlier revisions, that CA-4's "Clients" list gain the Anthropic SDKs with `lenny.deferConnectors`, is withdrawn, because [`0124-connector-removal`](../0124-connector-removal/change.md) withdrew CA-4 and removed `deferConnectors`.

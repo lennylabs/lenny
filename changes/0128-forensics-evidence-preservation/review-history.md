@@ -60,3 +60,62 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Finding identifiers renumbered (2026-11-16)
 
 When `origin/main` merged into `main`, two findings this design files had taken identifiers that proposal 0114's review had already used for other findings. The legal-hold escrow finding became F-12.8.65 and the legal-hold body finding became F-15.1.85; the other two keep F-12.8.64 and F-15.1.73.
+
+## M3 readiness review (2026-11-19)
+
+- Date: 2026-11-19.
+- Trigger: review.
+- Name: M3 readiness review, read against `main` at 092ef92f6, with the skeptic's verdicts on the High findings and the consistency reports that name this change.
+- Revision: 38. The status stays `Draft`.
+- Counts: 18 applied, 10 raised as open decisions (O2 to O11), 0 returned as issues, and 0 dropped.
+
+Applied:
+
+- 0128-F3: 0128.S4 depends on 0131.S4 and on 0135.S4 for its output-file part, and states that 0131.S6 lands with or after it; 0128.S6 depends on 0136.S2, 0136.S3, and 0118.S4; 0128.S7 depends on 0139.S2, 0145.S1, and 0135.S5. The `closes` entries wait on O4.
+- 0128-F5: 0128.S2 and 0128.S7 carry the line of decision 8 of 0117, naming `GWSEAM-ForceTerminate`, `GWSEAM-TerminateUserSessions`, `GWSEAM-ReclaimRevokedPreRunning`, `GWSEAM-InspectForRecycle`, `GWSEAM-RetireOnSessionCount`, `GWSEAM-RecyclePod`, `GWSEAM-RetirePod`, the new quarantine operation, and `GWSEAM-AttachCallingSession`, with the digest record the amendment of 2026-11-19 asks for.
+- 0128-F7 and tenancy-security-C9: FE-6b, the `static` test, and "Validation owed" item 5d admit in `lenny-node-agents` the templates of the named node agents that PM-9 places there, which include `lenny-quota-agent`.
+- 0128-F9: FE-1 order item 1 writes the custody event first, as FP5 requires, then the row in the session store, and states that the two stores share no transaction; a `chaos` test covers a failure between the writes.
+- 0128-F12: the deletion rule of `lenny-label-immutability` and the Phase 5 row name an `AgentPod` whose Pod carries the label, and a `component` test covers both deletions.
+- 0128-F14: the "Problem" table names `pkg/gateway/api/admin/legalhold.go`, `pkg/gateway/api/admin/session_terminator.go`, and `pkg/gateway/core/session/sessionserver/force_terminate.go`.
+- 0128-F15: the test headings, the `// diagnosis:` rule, the Terms row, two tier references, and "Validation owed" item 7 use the named tiers, and the old load tier splits into `load_local`, `load_kind`, and `load_cloud`.
+- 0128-F16: the `docs` test that compared the documented coverage table with test results is removed.
+- 0128-F17: the §28.4 claim-register edit is restated as issues under `FORENSIC` and `ACTSTR`, as the program reads it.
+- 0128-F18: "Specification sections affected" names the target pages `FORENSIC`, `ACTSTR`, `HOLD`, `GITMIR`, `PODINIT`, `APOD`, and `DATACLASS`, and states that each area change discharges the specification lane.
+- 0128-F19: "Changes requested of 0127-egress-and-git" marks its four requests as applied, as 0127 revision 93 states them.
+- 0128-F20: 0128.S2 states that it renders `keepalive`, matching 0118's statement that PLR-1 holds in full once 0128.S2 lands.
+- 0128-F21: "Documentation" gains `docs/api/admin.md`, `docs/api/rest.md`, and the tenant admin's view in `multi-tenancy.md`.
+- 0128-F22 (items 1 to 3): `preserve: false` with `freeze: true` reports `freeze: unavailable` and leaves the freeze to the capture Job; the pool settings become the pool fields `activityFileStream` and `activityOnCoverageLoss`; and "Tipping off" names a tenant deletion that blocks past its deadline. Item 4 is O11.
+- checkpoint-workspace-C7: 0128.S4 depends on 0131.S4 (with 0128-F3).
+- tenancy-security-C2: 0128.S1 depends on 0149.S2, and "Who can do what" states that `platform-forensics` is a platform role under TS-2's boundary.
+- program-C5: the settled O1 moved from "Open decisions" to "Record of O1" under "Decisions".
+- 0128-F2 (part, under the skeptic's note): the deferral event is renamed `forensics.erasure_deferred_completed` and joins the custody events, so the existing SO-4a carve-out covers it. The rest of the finding is O3.
+
+Raised as open decisions:
+
+- O2: the name of the evidence report frame and SDK call, a conflict with 0135 MD-15 (0128-F1, tenancy-security-C5).
+- O3: SO-4a's mirror and SO-4b's approval for the actions of a case, a conflict with 0142 (0128-F2, tenancy-security-C3).
+- O4: the legal-hold request body, and whether this change closes F-15.1.85, F-11.7.27, and part of F-12.8.45 (0128-F4).
+- O5: per-region escrow clients and escrow immutability (0128-F6).
+- O6: how decision 12's two-person rule selects regulated tenants and covers capture reads (0128-F8). The review marked it as needing no owner decision; the key for a regulated tenant has two defensible designs under 0150, so it is raised.
+- O7: the replica that delivers `CH-PRESERVE` and the single writer of a hold's copy worker (0128-F10). The review offered two designs, so it is raised.
+- O8: a freeze during a `cleanup` run and a quarantine during a slot release, which follow the 0145 and 0153 conflict (0128-F11, checkpoint-workspace-C3, pod-structure-C6).
+- O9: a paused session on a quarantined pod under `fail`, a conflict with 0146 (checkpoint-workspace-C6).
+- O10: the refusal of session creation under the activity floor, which bears on FP3 (0128-F13).
+- O11: who sets the `agentActivity.*` streams, and whether turning one off is a weakening under 0142's SO-2 (0128-F22, item 4).
+
+Dropped: none. Every finding and conflict held against the text of the change and the tree.
+
+Second pass. This pass closed the 10 edits that the agents of other changes requested of this change, which split into 13 parts: 2 already done, 6 applied, 2 raised as open decisions, 3 already recorded as open decisions, and 0 dropped. The revision stays 38 and the status stays `Draft`. `python3 scripts/changes/changes.py check` reports no problem after the step edits.
+
+- Already done (0118, 0136; tenancy-security-C9): FE-6b, its `static` test, and "Validation owed" item 5d already admit in `lenny-node-agents` the named node agents that PM-9 places there, `lenny-quota-agent` included.
+- Applied (0121; 0121-F13, 0121-F10): "Per-tenant cost" states that `evidence.usage` follows 0121's "Writing periodic events", 0128.S7 adds the event and `evidenceQuotaBytes` and depends on `0121.S2 (part)`, 0128.S2 adds `keepalive`'s request to the class subtraction when it lands after 0121.S1, and the `component` tier gains the event's idempotency case.
+- Applied (0127; 0127-p1-F13): "Changes requested of 0127-egress-and-git" records that 0127.S2 takes the resolution of a slot index and a time to a session, with its store under 0127's open decision 75.
+- Applied (0136; 0136-F13): 0128.S6 and 0128.S8 depend on 0136.S7 in place of 0136.S3, FE-5 names the capture image by digest and the fixed set of host paths its capture steps read, which `POD_NAMED_AGENT_ONLY` pins, and the `static` test and "Validation owed" item 4 follow.
+- Applied (0137): FE-1's `Contracting` row and 0128.S2 state that the controller keeping a quarantined pod's `PodSet` is the one 0137's O5 names.
+- Applied (0150; 0150-F2, 0150-F8): "Keys" names the evidence key store operation `CountTenantWrappedKeys`, which 0150's read route and `TenantKeyProbe` worker call, 0128.S7 states that whichever of it and 0150.S2 lands second adds the count to the move from `retained` to `none`, and the `component` tier gains the count's case.
+- Applied (0150; 0150-F21): 0128.S4, 0128.S6, 0128.S7, and 0128.S8, which write class names into §12.9, depend on `0150.S1 (part)`.
+- Raised O12 (0135; mirrors 0135 O9): the step that 0128.S4's output-file edge names if 0135.S4 is split.
+- Raised O13 (0136; mirrors 0136 O10): one residency region per deployment against FE-3's per-region escrow.
+- Already open (0135; tenancy-security-C5): O2 records 0135's O23 on the `activity` frame and `reportActivity`, and now names it.
+- Already open (0142; tenancy-security-C3): O3 records 0142's open decision 39, and now names it.
+- Already open (0145; 0145-F23): O8 records the `cleanup` freeze case, and now names 0145's O20 and maps its options to O8's.

@@ -1,6 +1,6 @@
 # Connector authorization and external memory
 
-Status: `Draft`, revision 20, 2026-11-15. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 21, 2026-11-19. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -270,6 +270,16 @@ The account-link attack exists in today's code, and tying its fix to either feat
 | A hook that receives the validated code and verifier | Shared interface |
 | What the start page displays, the per-provider callback path, and any digest compared on return | Supplied by each caller |
 | Code exchange and token storage | UC-2: the Token Service, with identity binding, the UC-2 rule that ties the provider account to the Lenny user, and a confirmation page. Today's §9.3 handlers, until CR-A of the removal design deletes them: the gateway, into the connector credential row. |
+
+**Open decisions on CA-0.** Three questions on CA-0 wait on the owner in `decisions.md`. O1 asks what step 0123.S1 builds and when it lands, because the "Browser login" the start page uses lands in 0149.S6 and 0124.S1 deletes the §9.3 handlers this section converts. O2 asks what the start page does in a deployment with no OIDC browser login. O5 asks how long a link URL stays usable when a link prompt shows it for longer than the flow identifier's 10 minutes.
+
+**Flow state.** The flow record lives in the Redis state store of the shared package. It is written once with a 10-minute TTL and consumed atomically at the callback, and a replayed `state` finds a tombstone. Its key is the §12.4 key that CR-1 of the removal design states for the shared flow in place of the connector row `conn:oauth:state:{state}`, and it keeps that row's platform-scope exception to the tenant prefix rule. Any replica serves the callback, because the record is in Redis rather than on the replica that served the start page. When the store is unreachable at the start page or at the callback, the flow is refused. The package carries the name that CR-1 of the removal design gives it in place of `pkg/connectoroauth`.
+
+**Several flows in one browser.** The cookie's name carries the flow identifier, in the form `__Host-lenny-link-<flow-id>`, and the callback reads the cookie named for the flow identifier that `state` signs. Two link URLs from one combined missing-links response, opened in two tabs, therefore keep separate nonces.
+
+**Consumption.** Opening the start page does not consume the flow identifier. A reload, or a second open after an abandoned provider login, within the 10-minute lifetime runs the login again and sets a new nonce for the flow, which replaces the earlier one, so a provider redirect from the earlier open fails the cookie check. The callback consumes the identifier.
+
+**Refusals.** Each refusal renders an error page that names the reason and writes an audit event. The reasons are a tenant or subject that differs from the flow's, a missing or mismatched cookie, an expired or consumed flow identifier, a failed signature or `iss` check, and an unreachable flow store. The caller names the audit event beside its success event, as UC-2 names `user_link.created`.
 
 ### CA-1: Link flow
 
@@ -611,20 +621,23 @@ No Codex result is recorded. The CLI was not logged in for model turns, and the 
 
 | Area | Items |
 | :-- | :-- |
-| Store | `pkg/gateway/session/memorystore`, including `pgstore`, `memorystoretest`, `preflight.go`, and `observer.go`. |
-| Tools | `registerMemoryTools` and its schemas in `mcptools`. |
-| Routes | `sessionserver/memory.go` and the `/v1/sessions/{id}/memory` routes. |
-| Gateway | `--memory-enabled`, `--memory-max-per-user`, the record-count sampler, and wiring in `wiring_fields.go`, `session_messaging.go`, `metricsbackfill.go`, `workers.go`, `config_parse.go`, and `adminrouter.go`. |
-| Erasure | The memory step in `erasure/order.go` and `contract.go`, and `ValidateMemoryStoreErasure`. |
-| Observability | `lenny_memory_store_*`, `MemoryStoreGrowthHigh`, `MemoryStoreErasureDurationHigh`, `pkg/alerting/rules`, `docs/alerting/rules.yaml`, and the chart's `alerting-rules.yaml`. |
+| Store | `pkg/gateway/session/memorystore`, including `pgstore`, `memorystoretest`, `embedder.go`, `preflight.go`, and `observer.go`. |
+| Tools | `registerMemoryTools` and its schemas in `pkg/gateway/platformtools/mcptools`. |
+| Routes | `pkg/gateway/platformtools/memory.go` and the `/v1/sessions/{id}/memory` and `/v1/sessions/{id}/memory/{memoryId}` routes that `pkg/gateway/platformtools/handler.go` registers, with the paths in `pkg/api/openapi/openapi.json` and the rows of `cmd/lenny-gateway/testdata/route-table.golden`. |
+| Seam and layout | The memory routes in "Route registration" of `spec/interfaces/gateway-seams.md`, the memory routes in the `platformtools` row of `pkg/gateway/ARCHITECTURE.md`, the three rows with `removed-by: '0123'` in `tests/registers/gateway-layout.yaml`, and the rows for `memorystore` and `memorystoretest` in `tests/registers/spec-section-citations.yaml`. |
+| Gateway | `--memory-enabled`, `--memory-max-per-user`, the record-count sampler, and wiring in `cmd/lenny-gateway`: `flags.go`, `wiring_fields.go`, `session_messaging.go`, `metricsbackfill.go`, `metrics_observers.go`, `workers.go`, `config_parse.go`, `adminrouter.go`, and `erasure_contract.go`, with the flag rows of `cmd/lenny-gateway/testdata/flag-surface.golden`. |
+| Erasure | The memory step in `pkg/storage/erasure/order.go` and `contract.go`, `ValidateMemoryStoreErasure`, and the memory store preflight phase of the erasure job in `pkg/storage/erasurejob` (`FailurePhaseMemoryStorePreflight`). The reserved preflight tenant that `migrations/0096_preflight_tenant.up.sql` seeds serves that preflight, and its treatment follows open decision O4. |
+| Observability | `lenny_memory_store_*` and their collectors in `pkg/gateway/replica/gatewaymetrics`, the catalog entries in `pkg/observability/metrics/catalog.go`, `MemoryStoreGrowthHigh`, `MemoryStoreErasureDurationHigh`, `pkg/alerting/rules`, `docs/alerting/rules.yaml`, and the chart's `alerting-rules.yaml`. |
 | SDKs | `MemoryWrite` and `MemoryQuery` in the Go, Python, and TypeScript runtime SDKs. |
-| Chart | Memory values and `gateway-deployment.yaml` flags, with the chart tests and `pkg/embedded/manifests/manifests.yaml`. |
-| Schema | A new migration dropping `agent_memory`. Migrations 0032 and 0044 stay as history. |
+| Chart | Memory values in `charts/lenny/values.yaml` and `values.schema.json`, and `gateway-deployment.yaml` flags, with the chart tests and `pkg/embedded/manifests/manifests.yaml`. |
+| Schema | A new migration dropping `agent_memory`. Migrations 0032 and 0044 stay as history, unless the owner rewrites them under open decision O4. |
 | Tests | `tests/component/stores/memory*`, and memory cases in the contract and security tiers. |
 
-**The embedder.** `semanticcache` imports `memorystore` for `Embedder`, `HashingEmbedder`, and `CosineDistance` **[source]**. If the cache is removed first or together, that code goes too. Otherwise it moves into `semanticcache`.
+**Removed settings and routes.** The chart's values schema refuses unknown top-level keys, so a values file that still sets a `memory.*` value fails the chart's schema check once the `memory` property leaves the schema. The gateway parses its flags with the standard flag set, which exits with an error on an unknown flag, so a deployment that still passes `--memory-enabled` or `--memory-max-per-user` does not start. The memory routes are no longer registered and answer `404`.
 
-**pgvector.** The `vector` extension requirement goes when no other user remains. Some database tests name the pgvector image only as their Postgres container, so a proposal verifies this and changes `tests/testinfra/containers/postgres.go` if appropriate **[pending]**.
+**The embedder.** `semanticcache` imports `memorystore` for `Embedder`, `HashingEmbedder`, and `CosineDistance` **[source]**. Step 0123.S2 depends on 0132.S1, which removes the semantic cache, so that code leaves with the memory store and nothing moves into `semanticcache`.
+
+**pgvector.** Whether the `vector` extension stays a prerequisite of the migration chain is open decision O4. Migration 0044 runs `ALTER TABLE agent_memory ADD COLUMN embedding vector(256)`, so the chain needs the extension, or the pure-SQL `vector` shim of the embedded stack, for as long as migrations 0032 and 0044 stay as they are. The carriers of the requirement are `tests/testinfra/containers/postgres.go` (`pgvector/pgvector:pg16`), `compose/default.yml`, `deploy/terraform/cloud/azure/managed-services.tf` (the `VECTOR` allowlist entry), and that shim. Some database tests name the pgvector image only as their Postgres container, and "Validation owed" in `steps.md` carries that check.
 
 **Data.** Nothing migrates, since there are no deployments.
 
@@ -651,7 +664,14 @@ credentialBindings:
 
 The harness speaks MCP to `https://memory.acme.com/mcp` through `netagent`, which attaches the assertion. The memory server verifies it against `https://<lenny>/identity/acme/jwks.json`.
 
-**Erasure [design].** Deleting the memory data is a deployer obligation, which the operator guide states. The erasure receipt names, under `externalDataNotErased`, the hosts of the tenant's bindings that carried the user's identity, from `userCredential` links the erasure deletes and from `identityAssertion` bindings, so a receipt never implies the external data was removed.
+**Pods.** A session that holds an `identityAssertion` binding is refused with `422 IDENTITY_ASSERTION_UNSUPPORTED_POD` on the pods that **Pods (D11).** under CR-2 of the removal design lists: a pod of a recycling pool, a pod that has served a session, and a pod with several slots on a pool whose attribution status records the union scope or no result yet. A binding with `scope: always`, as in the example above, places that limit on every session of the tenant in the binding's environments. A tenant that runs sessions on recycling pools gives the binding `scope: onRequest` or narrows its `environments`.
+
+**Erasure [design].** Deleting the memory data is a deployer obligation, which the operator guide states. The erasure receipt names, under `externalDataNotErased`, the hosts of the tenant's bindings that carried the user's identity, from `userCredential` links the erasure deletes and from `identityAssertion` bindings, so a receipt never implies the external data was removed. The field has these properties:
+
+- It is a list of host names, sorted and without duplicates. It is an empty list when no such binding or link exists.
+- The `DeleteByUser` job reads the hosts before it deletes the user's links, and it keeps the list in the job record, so a job that resumes by phase after a crash still reports them.
+- The receipt of a `DeleteByTenant` job names the hosts of every `userCredential` and `identityAssertion` binding of the tenant.
+- Which bindings count for a user, including a binding deleted before the erasure, and whether the receipt also names the provider account of each deleted link, are open decision O6 in `decisions.md`.
 
 **Retention, residency, capacity, and retrieval quality.** These move to the deployer.
 
@@ -822,7 +842,7 @@ Revision 13 applied the items that [`0139-runtime-protocol`](../0139-runtime-pro
 
 ## Specification changes
 
-> **Withdrawn in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The memory removals stay live under CA-10: the memory parts of the §4, §8.2, §8.3, and §8.5, §9.1, §9.4, §12, §15.1 and §15.4, §16, §18, §22.4, §23, and §28.5.3 rows, including `externalDataNotErased` in §12.8. No row is CA-0's: its shared flow lands on the account-link routes of §15.1 with UC-2, and §9.3 becomes a successor pointer under CR-1 of the removal design. Every connector statement is withdrawn, and the removal design's "Specification changes" replaces it.
+> **Withdrawn in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The memory removals stay live under CA-10: the memory parts of the §4, §8.2, §8.3, and §8.5, §9.1, §9.4, §12, §15.1 and §15.4, §16, §18, §22.4, §23, and §28.5.3 rows, including `externalDataNotErased` in §12.8, defined as the properties under **Erasure [design].** in "External memory pattern" state. No row is CA-0's: its shared flow lands on the account-link routes of §15.1 with UC-2, and §9.3 becomes a successor pointer under CR-1 of the removal design. Whether step 0123.S1 needs a specification edit of its own, for the converted §9.3 handlers and the property that only the subject who requested a link can complete it, follows open decision O1. §18 and §23 are successor stubs since 0115.S9, so under "Reading the program" of the v1 program the §18 row applies to `docs/about/status.md`, whose row "Memory, semantic caching, guardrail hooks" sits outside the generated markers, and the §23 row applies to `docs/about/comparisons.md`. Every connector statement is withdrawn, and the removal design's "Specification changes" replaces it.
 
 Each lands through `change-proposal`.
 
@@ -847,7 +867,22 @@ Each lands through `change-proposal`.
 
 ## Documentation
 
-> **Withdrawn in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The memory removal stays live: `docs/tutorials/agent-memory.md` describes the egress pattern of "External memory pattern", as the **External memory.** bullet states, and `docs/runtime-author-guide/platform-tools.md`, the runtime capabilities page, the operator guide, the glossary, and `docs/reference/metrics.md` lose the memory content. Every connector statement is withdrawn, and the removal design's "Changes to Lenny's documentation" replaces it.
+> **Withdrawn in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The memory removal stays live: `docs/tutorials/agent-memory.md` describes the egress pattern of "External memory pattern", as the **External memory.** bullet states, and `docs/runtime-author-guide/platform-tools.md`, the runtime capabilities page, the operator guide, the glossary, and `docs/reference/metrics.md` lose the memory content. Every connector statement is withdrawn, and the removal design's "Changes to Lenny's documentation" replaces it. [`0124-connector-removal`](../0124-connector-removal/change.md) also names `docs/tutorials/agent-memory.md` under "Changes to Lenny's documentation", and which step writes it is open decision O3.
+
+The live pages, each with its reader and what changes for that reader:
+
+| Page | Reader | Change |
+| :-- | :-- | :-- |
+| `docs/tutorials/agent-memory.md` | Runtime author and operator | Describes the egress pattern of "External memory pattern", with the deployer's erasure obligation and `externalDataNotErased`, in place of the built-in store. |
+| `docs/tutorials/index.md` | Runtime author and client | The "Agent Memory" entry describes the external pattern rather than memory persisted by Lenny. |
+| `docs/runtime-author-guide/platform-tools.md`, `runtime-sdk.md`, `local-development.md`, and the runtime capabilities page that replaces `integration-levels.md` | Runtime author | `lenny/memory_write`, `lenny/memory_query`, `MemoryWrite`, and `MemoryQuery` leave. |
+| `docs/operator-guide/configuration.md` ("Memory Store Configuration") and `docs/reference/configuration.md` ("Memory Store configuration") | Operator | The memory settings leave, and a values file that sets one fails the chart's schema check. |
+| `docs/operator-guide/observability.md` and `docs/reference/metrics.md` | Operator | `lenny_memory_store_*`, `MemoryStoreGrowthHigh`, and `MemoryStoreErasureDurationHigh` leave. |
+| `docs/getting-started/concepts.md` ("Memory Store") and `docs/getting-started/architecture.md` (the memory store node of the diagram) | Every reader | The memory store leaves the concepts and the architecture diagram. |
+| `README.md` and `docs/index.md` | Every reader | The "Memory store" bullet, which states a Postgres and pgvector default, leaves. |
+| `docs/reference/glossary.md` | Every reader | The memory store entries leave. |
+| `docs/testing/forward-compatibility.md` | Contributor | The statement that `MemoryStore` is pluggable in v1 leaves. |
+| `docs/about/status.md` and `docs/about/comparisons.md` | Every reader | The successors of the §18 and §23 rows: the status row "Memory, semantic caching, guardrail hooks" and the memory store rows and bullets of the comparisons drop built-in memory. |
 
 The pages that change are `docs/tutorials/agent-memory.md`, which becomes the external pattern; `docs/tutorials/using-connectors.md`, which gets the link flow; `docs/runtime-author-guide/platform-tools.md`, the runtime capabilities page that replaces `integration-levels.md` under [`0139-runtime-protocol`](../0139-runtime-protocol/change.md), the operator guide, the glossary, and `docs/reference/metrics.md`, which lose the memory content; and `TESTING.md` §13.36. Together they state every setting, limit, failure mode, and runtime-facing rule this design introduces:
 
@@ -860,6 +895,28 @@ The pages that change are `docs/tutorials/agent-memory.md`, which becomes the ex
 ## Tests
 
 > **Withdrawn in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The CA-0 cases of tier 9, a link URL sent to another subject, a missing cookie, and an impersonation bearer, each refused, stay live and run through the account-link routes of UC-2 once CR-A of the removal design deletes the §9.3 handlers. The tier 11 case for the removed memory metrics and alerts stays live. Every connector case is withdrawn, and the removal design's "Tests" replaces it.
+
+### Tests of the live steps
+
+The tiers are named as `lenny-test --tier` names them. Each test carries its `// spec:` annotation.
+
+| Step | Tier | Coverage |
+| :-- | :-- | :-- |
+| 0123.S1 | unit | The callback refuses a tampered `state` signature, an `iss` that differs from the provider's where the provider returns one (RFC 9207), an expired flow identifier, and a consumed flow identifier. The cookie name carries the flow identifier. |
+| 0123.S1 | integration | A replayed `state` finds the tombstone and is refused. A reload of the start page within the lifetime sets a new nonce, and a provider redirect from the earlier open fails the cookie check. Two flows in one browser complete independently. A callback on a replica other than the one that served the start page completes. |
+| 0123.S1 | chaos | The flow store unreachable at the start page and at the callback refuses the flow, with the error page and the audit event. |
+| 0123.S1 | security | A link URL sent to another subject is refused. A login in another tenant with the same subject is refused. A missing cookie is refused. An impersonation bearer is refused. Each refusal writes its audit event, and no token appears in the error page. The cases of open decision O2 for a deployment with no OIDC browser login join this row once O2 is settled. |
+| 0123.S2 | unit | The platform tool list carries no memory tool. The erasure order and contract carry no memory step, and the erasure job has no memory store preflight phase. |
+| 0123.S2 | contract | `POST` and `GET /v1/sessions/{id}/memory` and `DELETE /v1/sessions/{id}/memory/{memoryId}` answer `404`, and the route table and flag surface golden files carry no memory row. |
+| 0123.S2 | integration | The drop migration applies and reverses on the migration chain. A `DeleteByUser` job runs to completion with the memory step and its preflight gone. |
+| 0123.S2 | static | A values file that sets a `memory.*` value fails the chart's schema check, beside the chart render tests under `tests/static/chart`. |
+| 0123.S2 | unit | The gateway's flag parsing refuses `--memory-enabled` and `--memory-max-per-user` as unknown flags, beside `cmd/lenny-gateway/flags_test.go`. |
+| 0123.S2 | docs | Removed metrics and alerts leave no runbook or documentation reference. |
+| The step that lands `externalDataNotErased` under open decision O3 | integration | A `DeleteByUser` receipt names the hosts of the user's `userCredential` links and of the tenant's `identityAssertion` bindings, sorted and without duplicates, and an empty list when there are none. A job that resumes after a crash past the link deletion still reports the hosts. A `DeleteByTenant` receipt names the hosts of every such binding of the tenant. |
+
+### Withdrawn tests
+
+The table below is the record of the connector design and uses the tier numbers of that time.
 
 The tiers are the stages of the repository's test suite, which `lenny-test --tier` runs.
 

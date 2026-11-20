@@ -106,3 +106,62 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 
 The owner accepted three resolutions of conflicts between steps that the conversion of the moved designs into steps found (0113.S4). 0142.S2 no longer carries the `placement` section, the posture's placement fields, or `placementConfigured`, and 0142.S4 no longer carries the offering grant mirror. 0136.S6 and 0136.S5 add them after these steps land, which removes a dependency loop with 0136 and 0150.
 - 2026-11-17. Decision 8 of [0117](../0117-gateway-package-layout/decisions.md), settled by the owner, assigns this change the edits to the gateway seam interface page and `pkg/gateway/seam` for the mechanisms it changes. Added a line naming the operations to 0142.S6 in `steps.md`, and the decision to `decisions.md`.
+
+## Revision 61 (2026-11-19)
+
+- Date: 2026-11-19. Trigger: review. Name: M3 readiness review (`scratchpad/m3-readiness/reviews/0142.md`, the skeptic's verdict `scratchpad/m3-readiness/verified/0142.md`, which confirmed 0142-F1 as High, and the consistency reports connectors-llm-billing, tenancy-security, credentials-git, and program).
+- Counts: 26 applied (findings and conflicts with at least one edit here), 6 raised as open decisions (36 to 41), 1 returned as an issue, 0 dropped. No decision was open before this review.
+- Applied:
+  - 0142-F1 (High, confirmed): 0142.S1 depends on 0142.S4, which adds `impersonated_by`, so no impersonation bearer holds a security role in the window between them. The security-principal write routes land with 0142.S2 and its delay, and 0142.S1 widens `ResolveRoles` to read `typ`, `iat`, and `impersonated_by`, as the skeptic's note corrects.
+  - 0142-F2: SO-7 drops `patch` and `update` on `deployments` and `patch` on `deployments/scale`, as decision 18 settles; the `coreDnsStuckEndpoint` remedy gets no right in `kube-system` and takes one of the two forms decision 18 allows; the §25.4 **PKI trust boundary** statement rests on `jobs: create` alone; the `security` test asserts no Deployment write; 0142.S9 closes F-25.6.10.
+  - 0142-F3: "Defects found while verifying" and 0142.S4 state that `F-12.3.30` here is the session-list finding, and that `BUILD-GAPS.md` gives the identifier to a second, High finding that this change does not close. The renumbering is returned as an issue.
+  - 0142-F5 (the part every option of decision 37 keeps): SO-5a's wait runs off the session's frame reader (MDR-22), a message never resolves an approval, and 0142.S6 depends on 0135.S4.
+  - 0142-F6 and tenancy-security-C8: the record gains `"delegation": "forbid"` with its tightening, weakening, enforcement row, configuration row, and tests (0126 D5); `security_approvals` gains `withdrawn` with **Withdrawal on suspension.** and its tests (0146 L29, SLR-27); posture gains the `llm` section of 0133 "LU-8", with its sharing item left to decision 38; SO-5a states that rules never match a client tool and cites CTF-1 and CTF-2 (0122).
+  - 0142-F7: SO-4b names the gated routes by their access check, places the gate in `GWSEAM-AuthorizeSession` and `GWSEAM-SessionAccessible`, and 0142.S5 carries the decision-8 line naming them; the review's unverified sub-point holds, because the owner's tool-use approve route reads the caller through `GWSEAM-RequestCaller` (`pkg/gateway/platformtools/interactions_resolution.go`), so 0142.S4 carries a decision-8 line for that operation's `Caller` gaining `impersonated_by`; "Specification sections affected" names the seam page; the 0117 decision-8 note in `decisions.md` names 0142.S4 and 0142.S5.
+  - 0142-F8: **Where the applier and the sweeps run.** places every periodic job in the gateway under the Lease leader pattern of the §12.5 artifact GC job, lists every pending kind the applier serves, makes each activation a conditional update that emits its event once, and applies overdue activations in `effectiveAt` order; `integration` and `chaos` tests cover a restart and two replicas.
+  - 0142-F9: an approved operator access request is usable only by its `requested_by`, compared by the person behind the bearer, for impersonation and for a session content read; the approver sees the requester's operator reference; `integration` and `security` tests cover it.
+  - 0142-F10 (the parts that need no owner choice): 0142.S2 states that the `approvals.*` and `operatorAccess.*` members are accepted there and enforced by 0142.S5 to 0142.S7, and the repository-write tightening row lands with 0142.S7; 0142.S7 depends on 0127.S4.
+  - 0142-F11: the paths name `pkg/gateway/api/admin/tenants.go`, `pkg/gateway/api/admin/impersonation.go`, `pkg/gateway/core/session/executor/podstream.go`, `pkg/gateway/platformtools/toolapproval.go`, and `pkg/audit/adminaudit/adminaudit.go` with its `target_tenant_id`; the Tests headings use the tier names.
+  - 0142-F12: SO-7 and the `static` tests delete `TestOpsRBACMatchesSpecCanonicalBlock` and its skip entry, which read specification prose, and replace them with a chart-render assertion of the exact rule set.
+  - 0142-F13: 0142.S1 closes F-10.6.22 (part); 0142.S6 and "Defects found while verifying" state that 0139.S2 closes F-7.2.46 by retiring the adapter-local tools, which is returned as an edit to 0139.
+  - 0142-F14: "Residual risks" gains **Lockout by a stolen `security-admin`.**, which reaches `client-guide/security-teams.md` under the "Documentation" rule for residual risks.
+  - 0142-F15: setting `operatorAccess.approval: required` with no `security-approver` is refused with `422 NO_APPROVER`, and `SecurityApproverCoverageLost` covers it.
+  - 0142-F16: the documentation row drops `api/mcp.md`, which 0138 removes, and points to the MCP adapter's documentation; the runtime author guide row, the `contract` test, and the `conformance` test describe `tool_call` and `tool_result` frames.
+  - 0142-F17: the `placement` and posture `pools` test cases name 0136.S6 and 0136.S5, and tests cover `NO_APPROVER`, `SecurityApproverCoverageLost`, `SecurityPrincipalCoverageLost`, and an activation past `effectiveAt` after a restart.
+  - 0142-F18: 0142.S3 states that audit delivery also needs the forwarder's leaf from EG-11, and depends on 0136.S2 and 0136.S3 for its PM-8 row and system class.
+  - 0142-F19: the SO-4b table and 0142.S5 state that 0138.S2 builds the impersonation mint's refusal of an `adapter-only` token, and that 0142.S5 keeps it.
+  - tenancy-security-C6: SO-1's resolver adds no security row for a subject with an invalidation level or hold of TS-4, and such a principal does not count as active; `unit` and `security` tests cover it.
+  - tenancy-security-C10 (this change's side): the steps notes state that no principal row exists before 0142.S2's delay, because the write routes land there.
+  - tenancy-security-C14: the `verbatimClientFiles` enforcement and configuration rows cover the derived-runtime content that `workspaceFiles` and `gitClones` cover, so a platform-declared asset is not refused.
+  - credentials-git-C6 (this change's side): SO-5b's **Approval state and the user verdict.** keeps the approval `state` apart from 0152's verdict field.
+  - credentials-git-C16: posture's `userCredentials` row reports `client_secret_post` types and types whose provider omits `expires_in`.
+  - credentials-git-C17: the `forbidRuntimeHeld` row cites UC-5 of 0151 as the owner of `422 USER_CREDENTIAL_BINDING_SUSPENDED`.
+  - program-C9 (this change's side): 0142.S2 states that 0126.S1 adds the delegation guardrail row with or after it.
+  - connectors-llm-billing-C2 (the part that needs no choice): the `llm` posture section, with its sharing item left to decision 38.
+  - "Labels from other designs" gains D5 of 0126, MD-19 and MDR-22, L29 and SLR-27, CTF-1 and CTF-2, and LU-8 and LUR-14.
+- Raised as open decisions:
+  - 36, which entries `lifecycleSubjects` accepts (0142-F4, tenancy-security-C1; with 0149 and 0143).
+  - 37, whether `approvals.tools` rules reach harness approvals (0142-F5; with 0135).
+  - 38, whether a tenant's posture names the other tenants that share an LLM upstream (connectors-llm-billing-C2, 0142-F6; with 0133, open decision 7 there).
+  - 39, operator actions under a forensic case in the mirror and the approval gate (tenancy-security-C3; with 0128).
+  - 40, what a pending version holds (tenancy-security-C4; with 0150 and 0136).
+  - 41, whether 0142.S2 splits (0142-F10).
+- Returned as an issue: `BUILD-GAPS.md` carries two open findings with the identifier `F-12.3.30` (0142-F3).
+- Dropped: none.
+- Second pass (2026-11-19): this pass closed the 20 edits that other changes requested of this one. Counts: 10 applied, 2 raised as open decisions, 3 already recorded as open decisions, 5 already done, and 0 dropped. Two of the applied requests also raised an open decision (44 and 45).
+  - Applied, 0124-F24: SO-5a states the refusal of a rule naming a `connector:<id>` server as its own rule validation, outside 0124's D7 list, and the `unit` test names it so.
+  - Applied, 0126-F1: posture's `securityConfig` section reports whether `"delegation": "forbid"` is set. The record member, the constraint row, the hold order, and the 0142.S2 sentence were already present.
+  - Applied, credentials-git-C6 (0127) and 0152-F1: SO-5b steps 3 and 4 write only the entry's `state` and leave `userAccess` unchanged, and **Approval state and the user verdict.** names 0152's field `userAccess` and points to 0152's open decision 54 for whether a later `allowed` verdict clears `userRefused`.
+  - Applied, 0136-F12: **One applier and one delay for both records.** names the pending rows of `environment_placement_versions` as a third kind of record and points to decision 40, which now names 0136 O13 and 0150 O14 as its matching decisions.
+  - Applied, 0143-F5 and credentials-git-C16: the `userCredentials` posture row adds the `assertionAudience: tokenEndpoint` types, generated certificate expiry, and a tenant whose `security-admin` and `tenant-admin` are one person, and restates the `client_secret_post` and `expires_in` items for `clientCredentials` types.
+  - Applied, 0148-L9: 0142.S2, the `tenantRegisteredServices` row, and the `gates` posture row name OC-1 (0148.S1) for connectors and the outbound grant and OC-2 (0148.S2) for outbound hosts.
+  - Applied, 0150-F14 and 0150-F8: the `securitySettings` posture row is stated by reference to the TSS-3 view, so it carries `objectsUnderTenantKey` and `evidenceKeysUnderTenantKey`; decision 41 re-points 0150's edge to 0150.S4; 0142.S2 states that 0150.S2 depends on 0142.S1 (part) and 0142.S4, and that 0136.S5 and 0136.S6 land after it because they depend on it.
+  - Applied, 0150-F21: 0142.S1, 0142.S2, 0142.S3, and 0142.S6 depend on 0150.S1 (part) for the §12.9 class names, and "Notes on the steps" states why.
+  - Applied, 0151-F12: 0142.S1 states that decision 27's refusal on the admin write route of UC-1 lands with whichever of 0142.S1 and 0151.S1 lands second.
+  - Applied, 0144-F3 in part: 0142.S2 states that whichever of it and 0147.S11 lands second raises the security counter of `content_stop_epochs`, and that 0147.S11 does, because it depends on 0142.S2.
+  - Raised 42, whether `approvalRequired` survives the move to `CallPlatformTool` (requested by 0139; matches 0139 O18).
+  - Raised 43, whether the forbids `writableDefaultClones` and `alwaysWritableClones` raise the security counter (requested by 0144; matches 0144 decision 9).
+  - Raised 44, where the outbound grant is stored (requested by 0148; matches 0148 O3).
+  - Raised 45, the order of 0142.S2 against 0143.S1 for the `~svc~` check on `lifecycleSubjects` (requested by 0143; matches 0143 O9).
+  - Already open: 39 for 0128 O3, which now names the renamed event `forensics.erasure_deferred_completed`; 38 for 0133 open decision 7; 37 for 0135 O20, which now names the matching options; and 36, which now names 0143 O11 and 0149 decision 33.
+  - Already done: the client tool limit in SO-5a (0122-F25), the absence of an MCP version pin in this change's tests (0134), the withdrawal of a pending approval on suspension (0146-F12), the `verbatimClientFiles` scope (0147-p2-F13), and the resolver rule for a subject with an invalidation level or hold (0149-p2-F7).
