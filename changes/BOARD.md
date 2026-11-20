@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Building | 1 |
 | Ready | 1 |
 | Waiting on decisions | 35 |
-| Blocked | 149 |
+| Blocked | 150 |
 | Landed | 15 |
 | Cancelled | 1 |
 
@@ -239,6 +239,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
+| [0164.S1](0164-token-exchange-identity-rules/steps.md#0164s1-token-exchange-narrowing-and-identity-rules) | Token exchange narrowing and identity rules | Blocked | 0163.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
@@ -287,3 +288,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 0 of 1 | 0 |
+| [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `Decided` | 0 of 1 | 0 |
