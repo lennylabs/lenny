@@ -55,20 +55,26 @@ const lintProductMains = "./cmd/..."
 
 // productPackagesOutsideLint returns, sorted, the import paths of the
 // module's packages that a main package under cmd/ imports, directly or
-// not, and that ./... does not match. goList runs `go list` in root with
-// the given arguments, in one build target, and returns its standard
-// output. Every listing sets the lint's build tags, so the packages are
-// the ones that target's build compiles with those tags.
-// Every target lists every main package under cmd/, although the release
-// builds some of them only for Linux, so the listings of the main packages
-// and of what they import run with -e: a package whose files the target's
-// build constraints all exclude is left out rather than failing the
-// listing, because that build does not compile it (owner's answer to
-// GT-19, 2026-11-20). Any other error a listed package carries, such as an
-// import that no module provides or a file whose package clause or import
-// block does not parse, fails the check (lintDepsList).
-// A go list failure, and a tree with no main package under cmd/, are
-// errors, so the check never passes on an empty listing.
+// not, and that ./... does not match with the lint's build tags. goList
+// runs `go list` in root with the given arguments, in one build target,
+// and returns its standard output.
+// The main packages and what they import are listed twice: with the
+// lint's build tags, which the golangci-lint runs set, and with no tags,
+// as the release builds them. A package that only one of the two builds
+// compiles is outside the lint as much as one under a directory that
+// ./... skips, since the lint reads ./... with its tags.
+// Every target lists every main package under cmd/ that its build
+// compiles, whether or not the release builds that binary for the target,
+// so the listings run with -e: a package whose files the build's
+// constraints all exclude is left out rather than failing the listing,
+// because that build does not compile it (owner's answer to GT-19,
+// 2026-11-20). The untagged listing keeps a package that the lint's tags
+// exclude and the release compiles. Any other error a listed package
+// carries, such as an import that no module provides or a file whose
+// package clause or import block does not parse, fails the check
+// (lintDepsList).
+// A go list failure, and a tree with no main package under cmd/ in either
+// listing, are errors, so the check never passes on an empty listing.
 func productPackagesOutsideLint(ctx context.Context, root string, goList func(ctx context.Context, root string, args ...string) (string, error)) ([]string, error) {
 	tags := "-tags=" + strings.Join(lintBuildTags(), ",")
 	module, err := goList(ctx, root, "-m", "-f", "{{.Path}}")
@@ -83,6 +89,39 @@ func productPackagesOutsideLint(ctx context.Context, root string, goList func(ct
 	if err != nil {
 		return nil, err
 	}
+	linted, err := goList(ctx, root, "-e", tags, "-f", "{{.ImportPath}}", "./...")
+	if err != nil {
+		return nil, fmt.Errorf("list the packages ./... matches: %w", err)
+	}
+	covered := map[string]bool{}
+	for _, p := range strings.Fields(linted) {
+		covered[p] = true
+	}
+	found := map[string]bool{}
+	for _, build := range []struct{ name, tags string }{{"the lint's build tags", tags}, {"no build tags", "-tags="}} {
+		deps, err := productDeps(ctx, root, goList, build.tags, hidden)
+		if err != nil {
+			return nil, fmt.Errorf("with %s: %w", build.name, err)
+		}
+		for _, p := range deps {
+			if p.Module != nil && p.Module.Path == module && !covered[p.ImportPath] {
+				found[p.ImportPath] = true
+			}
+		}
+	}
+	outside := make([]string, 0, len(found))
+	for p := range found {
+		outside = append(outside, p)
+	}
+	sort.Strings(outside)
+	return outside, nil
+}
+
+// productDeps lists, with the build tags argument tags, the main packages
+// under cmd/ and the directories hidden names, and returns every package
+// they import, directly or not, the main packages included. A listing
+// with no main package is an error.
+func productDeps(ctx context.Context, root string, goList func(ctx context.Context, root string, args ...string) (string, error), tags string, hidden []string) ([]lintDepsPackage, error) {
 	listed, err := lintDepsList(ctx, root, goList, append([]string{tags, lintProductMains}, hidden...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list the main packages under %s: %w", lintProductMains, err)
@@ -100,23 +139,7 @@ func productPackagesOutsideLint(ctx context.Context, root string, goList func(ct
 	if err != nil {
 		return nil, fmt.Errorf("list the packages the binaries under %s import: %w", lintProductMains, err)
 	}
-	linted, err := goList(ctx, root, "-e", tags, "-f", "{{.ImportPath}}", "./...")
-	if err != nil {
-		return nil, fmt.Errorf("list the packages ./... matches: %w", err)
-	}
-	covered := map[string]bool{}
-	for _, p := range strings.Fields(linted) {
-		covered[p] = true
-	}
-	var outside []string
-	for _, p := range deps {
-		if p.Module == nil || p.Module.Path != module || covered[p.ImportPath] {
-			continue
-		}
-		outside = append(outside, p.ImportPath)
-	}
-	sort.Strings(outside)
-	return outside, nil
+	return deps, nil
 }
 
 // lintDepsPackage is the part of a `go list -json` record the coverage
@@ -152,8 +175,10 @@ func excludedByConstraints(e *lintDepsError) bool {
 // importer's DepsErrors, rather than failing, so every error in either
 // field other than a build-constraint exclusion fails the listing. A
 // package outside ./... therefore cannot drop out of the listing behind
-// -e: it is listed, or the listing fails, unless the build does not
-// compile it.
+// -e: it is listed, or the listing fails, unless the listing's build,
+// with the tags args name, does not compile it. productPackagesOutsideLint
+// lists both with the lint's tags and with none, so a package that the
+// lint's tags exclude and the release compiles is listed too.
 func lintDepsList(ctx context.Context, root string, goList func(ctx context.Context, root string, args ...string) (string, error), args ...string) ([]lintDepsPackage, error) {
 	out, err := goList(ctx, root, append([]string{"-e", "-json=ImportPath,Name,Module,Error,DepsErrors"}, args...)...)
 	if err != nil {

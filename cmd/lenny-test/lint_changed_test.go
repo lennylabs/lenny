@@ -1032,14 +1032,18 @@ func TestLintFindsProductPackagesPerReleaseTarget(t *testing.T) {
 // linux constraint. The darwin build passes and names the packages outside
 // ./... that it compiles, the Linux build names the Linux-only package
 // outside ./... as well, and a main package under cmd/ whose files are all
-// Linux-only is listed in the Linux build alone. The test checks
-// contributor tooling and verifies no specification requirement.
+// Linux-only is listed in the Linux build alone. A package that the lint's
+// build tags exclude and a build with no tags compiles, under a testdata
+// directory or under ./..., is outside the lint in every build. The test
+// checks contributor tooling and verifies no specification requirement.
 func TestLintListingLeavesOutPackagesTheBuildExcludes(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("blocked: go is not on PATH")
 	}
 	root := writeLintModule(t, map[string]string{
-		"cmd/lenny/main.go":      "package main\n\nimport _ \"example.com/m/_hidden/h\"\n\nfunc main() {}\n",
+		"cmd/lenny/main.go":      "package main\n\nimport (\n\t_ \"example.com/m/_hidden/h\"\n\t_ \"example.com/m/x/testdata/neg\"\n\t_ \"example.com/m/negated\"\n)\n\nfunc main() {}\n",
+		"x/testdata/neg/n.go":    "//go:build !integration\n\npackage neg\n",
+		"negated/n.go":           "//go:build !component\n\npackage negated\n",
 		"cmd/server/main.go":     "package main\n\nimport (\n\t_ \"example.com/m/linuxonly\"\n\t_ \"example.com/m/_linuxdep/d\"\n)\n\nfunc main() {}\n",
 		"cmd/_linuxtool/main.go": "//go:build linux\n\npackage main\n\nfunc main() {}\n",
 		"linuxonly/l.go":         "//go:build linux\n\npackage linuxonly\n",
@@ -1055,6 +1059,8 @@ func TestLintListingLeavesOutPackagesTheBuildExcludes(t *testing.T) {
 		"example.com/m/_hidden/h (built for linux/amd64, darwin/arm64)",
 		"example.com/m/_linuxdep/d (built for linux/amd64)",
 		"example.com/m/cmd/_linuxtool (built for linux/amd64)",
+		"example.com/m/negated (built for linux/amd64, darwin/arm64)",
+		"example.com/m/x/testdata/neg (built for linux/amd64, darwin/arm64)",
 	}
 	if !slices.Equal(res.outside, want) {
 		t.Errorf("packages outside ./... %v; want %v", res.outside, want)
