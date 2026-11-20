@@ -58,10 +58,13 @@ const golangciLintWallLimit = 25 * time.Minute
 // of about 5.1 GiB, and a cache fill in the gate container was killed,
 // most likely for lack of memory. With this limit the same run peaked at
 // about 3.2 GiB and took about 40% longer (TESTING.md, the golangci-lint
-// check of the static tier). The limit is
-// soft: when the live heap exceeds it, the Go runtime collects more
-// often, and the run slows rather than failing. Lowering the concurrency
-// did not lower the peak.
+// check of the static tier). The limit lowers the peak and does not bound
+// it: the Go runtime collects garbage more often as the heap nears the
+// limit, lets the heap grow past it when the live data needs more, and the
+// measured peak with the limit was above 3 GiB. A run can therefore still
+// be killed for memory, and a fill that is killed leaves the static tier
+// to the private cache (privateLintCache). Lowering the concurrency did
+// not lower the peak.
 const golangciLintMemLimit = "3GiB"
 
 // golangciLintExitIssues is the status the check asks golangci-lint to
@@ -544,7 +547,7 @@ func (l golangciLint) run() (string, error) {
 // records, and the gate's summary prints it (gateSummaryNotes).
 const (
 	lintCacheFallbackMarker = "LINT CACHE FALLBACK:"
-	lintCacheFallbackNote   = "the gate container's golangci-lint cache fill did not finish, so both golangci-lint runs used a private, empty cache created for this run in place of the shared read-only cache; the result is complete, and the runs analyzed every package without the shared cache"
+	lintCacheFallbackNote   = "the gate container's golangci-lint cache fill did not finish, so both golangci-lint runs used a private, empty cache created for this run in place of the shared read-only cache, and the runs analyzed every package without cached golangci-lint results"
 )
 
 // privateLintCache creates the cache directory the runs of the check use
@@ -556,9 +559,9 @@ const (
 // container is the fixture root on the container's own file system, and
 // the caller removes it after the runs. The gate runs the static tier
 // before the test tiers, so no test tier writes it while the runs read
-// it. The test packages of the static tier run alongside the lint as the
-// same user and could write it, as the fill itself could write the
-// shared cache.
+// it. The other checks of the static tier, the branch's scripts under
+// scripts/ and the static tier's Go test packages among them, run
+// alongside the lint as the same user and can write it.
 func privateLintCache() (string, error) {
 	dir, err := os.MkdirTemp("", "lenny-lint-cache-*")
 	if err != nil {
@@ -574,9 +577,11 @@ func privateLintCache() (string, error) {
 //
 // Either way the detail names each raise of the register the output lists
 // on a line that opens with lintRaiseMarker, so the static tier records
-// the raise in the verdict even when the check passes. A line of the
-// linter's own output that opens with the marker can add a false entry
-// but cannot remove one the check wrote.
+// the raise in the verdict even when the check passes, and the detail
+// carries lintCacheFallbackNote when a line opens with
+// lintCacheFallbackMarker. A line of the linter's own output that opens
+// with either marker can add a false entry but cannot remove one the
+// check wrote.
 func classifyGolangciLint(out string) (string, string) {
 	first, _, _ := strings.Cut(out, "\n")
 	status, detail := verdictstatus.Pass, ""

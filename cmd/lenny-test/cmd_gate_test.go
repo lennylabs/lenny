@@ -523,6 +523,9 @@ func TestGateContainerScriptReportsAFillThatDidNotFinish(t *testing.T) {
 	if _, err := exec.LookPath("sh"); err != nil {
 		t.Skip("blocked: sh is not on PATH")
 	}
+	// A gate whose own fill did not finish runs this test with the
+	// variable set; the finished-fill case must not inherit it.
+	t.Setenv(gateEnvLintFill, "")
 	_, rest, ok := strings.Cut(gateContainerScript, "\nfill_failed() {\n")
 	if !ok {
 		t.Fatal("the container script defines no fill_failed function")
