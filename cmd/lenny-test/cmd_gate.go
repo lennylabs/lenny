@@ -78,6 +78,9 @@ const (
 	// matches GOCACHE in tests/gate/Dockerfile and lies outside /root, so
 	// the unprivileged gate user can use it.
 	gateGoCache = "/var/cache/go-build"
+	// gateLintCache is golangci-lint's cache inside the container, on the
+	// build cache volume (GOLANGCI_LINT_CACHE).
+	gateLintCache = gateGoCache + "/golangci-lint"
 	// gateFixtureRoot is the fixture root inside the container (TMPDIR
 	// and LENNY_TEST_TMPDIR). It lies on the container's own file system,
 	// which behaves as a local Linux file system on every host: modes are
@@ -531,6 +534,11 @@ func gateDockerRunArgs(h gateHost) []string {
 		args,
 		"-v", gateModVolume+":/go/pkg/mod",
 		"-v", gateBuildVolume+":"+gateGoCache,
+		// golangci-lint keeps its analysis cache in a directory of the
+		// build cache volume, so a gate run after the first does not
+		// analyze the whole module cold. The Go build cache uses only its
+		// two-hex-digit directories and leaves this one alone.
+		"-e", "GOLANGCI_LINT_CACHE="+gateLintCache,
 		"-e", gateEnvImage+"="+h.image,
 		"-e", "GOTMPDIR="+gateGoTmpDir,
 		"-e", "TMPDIR="+gateFixtureRoot,
