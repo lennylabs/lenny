@@ -19,7 +19,7 @@ The specification states the empty-scope mint as intended. §10.2 (Authenticatio
 
 ## Scope
 
-The change covers the scope-narrowing invariant of the playground mint for every mint the endpoint serves in the `apiKey` and `oidc` modes, including the silent refresh, which calls the same endpoint. It edits the invariant, the failure-modes table, the §15.1 row of `POST /v1/playground/token`, the §15 error catalog row of `SCOPE_FORBIDDEN`, and §27.3.1.
+The change covers the scope-narrowing invariant of the playground mint for every mint the endpoint serves in the `apiKey` and `oidc` modes, including the silent refresh, which calls the same endpoint. It edits the invariant, the failure-modes table, the §15.1 row of `POST /v1/playground/token`, the `SCOPE_FORBIDDEN` row of the §15.1 **Error code catalog**, and §27.3.1.
 
 It leaves out:
 
@@ -40,7 +40,7 @@ It leaves out:
 
 ## Requirements
 
-None by identifier. The change edits §10.2 (Authentication), §15 (Error code catalog), §15.1 (REST API), and §27.3.1 (OIDC cookie-to-MCP-bearer exchange), which are content of the placeholder pages AUTHN, PLAY, and others that have no requirement identifiers yet.
+None by identifier. The change edits §10.2 (Authentication), §15.1 (REST API), and §27.3.1 (OIDC cookie-to-MCP-bearer exchange), which are content of the placeholder pages AUTHN, PLAY, and others that have no requirement identifiers yet.
 
 ## Detailed design
 
@@ -54,20 +54,20 @@ The mint computes the narrowed scope before it checks the signer, signs, or writ
 
 Each refusal emits `playground.bearer_mint_rejected` and increments `lenny_playground_bearer_mint_rejected_total`, with the invariant identifiers `subject_scope_invalid` and `scope_intersection_empty`. A refused mint signs nothing, writes no session record, and emits no `playground.bearer_minted` event.
 
-Both refusals use codes the §15 error catalog defines. `UNAUTHORIZED` carries the playground's other 401 refusals with a `details.reason`, and `SCOPE_FORBIDDEN` is the catalog's code for a refusal caused by the caller's `scope` claim alone.
+Both refusals use codes the §15.1 **Error code catalog** defines. `UNAUTHORIZED` carries the playground's other 401 refusals with a `details.reason`, and `SCOPE_FORBIDDEN` is the catalog's code for a refusal caused by the caller's `scope` claim alone.
 
 ### MS-2 Specification text
 
 - §10.2, invariant 2: the mint writes the intersection, `playground_allowed_scope` for a subject with an absent claim, and refuses the two cases of MS-1; the minted `scope` claim is never empty.
 - §10.2, **Playground mint failure modes**: the row with status 200 is replaced by two refusal rows.
 - §15.1, the `POST /v1/playground/token` row: the refusals are listed.
-- §15, the `SCOPE_FORBIDDEN` catalog row: the playground mint's use of `details.requiredScope` is stated.
+- §15.1, the `SCOPE_FORBIDDEN` row of the **Error code catalog**: the playground mint's use of `details.requiredScope` is stated.
 - §27.3.1: the sentence on an empty `effectiveScope` is replaced by the statement that the field is never empty, and the **Failure modes summary** table gains the two refusals.
 
 ## Specification and non-specification changes
 
 - `spec/10_gateway-internals.md`: §10.2 Authentication, **Playground mint invariants** and **Playground mint failure modes**.
-- `spec/15_external-api-surface.md`: §15 the `SCOPE_FORBIDDEN` catalog row, and §15.1 the `POST /v1/playground/token` row.
+- `spec/15_external-api-surface.md`: §15.1, the `POST /v1/playground/token` row and the `SCOPE_FORBIDDEN` row of the **Error code catalog**.
 - `spec/27_web-playground.md`: §27.3.1, **Bearer token exchange** and **Failure modes summary**.
 - `pkg/gateway/playground`: `token.go`.
 - `tests/registers/spec-section-citations.yaml`: the section-citation counts of the packages whose annotations change.
@@ -75,7 +75,7 @@ Both refusals use codes the §15 error catalog defines. `UNAUTHORIZED` carries t
 ## Documentation
 
 - `docs/operator-guide/web-playground.md` (operator): the authentication modes section states how the mint narrows the subject's scope and when it refuses, so an operator whose identity provider puts a raw OAuth `scope` claim in its tokens knows the mint refuses it.
-- `docs/reference/error-catalog.md` (client developer, operator): checked for the two codes; edited only when its rows name the playground.
+- `docs/reference/error-catalog.md` (client developer, operator): the policy errors gain a `SCOPE_FORBIDDEN` row, which the page lacked, naming the playground mint's use of it. `UNAUTHORIZED` keeps its generic row.
 
 ## Tests
 
