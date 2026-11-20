@@ -184,10 +184,12 @@
     var want = target.split(":"); // ["tools","sessions","write"]
     for (var i = 0; i < claim.length; i++) {
       if (!claim[i]) continue;
+      // tools:* is the one two-segment scope value, and it grants
+      // every tool, so it is matched whole before the split.
+      if (claim[i] === "tools:*") return true;
       var have = claim[i].split(":");
       if (have.length !== 3) continue;
       if (have[0] !== want[0]) continue;
-      if (have[1] === "*" && have[2] === "*") return true; // tools:*
       if (have[1] !== want[1]) continue;
       if (have[2] === "*" || have[2] === want[2]) return true;
     }

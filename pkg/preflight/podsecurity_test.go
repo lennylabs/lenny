@@ -11,19 +11,6 @@ import (
 
 func boolPtr(b bool) *bool { return &b }
 
-// compliantContainer mirrors the §13.1 baseline the chart authors:
-// non-root, all capabilities dropped, read-only root filesystem.
-func compliantContainer(name string) corev1.Container {
-	return corev1.Container{
-		Name: name,
-		SecurityContext: &corev1.SecurityContext{
-			RunAsNonRoot:           boolPtr(true),
-			ReadOnlyRootFilesystem: boolPtr(true),
-			Capabilities:           &corev1.Capabilities{Drop: []corev1.Capability{"ALL"}},
-		},
-	}
-}
-
 // spec: §13.1 — a workload whose containers run as non-root,
 // drop all capabilities, and mount a read-only root filesystem passes
 // the baseline. F-13.1.12.

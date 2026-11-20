@@ -12,21 +12,30 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/adapter"
 )
 
+// runtimeSocketSeq numbers the abstract socket addresses
+// runtimeSocketAddr hands out within one test process.
+var runtimeSocketSeq atomic.Uint64
+
 // runtimeSocketAddr returns a socket address the test binds: a Linux
 // abstract address (no filesystem cleanup) or, elsewhere, a short
 // filesystem path. The path is kept short because the Unix sun_path
 // field is limited to ~104 bytes on darwin and t.TempDir() alone can
-// exceed that.
+// exceed that. The abstract address carries a per-call sequence number,
+// because the process ID and the test name repeat when one process runs
+// a test more than once (go test -count=N, lenny-test stress), and a
+// listener that outlives its iteration would make the next bind fail
+// with "address already in use".
 func runtimeSocketAddr(t *testing.T) string {
 	t.Helper()
 	if runtime.GOOS == "linux" {
-		return fmt.Sprintf("@lenny-test-rt-%d-%s", os.Getpid(), t.Name())
+		return fmt.Sprintf("@lenny-test-rt-%d-%d-%s", os.Getpid(), runtimeSocketSeq.Add(1), t.Name())
 	}
 	return filesystemSocketPath(t)
 }

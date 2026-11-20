@@ -23,7 +23,7 @@ func TestParseScope_Canonical(t *testing.T) {
 		{"tools:health:read", "health", "read"},
 		{"tools:locks:*", "locks", "*"},
 		{"tools:credential_pool:rotate", "credential_pool", "rotate"},
-		{"tools:*:*", "*", "*"},
+		{"tools:*", "*", "*"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.in, func(t *testing.T) {
@@ -151,7 +151,7 @@ func TestParseScope_Malformed(t *testing.T) {
 		"tools::scale",       // empty domain
 		"tools:pool:",        // empty action
 		"tools:notadomain:*", // domain not in taxonomy
-		"tools:*:read",       // wildcard domain requires wildcard action
+		"tools:*:read",       // wildcard in the domain position
 		" tools:pool:scale",  // leading whitespace
 		"tools:pool:scale ",  // trailing whitespace
 	}
@@ -237,7 +237,7 @@ func TestMatches(t *testing.T) {
 		{"domain mismatch", "tools:pool:scale", "tools:health:scale", false},
 		{"per-domain wildcard", "tools:pool:*", "tools:pool:scale", true},
 		{"per-domain wildcard miss", "tools:pool:*", "tools:health:read", false},
-		{"global wildcard", "tools:*:*", "tools:pool:scale", true},
+		{"global wildcard", "tools:*", "tools:pool:scale", true},
 		{"multi-claim hits second", "tools:health:read tools:pool:scale", "tools:pool:scale", true},
 		{"multi-claim miss", "tools:health:read tools:locks:write", "tools:pool:scale", false},
 	}
@@ -259,7 +259,10 @@ func TestMatches(t *testing.T) {
 // caller that passes a malformed value cannot pass the check, even
 // with a wildcard claim.
 func TestMatches_MalformedRequired(t *testing.T) {
-	set, _ := scopes.Parse("tools:*:*")
+	set, _ := scopes.Parse("tools:*")
+	if !set.Present() {
+		t.Fatalf("Parse(tools:*).Present() = false, want the wildcard claim present")
+	}
 	if set.Matches("garbage") {
 		t.Errorf("Matches(garbage) on wildcard claim = true, want false")
 	}
@@ -326,5 +329,145 @@ func TestIntersect_EmptyOverlap(t *testing.T) {
 	}
 	if got.Matches("tools:pool:scale") || got.Matches("tools:health:read") {
 		t.Errorf("empty overlap must not match either operand")
+	}
+}
+
+// TestParseScopeAcceptsAllTools checks that the two-segment value
+// `tools:*` parses to the wildcard domain and action, renders back to
+// the same text, and parses inside a claim alongside other values.
+//
+// spec: §25.1 (Scoped Tokens)
+func TestParseScopeAcceptsAllTools(t *testing.T) {
+	got, err := scopes.ParseScope("tools:*")
+	if err != nil {
+		t.Fatalf("ParseScope(tools:*) returned %v, want the most permissive scope to parse", err)
+	}
+	if got.Domain != scopes.Wildcard || got.Action != scopes.Wildcard {
+		t.Errorf("ParseScope(tools:*) = %+v, want wildcard domain and action", got)
+	}
+	if got.String() != scopes.AllTools || scopes.AllTools != "tools:*" {
+		t.Errorf("ParseScope(tools:*).String() = %q (AllTools %q), want tools:*", got.String(), scopes.AllTools)
+	}
+	set, err := scopes.Parse("tools:health:read tools:*")
+	if err != nil {
+		t.Fatalf("Parse(tools:health:read tools:*) returned %v", err)
+	}
+	if !set.Present() || len(set.Scopes()) != 2 {
+		t.Errorf("Parse(tools:health:read tools:*) = %+v, want both values present", set.Scopes())
+	}
+}
+
+// TestAllToolsMatchesEveryRequiredScope checks that a claim carrying
+// `tools:*` permits every tool, as an absent claim does, while a
+// per-domain wildcard stays confined to its domain. A `tools:*` claim
+// is still a present claim: Present reports true and Raw keeps the
+// claim text.
+//
+// spec: §25.1 (Scoped Tokens)
+func TestAllToolsMatchesEveryRequiredScope(t *testing.T) {
+	all, err := scopes.Parse("tools:*")
+	if err != nil {
+		t.Fatalf("Parse(tools:*) returned %v", err)
+	}
+	if !all.Present() || all.Raw != "tools:*" {
+		t.Errorf("Parse(tools:*) = {Present: %v, Raw: %q}, want a present claim with Raw tools:*", all.Present(), all.Raw)
+	}
+	cases := []struct {
+		name    string
+		claim   string
+		req     string
+		matches bool
+	}{
+		{"all tools grants a read", "tools:*", "tools:health:read", true},
+		{"all tools grants a write", "tools:*", "tools:credential_pool:write", true},
+		{"all tools grants a named action", "tools:*", "tools:pool:scale", true},
+		{"all tools grants a domain wildcard", "tools:*", "tools:locks:*", true},
+		{"all tools grants itself", "tools:*", "tools:*", true},
+		{"all tools beside a narrow value", "tools:health:read tools:*", "tools:upgrade:write", true},
+		{"domain wildcard does not grant all tools", "tools:pool:*", "tools:*", false},
+		{"domain wildcard does not cross domains", "tools:pool:*", "tools:health:read", false},
+		{"all tools does not admit a malformed requirement", "tools:*", "tools:*:*", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			set, err := scopes.Parse(tc.claim)
+			if err != nil {
+				t.Fatalf("Parse(%q) returned %v", tc.claim, err)
+			}
+			if got := set.Matches(tc.req); got != tc.matches {
+				t.Errorf("Matches(%q) on claim %q = %v, want %v", tc.req, tc.claim, got, tc.matches)
+			}
+		})
+	}
+}
+
+// TestParseScopeRefusesNeighboursOfAllTools checks that accepting
+// `tools:*` admits no other value: the wildcard stays refused in the
+// domain position, and a near spelling of `tools:*` is malformed and
+// fails the whole claim.
+//
+// spec: §25.1 (Scoped Tokens)
+func TestParseScopeRefusesNeighboursOfAllTools(t *testing.T) {
+	for _, in := range []string{
+		"tools:",
+		"tools:*:*",
+		"tools:*:read",
+		"tools:*:",
+		"tools:**",
+		"tools:*pool",
+		"*",
+		"admin:*",
+		"TOOLS:*",
+		" tools:*",
+		"tools:* ",
+		"\ttools:*",
+		"tools:*\n",
+	} {
+		t.Run(in, func(t *testing.T) {
+			if got, err := scopes.ParseScope(in); !errors.Is(err, scopes.ErrInvalidScope) {
+				t.Errorf("ParseScope(%q) = %+v, %v; want ErrInvalidScope", in, got, err)
+			}
+		})
+	}
+	if _, err := scopes.Parse("tools:* tools:*:*"); !errors.Is(err, scopes.ErrInvalidScope) {
+		t.Errorf("Parse(tools:* tools:*:*) err = %v, want the malformed value to refuse the claim", err)
+	}
+}
+
+// TestIntersectWithAllToolsStaysParseable checks that an intersection
+// involving `tools:*` renders Raw text that parses again: two wildcard
+// claims intersect to `tools:*`, and a wildcard claim intersected with
+// a narrower one yields the narrower values.
+//
+// spec: §25.1 (Scoped Tokens)
+func TestIntersectWithAllToolsStaysParseable(t *testing.T) {
+	all, err := scopes.Parse("tools:*")
+	if err != nil {
+		t.Fatalf("Parse(tools:*) returned %v", err)
+	}
+	narrow, err := scopes.Parse("tools:sessions:* tools:me:read")
+	if err != nil {
+		t.Fatalf("Parse(narrow) returned %v", err)
+	}
+	both := all.Intersect(all)
+	if both.Raw != "tools:*" {
+		t.Errorf("tools:* intersected with itself has Raw %q, want tools:*", both.Raw)
+	}
+	for _, got := range []scopes.Set{all.Intersect(narrow), narrow.Intersect(all), both} {
+		reparsed, err := scopes.Parse(got.Raw)
+		if err != nil {
+			t.Errorf("intersection Raw %q does not parse: %v", got.Raw, err)
+			continue
+		}
+		if len(reparsed.Scopes()) != len(got.Scopes()) {
+			t.Errorf("intersection Raw %q reparses to %v, want %v", got.Raw, reparsed.Scopes(), got.Scopes())
+		}
+	}
+	got := all.Intersect(narrow)
+	if got.Raw != "tools:sessions:* tools:me:read" {
+		t.Errorf("tools:* intersected with a narrow claim has Raw %q, want the narrow values", got.Raw)
+	}
+	if got.Matches("tools:pool:scale") {
+		t.Errorf("intersection with a narrow claim must not keep the tools:* grant")
 	}
 }

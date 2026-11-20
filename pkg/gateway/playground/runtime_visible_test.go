@@ -156,7 +156,7 @@ func TestPlaygroundStoresEffectiveScope_spec_27_3_1(t *testing.T) {
 		"function hasScope(target)",              // the helper exists
 		"state.effectiveScope",                   // it reads the stored scope
 		`var want = target.split(":")`,           // it parses the probe target (e.g. tools:sessions:write)
-		`have[1] === "*" && have[2] === "*"`,     // tools:* matches everything
+		`claim[i] === "tools:*"`,                 // tools:* matches everything
 		`have[2] === "*" || have[2] === want[2]`, // action wildcard (tools:sessions:*) or exact match
 	} {
 		if !strings.Contains(app, marker) {

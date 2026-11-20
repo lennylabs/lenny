@@ -4,7 +4,8 @@
 // `scope` JWT claim. Scopes use the closed taxonomy documented in
 // §15.1 ("Scope taxonomy") and §25.1 ("Scope value syntax"):
 // each scope follows `tools:<domain>:<action>`, multiple scopes are
-// space-separated, and `*` is permitted in the `<action>` position.
+// space-separated, and `*` is permitted in the `<action>` position. The
+// one value outside that form is `tools:*`, which grants every tool.
 //
 // Consumers:
 //
@@ -41,6 +42,11 @@ const Wildcard = "*"
 // scope value. The taxonomy reserves "tools" for tool invocation
 // scopes; values that omit it are rejected.
 const scopePrefix = "tools"
+
+// AllTools is the most permissive scope value. It grants every tool,
+// which is the same restriction as an absent claim. It is the only
+// scope value with two segments, and the only one that names no domain.
+const AllTools = scopePrefix + ":" + Wildcard
 
 // Domains is the closed §15.1 / §25.1 domain enumeration. New
 // domains must land here before being used in handler annotations;
@@ -111,36 +117,54 @@ var Domains = map[string]struct{}{
 	"pools":    {},
 }
 
-// ErrInvalidScope is returned by ParseScope when a single value does
-// not satisfy the §25.1 `tools:<domain>:<action>` form.
+// ErrInvalidScope is returned by ParseScope when a single value is
+// neither AllTools nor a value in the §25.1 `tools:<domain>:<action>`
+// form.
 var ErrInvalidScope = errors.New("scopes: invalid scope value")
 
 // Scope is one parsed §25.1 scope value. Domain is the second segment
 // of `tools:<domain>:<action>`; Action is the third segment, which is
 // either a specific tool action (`read`, `write`, `scale`) or the
-// `*` wildcard.
+// `*` wildcard. AllTools parses to a Scope whose Domain and Action are
+// both Wildcard; no other value yields a Wildcard Domain.
 type Scope struct {
 	Domain string
 	Action string
 }
 
 // String renders the scope back in canonical `tools:<domain>:<action>`
-// form so a Scope value round-trips through the claim text.
+// form, or as AllTools for the Wildcard domain, so a Scope value
+// round-trips through ParseScope. Intersect builds its Raw text from
+// String, so a rendering ParseScope refuses would make an intersected
+// claim unparseable.
 func (s Scope) String() string {
+	if s.Domain == Wildcard {
+		return AllTools
+	}
 	return scopePrefix + ":" + s.Domain + ":" + s.Action
 }
 
-// ParseScope parses one scope value into a Scope. The value must have
+// ParseScope parses one scope value into a Scope. The value AllTools
+// parses to the Wildcard domain and action. Any other value must have
 // three colon-separated segments, the first segment must be the
 // reserved `tools` prefix, the domain must be in the §15.1 taxonomy,
-// and the action must be a non-empty token. Whitespace surrounding the
-// value is rejected — the §25.1 claim is space-delimited so a value
-// carrying leading or trailing whitespace is malformed.
+// and the action must be a non-empty token. The wildcard is therefore
+// refused in the domain position: `tools:*:*` and `tools:*:read` are
+// malformed. Whitespace surrounding the value is rejected, because the
+// §25.1 claim is space-delimited and a value carrying leading or
+// trailing whitespace is malformed.
+//
+// spec: §25.1 (Scoped Tokens)
 func ParseScope(v string) (Scope, error) {
 	// spec:§25.1: the claim is a space-separated string; a value with
 	// surrounding whitespace did not come from a well-formed claim.
 	if v == "" || v != strings.TrimSpace(v) {
 		return Scope{}, ErrInvalidScope
+	}
+	// AllTools is matched as a whole value before the split, so the
+	// two-segment form is accepted for this one value only.
+	if v == AllTools {
+		return Scope{Domain: Wildcard, Action: Wildcard}, nil
 	}
 	parts := strings.Split(v, ":")
 	if len(parts) != 3 {
@@ -150,18 +174,12 @@ func ParseScope(v string) (Scope, error) {
 		return Scope{}, ErrInvalidScope
 	}
 	domain, action := parts[1], parts[2]
-	if domain == "" || action == "" {
+	if action == "" {
 		return Scope{}, ErrInvalidScope
 	}
-	// `tools:*` is the §25.1 most-permissive form. It is the only
-	// scope whose domain may be the wildcard token; every other
-	// domain must be in the §15.1 taxonomy.
-	if domain == Wildcard {
-		if action != Wildcard {
-			return Scope{}, ErrInvalidScope
-		}
-		return Scope{Domain: Wildcard, Action: Wildcard}, nil
-	}
+	// Domains carries neither the empty string nor the wildcard, so
+	// this lookup refuses an empty domain and a wildcard domain along
+	// with every domain outside the taxonomy.
 	if _, ok := Domains[domain]; !ok {
 		return Scope{}, ErrInvalidScope
 	}

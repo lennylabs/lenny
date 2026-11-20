@@ -178,10 +178,15 @@ func TestSourceHealthProbeStartsOptimisticAndRefreshes_spec_25_5(t *testing.T) {
 	}
 	// The up-to-down edge opens the recovery flush's outage window, so the
 	// flush that follows a later recovery re-emits the events buffered during
-	// the outage rather than the whole local ring.
+	// the outage rather than the whole local ring. The refresh publishes the
+	// Redis state before it fires the edge, so the loop above can leave
+	// before the edge has fired; wait for the count instead of reading it
+	// once, and check it again after the loop stops so a stopping refresh
+	// that fires a second edge also fails.
+	awaitCount(t, &downs, 1, "the outage-window edge for the observed Redis outage")
+	cancel()
+	<-done
 	if n := downs.Load(); n != 1 {
 		t.Fatalf("the outage-window edge fired %d time(s) for one observed Redis outage; want exactly 1", n)
 	}
-	cancel()
-	<-done
 }

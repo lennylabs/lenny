@@ -152,13 +152,3 @@ func toMeteringEvent(e billingstore.Event) meteringEvent {
 		Conditional:          e.Conditional,
 	}
 }
-
-// uintQuery parses a non-negative integer query parameter, returning
-// fallback when the parameter is absent.
-func uintQuery(r *http.Request, name string, fallback uint64) (uint64, error) {
-	raw := r.URL.Query().Get(name)
-	if raw == "" {
-		return fallback, nil
-	}
-	return strconv.ParseUint(raw, 10, 64)
-}
