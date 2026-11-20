@@ -401,7 +401,7 @@ func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
 // root when the owner is root.
 func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 	for _, want := range []string{
-		`if [ "$uid" = 0 ]; then exec sh -c "$run" lenny-test-gate "$@"; fi`,
+		"if [ \"$uid\" = 0 ]; then\n\tsh -c \"$prepare\"\n\tlock_lint_cache\n\texec sh -c \"$run\" lenny-test-gate \"$@\"\nfi",
 		`useradd --uid "$uid" --gid "$gid"`,
 		`stat -c %g /var/run/docker.sock`,
 		`chown -R "$uid:$gid" "$d"`,
@@ -414,6 +414,38 @@ func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 	}
 	if strings.Index(gateContainerScript, "-delete") > strings.Index(gateContainerScript, "setpriv") {
 		t.Error("the container script empties the fixture root after dropping root, so it cannot remove what a root run left")
+	}
+}
+
+// TestGateContainerScriptLocksTheLintCacheBeforeTheGate pins the order
+// that keeps golangci-lint's cache read-only to the test tiers: the
+// worktree's owner fills the cache, root then bind-mounts the cache
+// directory read-only over itself, and only then does the gate run, as
+// the owner and as root alike. The owner is given the cache directory, so
+// the fill can write it, and a missing cache variable stops the script.
+func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
+	s := gateContainerScript
+	for _, want := range []string{
+		`"$HOME/bin/lenny-test" lint-cache-fill ||`,
+		`mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"`,
+		`mount -o remount,bind,ro "$GOLANGCI_LINT_CACHE"`,
+		`"${GOLANGCI_LINT_CACHE:?}"`,
+		`"$GOCACHE" "$GOLANGCI_LINT_CACHE" "$GOTMPDIR"; do`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the container script lacks %q", want)
+		}
+	}
+	userFill := strings.Index(s, `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$prepare"`)
+	userLock := strings.LastIndex(s, "lock_lint_cache\n")
+	userRun := strings.Index(s, `exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run"`)
+	if userFill < 0 || userLock < 0 || userRun < 0 || !(userFill < userLock && userLock < userRun) {
+		t.Errorf("the owner's path does not fill, lock, and then run the gate (fill %d, lock %d, run %d)", userFill, userLock, userRun)
+	}
+	_, rest, _ := strings.Cut(s, "prepare='")
+	prepare, _, _ := strings.Cut(rest, "'")
+	if !strings.Contains(prepare, "lint-cache-fill") || strings.Contains(prepare, "gate --here") {
+		t.Errorf("the fill step does not fill the cache, or runs the gate before the cache is read-only:\n%s", prepare)
 	}
 }
 

@@ -541,7 +541,8 @@ func gateDockerRunArgs(h gateHost) []string {
 		// first in the same worktree does not analyze the whole module
 		// cold, and a new worktree's first run does. The Go build cache
 		// uses only its two-hex-digit directories and leaves this one
-		// alone.
+		// alone. gateContainerScript fills the directory and then mounts
+		// it read-only for the gate itself.
 		"-e", "GOLANGCI_LINT_CACHE="+gateLintCache,
 		"-e", gateEnvImage+"="+h.image,
 		"-e", "GOTMPDIR="+gateGoTmpDir,
@@ -603,29 +604,52 @@ func (h gateHost) imageRef() string {
 // unprivileged as they do on a developer host: initdb refuses to run as
 // root, and the runtime supervisor tests derive the adapter UID from the
 // test's own. The user then verifies the module cache against go.sum,
-// compiles lenny-test from the mounted tree, and runs `lenny-test gate
-// --here`, so the gate always runs the harness of the commit under test.
+// compiles lenny-test from the mounted tree, and fills golangci-lint's
+// cache (lenny-test lint-cache-fill). A fill that does not finish logs a
+// warning, and the static tier's lint then analyzes what the cache lacks
+// without storing it. Root then bind-mounts golangci-lint's cache
+// directory read-only over itself, and the user runs `lenny-test gate
+// --here`, so the gate always runs the harness of the commit under test,
+// and its static tier reads the filled cache while no test tier can write
+// it (owner's answer to GT-11, 2026-11-20). The user holds no capability
+// after setpriv, and a mount that a user namespace inherits is locked, so
+// neither the user nor a namespace a test creates can remount the
+// directory writable. Two writers remain outside the mount: a gate run as
+// root, whose tests hold CAP_SYS_ADMIN and can remount it, and any
+// process with the host Docker socket, which can mount the volume in
+// another container. A mount that fails stops the gate.
 const gateContainerScript = `set -e
 if [ -n "${LENNY_TEST_SHARED_TMPDIR:-}" ]; then find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete; fi
-mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" /go/pkg/mod
-run='set -e
+mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" "${GOLANGCI_LINT_CACHE:?}" /go/pkg/mod
+prepare='set -e
 go mod verify
 mkdir -p "$HOME/bin"
 go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test
-exec "$HOME/bin/lenny-test" gate --here "$@"'
+"$HOME/bin/lenny-test" lint-cache-fill || echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier lints without storing results" >&2'
+run='exec "$HOME/bin/lenny-test" gate --here "$@"'
+lock_lint_cache() {
+	mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"
+	mount -o remount,bind,ro "$GOLANGCI_LINT_CACHE"
+}
 uid="${LENNY_GATE_UID:-0}"
 gid="${LENNY_GATE_GID:-0}"
-if [ "$uid" = 0 ]; then exec sh -c "$run" lenny-test-gate "$@"; fi
+if [ "$uid" = 0 ]; then
+	sh -c "$prepare"
+	lock_lint_cache
+	exec sh -c "$run" lenny-test-gate "$@"
+fi
 getent group "$gid" >/dev/null || groupadd --gid "$gid" gate
 getent passwd "$uid" >/dev/null || useradd --uid "$uid" --gid "$gid" --no-create-home --home-dir /home/gate --shell /bin/sh gate
 mkdir -p /home/gate
 chown "$uid:$gid" /home/gate
 groups="$gid"
 if [ -S /var/run/docker.sock ]; then groups="$groups,$(stat -c %g /var/run/docker.sock)"; fi
-for d in "$LENNY_TEST_TMPDIR" /go/pkg/mod "$GOCACHE" "$GOTMPDIR"; do
+for d in "$LENNY_TEST_TMPDIR" /go/pkg/mod "$GOCACHE" "$GOLANGCI_LINT_CACHE" "$GOTMPDIR"; do
 	if [ "$(stat -c %u "$d")" != "$uid" ]; then chown -R "$uid:$gid" "$d"; fi
 done
 export HOME=/home/gate USER="$(getent passwd "$uid" | cut -d: -f1)"
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$prepare"
+lock_lint_cache
 exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
 
 // pathWithin reports whether p is root or lies under it.

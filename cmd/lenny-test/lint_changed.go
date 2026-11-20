@@ -545,8 +545,7 @@ func (l golangciLint) wholeTree(ctx context.Context, comparable bool, base *lint
 	name := report.Name()
 	_ = report.Close()
 	defer func() { _ = os.Remove(name) }()
-	out, err := l.exec(ctx, l.bin, l.root, golangciLintArgs(l.root,
-		"--max-issues-per-linter=0", "--max-same-issues=0", "--show-stats=false", "--output.json.path="+name)...)
+	out, err := l.exec(ctx, l.bin, l.root, wholeTreeLintArgs(l.root, name)...)
 	var exitErr *exec.ExitError
 	if err != nil && (!errors.As(err, &exitErr) || exitErr.ExitCode() != golangciLintExitIssues) {
 		return fmt.Sprintf("golangci-lint did not finish its run on the whole tree (%v):\n%s", err, out), fmt.Errorf("golangci-lint on the whole tree did not finish: %w", err)
@@ -721,6 +720,15 @@ func golangciLintArgs(root string, extra ...string) []string {
 		"--timeout=" + golangciLintTimeout,
 		"--allow-serial-runners",
 	}, extra...)
+}
+
+// wholeTreeLintArgs returns the arguments of the whole-tree run, which
+// writes its JSON report to report: golangciLintArgs with golangci-lint's
+// caps on findings lifted. The gate container's cache fill
+// (lint_cache.go) runs the same arguments, so the run in the static tier
+// reads what the fill wrote.
+func wholeTreeLintArgs(root, report string) []string {
+	return golangciLintArgs(root, "--max-issues-per-linter=0", "--max-same-issues=0", "--show-stats=false", "--output.json.path="+report)
 }
 
 // shortCommit abbreviates a commit hash for a message.

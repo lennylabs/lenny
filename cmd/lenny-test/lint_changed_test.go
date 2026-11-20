@@ -976,6 +976,33 @@ func TestLintFindsProductPackagesOutsideDotDotDot(t *testing.T) {
 	}
 }
 
+// TestLintCacheFillRunsTheWholeTreeRun checks the gate container's cache
+// fill: it runs golangci-lint once with the whole-tree run's arguments,
+// counts an exit with findings as a finished run, fails on a run that
+// does not finish or a host without golangci-lint, and refuses arguments.
+func TestLintCacheFillRunsTheWholeTreeRun(t *testing.T) {
+	var stderr strings.Builder
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	if code := lintCacheFillCommand(nil, l, &stderr); code != 0 {
+		t.Fatalf("a run with findings: exit %d; want 0 (%s)", code, stderr.String())
+	}
+	if len(f.calls) != 1 || !containsArg(f.calls[0], "--max-issues-per-linter=0") || !containsArg(f.calls[0], "--output.json.path=") || containsArg(f.calls[0], "--new-from-patch=") {
+		t.Errorf("calls %v; want one whole-tree run", f.calls)
+	}
+	f.wholeErr = exitError(t, 4)
+	if code := lintCacheFillCommand(nil, l, &stderr); code != 1 || !strings.Contains(stderr.String(), "did not finish") {
+		t.Errorf("a run that does not finish: exit %d; want 1 (%s)", code, stderr.String())
+	}
+	l.bin = ""
+	if code := lintCacheFillCommand(nil, l, &stderr); code != 1 {
+		t.Errorf("no golangci-lint: exit %d; want 1", code)
+	}
+	if code := lintCacheFillCommand([]string{"--x"}, l, &stderr); code != 2 {
+		t.Errorf("an argument: exit %d; want the usage error 2", code)
+	}
+}
+
 // TestLintRegisterRoundTrips checks that the register the check writes
 // loads back with the same counts and drops a count of zero.
 func TestLintRegisterRoundTrips(t *testing.T) {

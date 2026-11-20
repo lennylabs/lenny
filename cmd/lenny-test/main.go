@@ -94,6 +94,8 @@ func main() {
 		os.Exit(runRun(args[1:]))
 	case "gate":
 		os.Exit(runGate(args[1:]))
+	case "lint-cache-fill":
+		os.Exit(runLintCacheFill(args[1:]))
 	case "secretscan":
 		os.Exit(runSecretScanSubcommand(args[1:]))
 	case "stress":
@@ -141,6 +143,10 @@ Usage:
   lenny-test gate [merge] [--base <ref>]   Run the merge gate in the gate container
                                            (tests/gate/Dockerfile) and write
                                            tests/results/gate-<run>.json.
+  lenny-test lint-cache-fill               Fill golangci-lint's cache for this
+                                           checkout with the static tier's
+                                           whole-tree run (the gate container runs
+                                           it before the gate).
   lenny-test secretscan [--root <dir>]     Run the static tier's secret scan on the
                                            committed tree at HEAD; exit 0 on PASS,
                                            1 on FAIL, 3 on UNVERIFIED.
