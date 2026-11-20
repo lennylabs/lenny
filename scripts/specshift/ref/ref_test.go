@@ -657,3 +657,39 @@ func TestCheckReportsAPageThatTakesAReservedIssueCode(t *testing.T) {
 		t.Errorf("got %d reserved-code findings, want four and none for GATEWAY:\n%s", len(got), all)
 	}
 }
+
+// TestReservedCodesMatchTheIssuesReadme checks that the reserved issue
+// codes the registry refuses are the codes the table under "Codes outside
+// the specification" in issues/README.md lists, so the stated list and
+// the enforced one stay one statement.
+func TestReservedCodesMatchTheIssuesReadme(t *testing.T) {
+	body, err := os.ReadFile(filepath.Join("..", "..", "..", "issues", "README.md"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, section, ok := strings.Cut(string(body), "## Codes outside the specification")
+	if !ok {
+		t.Fatal(`issues/README.md has no "Codes outside the specification" section`)
+	}
+	section, _, _ = strings.Cut(section, "\n## ")
+	listed := map[string]bool{}
+	for _, line := range strings.Split(section, "\n") {
+		if rest, ok := strings.CutPrefix(line, "| `"); ok {
+			code, _, _ := strings.Cut(rest, "`")
+			listed[code] = true
+		}
+	}
+	for code := range ReservedCodes {
+		if !listed[code] {
+			t.Errorf("ReservedCodes holds %s, which issues/README.md does not list", code)
+		}
+	}
+	for code := range listed {
+		if !IsReservedCode(code) {
+			t.Errorf("issues/README.md lists %s, which ReservedCodes does not hold", code)
+		}
+	}
+	if len(listed) == 0 {
+		t.Error("issues/README.md lists no reserved code")
+	}
+}

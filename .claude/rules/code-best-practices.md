@@ -89,7 +89,7 @@ The static tier runs `golangci-lint` with `errcheck`, `govet`, `staticcheck`, `g
 
 - Generated code (`*.pb.go`, `zz_generated.deepcopy.go`, mocks, other codegen output) is exempt and must not be hand-edited. After changing a CRD type's `+kubebuilder` markers or a proto definition, regenerate the derived files and the CRD manifests rather than editing them by hand.
 - Vendored or third-party code keeps its upstream style.
-- A `nolint` directive is permitted only with the linter it silences and an inline reason (`//nolint:<linter> // <reason>`), which `nolintlint` checks, and is the exception, not a routine tool.
+- A `nolint` directive is permitted only with the linter it silences and an inline reason (`//nolint:<linter> // <reason>`), which `nolintlint` checks. It is an exception and is not used routinely.
 
 ## Maintenance
 

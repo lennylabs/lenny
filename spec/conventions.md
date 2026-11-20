@@ -503,7 +503,7 @@ The owner defines the register in a `register` block.
 
 ## Identifiers
 
-**Page codes.** Every page has a code of two to nine upper-case letters with no hyphen and no digit, registered in the code registry below. A page's code does not change when its title or path does. The registry refuses a code registered twice, and a code that extends an existing code by one letter (`DERIVE` beside `DERIVED`).
+**Page codes.** Every page has a code of two to nine upper-case letters with no hyphen and no digit, registered in the code registry below. A page's code does not change when its title or path does. The registry refuses a code registered twice, a code that extends an existing code by one letter (`DERIVE` beside `DERIVED`), and a code that equals a reserved issue code or differs from one by one letter (see "Issues" below).
 
 **Requirements.** A requirement is numbered per page and carries a title and an explicit anchor equal to its lower-cased identifier:
 
