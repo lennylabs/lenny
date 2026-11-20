@@ -460,16 +460,16 @@ func TestAPIKeyModeScopeIsNarrowedToIntersection(t *testing.T) {
 
 // TestMintResponseEffectiveScopeMirrorsJWTScope pins the §27.3.1
 // effectiveScope carrier: the mint-response field equals the minted
-// JWT's scope claim by construction across the four narrowing cases the
+// JWT's scope claim by construction across the narrowing cases the
 // SPA must gate the §27.4 delegation-policy affordance on. The
 // apiKey-mode cases drive the intersection through a subject token; the
 // dev-mode case carries the full ceiling literal. effectiveScope is the
 // space-separated intersection(subject.scope, playground_allowed_scope),
 // so a subject scoped to the narrower tools:sessions:write survives as
-// tools:sessions:write (Intersect keeps the narrower operand), an
+// tools:sessions:write (Intersect keeps the narrower operand), and an
 // absent subject scope is the §25.1 absent-claim case that returns the
-// full ceiling, and a present-but-disjoint subject scope yields the
-// empty string via the intersectScope sentinel translation.
+// full ceiling. A present-but-disjoint subject scope is refused rather
+// than minted; token_scope_refusal_test.go covers it.
 //
 // spec: 27.3.1 (mint-response effectiveScope carrier), 25.1
 // (playground-allowed scope set), 10.2 (scope is the intersection,
@@ -494,8 +494,8 @@ func TestMintResponseEffectiveScopeMirrorsJWTScope_spec_27_3_1(t *testing.T) {
 		devMode      bool
 		subjectScope string
 		// wantContains is asserted as a substring of effectiveScope when
-		// set; exactScope (with wantExact) is asserted as an exact match
-		// when assertExact is true, so the empty-string case is checkable.
+		// set; wantExact is asserted as an exact match when assertExact
+		// is true.
 		wantContains string
 		assertExact  bool
 		wantExact    string
@@ -523,14 +523,6 @@ func TestMintResponseEffectiveScopeMirrorsJWTScope_spec_27_3_1(t *testing.T) {
 			subjectScope: "",
 			assertExact:  true,
 			wantExact:    fullCeiling,
-		},
-		{
-			// Present-but-disjoint subject scope: the intersection is empty
-			// and intersectScope translates the sentinel to "".
-			name:         "present-but-disjoint subject scope yields empty",
-			subjectScope: "tools:credential:write",
-			assertExact:  true,
-			wantExact:    "",
 		},
 	}
 	for _, tc := range cases {

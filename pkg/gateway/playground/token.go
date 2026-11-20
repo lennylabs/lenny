@@ -5,6 +5,7 @@ package playground
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"strings"
 	"time"
@@ -223,6 +224,9 @@ func (h *Handler) mintAPIKey(w http.ResponseWriter, r *http.Request) {
 		Roles:      claims.Roles,
 		Groups:     claims.Groups,
 		Typ:        auth.TokenUserBearer,
+		// JWTID names the pasted subject in a playground.bearer_mint_rejected
+		// event; the minted bearer carries its own jti.
+		JWTID: claims.JWTID,
 		// spec: §10.2 (Authentication) "JWT claims" expiry — the
 		// minted bearer's exp never passes the pasted subject's exp.
 		Expiry: claims.Expiry,
@@ -308,8 +312,14 @@ type recordRef struct {
 // completeMint applies the §10.2 playground mint invariants, mints
 // the session-capability JWT with the origin claim, records the
 // minted jti on the oidc session record, emits the §27.3.1 audit
-// event, and writes the response.
+// event, and writes the response. The scope narrowing runs first, so
+// a refused subject is refused whatever the signer's state, and a
+// refusal signs nothing and leaves the session record unchanged.
 func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject jwt.Claims, ref *recordRef) {
+	narrowed, ok := h.narrowSubjectScope(w, r, subject)
+	if !ok {
+		return
+	}
 	if h.signer == nil {
 		writeSigningUnavailable(w, nil, "the playground JWT signer is not configured")
 		return
@@ -317,10 +327,6 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	now := h.now().UTC()
 	exp := h.bearerExpiry(now, subject)
 	jti := newJTI(now)
-
-	// §27.3 / §10.2 invariant: scope is the intersection of the
-	// subject scope and playground_allowed_scope, never the union.
-	narrowed := intersectScope(subject.Scope, playgroundAllowedScope)
 
 	// §27.3 / §27.3.1: the origin: "playground" claim is stamped on the
 	// minted session-capability JWT in all three auth modes. The
@@ -443,41 +449,81 @@ func (h *Handler) rejectWrongMaterial(w http.ResponseWriter, presented string) {
 		})
 }
 
-// intersectScope returns the §10.2 narrowing of the subject scope by
-// the playground_allowed_scope ceiling: the largest scope claim whose
-// values are matched by both. The narrowing is wildcard-aware through
-// the shared §25.1 scopes package, so a subject `tools:sessions:read`
-// survives against the allowed `tools:sessions:*`. An empty subject
-// scope yields the empty string (the subject held no scope, so the
-// intersection is empty), and a malformed subject scope is treated as
-// empty so a mint never produces a scope claim the auth chain would
-// reject. The allowed set is a package constant of canonical values, so
-// its Parse cannot fail.
+// errSubjectScopeInvalid is returned by intersectScope when the subject's
+// scope claim carries a value the §25.1 canonical form refuses.
+var errSubjectScopeInvalid = errors.New("playground: subject scope claim is not in the canonical tools:<domain>:<action> form")
+
+// errScopeIntersectionEmpty is returned by intersectScope when a parsed
+// subject scope has no value in common with the allowed set.
+var errScopeIntersectionEmpty = errors.New("playground: subject scope shares no value with the playground allowed scope")
+
+// intersectScope returns the narrowing of the subject scope by the
+// playground_allowed_scope ceiling: the largest scope claim whose values
+// are matched by both. The narrowing is wildcard-aware through the shared
+// scopes package, so a subject `tools:sessions:read` survives against the
+// allowed `tools:sessions:*`. An absent or empty subject scope carries no
+// restriction, so the result is the allowed set.
 //
-// spec: §10.2 "scope is intersection(subject_token.scope,
-// playground_allowed_scope) — never the union".
-func intersectScope(subjectScope string, allowed []string) string {
+// It never returns an empty claim with a nil error. An empty scope claim
+// is the absent claim, which every scope gate treats as unrestricted, so a
+// subject the mint cannot narrow is refused: errSubjectScopeInvalid for a
+// subject scope the parser refuses, and errScopeIntersectionEmpty for a
+// parsed subject scope disjoint from the allowed set. Set.Intersect marks
+// the disjoint case with a sentinel Raw that keeps Matches fail-closed for
+// its other callers; this function reads it through Scopes rather than
+// writing the sentinel into a token.
+//
+// spec: §10.2 (Authentication), §25.1 (Design Philosophy and Agent Model)
+func intersectScope(subjectScope string, allowed []string) (string, error) {
 	subjectSet, err := scopes.Parse(subjectScope)
 	if err != nil {
-		// Fail closed: a subject scope the §25.1 parser rejects yields no
-		// playground scope rather than a claim the §10.2 auth chain would
-		// reject downstream.
-		return ""
+		return "", errSubjectScopeInvalid
 	}
 	allowedSet, err := scopes.Parse(strings.Join(allowed, " "))
 	if err != nil {
-		return ""
+		// The allowed set is a package constant of canonical values, so
+		// this branch is unreachable; it refuses rather than mint from a
+		// ceiling that did not parse.
+		return "", fmt.Errorf("playground: allowed scope set does not parse: %w", err)
 	}
 	narrowed := subjectSet.Intersect(allowedSet)
-	// spec: §10.2 — "If the intersection is empty, the mint
-	// proceeds with an empty scope claim." Intersect carries a sentinel
-	// Raw for the both-present-but-disjoint case to keep Matches
-	// fail-closed for its other callers; the playground mint translates
-	// that sentinel back to the empty claim the §10.2 table mandates.
 	if len(narrowed.Scopes()) == 0 {
-		return ""
+		return "", errScopeIntersectionEmpty
 	}
-	return narrowed.Raw
+	return narrowed.Raw, nil
+}
+
+// narrowSubjectScope computes the minted bearer's scope claim from the
+// subject and returns it with true, or writes the refusal and returns
+// false. An unparseable subject scope is refused with 401 UNAUTHORIZED and
+// details.reason subject_scope_invalid, and a disjoint subject scope with
+// 403 SCOPE_FORBIDDEN carrying details.activeScope and
+// details.requiredScope. Each refusal emits playground.bearer_mint_rejected
+// with the invariant identifier before the response is written.
+//
+// spec: §10.2 (Authentication), §27.3.1 (OIDC cookie-to-MCP-bearer exchange)
+func (h *Handler) narrowSubjectScope(w http.ResponseWriter, r *http.Request, subject jwt.Claims) (string, bool) {
+	narrowed, err := intersectScope(subject.Scope, playgroundAllowedScope)
+	switch {
+	case err == nil:
+		return narrowed, true
+	case errors.Is(err, errSubjectScopeInvalid):
+		h.emitMintRejected(r, subject.TenantID, subject.JWTID, string(subject.Typ), "subject_scope_invalid")
+		writeErrorReason(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"the subject's scope claim carries a value outside the tools:<domain>:<action> form, so the playground cannot narrow it",
+			"subject_scope_invalid")
+	case errors.Is(err, errScopeIntersectionEmpty):
+		h.emitMintRejected(r, subject.TenantID, subject.JWTID, string(subject.Typ), "scope_intersection_empty")
+		writeError(w, http.StatusForbidden, "SCOPE_FORBIDDEN",
+			"the subject's scope claim grants none of the scopes a playground bearer may carry",
+			map[string]any{
+				"requiredScope": strings.Join(playgroundAllowedScope, " "),
+				"activeScope":   strings.TrimSpace(subject.Scope),
+			})
+	default:
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+	}
+	return "", false
 }
 
 // emptyJSONBody reports whether the request body is empty or an empty

@@ -564,7 +564,7 @@ packages:
     - package: pkg/gateway/platformtools/treerecovery
       count: 16
     - package: pkg/gateway/playground
-      count: 95
+      count: 103
     - package: pkg/gateway/replica/devmode
       count: 4
     - package: pkg/gateway/replica/gatewayleader
