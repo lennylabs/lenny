@@ -1,6 +1,6 @@
 # Token exchange narrowing and identity rules
 
-Status: `Decided`, revision 1, 2026-11-20.
+Status: `In progress`, revision 1, 2026-11-20.
 
 ## Problem
 
