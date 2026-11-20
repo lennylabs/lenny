@@ -48,8 +48,9 @@ func TestChildTokenActClaimWireForm(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read tools:sessions:write",
 	})
+	// bob mints a child of alice's token, so he narrows her scope.
 	actor := mint(t, signer, jwt.Claims{
 		Subject: "bob", TenantID: "acme",
 		Typ: auth.TokenSessionCapability, DelegationDepth: 1,

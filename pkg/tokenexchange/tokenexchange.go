@@ -11,7 +11,8 @@
 //     tools:* grant every value); a request without scope issues
 //     subject.scope
 //   - A caller other than the subject must request a strictly narrower
-//     scope (no actor_token)
+//     scope; with an actor_token, the actor must be the caller, and a
+//     subject other than the actor must be narrowed strictly
 //   - A playground-origin subject or actor is refused
 //   - Tenant match: issued.tenant_id == subject.tenant_id == caller.tenant_id
 //   - delegation_depth: child = parent + 1 (with actor_token);
@@ -421,17 +422,39 @@ func expandAllTools(values []string) []string {
 // scope. The caller differs when its sub differs from the subject's, or
 // when both tokens carry a caller_type and the two differ; an upstream
 // IdP caller token carries none. A child-minting exchange (actor_token
-// present) is outside the rule.
+// present) takes checkChildMintIdentity instead.
 //
 // spec: §13.3 (Credential Flow) "Client authentication on
 // /v1/oauth/token."
 func checkCallerIdentity(r Request) error {
 	if r.Actor != nil {
-		return nil
+		return checkChildMintIdentity(r)
 	}
 	sameSub := r.Caller.Subject == r.Subject.Subject
 	sameType := r.Caller.CallerType == "" || r.Subject.CallerType == "" || r.Caller.CallerType == r.Subject.CallerType
 	if sameSub && sameType {
+		return nil
+	}
+	if strictlyNarrower(r.Requested.Scope, r.Subject.Scope) {
+		return nil
+	}
+	return &ExchangeError{Code: "invalid_scope", Reason: "scope_not_narrowed"}
+}
+
+// checkChildMintIdentity applies the caller-identity rule of a
+// child-minting exchange: the actor's sub must equal the caller's, and a
+// subject whose sub differs from the actor's must be narrowed strictly,
+// so a holder of someone else's token can neither borrow their actor
+// token nor mint a child of their token at its full reach. A child minted
+// for the actor's own principal is unaffected.
+//
+// spec: §13.3 (Credential Flow) "Client authentication on
+// /v1/oauth/token."
+func checkChildMintIdentity(r Request) error {
+	if r.Actor.Subject != r.Caller.Subject {
+		return &ExchangeError{Code: "invalid_grant", Reason: "actor_token_not_caller"}
+	}
+	if r.Subject.Subject == r.Actor.Subject {
 		return nil
 	}
 	if strictlyNarrower(r.Requested.Scope, r.Subject.Scope) {

@@ -33,6 +33,9 @@ import (
 var (
 	ErrNotFound      = errors.New("issuedtokenstore: token not found")
 	ErrAlreadyExists = errors.New("issuedtokenstore: jti already recorded")
+	// ErrCallerRevoked reports that the caller token of a revocation
+	// request is itself revoked; RevokeCascadeByCaller revokes nothing.
+	ErrCallerRevoked = errors.New("issuedtokenstore: caller token revoked")
 )
 
 // IssuedToken is one row of issued-token metadata. The §12.2 schema
@@ -553,11 +556,40 @@ type RevokedToken struct {
 //
 // spec: §13.3; §8.3.
 func (s *Store) RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
+	return s.RevokeCascadeByCaller(ctx, tenantID, "", rootJTI, rootReason, childReason, at)
+}
+
+// RevokeCascadeByCaller is RevokeCascade for a revocation request whose
+// caller token is callerJTI. In the same transaction, and before the
+// cascade, it reads the caller's row in the tenant under FOR SHARE and
+// returns ErrCallerRevoked, revoking nothing, when the row is revoked.
+// The share lock makes a concurrent revocation of the caller token either
+// commit first, which refuses the request, or wait until the request
+// commits. An empty callerJTI, or a caller with no row in the tenant
+// (an upstream OIDC ID token), skips the check. The root may be revoked
+// already: the cascade then revokes the descendants not yet revoked.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
+func (s *Store) RevokeCascadeByCaller(ctx context.Context, tenantID, callerJTI, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
 	var out []RevokedToken
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if callerJTI != "" {
+			var callerRevoked bool
+			err := tx.QueryRow(ctx,
+				`SELECT revoked_at IS NOT NULL FROM issued_tokens WHERE jti = $1 AND tenant_id = $2 FOR SHARE`,
+				callerJTI, tenantID).Scan(&callerRevoked)
+			switch {
+			case errors.Is(err, pgx.ErrNoRows):
+			case err != nil:
+				return err
+			case callerRevoked:
+				return ErrCallerRevoked
+			}
+		}
 		// Confirm the root exists so a typo'd jti is ErrNotFound rather
 		// than a silent no-op; an already-revoked root still cascades to
 		// any not-yet-revoked descendant.

@@ -96,8 +96,13 @@ var _ IssuedTokenRotationStore = (*issuedtokenstore.Store)(nil)
 // Token Service serves the `requested_token_type=...:access_token:revoked`
 // revocation request: it revokes the subject token and cascades to its
 // delegation descendants. F-16.7.5.
+//
+// RevokeCascadeByCaller reads the caller token's row under a share lock
+// in the transaction that revokes, and returns
+// issuedtokenstore.ErrCallerRevoked, revoking nothing, when that row is
+// revoked.
 type RevocationStore interface {
-	RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason, childReason string, at time.Time) ([]issuedtokenstore.RevokedToken, error)
+	RevokeCascadeByCaller(ctx context.Context, tenantID, callerJTI, rootJTI, rootReason, childReason string, at time.Time) ([]issuedtokenstore.RevokedToken, error)
 }
 
 // Auditor writes §16.7 audit rows on the Token Service's behalf. The
@@ -870,8 +875,8 @@ func actorClaim(a *tokenexchange.Actor) *jwt.ActorClaim {
 // the exchange is rejected with 400 invalid_grant. It returns true once the record is durable.
 // spec: §13.3 (Credential Flow: Write-before-issue ordering).
 func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, req Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
-	rec := issuedRecord(jti, issued, signed, dialectCap, subjectClaims, actorClaims, now)
 	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
+	rec := issuedRecord(jti, issued, signed, dialectCap, subjectClaims, actorClaims, isRotation, now)
 	auditPayload := exchangeAuditPayload{
 		ExchangeType:    classifyExchangeType(issued, isRotation, actorClaims),
 		CallerSub:       callerClaims.Subject,
@@ -901,9 +906,9 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, req 
 // issuedRecord builds the issued_tokens row for a signed token. The row
 // carries the SHA-256 digest of the token, never the token itself, and the
 // lineage derivedLineage returns.
-func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time) issuedtokenstore.IssuedToken {
+func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, subjectClaims jwt.Claims, actorClaims *jwt.Claims, isRotation bool, now time.Time) issuedtokenstore.IssuedToken {
 	hash := sha256.Sum256([]byte(signed))
-	actSub, parentJTI := derivedLineage(subjectClaims, actorClaims)
+	actSub, parentJTI := derivedLineage(subjectClaims, actorClaims, isRotation)
 	return issuedtokenstore.IssuedToken{
 		JTI:       jti,
 		TenantID:  issued.TenantID,
@@ -937,17 +942,25 @@ func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialec
 // re-read would treat as an impersonation bearer, so an actor token with
 // no jti records no lineage.
 //
-// Every other exchange (rotation, scope narrowing, lease issuance, or an
-// exchange by another caller) derives the issued token from the
-// subject_token, so the parent is the subject's jti and act_sub stays
-// empty. A row with parent_jti set is never an impersonation row. A
-// subject without a jti records no parent. Every Lenny mint stamps a jti,
-// so the empty-jti branches are defensive.
+// A self-rotation starts a new lineage and records neither column, so
+// revoking the token it replaced, such as a leaked one, does not reach
+// the replacement. A row with both columns null is not an impersonation
+// row.
+//
+// Every other exchange (scope narrowing, lease issuance, or an exchange
+// by another caller) derives the issued token from the subject_token, so
+// the parent is the subject's jti and act_sub stays empty. A row with
+// parent_jti set is never an impersonation row. A subject without a jti
+// records no parent. Every Lenny mint stamps a jti, so the empty-jti
+// branches are defensive.
 //
 // spec: §13.3 (Credential Flow) "Lineage of derived tokens.",
 // "Platform-admin impersonation." rule 2; §12.2 (TokenIssuanceStore
 // act_sub and parent_jti columns).
-func derivedLineage(subjectClaims jwt.Claims, actorClaims *jwt.Claims) (actSub, parentJTI string) {
+func derivedLineage(subjectClaims jwt.Claims, actorClaims *jwt.Claims, isRotation bool) (actSub, parentJTI string) {
+	if isRotation {
+		return "", ""
+	}
 	if actorClaims != nil {
 		if actorClaims.JWTID == "" {
 			return "", ""
@@ -1190,7 +1203,9 @@ func (s *Server) EmitRevocation(ctx context.Context, tenantID, sub, jti, reason 
 
 // handleRevocationRequest serves the §13.3 / §8.3 recursive
 // revocation request (`requested_token_type=...:access_token:revoked`).
-// It revokes the subject token (the root) and every delegation
+// It accepts the request only from the subject's own principal or a
+// tenant administrator (authorizeRevocation), and refuses a caller whose
+// own token is revoked. It revokes the subject token (the root) and every
 // descendant reachable through parent_jti, then emits one §16.7
 // token.revoked audit row per revoked node — `explicit_revoke` for the
 // root and `cascade_from_parent` for each descendant — and pushes each
@@ -1201,6 +1216,12 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 	if caller.TenantID != subject.TenantID {
 		writeOAuthError(w, http.StatusForbidden, "invalid_grant", "cross-tenant revocation is not permitted")
 		finish("invalid_grant")
+		return
+	}
+	if !authorizeRevocation(caller, subject) {
+		writeOAuthError(w, http.StatusForbidden, "unauthorized_client",
+			"a revocation request is accepted only from the token's own user or a tenant administrator")
+		finish("unauthorized_client")
 		return
 	}
 	if subject.JWTID == "" {
@@ -1216,8 +1237,13 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 		finish("token_store_unavailable")
 		return
 	}
-	revoked, err := rs.RevokeCascade(r.Context(), subject.TenantID, subject.JWTID,
+	revoked, err := rs.RevokeCascadeByCaller(r.Context(), subject.TenantID, caller.JWTID, subject.JWTID,
 		revocationReasonExplicit, revocationReasonCascade, now)
+	if errors.Is(err, issuedtokenstore.ErrCallerRevoked) {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "the caller token is revoked")
+		finish("invalid_client")
+		return
+	}
 	if errors.Is(err, issuedtokenstore.ErrNotFound) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
 			"subject_token jti is not a known issued token")
@@ -1236,6 +1262,20 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 		"revoked_count": len(revoked),
 	})
 	finish("")
+}
+
+// authorizeRevocation reports whether the caller may revoke the subject
+// token: the caller is the subject's own principal, or its token carries
+// the tenant-admin or platform-admin role. The tenant check runs before
+// it, so an administrator acts only within its own tenant.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
+func authorizeRevocation(caller, subject jwt.Claims) bool {
+	if caller.Subject != "" && caller.Subject == subject.Subject {
+		return true
+	}
+	return caller.HasRole(auth.RoleTenantAdmin) || caller.HasRole(auth.RolePlatformAdmin)
 }
 
 // emitTokenRevoked writes the §16.7 token.revoked audit row for one

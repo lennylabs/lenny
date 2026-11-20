@@ -23,8 +23,19 @@ import (
 
 // identityRulesTokenService builds the Token Service over the KMS stub as
 // cmd/lenny-token-service builds it, and returns a function that signs an
-// acme user bearer under the same key.
+// acme platform-admin user bearer under the same key.
 func identityRulesTokenService(t *testing.T) (*tokenservice.Server, func(sub, jti, scope, origin string) string) {
+	t.Helper()
+	srv, signRoles := identityRulesTokenServiceWithRoles(t)
+	sign := func(sub, jti, scope, origin string) string {
+		return signRoles(sub, jti, scope, origin, []auth.Role{auth.RolePlatformAdmin})
+	}
+	return srv, sign
+}
+
+// identityRulesTokenServiceWithRoles is identityRulesTokenService with a
+// signer that takes the bearer's roles.
+func identityRulesTokenServiceWithRoles(t *testing.T) (*tokenservice.Server, func(sub, jti, scope, origin string, roles []auth.Role) string) {
 	t.Helper()
 	stub := kmsstub.New(t)
 	ks, signer, err := jwt.LoadSigning(context.Background(), stub.AsProvider(), map[string]string{kms.AliasJWTSigning: "key-1"}, nil)
@@ -38,11 +49,11 @@ func identityRulesTokenService(t *testing.T) (*tokenservice.Server, func(sub, jt
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	sign := func(sub, jti, scope, origin string) string {
+	sign := func(sub, jti, scope, origin string, roles []auth.Role) string {
 		now := time.Now()
 		tok, err := signer.Sign(context.Background(), jwt.Claims{
 			Subject: sub, TenantID: "acme", Typ: auth.TokenUserBearer, CallerType: "human",
-			Roles: []auth.Role{auth.RolePlatformAdmin}, Scope: scope, Origin: origin,
+			Roles: roles, Scope: scope, Origin: origin,
 			Audience: []string{"lenny-gateway"}, IssuedAt: now.Unix(), Expiry: now.Add(time.Hour).Unix(),
 			JWTID: jti,
 		})
@@ -114,6 +125,74 @@ func TestAPlaygroundBearerCannotBeExchanged(t *testing.T) {
 		}
 		if _, ok := out["access_token"]; ok {
 			t.Errorf("playground %s: exchange returned an access_token", name)
+		}
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: bob, holding alice's token in the same tenant, presented it
+// as the subject_token of a child mint with his own token as the
+// actor_token, and received a child that carries alice's identity at her
+// scope, outside the reach of the revocation of alice's token. Inspect the
+// child-mint branch of the caller-identity check in tokenexchange.Validate.
+func TestAChildMintCannotCopyAnotherUsersTokenAtTheSameScope(t *testing.T) {
+	srv, sign := identityRulesTokenService(t)
+	alice := sign("alice@acme.com", "jti-alice", "tools:health:read tools:pool:read", "")
+	bob := sign("bob@acme.com", "jti-bob", "", "")
+
+	for _, scope := range []string{"", "tools:health:read tools:pool:read"} {
+		body := fmt.Sprintf(`{"grant_type":%q,"subject_token":%q,"actor_token":%q,"scope":%q,"audience":"lenny-gateway"}`,
+			"urn:ietf:params:oauth:grant-type:token-exchange", alice, bob, scope)
+		code, out := postIdentityExchange(t, srv, bob, body)
+		if code != http.StatusBadRequest || out["error"] != "invalid_scope" {
+			t.Errorf("scope %q: status %d body %v, want 400 invalid_scope", scope, code, out)
+		}
+		if _, ok := out["access_token"]; ok {
+			t.Errorf("scope %q: bob received a child of alice's token at her scope", scope)
+		}
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: carol presented bob's token as the actor_token of a child
+// mint and received a child whose act claim and lineage name bob. Inspect
+// the actor-is-caller check in tokenexchange.Validate.
+func TestAChildMintRefusesAnActorTokenThatIsNotTheCallers(t *testing.T) {
+	srv, sign := identityRulesTokenService(t)
+	alice := sign("alice@acme.com", "jti-alice", "tools:health:read tools:pool:read", "")
+	bob := sign("bob@acme.com", "jti-bob", "", "")
+	carol := sign("carol@acme.com", "jti-carol", "", "")
+
+	body := fmt.Sprintf(`{"grant_type":%q,"subject_token":%q,"actor_token":%q,"scope":"tools:health:read","audience":"lenny-gateway"}`,
+		"urn:ietf:params:oauth:grant-type:token-exchange", alice, bob)
+	code, out := postIdentityExchange(t, srv, carol, body)
+	if code != http.StatusBadRequest || out["error"] != "invalid_grant" {
+		t.Errorf("status %d body %v, want 400 invalid_grant", code, out)
+	}
+	if _, ok := out["access_token"]; ok {
+		t.Errorf("carol received a child minted with bob's actor token")
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: bob, a user in alice's tenant without an administrator role,
+// sent a recursive-revocation request for alice's token and was not
+// refused with 403 unauthorized_client. Inspect authorizeRevocation in
+// pkg/tokenservice/tokenservice.go.
+func TestAnotherUserCannotRevokeAUsersToken(t *testing.T) {
+	srv, sign := identityRulesTokenServiceWithRoles(t)
+	alice := sign("alice@acme.com", "jti-alice", "", "", nil)
+	for name, roles := range map[string][]auth.Role{
+		"no role":       nil,
+		"user":          {auth.RoleUser},
+		"tenant-viewer": {auth.RoleTenantViewer},
+	} {
+		bob := sign("bob@acme.com", "jti-bob", "", "", roles)
+		body := fmt.Sprintf(`{"grant_type":%q,"subject_token":%q,"requested_token_type":%q}`,
+			"urn:ietf:params:oauth:grant-type:token-exchange", alice, "urn:ietf:params:oauth:token-type:access_token:revoked")
+		code, out := postIdentityExchange(t, srv, bob, body)
+		if code != http.StatusForbidden || out["error"] != "unauthorized_client" {
+			t.Errorf("%s: status %d body %v, want 403 unauthorized_client", name, code, out)
 		}
 	}
 }

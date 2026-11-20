@@ -26,11 +26,12 @@ func lineageClaims(sub, jti string, typ auth.TokenType) jwt.Claims {
 // The issued_tokens row of an a2a_delegation mint records the actor
 // token's sub in act_sub and the actor token's jti in parent_jti, which is
 // the edge RevokeCascade walks, so a child whose subject differs from its
-// actor still names the actor as its parent. Every exchange without an
-// actor records the subject token's jti in parent_jti and leaves act_sub
-// empty: a rotation, a narrowing by another caller, and a lease issuance
-// each name their subject as the parent. No row the Token Service writes
-// matches the impersonation predicate (act_sub set, parent_jti null).
+// actor still names the actor as its parent. Every other exchange without
+// an actor records the subject token's jti in parent_jti and leaves
+// act_sub empty: a narrowing by another caller and a lease issuance each
+// name their subject as the parent. A self rotation starts a new lineage
+// and records neither column. No row the Token Service writes matches the
+// impersonation predicate (act_sub set, parent_jti null).
 func TestIssuedRecordLineagePerExchangeType_spec_13_3(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	alice := mintToken(t, signer, lineageClaims("alice@acme.com", "alice-1", auth.TokenUserBearer))
@@ -72,13 +73,12 @@ func TestIssuedRecordLineagePerExchangeType_spec_13_3(t *testing.T) {
 			},
 		},
 		{
-			name:   "self rotation",
+			name:   "self rotation starts a new lineage",
 			caller: alice,
 			req: Request{
 				SubjectToken: alice,
 				Scope:        "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
 			},
-			wantParentJTI: "alice-1",
 		},
 		{
 			name:   "scope narrowing by another caller",
@@ -156,27 +156,29 @@ func assertNotImpersonationRow(t *testing.T, rec issuedtokenstore.IssuedToken) {
 // spec: 13.3 (Credential Flow) "Lineage of derived tokens", 13.3 (Credential Flow) "Platform-admin impersonation" rule 2
 //
 // derivedLineage takes act_sub and parent_jti from the actor when an actor
-// is present, together or not at all, and otherwise takes parent_jti from
-// the subject with no act_sub. No result matches the impersonation
-// predicate.
+// is present, together or not at all, takes neither for a self rotation,
+// and otherwise takes parent_jti from the subject with no act_sub. No
+// result matches the impersonation predicate.
 func TestDerivedLineageNamesTheActorOrTheSubject(t *testing.T) {
 	subject := jwt.Claims{Subject: "alice@acme.com", JWTID: "alice-1"}
 	cases := []struct {
 		name       string
 		subject    jwt.Claims
 		actor      *jwt.Claims
+		rotation   bool
 		wantSub    string
 		wantParent string
 	}{
-		{"no actor names the subject", subject, nil, "", "alice-1"},
-		{"no actor and a subject without jti", jwt.Claims{Subject: "alice@acme.com"}, nil, "", ""},
-		{"actor with jti", subject, &jwt.Claims{Subject: "bob@acme.com", JWTID: "bob-1"}, "bob@acme.com", "bob-1"},
-		{"actor without jti", subject, &jwt.Claims{Subject: "bob@acme.com"}, "", ""},
-		{"actor without sub", subject, &jwt.Claims{JWTID: "bob-1"}, "", "bob-1"},
+		{"no actor names the subject", subject, nil, false, "", "alice-1"},
+		{"a rotation names no parent", subject, nil, true, "", ""},
+		{"no actor and a subject without jti", jwt.Claims{Subject: "alice@acme.com"}, nil, false, "", ""},
+		{"actor with jti", subject, &jwt.Claims{Subject: "bob@acme.com", JWTID: "bob-1"}, false, "bob@acme.com", "bob-1"},
+		{"actor without jti", subject, &jwt.Claims{Subject: "bob@acme.com"}, false, "", ""},
+		{"actor without sub", subject, &jwt.Claims{JWTID: "bob-1"}, false, "", "bob-1"},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
-			sub, parent := derivedLineage(c.subject, c.actor)
+			sub, parent := derivedLineage(c.subject, c.actor, c.rotation)
 			if sub != c.wantSub || parent != c.wantParent {
 				t.Errorf("derivedLineage = (%q, %q), want (%q, %q)", sub, parent, c.wantSub, c.wantParent)
 			}

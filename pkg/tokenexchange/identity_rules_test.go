@@ -192,16 +192,75 @@ func TestValidateADifferentCallerMustNarrow(t *testing.T) {
 
 // spec: §13.3 (Credential Flow)
 //
-// An a2a_delegation child mint keeps its own rules: a caller other than
-// the subject's owner mints a child at the subject's scope without
-// narrowing it.
-func TestValidateChildMintByAnotherCallerIsUnaffected(t *testing.T) {
+// A child mint whose subject is another user's token must name a scope
+// strictly narrower than the subject's: the subject's own scope and an
+// absent scope are refused with invalid_scope, and a narrower scope is
+// accepted and carries the subject's identity at that scope.
+func TestValidateChildMintForAnotherUserMustNarrow(t *testing.T) {
 	subject := validSubject()
 	bob := validSubject()
 	bob.Subject = "bob@acme.com"
 	bob.CallerType = CallerAgent
 	bob.Typ = TypeSessionCapability
-	got, err := exchangeOf(subject, bob, &bob, nil)
+	for _, c := range []struct {
+		name      string
+		requested []string
+	}{
+		{"no scope", nil},
+		{"the subject scope", subject.Scope},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := exchangeOf(subject, bob, &bob, c.requested)
+			wantRefusal(t, err, "invalid_scope", "scope_not_narrowed")
+		})
+	}
+	got, err := exchangeOf(subject, bob, &bob, []string{"tools:sessions:read"})
+	if err != nil {
+		t.Fatalf("narrower child mint should succeed, got %v", err)
+	}
+	if got.Subject != subject.Subject || !reflect.DeepEqual(got.Scope, []string{"tools:sessions:read"}) {
+		t.Errorf("child = sub %q scope %v, want alice at tools:sessions:read", got.Subject, got.Scope)
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// The actor token of a child mint must belong to the caller: a caller that
+// presents another principal's token as the actor is refused with
+// invalid_grant, whatever scope it requests and whoever the subject is.
+func TestValidateChildMintRefusesAnActorThatIsNotTheCaller(t *testing.T) {
+	subject := validSubject()
+	bob := validSubject()
+	bob.Subject = "bob@acme.com"
+	bob.Typ = TypeSessionCapability
+	carol := validSubject()
+	carol.Subject = "carol@acme.com"
+	for _, c := range []struct {
+		name      string
+		caller    Token
+		actor     Token
+		requested []string
+	}{
+		{"another user's actor", carol, bob, []string{"tools:sessions:read"}},
+		{"the subject's actor presented by another user", carol, subject, nil},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := exchangeOf(subject, c.caller, &c.actor, c.requested)
+			wantRefusal(t, err, "invalid_grant", "actor_token_not_caller")
+		})
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// A parent session minting a child for its own user is unaffected: when
+// the caller, the actor, and the subject share a sub, a request without
+// scope mints the child at the subject's scope.
+func TestValidateChildMintForTheActorsOwnUserIsUnaffected(t *testing.T) {
+	subject := validSubject()
+	session := validSubject()
+	session.Typ = TypeSessionCapability
+	got, err := exchangeOf(subject, session, &session, nil)
 	if err != nil {
 		t.Fatalf("child mint should succeed, got %v", err)
 	}

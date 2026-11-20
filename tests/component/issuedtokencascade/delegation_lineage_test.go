@@ -132,9 +132,11 @@ func TestRecursiveRevocationReachesExternalDelegationChildren_spec_13_3(t *testi
 	alice := h.userToken(t, tenant, "alice@acme.com", "alice-root-"+tenant)
 	bob := h.userToken(t, tenant, "bob@acme.com", "bob-root-"+tenant)
 
-	// The parent is a scope narrowing of alice's bearer, so it has a row.
+	// The parent is a scope narrowing of alice's bearer, so it has a row. A
+	// request at the bearer's own scope would be a self rotation, which
+	// records no parent.
 	parent, parentJTI := h.mint(t, alice, tokenservice.Request{
-		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
+		SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	// The child carries bob's identity and names the parent as its actor.
 	child, childJTI := h.mint(t, parent, tokenservice.Request{
@@ -247,11 +249,12 @@ func TestRecursiveRevocationReachesExternalDelegationChildren_spec_13_3(t *testi
 		}
 	}
 
-	// The revoked child can no longer act as the parent of a new child.
-	if code, body := h.post(t, alice, tokenservice.Request{
+	// The revoked child can no longer act as the parent of a new child. The
+	// child authenticates the call, so the actor is the caller's token.
+	if code, body := h.post(t, child, tokenservice.Request{
 		SubjectToken: bob, ActorToken: child, Scope: "tools:sessions:read", Audience: "lenny-gateway",
-	}); code != http.StatusBadRequest || body["error"] != "invalid_grant" {
-		t.Errorf("mint with the revoked child as actor: status %d body %v, want 400 invalid_grant", code, body)
+	}); code != http.StatusBadRequest || body["error"] != "invalid_grant" || body["error_description"] != "actor_token_revoked" {
+		t.Errorf("mint with the revoked child as actor: status %d body %v, want 400 invalid_grant actor_token_revoked", code, body)
 	}
 }
 

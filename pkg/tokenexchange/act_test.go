@@ -49,9 +49,14 @@ func TestValidateSetsActOnlyWithActorToken_spec_13_3(t *testing.T) {
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
+			// The actor token belongs to the caller of a child mint.
+			caller := c.subject
+			if c.actor != nil {
+				caller = *c.actor
+			}
 			got, err := Validate(Request{
 				Subject:      c.subject,
-				Caller:       c.subject,
+				Caller:       caller,
 				Actor:        c.actor,
 				Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 				RequestedExp: now.Add(30 * time.Minute),

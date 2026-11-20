@@ -222,16 +222,32 @@ func TestADifferentCallerMustNarrowTheSubjectScope(t *testing.T) {
 
 // spec: §13.3 (Credential Flow)
 //
-// An a2a_delegation child mint by a caller other than the subject's owner
-// keeps its own rules: it is accepted without a narrower scope, and its
-// parent is the actor token.
-func TestAChildMintByAnotherCallerIsUnaffectedByTheCallerRule(t *testing.T) {
+// An a2a_delegation child mint whose subject is another user's token must
+// name a strictly narrower scope: the subject's own scope and an absent
+// scope are refused with 400 invalid_scope and record no token, and a
+// narrower scope is accepted with the actor token as the parent.
+func TestAChildMintOfAnotherUsersTokenMustNarrow(t *testing.T) {
+	for _, scope := range []string{"", "tools:sessions:read tools:sessions:write"} {
+		t.Run("refused scope "+scope, func(t *testing.T) {
+			srv, signer, store, _ := identityServer(t)
+			bob := identityToken(t, signer, "bob@acme.com", "bob-1", "", "agent", "")
+			alice := identityToken(t, signer, "alice@acme.com", "alice-1", "tools:sessions:read tools:sessions:write", "human", "")
+			status, env := decodeExchange(t, doExchange(t, srv, bob, Request{
+				GrantType: grantTypeExchange, SubjectToken: alice, ActorToken: bob, Scope: scope, Audience: "lenny-gateway",
+			}))
+			if status != http.StatusBadRequest || env["error"] != "invalid_scope" || env["error_description"] != "scope_not_narrowed" {
+				t.Fatalf("status %d body %v, want 400 invalid_scope scope_not_narrowed", status, env)
+			}
+			if recs := store.snapshot(); len(recs) != 0 {
+				t.Errorf("issued rows = %+v, want none", recs)
+			}
+		})
+	}
 	srv, signer, store, _ := identityServer(t)
-	bob := identityToken(t, signer, "bob@acme.com", "bob-1", "tools:sessions:read", "agent", "")
-	alice := identityToken(t, signer, "alice@acme.com", "alice-1", "tools:sessions:read", "human", "")
-
+	bob := identityToken(t, signer, "bob@acme.com", "bob-1", "", "agent", "")
+	alice := identityToken(t, signer, "alice@acme.com", "alice-1", "tools:sessions:read tools:sessions:write", "human", "")
 	status, env := decodeExchange(t, doExchange(t, srv, bob, Request{
-		GrantType: grantTypeExchange, SubjectToken: alice, ActorToken: bob, Audience: "lenny-gateway",
+		GrantType: grantTypeExchange, SubjectToken: alice, ActorToken: bob, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	}))
 	if status != http.StatusOK {
 		t.Fatalf("status %d body %v, want 200", status, env)
@@ -239,6 +255,54 @@ func TestAChildMintByAnotherCallerIsUnaffectedByTheCallerRule(t *testing.T) {
 	recs := store.snapshot()
 	if len(recs) != 1 || recs[0].ParentJTI != "bob-1" || recs[0].ActSubject != "bob@acme.com" {
 		t.Errorf("issued rows = %+v, want one row whose parent is bob-1 and act_sub bob", recs)
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// The actor token of a child mint must belong to the caller: carol,
+// presenting bob's token as the actor, is refused with 400 invalid_grant
+// and no token is recorded, even with a narrower scope.
+func TestAChildMintRefusesAnActorTokenOfAnotherCaller(t *testing.T) {
+	srv, signer, store, _ := identityServer(t)
+	carol := identityToken(t, signer, "carol@acme.com", "carol-1", "", "human", "")
+	bob := identityToken(t, signer, "bob@acme.com", "bob-1", "", "agent", "")
+	alice := identityToken(t, signer, "alice@acme.com", "alice-1", "tools:sessions:read tools:sessions:write", "human", "")
+	status, env := decodeExchange(t, doExchange(t, srv, carol, Request{
+		GrantType: grantTypeExchange, SubjectToken: alice, ActorToken: bob, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	}))
+	if status != http.StatusBadRequest || env["error"] != "invalid_grant" || env["error_description"] != "actor_token_not_caller" {
+		t.Fatalf("status %d body %v, want 400 invalid_grant actor_token_not_caller", status, env)
+	}
+	if recs := store.snapshot(); len(recs) != 0 {
+		t.Errorf("issued rows = %+v, want none", recs)
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// A parent session minting a child for its own user is unaffected: alice's
+// session token as the caller and the actor, with alice's token as the
+// subject and no scope, mints the child at the subject's scope.
+func TestAChildMintForTheCallersOwnUserIsUnaffected(t *testing.T) {
+	srv, signer, store, _ := identityServer(t)
+	session := mintToken(t, signer, jwt.Claims{
+		Subject: "alice@acme.com", TenantID: "acme", JWTID: "sess-1", Typ: auth.TokenSessionCapability,
+		CallerType: "agent", SessionID: "sess_alice",
+	})
+	alice := identityToken(t, signer, "alice@acme.com", "alice-1", "tools:sessions:read tools:sessions:write", "human", "")
+	status, env := decodeExchange(t, doExchange(t, srv, session, Request{
+		GrantType: grantTypeExchange, SubjectToken: alice, ActorToken: session, Audience: "lenny-gateway",
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("status %d body %v, want 200", status, env)
+	}
+	if env["scope"] != "tools:sessions:read tools:sessions:write" {
+		t.Errorf("scope = %v, want the subject scope", env["scope"])
+	}
+	recs := store.snapshot()
+	if len(recs) != 1 || recs[0].ParentJTI != "sess-1" || recs[0].ActSubject != "alice@acme.com" {
+		t.Errorf("issued rows = %+v, want one row whose parent is sess-1 and act_sub alice", recs)
 	}
 }
 

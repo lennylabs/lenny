@@ -108,3 +108,82 @@ func TestADifferentCallerMustNarrowOverHTTP(t *testing.T) {
 		})
 	}
 }
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: a child mint of another user's token at that user's scope
+// (equal scope or no scope) was accepted, a strictly narrower child mint
+// was refused, an actor_token that is not the caller's was accepted, or a
+// refusal did not carry the 400 error and reason §13.3 names. Inspect
+// checkChildMintIdentity in pkg/tokenexchange.
+func TestAChildMintOfAnotherUsersTokenOverHTTP(t *testing.T) {
+	const subjectScope = "tools:health:read tools:sessions:read"
+	cases := []struct {
+		name, callerSub, scope string
+		wantStatus             int
+		wantError, wantReason  string
+	}{
+		{"equal scope", "bob@acme.com", subjectScope, http.StatusBadRequest, "invalid_scope", "scope_not_narrowed"},
+		{"no scope", "bob@acme.com", "", http.StatusBadRequest, "invalid_scope", "scope_not_narrowed"},
+		{"strictly narrower scope", "bob@acme.com", "tools:health:read", http.StatusOK, "", ""},
+		{"actor token of another caller", "carol@acme.com", "tools:health:read", http.StatusBadRequest, "invalid_grant", "actor_token_not_caller"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			ts, signer := newTestServer(t)
+			caller := mint(t, signer, jwt.Claims{Subject: c.callerSub, TenantID: "acme", JWTID: "caller-1", Typ: auth.TokenUserBearer})
+			bob := mint(t, signer, jwt.Claims{
+				Subject: "bob@acme.com", TenantID: "acme", JWTID: "bob-1",
+				Typ: auth.TokenSessionCapability, SessionID: "sess_bob",
+			})
+			alice := mint(t, signer, jwt.Claims{
+				Subject: "alice@acme.com", TenantID: "acme", JWTID: "alice-1",
+				Typ: auth.TokenUserBearer, Scope: subjectScope,
+			})
+			resp, body := exchange(t, ts, caller, tokenservice.Request{
+				GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
+				SubjectToken:     alice,
+				SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
+				ActorToken:       bob,
+				ActorTokenType:   "urn:ietf:params:oauth:token-type:jwt",
+				Scope:            c.scope,
+				Audience:         "lenny-gateway",
+			})
+			if resp.StatusCode != c.wantStatus {
+				t.Fatalf("status = %d body %v, want %d", resp.StatusCode, body, c.wantStatus)
+			}
+			if c.wantStatus != http.StatusOK {
+				if body["error"] != c.wantError || body["error_description"] != c.wantReason {
+					t.Errorf("error = %v %v, want %s %s", body["error"], body["error_description"], c.wantError, c.wantReason)
+				}
+				if _, ok := body["access_token"]; ok {
+					t.Errorf("refusal body carries an access_token")
+				}
+				return
+			}
+			if got, _ := body["scope"].(string); got != c.scope {
+				t.Errorf("response scope = %q, want %q", got, c.scope)
+			}
+		})
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: a recursive-revocation request from a user other than the
+// token's owner, holding no administrator role, was not refused with 403
+// unauthorized_client. Inspect authorizeRevocation in pkg/tokenservice.
+func TestARevocationRequestFromAnotherUserIsRefusedOverHTTP(t *testing.T) {
+	ts, signer := newTestServer(t)
+	bob := mint(t, signer, jwt.Claims{
+		Subject: "bob@acme.com", TenantID: "acme", JWTID: "bob-1",
+		Typ: auth.TokenUserBearer, Roles: []auth.Role{auth.RoleUser},
+	})
+	alice := mint(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "alice-1", Typ: auth.TokenUserBearer})
+	resp, body := exchange(t, ts, bob, tokenservice.Request{
+		GrantType:          "urn:ietf:params:oauth:grant-type:token-exchange",
+		SubjectToken:       alice,
+		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token:revoked",
+	})
+	if resp.StatusCode != http.StatusForbidden || body["error"] != "unauthorized_client" {
+		t.Fatalf("status = %d body %v, want 403 unauthorized_client", resp.StatusCode, body)
+	}
+}
