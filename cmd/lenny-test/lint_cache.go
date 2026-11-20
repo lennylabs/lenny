@@ -59,7 +59,7 @@ func (l golangciLint) fillCache(ctx context.Context) error {
 	name := report.Name()
 	_ = report.Close()
 	defer func() { _ = os.Remove(name) }()
-	out, err := l.exec(ctx, l.bin, l.root, wholeTreeLintArgs(l.root, name)...)
+	out, err := l.exec(ctx, l.bin, l.root, "", wholeTreeLintArgs(l.root, name)...)
 	var exitErr *exec.ExitError
 	if err != nil && (!errors.As(err, &exitErr) || exitErr.ExitCode() != golangciLintExitIssues) {
 		return fmt.Errorf("golangci-lint did not finish its run on the whole tree (%w):\n%s", err, out)

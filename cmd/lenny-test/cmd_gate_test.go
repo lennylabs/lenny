@@ -462,7 +462,7 @@ func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
 // it keeps running as root when the owner is root.
 func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 	for _, want := range []string{
-		"if [ \"$uid\" = 0 ]; then\n\tsh -c \"$build\"\n\tinstall_harness\n\tsh -c \"$fill\"\n\tlock_lint_cache\n\texec sh -c \"$run\" lenny-test-gate \"$@\"\nfi",
+		"if [ \"$uid\" = 0 ]; then\n\tsh -c \"$build\"\n\tinstall_harness\n\tsh -c \"$fill\" || fill_failed\n\tlock_lint_cache\n\texec sh -c \"$run\" lenny-test-gate \"$@\"\nfi",
 		`useradd --uid "$uid" --gid "$gid"`,
 		`stat -c %g /var/run/docker.sock`,
 		`chown -R "$uid:$gid" "$d"`,
@@ -487,7 +487,8 @@ func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 	s := gateContainerScript
 	for _, want := range []string{
-		`"$` + gateEnvHarness + `" lint-cache-fill ||`,
+		`fill='"$` + gateEnvHarness + `" lint-cache-fill'`,
+		`sh -c "$fill" || fill_failed`,
 		`export ` + gateEnvHarness + `=` + gateHarnessPath,
 		`install -o 0 -g 0 -m 0555 "$GOTMPDIR/lenny-test" "$` + gateEnvHarness + `"`,
 		`mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"`,
@@ -502,7 +503,7 @@ func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 	setpriv := `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c `
 	userBuild := strings.Index(s, setpriv+`"$build"`)
 	userInstall := strings.LastIndex(s, "install_harness\n")
-	userFill := strings.Index(s, setpriv+`"$fill"`)
+	userFill := strings.Index(s, setpriv+`"$fill" || fill_failed`)
 	userLock := strings.LastIndex(s, "lock_lint_cache\n")
 	userRun := strings.Index(s, "exec "+setpriv+`"$run"`)
 	if userBuild < 0 || userInstall <= userBuild || userFill <= userInstall || userLock <= userFill || userRun <= userLock {
@@ -510,6 +511,39 @@ func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 	}
 	if fill := gateScriptVar(t, "fill"); !strings.Contains(fill, "lint-cache-fill") || strings.Contains(fill, "gate --here") {
 		t.Errorf("the fill step does not fill the cache, or runs the gate before the cache is read-only:\n%s", fill)
+	}
+}
+
+// TestGateContainerScriptReportsAFillThatDidNotFinish runs the container
+// script's fill_failed function after a fill that fails and after one that
+// finishes. A failed fill logs one warning line and exports the variable
+// that turns the static tier's golangci-lint runs to a private cache, and
+// the gate step inherits it; a finished fill sets nothing.
+func TestGateContainerScriptReportsAFillThatDidNotFinish(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("blocked: sh is not on PATH")
+	}
+	_, rest, ok := strings.Cut(gateContainerScript, "\nfill_failed() {\n")
+	if !ok {
+		t.Fatal("the container script defines no fill_failed function")
+	}
+	body, _, _ := strings.Cut(rest, "\n}\n")
+	fn := "fill_failed() {\n" + body + "\n}\n"
+	for fill, want := range map[string]string{"false": gateLintFillFailed, "true": ""} {
+		cmd := exec.Command("sh", "-c", "set -e\n"+fn+"sh -c "+fill+" || fill_failed\nsh -c 'printf %s \"${"+gateEnvLintFill+":-}\"'")
+		cmd.Env = os.Environ()
+		var stdout, stderr strings.Builder
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("fill %s: %v\n%s", fill, err, stderr.String())
+		}
+		if stdout.String() != want {
+			t.Errorf("fill %s: the gate step sees %s=%q; want %q", fill, gateEnvLintFill, stdout.String(), want)
+		}
+		warned := strings.Count(stderr.String(), "\n")
+		if (want != "" && (warned != 1 || !strings.Contains(stderr.String(), "private, empty cache"))) || (want == "" && warned != 0) {
+			t.Errorf("fill %s: logged %q", fill, stderr.String())
+		}
 	}
 }
 
