@@ -7,7 +7,7 @@ None.
 ## Steps
 
 ### 0163.S1 Token exchange default scope
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - closes: [TOKX-I2]
 

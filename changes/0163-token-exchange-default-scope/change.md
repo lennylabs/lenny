@@ -1,6 +1,6 @@
 # A token exchange without scope issues the subject token's scope
 
-Status: `Decided`, revision 1, 2026-11-19.
+Status: `In progress`, revision 1, 2026-11-19.
 
 ## Problem
 
