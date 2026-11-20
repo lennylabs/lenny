@@ -300,7 +300,7 @@ packages:
     - package: pkg/credential/denylist/propagator
       count: 2
     - package: pkg/credential/impersonation
-      count: 50
+      count: 52
     - package: pkg/credential/impersonation/impersonationtest
       count: 1
     - package: pkg/credential/revocation
@@ -938,9 +938,9 @@ packages:
     - package: pkg/tierpromotion
       count: 25
     - package: pkg/tokenexchange
-      count: 9
+      count: 14
     - package: pkg/tokenservice
-      count: 179
+      count: 178
     - package: pkg/tokenservice/cache
       count: 16
     - package: pkg/tokenservice/promemit
@@ -1014,7 +1014,7 @@ packages:
     - package: tests/component/healthchecks
       count: 11
     - package: tests/component/issuedtokencascade
-      count: 11
+      count: 13
     - package: tests/component/leasedenial
       count: 8
     - package: tests/component/leases

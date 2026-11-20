@@ -53,7 +53,7 @@ func TestOAuthTokenHardSigningErrorReturns503RetryAfter1_spec_10_2(t *testing.T)
 
 	caller := mint(t, verifier, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read sessions:write",
+		Scope: "tools:sessions:read tools:sessions:write",
 	})
 	resp, body := exchange(t, ts, caller, narrowing(caller))
 	if resp.StatusCode != http.StatusServiceUnavailable {

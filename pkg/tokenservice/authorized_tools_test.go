@@ -18,7 +18,7 @@ func TestToExchangeTokenCarriesAuthorizedTools_spec_13_3_580(t *testing.T) {
 	c := jwt.Claims{
 		TenantID:        "acme",
 		Subject:         "alice@acme.com",
-		Scope:           "sessions:read",
+		Scope:           "tools:sessions:read",
 		Typ:             "user_bearer",
 		AuthorizedTools: []string{"tools:sessions:read", "tools:sessions:write"},
 	}

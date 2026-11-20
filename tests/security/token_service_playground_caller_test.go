@@ -34,7 +34,7 @@ func signPlaygroundCase(t *testing.T, signer jwt.Signer, jti, origin string) str
 	now := time.Now()
 	tok, err := signer.Sign(context.Background(), jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read tools:sessions:write", Audience: []string{"lenny-gateway"},
 		IssuedAt: now.Unix(), Expiry: now.Add(time.Hour).Unix(), JWTID: jti, Origin: origin,
 	})
 	if err != nil {
@@ -67,7 +67,7 @@ func TestTokenServiceRefusesPlaygroundCallerBeforeSigning_spec_13_3(t *testing.T
 	subject := signPlaygroundCase(t, signer, "jti-subject", "")
 	signsBefore := stub.SignCalls()
 
-	body := fmt.Sprintf(`{"grant_type":%q,"subject_token":%q,"scope":"sessions:read","audience":"lenny-gateway"}`,
+	body := fmt.Sprintf(`{"grant_type":%q,"subject_token":%q,"scope":"tools:sessions:read","audience":"lenny-gateway"}`,
 		"urn:ietf:params:oauth:grant-type:token-exchange", subject)
 	req := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")

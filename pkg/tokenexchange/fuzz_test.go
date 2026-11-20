@@ -16,7 +16,7 @@ import (
 // The fuzz seed covers cross-tenant, empty, oversize, and
 // scope-broadening shapes.
 func FuzzValidateDoesNotPanic(f *testing.F) {
-	f.Add("acme", "alice", "alice@acme.com", "alice", "alice@acme.com", "sessions:read", "lenny-gateway")
+	f.Add("acme", "alice", "alice@acme.com", "alice", "alice@acme.com", "tools:sessions:read", "lenny-gateway")
 	f.Add("", "", "", "", "", "", "")
 	f.Add("acme", "alice", "alice", "alice", "alice", string(make([]byte, 4096)), "aud")
 	f.Add("acme/bad", "alice", "alice", "alice", "alice", "scope", "aud")

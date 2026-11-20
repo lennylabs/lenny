@@ -48,36 +48,36 @@ func TestMintedTokenCarriesActOnlyWithActorToken_spec_13_3(t *testing.T) {
 	}{
 		{
 			name: "delegation mint with a distinct actor", caller: bob,
-			req:       Request{SubjectToken: alice, ActorToken: bob, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:       Request{SubjectToken: alice, ActorToken: bob, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantAct:   &jwt.ActorClaim{Subject: "bob@acme.com", TenantID: "acme", SessionID: "sess_bob", DelegationDepth: 1},
 			wantTyp:   auth.TokenA2ADelegation,
 			wantDepth: 2,
 		},
 		{
 			name: "delegation mint whose actor is the subject", caller: alice,
-			req:       Request{SubjectToken: alice, ActorToken: alice, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:       Request{SubjectToken: alice, ActorToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantAct:   &jwt.ActorClaim{Subject: "alice@acme.com", TenantID: "acme", DelegationDepth: 0},
 			wantTyp:   auth.TokenA2ADelegation,
 			wantDepth: 1,
 		},
 		{
 			name: "self rotation", caller: alice,
-			req:     Request{SubjectToken: alice, Scope: "sessions:read sessions:write", Audience: "lenny-gateway"},
+			req:     Request{SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway"},
 			wantTyp: auth.TokenUserBearer,
 		},
 		{
 			name: "scope narrowing", caller: bob,
-			req:     Request{SubjectToken: alice, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:     Request{SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantTyp: auth.TokenUserBearer,
 		},
 		{
 			name: "credential lease issuance", caller: bob,
-			req:     Request{SubjectToken: capability, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:     Request{SubjectToken: capability, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantTyp: auth.TokenSessionCapability,
 		},
 		{
 			name: "exchange of an a2a_delegation subject without an actor", caller: alice,
-			req:       Request{SubjectToken: child, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:       Request{SubjectToken: child, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantTyp:   auth.TokenA2ADelegation,
 			wantDepth: 2,
 		},

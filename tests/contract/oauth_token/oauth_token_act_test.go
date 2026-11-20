@@ -48,12 +48,12 @@ func TestChildTokenActClaimWireForm(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	actor := mint(t, signer, jwt.Claims{
 		Subject: "bob", TenantID: "acme",
 		Typ: auth.TokenSessionCapability, DelegationDepth: 1,
-		Scope: "sessions:read", SessionID: "sess_parent",
+		Scope: "tools:sessions:read", SessionID: "sess_parent",
 	})
 
 	resp, body := exchange(t, ts, actor, tokenservice.Request{
@@ -62,7 +62,7 @@ func TestChildTokenActClaimWireForm(t *testing.T) {
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		ActorToken:       actor,
 		ActorTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -85,7 +85,7 @@ func TestChildTokenActClaimWireForm(t *testing.T) {
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {

@@ -148,12 +148,12 @@ func TestRotationRevocationObservesPropagation_SEC_TS_1(t *testing.T) {
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)

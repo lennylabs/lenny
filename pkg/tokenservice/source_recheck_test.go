@@ -77,7 +77,7 @@ func assertSingleRejectionAudit(t *testing.T, rows []recordedAudit, policyResult
 func recheckClaims(jti string) jwt.Claims {
 	return jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: jti,
-		Typ: auth.TokenUserBearer, Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read tools:sessions:write", Audience: []string{"lenny-gateway"},
 	}
 }
 
@@ -133,7 +133,7 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			caller := mintToken(t, signer, recheckClaims("caller-1"))
 			req := Request{
 				GrantType: grantTypeExchange, SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
-				Scope: "sessions:read", Audience: "lenny-gateway",
+				Scope: "tools:sessions:read", Audience: "lenny-gateway",
 			}
 			if tc.withActor {
 				req.ActorToken = mintToken(t, signer, recheckClaims("actor-1"))
@@ -170,7 +170,7 @@ func TestHandlerSourceRevokedRejectionAuditFailure_spec_13_3(t *testing.T) {
 				GrantType:    grantTypeExchange,
 				SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
 				ActorToken:   mintToken(t, signer, recheckClaims("actor-1")),
-				Scope:        "sessions:read", Audience: "lenny-gateway",
+				Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 			})
 			assertOAuthRejection(t, resp, http.StatusInternalServerError, "token_exchange_failed", tc.wantReason)
 		})
@@ -186,7 +186,7 @@ func TestHandlerLiveSourcesPassReRead_spec_13_3(t *testing.T) {
 	resp := doExchange(t, srv, mintToken(t, signer, recheckClaims("caller-1")), Request{
 		GrantType:    grantTypeExchange,
 		SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
-		Scope:        "sessions:read", Audience: "lenny-gateway",
+		Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -251,7 +251,7 @@ func TestHandlerRefusesImpersonationSource_spec_13_3(t *testing.T) {
 				GrantType:    grantTypeExchange,
 				SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
 				ActorToken:   mintToken(t, signer, recheckClaims("actor-1")),
-				Scope:        "sessions:read", Audience: "lenny-gateway",
+				Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 			})
 			assertOAuthRejection(t, resp, http.StatusBadRequest, "invalid_grant", tc.wantReason)
 			if len(store.records) != 0 || len(store.audits) != 0 {
@@ -271,7 +271,7 @@ func TestHandlerImpersonationRejectionAuditFailure_spec_13_3(t *testing.T) {
 	resp := doExchange(t, srv, mintToken(t, signer, recheckClaims("caller-1")), Request{
 		GrantType:    grantTypeExchange,
 		SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
-		Scope:        "sessions:read", Audience: "lenny-gateway",
+		Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	assertOAuthRejection(t, resp, http.StatusInternalServerError, "token_exchange_failed", "subject_token_impersonation")
 }
