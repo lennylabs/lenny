@@ -226,31 +226,26 @@ func TestLintPatchRefusesPathsTheDiffCannotName(t *testing.T) {
 	}
 }
 
-// TestLintEnvDropsThePatchOverrideAndTargetsLinux checks the environment
-// of a golangci-lint run: an inherited patch override is dropped, PWD
-// names the root, and a host other than Linux analyzes the Linux build.
-func TestLintEnvDropsThePatchOverrideAndTargetsLinux(t *testing.T) {
-	in := []string{"HOME=/home/alice", "GOLANGCI_DIFF_PROCESSOR_PATCH=x", "PWD=/elsewhere", "GOOS=darwin", "CGO_ENABLED=1"}
-	darwin := strings.Join(golangciLintEnv(in, "/repo", "darwin", "/cache"), "\n")
-	for _, want := range []string{"HOME=/home/alice", "PWD=/repo", "GOOS=linux", "CGO_ENABLED=0"} {
-		if !strings.Contains(darwin, want) {
-			t.Errorf("darwin environment lacks %s:\n%s", want, darwin)
+// TestLintEnvDropsThePatchOverrideAndTargetsLinuxAmd64 checks the
+// environment of a golangci-lint run: an inherited patch override is
+// dropped, PWD names the root, and every run reads the linux/amd64 build
+// with cgo and the workspace off, whatever the inherited environment
+// names.
+func TestLintEnvDropsThePatchOverrideAndTargetsLinuxAmd64(t *testing.T) {
+	in := []string{"HOME=/home/alice", "GOLANGCI_DIFF_PROCESSOR_PATCH=x", "PWD=/elsewhere", "GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=1", "GOWORK=/elsewhere/go.work"}
+	env := golangciLintEnv(in, "/repo", "/cache")
+	for _, want := range []string{"HOME=/home/alice", "PWD=/repo", "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOWORK=off"} {
+		if !slices.Contains(env, want) {
+			t.Errorf("environment lacks %s:\n%s", want, strings.Join(env, "\n"))
 		}
 	}
-	for _, bad := range []string{"GOLANGCI_DIFF_PROCESSOR_PATCH", "PWD=/elsewhere", "GOOS=darwin", "CGO_ENABLED=1"} {
-		if strings.Contains(darwin, bad) {
-			t.Errorf("darwin environment keeps %s:\n%s", bad, darwin)
+	for _, bad := range []string{"GOLANGCI_DIFF_PROCESSOR_PATCH=x", "PWD=/elsewhere", "GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=1", "GOWORK=/elsewhere/go.work"} {
+		if slices.Contains(env, bad) {
+			t.Errorf("environment keeps %s:\n%s", bad, strings.Join(env, "\n"))
 		}
 	}
-	linux := strings.Join(golangciLintEnv(in, "/repo", "linux", "/cache"), "\n")
-	if !strings.Contains(linux, "GOOS=darwin") || !strings.Contains(linux, "CGO_ENABLED=1") || strings.Contains(linux, "GOOS=linux") {
-		t.Errorf("a Linux host changed the build target:\n%s", linux)
-	}
-	for _, goos := range []string{"darwin", "linux"} {
-		env := golangciLintEnv(append(in, "GOWORK=/elsewhere/go.work"), "/repo", goos, "/cache")
-		if !slices.Contains(env, "GOWORK=off") || slices.Contains(env, "GOWORK=/elsewhere/go.work") {
-			t.Errorf("%s: the environment does not turn the workspace off:\n%s", goos, strings.Join(env, "\n"))
-		}
+	if target := lintTargetEnv(nil); !slices.Equal(target, lintTargetEnvVars) {
+		t.Errorf("an empty environment gives %v; want %v", target, lintTargetEnvVars)
 	}
 }
 
@@ -1180,19 +1175,19 @@ func TestLintCacheIsPerCheckout(t *testing.T) {
 		return out
 	}
 	inherited := []string{"GOLANGCI_LINT_CACHE=/shared"}
-	a := cacheOf(golangciLintEnv(inherited, "/work/a", "linux", "/home/alice/.cache"))
-	b := cacheOf(golangciLintEnv(inherited, "/work/b", "linux", "/home/alice/.cache"))
+	a := cacheOf(golangciLintEnv(inherited, "/work/a", "/home/alice/.cache"))
+	b := cacheOf(golangciLintEnv(inherited, "/work/b", "/home/alice/.cache"))
 	if len(a) != 1 || len(b) != 1 || a[0] == b[0] || filepath.Dir(a[0]) != "/shared" || filepath.Dir(b[0]) != "/shared" {
 		t.Errorf("caches %v and %v; want one directory per checkout under /shared", a, b)
 	}
-	if again := cacheOf(golangciLintEnv(inherited, "/work/a", "linux", "")); len(again) != 1 || again[0] != a[0] {
+	if again := cacheOf(golangciLintEnv(inherited, "/work/a", "")); len(again) != 1 || again[0] != a[0] {
 		t.Errorf("cache %v; want the same directory %s for the same checkout", again, a[0])
 	}
-	def := cacheOf(golangciLintEnv(nil, "/work/a", "darwin", "/home/alice/.cache"))
+	def := cacheOf(golangciLintEnv(nil, "/work/a", "/home/alice/.cache"))
 	if len(def) != 1 || filepath.Dir(def[0]) != "/home/alice/.cache/golangci-lint" {
 		t.Errorf("cache %v; want a directory under golangci-lint's default", def)
 	}
-	if none := cacheOf(golangciLintEnv(nil, "/work/a", "linux", "")); len(none) != 0 {
+	if none := cacheOf(golangciLintEnv(nil, "/work/a", "")); len(none) != 0 {
 		t.Errorf("cache %v; want none when no cache directory is known", none)
 	}
 }

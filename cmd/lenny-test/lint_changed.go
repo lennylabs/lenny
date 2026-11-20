@@ -12,7 +12,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -320,14 +319,14 @@ func execGolangciLint(ctx context.Context, bin, root string, args ...string) (st
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = root
 	userCache, _ := os.UserCacheDir()
-	cmd.Env = golangciLintEnv(os.Environ(), root, runtime.GOOS, userCache)
+	cmd.Env = golangciLintEnv(os.Environ(), root, userCache)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
 // golangciLintEnv returns the environment of a golangci-lint run, built
-// from the harness's own environment env on a host whose operating system
-// is goos and whose user cache directory is userCache. It is the build
+// from the harness's own environment env on a host whose user cache
+// directory is userCache. It is the build
 // target of lintTargetEnv, with these settings of the run's own:
 //
 //   - GOLANGCI_DIFF_PROCESSOR_PATCH replaces the diff golangci-lint
@@ -344,10 +343,10 @@ func execGolangciLint(ctx context.Context, bin, root string, args ...string) (st
 //     other's paths. The changed-line run then matches no finding to the
 //     diff and passes, and the whole-tree counts name no package of the
 //     tree.
-func golangciLintEnv(env []string, root, goos, userCache string) []string {
+func golangciLintEnv(env []string, root, userCache string) []string {
 	drop := map[string]bool{"GOLANGCI_DIFF_PROCESSOR_PATCH": true, "PWD": true, "GOLANGCI_LINT_CACHE": true}
 	cacheBase := ""
-	target := lintTargetEnv(env, goos)
+	target := lintTargetEnv(env)
 	out := make([]string, 0, len(target)+2)
 	for _, kv := range target {
 		name, value, _ := strings.Cut(kv, "=")
@@ -365,34 +364,42 @@ func golangciLintEnv(env []string, root, goos, userCache string) []string {
 	return out
 }
 
-// lintTargetEnv returns env set to the build the lint reads, for both
-// golangci-lint runs and the listing of the product packages
-// (lint_deps.go), on a host whose operating system is goos.
+// lintTargetEnvVars is the build the lint reads, for both golangci-lint
+// runs and the listing of the product packages (lint_deps.go), on every
+// host.
 //
+//   - GOOS and GOARCH name linux/amd64 (owner's answer to GT-12,
+//     2026-11-20). The merge gate's container is Linux, and a file behind
+//     an operating system or architecture constraint is read only in the
+//     build it names, so a target that followed the host would count
+//     other findings on another host and fail the register there. A
+//     package that builds only on Linux would also report a type-checking
+//     error on another operating system that the gate never sees.
+//   - CGO_ENABLED is 0. The go command turns cgo off by default when it
+//     builds for another architecture than the host's, so an inherited or
+//     default setting would read cgo files on an amd64 host and not on an
+//     arm64 one.
 //   - GOWORK is off, so a go.work file in the checkout or above it cannot
 //     add modules to the build or replace the module's own requirements
 //     (owner's answer to GT-10, 2026-11-20).
-//   - On a host other than Linux the build is the Linux one, as the merge
-//     gate's container reads, so a package that builds only on Linux
-//     does not report a type-checking error that the gate never sees.
-//     cgo is off for that cross-target analysis.
-func lintTargetEnv(env []string, goos string) []string {
-	drop := map[string]bool{"GOWORK": true}
-	if goos != "linux" {
-		drop["GOOS"], drop["CGO_ENABLED"] = true, true
+var lintTargetEnvVars = []string{"GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOWORK=off"}
+
+// lintTargetEnv returns env with every variable lintTargetEnvVars names
+// set to the lint's value, whatever env carries.
+func lintTargetEnv(env []string) []string {
+	drop := map[string]bool{}
+	for _, kv := range lintTargetEnvVars {
+		name, _, _ := strings.Cut(kv, "=")
+		drop[name] = true
 	}
-	out := make([]string, 0, len(env)+3)
+	out := make([]string, 0, len(env)+len(lintTargetEnvVars))
 	for _, kv := range env {
 		name, _, _ := strings.Cut(kv, "=")
 		if !drop[name] {
 			out = append(out, kv)
 		}
 	}
-	out = append(out, "GOWORK=off")
-	if goos != "linux" {
-		out = append(out, "GOOS=linux", "CGO_ENABLED=0")
-	}
-	return out
+	return append(out, lintTargetEnvVars...)
 }
 
 // golangciLintCache returns the cache directory of the checkout at root:

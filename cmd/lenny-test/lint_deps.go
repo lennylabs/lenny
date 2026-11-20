@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"runtime"
 	"sort"
 	"strings"
 )
@@ -80,7 +79,7 @@ func productPackagesOutsideLint(ctx context.Context, root string, goList func(ct
 func execGoList(ctx context.Context, root string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, "go", append([]string{"list"}, args...)...)
 	cmd.Dir = root
-	cmd.Env = lintTargetEnv(os.Environ(), runtime.GOOS)
+	cmd.Env = lintTargetEnv(os.Environ())
 	var stderr strings.Builder
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
