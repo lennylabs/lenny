@@ -4,6 +4,8 @@ package main
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +13,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,11 +25,13 @@ import (
 // over the same configuration. The first run reports only the findings on
 // the lines the branch adds or changes relative to its merge base with
 // the integration branch, and any such finding fails the tier. The second
-// run reports the findings of the whole tree, which include the findings
-// that predate the check, as a non-fatal warning. The whole-tree run
-// becomes fatal when the pre-existing findings that GATE-I1 lists reach
-// zero. The check is contributor tooling, so this file carries no
-// specification annotation.
+// run counts the findings of the whole tree, which include the findings
+// that predate the check, per package and linter, and compares the counts
+// with the shrink-only register (lint_register.go): a count above the
+// register fails the tier, and the findings within it are a warning. The
+// whole-tree run becomes fatal on any finding when the pre-existing
+// findings that GATE-I1 lists reach zero. The check is contributor
+// tooling, so this file carries no specification annotation.
 
 // lintDebtIssue tracks the pre-existing golangci-lint findings that keep
 // the whole-tree run a warning.
@@ -297,14 +302,15 @@ func execGolangciLint(ctx context.Context, bin, root string, args ...string) (st
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = root
-	cmd.Env = golangciLintEnv(os.Environ(), root, runtime.GOOS)
+	userCache, _ := os.UserCacheDir()
+	cmd.Env = golangciLintEnv(os.Environ(), root, runtime.GOOS, userCache)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
 // golangciLintEnv returns the environment of a golangci-lint run, built
 // from the harness's own environment env on a host whose operating system
-// is goos.
+// is goos and whose user cache directory is userCache.
 //
 //   - GOLANGCI_DIFF_PROCESSOR_PATCH replaces the diff golangci-lint
 //     filters by, so an inherited value is dropped.
@@ -314,33 +320,66 @@ func execGolangciLint(ctx context.Context, bin, root string, args ...string) (st
 //     cgo is off for that cross-target analysis.
 //   - PWD names root. os/exec sets it only when the environment is
 //     inherited, and golangci-lint reads its working directory from it.
-func golangciLintEnv(env []string, root, goos string) []string {
-	drop := map[string]bool{"GOLANGCI_DIFF_PROCESSOR_PATCH": true, "PWD": true}
+//   - GOLANGCI_LINT_CACHE names a directory of its own for root, under
+//     the inherited GOLANGCI_LINT_CACHE or under golangci-lint's default
+//     directory in userCache (golangciLintCache). golangci-lint keys a
+//     cached package by its content and returns the cached findings with
+//     the file paths of the checkout that first reported them, so a cache
+//     shared by two checkouts of the same code, such as two worktrees or
+//     the gate's cache volume, reports one checkout's findings under the
+//     other's paths. The changed-line run then matches no finding to the
+//     diff and passes, and the whole-tree counts name no package of the
+//     tree.
+func golangciLintEnv(env []string, root, goos, userCache string) []string {
+	drop := map[string]bool{"GOLANGCI_DIFF_PROCESSOR_PATCH": true, "PWD": true, "GOLANGCI_LINT_CACHE": true}
+	cacheBase := ""
 	if goos != "linux" {
 		drop["GOOS"], drop["CGO_ENABLED"] = true, true
 	}
-	out := make([]string, 0, len(env)+3)
+	out := make([]string, 0, len(env)+4)
 	for _, kv := range env {
-		if name, _, _ := strings.Cut(kv, "="); !drop[name] {
+		name, value, _ := strings.Cut(kv, "=")
+		if name == "GOLANGCI_LINT_CACHE" {
+			cacheBase = value
+		}
+		if !drop[name] {
 			out = append(out, kv)
 		}
 	}
 	out = append(out, "PWD="+root)
+	if cache := golangciLintCache(cacheBase, userCache, root); cache != "" {
+		out = append(out, "GOLANGCI_LINT_CACHE="+cache)
+	}
 	if goos != "linux" {
 		out = append(out, "GOOS=linux", "CGO_ENABLED=0")
 	}
 	return out
 }
 
+// golangciLintCache returns the cache directory of the checkout at root:
+// a directory named for a digest of root under base, or, when base is
+// empty, under golangci-lint's default directory in userCache. It returns
+// "" when neither is known, and golangci-lint then picks its own.
+func golangciLintCache(base, userCache, root string) string {
+	if base == "" {
+		if userCache == "" {
+			return ""
+		}
+		base = filepath.Join(userCache, "golangci-lint")
+	}
+	sum := sha256.Sum256([]byte(root))
+	return filepath.Join(base, "checkout-"+hex.EncodeToString(sum[:8]))
+}
+
 // run runs the check. A finding on a changed line, a changed Go file the
 // diff cannot name, or a changed-line run that fails for any other reason
-// returns an error, which fails the tier. When no golangci-lint is
+// returns an error, which fails the tier, and so does a whole-tree count
+// the register does not allow (wholeTree). When no golangci-lint is
 // installed, when the installed one is not the pinned release, or when the
 // merge base cannot be resolved, the output opens with the unverified
 // marker, so the tier reports that the check proved nothing rather than
 // passing; without a resolved merge base the changed-line run does not
-// happen. The whole-tree run happens whenever the linter is installed,
-// and its findings never fail the tier.
+// happen. The whole-tree run happens whenever the linter is installed.
 func (l golangciLint) run() (string, error) {
 	if l.bin == "" {
 		return verdictstatus.UnverifiedMarker + " golangci-lint not found, so the lint did not run (run scripts/setup-dev.sh; the gate image installs it)", nil
@@ -348,8 +387,9 @@ func (l golangciLint) run() (string, error) {
 	ctx := context.Background()
 	var unverified, sections []string
 	var failure error
-	if err := l.version(ctx, l.root, l.bin); err != nil {
-		unverified = append(unverified, err.Error())
+	versionErr := l.version(ctx, l.root, l.bin)
+	if versionErr != nil {
+		unverified = append(unverified, versionErr.Error())
 	}
 	b, err := l.resolve(ctx, l.root, l.base)
 	if err != nil {
@@ -359,7 +399,9 @@ func (l golangciLint) run() (string, error) {
 		sections = append(sections, section)
 		failure = runErr
 	}
-	sections = append(sections, l.wholeTree(ctx))
+	section, treeErr := l.wholeTree(ctx, versionErr == nil)
+	sections = append(sections, section)
+	failure = errors.Join(failure, treeErr)
 	if len(unverified) > 0 {
 		sections = append([]string{verdictstatus.UnverifiedMarker + " " + strings.Join(unverified, "; ")}, sections...)
 	}
@@ -415,14 +457,122 @@ func (l golangciLint) changedLines(ctx context.Context, b lintBase) (string, err
 	return fmt.Sprintf("golangci-lint did not finish its run on %s (%v):\n%s", scope, err, out), fmt.Errorf("golangci-lint on the changed lines did not finish: %w", err)
 }
 
-// wholeTree runs golangci-lint over the whole tree and reports its
-// findings as a warning.
-func (l golangciLint) wholeTree(ctx context.Context) string {
-	out, err := l.exec(ctx, l.bin, l.root, golangciLintArgs(l.root)...)
+// wholeTree runs golangci-lint over the whole tree with no cap on the
+// findings it reports, counts them per package and linter, and compares
+// the counts with the register. The findings within the register are a
+// warning. A count that rises above the register, a count the register
+// lacks, and a count that fell, which the run writes back to the register,
+// return an error, as does a run that does not finish or a report the
+// check cannot read. When comparable is false, because the installed
+// golangci-lint is not the pinned release, the counts are reported and not
+// compared, since another release counts other findings; the check is
+// then unverified rather than passing.
+func (l golangciLint) wholeTree(ctx context.Context, comparable bool) (string, error) {
+	report, err := os.CreateTemp("", "lenny-lint-*.json")
 	if err != nil {
-		return fmt.Sprintf("WARNING (non-fatal until the pre-existing findings %s lists reach zero; see .golangci.yml):\n%s", lintDebtIssue, out)
+		return fmt.Sprintf("golangci-lint did not run on the whole tree: %v", err), fmt.Errorf("create the whole-tree report: %w", err)
 	}
-	return "golangci-lint: no finding in the whole tree"
+	name := report.Name()
+	_ = report.Close()
+	defer func() { _ = os.Remove(name) }()
+	out, err := l.exec(ctx, l.bin, l.root, golangciLintArgs(l.root,
+		"--max-issues-per-linter=0", "--max-same-issues=0", "--show-stats=false", "--output.json.path="+name)...)
+	var exitErr *exec.ExitError
+	if err != nil && (!errors.As(err, &exitErr) || exitErr.ExitCode() != golangciLintExitIssues) {
+		return fmt.Sprintf("golangci-lint did not finish its run on the whole tree (%v):\n%s", err, out), fmt.Errorf("golangci-lint on the whole tree did not finish: %w", err)
+	}
+	body, err := os.ReadFile(name)
+	if err != nil {
+		return fmt.Sprintf("golangci-lint wrote no report of the whole tree: %v\n%s", err, out), fmt.Errorf("read the whole-tree report: %w", err)
+	}
+	findings, err := parseLintReport(l.root, body)
+	if err != nil {
+		return fmt.Sprintf("golangci-lint whole-tree report: %v", err), err
+	}
+	counted := countLintFindings(findings)
+	summary := lintSummary(findings)
+	if !comparable {
+		return summary + fmt.Sprintf("\nThe counts were not compared with %s, because the installed golangci-lint is not the pinned release.", golangciLintRegister), nil
+	}
+	carried, err := loadLintRegister(filepath.Join(l.root, golangciLintRegister))
+	if err != nil {
+		return summary + "\n" + err.Error(), err
+	}
+	c := compareLintCounts(counted, carried)
+	if len(c.lowered) > 0 {
+		if err := writeLintRegister(filepath.Join(l.root, golangciLintRegister), c.kept); err != nil {
+			return summary + "\n" + err.Error(), err
+		}
+	}
+	return lintRegisterSection(summary, c, findings), lintRegisterError(c)
+}
+
+// lintSummary states how many findings the whole tree carries, per
+// linter, and the issue that tracks them.
+func lintSummary(findings []lintFinding) string {
+	if len(findings) == 0 {
+		return "golangci-lint: no finding in the whole tree"
+	}
+	perLinter := map[string]int{}
+	for _, f := range findings {
+		perLinter[f.linter]++
+	}
+	linters := make([]string, 0, len(perLinter))
+	for name := range perLinter {
+		linters = append(linters, name)
+	}
+	sort.Strings(linters)
+	parts := make([]string, 0, len(linters))
+	for _, name := range linters {
+		parts = append(parts, fmt.Sprintf("%s %d", name, perLinter[name]))
+	}
+	return fmt.Sprintf("WARNING (non-fatal while each count stays within %s, until the pre-existing findings %s lists reach zero; see .golangci.yml): golangci-lint reports %d finding(s) in the whole tree: %s",
+		golangciLintRegister, lintDebtIssue, len(findings), strings.Join(parts, ", "))
+}
+
+// lintRegisterSection renders the comparison: each count that rose with
+// the findings behind it, and each count the run lowered.
+func lintRegisterSection(summary string, c lintComparison, findings []lintFinding) string {
+	var b strings.Builder
+	b.WriteString(summary)
+	if len(c.risen) > 0 {
+		risen := map[lintKey]bool{}
+		fmt.Fprintf(&b, "\ngolangci-lint finding counts above %s; fix the findings rather than raising the counts:", golangciLintRegister)
+		for _, r := range c.risen {
+			risen[r.key] = true
+			b.WriteString("\n  " + r.String())
+		}
+		b.WriteString("\nThe findings in those packages and linters:")
+		for _, f := range findings {
+			if risen[f.key()] {
+				b.WriteString("\n  " + f.String())
+			}
+		}
+	}
+	if len(c.lowered) > 0 {
+		fmt.Fprintf(&b, "\ngolangci-lint finding counts fell, and the run lowered them in %s; commit the lowered register with the change:", golangciLintRegister)
+		for _, r := range c.lowered {
+			fmt.Fprintf(&b, "\n  %s: %d where the register carried %d", r.key, r.counted, r.registered)
+		}
+	}
+	if len(c.risen) == 0 && len(c.lowered) == 0 {
+		fmt.Fprintf(&b, "\nEvery count matches %s (%d count(s)).", golangciLintRegister, c.held)
+	}
+	return b.String()
+}
+
+// lintRegisterError returns the error that fails the tier when a count
+// rose or fell, or nil when every count held.
+func lintRegisterError(c lintComparison) error {
+	switch {
+	case len(c.risen) > 0 && len(c.lowered) > 0:
+		return fmt.Errorf("golangci-lint: %d count(s) above %s and %d count(s) lowered in it", len(c.risen), golangciLintRegister, len(c.lowered))
+	case len(c.risen) > 0:
+		return fmt.Errorf("golangci-lint: %d count(s) above %s", len(c.risen), golangciLintRegister)
+	case len(c.lowered) > 0:
+		return fmt.Errorf("golangci-lint: %d count(s) lowered in %s; commit the register", len(c.lowered), golangciLintRegister)
+	}
+	return nil
 }
 
 // golangciLintArgs returns the arguments of one golangci-lint run. The

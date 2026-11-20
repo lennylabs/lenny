@@ -1,0 +1,299 @@
+# SPDX-License-Identifier: MIT
+#
+# Per-package counts of golangci-lint findings, by linter.
+#
+# Each count is how many findings one linter reports in one Go package
+# directory when the static tier's golangci-lint check runs over the whole
+# tree (cmd/lenny-test/lint_register.go). Issue GATE-I1 tracks the
+# findings, and every count reaches zero before the whole-tree run becomes
+# fatal on any finding.
+#
+# The check fails a count that rises above the count here, and a package
+# and linter with a finding and no entry, so a branch cannot add a finding
+# on a line it does not change. A count that falls is written back here by
+# the run that measures the fall, and that run fails so that the author
+# commits the lowered count with the change. No run raises a count, and a
+# finding a branch adds is fixed rather than registered.
+kind: golangci-lint-finding-count-baseline
+version: 1
+packages:
+    - package: cmd/lenny-adapter
+      linters:
+        staticcheck: 2
+    - package: cmd/lenny-gateway
+      linters:
+        staticcheck: 5
+    - package: cmd/lenny-test
+      linters:
+        errcheck: 3
+        ineffassign: 2
+        staticcheck: 2
+        unused: 1
+    - package: pkg/adapter
+      linters:
+        staticcheck: 3
+    - package: pkg/adapter/statelessslot
+      linters:
+        staticcheck: 1
+    - package: pkg/api/openapi
+      linters:
+        govet: 1
+    - package: pkg/audit/auditstore
+      linters:
+        unused: 1
+    - package: pkg/billing/billingstore
+      linters:
+        errcheck: 1
+    - package: pkg/billing/billingstore/failover/redisstream
+      linters:
+        errcheck: 1
+    - package: pkg/billing/correctionstore
+      linters:
+        errcheck: 6
+    - package: pkg/blobstore/s3
+      linters:
+        unused: 1
+    - package: pkg/clockinject
+      linters:
+        staticcheck: 2
+        unused: 1
+    - package: pkg/controller/agentpod/podspec
+      linters:
+        staticcheck: 7
+    - package: pkg/controller/cidrdrift
+      linters:
+        staticcheck: 1
+    - package: pkg/controller/controllermetrics
+      linters:
+        staticcheck: 2
+    - package: pkg/controller/poolscaling
+      linters:
+        misspell: 4
+    - package: pkg/controller/tenantdeletion
+      linters:
+        ineffassign: 1
+    - package: pkg/controller/warmpool
+      linters:
+        staticcheck: 7
+    - package: pkg/credential/credentialserver
+      linters:
+        staticcheck: 7
+    - package: pkg/ctlcli
+      linters:
+        misspell: 3
+        unused: 1
+    - package: pkg/gateway/api/admin
+      linters:
+        staticcheck: 43
+    - package: pkg/gateway/api/ratelimit
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/api/wsbearer
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/checkpoint/checkpointer
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/checkpoint/resumechunks
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/coordination/dualstore
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/coordination/leasestore
+      linters:
+        unused: 1
+    - package: pkg/gateway/core/leaderjobs
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/podclaim
+      linters:
+        staticcheck: 2
+    - package: pkg/gateway/core/session/budgetstate
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/session/recycle
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/session/routingcache
+      linters:
+        errcheck: 1
+    - package: pkg/gateway/core/session/sessioninbox
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/session/sessionserver
+      linters:
+        staticcheck: 15
+    - package: pkg/gateway/core/session/slotcounter
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/session/slotreaper
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/core/session/watchdog
+      linters:
+        staticcheck: 2
+    - package: pkg/gateway/credentials/credassign
+      linters:
+        unused: 1
+    - package: pkg/gateway/drain/prestop
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/experiment/experimentprovider
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/platformtools/delegation
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/platformtools/mcp
+      linters:
+        staticcheck: 48
+        unused: 1
+    - package: pkg/gateway/platformtools/mcptools
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/platformtools/toolapproval
+      linters:
+        errcheck: 1
+    - package: pkg/gateway/playground
+      linters:
+        unused: 1
+    - package: pkg/gateway/replica/gatewayleader
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/runtime/tenantaffinity
+      linters:
+        errcheck: 3
+    - package: pkg/gateway/seam
+      linters:
+        staticcheck: 2
+    - package: pkg/gateway/seam/subsystem
+      linters:
+        staticcheck: 1
+    - package: pkg/gateway/streamproxy
+      linters:
+        staticcheck: 1
+    - package: pkg/loadctl
+      linters:
+        staticcheck: 9
+    - package: pkg/loadrunner/dispatch
+      linters:
+        staticcheck: 2
+    - package: pkg/mtls/interceptordial
+      linters:
+        staticcheck: 1
+    - package: pkg/ops/backup
+      linters:
+        staticcheck: 1
+        unused: 1
+    - package: pkg/ops/diagnostics/prodsource
+      linters:
+        staticcheck: 1
+    - package: pkg/ops/events
+      linters:
+        errcheck: 36
+        staticcheck: 1
+        unused: 1
+    - package: pkg/ops/eventsubscription/pgstore
+      linters:
+        errcheck: 1
+    - package: pkg/ops/operations
+      linters:
+        staticcheck: 1
+    - package: pkg/ops/opsidem
+      linters:
+        errcheck: 6
+    - package: pkg/ops/opsidem/pgstore
+      linters:
+        errcheck: 1
+    - package: pkg/ops/opsserver
+      linters:
+        errcheck: 1
+        govet: 1
+        ineffassign: 2
+        staticcheck: 2
+    - package: pkg/ops/opsservice
+      linters:
+        errcheck: 1
+        staticcheck: 2
+    - package: pkg/pgwritemetrics
+      linters:
+        errcheck: 3
+    - package: pkg/platform/store
+      linters:
+        staticcheck: 8
+    - package: pkg/podlifecycle
+      linters:
+        staticcheck: 4
+    - package: pkg/recommendations
+      linters:
+        staticcheck: 1
+    - package: pkg/redisconn
+      linters:
+        staticcheck: 2
+    - package: pkg/runtimekit/echocore
+      linters:
+        ineffassign: 1
+    - package: pkg/storage/erasurejob/saltlockpg
+      linters:
+        staticcheck: 1
+    - package: pkg/storage/failopen
+      linters:
+        staticcheck: 2
+    - package: pkg/storage/partitionmaint
+      linters:
+        staticcheck: 4
+        unused: 1
+    - package: pkg/tenancy/tenantstore
+      linters:
+        staticcheck: 1
+    - package: pkg/tenantkms
+      linters:
+        errcheck: 2
+    - package: pkg/tokenservice
+      linters:
+        staticcheck: 1
+        unused: 1
+    - package: pkg/upload/archive
+      linters:
+        staticcheck: 2
+    - package: pkg/workspaceplan
+      linters:
+        errcheck: 22
+    - package: scripts/specshift/annotation
+      linters:
+        unused: 1
+    - package: scripts/specshift/survey
+      linters:
+        unused: 1
+    - package: sdks/client/go/lenny
+      linters:
+        errcheck: 2
+    - package: sdks/client/go/test-helper
+      linters:
+        errcheck: 2
+    - package: tests/testinfra/commitfault
+      linters:
+        staticcheck: 1
+    - package: tests/testinfra/gateway
+      linters:
+        errcheck: 1
+    - package: tests/testinfra/inproc
+      linters:
+        errcheck: 5
+        unused: 1
+    - package: tests/testinfra/kind
+      linters:
+        staticcheck: 1
+    - package: tests/testinfra/kind/reinstall
+      linters:
+        staticcheck: 3
+    - package: tests/testinfra/loadgen
+      linters:
+        staticcheck: 1
+    - package: tests/testinfra/opsprocess
+      linters:
+        errcheck: 1
+    - package: tests/testinfra/sessiondriver
+      linters:
+        staticcheck: 1

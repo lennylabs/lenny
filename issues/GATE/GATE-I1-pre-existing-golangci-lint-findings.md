@@ -16,9 +16,10 @@ The owner settled question S-4 of the M3 readiness review on 2026-11-19 with opt
 
 ## Evidence
 
-- `cmd/lenny-test/lint_changed.go` runs golangci-lint twice in the static tier. The run with `--new-from-patch`, over the diff of the working tree against the branch's merge base, fails the tier on a finding. The whole-tree run reports its findings as a non-fatal warning that names this issue.
-- `GOOS=linux CGO_ENABLED=0 golangci-lint run --max-issues-per-linter=0 --max-same-issues=0` (golangci-lint 2.12.2, the release `tests/gate/Dockerfile` and `scripts/lib/versions.sh` pin) over `main` at `db6c42d36`, with `.golangci.yml` and no build tags, reports 353 findings in 88 packages. The gate's own run keeps golangci-lint's default caps of 50 findings per linter and 3 findings with the same text, so its warning lists fewer.
+- `cmd/lenny-test/lint_changed.go` runs golangci-lint twice in the static tier. The run with `--new-from-patch`, over the diff of the working tree against the branch's merge base, fails the tier on a finding. The whole-tree run counts its findings per package and linter and compares the counts with the shrink-only register `tests/registers/golangci-lint-findings.yaml`: a count above the register fails the tier, and the findings within it are a non-fatal warning that names this issue (owner's answer to GT-3, 2026-11-19).
+- `GOOS=linux CGO_ENABLED=0 golangci-lint run --max-issues-per-linter=0 --max-same-issues=0` (golangci-lint 2.12.2, the release `tests/gate/Dockerfile` and `scripts/lib/versions.sh` pin) over `main` at `db6c42d36`, with `.golangci.yml` and no build tags, reports 353 findings in 88 packages. The same command over `main` at `b5e4cab8f` reports the same 353 findings, and the register was seeded from that run.
 - Without `GOOS=linux`, on a darwin host, the run reports one type-checking error in `tests/testinfra/supervisedpod`, which builds only on Linux, and no other finding. The check therefore analyzes the Linux build on a host other than Linux. The counts below are from the Linux build, which is the gate's environment.
+- golangci-lint returns a cached finding under the file path of the checkout that first reported it. A run over `b5e4cab8f` with the cache that other worktrees on the same host had filled reported 354 findings, each under the path of another worktree; the same run with an empty cache reported 353 under this checkout's paths. The check therefore gives each checkout a cache directory of its own and fails on a finding whose path lies outside the checkout.
 
 Findings per linter:
 
@@ -130,10 +131,10 @@ Findings per package and linter:
 
 ## Gap
 
-The whole-tree golangci-lint run of the static tier stays non-fatal while these findings remain, so a finding outside a branch's changed lines does not block a merge. A branch that edits a line carrying one of these findings has to fix it, because the changed-line run reports it.
+The whole-tree golangci-lint run of the static tier fails only on a count above the register while these findings remain. A branch that edits a line carrying one of these findings has to fix it, because the changed-line run reports it, and a branch that fixes one commits the lowered register.
 
 The counts cover the default build configuration. Files behind a build tag, such as the `integration`, `component`, and `contract` tests, are outside both runs.
 
 ## Suggested resolution
 
-Fix the findings package by package, starting with the packages that carry the most, and recount with the command under "Evidence". When the count reaches zero, make the whole-tree run in `cmd/lenny-test/lint_changed.go` fail the tier, remove the changed-line run, whose findings the whole-tree run then covers, update item 7 of the static-tier check list in `TESTING.md`, and close this issue.
+Fix the findings package by package, starting with the packages that carry the most, and recount with the command under "Evidence". The check lowers the register as the counts fall. When the count reaches zero, delete the register, make the whole-tree run in `cmd/lenny-test/lint_changed.go` fail the tier, remove the changed-line run, whose findings the whole-tree run then covers, update item 7 of the static-tier check list in `TESTING.md`, and close this issue.

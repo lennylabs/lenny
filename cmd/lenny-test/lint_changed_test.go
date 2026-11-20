@@ -4,6 +4,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"os"
 	"os/exec"
@@ -229,7 +230,7 @@ func TestLintPatchRefusesPathsTheDiffCannotName(t *testing.T) {
 // names the root, and a host other than Linux analyzes the Linux build.
 func TestLintEnvDropsThePatchOverrideAndTargetsLinux(t *testing.T) {
 	in := []string{"HOME=/home/alice", "GOLANGCI_DIFF_PROCESSOR_PATCH=x", "PWD=/elsewhere", "GOOS=darwin", "CGO_ENABLED=1"}
-	darwin := strings.Join(golangciLintEnv(in, "/repo", "darwin"), "\n")
+	darwin := strings.Join(golangciLintEnv(in, "/repo", "darwin", "/cache"), "\n")
 	for _, want := range []string{"HOME=/home/alice", "PWD=/repo", "GOOS=linux", "CGO_ENABLED=0"} {
 		if !strings.Contains(darwin, want) {
 			t.Errorf("darwin environment lacks %s:\n%s", want, darwin)
@@ -240,7 +241,7 @@ func TestLintEnvDropsThePatchOverrideAndTargetsLinux(t *testing.T) {
 			t.Errorf("darwin environment keeps %s:\n%s", bad, darwin)
 		}
 	}
-	linux := strings.Join(golangciLintEnv(in, "/repo", "linux"), "\n")
+	linux := strings.Join(golangciLintEnv(in, "/repo", "linux", "/cache"), "\n")
 	if !strings.Contains(linux, "GOOS=darwin") || !strings.Contains(linux, "CGO_ENABLED=1") || strings.Contains(linux, "GOOS=linux") {
 		t.Errorf("a Linux host changed the build target:\n%s", linux)
 	}
@@ -267,11 +268,14 @@ func TestGolangciLintPinsAgree(t *testing.T) {
 
 // fakeLint records the golangci-lint invocations of one check run and
 // answers each from its table: the changed-line run is the one that
-// carries --new-from-patch.
+// carries --new-from-patch. The whole-tree run writes wholeJSON, or a
+// report with no finding when it is empty, to the path its
+// --output.json.path argument names.
 type fakeLint struct {
 	calls      [][]string
 	changedOut string
 	changedErr error
+	wholeJSON  string
 	wholeOut   string
 	wholeErr   error
 }
@@ -281,7 +285,83 @@ func (f *fakeLint) exec(_ context.Context, _, _ string, args ...string) (string,
 	if containsArg(args, "--new-from-patch=") {
 		return f.changedOut, f.changedErr
 	}
+	for _, a := range args {
+		if p, ok := strings.CutPrefix(a, "--output.json.path="); ok {
+			body := f.wholeJSON
+			if body == "" {
+				body = `{"Issues":null}`
+			}
+			if err := os.WriteFile(p, []byte(body), 0o600); err != nil {
+				return "", err
+			}
+		}
+	}
 	return f.wholeOut, f.wholeErr
+}
+
+// lintJSON returns a golangci-lint JSON report holding one finding per
+// entry, each written as "<file>:<line>:<linter>".
+func lintJSON(t *testing.T, findings ...string) string {
+	t.Helper()
+	type pos struct {
+		Filename string
+		Line     int
+		Column   int
+	}
+	type issue struct {
+		FromLinter string
+		Text       string
+		Pos        pos
+	}
+	var issues []issue
+	for _, f := range findings {
+		parts := strings.Split(f, ":")
+		if len(parts) != 3 {
+			t.Fatalf("finding %q is not <file>:<line>:<linter>", f)
+		}
+		line, err := strconv.Atoi(parts[1])
+		if err != nil {
+			t.Fatal(err)
+		}
+		issues = append(issues, issue{FromLinter: parts[2], Text: "finding in " + parts[0], Pos: pos{Filename: parts[0], Line: line, Column: 1}})
+	}
+	body, err := json.Marshal(map[string]any{"Issues": issues})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(body)
+}
+
+// writeTestLintRegister writes the register under root with the counts
+// given as "<package> <linter>" keys.
+func writeTestLintRegister(t *testing.T, root string, counts map[string]int) {
+	t.Helper()
+	m := map[lintKey]int{}
+	for k, n := range counts {
+		pkg, linter, _ := strings.Cut(k, " ")
+		m[lintKey{pkg: pkg, linter: linter}] = n
+	}
+	if err := os.MkdirAll(filepath.Join(root, filepath.Dir(golangciLintRegister)), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeLintRegister(filepath.Join(root, golangciLintRegister), m); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// readTestLintRegister returns the register under root as
+// "<package> <linter>" keys.
+func readTestLintRegister(t *testing.T, root string) map[string]int {
+	t.Helper()
+	m, err := loadLintRegister(filepath.Join(root, golangciLintRegister))
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := map[string]int{}
+	for k, n := range m {
+		out[k.String()] = n
+	}
+	return out
 }
 
 // exitError returns an *exec.ExitError with the given status, as
@@ -296,12 +376,16 @@ func exitError(t *testing.T, code int) error {
 	return err
 }
 
-// stubLint returns a check over f whose merge base resolves to b, or
-// fails with resolveErr, whose patch is empty, and whose linter is the
-// pinned release.
-func stubLint(f *fakeLint, b lintBase, resolveErr error) golangciLint {
+// stubLint returns a check over f in a temporary root whose register
+// carries the single count `pkg/b unused: 1`, whose merge base resolves
+// to b, or fails with resolveErr, whose patch is empty, and whose linter
+// is the pinned release.
+func stubLint(t *testing.T, f *fakeLint, b lintBase, resolveErr error) golangciLint {
+	t.Helper()
+	root := t.TempDir()
+	writeTestLintRegister(t, root, map[string]int{"pkg/b unused": 1})
 	return golangciLint{
-		root: "/repo",
+		root: root,
 		base: "main",
 		bin:  "golangci-lint",
 		resolve: func(context.Context, string, string) (lintBase, error) {
@@ -324,11 +408,14 @@ func runLintCheck(l golangciLint) (string, string) {
 var testLintBase = lintBase{commit: "0123456789abcdef0123", ref: "main"}
 
 // TestLintPassesWithNoFindingOnChangedLines checks the pass outcome: no
-// finding anywhere passes the tier, and both runs name the configuration
-// file and the exit status for findings on the command line.
+// finding on a changed line and a whole-tree count that matches the
+// register pass the tier, both runs name the configuration file and the
+// exit status for findings on the command line, and the whole-tree run
+// lifts golangci-lint's caps and writes its JSON report.
 func TestLintPassesWithNoFindingOnChangedLines(t *testing.T) {
-	f := &fakeLint{}
-	status, out := runLintCheck(stubLint(f, testLintBase, nil))
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	status, out := runLintCheck(l)
 	if status != verdictstatus.Pass {
 		t.Fatalf("status %q; want pass (output %q)", status, out)
 	}
@@ -339,12 +426,21 @@ func TestLintPassesWithNoFindingOnChangedLines(t *testing.T) {
 		t.Errorf("changed-line run args %v; want --new-from-patch", f.calls[0])
 	}
 	for _, call := range f.calls {
-		if !containsArg(call, "--config=/repo/.golangci.yml") || !containsArg(call, "--issues-exit-code=1") {
+		if !containsArg(call, "--config="+filepath.Join(l.root, ".golangci.yml")) || !containsArg(call, "--issues-exit-code=1") {
 			t.Errorf("run args %v do not pin the configuration file and the exit status", call)
 		}
 	}
-	if containsArg(f.calls[1], "--new") {
-		t.Errorf("whole-tree run carries a new-code flag: %v", f.calls[1])
+	whole := f.calls[1]
+	if containsArg(whole, "--new") {
+		t.Errorf("whole-tree run carries a new-code flag: %v", whole)
+	}
+	for _, want := range []string{"--max-issues-per-linter=0", "--max-same-issues=0", "--output.json.path="} {
+		if !containsArg(whole, want) {
+			t.Errorf("whole-tree run args %v lack %s", whole, want)
+		}
+	}
+	if !strings.Contains(out, "Every count matches "+golangciLintRegister) {
+		t.Errorf("output does not report the held register:\n%s", out)
 	}
 }
 
@@ -355,14 +451,14 @@ func TestLintFailsOnAFindingOnAChangedLine(t *testing.T) {
 	f := &fakeLint{
 		changedOut: "pkg/a/a.go:3:2: Error return value is not checked (errcheck)",
 		changedErr: exitError(t, 1),
-		wholeOut:   "pkg/b/b.go:9:1: func old is unused (unused)",
+		wholeJSON:  lintJSON(t, "pkg/b/b.go:9:unused"),
 		wholeErr:   exitError(t, 1),
 	}
-	status, out := runLintCheck(stubLint(f, testLintBase, nil))
+	status, out := runLintCheck(stubLint(t, f, testLintBase, nil))
 	if status != verdictstatus.Fail {
 		t.Fatalf("status %q; want fail (output %q)", status, out)
 	}
-	for _, want := range []string{"reports findings on", "pkg/a/a.go:3:2", "pkg/b/b.go:9:1", "WARNING (non-fatal"} {
+	for _, want := range []string{"reports findings on", "pkg/a/a.go:3:2", "WARNING (non-fatal", "1 finding(s) in the whole tree: unused 1"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
@@ -379,14 +475,14 @@ func TestLintFailsWhenTheChangedLineRunCannotRun(t *testing.T) {
 		"timeout":     exitError(t, 4),
 		"config":      exitError(t, 3),
 	} {
-		f := &fakeLint{changedOut: "level=error msg=\"Timeout exceeded\"", changedErr: err}
-		status, out := runLintCheck(stubLint(f, testLintBase, nil))
+		f := &fakeLint{changedOut: "level=error msg=\"Timeout exceeded\"", changedErr: err, wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused")}
+		status, out := runLintCheck(stubLint(t, f, testLintBase, nil))
 		if status != verdictstatus.Fail || !strings.Contains(out, "did not finish") || strings.Contains(out, "reports findings") {
 			t.Errorf("%s: status %q; want fail naming an unfinished run (output %q)", name, status, out)
 		}
 	}
-	f := &fakeLint{}
-	l := stubLint(f, testLintBase, nil)
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused")}
+	l := stubLint(t, f, testLintBase, nil)
 	l.patch = func(context.Context, string, string) (string, error) {
 		return "", errors.New("changed Go files the changed-line lint cannot read: impl.go: the file is a symbolic link")
 	}
@@ -396,29 +492,200 @@ func TestLintFailsWhenTheChangedLineRunCannotRun(t *testing.T) {
 }
 
 // TestLintWarnsOnFindingsOutsideTheChangedLines checks the warning
-// outcome: findings only in the whole-tree run pass the tier and are
+// outcome: whole-tree findings within the register pass the tier and are
 // reported with the issue that tracks them.
 func TestLintWarnsOnFindingsOutsideTheChangedLines(t *testing.T) {
-	f := &fakeLint{wholeOut: "pkg/b/b.go:9:1: func old is unused (unused)", wholeErr: exitError(t, 1)}
-	status, out := runLintCheck(stubLint(f, testLintBase, nil))
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	status, out := runLintCheck(stubLint(t, f, testLintBase, nil))
 	if status != verdictstatus.Pass {
 		t.Fatalf("status %q; want pass (output %q)", status, out)
 	}
-	for _, want := range []string{"WARNING (non-fatal", lintDebtIssue, "pkg/b/b.go:9:1", "no finding on the lines changed since the merge base 0123456789ab with main"} {
+	for _, want := range []string{"WARNING (non-fatal", lintDebtIssue, "unused 1", "no finding on the lines changed since the merge base 0123456789ab with main"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}
 	}
 }
 
+// TestLintFailsWhenAWholeTreeCountRises checks that a finding off the
+// changed lines that raises a registered count fails the tier, names the
+// count and the findings behind it, and leaves the register as it was.
+func TestLintFailsWhenAWholeTreeCountRises(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused", "pkg/b/c.go:4:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	status, out := runLintCheck(l)
+	if status != verdictstatus.Fail {
+		t.Fatalf("status %q; want fail (output %q)", status, out)
+	}
+	for _, want := range []string{"pkg/b unused: 2 finding(s) where " + golangciLintRegister + " carries 1", "pkg/b/b.go:9:1", "pkg/b/c.go:4:1", "rather than raising the counts"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if got := readTestLintRegister(t, l.root); len(got) != 1 || got["pkg/b unused"] != 1 {
+		t.Errorf("register %v; want it unchanged", got)
+	}
+}
+
+// TestLintFailsOnAFindingTheRegisterDoesNotCarry checks that a finding in
+// a package, or from a linter, that the register carries no count for
+// fails the tier.
+func TestLintFailsOnAFindingTheRegisterDoesNotCarry(t *testing.T) {
+	for name, finding := range map[string]string{
+		"package": "pkg/c/c.go:2:unused",
+		"linter":  "pkg/b/b.go:2:errcheck",
+	} {
+		f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused", finding), wholeErr: exitError(t, 1)}
+		status, out := runLintCheck(stubLint(t, f, testLintBase, nil))
+		if status != verdictstatus.Fail || !strings.Contains(out, "carries no count") {
+			t.Errorf("%s: status %q; want fail naming the missing count (output %q)", name, status, out)
+		}
+	}
+}
+
+// TestLintLowersAFallenCountAndFails checks that a count that falls, or
+// that falls to zero, is written back to the register and fails the run,
+// so the author commits the lowered register, and that a count that rose
+// in the same run stays at its registered value.
+func TestLintLowersAFallenCountAndFails(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused", "pkg/c/c.go:1:errcheck", "pkg/c/c.go:2:errcheck"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	writeTestLintRegister(t, l.root, map[string]int{"pkg/b unused": 3, "pkg/b staticcheck": 1, "pkg/c errcheck": 1, "pkg/gone misspell": 2})
+	status, out := runLintCheck(l)
+	if status != verdictstatus.Fail {
+		t.Fatalf("status %q; want fail (output %q)", status, out)
+	}
+	for _, want := range []string{
+		"commit the lowered register",
+		"pkg/b unused: 1 where the register carried 3",
+		"pkg/b staticcheck: 0 where the register carried 1",
+		"pkg/gone misspell: 0 where the register carried 2",
+		"pkg/c errcheck: 2 finding(s) where",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	got := readTestLintRegister(t, l.root)
+	if len(got) != 2 || got["pkg/b unused"] != 1 || got["pkg/c errcheck"] != 1 {
+		t.Errorf("register %v; want pkg/b unused lowered to 1 and pkg/c errcheck kept at 1", got)
+	}
+}
+
+// TestLintPassesWithNoFindingAndAnEmptyRegister checks that a tree with
+// no finding passes against a register that carries no count.
+func TestLintPassesWithNoFindingAndAnEmptyRegister(t *testing.T) {
+	f := &fakeLint{}
+	l := stubLint(t, f, testLintBase, nil)
+	writeTestLintRegister(t, l.root, nil)
+	status, out := runLintCheck(l)
+	if status != verdictstatus.Pass || !strings.Contains(out, "no finding in the whole tree") {
+		t.Errorf("status %q; want pass with no finding (output %q)", status, out)
+	}
+}
+
+// TestLintFailsWhenTheWholeTreeRunCannotFinish checks that a whole-tree
+// run that exits on a timeout or a configuration error, or whose report
+// does not parse, fails the tier rather than passing an unmeasured tree.
+func TestLintFailsWhenTheWholeTreeRunCannotFinish(t *testing.T) {
+	for name, f := range map[string]*fakeLint{
+		"timeout":   {wholeOut: "level=error msg=\"Timeout exceeded\"", wholeErr: exitError(t, 4)},
+		"not JSON":  {wholeJSON: "not json", wholeErr: exitError(t, 1)},
+		"no linter": {wholeJSON: `{"Issues":[{"FromLinter":"","Pos":{"Filename":"pkg/b/b.go","Line":1}}]}`, wholeErr: exitError(t, 1)},
+	} {
+		status, out := runLintCheck(stubLint(t, f, testLintBase, nil))
+		if status != verdictstatus.Fail {
+			t.Errorf("%s: status %q; want fail (output %q)", name, status, out)
+		}
+	}
+}
+
+// TestLintRefusesAFindingOutsideTheCheckout checks that a finding whose
+// path leaves the checkout, which a cache shared with another checkout
+// returns, fails the tier and names the cache, rather than being counted
+// under a package of another tree.
+func TestLintRefusesAFindingOutsideTheCheckout(t *testing.T) {
+	for _, name := range []string{"../other/pkg/b/b.go", "/elsewhere/pkg/b/b.go"} {
+		f := &fakeLint{wholeJSON: lintJSON(t, name+":9:unused"), wholeErr: exitError(t, 1)}
+		status, out := runLintCheck(stubLint(t, f, testLintBase, nil))
+		if status != verdictstatus.Fail || !strings.Contains(out, "golangci-lint cache clean") {
+			t.Errorf("%s: status %q; want fail naming the cache (output %q)", name, status, out)
+		}
+	}
+}
+
+// TestLintReadsAnAbsolutePathInsideTheCheckout checks that a finding
+// reported under an absolute path inside the checkout counts under its
+// package relative to the root.
+func TestLintReadsAnAbsolutePathInsideTheCheckout(t *testing.T) {
+	root := t.TempDir()
+	got, err := parseLintReport(root, []byte(lintJSON(t, filepath.Join(root, "pkg", "b", "b.go")+":9:unused")))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0].key() != (lintKey{pkg: "pkg/b", linter: "unused"}) {
+		t.Errorf("findings %v; want one under pkg/b", got)
+	}
+}
+
+// TestLintRefusesAMalformedRegister checks that a register the check
+// cannot read in full fails the tier rather than degrading to no count
+// or an unbounded one.
+func TestLintRefusesAMalformedRegister(t *testing.T) {
+	const head = "kind: golangci-lint-finding-count-baseline\nversion: 1\n"
+	for name, body := range map[string]string{
+		"missing":        "",
+		"kind":           "kind: other\nversion: 1\npackages: []\n",
+		"version":        "kind: golangci-lint-finding-count-baseline\nversion: 2\npackages: []\n",
+		"no packages":    head,
+		"no package":     head + "packages:\n  - linters: {unused: 1}\n",
+		"twice":          head + "packages:\n  - package: pkg/b\n    linters: {unused: 1}\n  - package: pkg/b\n    linters: {errcheck: 1}\n",
+		"no linters":     head + "packages:\n  - package: pkg/b\n",
+		"zero count":     head + "packages:\n  - package: pkg/b\n    linters: {unused: 0}\n",
+		"no linter":      head + "packages:\n  - package: pkg/b\n    linters: {\"\": 1}\n",
+		"does not parse": "kind: [\n",
+	} {
+		f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+		l := stubLint(t, f, testLintBase, nil)
+		file := filepath.Join(l.root, golangciLintRegister)
+		if err := os.Remove(file); err != nil {
+			t.Fatal(err)
+		}
+		if body != "" {
+			if err := os.WriteFile(file, []byte(body), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		if status, out := runLintCheck(l); status != verdictstatus.Fail || !strings.Contains(out, "register") {
+			t.Errorf("%s: status %q; want fail naming the register (output %q)", name, status, out)
+		}
+	}
+}
+
+// TestLintRegisterRoundTrips checks that the register the check writes
+// loads back with the same counts and drops a count of zero.
+func TestLintRegisterRoundTrips(t *testing.T) {
+	root := t.TempDir()
+	writeTestLintRegister(t, root, map[string]int{"pkg/b unused": 2, "pkg/b errcheck": 1, "cmd/x staticcheck": 5, "pkg/z misspell": 0})
+	got := readTestLintRegister(t, root)
+	if len(got) != 3 || got["pkg/b unused"] != 2 || got["pkg/b errcheck"] != 1 || got["cmd/x staticcheck"] != 5 {
+		t.Errorf("register %v; want the three counts above zero", got)
+	}
+}
+
 // TestLintMarkerInLinterOutputDoesNotChangeTheStatus checks that the
-// unverified marker inside a source line golangci-lint echoes leaves the
-// tier at pass, because only the check's own first line carries its
-// conclusion.
+// unverified marker inside a source line golangci-lint echoes leaves a
+// failing run at fail, because only the check's own first line carries
+// its conclusion.
 func TestLintMarkerInLinterOutputDoesNotChangeTheStatus(t *testing.T) {
-	f := &fakeLint{wholeOut: "cmd/x/x.go:9:1: unused\n\tconst m = \"" + verdictstatus.UnverifiedMarker + " echoed\"\n", wholeErr: exitError(t, 1)}
-	if status, out := runLintCheck(stubLint(f, testLintBase, nil)); status != verdictstatus.Pass {
-		t.Errorf("status %q; want pass (output %q)", status, out)
+	f := &fakeLint{
+		changedOut: "cmd/x/x.go:9:1: unused\n\tconst m = \"" + verdictstatus.UnverifiedMarker + " echoed\"\n",
+		changedErr: exitError(t, 1),
+		wholeJSON:  lintJSON(t, "pkg/b/b.go:9:unused"),
+		wholeErr:   exitError(t, 1),
+	}
+	if status, out := runLintCheck(stubLint(t, f, testLintBase, nil)); status != verdictstatus.Fail {
+		t.Errorf("status %q; want fail (output %q)", status, out)
 	}
 }
 
@@ -426,10 +693,10 @@ func TestLintMarkerInLinterOutputDoesNotChangeTheStatus(t *testing.T) {
 // merge base is HEAD says that only uncommitted and untracked lines were
 // checked.
 func TestLintOnTheMergeBaseNamesTheUncommittedScope(t *testing.T) {
-	f := &fakeLint{}
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused")}
 	b := testLintBase
 	b.atHead = true
-	_, out := runLintCheck(stubLint(f, b, nil))
+	_, out := runLintCheck(stubLint(t, f, b, nil))
 	if !strings.Contains(out, "uncommitted and untracked lines, because HEAD is the merge base") {
 		t.Errorf("output does not name the uncommitted scope:\n%s", out)
 	}
@@ -440,28 +707,33 @@ func TestLintOnTheMergeBaseNamesTheUncommittedScope(t *testing.T) {
 // names the reason, skips the changed-line run, and still reports the
 // whole-tree findings.
 func TestLintIsUnverifiedWhenTheBaseCannotBeResolved(t *testing.T) {
-	f := &fakeLint{wholeOut: "pkg/b/b.go:9:1: func old is unused (unused)", wholeErr: exitError(t, 1)}
-	status, out := runLintCheck(stubLint(f, lintBase{}, annotation.ErrNoBase))
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	status, out := runLintCheck(stubLint(t, f, lintBase{}, annotation.ErrNoBase))
 	if status != verdictstatus.Unverified {
 		t.Fatalf("status %q; want unverified (output %q)", status, out)
 	}
 	if len(f.calls) != 1 || containsArg(f.calls[0], "--new-from-patch=") {
 		t.Errorf("calls %v; want the whole-tree run only", f.calls)
 	}
-	if !strings.Contains(out, "merge base could not be resolved") || !strings.Contains(out, "pkg/b/b.go:9:1") {
+	if !strings.Contains(out, "merge base could not be resolved") || !strings.Contains(out, "unused 1") {
 		t.Errorf("output lacks the reason or the whole-tree findings:\n%s", out)
 	}
 }
 
 // TestLintIsUnverifiedWithAnotherLinterRelease checks that a linter other
 // than the pinned release leaves a clean run unverified and a finding on
-// a changed line failing.
+// a changed line failing, and that its whole-tree counts are reported
+// without being compared with the register, which stays as it was.
 func TestLintIsUnverifiedWithAnotherLinterRelease(t *testing.T) {
-	f := &fakeLint{}
-	l := stubLint(f, testLintBase, nil)
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/c/c.go:9:errcheck"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
 	l.version = func(context.Context, string, string) error { return errors.New("golangci-lint 2.1.0 is installed") }
-	if status, out := runLintCheck(l); status != verdictstatus.Unverified || !strings.Contains(out, "2.1.0") {
+	status, out := runLintCheck(l)
+	if status != verdictstatus.Unverified || !strings.Contains(out, "2.1.0") || !strings.Contains(out, "not compared") {
 		t.Errorf("clean run with another release: status %q (output %q)", status, out)
+	}
+	if got := readTestLintRegister(t, l.root); len(got) != 1 || got["pkg/b unused"] != 1 {
+		t.Errorf("register %v; want it unchanged", got)
 	}
 	f.changedErr = exitError(t, 1)
 	if status, _ := runLintCheck(l); status != verdictstatus.Fail {
@@ -473,11 +745,43 @@ func TestLintIsUnverifiedWithAnotherLinterRelease(t *testing.T) {
 // golangci-lint runs nothing and reports unverified rather than pass.
 func TestLintIsUnverifiedWithoutTheLinter(t *testing.T) {
 	f := &fakeLint{}
-	l := stubLint(f, testLintBase, nil)
+	l := stubLint(t, f, testLintBase, nil)
 	l.bin = ""
 	status, out := runLintCheck(l)
 	if status != verdictstatus.Unverified || !strings.Contains(out, "golangci-lint not found") || len(f.calls) != 0 {
 		t.Errorf("run without the linter: status %q, output %q, calls %v", status, out, f.calls)
+	}
+}
+
+// TestLintCacheIsPerCheckout checks that each checkout gets a cache
+// directory of its own, under the inherited GOLANGCI_LINT_CACHE or under
+// golangci-lint's default directory, so a finding cached by one checkout
+// is never returned under another checkout's paths.
+func TestLintCacheIsPerCheckout(t *testing.T) {
+	cacheOf := func(env []string) []string {
+		var out []string
+		for _, kv := range env {
+			if v, ok := strings.CutPrefix(kv, "GOLANGCI_LINT_CACHE="); ok {
+				out = append(out, v)
+			}
+		}
+		return out
+	}
+	inherited := []string{"GOLANGCI_LINT_CACHE=/shared"}
+	a := cacheOf(golangciLintEnv(inherited, "/work/a", "linux", "/home/alice/.cache"))
+	b := cacheOf(golangciLintEnv(inherited, "/work/b", "linux", "/home/alice/.cache"))
+	if len(a) != 1 || len(b) != 1 || a[0] == b[0] || filepath.Dir(a[0]) != "/shared" || filepath.Dir(b[0]) != "/shared" {
+		t.Errorf("caches %v and %v; want one directory per checkout under /shared", a, b)
+	}
+	if again := cacheOf(golangciLintEnv(inherited, "/work/a", "linux", "")); len(again) != 1 || again[0] != a[0] {
+		t.Errorf("cache %v; want the same directory %s for the same checkout", again, a[0])
+	}
+	def := cacheOf(golangciLintEnv(nil, "/work/a", "darwin", "/home/alice/.cache"))
+	if len(def) != 1 || filepath.Dir(def[0]) != "/home/alice/.cache/golangci-lint" {
+		t.Errorf("cache %v; want a directory under golangci-lint's default", def)
+	}
+	if none := cacheOf(golangciLintEnv(nil, "/work/a", "linux", "")); len(none) != 0 {
+		t.Errorf("cache %v; want none when no cache directory is known", none)
 	}
 }
 
@@ -492,18 +796,21 @@ func Old() {
 }
 `
 
-// lintFinding returns a Go file whose errcheck finding is on line 7.
-func lintFinding(name string) string {
+// lintFindingFile returns a Go file whose errcheck finding is on line 7.
+func lintFindingFile(name string) string {
 	return "package m\n\nimport \"os\"\n\n// " + name + " removes a file.\nfunc " + name + "() {\n\tos.Remove(\"" + name + "\")\n}\n"
 }
 
 // TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest runs the
 // installed golangci-lint over a module in a temporary repository. A
 // branch whose changed lines are clean passes with the pre-existing
-// finding as a warning, and a finding in a committed, an uncommitted, or
-// an untracked change fails with that finding named in the changed-line
-// section. It pins the new-code filtering of the pinned golangci-lint
-// release rather than a fake. On macOS the temporary directory is reached
+// finding, which the register carries, as a warning, and a finding in a
+// committed, an uncommitted, or an untracked change fails with that
+// finding named in the changed-line section. A branch that deletes the
+// only caller of a function adds a finding on a line it does not change,
+// which the changed-line run does not report and the register comparison
+// fails. It pins the new-code filtering and the JSON report of the pinned
+// golangci-lint release rather than a fake. On macOS the temporary directory is reached
 // through the /var symbolic link, so the case also pins the resolution of
 // the root in newGolangciLint, without which a new finding reads as old.
 func TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest(t *testing.T) {
@@ -514,6 +821,10 @@ func TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest(t *testing.T
 	r.commit("go.mod", "module example.com/m\n\ngo 1.22\n", "module")
 	r.commit(".golangci.yml", "version: \"2\"\n", "config")
 	r.commit("old.go", lintModuleBase, "pre-existing finding")
+	r.commit("u.go", lintModuleCaller, "a function and its caller")
+	writeTestLintRegister(t, r.root, map[string]int{". errcheck": 1})
+	r.git("add", golangciLintRegister)
+	r.git("commit", "-q", "-m", "register")
 	r.git("checkout", "-q", "-b", "feature")
 	t.Setenv("GOLANGCI_LINT_CACHE", t.TempDir())
 	t.Setenv("GOFLAGS", "-buildvcs=false")
@@ -525,8 +836,8 @@ func TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest(t *testing.T
 	if err != nil {
 		t.Fatalf("clean changed lines failed: %v\n%s", err, out)
 	}
-	if !strings.Contains(out, "old.go:6") || !strings.Contains(out, "WARNING (non-fatal") {
-		t.Errorf("the pre-existing finding is not a warning:\n%s", out)
+	if !strings.Contains(out, "errcheck 1") || !strings.Contains(out, "WARNING (non-fatal") || !strings.Contains(out, "Every count matches") {
+		t.Errorf("the pre-existing finding is not a warning within the register:\n%s", out)
 	}
 
 	cases := []struct {
@@ -536,17 +847,17 @@ func TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest(t *testing.T
 	}{
 		{
 			"committed", "committed.go",
-			func() { r.commit("committed.go", lintFinding("Committed"), "finding") },
+			func() { r.commit("committed.go", lintFindingFile("Committed"), "finding") },
 			func() { r.git("reset", "-q", "--hard", "HEAD~1") },
 		},
 		{
 			"uncommitted", "clean.go",
-			func() { r.write("clean.go", lintFinding("Uncommitted")) },
+			func() { r.write("clean.go", lintFindingFile("Uncommitted")) },
 			func() { r.git("checkout", "-q", "--", "clean.go") },
 		},
 		{
 			"untracked", "untracked.go",
-			func() { r.write("untracked.go", lintFinding("Untracked")) },
+			func() { r.write("untracked.go", lintFindingFile("Untracked")) },
 			func() { _ = os.Remove(filepath.Join(r.root, "untracked.go")) },
 		},
 	}
@@ -563,7 +874,29 @@ func TestLintWithTheInstalledLinterSeparatesChangedLinesFromTheRest(t *testing.T
 			t.Errorf("%s: the changed-line section does not name exactly the new finding:\n%s", c.name, changed)
 		}
 	}
+
+	r.commit("u.go", "package m\n\nfunc helper() int { return 1 }\n", "delete the caller")
+	out, err = l.run()
+	if err == nil {
+		t.Fatalf("a finding off the changed lines passed:\n%s", out)
+	}
+	for _, want := range []string{"golangci-lint: no finding on the lines changed", ". unused: 1 finding(s), and " + golangciLintRegister + " carries no count", "u.go:3:"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
 }
+
+// lintModuleCaller is a Go file whose unexported function has one caller.
+// Deleting the caller makes the function unused on a line the deletion
+// does not change.
+const lintModuleCaller = `package m
+
+func helper() int { return 1 }
+
+// Caller returns helper's value.
+func Caller() int { return helper() }
+`
 
 // containsArg reports whether args holds an argument with the prefix.
 func containsArg(args []string, prefix string) bool {
