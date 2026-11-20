@@ -16,7 +16,7 @@ The specification does not settle the case. §13.3 (Credential Flow), **Scope na
 
 ## Scope
 
-The change covers the scope that `POST /v1/oauth/token` issues when the request carries no `scope` parameter, for every exchange the endpoint serves: the self-rotation grant, scope narrowing, credential-lease issuance, and `a2a_delegation` child minting with an `actor_token`. It edits the `scope` row of the §13.3 RFC 8693 parameter table and **Scope narrowing enforcement.**
+The change covers the scope that `POST /v1/oauth/token` issues when the request carries no `scope` parameter, for every exchange the endpoint serves: the self-rotation grant, scope narrowing, credential-lease issuance, and `a2a_delegation` child minting with an `actor_token`. It edits the `scope` row of the §13.3 RFC 8693 parameter table, §13.3 **Scope narrowing enforcement.**, and §25.1 **Issuing a scoped token.**
 
 It leaves out:
 
@@ -60,7 +60,8 @@ Consequences on the exchanges the endpoint serves:
 ### DS-2 Specification text
 
 - §13.3, the `scope` row of the RFC 8693 parameter table: a request without `scope` receives the subject token's scope.
-- §13.3, **Scope narrowing enforcement.**: the enforcement list states the default, and states that a subject token with an absent claim yields an issued token with an absent claim, which §25.1 (**Matching.**) reads as no restriction.
+- §13.3, **Scope narrowing enforcement.**: the enforcement list states the default, and states that a subject token with an absent claim yields an issued token with an absent claim, which §25.1 (**Matching.**) reads as no restriction. Rule (e) intersects `authorized_tools` with the issued token's scope, which names the scope the default produces when the request carries none.
+- §25.1, **Issuing a scoped token.**: the paragraph states the default and points to §13.3.
 
 ## Limits, and alternatives rejected
 
@@ -71,6 +72,7 @@ The alternative not chosen was option (b) of question SM-1, refusing an exchange
 ## Specification and non-specification changes
 
 - `spec/13_security-model.md`: §13.3 Credential Flow, the `scope` row of the RFC 8693 parameter table and **Scope narrowing enforcement.**
+- `spec/25_agent-operability.md`: §25.1, **Issuing a scoped token.**
 - `pkg/tokenexchange`: `tokenexchange.go`.
 - `tests/registers/spec-section-citations.yaml`: the section-citation counts of the packages whose tests the step adds.
 - `issues/TOKX/TOKX-I2-exchange-without-scope-issues-an-unrestricted-token.md`: filed on this branch with the content 0162 gave it, and closed by 0163.S1.
