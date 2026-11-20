@@ -196,7 +196,10 @@ The golangci-lint check of the static tier (`cmd/lenny-test`,
 | `golangci-lint-findings.yaml` | `kind: golangci-lint-finding-count-baseline`, `version: 1`, and a `packages` list of `package` (a Go package directory) and `linters` (a map from a linter's name to its count of findings there, each at least 1). | The findings the whole-tree run reports, counted per package and linter, which issue GATE-I1 tracks. |
 
 The check fails a count that rises above the register and a finding in a
-package and linter the register carries no count for. A count that falls
+package and linter the register carries no count for. Because the
+register holds counts, a branch that removes one finding and adds another
+of the same linter in the same package keeps the count. The register is
+read and written only as a regular file. A count that falls
 is written back by the run that measures it, and that run fails so that
 the branch commits the lowered register. No run raises a count, and a
 finding a branch adds is fixed rather than registered.

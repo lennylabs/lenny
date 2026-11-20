@@ -237,6 +237,9 @@ type golangciLint struct {
 	version func(ctx context.Context, root, bin string) error
 	// exec runs bin with args in root and returns the combined output.
 	exec func(ctx context.Context, bin, root string, args ...string) (string, error)
+	// scan lists the Go source problems in root that hide code from the
+	// linter (lint_sources.go).
+	scan func(ctx context.Context, root string) ([]string, error)
 }
 
 // newGolangciLint returns the check wired to the installed linter, git,
@@ -261,6 +264,7 @@ func newGolangciLint(root, base string) golangciLint {
 		patch:   buildLintPatch,
 		version: checkGolangciLintVersion,
 		exec:    execGolangciLint,
+		scan:    scanLintSources,
 	}
 }
 
@@ -402,6 +406,9 @@ func (l golangciLint) run() (string, error) {
 	section, treeErr := l.wholeTree(ctx, versionErr == nil)
 	sections = append(sections, section)
 	failure = errors.Join(failure, treeErr)
+	section, scanErr := l.sourceSection(ctx)
+	sections = append(sections, section)
+	failure = errors.Join(failure, scanErr)
 	if len(unverified) > 0 {
 		sections = append([]string{verdictstatus.UnverifiedMarker + " " + strings.Join(unverified, "; ")}, sections...)
 	}
@@ -586,8 +593,9 @@ var lintExtraBuildTags = []string{"smoke"}
 // build tag of every tier and lintExtraBuildTags, sorted. Without them the
 // linter reads only the default build and skips the test files of the
 // component, contract, integration, and later tiers (owner's answer to
-// GT-4, 2026-11-19). No file the tiers compile carries a negated tier
-// tag, so setting every tag at once drops no file (tierBuildTags).
+// GT-4, 2026-11-19). The source scan (lint_sources.go) refuses a build
+// tag the runs do not set and a negated tag they do set, so setting every
+// tag at once leaves no file out of both runs.
 func lintBuildTags() []string {
 	tags := append(tierBuildTags(), lintExtraBuildTags...)
 	sort.Strings(tags)

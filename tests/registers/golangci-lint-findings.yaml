@@ -10,7 +10,8 @@
 #
 # The check fails a count that rises above the count here, and a package
 # and linter with a finding and no entry, so a branch cannot add a finding
-# on a line it does not change. A count that falls is written back here by
+# on a line it does not change unless it also removes a finding of the same
+# linter in the same package. A count that falls is written back here by
 # the run that measures the fall, and that run fails so that the author
 # commits the lowered count with the change. No run raises a count, and a
 # finding a branch adds is fixed rather than registered.

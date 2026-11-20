@@ -535,9 +535,13 @@ func gateDockerRunArgs(h gateHost) []string {
 		"-v", gateModVolume+":/go/pkg/mod",
 		"-v", gateBuildVolume+":"+gateGoCache,
 		// golangci-lint keeps its analysis cache in a directory of the
-		// build cache volume, so a gate run after the first does not
-		// analyze the whole module cold. The Go build cache uses only its
-		// two-hex-digit directories and leaves this one alone.
+		// build cache volume, and the static tier's check gives each
+		// checkout a subdirectory of it named for a digest of the
+		// checkout's path (golangciLintCache), so a gate run after the
+		// first in the same worktree does not analyze the whole module
+		// cold, and a new worktree's first run does. The Go build cache
+		// uses only its two-hex-digit directories and leaves this one
+		// alone.
 		"-e", "GOLANGCI_LINT_CACHE="+gateLintCache,
 		"-e", gateEnvImage+"="+h.image,
 		"-e", "GOTMPDIR="+gateGoTmpDir,

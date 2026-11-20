@@ -4,7 +4,9 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"path/filepath"
@@ -19,10 +21,14 @@ import (
 // each linter reports there. The whole-tree run fails the tier when a
 // count rises above the register or a package and linter the register
 // does not carry reports a finding, so a branch cannot add a finding off
-// the lines it changes. A count that falls is written back to the register
-// and also fails the run, so the author commits the lowered register with
-// the change, as the section-citation ratchet does. The check is
-// contributor tooling, so this file carries no specification annotation.
+// the lines it changes without also removing a finding of the same linter
+// in the same package, which the counts cannot tell apart. A count that
+// falls is written back to the register and also fails the run, so the
+// author commits the lowered register with the change, as the
+// section-citation ratchet does. The register is read and written only
+// as a regular file, so a symbolic link cannot point it at a file outside
+// the reviewed paths. The check is contributor tooling, so this file
+// carries no specification annotation.
 
 // golangciLintRegister is the repo-relative path of the register.
 const golangciLintRegister = "tests/registers/golangci-lint-findings.yaml"
@@ -227,6 +233,9 @@ type lintRegisterEntry struct {
 // count, and one that degraded to an unbounded count would exempt the
 // rise the register exists to stop.
 func loadLintRegister(file string) (map[lintKey]int, error) {
+	if err := refuseNonRegularRegister(file, false); err != nil {
+		return nil, err
+	}
 	data, err := os.ReadFile(file)
 	if err != nil {
 		return nil, fmt.Errorf("read the golangci-lint register: %w", err)
@@ -271,10 +280,34 @@ func loadLintRegister(file string) (map[lintKey]int, error) {
 	return carried, nil
 }
 
+// refuseNonRegularRegister returns an error when the register is a
+// symbolic link or anything else but a regular file. A register that
+// links elsewhere would let a later edit of the link's target, outside
+// the paths a merge-gate review covers, raise a count, and the downward
+// rewrite would write through the link. With mayBeAbsent, a register
+// that does not exist yet passes, so the writer can create it.
+func refuseNonRegularRegister(file string, mayBeAbsent bool) error {
+	fi, err := os.Lstat(file)
+	if mayBeAbsent && errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the golangci-lint register: %w", err)
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("the golangci-lint register %s is not a regular file (mode %s)", golangciLintRegister, fi.Mode().Type())
+	}
+	return nil
+}
+
 // writeLintRegister writes the register holding exactly the counts
-// given, dropping any count of zero. It is the one writer of the file:
-// the downward rewrite and the seeding both call it.
+// given, dropping any count of zero. It is the one writer of the file,
+// which the downward rewrite calls, and it refuses a register that is not
+// a regular file.
 func writeLintRegister(file string, counts map[lintKey]int) error {
+	if err := refuseNonRegularRegister(file, true); err != nil {
+		return err
+	}
 	byPkg := map[string]map[string]int{}
 	for k, n := range counts {
 		if n < 1 {
@@ -318,7 +351,8 @@ const lintRegisterHeader = `# SPDX-License-Identifier: MIT
 #
 # The check fails a count that rises above the count here, and a package
 # and linter with a finding and no entry, so a branch cannot add a finding
-# on a line it does not change. A count that falls is written back here by
+# on a line it does not change unless it also removes a finding of the same
+# linter in the same package. A count that falls is written back here by
 # the run that measures the fall, and that run fails so that the author
 # commits the lowered count with the change. No run raises a count, and a
 # finding a branch adds is fixed rather than registered.

@@ -148,7 +148,7 @@ Findings per package and linter:
 
 ## Gap
 
-The whole-tree golangci-lint run of the static tier fails only on a count above the register while these findings remain. A branch that edits a line carrying one of these findings has to fix it, because the changed-line run reports it, and a branch that fixes one commits the lowered register.
+While these findings remain, the whole-tree golangci-lint run of the static tier fails on a count above the register or one the register lacks, and on a count that fell until the branch commits the lowered register, rather than on every finding. A branch that edits a line carrying one of these findings has to fix it, because the changed-line run reports it, and a branch that fixes one commits the lowered register.
 
 
 ## Suggested resolution
