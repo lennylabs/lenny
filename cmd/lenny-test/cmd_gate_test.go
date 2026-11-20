@@ -73,19 +73,73 @@ func TestGatePassesWhenEveryTierPasses(t *testing.T) {
 	}
 }
 
-// TestGatePassesItsBaseToTheStaticTier checks that the merge gate's
-// --base reaches the static tier, which the changed-line lint compares
-// with.
+// TestGatePassesItsBaseToTheStaticTier checks that the static tier, which
+// the changed-line lint compares with, and the changed plan get the merge
+// base the gate resolved for its --base and recorded, rather than the ref,
+// and get the ref when the merge base cannot be resolved.
 func TestGatePassesItsBaseToTheStaticTier(t *testing.T) {
 	g := stubGateRunner()
-	var got string
+	var gotStatic, gotPlan string
 	g.static = func(base string) (string, string, *tierResult) {
-		got = base
+		gotStatic = base
 		return verdictstatus.Pass, "", &tierResult{Total: 1, Passed: 1}
 	}
+	plan := g.plan
+	g.plan = func(base string, depth int, all bool) (resolvedSelector, error) {
+		gotPlan = base
+		return plan(base, depth, all)
+	}
 	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
-	if got != "release-1" {
-		t.Errorf("static tier got base %q; want release-1", got)
+	if gotStatic != "def456" || gotPlan != "def456" {
+		t.Errorf("static tier got %q and plan %q; want the resolved merge base def456", gotStatic, gotPlan)
+	}
+	g.bases = func(string) gateBases { return gateBases{usedErr: errors.New("bad revision")} }
+	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+	if gotStatic != "release-1" || gotPlan != "release-1" {
+		t.Errorf("an unresolved base: static tier got %q and plan %q; want release-1", gotStatic, gotPlan)
+	}
+}
+
+// TestGateIsUnverifiedWhenTheStateChangesDuringTheRun checks that a gate
+// whose HEAD, tree state, or merge bases differ after the last tier from
+// what it read before the static tier is UNVERIFIED with the change named.
+func TestGateIsUnverifiedWhenTheStateChangesDuringTheRun(t *testing.T) {
+	for name, tc := range map[string]struct {
+		state func(int) (string, bool)
+		bases func(int) gateBases
+		want  string
+	}{
+		"HEAD moves": {
+			state: func(n int) (string, bool) { return map[int]string{1: "abc123", 2: "fff999"}[n], false },
+			want:  "HEAD from abc123 to fff999",
+		},
+		"the tree changes": {
+			state: func(n int) (string, bool) { return "abc123", n == 2 },
+			want:  "uncommitted changes from false to true",
+		},
+		"main moves": {
+			bases: func(n int) gateBases {
+				b := gateBases{used: "def456", integration: "def456", integrationRef: "main"}
+				if n == 2 {
+					b.integration = "aaa111"
+				}
+				return b
+			},
+			want: "the merge base with the integration branch from def456 to aaa111",
+		},
+	} {
+		g := stubGateRunner()
+		states, bases := 0, 0
+		if tc.state != nil {
+			g.state = func() (string, bool) { states++; return tc.state(states) }
+		}
+		if tc.bases != nil {
+			g.bases = func(string) gateBases { bases++; return tc.bases(bases) }
+		}
+		v := runStubGate(g)
+		if v.Verdict != verdictstatus.VerdictUnverified || len(v.Gate.Unverified) != 1 || !strings.Contains(v.Gate.Unverified[0], tc.want) {
+			t.Errorf("%s: verdict %q, reasons %q; want UNVERIFIED naming %q", name, v.Verdict, v.Gate.Unverified, tc.want)
+		}
 	}
 }
 
@@ -850,6 +904,19 @@ func TestGateBasesCompareTheBaseWithTheIntegrationMergeBase(t *testing.T) {
 	}
 	if err := gateBaseError("main..feature~1", resolveGateBases(ctx, r.root, "main..feature~1")); err == nil || !strings.Contains(err.Error(), "could not be resolved") {
 		t.Errorf("a range that does not end at HEAD: %v; want an error", err)
+	}
+
+	if err := gateBaseError("", resolveGateBases(ctx, r.root, "")); err == nil || !strings.Contains(err.Error(), "--base is empty") {
+		t.Errorf("an empty --base: %v; want an error", err)
+	}
+	if code := runGate([]string{"--base", ""}); code != 2 {
+		t.Errorf("runGate with an empty --base = %d; want the usage exit code 2", code)
+	}
+
+	// A tag named main does not stand in for the branch.
+	r.git("tag", "main", "HEAD")
+	if b := resolveGateBases(ctx, r.root, "main"); b.integration != fork || b.integrationRef != "main" {
+		t.Errorf("with a tag named main: %+v; want the integration merge base with the branch at %s", b, fork)
 	}
 
 	clone := newLintRepo(t, "trunk")
