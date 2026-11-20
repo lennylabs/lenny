@@ -336,6 +336,10 @@ type lintRaise struct {
 // tier passes.
 const lintRaiseMarker = "REGISTER RAISE (the merge-gate review covers it):"
 
+// lintRaiseNote names the raises in the detail classifyGolangciLint
+// writes, which printGateSummary looks for (gateSummaryNotes).
+const lintRaiseNote = "raise(s) of " + golangciLintRegister + " by hand"
+
 // String renders the raise, naming both counts.
 func (r lintRaise) String() string {
 	return fmt.Sprintf("%s: %d in %s where the merge base carries %d", r.key, r.branch, golangciLintRegister, r.base)

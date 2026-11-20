@@ -937,24 +937,29 @@ func writeLintModule(t *testing.T, files map[string]string) string {
 // under a directory starting with an underscore and one under a testdata
 // directory, which ./... does not match, and one that it does. A package
 // only a tagged file imports counts, because the listing sets the lint's
-// build tags, and a package no binary imports does not.
+// build tags, and a package no binary imports does not. A main package in
+// a directory under cmd/ that starts with an underscore counts, with what
+// it imports, and a fixture under a testdata directory of cmd/ does not.
 func TestLintFindsProductPackagesOutsideDotDotDot(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("blocked: go is not on PATH")
 	}
 	root := writeLintModule(t, map[string]string{
-		"cmd/app/main.go":         "package main\n\nimport (\n\t_ \"example.com/m/_hidden/h\"\n\t_ \"example.com/m/lib\"\n)\n\nfunc main() {}\n",
-		"cmd/app/tagged.go":       "//go:build integration\n\npackage main\n\nimport _ \"example.com/m/lib/testdata/fix\"\n",
-		"_hidden/h/h.go":          "package h\n",
-		"lib/l.go":                "package lib\n",
-		"lib/testdata/fix/f.go":   "package fix\n",
-		"lib/testdata/other/o.go": "package other\n",
+		"cmd/app/main.go":             "package main\n\nimport (\n\t_ \"example.com/m/_hidden/h\"\n\t_ \"example.com/m/lib\"\n)\n\nfunc main() {}\n",
+		"cmd/app/tagged.go":           "//go:build integration\n\npackage main\n\nimport _ \"example.com/m/lib/testdata/fix\"\n",
+		"_hidden/h/h.go":              "package h\n",
+		"lib/l.go":                    "package lib\n",
+		"lib/testdata/fix/f.go":       "package fix\n",
+		"lib/testdata/other/o.go":     "package other\n",
+		"cmd/_tool/main.go":           "package main\n\nimport _ \"example.com/m/_tooldep/d\"\n\nfunc main() {}\n",
+		"_tooldep/d/d.go":             "package d\n",
+		"cmd/app/testdata/fixture.go": "package main\n\nimport _ \"example.com/m/_unused/u\"\n",
 	})
 	got, err := productPackagesOutsideLint(context.Background(), root, execGoList)
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"example.com/m/_hidden/h", "example.com/m/lib/testdata/fix"}
+	want := []string{"example.com/m/_hidden/h", "example.com/m/_tooldep/d", "example.com/m/cmd/_tool", "example.com/m/lib/testdata/fix"}
 	if !slices.Equal(got, want) {
 		t.Errorf("packages outside ./... %v; want %v", got, want)
 	}

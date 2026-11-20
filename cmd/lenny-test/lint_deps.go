@@ -4,9 +4,12 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sort"
 	"strings"
 )
@@ -18,7 +21,9 @@ import (
 // there still compiles into a binary that imports it. The check lists the
 // module's packages that the main packages under cmd/ import, directly or
 // not, for the build the lint reads, and fails on any of them that ./...
-// does not match (owner's answer to GT-10, 2026-11-20). The check is
+// does not match. The main packages include those in a directory under
+// cmd/ that starts with `_` or `.`, which ./cmd/... skips but a build that
+// names the directory compiles (owner's answer to GT-10, 2026-11-20). The check is
 // contributor tooling, so this file carries no specification annotation.
 
 // lintProductMains is the pattern of the product binaries' packages.
@@ -42,7 +47,11 @@ func productPackagesOutsideLint(ctx context.Context, root string, goList func(ct
 	if module == "" || strings.Contains(module, "\n") {
 		return nil, fmt.Errorf("go list -m names %q rather than one main module", module)
 	}
-	mainsOut, err := goList(ctx, root, tags, "-f", `{{if eq .Name "main"}}{{.ImportPath}}{{end}}`, lintProductMains)
+	hidden, err := hiddenCmdDirs(root)
+	if err != nil {
+		return nil, err
+	}
+	mainsOut, err := goList(ctx, root, append([]string{tags, "-f", `{{if eq .Name "main"}}{{.ImportPath}}{{end}}`, lintProductMains}, hidden...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list the main packages under %s: %w", lintProductMains, err)
 	}
@@ -72,6 +81,52 @@ func productPackagesOutsideLint(ctx context.Context, root string, goList func(ct
 	}
 	sort.Strings(outside)
 	return outside, nil
+}
+
+// hiddenCmdDirs returns, as ./-relative patterns, each directory under
+// cmd/ that holds a Go file and that lintProductMains does not match
+// because a path element starts with `_` or `.`. A main package there
+// compiles when a build names its directory, so the listing names it too.
+// Directories named testdata hold fixtures and are left out. A tree with
+// no cmd/ directory returns none.
+func hiddenCmdDirs(root string) ([]string, error) {
+	var out []string
+	base := filepath.Join(root, "cmd")
+	err := filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			if p == base && errors.Is(err, fs.ErrNotExist) {
+				return filepath.SkipDir
+			}
+			return err
+		}
+		if d.IsDir() {
+			if d.Name() == "testdata" {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !strings.HasSuffix(d.Name(), ".go") {
+			return nil
+		}
+		rel, err := filepath.Rel(root, filepath.Dir(p))
+		if err != nil {
+			return err
+		}
+		rel = filepath.ToSlash(rel)
+		for _, el := range strings.Split(rel, "/") {
+			if strings.HasPrefix(el, "_") || strings.HasPrefix(el, ".") {
+				if pattern := "./" + rel; len(out) == 0 || out[len(out)-1] != pattern {
+					out = append(out, pattern)
+				}
+				break
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return nil, fmt.Errorf("walk %s: %w", base, err)
+	}
+	return out, nil
 }
 
 // execGoList runs `go list` in root, in the lint's build target, and

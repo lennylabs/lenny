@@ -558,6 +558,13 @@ func gateDockerRunArgs(h gateHost) []string {
 		// test reads.
 		"-e", "GIT_OPTIONAL_LOCKS=0",
 		"-e", "GOFLAGS=-buildvcs=false",
+		// git substitutes an object for any object a ref under
+		// refs/replace/ names. When the gate runs in a main checkout,
+		// its .git lies in the writable worktree, so a test could plant
+		// a replace ref that changes what a later run reads at the merge
+		// base, such as the golangci-lint register or the changed-line
+		// diff. The gate tells git to ignore replace refs.
+		"-e", "GIT_NO_REPLACE_OBJECTS=1",
 		"-e", gateEnvUID+"="+strconv.Itoa(h.uid),
 		"-e", gateEnvGID+"="+strconv.Itoa(h.gid),
 	)
@@ -607,17 +614,24 @@ func (h gateHost) imageRef() string {
 // compiles lenny-test from the mounted tree, and fills golangci-lint's
 // cache (lenny-test lint-cache-fill). A fill that does not finish logs a
 // warning, and the static tier's lint then analyzes what the cache lacks
-// without storing it. Root then bind-mounts golangci-lint's cache
+// without storing it, or fails with a cache error when the fill stopped
+// before golangci-lint initialized and closed the cache, because
+// golangci-lint cannot create the cache's directories or its trim record
+// on a read-only mount. Root then bind-mounts golangci-lint's cache
 // directory read-only over itself, and the user runs `lenny-test gate
 // --here`, so the gate always runs the harness of the commit under test,
 // and its static tier reads the filled cache while no test tier can write
 // it (owner's answer to GT-11, 2026-11-20). The user holds no capability
 // after setpriv, and a mount that a user namespace inherits is locked, so
 // neither the user nor a namespace a test creates can remount the
-// directory writable. Two writers remain outside the mount: a gate run as
-// root, whose tests hold CAP_SYS_ADMIN and can remount it, and any
-// process with the host Docker socket, which can mount the volume in
-// another container. A mount that fails stops the gate.
+// directory writable. Writers remain outside the mount: a gate run as
+// root, whose tests hold CAP_SYS_ADMIN and can remount it; any process
+// with the host Docker socket, which can mount the volume in another
+// container; the fill itself, which runs lenny-test as the branch builds
+// it, with the packages it imports; and the fill of a gate container
+// another worktree runs at the same time. The Go build cache on the same
+// volume stays writable to the test tiers. A mount that fails stops the
+// gate.
 const gateContainerScript = `set -e
 if [ -n "${LENNY_TEST_SHARED_TMPDIR:-}" ]; then find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete; fi
 mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" "${GOLANGCI_LINT_CACHE:?}" /go/pkg/mod
@@ -625,7 +639,7 @@ prepare='set -e
 go mod verify
 mkdir -p "$HOME/bin"
 go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test
-"$HOME/bin/lenny-test" lint-cache-fill || echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier lints without storing results" >&2'
+"$HOME/bin/lenny-test" lint-cache-fill || echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier lints against a read-only cache, and fails if golangci-lint cannot open it" >&2'
 run='exec "$HOME/bin/lenny-test" gate --here "$@"'
 lock_lint_cache() {
 	mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"
@@ -651,6 +665,19 @@ export HOME=/home/gate USER="$(getent passwd "$uid" | cut -d: -f1)"
 setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$prepare"
 lock_lint_cache
 exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
+
+// gateSummaryNotes returns the lines of a tier's detail that the summary
+// prints whatever the tier's status: each golangci-lint register raise
+// (GT-8), which a passing static tier records only in its detail.
+func gateSummaryNotes(detail string) []string {
+	var out []string
+	for _, line := range strings.Split(detail, "\n") {
+		if strings.Contains(line, lintRaiseNote) {
+			out = append(out, strings.TrimSpace(line))
+		}
+	}
+	return out
+}
 
 // pathWithin reports whether p is root or lies under it.
 func pathWithin(p, root string) bool {
@@ -1070,6 +1097,9 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 		fmt.Fprintln(w, line)
 		for _, f := range t.Failures {
 			fmt.Fprintf(w, "    FAIL %s\n", f.Test)
+		}
+		for _, note := range gateSummaryNotes(t.Detail) {
+			fmt.Fprintf(w, "    NOTE %s\n", note)
 		}
 	}
 	fmt.Fprintf(w, "  verdict:     %s\n", path)

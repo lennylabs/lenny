@@ -488,7 +488,7 @@ func classifyGolangciLint(out string) (string, string) {
 		}
 	}
 	if len(raises) > 0 {
-		note := fmt.Sprintf("%d raise(s) of %s by hand, each needing the merge-gate review that records its reason: %s", len(raises), golangciLintRegister, strings.Join(raises, "; "))
+		note := fmt.Sprintf("%d %s, each needing the merge-gate review that records its reason: %s", len(raises), lintRaiseNote, strings.Join(raises, "; "))
 		detail = strings.TrimPrefix(detail+"; "+note, "; ")
 	}
 	return status, detail
@@ -568,7 +568,7 @@ func (l golangciLint) wholeTree(ctx context.Context, comparable bool, base *lint
 	counted := countLintFindings(findings)
 	summary := lintSummary(findings)
 	if !comparable {
-		return summary + fmt.Sprintf("\nThe counts were not compared with %s, because the installed golangci-lint is not the pinned release.", golangciLintRegister), nil
+		return summary + fmt.Sprintf("\nThe counts were not compared with %s, and raises of it were not checked, because the installed golangci-lint is not the pinned release.", golangciLintRegister), nil
 	}
 	carried, err := loadLintRegister(filepath.Join(l.root, golangciLintRegister))
 	if err != nil {

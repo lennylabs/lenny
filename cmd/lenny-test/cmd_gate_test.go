@@ -384,6 +384,7 @@ func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
 		"-e " + gateEnvGID + "=20",
 		"-e GIT_OPTIONAL_LOCKS=0",
 		"-e GOFLAGS=-buildvcs=false",
+		"-e GIT_NO_REPLACE_OBJECTS=1",
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("docker run args lack %q:\n%s", want, args)
@@ -439,7 +440,7 @@ func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 	userFill := strings.Index(s, `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$prepare"`)
 	userLock := strings.LastIndex(s, "lock_lint_cache\n")
 	userRun := strings.Index(s, `exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run"`)
-	if userFill < 0 || userLock < 0 || userRun < 0 || !(userFill < userLock && userLock < userRun) {
+	if userFill < 0 || userLock <= userFill || userRun <= userLock {
 		t.Errorf("the owner's path does not fill, lock, and then run the gate (fill %d, lock %d, run %d)", userFill, userLock, userRun)
 	}
 	_, rest, _ := strings.Cut(s, "prepare='")
@@ -661,6 +662,25 @@ func TestGateOnADirtyTreeIsUnverifiedWithTheReason(t *testing.T) {
 	printGateSummary(&b, v, "x")
 	if !strings.Contains(b.String(), "unverified:  the worktree has uncommitted changes") {
 		t.Errorf("summary does not give the reason:\n%s", b.String())
+	}
+}
+
+// TestGateSummaryPrintsARegisterRaiseOfAPassingTier checks that the
+// printed summary names each golangci-lint register raise that a passing
+// static tier records in its detail, so the raise is visible without
+// reading the verdict file.
+func TestGateSummaryPrintsARegisterRaiseOfAPassingTier(t *testing.T) {
+	g := stubGateRunner()
+	raise := "golangci-lint run passed: 1 " + lintRaiseNote + ", each needing the merge-gate review that records its reason: pkg/b unused: 2"
+	g.static = func(string) (string, string, *tierResult) {
+		return verdictstatus.Pass, "budget note\n" + raise, &tierResult{Total: 1, Passed: 1}
+	}
+	v := runStubGate(g)
+	var b strings.Builder
+	v.finalize()
+	printGateSummary(&b, v, "x")
+	if !strings.Contains(b.String(), "NOTE "+raise) || strings.Contains(b.String(), "NOTE budget note") {
+		t.Errorf("summary does not print the raise alone:\n%s", b.String())
 	}
 }
 
