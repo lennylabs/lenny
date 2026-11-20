@@ -124,7 +124,7 @@ The redirect query-param namespace (`tenant_claim_missing`, `tenant_not_found`, 
     }
     ```
 
-    Default `expiresInSeconds` is `900` (15 min); configurable via `auth.capabilityTokenTtlSeconds` ([§10.2](10_gateway-internals.md#102-authentication)). The token is a standard gateway-minted session-capability JWT using the `JWTSigner` described in [§10.2](10_gateway-internals.md#102-authentication) (ES256 with the key of the configured KMS provider), carrying `user_id`, `tenant_id`, `caller_type`, and `expiry` claims plus an additional `origin: "playground"` claim; the `scope` claim is narrowed to `intersection(subject.scope, playground_allowed_scope)` per the [§10.2 Playground mint invariants](10_gateway-internals.md#102-authentication). Minting failures return `503 KMS_SIGNING_UNAVAILABLE` with the same retry semantics as other mint paths. The `effectiveScope` field carries the minted JWT's `scope` claim (the space-separated `intersection(subject.scope, playground_allowed_scope)` computed for this mint), so the SPA can gate scope-conditional affordances (such as the §27.4 delegation-policy selection) without decoding the bearer. It equals the `scope` claim on the returned `bearerToken`. When the intersection is empty the field is the empty string.
+    Default `expiresInSeconds` is `900` (15 min); configurable via `auth.capabilityTokenTtlSeconds` ([§10.2](10_gateway-internals.md#102-authentication)). The token is a standard gateway-minted session-capability JWT using the `JWTSigner` described in [§10.2](10_gateway-internals.md#102-authentication) (ES256 with the key of the configured KMS provider), carrying `user_id`, `tenant_id`, `caller_type`, and `expiry` claims plus an additional `origin: "playground"` claim; the `scope` claim is narrowed to `intersection(subject.scope, playground_allowed_scope)` per the [§10.2 Playground mint invariants](10_gateway-internals.md#102-authentication). Minting failures return `503 KMS_SIGNING_UNAVAILABLE` with the same retry semantics as other mint paths. The `effectiveScope` field carries the minted JWT's `scope` claim (the space-separated `intersection(subject.scope, playground_allowed_scope)` computed for this mint), so the SPA can gate scope-conditional affordances (such as the §27.4 delegation-policy selection) without decoding the bearer. It equals the `scope` claim on the returned `bearerToken`. The field is never empty, because the mint refuses a subject whose intersection is empty ([§10.2 Playground mint invariants](10_gateway-internals.md#102-authentication), invariant 2).
 
     **Auth by mode.** The endpoint's admission material differs per `playground.authMode`; all three modes converge on the same mint invariants and response schema above. Exactly one admission path is accepted per mode — presenting the wrong material (or both) for the active mode is a hard rejection.
 
@@ -156,7 +156,7 @@ Logout, `user.invalidated`, or playground-session TTL expiry all converge on the
 
 **6. Audit events.**
 
-Every `POST /v1/playground/token` call emits a `playground.bearer_minted` audit event (fields: `user_id`, `tenant_id`, `session_cookie_id` (opaque), `bearer_jti`, `bearer_ttl_seconds`, `origin: "playground"`). Logout emits `playground.bearer_revoked`. These events share the taxonomy and redaction rules of other auth events in [§11.7](11_policy-and-controls.md#117-audit-logging).
+Every successful `POST /v1/playground/token` call emits a `playground.bearer_minted` audit event (fields: `user_id`, `tenant_id`, `session_cookie_id` (opaque), `bearer_jti`, `bearer_ttl_seconds`, `origin: "playground"`). Logout emits `playground.bearer_revoked`. These events share the taxonomy and redaction rules of other auth events in [§11.7](11_policy-and-controls.md#117-audit-logging).
 
 **7. Failure modes summary.**
 
@@ -165,6 +165,8 @@ Every `POST /v1/playground/token` call emits a `playground.bearer_minted` audit 
 | No `lenny_playground_session` cookie | 401 | `UNAUTHORIZED` | Redirect to `/playground/auth/login` |
 | Cookie present but server-side record expired | 401 | `UNAUTHORIZED` (with `details.reason: "playground_session_expired"`) | Redirect to `/playground/auth/login` |
 | Cookie present, user invalidated | 401 | `UNAUTHORIZED` (with `details.reason: "user_invalidated"`) | Surface error; do not auto-retry |
+| Subject `scope` claim carries a value the §25.1 canonical form refuses | 401 | `UNAUTHORIZED` (with `details.reason: "subject_scope_invalid"`) | Surface error; do not auto-retry or redirect to login |
+| Subject `scope` claim shares no value with `playground_allowed_scope` | 403 | `SCOPE_FORBIDDEN` | Surface error; do not auto-retry |
 | KMS signing unavailable | 503 | `KMS_SIGNING_UNAVAILABLE` | Exponential backoff; reuse any still-valid cached bearer |
 | Bearer presented on REST/MCP after revocation (`pg:revoked:{jti}` hit) | 401 | `UNAUTHORIZED` (with `details.reason: "bearer_revoked"`) | Re-exchange (if cookie still valid) or redirect to login |
 | Bearer presented on WebSocket after revocation | WebSocket close code `4401` | `bearer_revoked` | Re-exchange (if cookie still valid) or redirect to login |

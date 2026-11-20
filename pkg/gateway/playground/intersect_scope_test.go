@@ -2,46 +2,125 @@
 
 package playground
 
-import "testing"
+import (
+	"errors"
+	"strings"
+	"testing"
+)
 
-// TestIntersectScopeNarrowsToCeiling pins the §10.2 playground scope
-// intersection: the minted scope is intersection(subject_token.scope,
-// playground_allowed_scope), wildcard-aware so a subject `tools:sessions:read`
-// survives against the allowed `tools:sessions:*`, and an out-of-ceiling
-// subject scope is dropped.
+// allowedCeiling is playgroundAllowedScope as the space-separated claim
+// intersectScope returns when the subject does not narrow it.
+var allowedCeiling = strings.Join(playgroundAllowedScope, " ")
+
+// TestIntersectScopeKeepsTheOverlapWithTheAllowedSet checks that the
+// narrowed scope is the intersection rather than the union: a subject value
+// inside the ceiling survives, including a narrower value under a wildcard
+// of the ceiling, and a value outside it is dropped.
 //
-// spec: 10.2 (scope is intersection(subject_token.scope,
-// playground_allowed_scope) — never the union), 25.1 (canonical scope form)
-func TestIntersectScopeNarrowsToCeiling_spec_10_2(t *testing.T) {
-	got := intersectScope("tools:sessions:read tools:credential:write", playgroundAllowedScope)
-	if got != "tools:sessions:read" {
-		t.Fatalf("intersectScope narrowed = %q, want tools:sessions:read", got)
+// spec: §10.2 (Authentication), §25.1 (Design Philosophy and Agent Model)
+func TestIntersectScopeKeepsTheOverlapWithTheAllowedSet(t *testing.T) {
+	cases := []struct {
+		subject string
+		want    string
+	}{
+		{"tools:sessions:read tools:credential:write", "tools:sessions:read"},
+		{"tools:sessions:write", "tools:sessions:write"},
+		{"tools:health:read tools:pools:read", "tools:pools:read"},
+	}
+	for _, tc := range cases {
+		got, err := intersectScope(tc.subject, playgroundAllowedScope)
+		if err != nil || got != tc.want {
+			t.Errorf("intersectScope(%q) = (%q, %v), want (%q, nil)", tc.subject, got, err, tc.want)
+		}
 	}
 }
 
-// TestIntersectScopeDisjointYieldsEmpty pins the §10.2 empty-intersection rule:
-// a subject scope that holds only out-of-ceiling values yields the empty scope
-// claim, so the mint proceeds with no scope restriction the §10.2 auth chain would otherwise reject. spec: 10.2
-func TestIntersectScopeDisjointYieldsEmpty_spec_10_2(t *testing.T) {
-	if got := intersectScope("tools:credential:write", playgroundAllowedScope); got != "" {
-		t.Fatalf("disjoint intersectScope = %q, want empty", got)
+// TestIntersectScopeOfTheAllowedSetIsTheAllowedSet checks the boundary
+// subjects that the ceiling does not narrow: a subject whose scope is
+// exactly the allowed set, the same set in another order, and tools:*. Each
+// yields the allowed set.
+//
+// spec: §10.2 (Authentication), §25.1 (Design Philosophy and Agent Model)
+func TestIntersectScopeOfTheAllowedSetIsTheAllowedSet(t *testing.T) {
+	reversed := make([]string, len(playgroundAllowedScope))
+	for i, s := range playgroundAllowedScope {
+		reversed[len(reversed)-1-i] = s
+	}
+	for _, subject := range []string{allowedCeiling, strings.Join(reversed, " "), "tools:*"} {
+		got, err := intersectScope(subject, playgroundAllowedScope)
+		if err != nil {
+			t.Fatalf("intersectScope(%q) error = %v, want nil", subject, err)
+		}
+		if !sameScopeValues(got, allowedCeiling) {
+			t.Errorf("intersectScope(%q) = %q, want the allowed set %q", subject, got, allowedCeiling)
+		}
 	}
 }
 
-// TestIntersectScopeMalformedSubjectFailsClosed pins the §10.2 fail-closed
-// behavior: a subject scope the §25.1 parser rejects yields no playground scope
-// rather than a claim the auth chain would reject downstream.
+// TestIntersectScopeOfAnAbsentClaimIsTheAllowedSet checks that a subject
+// with no scope claim, which carries no scope restriction, receives the
+// allowed set rather than an empty claim.
 //
-// spec: 10.2 (fail closed on a malformed subject scope), 25.1 (a value outside
-// the canonical taxonomy is rejected)
-func TestIntersectScopeMalformedSubjectFailsClosed_spec_10_2(t *testing.T) {
-	// "bogusdomain" is not in the §25.1 domain taxonomy, so Parse rejects the
-	// whole claim and intersectScope returns the empty scope.
-	if got := intersectScope("bogusdomain:read", playgroundAllowedScope); got != "" {
-		t.Fatalf("malformed subject intersectScope = %q, want empty", got)
+// spec: §10.2 (Authentication), §25.1 (Design Philosophy and Agent Model)
+func TestIntersectScopeOfAnAbsentClaimIsTheAllowedSet(t *testing.T) {
+	for _, subject := range []string{"", "   "} {
+		got, err := intersectScope(subject, playgroundAllowedScope)
+		if err != nil || got != allowedCeiling {
+			t.Errorf("intersectScope(%q) = (%q, %v), want (%q, nil)", subject, got, err, allowedCeiling)
+		}
 	}
-	// A token with too many colon-separated parts is also malformed.
-	if got := intersectScope("tools:sessions:read:extra", playgroundAllowedScope); got != "" {
-		t.Fatalf("over-segmented subject intersectScope = %q, want empty", got)
+}
+
+// TestIntersectScopeRefusesAnUnparseableSubjectScope checks that a subject
+// scope the canonical parser refuses, including a raw OAuth value from an
+// identity provider and one bad value among good ones, yields
+// errSubjectScopeInvalid and no claim.
+//
+// spec: §10.2 (Authentication), §25.1 (Design Philosophy and Agent Model)
+func TestIntersectScopeRefusesAnUnparseableSubjectScope(t *testing.T) {
+	for _, subject := range []string{
+		"openid profile",
+		"bogusdomain:read",
+		"tools:sessions:read:extra",
+		"tools:sessions:read openid",
+	} {
+		got, err := intersectScope(subject, playgroundAllowedScope)
+		if !errors.Is(err, errSubjectScopeInvalid) || got != "" {
+			t.Errorf("intersectScope(%q) = (%q, %v), want (\"\", errSubjectScopeInvalid)", subject, got, err)
+		}
 	}
+}
+
+// TestIntersectScopeRefusesADisjointSubjectScope checks that a subject scope
+// that parses and shares no value with the allowed set yields
+// errScopeIntersectionEmpty and no claim, so the mint never writes the empty
+// claim that every scope gate reads as unrestricted.
+//
+// spec: §10.2 (Authentication), §25.1 (Design Philosophy and Agent Model)
+func TestIntersectScopeRefusesADisjointSubjectScope(t *testing.T) {
+	for _, subject := range []string{"tools:credential:write", "tools:health:read", "tools:pools:write tools:credential:read"} {
+		got, err := intersectScope(subject, playgroundAllowedScope)
+		if !errors.Is(err, errScopeIntersectionEmpty) || got != "" {
+			t.Errorf("intersectScope(%q) = (%q, %v), want (\"\", errScopeIntersectionEmpty)", subject, got, err)
+		}
+	}
+}
+
+// sameScopeValues reports whether two space-separated scope claims hold the
+// same values in any order.
+func sameScopeValues(a, b string) bool {
+	as, bs := strings.Fields(a), strings.Fields(b)
+	if len(as) != len(bs) {
+		return false
+	}
+	seen := make(map[string]bool, len(as))
+	for _, s := range as {
+		seen[s] = true
+	}
+	for _, s := range bs {
+		if !seen[s] {
+			return false
+		}
+	}
+	return true
 }

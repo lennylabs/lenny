@@ -564,7 +564,7 @@ packages:
     - package: pkg/gateway/platformtools/treerecovery
       count: 16
     - package: pkg/gateway/playground
-      count: 95
+      count: 111
     - package: pkg/gateway/replica/devmode
       count: 4
     - package: pkg/gateway/replica/gatewayleader
@@ -1166,7 +1166,7 @@ packages:
     - package: tests/contract/ops_endpoints
       count: 114
     - package: tests/contract/playground
-      count: 16
+      count: 18
     - package: tests/contract/rest_auth
       count: 20
     - package: tests/contract/rest_circuitbreaker
