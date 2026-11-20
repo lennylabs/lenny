@@ -611,8 +611,17 @@ func (h gateHost) imageRef() string {
 // unprivileged as they do on a developer host: initdb refuses to run as
 // root, and the runtime supervisor tests derive the adapter UID from the
 // test's own. The user then verifies the module cache against go.sum,
-// compiles lenny-test from the mounted tree, and fills golangci-lint's
-// cache (lenny-test lint-cache-fill). A fill that does not finish logs a
+// compiles lenny-test from the mounted tree with a build cache of its own,
+// and fills golangci-lint's cache with that binary (lenny-test
+// lint-cache-fill). The build cache of the compile is a new, empty
+// directory under GOTMPDIR, on the container's own file system, which the
+// script removes after the compile, so the binary that runs the cache fill
+// and the gate and writes the verdict links no entry of the build cache
+// volume, which the test tiers of every earlier gate run could write
+// (owner's answer to GT-15, 2026-11-20). A cold compile of lenny-test
+// takes about nine seconds in the gate image. Every other go command of
+// the run, the fill's golangci-lint and the tiers' builds among them,
+// still uses the volume. A fill that does not finish logs a
 // warning, and the static tier's lint then analyzes what the cache lacks
 // without storing it, or fails with a cache error when the fill stopped
 // before golangci-lint initialized and closed the cache, because
@@ -638,7 +647,9 @@ mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" "${GOLANGCI_LINT_CACHE:?}" 
 prepare='set -e
 go mod verify
 mkdir -p "$HOME/bin"
-go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test
+build_cache="$(mktemp -d "$GOTMPDIR/lenny-test-build.XXXXXX")"
+GOCACHE="$build_cache" go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test
+rm -rf "$build_cache"
 "$HOME/bin/lenny-test" lint-cache-fill || echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier lints against a read-only cache, and fails if golangci-lint cannot open it" >&2'
 run='exec "$HOME/bin/lenny-test" gate --here "$@"'
 lock_lint_cache() {

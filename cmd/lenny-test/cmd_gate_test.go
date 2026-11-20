@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -447,6 +448,91 @@ func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 	prepare, _, _ := strings.Cut(rest, "'")
 	if !strings.Contains(prepare, "lint-cache-fill") || strings.Contains(prepare, "gate --here") {
 		t.Errorf("the fill step does not fill the cache, or runs the gate before the cache is read-only:\n%s", prepare)
+	}
+}
+
+// gateScriptVar returns the body of the single-quoted shell variable name
+// that the container script assigns.
+func gateScriptVar(t *testing.T, name string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(gateContainerScript, "\n"+name+"='")
+	if !ok {
+		t.Fatalf("the container script assigns no %s", name)
+	}
+	body, _, _ := strings.Cut(rest, "'")
+	return body
+}
+
+// gateFakeGo is a go command for the preparation step: `go mod verify`
+// succeeds, and `go build -o <out> <pkg>` records the GOCACHE it ran with
+// and that directory's listing, and writes to <out> a program that
+// appends its path and arguments to $LOG/calls.
+const gateFakeGo = `#!/bin/sh
+set -e
+case "$1" in
+mod) exit 0 ;;
+build)
+	printf '%s\n' "$GOCACHE" > "$LOG/build-cache"
+	ls -A "$GOCACHE" > "$LOG/build-cache-listing"
+	printf '#!/bin/sh\necho "$0 $*" >> "$LOG/calls"\n' > "$3"
+	chmod +x "$3"
+	;;
+*) exit 2 ;;
+esac
+`
+
+// TestGateBuildsTheHarnessWithAPrivateBuildCache runs the container's
+// preparation step and its gate step with a stand-in go command. The
+// compile of lenny-test uses a new, empty build cache under GOTMPDIR
+// rather than the shared GOCACHE, the script removes that cache after the
+// compile, and the binary the compile wrote is the one that fills the lint
+// cache and runs the gate (owner's answer to GT-15, 2026-11-20).
+func TestGateBuildsTheHarnessWithAPrivateBuildCache(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("blocked: sh is not on PATH")
+	}
+	bin, home, goTmp, shared, log := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(gateFakeGo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(shared, "planted"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "HOME="+home, "GOTMPDIR="+goTmp, "GOCACHE="+shared, "LOG="+log)
+	for _, step := range []struct {
+		name string
+		args []string
+	}{
+		{"prepare", nil},
+		{"run", []string{"--base", "main"}},
+	} {
+		cmd := exec.Command("sh", append([]string{"-c", gateScriptVar(t, step.name), "lenny-test-gate"}, step.args...)...)
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("the %s step failed: %v\n%s", step.name, err, out)
+		}
+	}
+	readLog := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(log, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	cache := readLog("build-cache")
+	if cache == shared || !pathWithin(cache, goTmp) || cache == goTmp {
+		t.Errorf("the compile used GOCACHE=%s; want a new directory under GOTMPDIR %s rather than the shared cache %s", cache, goTmp, shared)
+	}
+	if listing := readLog("build-cache-listing"); listing != "" {
+		t.Errorf("the compile's build cache was not empty: %q", listing)
+	}
+	if _, err := os.Stat(cache); !errors.Is(err, os.ErrNotExist) {
+		t.Errorf("the compile's build cache %s is left behind (stat: %v)", cache, err)
+	}
+	harness := filepath.Join(home, "bin", "lenny-test")
+	want := harness + " lint-cache-fill\n" + harness + " gate --here --base main"
+	if got := readLog("calls"); got != want {
+		t.Errorf("the harness calls:\n%s\nwant:\n%s", got, want)
 	}
 }
 
