@@ -248,7 +248,8 @@ func TestGateDockerRunArgsMountTheTreeTheGitDirAndTheCaches(t *testing.T) {
 		"--network host",
 		"TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1",
 		"sha256:feed sh -c",
-		"go mod verify\nmkdir -p \"$HOME/bin\"\ngo build",
+		"go mod verify\nmkdir -p \"$HOME/bin\"\n",
+		`GOCACHE="$build_cache" go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test`,
 		"gate --here",
 	} {
 		if !strings.Contains(args, want) {
