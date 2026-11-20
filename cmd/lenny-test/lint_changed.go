@@ -575,10 +575,30 @@ func lintRegisterError(c lintComparison) error {
 	return nil
 }
 
+// lintExtraBuildTags are the build tags the lint sets beyond the tiers'
+// own (tierBuildTags). smoke marks the Embedded Mode and Source Mode smoke
+// tests under tests/integration, which no tier selects by tag. The
+// `ignore` tag is never set: it marks standalone programs that `go run`
+// builds one file at a time.
+var lintExtraBuildTags = []string{"smoke"}
+
+// lintBuildTags returns the build tags every golangci-lint run sets: the
+// build tag of every tier and lintExtraBuildTags, sorted. Without them the
+// linter reads only the default build and skips the test files of the
+// component, contract, integration, and later tiers (owner's answer to
+// GT-4, 2026-11-19). No file the tiers compile carries a negated tier
+// tag, so setting every tag at once drops no file (tierBuildTags).
+func lintBuildTags() []string {
+	tags := append(tierBuildTags(), lintExtraBuildTags...)
+	sort.Strings(tags)
+	return tags
+}
+
 // golangciLintArgs returns the arguments of one golangci-lint run. The
-// configuration file and the exit status for findings are named on the
-// command line, which takes precedence over the configuration, so the
-// configuration cannot make a run with findings exit 0.
+// configuration file, the exit status for findings, and the build tags
+// are named on the command line, which takes precedence over the
+// configuration, so the configuration cannot make a run with findings
+// exit 0 or drop the tagged files.
 // golangci-lint holds a lock file in the temporary directory and, by
 // default, exits with an error when another instance holds it, which
 // would fail the changed-line run whenever a lint in another worktree on
@@ -589,6 +609,7 @@ func golangciLintArgs(root string, extra ...string) []string {
 		"run",
 		"--config=" + filepath.Join(root, golangciLintConfig),
 		fmt.Sprintf("--issues-exit-code=%d", golangciLintExitIssues),
+		"--build-tags=" + strings.Join(lintBuildTags(), ","),
 		"--timeout=" + golangciLintTimeout,
 		"--allow-serial-runners",
 	}, extra...)

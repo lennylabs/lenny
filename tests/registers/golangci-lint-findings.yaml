@@ -272,6 +272,49 @@ packages:
     - package: sdks/client/go/test-helper
       linters:
         errcheck: 2
+    - package: tests/component/stores
+      linters:
+        staticcheck: 1
+    - package: tests/conformance
+      linters:
+        errcheck: 1
+    - package: tests/contract/rest_sessions
+      linters:
+        staticcheck: 1
+    - package: tests/e2e_cloud
+      linters:
+        staticcheck: 1
+    - package: tests/e2e_kind
+      linters:
+        staticcheck: 1
+    - package: tests/integration
+      linters:
+        errcheck: 2
+    - package: tests/load_cloud
+      linters:
+        misspell: 1
+    - package: tests/load_local
+      linters:
+        errcheck: 2
+    - package: tests/load_local/scenarios/auth_jwt_verify_throughput
+      linters:
+        staticcheck: 1
+    - package: tests/load_local/scenarios/clock_skew_admission
+      linters:
+        staticcheck: 1
+    - package: tests/load_local/scenarios/connection_exhaustion_recovery
+      linters:
+        unused: 1
+    - package: tests/load_local/scenarios/controller_reconcile_rate
+      linters:
+        staticcheck: 1
+    - package: tests/load_local/scenarios/streaming_reconnect_storm
+      linters:
+        ineffassign: 1
+    - package: tests/security
+      linters:
+        errcheck: 6
+        unused: 3
     - package: tests/testinfra/commitfault
       linters:
         staticcheck: 1

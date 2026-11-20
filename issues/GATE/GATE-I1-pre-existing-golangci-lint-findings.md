@@ -17,7 +17,8 @@ The owner settled question S-4 of the M3 readiness review on 2026-11-19 with opt
 ## Evidence
 
 - `cmd/lenny-test/lint_changed.go` runs golangci-lint twice in the static tier. The run with `--new-from-patch`, over the diff of the working tree against the branch's merge base, fails the tier on a finding. The whole-tree run counts its findings per package and linter and compares the counts with the shrink-only register `tests/registers/golangci-lint-findings.yaml`: a count above the register fails the tier, and the findings within it are a non-fatal warning that names this issue (owner's answer to GT-3, 2026-11-19).
-- `GOOS=linux CGO_ENABLED=0 golangci-lint run --max-issues-per-linter=0 --max-same-issues=0` (golangci-lint 2.12.2, the release `tests/gate/Dockerfile` and `scripts/lib/versions.sh` pin) over `main` at `db6c42d36`, with `.golangci.yml` and no build tags, reports 353 findings in 88 packages. The same command over `main` at `b5e4cab8f` reports the same 353 findings, and the register was seeded from that run.
+- `GOOS=linux CGO_ENABLED=0 golangci-lint run --max-issues-per-linter=0 --max-same-issues=0` (golangci-lint 2.12.2, the release `tests/gate/Dockerfile` and `scripts/lib/versions.sh` pin) over `main` at `db6c42d36`, with `.golangci.yml` and no build tags, reports 353 findings in 88 packages. The same command over `main` at `b5e4cab8f` reports the same 353 findings, and the register was first seeded from that run.
+- Both runs of the check set the build tag of every tier and the `smoke` tag (owner's answer to GT-4, 2026-11-19). The same command with `--build-tags=chaos,component,conformance,contract,e2e_cloud,e2e_kind,integration,load_cloud,load_kind,load_local,security,smoke` over the same tree reports 377 findings in 102 packages. The 24 findings the tags add are all in test files under `tests/`: `errcheck` 11, `staticcheck` 7, `unused` 4, `ineffassign` 1, and `misspell` 1. The register carries them.
 - Without `GOOS=linux`, on a darwin host, the run reports one type-checking error in `tests/testinfra/supervisedpod`, which builds only on Linux, and no other finding. The check therefore analyzes the Linux build on a host other than Linux. The counts below are from the Linux build, which is the gate's environment.
 - golangci-lint returns a cached finding under the file path of the checkout that first reported it. A run over `b5e4cab8f` with the cache that other worktrees on the same host had filled reported 354 findings, each under the path of another worktree; the same run with an empty cache reported 353 under this checkout's paths. The check therefore gives each checkout a cache directory of its own and fails on a finding whose path lies outside the checkout.
 
@@ -25,15 +26,15 @@ Findings per linter:
 
 | Linter | Findings |
 |:--|--:|
-| `staticcheck` | 222 |
-| `errcheck` | 100 |
-| `unused` | 16 |
-| `misspell` | 7 |
-| `ineffassign` | 6 |
+| `staticcheck` | 229 |
+| `errcheck` | 111 |
+| `unused` | 20 |
+| `misspell` | 8 |
+| `ineffassign` | 7 |
 | `govet` | 2 |
-| Total | 353 |
+| Total | 377 |
 
-The `staticcheck` findings by check: `SA1019` (use of a deprecated identifier) 67, `SA1012` (a nil `context.Context`) 51, `QF1008` 29, `SA4006` 13, `QF1001` 9, `ST1023` 8, `SA4023` 10 (4 findings and 6 related-information entries that golangci-lint reports separately), `ST1005` 5, `S1016` 5, `QF1006` 4, `QF1011` 4, `SA4000` 4, `ST1011` 3, `S1024` 2, `SA5011` 2 (1 finding and 1 related-information entry), and 1 each of `SA1008`, `SA9003`, `QF1003`, `QF1002`, `SA4010`, and `SA4017`.
+The `staticcheck` findings by check, counting each related-information entry that golangci-lint reports as a finding of its own: `SA1019` 67, `SA1012` 51, `QF1008` 30, `SA4006` 13, `SA4023` 10, `QF1001` 10, `ST1023` 9, `ST1005` 7, `S1016` 5, `QF1006` 4, `QF1011` 4, `SA4000` 4, `ST1011` 3, `S1024` 2, `SA5011` 2, `SA1008` 1, `SA9003` 1, `QF1003` 1, `QF1002` 1, `SA4010` 1, `S1011` 1, `S1000` 1, and `SA4017` 1.
 
 Findings per package and linter:
 
@@ -45,6 +46,7 @@ Findings per package and linter:
 | `pkg/workspaceplan` | 22 | 0 | 0 | 0 | 0 | 0 | 22 |
 | `pkg/gateway/core/session/sessionserver` | 0 | 0 | 0 | 0 | 15 | 0 | 15 |
 | `pkg/loadctl` | 0 | 0 | 0 | 0 | 9 | 0 | 9 |
+| `tests/security` | 6 | 0 | 0 | 0 | 0 | 3 | 9 |
 | `cmd/lenny-test` | 3 | 0 | 2 | 0 | 2 | 1 | 8 |
 | `pkg/platform/store` | 0 | 0 | 0 | 0 | 8 | 0 | 8 |
 | `pkg/controller/agentpod/podspec` | 0 | 0 | 0 | 0 | 7 | 0 | 7 |
@@ -79,6 +81,8 @@ Findings per package and linter:
 | `pkg/upload/archive` | 0 | 0 | 0 | 0 | 2 | 0 | 2 |
 | `sdks/client/go/lenny` | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
 | `sdks/client/go/test-helper` | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
+| `tests/integration` | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
+| `tests/load_local` | 2 | 0 | 0 | 0 | 0 | 0 | 2 |
 | `pkg/adapter/statelessslot` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | `pkg/api/openapi` | 0 | 1 | 0 | 0 | 0 | 0 | 1 |
 | `pkg/audit/auditstore` | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
@@ -121,20 +125,30 @@ Findings per package and linter:
 | `pkg/tenancy/tenantstore` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | `scripts/specshift/annotation` | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
 | `scripts/specshift/survey` | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
+| `tests/component/stores` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| `tests/conformance` | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
+| `tests/contract/rest_sessions` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| `tests/e2e_cloud` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| `tests/e2e_kind` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| `tests/load_cloud` | 0 | 0 | 0 | 1 | 0 | 0 | 1 |
+| `tests/load_local/scenarios/auth_jwt_verify_throughput` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| `tests/load_local/scenarios/clock_skew_admission` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| `tests/load_local/scenarios/connection_exhaustion_recovery` | 0 | 0 | 0 | 0 | 0 | 1 | 1 |
+| `tests/load_local/scenarios/controller_reconcile_rate` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
+| `tests/load_local/scenarios/streaming_reconnect_storm` | 0 | 0 | 1 | 0 | 0 | 0 | 1 |
 | `tests/testinfra/commitfault` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | `tests/testinfra/gateway` | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
 | `tests/testinfra/kind` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | `tests/testinfra/loadgen` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
 | `tests/testinfra/opsprocess` | 1 | 0 | 0 | 0 | 0 | 0 | 1 |
 | `tests/testinfra/sessiondriver` | 0 | 0 | 0 | 0 | 1 | 0 | 1 |
-| Total | 100 | 2 | 6 | 7 | 222 | 16 | 353 |
+| Total | 111 | 2 | 7 | 8 | 229 | 20 | 377 |
 
 ## Gap
 
 The whole-tree golangci-lint run of the static tier fails only on a count above the register while these findings remain. A branch that edits a line carrying one of these findings has to fix it, because the changed-line run reports it, and a branch that fixes one commits the lowered register.
 
-The counts cover the default build configuration. Files behind a build tag, such as the `integration`, `component`, and `contract` tests, are outside both runs.
 
 ## Suggested resolution
 
-Fix the findings package by package, starting with the packages that carry the most, and recount with the command under "Evidence". The check lowers the register as the counts fall. When the count reaches zero, delete the register, make the whole-tree run in `cmd/lenny-test/lint_changed.go` fail the tier, remove the changed-line run, whose findings the whole-tree run then covers, update item 7 of the static-tier check list in `TESTING.md`, and close this issue.
+Fix the findings package by package, starting with the packages that carry the most, and recount with the command under "Evidence", with the build tags it names. The check lowers the register as the counts fall. When the count reaches zero, delete the register, make the whole-tree run in `cmd/lenny-test/lint_changed.go` fail the tier, remove the changed-line run, whose findings the whole-tree run then covers, update item 7 of the static-tier check list in `TESTING.md`, and close this issue.
