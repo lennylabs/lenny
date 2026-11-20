@@ -1,0 +1,11 @@
+-- §13.3 lineage index on issued_tokens.parent_jti.
+--
+-- Every token a token exchange derives records its parent in parent_jti
+-- (§13.3 "Lineage of derived tokens"), and the recursive revocation walks
+-- that edge one level at a time within a tenant. This partial index keys
+-- each step of the walk, so the cost of a cascade grows with the size of
+-- the subtree it revokes rather than with the tenant's token population.
+--
+-- spec: §12.2 (TokenIssuanceStore indexes), §13.3 (Lineage of derived
+-- tokens).
+CREATE INDEX idx_issued_tokens_parent ON issued_tokens (tenant_id, parent_jti) WHERE parent_jti IS NOT NULL;
