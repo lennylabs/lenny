@@ -51,6 +51,22 @@ const golangciLintTimeout = "10m"
 // exits non-zero.
 const golangciLintWallLimit = 25 * time.Minute
 
+// golangciLintMemLimit is the soft memory limit (GOMEMLIMIT) of every
+// golangci-lint run, the gate container's cache fill among them, unless
+// the harness's environment sets GOMEMLIMIT. With no limit, a whole-tree
+// run with an empty cache in the gate image reached a peak resident size
+// of about 5.1 GiB, and a cache fill in the gate container was killed,
+// most likely for lack of memory. With this limit the same run peaked at
+// about 3.2 GiB and took about 40% longer (TESTING.md, the golangci-lint
+// check of the static tier). The limit lowers the peak and does not bound
+// it: the Go runtime collects garbage more often as the heap nears the
+// limit, lets the heap grow past it when the live data needs more, and the
+// measured peak with the limit was above 3 GiB. A run can therefore still
+// be killed for memory, and a fill that is killed leaves the static tier
+// to the private cache (privateLintCache). Lowering the concurrency did
+// not lower the peak.
+const golangciLintMemLimit = "3GiB"
+
 // golangciLintExitIssues is the status the check asks golangci-lint to
 // exit with when it reports findings (--issues-exit-code). Every other
 // non-zero status is a run that did not finish, such as a timeout or a
@@ -237,7 +253,9 @@ type golangciLint struct {
 	// release, or nil when it is.
 	version func(ctx context.Context, root, bin string) error
 	// exec runs bin with args in root and returns the combined output.
-	exec func(ctx context.Context, bin, root string, args ...string) (string, error)
+	// With cache set, golangci-lint keeps its cache in that directory
+	// rather than in the checkout's directory (golangciLintEnv).
+	exec func(ctx context.Context, bin, root, cache string, args ...string) (string, error)
 	// scan lists the Go source problems in root that hide code from the
 	// linter (lint_sources.go).
 	scan func(ctx context.Context, root string) ([]string, error)
@@ -248,6 +266,14 @@ type golangciLint struct {
 	// that the product binaries import and that ./... does not match
 	// (lint_deps.go).
 	deps func(ctx context.Context, root string) (lintDepsResult, error)
+	// privateCache reports that the gate container's cache fill did not
+	// finish (gateEnvLintFill), so the runs of the check use a private
+	// cache rather than the shared one (privateLintCache).
+	privateCache bool
+	// cache is the private cache directory the runs of the check use, or
+	// empty for the checkout's directory. run sets it on its own copy of
+	// the check.
+	cache string
 }
 
 // newGolangciLint returns the check wired to the installed linter, git,
@@ -276,6 +302,7 @@ func newGolangciLint(root, base string) golangciLint {
 
 		baseRegister: loadBaseLintRegister,
 		deps:         releasePackagesOutsideLint,
+		privateCache: os.Getenv(gateEnvLintFill) == gateLintFillFailed,
 	}
 }
 
@@ -311,21 +338,23 @@ func pinnedGolangciLintVersion(root string) (string, error) {
 }
 
 // execGolangciLint runs golangci-lint in root, bounded by
-// golangciLintWallLimit, in the environment golangciLintEnv returns.
-func execGolangciLint(ctx context.Context, bin, root string, args ...string) (string, error) {
+// golangciLintWallLimit, in the environment golangciLintEnv returns for
+// the cache directory cache.
+func execGolangciLint(ctx context.Context, bin, root, cache string, args ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(ctx, golangciLintWallLimit)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, bin, args...)
 	cmd.Dir = root
 	userCache, _ := os.UserCacheDir()
-	cmd.Env = golangciLintEnv(os.Environ(), root, userCache)
+	cmd.Env = golangciLintEnv(os.Environ(), root, userCache, cache)
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
 
 // golangciLintEnv returns the environment of a golangci-lint run, built
 // from the harness's own environment env on a host whose user cache
-// directory is userCache. It is the build
+// directory is userCache, with golangci-lint's cache in cache when cache
+// is set (the private cache of privateLintCache). It is the build
 // target of lintTargetEnv, with these settings of the run's own:
 //
 //   - GOLANGCI_DIFF_PROCESSOR_PATCH replaces the diff golangci-lint
@@ -342,22 +371,34 @@ func execGolangciLint(ctx context.Context, bin, root string, args ...string) (st
 //     other's paths. The changed-line run then matches no finding to the
 //     diff and passes, and the whole-tree counts name no package of the
 //     tree.
-func golangciLintEnv(env []string, root, userCache string) []string {
+//   - GOMEMLIMIT is golangciLintMemLimit unless env sets it, in which case
+//     the inherited value stands.
+func golangciLintEnv(env []string, root, userCache, cache string) []string {
 	drop := map[string]bool{"GOLANGCI_DIFF_PROCESSOR_PATCH": true, "PWD": true, "GOLANGCI_LINT_CACHE": true}
 	cacheBase := ""
+	memLimit := true
 	target := lintTargetEnv(env)
-	out := make([]string, 0, len(target)+2)
+	out := make([]string, 0, len(target)+3)
 	for _, kv := range target {
 		name, value, _ := strings.Cut(kv, "=")
-		if name == "GOLANGCI_LINT_CACHE" {
+		switch name {
+		case "GOLANGCI_LINT_CACHE":
 			cacheBase = value
+		case "GOMEMLIMIT":
+			memLimit = false
 		}
 		if !drop[name] {
 			out = append(out, kv)
 		}
 	}
 	out = append(out, "PWD="+root)
-	if cache := golangciLintCache(cacheBase, userCache, root); cache != "" {
+	if memLimit {
+		out = append(out, "GOMEMLIMIT="+golangciLintMemLimit)
+	}
+	if cache == "" {
+		cache = golangciLintCache(cacheBase, userCache, root)
+	}
+	if cache != "" {
 		out = append(out, "GOLANGCI_LINT_CACHE="+cache)
 	}
 	return out
@@ -451,13 +492,25 @@ func golangciLintCache(base, userCache, root string) string {
 // marker, so the tier reports that the check proved nothing rather than
 // passing; without a resolved merge base the changed-line run does not
 // happen and the register's raises are not checked. The whole-tree run
-// happens whenever the linter is installed.
+// happens whenever the linter is installed. When the gate container's
+// cache fill did not finish, both runs use a private cache
+// (privateLintCache), and the output says so on a line that opens with
+// lintCacheFallbackMarker.
 func (l golangciLint) run() (string, error) {
 	if l.bin == "" {
 		return verdictstatus.UnverifiedMarker + " golangci-lint not found, so the lint did not run (run scripts/setup-dev.sh; the gate image installs it)", nil
 	}
 	ctx := context.Background()
-	var unverified, sections []string
+	var head, unverified, sections []string
+	if l.privateCache {
+		dir, err := privateLintCache()
+		if err != nil {
+			return "golangci-lint did not run: " + err.Error(), err
+		}
+		defer func() { _ = os.RemoveAll(dir) }()
+		l.cache = dir
+		head = append(head, lintCacheFallbackMarker+" "+lintCacheFallbackNote)
+	}
 	var failure error
 	versionErr := l.version(ctx, l.root, l.bin)
 	if versionErr != nil {
@@ -483,9 +536,38 @@ func (l golangciLint) run() (string, error) {
 	sections = append(sections, section)
 	failure = errors.Join(failure, depsErr)
 	if len(unverified) > 0 {
-		sections = append([]string{verdictstatus.UnverifiedMarker + " " + strings.Join(unverified, "; ")}, sections...)
+		head = append([]string{verdictstatus.UnverifiedMarker + " " + strings.Join(unverified, "; ")}, head...)
 	}
-	return strings.Join(sections, "\n"), failure
+	return strings.Join(append(head, sections...), "\n"), failure
+}
+
+// lintCacheFallbackMarker opens the line of the check's output that
+// reports the private cache, and lintCacheFallbackNote states it.
+// classifyGolangciLint carries the note into the detail the static tier
+// records, and the gate's summary prints it (gateSummaryNotes).
+const (
+	lintCacheFallbackMarker = "LINT CACHE FALLBACK:"
+	lintCacheFallbackNote   = "the gate container's golangci-lint cache fill did not finish, so both golangci-lint runs used a private, empty cache created for this run in place of the shared read-only cache, and the runs analyzed every package without cached golangci-lint results"
+)
+
+// privateLintCache creates the cache directory the runs of the check use
+// when the gate container's cache fill did not finish. The shared cache
+// is then mounted read-only and may lack the entries golangci-lint needs
+// or never have been initialized, and golangci-lint can exit non-zero
+// when it cannot write it, even on a clean tree. The directory is new and
+// empty and lies under the temporary directory, which in the gate
+// container is the fixture root on the container's own file system, and
+// the caller removes it after the runs. The gate runs the static tier
+// before the test tiers, so no test tier writes it while the runs read
+// it. The other checks of the static tier, the branch's scripts under
+// scripts/ and the static tier's Go test packages among them, run
+// alongside the lint as the same user and can write it.
+func privateLintCache() (string, error) {
+	dir, err := os.MkdirTemp("", "lenny-lint-cache-*")
+	if err != nil {
+		return "", fmt.Errorf("the gate container's golangci-lint cache fill did not finish, and the private cache could not be created: %w", err)
+	}
+	return dir, nil
 }
 
 // classifyGolangciLint reads the check's output as unverified only when
@@ -495,9 +577,11 @@ func (l golangciLint) run() (string, error) {
 //
 // Either way the detail names each raise of the register the output lists
 // on a line that opens with lintRaiseMarker, so the static tier records
-// the raise in the verdict even when the check passes. A line of the
-// linter's own output that opens with the marker can add a false entry
-// but cannot remove one the check wrote.
+// the raise in the verdict even when the check passes, and the detail
+// carries lintCacheFallbackNote when a line opens with
+// lintCacheFallbackMarker. A line of the linter's own output that opens
+// with either marker can add a false entry but cannot remove one the
+// check wrote.
 func classifyGolangciLint(out string) (string, string) {
 	first, _, _ := strings.Cut(out, "\n")
 	status, detail := verdictstatus.Pass, ""
@@ -505,10 +589,17 @@ func classifyGolangciLint(out string) (string, string) {
 		status, detail = verdictstatus.Unverified, strings.TrimSpace(strings.TrimPrefix(first, verdictstatus.UnverifiedMarker))
 	}
 	var raises []string
+	fallback := false
 	for _, line := range strings.Split(out, "\n") {
 		if r, ok := strings.CutPrefix(line, lintRaiseMarker); ok {
 			raises = append(raises, strings.TrimSpace(r))
 		}
+		if strings.HasPrefix(line, lintCacheFallbackMarker) {
+			fallback = true
+		}
+	}
+	if fallback {
+		detail = strings.TrimPrefix(detail+"; "+lintCacheFallbackNote, "; ")
 	}
 	if len(raises) > 0 {
 		note := fmt.Sprintf("%d %s, each needing the merge-gate review that records its reason: %s", len(raises), lintRaiseNote, strings.Join(raises, "; "))
@@ -543,7 +634,7 @@ func (l golangciLint) changedLines(ctx context.Context, b lintBase) (string, err
 	if werr != nil {
 		return fmt.Sprintf("golangci-lint did not run on %s: %v", scope, werr), fmt.Errorf("write the changed-line patch: %w", werr)
 	}
-	out, err := l.exec(ctx, l.bin, l.root, golangciLintArgs(l.root, "--new-from-patch="+f.Name())...)
+	out, err := l.exec(ctx, l.bin, l.root, l.cache, golangciLintArgs(l.root, "--new-from-patch="+f.Name())...)
 	if err == nil {
 		return fmt.Sprintf("golangci-lint: no finding on %s", scope), nil
 	}
@@ -575,7 +666,7 @@ func (l golangciLint) wholeTree(ctx context.Context, comparable bool, base *lint
 	name := report.Name()
 	_ = report.Close()
 	defer func() { _ = os.Remove(name) }()
-	out, err := l.exec(ctx, l.bin, l.root, wholeTreeLintArgs(l.root, name)...)
+	out, err := l.exec(ctx, l.bin, l.root, l.cache, wholeTreeLintArgs(l.root, name)...)
 	var exitErr *exec.ExitError
 	if err != nil && (!errors.As(err, &exitErr) || exitErr.ExitCode() != golangciLintExitIssues) {
 		return fmt.Sprintf("golangci-lint did not finish its run on the whole tree (%v):\n%s", err, out), fmt.Errorf("golangci-lint on the whole tree did not finish: %w", err)

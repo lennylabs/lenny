@@ -228,12 +228,13 @@ func TestLintPatchRefusesPathsTheDiffCannotName(t *testing.T) {
 
 // TestLintEnvDropsThePatchOverrideAndTargetsLinuxAmd64 checks the
 // environment of a golangci-lint run: an inherited patch override is
-// dropped, PWD names the root, and every run reads the linux/amd64 build
+// dropped, PWD names the root, every run reads the linux/amd64 build
 // with cgo and the workspace off, whatever the inherited environment
-// names.
+// names, and the run carries the memory limit unless the inherited
+// environment sets one.
 func TestLintEnvDropsThePatchOverrideAndTargetsLinuxAmd64(t *testing.T) {
 	in := []string{"HOME=/home/alice", "GOLANGCI_DIFF_PROCESSOR_PATCH=x", "PWD=/elsewhere", "GOOS=darwin", "GOARCH=arm64", "CGO_ENABLED=1", "GOWORK=/elsewhere/go.work"}
-	env := golangciLintEnv(in, "/repo", "/cache")
+	env := golangciLintEnv(in, "/repo", "/cache", "")
 	for _, want := range []string{"HOME=/home/alice", "PWD=/repo", "GOOS=linux", "GOARCH=amd64", "CGO_ENABLED=0", "GOWORK=off"} {
 		if !slices.Contains(env, want) {
 			t.Errorf("environment lacks %s:\n%s", want, strings.Join(env, "\n"))
@@ -243,6 +244,19 @@ func TestLintEnvDropsThePatchOverrideAndTargetsLinuxAmd64(t *testing.T) {
 		if slices.Contains(env, bad) {
 			t.Errorf("environment keeps %s:\n%s", bad, strings.Join(env, "\n"))
 		}
+	}
+	if !slices.Contains(env, "GOMEMLIMIT="+golangciLintMemLimit) {
+		t.Errorf("environment lacks the memory limit GOMEMLIMIT=%s:\n%s", golangciLintMemLimit, strings.Join(env, "\n"))
+	}
+	inherited := golangciLintEnv(append(in, "GOMEMLIMIT=1GiB"), "/repo", "/cache", "")
+	var limits []string
+	for _, kv := range inherited {
+		if strings.HasPrefix(kv, "GOMEMLIMIT=") {
+			limits = append(limits, kv)
+		}
+	}
+	if !slices.Equal(limits, []string{"GOMEMLIMIT=1GiB"}) {
+		t.Errorf("an inherited memory limit gives %v; want the inherited GOMEMLIMIT=1GiB alone", limits)
 	}
 	if target, want := lintTargetEnv(nil), lintTargetEnvVars(lintBuildTarget); !slices.Equal(target, want) {
 		t.Errorf("an empty environment gives %v; want %v", target, want)
@@ -345,6 +359,7 @@ func TestGolangciLintPinsAgree(t *testing.T) {
 // --output.json.path argument names.
 type fakeLint struct {
 	calls      [][]string
+	caches     []string
 	changedOut string
 	changedErr error
 	wholeJSON  string
@@ -352,8 +367,9 @@ type fakeLint struct {
 	wholeErr   error
 }
 
-func (f *fakeLint) exec(_ context.Context, _, _ string, args ...string) (string, error) {
+func (f *fakeLint) exec(_ context.Context, _, _, cache string, args ...string) (string, error) {
 	f.calls = append(f.calls, args)
+	f.caches = append(f.caches, cache)
 	if containsArg(args, "--new-from-patch=") {
 		return f.changedOut, f.changedErr
 	}
@@ -1449,19 +1465,19 @@ func TestLintCacheIsPerCheckout(t *testing.T) {
 		return out
 	}
 	inherited := []string{"GOLANGCI_LINT_CACHE=/shared"}
-	a := cacheOf(golangciLintEnv(inherited, "/work/a", "/home/alice/.cache"))
-	b := cacheOf(golangciLintEnv(inherited, "/work/b", "/home/alice/.cache"))
+	a := cacheOf(golangciLintEnv(inherited, "/work/a", "/home/alice/.cache", ""))
+	b := cacheOf(golangciLintEnv(inherited, "/work/b", "/home/alice/.cache", ""))
 	if len(a) != 1 || len(b) != 1 || a[0] == b[0] || filepath.Dir(a[0]) != "/shared" || filepath.Dir(b[0]) != "/shared" {
 		t.Errorf("caches %v and %v; want one directory per checkout under /shared", a, b)
 	}
-	if again := cacheOf(golangciLintEnv(inherited, "/work/a", "")); len(again) != 1 || again[0] != a[0] {
+	if again := cacheOf(golangciLintEnv(inherited, "/work/a", "", "")); len(again) != 1 || again[0] != a[0] {
 		t.Errorf("cache %v; want the same directory %s for the same checkout", again, a[0])
 	}
-	def := cacheOf(golangciLintEnv(nil, "/work/a", "/home/alice/.cache"))
+	def := cacheOf(golangciLintEnv(nil, "/work/a", "/home/alice/.cache", ""))
 	if len(def) != 1 || filepath.Dir(def[0]) != "/home/alice/.cache/golangci-lint" {
 		t.Errorf("cache %v; want a directory under golangci-lint's default", def)
 	}
-	if none := cacheOf(golangciLintEnv(nil, "/work/a", "")); len(none) != 0 {
+	if none := cacheOf(golangciLintEnv(nil, "/work/a", "", "")); len(none) != 0 {
 		t.Errorf("cache %v; want none when no cache directory is known", none)
 	}
 }

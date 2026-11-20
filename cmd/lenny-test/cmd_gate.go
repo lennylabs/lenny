@@ -112,6 +112,12 @@ const (
 	// script's steps.
 	gateHarnessPath = "/usr/local/libexec/lenny-gate/lenny-test"
 	gateEnvHarness  = "LENNY_GATE_HARNESS"
+	// gateEnvLintFill is set to gateLintFillFailed by the container
+	// script when the golangci-lint cache fill did not finish, and the
+	// static tier's golangci-lint runs then use a private cache
+	// (privateLintCache).
+	gateEnvLintFill    = "LENNY_GATE_LINT_CACHE_FILL"
+	gateLintFillFailed = "failed"
 )
 
 // gateChangedTiers are the tiers the gate takes from the --changed plan,
@@ -653,12 +659,13 @@ func (h gateHost) imageRef() string {
 // and the module cache volume stays writable to the gate user.
 //
 // The user then fills golangci-lint's cache with the installed binary
-// (lenny-test lint-cache-fill). A fill that does not finish logs a
-// warning, and the static tier's lint then analyzes what the cache lacks
-// without storing it, or fails with a cache error when the fill stopped
-// before golangci-lint initialized and closed the cache, because
-// golangci-lint cannot create the cache's directories or its trim record
-// on a read-only mount. Root then bind-mounts golangci-lint's cache
+// (lenny-test lint-cache-fill). A fill that does not finish, such as one
+// the kernel kills for memory, logs one line and sets gateEnvLintFill, and
+// the static tier's golangci-lint runs then use a private, empty cache
+// created for that run (privateLintCache) and report it in the tier's
+// detail. Against the read-only shared cache, a run whose fill did not
+// finish logs a warning for each result it cannot store and can exit
+// non-zero on a clean tree. Root then bind-mounts golangci-lint's cache
 // directory read-only over itself, and the user runs `lenny-test gate
 // --here` with the installed binary, so the gate always runs the harness
 // of the commit under test, and its static tier reads the filled cache
@@ -693,12 +700,16 @@ build_cache="$(mktemp -d "$GOTMPDIR/lenny-test-build.XXXXXX")"
 GOCACHE="$build_cache" go build -o "$GOTMPDIR/lenny-test" ./cmd/lenny-test
 cd /
 rm -rf "$build_cache" "$src"'
-fill='"$` + gateEnvHarness + `" lint-cache-fill || echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier lints against a read-only cache, and fails if golangci-lint cannot open it" >&2'
+fill='"$` + gateEnvHarness + `" lint-cache-fill'
 run='exec "$` + gateEnvHarness + `" gate --here "$@"'
 install_harness() {
 	mkdir -p "$(dirname "$` + gateEnvHarness + `")"
 	install -o 0 -g 0 -m 0555 "$GOTMPDIR/lenny-test" "$` + gateEnvHarness + `"
 	rm -f "$GOTMPDIR/lenny-test"
+}
+fill_failed() {
+	echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier's golangci-lint runs use a private, empty cache for this run, and the shared cache stays read-only" >&2
+	export ` + gateEnvLintFill + `=` + gateLintFillFailed + `
 }
 lock_lint_cache() {
 	mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"
@@ -709,7 +720,7 @@ gid="${LENNY_GATE_GID:-0}"
 if [ "$uid" = 0 ]; then
 	sh -c "$build"
 	install_harness
-	sh -c "$fill"
+	sh -c "$fill" || fill_failed
 	lock_lint_cache
 	exec sh -c "$run" lenny-test-gate "$@"
 fi
@@ -725,17 +736,18 @@ done
 export HOME=/home/gate USER="$(getent passwd "$uid" | cut -d: -f1)"
 setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$build"
 install_harness
-setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$fill"
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$fill" || fill_failed
 lock_lint_cache
 exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
 
 // gateSummaryNotes returns the lines of a tier's detail that the summary
 // prints whatever the tier's status: each golangci-lint register raise
-// (GT-8), which a passing static tier records only in its detail.
+// (GT-8) and the golangci-lint runs' private cache (privateLintCache),
+// which a passing static tier records only in its detail.
 func gateSummaryNotes(detail string) []string {
 	var out []string
 	for _, line := range strings.Split(detail, "\n") {
-		if strings.Contains(line, lintRaiseNote) {
+		if strings.Contains(line, lintRaiseNote) || strings.Contains(line, lintCacheFallbackNote) {
 			out = append(out, strings.TrimSpace(line))
 		}
 	}
