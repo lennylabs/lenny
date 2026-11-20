@@ -106,6 +106,18 @@ const (
 	// gateNotRunPrefix opens the reason of a tier the gate selected but
 	// could not run in its environment.
 	gateNotRunPrefix = "not run: "
+	// gateHarnessPath is where the container installs the lenny-test it
+	// compiled, owned by root and read-only, before the cache fill and the
+	// gate run it (gateContainerScript). gateEnvHarness names it to the
+	// script's steps.
+	gateHarnessPath = "/usr/local/libexec/lenny-gate/lenny-test"
+	gateEnvHarness  = "LENNY_GATE_HARNESS"
+	// gateEnvLintFill is set to gateLintFillFailed by the container
+	// script when the golangci-lint cache fill did not finish, and the
+	// static tier's golangci-lint runs then use a private cache
+	// (privateLintCache).
+	gateEnvLintFill    = "LENNY_GATE_LINT_CACHE_FILL"
+	gateLintFillFailed = "failed"
 )
 
 // gateChangedTiers are the tiers the gate takes from the --changed plan,
@@ -155,9 +167,14 @@ type gateOptions struct {
 // gateRecord is the gate's own section of the verdict.
 type gateRecord struct {
 	// Base is the ref the branch is compared with, and MergeBase the
-	// commit the comparison starts from.
+	// commit the static tier's changed-line lint and register raise check
+	// compare with for it (resolveLintBase).
 	Base      string `json:"base"`
 	MergeBase string `json:"merge_base,omitempty"`
+	// IntegrationMergeBase is the merge base of HEAD with the integration
+	// branch, main or else origin/main (integrationMergeBase). A verdict
+	// whose MergeBase is another commit is UNVERIFIED (GT-18).
+	IntegrationMergeBase string `json:"integration_merge_base,omitempty"`
 	// Dirty reports uncommitted changes in the worktree. A verdict for
 	// a dirty tree is not a verdict for the branch head.
 	Dirty bool `json:"dirty"`
@@ -174,15 +191,17 @@ type gateRecord struct {
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
 	// Unverified lists why the verdict cannot stand for the commit even
-	// when every tier passed: uncommitted changes in the tree, or a run
-	// outside the gate image. Any entry keeps the verdict from PASS.
+	// when every tier passed: uncommitted changes in the tree, a run
+	// outside the gate image, a narrowed dependent walk, or a --base whose
+	// merge base is not the merge base with the integration branch. Any
+	// entry keeps the verdict from PASS.
 	Unverified []string `json:"unverified,omitempty"`
 }
 
 // runGate handles `lenny-test gate`.
 func runGate(args []string) int {
 	fs := flag.NewFlagSet("gate", flag.ExitOnError)
-	base := fs.String("base", "main", "the ref the branch merges into; the changed tiers are selected from the diff against its merge base")
+	base := fs.String("base", "main", "the ref the branch merges into; the changed tiers are selected from the diff against its merge base, and a merge base other than the merge base of HEAD with main (or origin/main without main) makes the verdict UNVERIFIED")
 	here := fs.Bool("here", false, "run the gate in this environment instead of the gate container (the container itself runs the gate this way); outside the gate image the verdict is at best UNVERIFIED")
 	rebuild := fs.Bool("rebuild", false, "rebuild the gate image even when it exists")
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
@@ -200,6 +219,10 @@ func runGate(args []string) int {
 	if err := gateRejectPositional(fs.Args()); err != nil {
 		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
 		fs.Usage()
+		return 2
+	}
+	if *base == "" {
+		fmt.Fprintln(os.Stderr, "lenny-test gate: --base is empty; the merge gate compares with the merge base of a ref, main by default")
 		return 2
 	}
 	root := repoRoot()
@@ -535,9 +558,14 @@ func gateDockerRunArgs(h gateHost) []string {
 		"-v", gateModVolume+":/go/pkg/mod",
 		"-v", gateBuildVolume+":"+gateGoCache,
 		// golangci-lint keeps its analysis cache in a directory of the
-		// build cache volume, so a gate run after the first does not
-		// analyze the whole module cold. The Go build cache uses only its
-		// two-hex-digit directories and leaves this one alone.
+		// build cache volume, and the static tier's check gives each
+		// checkout a subdirectory of it named for a digest of the
+		// checkout's path (golangciLintCache), so a gate run after the
+		// first in the same worktree does not analyze the whole module
+		// cold, and a new worktree's first run does. The Go build cache
+		// uses only its two-hex-digit directories and leaves this one
+		// alone. gateContainerScript fills the directory and then mounts
+		// it read-only for the gate itself.
 		"-e", "GOLANGCI_LINT_CACHE="+gateLintCache,
 		"-e", gateEnvImage+"="+h.image,
 		"-e", "GOTMPDIR="+gateGoTmpDir,
@@ -553,6 +581,13 @@ func gateDockerRunArgs(h gateHost) []string {
 		// test reads.
 		"-e", "GIT_OPTIONAL_LOCKS=0",
 		"-e", "GOFLAGS=-buildvcs=false",
+		// git substitutes an object for any object a ref under
+		// refs/replace/ names. When the gate runs in a main checkout,
+		// its .git lies in the writable worktree, so a test could plant
+		// a replace ref that changes what a later run reads at the merge
+		// base, such as the golangci-lint register or the changed-line
+		// diff. The gate tells git to ignore replace refs.
+		"-e", "GIT_NO_REPLACE_OBJECTS=1",
 		"-e", gateEnvUID+"="+strconv.Itoa(h.uid),
 		"-e", gateEnvGID+"="+strconv.Itoa(h.gid),
 	)
@@ -598,31 +633,126 @@ func (h gateHost) imageRef() string {
 // the verdict among them, belong to that owner, and the tests run
 // unprivileged as they do on a developer host: initdb refuses to run as
 // root, and the runtime supervisor tests derive the adapter UID from the
-// test's own. The user then verifies the module cache against go.sum,
-// compiles lenny-test from the mounted tree, and runs `lenny-test gate
-// --here`, so the gate always runs the harness of the commit under test.
+// test's own.
+//
+// The user then compiles lenny-test (the build step). It exports the
+// commit HEAD names with git archive into a new directory under GOTMPDIR,
+// on the container's own file system, and checks that the export holds
+// every file of HEAD's tree, so an export-ignore attribute cannot drop a
+// file from the harness. In the export it runs go mod verify and go build
+// with GOWORK=off and -mod=readonly, so a go.work file and a vendor
+// directory play no part, and with a build cache of its own: a new, empty
+// directory under GOTMPDIR. The script removes the export and that build
+// cache after the compile. The binary that runs the cache fill and the
+// gate and writes the verdict is therefore compiled from the committed
+// tree, the module cache, and the image's toolchain, and links no entry of
+// the build cache volume, which the test tiers of every earlier gate run
+// could write (owner's answer to GT-15, 2026-11-20). An uncommitted or
+// untracked file, which a test of an earlier run in the same worktree
+// could plant, is not compiled in. A cold compile of lenny-test took about
+// nine seconds in the gate image when the owner measured it on 2026-11-20.
+// Root then installs the binary at gateHarnessPath, owned by root and
+// read-only, so no process of the gate user, a test among them, can
+// replace the file that a later check of the gate runs again
+// (os.Executable). Every other go command of the run, the fill's
+// golangci-lint and the tiers' builds among them, still uses the volume,
+// and the module cache volume stays writable to the gate user.
+//
+// The user then fills golangci-lint's cache with the installed binary
+// (lenny-test lint-cache-fill). A fill that does not finish, such as one
+// the kernel kills for memory, logs one line and sets gateEnvLintFill, and
+// the static tier's golangci-lint runs then use a private, empty cache
+// created for that run (privateLintCache) and report it in the tier's
+// detail. Against the read-only shared cache, a run whose fill did not
+// finish logs a warning for each result it cannot store and can exit
+// non-zero on a clean tree. Root then bind-mounts golangci-lint's cache
+// directory read-only over itself, and the user runs `lenny-test gate
+// --here` with the installed binary, so the gate always runs the harness
+// of the commit under test, and its static tier reads the filled cache
+// while no test tier can write it (owner's answer to GT-11, 2026-11-20).
+// The user holds no capability after setpriv, and a mount that a user
+// namespace inherits is locked, so neither the user nor a namespace a
+// test creates can remount the directory writable. Writers remain outside
+// the mount: a gate run as root, whose tests hold CAP_SYS_ADMIN and can
+// remount it; any process with the host Docker socket, which can mount
+// the volume in another container; the fill itself, which runs lenny-test as the branch builds
+// it, with the packages it imports; and the fill of a gate container
+// another worktree runs at the same time. The owner accepted these limits
+// (owner's answer to GT-16, 2026-11-20). The Go build cache on the same
+// volume stays writable to the test tiers. A mount that fails stops the
+// gate.
 const gateContainerScript = `set -e
 if [ -n "${LENNY_TEST_SHARED_TMPDIR:-}" ]; then find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete; fi
-mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" /go/pkg/mod
-run='set -e
+mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" "${GOLANGCI_LINT_CACHE:?}" /go/pkg/mod
+export ` + gateEnvHarness + `=` + gateHarnessPath + `
+build='set -e
+src="$(mktemp -d "$GOTMPDIR/lenny-test-src.XXXXXX")"
+git archive -o "$src.tar" HEAD
+tar -x -f "$src.tar" -C "$src"
+rm -f "$src.tar"
+want="$(git ls-tree -r -z --format="%(objecttype)" HEAD | tr "\000" "\n" | grep -c "^blob$")"
+got="$(find "$src" ! -type d -print0 | tr -cd "\000" | wc -c | tr -d " ")"
+if [ "$want" != "$got" ]; then echo "lenny-test gate: the export of HEAD holds $got files and HEAD holds $want; an export-ignore attribute kept files out of the harness build" >&2; exit 1; fi
+cd "$src"
+export GOWORK=off GOFLAGS="-buildvcs=false -mod=readonly"
 go mod verify
-mkdir -p "$HOME/bin"
-go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test
-exec "$HOME/bin/lenny-test" gate --here "$@"'
+build_cache="$(mktemp -d "$GOTMPDIR/lenny-test-build.XXXXXX")"
+GOCACHE="$build_cache" go build -o "$GOTMPDIR/lenny-test" ./cmd/lenny-test
+cd /
+rm -rf "$build_cache" "$src"'
+fill='"$` + gateEnvHarness + `" lint-cache-fill'
+run='exec "$` + gateEnvHarness + `" gate --here "$@"'
+install_harness() {
+	mkdir -p "$(dirname "$` + gateEnvHarness + `")"
+	install -o 0 -g 0 -m 0555 "$GOTMPDIR/lenny-test" "$` + gateEnvHarness + `"
+	rm -f "$GOTMPDIR/lenny-test"
+}
+fill_failed() {
+	echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier's golangci-lint runs use a private, empty cache for this run, and the shared cache stays read-only" >&2
+	export ` + gateEnvLintFill + `=` + gateLintFillFailed + `
+}
+lock_lint_cache() {
+	mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"
+	mount -o remount,bind,ro "$GOLANGCI_LINT_CACHE"
+}
 uid="${LENNY_GATE_UID:-0}"
 gid="${LENNY_GATE_GID:-0}"
-if [ "$uid" = 0 ]; then exec sh -c "$run" lenny-test-gate "$@"; fi
+if [ "$uid" = 0 ]; then
+	sh -c "$build"
+	install_harness
+	sh -c "$fill" || fill_failed
+	lock_lint_cache
+	exec sh -c "$run" lenny-test-gate "$@"
+fi
 getent group "$gid" >/dev/null || groupadd --gid "$gid" gate
 getent passwd "$uid" >/dev/null || useradd --uid "$uid" --gid "$gid" --no-create-home --home-dir /home/gate --shell /bin/sh gate
 mkdir -p /home/gate
 chown "$uid:$gid" /home/gate
 groups="$gid"
 if [ -S /var/run/docker.sock ]; then groups="$groups,$(stat -c %g /var/run/docker.sock)"; fi
-for d in "$LENNY_TEST_TMPDIR" /go/pkg/mod "$GOCACHE" "$GOTMPDIR"; do
+for d in "$LENNY_TEST_TMPDIR" /go/pkg/mod "$GOCACHE" "$GOLANGCI_LINT_CACHE" "$GOTMPDIR"; do
 	if [ "$(stat -c %u "$d")" != "$uid" ]; then chown -R "$uid:$gid" "$d"; fi
 done
 export HOME=/home/gate USER="$(getent passwd "$uid" | cut -d: -f1)"
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$build"
+install_harness
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$fill" || fill_failed
+lock_lint_cache
 exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
+
+// gateSummaryNotes returns the lines of a tier's detail that the summary
+// prints whatever the tier's status: each golangci-lint register raise
+// (GT-8) and the golangci-lint runs' private cache (privateLintCache),
+// which a passing static tier records only in its detail.
+func gateSummaryNotes(detail string) []string {
+	var out []string
+	for _, line := range strings.Split(detail, "\n") {
+		if strings.Contains(line, lintRaiseNote) || strings.Contains(line, lintCacheFallbackNote) {
+			out = append(out, strings.TrimSpace(line))
+		}
+	}
+	return out
+}
 
 // pathWithin reports whether p is root or lies under it.
 func pathWithin(p, root string) bool {
@@ -698,9 +828,99 @@ type gateRunner struct {
 	// nil when it can.
 	precheck map[string]func() error
 	docs     func() (string, string, *tierResult)
-	// state reads the commit, the merge base, and whether the tree is
-	// dirty.
-	state func(base string) (head, mergeBase string, dirty bool)
+	// state reads the commit and whether the tree is dirty.
+	state func() (head string, dirty bool)
+	// bases resolves the merge base the static tier compares with for
+	// the gate's --base and the merge base with the integration branch.
+	bases func(base string) gateBases
+}
+
+// gateBases are the two merge bases the gate compares (GT-18).
+type gateBases struct {
+	// base is the --base the merge bases were resolved for.
+	base string
+	// used is the commit the static tier's changed-line lint and its
+	// golangci-lint register raise check compare with for the gate's
+	// --base (resolveLintBase), or "" with usedErr set when it cannot be
+	// resolved.
+	used    string
+	usedErr error
+	// integration is the merge base of HEAD with the integration branch,
+	// and integrationRef the ref it was taken against: main, or
+	// origin/main in a clone without main (integrationMergeBase). It is ""
+	// with integrationErr set when neither resolves.
+	integration    string
+	integrationRef string
+	integrationErr error
+}
+
+// gateIntegrationRefs are the refs the gate takes the integration
+// branch's merge base against, in order, each by its full name so that a
+// tag or a file under the git directory named main cannot stand in for the
+// branch, with the name the gate reports. They are the refs the static
+// tier's other changed-line lints read (annotation.BaseRefs).
+var gateIntegrationRefs = []struct{ full, name string }{
+	{"refs/heads/main", "main"},
+	{"refs/remotes/origin/main", "origin/main"},
+}
+
+// resolveGateBases resolves both merge bases for the checkout at root.
+func resolveGateBases(ctx context.Context, root, base string) gateBases {
+	b := gateBases{base: base}
+	if lb, err := resolveLintBase(ctx, root, base); err != nil {
+		b.usedErr = err
+	} else {
+		b.used = lb.commit
+	}
+	b.integration, b.integrationRef, b.integrationErr = integrationMergeBase(ctx, root)
+	return b
+}
+
+// integrationMergeBase returns the merge base of HEAD with the first ref
+// of gateIntegrationRefs the repository carries, and that ref's name. A
+// repository that carries neither ref, and a git command that fails, are
+// errors.
+func integrationMergeBase(ctx context.Context, root string) (string, string, error) {
+	for _, r := range gateIntegrationRefs {
+		commit, err := gitOutput(ctx, root, "for-each-ref", "--format=%(objectname)", r.full)
+		if err != nil {
+			return "", "", fmt.Errorf("read %s: %w", r.full, err)
+		}
+		if commit == "" {
+			continue
+		}
+		mb, err := gitOutput(ctx, root, "merge-base", "HEAD", r.full)
+		if err != nil || mb == "" {
+			return "", "", fmt.Errorf("find the merge base of HEAD with %s: %v", r.name, err)
+		}
+		return mb, r.name, nil
+	}
+	return "", "", errors.New("the repository carries neither refs/heads/main nor refs/remotes/origin/main")
+}
+
+// gateBaseError returns why the merge base the gate's --base gives cannot
+// stand for the merge with the integration branch, or nil when it can.
+// The changed-line lint reports findings only on the lines changed since
+// that merge base, and the register raise check lists only the raises
+// since it, so a --base that is a range, or a ref past the commit that
+// raised the register, would let a PASS hide a raise or a finding (owner's
+// answer to GT-18, 2026-11-20).
+func gateBaseError(base string, b gateBases) error {
+	suggest := "main"
+	if b.integrationRef != "" {
+		suggest = b.integrationRef
+	}
+	switch {
+	case base == "":
+		return errors.New("--base is empty, so the changed tiers were selected from the uncommitted changes alone; run the gate with --base " + suggest)
+	case b.usedErr != nil:
+		return fmt.Errorf("the merge base of --base %s could not be resolved (%v), so the changed-line lint and the golangci-lint register raise check did not compare with the merge base with the integration branch; run the gate with --base %s", base, b.usedErr, suggest)
+	case b.integrationErr != nil:
+		return fmt.Errorf("the merge base of HEAD with the integration branch could not be resolved (%v), so the gate cannot confirm that --base %s compares with it; fetch main or origin/main", b.integrationErr, base)
+	case b.used != b.integration:
+		return fmt.Errorf("--base %s compares with %s, and the merge base of HEAD with %s is %s; the changed-line lint and the golangci-lint register raise check stand for the merge only when they compare with the merge base with the integration branch, so run the gate with --base %s", base, shortCommit(b.used), b.integrationRef, shortCommit(b.integration), b.integrationRef)
+	}
+	return nil
 }
 
 // defaultGateRunner wires the gate to the harness's tier executors.
@@ -724,7 +944,8 @@ func defaultGateRunner(root string) gateRunner {
 			tierIntegration: dockerReachable,
 		},
 		docs:  func() (string, string, *tierResult) { return runGateDocs(root) },
-		state: func(base string) (string, string, bool) { return gitState(root, base) },
+		state: func() (string, bool) { return gitState(root) },
+		bases: func(base string) gateBases { return resolveGateBases(context.Background(), root, base) },
 	}
 }
 
@@ -757,15 +978,23 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		v.Command += " --all"
 	}
 	v.Trigger.Mode = "gate"
-	head, mergeBase, dirty := g.state(o.base)
+	head, dirty := g.state()
 	if head != "" {
 		v.Trigger.GitRevision = head
 	}
-	v.Gate = &gateRecord{Base: o.base, MergeBase: mergeBase, Dirty: dirty, Environment: o.environment, All: o.all}
+	bases := g.bases(o.base)
+	v.Gate = &gateRecord{Base: o.base, MergeBase: bases.used, IntegrationMergeBase: bases.integration, Dirty: dirty, Environment: o.environment, All: o.all}
+	// The static tier and the plan compare with the commit resolved here
+	// rather than with the ref, so the commit the verdict records and
+	// checks is the one they read even when the ref moves during the run.
+	compare := o.base
+	if bases.used != "" {
+		compare = bases.used
+	}
 
-	g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(o.base) })
+	g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(compare) })
 
-	plan, err := g.plan(o.base, o.rdepsDepth, o.all)
+	plan, err := g.plan(compare, o.rdepsDepth, o.all)
 	if err != nil {
 		v.recordTier(tierUnit, verdictstatus.Fail, 0, fmt.Sprintf("resolve the changed tiers against %s: %v", o.base, err))
 	}
@@ -784,22 +1013,58 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	if o.rdepsDepth >= 0 && !o.all {
 		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
 	}
-	withholdGatePass(v, dirty, o.environmentErr)
+	if why := gateStateChange(head, dirty, bases, g); why != "" {
+		v.Gate.Unverified = append(v.Gate.Unverified, why)
+	}
+	withholdGatePass(v, dirty, o.environmentErr, gateBaseError(o.base, bases))
 	return v
+}
+
+// gateStateChange reads HEAD, the tree's state, and both merge bases again
+// after the last tier, and returns why the verdict cannot stand when any
+// of them differs from what the gate read before the static tier, or ""
+// when none does. The tiers run the branch's code, which can move a ref,
+// commit, or edit the tree and restore it, so a value read only at the
+// start would not show it.
+func gateStateChange(head string, dirty bool, bases gateBases, g gateRunner) string {
+	head2, dirty2 := g.state()
+	bases2 := g.bases(bases.base)
+	var changed []string
+	if head2 != head {
+		changed = append(changed, fmt.Sprintf("HEAD from %s to %s", shortCommit(head), shortCommit(head2)))
+	}
+	if dirty2 != dirty {
+		changed = append(changed, fmt.Sprintf("uncommitted changes from %t to %t", dirty, dirty2))
+	}
+	if bases2.used != bases.used {
+		changed = append(changed, fmt.Sprintf("the merge base of --base from %s to %s", shortCommit(bases.used), shortCommit(bases2.used)))
+	}
+	if bases2.integration != bases.integration {
+		changed = append(changed, fmt.Sprintf("the merge base with the integration branch from %s to %s", shortCommit(bases.integration), shortCommit(bases2.integration)))
+	}
+	if len(changed) == 0 {
+		return ""
+	}
+	return "the state the gate read before the tiers changed while they ran (" + strings.Join(changed, "; ") + "); run the gate again"
 }
 
 // withholdGatePass records why the verdict cannot stand for the commit
 // and keeps it from PASS. On a dirty tree the tiers ran on files the
-// commit does not hold, and outside the gate image they ran in an
-// environment other than the canonical one. A FAIL or INCONCLUSIVE
-// verdict stays as it is, because it already blocks the merge and
-// outranks UNVERIFIED (verdictRank).
-func withholdGatePass(v *verdict, dirty bool, envErr error) {
+// commit does not hold, outside the gate image they ran in an environment
+// other than the canonical one, and with baseErr set the static tier
+// compared with another commit than the merge base with the integration
+// branch (gateBaseError). A FAIL or INCONCLUSIVE verdict stays as it is,
+// because it already blocks the merge and outranks UNVERIFIED
+// (verdictRank).
+func withholdGatePass(v *verdict, dirty bool, envErr, baseErr error) {
 	if dirty {
 		v.Gate.Unverified = append(v.Gate.Unverified, "the worktree has uncommitted changes, so the tiers did not run on the commit; commit or remove them and run the gate again")
 	}
 	if envErr != nil {
 		v.Gate.Unverified = append(v.Gate.Unverified, envErr.Error())
+	}
+	if baseErr != nil {
+		v.Gate.Unverified = append(v.Gate.Unverified, baseErr.Error())
 	}
 	if len(v.Gate.Unverified) > 0 {
 		v.promoteVerdict(verdictstatus.VerdictUnverified)
@@ -881,10 +1146,9 @@ func firstLine(s string) string {
 	return ""
 }
 
-// gitState returns HEAD, the merge base of HEAD and base, and whether
-// the worktree has uncommitted changes. A value git cannot produce is
-// left empty.
-func gitState(root, base string) (head, mergeBase string, dirty bool) {
+// gitState returns HEAD and whether the worktree has uncommitted changes.
+// A HEAD git cannot produce is left empty.
+func gitState(root string) (head string, dirty bool) {
 	git := func(args ...string) string {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = root
@@ -895,9 +1159,8 @@ func gitState(root, base string) (head, mergeBase string, dirty bool) {
 		return strings.TrimSpace(string(out))
 	}
 	head = git("rev-parse", "HEAD")
-	mergeBase = git("merge-base", base, "HEAD")
 	dirty = git("status", "--porcelain", "--untracked-files=normal") != ""
-	return head, mergeBase, dirty
+	return head, dirty
 }
 
 // runGateDocs runs the general documentation gates of the docs tier.
@@ -1018,7 +1281,7 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 	fmt.Fprintf(w, "  run:         %s\n", v.RunID)
 	fmt.Fprintf(w, "  commit:      %s\n", v.Trigger.GitRevision)
 	if v.Gate != nil {
-		fmt.Fprintf(w, "  base:        %s (merge base %s)\n", v.Gate.Base, v.Gate.MergeBase)
+		fmt.Fprintf(w, "  base:        %s (merge base %s; with the integration branch %s)\n", v.Gate.Base, v.Gate.MergeBase, v.Gate.IntegrationMergeBase)
 		fmt.Fprintf(w, "  environment: %s\n", v.Gate.Environment)
 		if v.Gate.Dirty {
 			fmt.Fprintln(w, "  tree:        dirty; this verdict is not a verdict for the commit")
@@ -1042,6 +1305,9 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 		fmt.Fprintln(w, line)
 		for _, f := range t.Failures {
 			fmt.Fprintf(w, "    FAIL %s\n", f.Test)
+		}
+		for _, note := range gateSummaryNotes(t.Detail) {
+			fmt.Fprintf(w, "    NOTE %s\n", note)
 		}
 	}
 	fmt.Fprintf(w, "  verdict:     %s\n", path)

@@ -184,6 +184,7 @@ func Build(ctx context.Context, t *Tree, committed *Registry) (*Registry, []Find
 	b.reportDuplicateCodes()
 	b.reportDuplicateAnchors()
 	b.reportSuffixCodes()
+	b.reportReservedCodes()
 	b.sort()
 	b.reg.Moves = appendMoves(committed, b.reg)
 	return b.reg, b.findings, nil
@@ -436,6 +437,39 @@ func (b *builder) reportSuffixCodes() {
 		short := code[:len(code)-1]
 		if other, ok := owner[short]; ok && other != file {
 			b.findings = append(b.findings, Finding{File: file, Line: b.codeLine[file], Message: fmt.Sprintf("code %s differs from %s (%s) only by a suffix", code, short, other)})
+		}
+	}
+}
+
+// ReservedCodes holds the issue codes that no specification page
+// carries, each with the subject its issues cover. issues/README.md
+// ("Codes outside the specification") assigns them. A page that took one
+// would share its folder under issues/, so the registry refuses it.
+var ReservedCodes = map[string]string{
+	"GATE": "the merge gate, the test harness, and the gate registers",
+}
+
+// IsReservedCode reports whether code is an issue code that no page
+// carries.
+func IsReservedCode(code string) bool {
+	_, ok := ReservedCodes[code]
+	return ok
+}
+
+// reportReservedCodes reports a page code or alias that is a reserved
+// issue code, or that differs from one only by a one-letter suffix, as
+// reportSuffixCodes reads two page codes.
+func (b *builder) reportReservedCodes() {
+	for _, p := range b.reg.Pages {
+		for _, c := range append([]string{p.Code}, p.Aliases...) {
+			for reserved, subject := range ReservedCodes {
+				switch {
+				case c == reserved:
+					b.findings = append(b.findings, Finding{File: p.Path, Line: b.codeLine[p.Path], Message: fmt.Sprintf("code %s is reserved for the issues about %s (issues/README.md)", c, subject)})
+				case len(c) > 1 && (c[:len(c)-1] == reserved || reserved[:len(reserved)-1] == c):
+					b.findings = append(b.findings, Finding{File: p.Path, Line: b.codeLine[p.Path], Message: fmt.Sprintf("code %s differs from the reserved issue code %s only by a suffix", c, reserved)})
+				}
+			}
 		}
 	}
 }

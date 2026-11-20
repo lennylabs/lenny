@@ -18,6 +18,20 @@ issues/
 
 An issue lives under the code of the specification page that owns the requirement in question. Page codes survive any reorganization of the specification, so the folders never move. An issue is named `<CODE>-I<n>-<slug>.md`, and numbers are never reused within a code.
 
+## Codes outside the specification
+
+A reserved issue code belongs to no specification page. It holds the issues about a part of the repository that a document outside `spec/` defines. `specshift ref check` refuses a page code that equals a reserved code or differs from one by a one-letter suffix, and `ReservedCodes` in `scripts/specshift/ref/registry.go` lists the reserved codes.
+
+| Code | Owns the issues about |
+|:--|:--|
+| `GATE` | The merge gate and the test harness: `lenny-test` under `cmd/lenny-test`, the checks of each tier, and the gate registers under `tests/registers/`, which `TESTING.md` and `.claude/rules/test-coverage.md` define. |
+
+An issue under a reserved code names no requirement, so its `requirements` list is empty.
+
+## Moving an issue
+
+An issue filed under a code that does not own it moves to the code that does and takes that code's next number. The commit that moves it writes a record under `closed/<old code>/` with the old identifier, `status: closed`, `closed: duplicate`, and `closed-by` naming the new identifier, so the old identifier still resolves and its number is not reused. The moved record states the identifier it was filed under. Every reference to the old identifier outside the historical records is updated in the same commit.
+
 ## Front matter
 
 ```yaml
