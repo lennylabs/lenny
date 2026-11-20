@@ -494,12 +494,8 @@ func intersectScope(subjectScope string, allowed []string) (string, error) {
 }
 
 // narrowSubjectScope computes the minted bearer's scope claim from the
-// subject and returns it with true, or writes the refusal and returns
-// false. An unparseable subject scope is refused with 401 UNAUTHORIZED and
-// details.reason subject_scope_invalid, and a disjoint subject scope with
-// 403 SCOPE_FORBIDDEN carrying details.activeScope and
-// details.requiredScope. Each refusal emits playground.bearer_mint_rejected
-// with the invariant identifier before the response is written.
+// subject and returns it with true, or emits the mint-rejected event,
+// writes the refusal for the intersectScope error, and returns false.
 //
 // spec: §10.2 (Authentication), §27.3.1 (OIDC cookie-to-MCP-bearer exchange)
 func (h *Handler) narrowSubjectScope(w http.ResponseWriter, r *http.Request, subject jwt.Claims) (string, bool) {

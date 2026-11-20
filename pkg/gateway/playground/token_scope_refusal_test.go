@@ -244,3 +244,37 @@ func TestOIDCMintRefusesASessionRecordScopeItCannotNarrow(t *testing.T) {
 		})
 	}
 }
+
+// TestScopeRefusalPrecedesTheSignerCheck checks that the scope refusal runs
+// before the signer is consulted: with no signer configured, a disjoint
+// subject scope is refused with 403 SCOPE_FORBIDDEN rather than answered
+// with the 503 the signer check writes.
+//
+// spec: §10.2 (Authentication)
+func TestScopeRefusalPrecedesTheSignerCheck(t *testing.T) {
+	verifier := devSigner()
+	pasted, err := verifier.Sign(jwt.Claims{
+		Subject: "bob", TenantID: "acme", Typ: auth.TokenUserBearer, Scope: "tools:health:read",
+		Audience: []string{"lenny-gateway"}, Expiry: time.Now().Add(time.Hour).Unix(),
+	})
+	if err != nil {
+		t.Fatalf("sign pasted bearer: %v", err)
+	}
+	h := New(Config{Enabled: true, AuthMode: AuthModeAPIKey, CapabilityTokenTTL: 900 * time.Second},
+		Options{Verifier: verifier})
+	srv := httptest.NewServer(h.TokenRoutes())
+	defer srv.Close()
+	req, _ := http.NewRequest(http.MethodPost, srv.URL+"/v1/playground/token", strings.NewReader("{}"))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+pasted)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST token: %v", err)
+	}
+	defer resp.Body.Close()
+	var res scopedMintResult
+	decodeMint(t, resp, &res)
+	if res.status != http.StatusForbidden || res.env.Error.Code != "SCOPE_FORBIDDEN" {
+		t.Fatalf("status %d code %q, want 403 SCOPE_FORBIDDEN before the signer check", res.status, res.env.Error.Code)
+	}
+}
