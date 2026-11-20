@@ -8,11 +8,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 2 |
+| Building | 1 |
 | Ready | 1 |
 | Waiting on decisions | 35 |
 | Blocked | 149 |
-| Landed | 15 |
+| Landed | 16 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -54,7 +54,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Building |  |
 | [0164.S1](0164-token-exchange-identity-rules/steps.md#0164s1-token-exchange-narrowing-and-identity-rules) | Token exchange narrowing and identity rules | Building |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
@@ -242,6 +241,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
+| [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -287,5 +287,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 38 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
-| [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 0 of 1 | 0 |
+| [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 0 of 1 | 2 |
