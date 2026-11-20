@@ -41,6 +41,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
+	"github.com/lennylabs/lenny/scripts/specshift/annotation"
 	"github.com/lennylabs/lenny/tests/testinfra/testtmp"
 )
 
@@ -155,9 +156,14 @@ type gateOptions struct {
 // gateRecord is the gate's own section of the verdict.
 type gateRecord struct {
 	// Base is the ref the branch is compared with, and MergeBase the
-	// commit the comparison starts from.
+	// commit the static tier's changed-line lint and register raise check
+	// compare with for it (resolveLintBase).
 	Base      string `json:"base"`
 	MergeBase string `json:"merge_base,omitempty"`
+	// IntegrationMergeBase is the merge base of HEAD with the integration
+	// branch, main or else origin/main (annotation.MergeBase). A verdict
+	// whose MergeBase is another commit is UNVERIFIED (GT-18).
+	IntegrationMergeBase string `json:"integration_merge_base,omitempty"`
 	// Dirty reports uncommitted changes in the worktree. A verdict for
 	// a dirty tree is not a verdict for the branch head.
 	Dirty bool `json:"dirty"`
@@ -174,15 +180,17 @@ type gateRecord struct {
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
 	// Unverified lists why the verdict cannot stand for the commit even
-	// when every tier passed: uncommitted changes in the tree, or a run
-	// outside the gate image. Any entry keeps the verdict from PASS.
+	// when every tier passed: uncommitted changes in the tree, a run
+	// outside the gate image, a narrowed dependent walk, or a --base whose
+	// merge base is not the merge base with the integration branch. Any
+	// entry keeps the verdict from PASS.
 	Unverified []string `json:"unverified,omitempty"`
 }
 
 // runGate handles `lenny-test gate`.
 func runGate(args []string) int {
 	fs := flag.NewFlagSet("gate", flag.ExitOnError)
-	base := fs.String("base", "main", "the ref the branch merges into; the changed tiers are selected from the diff against its merge base")
+	base := fs.String("base", "main", "the ref the branch merges into; the changed tiers are selected from the diff against its merge base, and a merge base other than the merge base of HEAD with main (or origin/main without main) makes the verdict UNVERIFIED")
 	here := fs.Bool("here", false, "run the gate in this environment instead of the gate container (the container itself runs the gate this way); outside the gate image the verdict is at best UNVERIFIED")
 	rebuild := fs.Bool("rebuild", false, "rebuild the gate image even when it exists")
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
@@ -638,7 +646,8 @@ func (h gateHost) imageRef() string {
 // with the host Docker socket, which can mount the volume in another
 // container; the fill itself, which runs lenny-test as the branch builds
 // it, with the packages it imports; and the fill of a gate container
-// another worktree runs at the same time. The Go build cache on the same
+// another worktree runs at the same time. The owner accepted these limits
+// (owner's answer to GT-16, 2026-11-20). The Go build cache on the same
 // volume stays writable to the test tiers. A mount that fails stops the
 // gate.
 const gateContainerScript = `set -e
@@ -764,9 +773,59 @@ type gateRunner struct {
 	// nil when it can.
 	precheck map[string]func() error
 	docs     func() (string, string, *tierResult)
-	// state reads the commit, the merge base, and whether the tree is
-	// dirty.
-	state func(base string) (head, mergeBase string, dirty bool)
+	// state reads the commit and whether the tree is dirty.
+	state func() (head string, dirty bool)
+	// bases resolves the merge base the static tier compares with for
+	// the gate's --base and the merge base with the integration branch.
+	bases func(base string) gateBases
+}
+
+// gateBases are the two merge bases the gate compares (GT-18).
+type gateBases struct {
+	// used is the commit the static tier's changed-line lint and its
+	// golangci-lint register raise check compare with for the gate's
+	// --base (resolveLintBase), or "" with usedErr set when it cannot be
+	// resolved.
+	used    string
+	usedErr error
+	// integration is the merge base of HEAD with the integration branch,
+	// and integrationRef the ref it was taken against: main, or
+	// origin/main in a clone without main (annotation.MergeBase). It is ""
+	// with integrationErr set when neither resolves.
+	integration    string
+	integrationRef string
+	integrationErr error
+}
+
+// resolveGateBases resolves both merge bases for the checkout at root.
+func resolveGateBases(ctx context.Context, root, base string) gateBases {
+	var b gateBases
+	if lb, err := resolveLintBase(ctx, root, base); err != nil {
+		b.usedErr = err
+	} else {
+		b.used = lb.commit
+	}
+	b.integration, b.integrationRef, b.integrationErr = annotation.MergeBase(ctx, root)
+	return b
+}
+
+// gateBaseError returns why the merge base the gate's --base gives cannot
+// stand for the merge with the integration branch, or nil when it can.
+// The changed-line lint reports findings only on the lines changed since
+// that merge base, and the register raise check lists only the raises
+// since it, so a --base that is a range, or a ref past the commit that
+// raised the register, would let a PASS hide a raise or a finding (owner's
+// answer to GT-18, 2026-11-20).
+func gateBaseError(base string, b gateBases) error {
+	switch {
+	case b.usedErr != nil:
+		return fmt.Errorf("the merge base of --base %s could not be resolved (%v), so the changed-line lint and the golangci-lint register raise check did not compare with the merge base with the integration branch; run the gate with --base main", base, b.usedErr)
+	case b.integrationErr != nil:
+		return fmt.Errorf("the merge base of HEAD with the integration branch could not be resolved (%v), so the gate cannot confirm that --base %s compares with it; fetch main or origin/main", b.integrationErr, base)
+	case b.used != b.integration:
+		return fmt.Errorf("--base %s compares with %s, and the merge base of HEAD with %s is %s; the changed-line lint and the golangci-lint register raise check stand for the merge only when they compare with the merge base with the integration branch, so run the gate with --base %s", base, shortCommit(b.used), b.integrationRef, shortCommit(b.integration), b.integrationRef)
+	}
+	return nil
 }
 
 // defaultGateRunner wires the gate to the harness's tier executors.
@@ -790,7 +849,8 @@ func defaultGateRunner(root string) gateRunner {
 			tierIntegration: dockerReachable,
 		},
 		docs:  func() (string, string, *tierResult) { return runGateDocs(root) },
-		state: func(base string) (string, string, bool) { return gitState(root, base) },
+		state: func() (string, bool) { return gitState(root) },
+		bases: func(base string) gateBases { return resolveGateBases(context.Background(), root, base) },
 	}
 }
 
@@ -823,11 +883,12 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		v.Command += " --all"
 	}
 	v.Trigger.Mode = "gate"
-	head, mergeBase, dirty := g.state(o.base)
+	head, dirty := g.state()
 	if head != "" {
 		v.Trigger.GitRevision = head
 	}
-	v.Gate = &gateRecord{Base: o.base, MergeBase: mergeBase, Dirty: dirty, Environment: o.environment, All: o.all}
+	bases := g.bases(o.base)
+	v.Gate = &gateRecord{Base: o.base, MergeBase: bases.used, IntegrationMergeBase: bases.integration, Dirty: dirty, Environment: o.environment, All: o.all}
 
 	g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(o.base) })
 
@@ -850,22 +911,27 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	if o.rdepsDepth >= 0 && !o.all {
 		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
 	}
-	withholdGatePass(v, dirty, o.environmentErr)
+	withholdGatePass(v, dirty, o.environmentErr, gateBaseError(o.base, bases))
 	return v
 }
 
 // withholdGatePass records why the verdict cannot stand for the commit
 // and keeps it from PASS. On a dirty tree the tiers ran on files the
-// commit does not hold, and outside the gate image they ran in an
-// environment other than the canonical one. A FAIL or INCONCLUSIVE
-// verdict stays as it is, because it already blocks the merge and
-// outranks UNVERIFIED (verdictRank).
-func withholdGatePass(v *verdict, dirty bool, envErr error) {
+// commit does not hold, outside the gate image they ran in an environment
+// other than the canonical one, and with baseErr set the static tier
+// compared with another commit than the merge base with the integration
+// branch (gateBaseError). A FAIL or INCONCLUSIVE verdict stays as it is,
+// because it already blocks the merge and outranks UNVERIFIED
+// (verdictRank).
+func withholdGatePass(v *verdict, dirty bool, envErr, baseErr error) {
 	if dirty {
 		v.Gate.Unverified = append(v.Gate.Unverified, "the worktree has uncommitted changes, so the tiers did not run on the commit; commit or remove them and run the gate again")
 	}
 	if envErr != nil {
 		v.Gate.Unverified = append(v.Gate.Unverified, envErr.Error())
+	}
+	if baseErr != nil {
+		v.Gate.Unverified = append(v.Gate.Unverified, baseErr.Error())
 	}
 	if len(v.Gate.Unverified) > 0 {
 		v.promoteVerdict(verdictstatus.VerdictUnverified)
@@ -947,10 +1013,9 @@ func firstLine(s string) string {
 	return ""
 }
 
-// gitState returns HEAD, the merge base of HEAD and base, and whether
-// the worktree has uncommitted changes. A value git cannot produce is
-// left empty.
-func gitState(root, base string) (head, mergeBase string, dirty bool) {
+// gitState returns HEAD and whether the worktree has uncommitted changes.
+// A HEAD git cannot produce is left empty.
+func gitState(root string) (head string, dirty bool) {
 	git := func(args ...string) string {
 		cmd := exec.Command("git", args...)
 		cmd.Dir = root
@@ -961,9 +1026,8 @@ func gitState(root, base string) (head, mergeBase string, dirty bool) {
 		return strings.TrimSpace(string(out))
 	}
 	head = git("rev-parse", "HEAD")
-	mergeBase = git("merge-base", base, "HEAD")
 	dirty = git("status", "--porcelain", "--untracked-files=normal") != ""
-	return head, mergeBase, dirty
+	return head, dirty
 }
 
 // runGateDocs runs the general documentation gates of the docs tier.
@@ -1084,7 +1148,7 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 	fmt.Fprintf(w, "  run:         %s\n", v.RunID)
 	fmt.Fprintf(w, "  commit:      %s\n", v.Trigger.GitRevision)
 	if v.Gate != nil {
-		fmt.Fprintf(w, "  base:        %s (merge base %s)\n", v.Gate.Base, v.Gate.MergeBase)
+		fmt.Fprintf(w, "  base:        %s (merge base %s; with the integration branch %s)\n", v.Gate.Base, v.Gate.MergeBase, v.Gate.IntegrationMergeBase)
 		fmt.Fprintf(w, "  environment: %s\n", v.Gate.Environment)
 		if v.Gate.Dirty {
 			fmt.Fprintln(w, "  tree:        dirty; this verdict is not a verdict for the commit")

@@ -7,6 +7,7 @@ package main
 // spec annotation.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
@@ -43,7 +44,10 @@ func stubGateRunner() gateRunner {
 		exec:     map[string]tierExecFn{tierUnit: pass, tierComponent: pass, tierContract: pass, tierIntegration: pass},
 		precheck: map[string]func() error{},
 		docs:     func() (string, string, *tierResult) { return verdictstatus.Pass, "", &tierResult{Total: 3, Passed: 3} },
-		state:    func(string) (string, string, bool) { return "abc123", "def456", false },
+		state:    func() (string, bool) { return "abc123", false },
+		bases: func(string) gateBases {
+			return gateBases{used: "def456", integration: "def456", integrationRef: "main"}
+		},
 	}
 }
 
@@ -64,7 +68,7 @@ func TestGatePassesWhenEveryTierPasses(t *testing.T) {
 	if v.Trigger.Mode != "gate" || v.Trigger.GitRevision != "abc123" {
 		t.Errorf("trigger %+v; want mode gate at abc123", v.Trigger)
 	}
-	if v.Gate == nil || v.Gate.Base != "main" || v.Gate.MergeBase != "def456" || v.Gate.Environment != "lenny-gate:test" {
+	if v.Gate == nil || v.Gate.Base != "main" || v.Gate.MergeBase != "def456" || v.Gate.IntegrationMergeBase != "def456" || v.Gate.Environment != "lenny-gate:test" {
 		t.Errorf("gate record %+v", v.Gate)
 	}
 }
@@ -718,6 +722,77 @@ func TestGateOutsideTheGateImageIsUnverifiedWithTheReason(t *testing.T) {
 	}
 }
 
+// TestGateWithABaseOtherThanTheIntegrationMergeBaseIsUnverified checks
+// that a gate whose --base gives another merge base than the merge base of
+// HEAD with the integration branch, or whose merge bases cannot be
+// resolved, is UNVERIFIED with the reason, and that a FAIL stays FAIL
+// (owner's answer to GT-18, 2026-11-20).
+func TestGateWithABaseOtherThanTheIntegrationMergeBaseIsUnverified(t *testing.T) {
+	for name, tc := range map[string]struct {
+		bases gateBases
+		want  string
+	}{
+		"a later commit":          {gateBases{used: "f1f1f1", integration: "def456", integrationRef: "main"}, "--base f1..HEAD compares with f1f1f1, and the merge base of HEAD with main is def456"},
+		"no merge base of --base": {gateBases{usedErr: errors.New("bad revision"), integration: "def456", integrationRef: "main"}, "the merge base of --base f1..HEAD could not be resolved (bad revision)"},
+		"no integration branch":   {gateBases{used: "def456", integrationErr: errors.New("no merge base with main or origin/main")}, "the merge base of HEAD with the integration branch could not be resolved"},
+	} {
+		g := stubGateRunner()
+		g.bases = func(string) gateBases { return tc.bases }
+		v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+		if v.Verdict != verdictstatus.VerdictUnverified {
+			t.Errorf("%s: verdict %q; want %q", name, v.Verdict, verdictstatus.VerdictUnverified)
+		}
+		if len(v.Gate.Unverified) != 1 || !strings.Contains(v.Gate.Unverified[0], tc.want) {
+			t.Errorf("%s: unverified reasons %q; want one containing %q", name, v.Gate.Unverified, tc.want)
+		}
+		g.static = func(string) (string, string, *tierResult) {
+			return verdictstatus.Fail, "lint", &tierResult{Total: 1, Failed: 1}
+		}
+		if v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"}); v.Verdict != verdictstatus.VerdictFail {
+			t.Errorf("%s: a failing gate's verdict %q; want %q", name, v.Verdict, verdictstatus.VerdictFail)
+		}
+	}
+}
+
+// TestGateBasesCompareTheBaseWithTheIntegrationMergeBase resolves both
+// merge bases in a repository whose branch raises a register after the
+// fork from main: --base main and the range from the fork point give the
+// merge base with main, and a range or a ref that starts past the fork
+// point gives another commit, which gateBaseError refuses. In a clone
+// without main, the integration merge base is taken against origin/main.
+func TestGateBasesCompareTheBaseWithTheIntegrationMergeBase(t *testing.T) {
+	r := newLintRepo(t, "main")
+	fork := r.git("rev-parse", "HEAD")
+	r.git("checkout", "-q", "-b", "feature")
+	raise := r.commit("register.yaml", "raised: 2\n", "raise the register")
+	r.commit("b.go", "package m\n", "branch")
+	ctx := context.Background()
+	for _, base := range []string{"main", fork + "..HEAD"} {
+		b := resolveGateBases(ctx, r.root, base)
+		if b.used != fork || b.integration != fork || b.integrationRef != "main" || gateBaseError(base, b) != nil {
+			t.Errorf("--base %s: %+v (error %v); want both at the fork point %s", base, b, gateBaseError(base, b), fork)
+		}
+	}
+	for _, base := range []string{raise + "..HEAD", raise, "feature"} {
+		b := resolveGateBases(ctx, r.root, base)
+		if err := gateBaseError(base, b); err == nil || b.integration != fork {
+			t.Errorf("--base %s: %+v; want an error, with the integration merge base at %s", base, b, fork)
+		}
+	}
+	if err := gateBaseError("main..feature~1", resolveGateBases(ctx, r.root, "main..feature~1")); err == nil || !strings.Contains(err.Error(), "could not be resolved") {
+		t.Errorf("a range that does not end at HEAD: %v; want an error", err)
+	}
+
+	clone := newLintRepo(t, "trunk")
+	cloneFork := clone.git("rev-parse", "HEAD")
+	clone.git("update-ref", "refs/remotes/origin/main", cloneFork)
+	clone.commit("b.go", "package m\n", "branch")
+	b := resolveGateBases(ctx, clone.root, "origin/main")
+	if b.integration != cloneFork || b.integrationRef != "origin/main" || gateBaseError("origin/main", b) != nil {
+		t.Errorf("a clone without main: %+v; want both at %s against origin/main", b, cloneFork)
+	}
+}
+
 // TestGateWithANarrowedDependentWalkIsUnverified pins that a gate run with
 // --rdeps-depth at or above zero cannot pass: the merge gate runs the
 // changed packages and every dependent, and the verdict records the depth.
@@ -736,7 +811,7 @@ func TestGateWithANarrowedDependentWalkIsUnverified(t *testing.T) {
 
 func TestGateOnADirtyTreeIsUnverifiedWithTheReason(t *testing.T) {
 	g := stubGateRunner()
-	g.state = func(string) (string, string, bool) { return "abc123", "def456", true }
+	g.state = func() (string, bool) { return "abc123", true }
 	v := runStubGate(g)
 	if v.Verdict != verdictstatus.VerdictUnverified || exitCodeFor(v.Verdict) == 0 {
 		t.Fatalf("verdict %q; want %q with a non-zero exit on a dirty tree", v.Verdict, verdictstatus.VerdictUnverified)
@@ -773,7 +848,7 @@ func TestGateSummaryPrintsARegisterRaiseOfAPassingTier(t *testing.T) {
 
 func TestGateFailureStaysFailOnADirtyTreeOutsideTheImage(t *testing.T) {
 	g := stubGateRunner()
-	g.state = func(string) (string, string, bool) { return "abc123", "def456", true }
+	g.state = func() (string, bool) { return "abc123", true }
 	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "vet", &tierResult{Total: 1, Failed: 1}
 	}
