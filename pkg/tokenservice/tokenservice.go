@@ -1108,8 +1108,7 @@ type exchangeAuditPayload struct {
 	JTI          string `json:"jti,omitempty"`
 	// RequestedScope is the request's `scope` parameter, empty when the
 	// request named none. GrantedScope is the issued token's scope, which
-	// a rejected row does not carry. spec: §16.7 (Section 25 Audit
-	// Events) token.exchanged.
+	// a rejected row does not carry.
 	RequestedScope  []string  `json:"requested_scope,omitempty"`
 	GrantedScope    []string  `json:"granted_scope,omitempty"`
 	Audience        []string  `json:"audience,omitempty"`

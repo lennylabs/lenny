@@ -7,6 +7,8 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 )
 
 // exchangeOf validates an exchange of subject by caller requesting scope.
@@ -119,13 +121,24 @@ func TestValidateRefusesPlaygroundSources(t *testing.T) {
 	}
 }
 
+// narrowCase is one exchange of TestValidateADifferentCallerMustNarrow.
+type narrowCase struct {
+	name         string
+	caller       Token
+	subjectScope []string
+	requested    []string
+	wantOK       bool
+}
+
 // spec: §13.3 (Credential Flow)
 //
 // A caller whose sub differs from the subject's, or whose caller_type
 // differs when both carry one, must request a strictly narrower scope.
 // An equal scope, a broader-reading equal set, no scope, and tools:* from
 // an unscoped subject are refused with invalid_scope scope_not_narrowed;
-// a strictly narrower set is accepted. A caller without caller_type and
+// a strictly narrower set is accepted. A request that lists every domain
+// wildcard grants what tools:* grants and is not narrower than an unscoped
+// or tools:* subject. A caller without caller_type and
 // with the subject's sub is the subject's principal.
 func TestValidateADifferentCallerMustNarrow(t *testing.T) {
 	bob := validSubject()
@@ -136,13 +149,7 @@ func TestValidateADifferentCallerMustNarrow(t *testing.T) {
 	noType.CallerType = ""
 	full := []string{"tools:sessions:read", "tools:sessions:write"}
 
-	cases := []struct {
-		name         string
-		caller       Token
-		subjectScope []string
-		requested    []string
-		wantOK       bool
-	}{
+	cases := []narrowCase{
 		{"other sub, equal scope", bob, full, full, false},
 		{"other sub, equal scope reordered", bob, full, []string{"tools:sessions:write", "tools:sessions:read"}, false},
 		{"other sub, no scope", bob, full, nil, false},
@@ -156,6 +163,17 @@ func TestValidateADifferentCallerMustNarrow(t *testing.T) {
 		{"no caller_type, same sub, equal scope", noType, full, full, true},
 		{"no caller_type, same sub, no scope", noType, full, nil, true},
 	}
+	everyDomain := make([]string, 0, len(scopes.Domains))
+	for domain := range scopes.Domains {
+		everyDomain = append(everyDomain, "tools:"+domain+":*")
+	}
+	allButOne := everyDomain[1:]
+	cases = append(
+		cases,
+		narrowCase{"other sub, unscoped subject to every domain wildcard", bob, nil, everyDomain, false},
+		narrowCase{"other sub, tools:* subject to every domain wildcard", bob, []string{"tools:*"}, everyDomain, false},
+		narrowCase{"other sub, unscoped subject to all but one domain wildcard", bob, nil, allButOne, true},
+	)
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			subject := validSubject()

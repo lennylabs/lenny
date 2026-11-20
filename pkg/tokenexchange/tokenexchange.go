@@ -381,8 +381,10 @@ func grantsAll(granted, requested []string) bool {
 // strictlyNarrower reports whether the requested scope is strictly
 // narrower than the subject's: the subject grants every requested value,
 // and the requested values do not grant every value of the subject. An
-// absent subject claim counts as tools:*. An empty request is never
-// strictly narrower.
+// absent subject claim counts as tools:*. A tools:* value is compared as
+// the domain wildcard of every domain, so a request that lists every
+// tools:<domain>:* value grants what tools:* grants and is not narrower.
+// An empty request is never strictly narrower.
 //
 // spec: §13.3 (Credential Flow) "Client authentication on
 // /v1/oauth/token."
@@ -394,7 +396,24 @@ func strictlyNarrower(requested, subject []string) bool {
 	if len(effective) == 0 {
 		effective = []string{scopes.AllTools}
 	}
-	return !grantsAll(requested, effective)
+	return !grantsAll(requested, expandAllTools(effective))
+}
+
+// expandAllTools replaces each tools:* value with the domain wildcard of
+// every domain in the closed taxonomy, so a grant check against the result
+// asks whether every domain is fully granted.
+func expandAllTools(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v != scopes.AllTools {
+			out = append(out, v)
+			continue
+		}
+		for domain := range scopes.Domains {
+			out = append(out, "tools:"+domain+":"+scopes.Wildcard)
+		}
+	}
+	return out
 }
 
 // checkCallerIdentity refuses an exchange whose caller is not the
