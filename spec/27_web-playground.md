@@ -156,7 +156,7 @@ Logout, `user.invalidated`, or playground-session TTL expiry all converge on the
 
 **6. Audit events.**
 
-Every `POST /v1/playground/token` call emits a `playground.bearer_minted` audit event (fields: `user_id`, `tenant_id`, `session_cookie_id` (opaque), `bearer_jti`, `bearer_ttl_seconds`, `origin: "playground"`). Logout emits `playground.bearer_revoked`. These events share the taxonomy and redaction rules of other auth events in [§11.7](11_policy-and-controls.md#117-audit-logging).
+Every successful `POST /v1/playground/token` call emits a `playground.bearer_minted` audit event (fields: `user_id`, `tenant_id`, `session_cookie_id` (opaque), `bearer_jti`, `bearer_ttl_seconds`, `origin: "playground"`). Logout emits `playground.bearer_revoked`. These events share the taxonomy and redaction rules of other auth events in [§11.7](11_policy-and-controls.md#117-audit-logging).
 
 **7. Failure modes summary.**
 
