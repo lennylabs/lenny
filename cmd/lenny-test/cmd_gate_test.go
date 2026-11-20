@@ -28,7 +28,9 @@ func stubGateRunner() gateRunner {
 		return verdictstatus.Pass, "", &tierResult{Total: 1, Passed: 1}
 	}
 	return gateRunner{
-		static: func() (string, string, *tierResult) { return verdictstatus.Pass, "", &tierResult{Total: 2, Passed: 2} },
+		static: func(string) (string, string, *tierResult) {
+			return verdictstatus.Pass, "", &tierResult{Total: 2, Passed: 2}
+		},
 		plan: func(string, int, bool) (resolvedSelector, error) {
 			return resolvedSelector{tiers: []tierPlan{
 				{name: tierStatic},
@@ -66,9 +68,25 @@ func TestGatePassesWhenEveryTierPasses(t *testing.T) {
 	}
 }
 
+// TestGatePassesItsBaseToTheStaticTier checks that the merge gate's
+// --base reaches the static tier, which the changed-line lint compares
+// with.
+func TestGatePassesItsBaseToTheStaticTier(t *testing.T) {
+	g := stubGateRunner()
+	var got string
+	g.static = func(base string) (string, string, *tierResult) {
+		got = base
+		return verdictstatus.Pass, "", &tierResult{Total: 1, Passed: 1}
+	}
+	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+	if got != "release-1" {
+		t.Errorf("static tier got base %q; want release-1", got)
+	}
+}
+
 func TestGateRunsEveryTierAfterAFailureAndReportsEachFailure(t *testing.T) {
 	g := stubGateRunner()
-	g.static = func() (string, string, *tierResult) {
+	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "go vet failed", &tierResult{Total: 2, Failed: 1, Failures: []failureEntry{{Test: "go vet ./..."}}}
 	}
 	var unitRan atomic.Bool
@@ -222,6 +240,7 @@ func TestGateDockerRunArgsMountTheTreeTheGitDirAndTheCaches(t *testing.T) {
 		"-v /work/lenny/.git:/work/lenny/.git:ro",
 		"-v " + gateModVolume + ":/go/pkg/mod",
 		"-v " + gateBuildVolume + ":" + gateGoCache,
+		"-e GOLANGCI_LINT_CACHE=" + gateGoCache + "/golangci-lint",
 		"-e " + gateEnvImage + "=lenny-gate:0123456789ab",
 		"-e " + gateEnvImageID + "=sha256:feed",
 		"-v /var/run/docker.sock:/var/run/docker.sock",
@@ -616,7 +635,7 @@ func TestGateOnADirtyTreeIsUnverifiedWithTheReason(t *testing.T) {
 func TestGateFailureStaysFailOnADirtyTreeOutsideTheImage(t *testing.T) {
 	g := stubGateRunner()
 	g.state = func(string) (string, string, bool) { return "abc123", "def456", true }
-	g.static = func() (string, string, *tierResult) {
+	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "vet", &tierResult{Total: 1, Failed: 1}
 	}
 	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environmentErr: errors.New("outside")})
@@ -755,7 +774,7 @@ func TestGateDocsFilesExistInTheTree(t *testing.T) {
 
 func TestPrintGateSummaryNamesTheRunEveryFailureAndTheNotRunTiers(t *testing.T) {
 	g := stubGateRunner()
-	g.static = func() (string, string, *tierResult) {
+	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "", &tierResult{Total: 2, Failed: 1, Failures: []failureEntry{{Test: "go vet ./..."}}}
 	}
 	g.precheck[tierComponent] = func() error { return errors.New("no envtest") }
