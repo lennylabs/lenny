@@ -245,6 +245,9 @@ type golangciLint struct {
 	// baseRegister reads the register as a commit holds it, reporting
 	// false when the commit carries none (loadBaseLintRegister).
 	baseRegister func(ctx context.Context, root, commit string) (map[lintKey]int, bool, error)
+	// deps lists the module's packages that the product binaries import
+	// and that ./... does not match (lint_deps.go).
+	deps func(ctx context.Context, root string) ([]string, error)
 }
 
 // newGolangciLint returns the check wired to the installed linter, git,
@@ -272,6 +275,9 @@ func newGolangciLint(root, base string) golangciLint {
 		scan:    scanLintSources,
 
 		baseRegister: loadBaseLintRegister,
+		deps: func(ctx context.Context, root string) ([]string, error) {
+			return productPackagesOutsideLint(ctx, root, execGoList)
+		},
 	}
 }
 
@@ -321,14 +327,11 @@ func execGolangciLint(ctx context.Context, bin, root string, args ...string) (st
 
 // golangciLintEnv returns the environment of a golangci-lint run, built
 // from the harness's own environment env on a host whose operating system
-// is goos and whose user cache directory is userCache.
+// is goos and whose user cache directory is userCache. It is the build
+// target of lintTargetEnv, with these settings of the run's own:
 //
 //   - GOLANGCI_DIFF_PROCESSOR_PATCH replaces the diff golangci-lint
 //     filters by, so an inherited value is dropped.
-//   - On a host other than Linux the run analyzes the Linux build, as the
-//     merge gate's container does, so a package that builds only on Linux
-//     does not report a type-checking error that the gate never sees.
-//     cgo is off for that cross-target analysis.
 //   - PWD names root. os/exec sets it only when the environment is
 //     inherited, and golangci-lint reads its working directory from it.
 //   - GOLANGCI_LINT_CACHE names a directory of its own for root, under
@@ -344,11 +347,9 @@ func execGolangciLint(ctx context.Context, bin, root string, args ...string) (st
 func golangciLintEnv(env []string, root, goos, userCache string) []string {
 	drop := map[string]bool{"GOLANGCI_DIFF_PROCESSOR_PATCH": true, "PWD": true, "GOLANGCI_LINT_CACHE": true}
 	cacheBase := ""
-	if goos != "linux" {
-		drop["GOOS"], drop["CGO_ENABLED"] = true, true
-	}
-	out := make([]string, 0, len(env)+4)
-	for _, kv := range env {
+	target := lintTargetEnv(env, goos)
+	out := make([]string, 0, len(target)+2)
+	for _, kv := range target {
 		name, value, _ := strings.Cut(kv, "=")
 		if name == "GOLANGCI_LINT_CACHE" {
 			cacheBase = value
@@ -361,6 +362,33 @@ func golangciLintEnv(env []string, root, goos, userCache string) []string {
 	if cache := golangciLintCache(cacheBase, userCache, root); cache != "" {
 		out = append(out, "GOLANGCI_LINT_CACHE="+cache)
 	}
+	return out
+}
+
+// lintTargetEnv returns env set to the build the lint reads, for both
+// golangci-lint runs and the listing of the product packages
+// (lint_deps.go), on a host whose operating system is goos.
+//
+//   - GOWORK is off, so a go.work file in the checkout or above it cannot
+//     add modules to the build or replace the module's own requirements
+//     (owner's answer to GT-10, 2026-11-20).
+//   - On a host other than Linux the build is the Linux one, as the merge
+//     gate's container reads, so a package that builds only on Linux
+//     does not report a type-checking error that the gate never sees.
+//     cgo is off for that cross-target analysis.
+func lintTargetEnv(env []string, goos string) []string {
+	drop := map[string]bool{"GOWORK": true}
+	if goos != "linux" {
+		drop["GOOS"], drop["CGO_ENABLED"] = true, true
+	}
+	out := make([]string, 0, len(env)+3)
+	for _, kv := range env {
+		name, _, _ := strings.Cut(kv, "=")
+		if !drop[name] {
+			out = append(out, kv)
+		}
+	}
+	out = append(out, "GOWORK=off")
 	if goos != "linux" {
 		out = append(out, "GOOS=linux", "CGO_ENABLED=0")
 	}
@@ -385,9 +413,11 @@ func golangciLintCache(base, userCache, root string) string {
 // run runs the check. A finding on a changed line, a changed Go file the
 // diff cannot name, or a changed-line run that fails for any other reason
 // returns an error, which fails the tier, and so does a whole-tree count
-// the register does not allow (wholeTree). When no golangci-lint is
-// installed, when the installed one is not the pinned release, or when the
-// merge base cannot be resolved, the output opens with the unverified
+// the register does not allow (wholeTree), a source that hides code from
+// the linter (sourceSection), and a package of the product binaries that
+// neither run reads (depsSection). When no golangci-lint is installed,
+// when the installed one is not the pinned release, or when the merge
+// base cannot be resolved, the output opens with the unverified
 // marker, so the tier reports that the check proved nothing rather than
 // passing; without a resolved merge base the changed-line run does not
 // happen and the register's raises are not checked. The whole-tree run
@@ -419,6 +449,9 @@ func (l golangciLint) run() (string, error) {
 	section, scanErr := l.sourceSection(ctx)
 	sections = append(sections, section)
 	failure = errors.Join(failure, scanErr)
+	section, depsErr := l.depsSection(ctx)
+	sections = append(sections, section)
+	failure = errors.Join(failure, depsErr)
 	if len(unverified) > 0 {
 		sections = append([]string{verdictstatus.UnverifiedMarker + " " + strings.Join(unverified, "; ")}, sections...)
 	}

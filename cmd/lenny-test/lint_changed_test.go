@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -245,6 +246,12 @@ func TestLintEnvDropsThePatchOverrideAndTargetsLinux(t *testing.T) {
 	if !strings.Contains(linux, "GOOS=darwin") || !strings.Contains(linux, "CGO_ENABLED=1") || strings.Contains(linux, "GOOS=linux") {
 		t.Errorf("a Linux host changed the build target:\n%s", linux)
 	}
+	for _, goos := range []string{"darwin", "linux"} {
+		env := golangciLintEnv(append(in, "GOWORK=/elsewhere/go.work"), "/repo", goos, "/cache")
+		if !slices.Contains(env, "GOWORK=off") || slices.Contains(env, "GOWORK=/elsewhere/go.work") {
+			t.Errorf("%s: the environment does not turn the workspace off:\n%s", goos, strings.Join(env, "\n"))
+		}
+	}
 }
 
 // TestLintRunsSetEveryTierBuildTag checks that every golangci-lint run
@@ -449,7 +456,8 @@ func exitError(t *testing.T, code int) error {
 // stubLint returns a check over f in a temporary root whose register
 // carries the single count `pkg/b unused: 1`, as does the register at the
 // merge base, whose merge base resolves to b, or fails with resolveErr,
-// whose patch is empty, and whose linter is the pinned release.
+// whose patch is empty, whose linter is the pinned release, and whose
+// product packages are all inside ./....
 func stubLint(t *testing.T, f *fakeLint, b lintBase, resolveErr error) golangciLint {
 	t.Helper()
 	root := t.TempDir()
@@ -468,6 +476,7 @@ func stubLint(t *testing.T, f *fakeLint, b lintBase, resolveErr error) golangciL
 		baseRegister: func(context.Context, string, string) (map[lintKey]int, bool, error) {
 			return map[lintKey]int{{pkg: "pkg/b", linter: "unused"}: 1}, true, nil
 		},
+		deps: func(context.Context, string) ([]string, error) { return nil, nil },
 	}
 }
 
@@ -888,6 +897,82 @@ func TestLintReadsTheRegisterAtTheMergeBase(t *testing.T) {
 	}
 	if _, _, err := loadBaseLintRegister(ctx, r.root, "0000000000000000000000000000000000000000"); err == nil {
 		t.Error("an unknown commit read without an error")
+	}
+}
+
+// TestLintFailsOnAProductPackageOutsideTheLint checks that a package the
+// product binaries import and ./... does not match fails the tier and is
+// named, and that a listing that cannot finish fails it too.
+func TestLintFailsOnAProductPackageOutsideTheLint(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	l.deps = func(context.Context, string) ([]string, error) {
+		return []string{"github.com/lennylabs/lenny/pkg/x/testdata/fixture"}, nil
+	}
+	status, out := runLintCheck(l)
+	if status != verdictstatus.Fail || !strings.Contains(out, "pkg/x/testdata/fixture") {
+		t.Errorf("status %q; want fail naming the package (output %q)", status, out)
+	}
+	l.deps = func(context.Context, string) ([]string, error) { return nil, errors.New("go list: exit status 1") }
+	if status, out := runLintCheck(l); status != verdictstatus.Fail || !strings.Contains(out, "did not finish") {
+		t.Errorf("a listing that fails: status %q; want fail (output %q)", status, out)
+	}
+}
+
+// writeLintModule writes a module example.com/m under a temporary root
+// with the files given as path and body, and returns the root.
+func writeLintModule(t *testing.T, files map[string]string) string {
+	t.Helper()
+	root := t.TempDir()
+	files["go.mod"] = "module example.com/m\n\ngo 1.25\n"
+	for p, body := range files {
+		full := filepath.Join(root, filepath.FromSlash(p))
+		if err := os.MkdirAll(filepath.Dir(full), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(full, []byte(body), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return root
+}
+
+// TestLintFindsProductPackagesOutsideDotDotDot checks the listing with
+// the go command over a module whose binary under cmd/ imports a package
+// under a directory starting with an underscore and one under a testdata
+// directory, which ./... does not match, and one that it does. A package
+// only a tagged file imports counts, because the listing sets the lint's
+// build tags, and a package no binary imports does not.
+func TestLintFindsProductPackagesOutsideDotDotDot(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("blocked: go is not on PATH")
+	}
+	root := writeLintModule(t, map[string]string{
+		"cmd/app/main.go":         "package main\n\nimport (\n\t_ \"example.com/m/_hidden/h\"\n\t_ \"example.com/m/lib\"\n)\n\nfunc main() {}\n",
+		"cmd/app/tagged.go":       "//go:build integration\n\npackage main\n\nimport _ \"example.com/m/lib/testdata/fix\"\n",
+		"_hidden/h/h.go":          "package h\n",
+		"lib/l.go":                "package lib\n",
+		"lib/testdata/fix/f.go":   "package fix\n",
+		"lib/testdata/other/o.go": "package other\n",
+	})
+	got, err := productPackagesOutsideLint(context.Background(), root, execGoList)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"example.com/m/_hidden/h", "example.com/m/lib/testdata/fix"}
+	if !slices.Equal(got, want) {
+		t.Errorf("packages outside ./... %v; want %v", got, want)
+	}
+	clean := writeLintModule(t, map[string]string{
+		"cmd/app/main.go": "package main\n\nimport _ \"example.com/m/lib\"\n\nfunc main() {}\n",
+		"lib/l.go":        "package lib\n",
+	})
+	if got, err := productPackagesOutsideLint(context.Background(), clean, execGoList); err != nil || len(got) != 0 {
+		t.Errorf("a module whose binaries import only ./... packages: %v, %v", got, err)
+	}
+	noMain := writeLintModule(t, map[string]string{"cmd/lib/l.go": "package lib\n"})
+	if _, err := productPackagesOutsideLint(context.Background(), noMain, execGoList); err == nil || !strings.Contains(err.Error(), "no main package") {
+		t.Errorf("a module with no main package under cmd/: err %v; want an error", err)
 	}
 }
 
