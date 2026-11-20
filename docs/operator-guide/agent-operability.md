@@ -161,7 +161,7 @@ curl -X POST https://lenny.example.com/v1/oauth/token \
   -d scope="tools:health:* tools:diagnostics:* tools:escalation:create"
 ```
 
-The caller presents its own token here. A caller that presents another user's token as `subject_token` must request a scope strictly narrower than that token's scope, or the exchange is rejected with `invalid_scope`. Revoking a token through the Token Service also revokes every token narrowed from it.
+The caller presents its own token here. A caller that presents another user's token as `subject_token` must request a scope strictly narrower than that token's scope, or the exchange is rejected with `invalid_scope`. Revoking a token through the Token Service also revokes every token narrowed from it. Only the token's own user, or a `tenant-admin` or `platform-admin` of the same tenant, can revoke it.
 
 This replaces any earlier ad-hoc "mint a narrowed token" mechanism.
 
