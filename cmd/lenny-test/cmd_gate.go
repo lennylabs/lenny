@@ -107,6 +107,12 @@ const (
 	// gateNotRunPrefix opens the reason of a tier the gate selected but
 	// could not run in its environment.
 	gateNotRunPrefix = "not run: "
+	// gateHarnessPath is where the container installs the lenny-test it
+	// compiled, owned by root and read-only, before the cache fill and the
+	// gate run it (gateContainerScript). gateEnvHarness names it to the
+	// script's steps.
+	gateHarnessPath = "/usr/local/libexec/lenny-gate/lenny-test"
+	gateEnvHarness  = "LENNY_GATE_HARNESS"
 )
 
 // gateChangedTiers are the tiers the gate takes from the --changed plan,
@@ -618,33 +624,48 @@ func (h gateHost) imageRef() string {
 // the verdict among them, belong to that owner, and the tests run
 // unprivileged as they do on a developer host: initdb refuses to run as
 // root, and the runtime supervisor tests derive the adapter UID from the
-// test's own. The user then verifies the module cache against go.sum,
-// compiles lenny-test from the mounted tree with a build cache of its own,
-// and fills golangci-lint's cache with that binary (lenny-test
-// lint-cache-fill). The build cache of the compile is a new, empty
-// directory under GOTMPDIR, on the container's own file system, which the
-// script removes after the compile, so the binary that runs the cache fill
-// and the gate and writes the verdict links no entry of the build cache
-// volume, which the test tiers of every earlier gate run could write
-// (owner's answer to GT-15, 2026-11-20). A cold compile of lenny-test
-// takes about nine seconds in the gate image. Every other go command of
-// the run, the fill's golangci-lint and the tiers' builds among them,
-// still uses the volume. A fill that does not finish logs a
+// test's own.
+//
+// The user then compiles lenny-test (the build step). It exports the
+// commit HEAD names with git archive into a new directory under GOTMPDIR,
+// on the container's own file system, and checks that the export holds
+// every file of HEAD's tree, so an export-ignore attribute cannot drop a
+// file from the harness. In the export it runs go mod verify and go build
+// with GOWORK=off and -mod=readonly, so a go.work file and a vendor
+// directory play no part, and with a build cache of its own: a new, empty
+// directory under GOTMPDIR. The script removes the export and that build
+// cache after the compile. The binary that runs the cache fill and the
+// gate and writes the verdict is therefore compiled from the committed
+// tree, the module cache, and the image's toolchain, and links no entry of
+// the build cache volume, which the test tiers of every earlier gate run
+// could write (owner's answer to GT-15, 2026-11-20). An uncommitted or
+// untracked file, which a test of an earlier run in the same worktree
+// could plant, is not compiled in. A cold compile of lenny-test took about
+// nine seconds in the gate image when the owner measured it on 2026-11-20.
+// Root then installs the binary at gateHarnessPath, owned by root and
+// read-only, so no process of the gate user, a test among them, can
+// replace the file that a later check of the gate runs again
+// (os.Executable). Every other go command of the run, the fill's
+// golangci-lint and the tiers' builds among them, still uses the volume,
+// and the module cache volume stays writable to the gate user.
+//
+// The user then fills golangci-lint's cache with the installed binary
+// (lenny-test lint-cache-fill). A fill that does not finish logs a
 // warning, and the static tier's lint then analyzes what the cache lacks
 // without storing it, or fails with a cache error when the fill stopped
 // before golangci-lint initialized and closed the cache, because
 // golangci-lint cannot create the cache's directories or its trim record
 // on a read-only mount. Root then bind-mounts golangci-lint's cache
 // directory read-only over itself, and the user runs `lenny-test gate
-// --here`, so the gate always runs the harness of the commit under test,
-// and its static tier reads the filled cache while no test tier can write
-// it (owner's answer to GT-11, 2026-11-20). The user holds no capability
-// after setpriv, and a mount that a user namespace inherits is locked, so
-// neither the user nor a namespace a test creates can remount the
-// directory writable. Writers remain outside the mount: a gate run as
-// root, whose tests hold CAP_SYS_ADMIN and can remount it; any process
-// with the host Docker socket, which can mount the volume in another
-// container; the fill itself, which runs lenny-test as the branch builds
+// --here` with the installed binary, so the gate always runs the harness
+// of the commit under test, and its static tier reads the filled cache
+// while no test tier can write it (owner's answer to GT-11, 2026-11-20).
+// The user holds no capability after setpriv, and a mount that a user
+// namespace inherits is locked, so neither the user nor a namespace a
+// test creates can remount the directory writable. Writers remain outside
+// the mount: a gate run as root, whose tests hold CAP_SYS_ADMIN and can
+// remount it; any process with the host Docker socket, which can mount
+// the volume in another container; the fill itself, which runs lenny-test as the branch builds
 // it, with the packages it imports; and the fill of a gate container
 // another worktree runs at the same time. The owner accepted these limits
 // (owner's answer to GT-16, 2026-11-20). The Go build cache on the same
@@ -653,14 +674,29 @@ func (h gateHost) imageRef() string {
 const gateContainerScript = `set -e
 if [ -n "${LENNY_TEST_SHARED_TMPDIR:-}" ]; then find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete; fi
 mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" "${GOLANGCI_LINT_CACHE:?}" /go/pkg/mod
-prepare='set -e
+export ` + gateEnvHarness + `=` + gateHarnessPath + `
+build='set -e
+src="$(mktemp -d "$GOTMPDIR/lenny-test-src.XXXXXX")"
+git archive -o "$src.tar" HEAD
+tar -x -f "$src.tar" -C "$src"
+rm -f "$src.tar"
+want="$(git ls-tree -r -z --format="%(objecttype)" HEAD | tr "\000" "\n" | grep -c "^blob$")"
+got="$(find "$src" ! -type d -print0 | tr -cd "\000" | wc -c | tr -d " ")"
+if [ "$want" != "$got" ]; then echo "lenny-test gate: the export of HEAD holds $got files and HEAD holds $want; an export-ignore attribute kept files out of the harness build" >&2; exit 1; fi
+cd "$src"
+export GOWORK=off GOFLAGS="-buildvcs=false -mod=readonly"
 go mod verify
-mkdir -p "$HOME/bin"
 build_cache="$(mktemp -d "$GOTMPDIR/lenny-test-build.XXXXXX")"
-GOCACHE="$build_cache" go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test
-rm -rf "$build_cache"
-"$HOME/bin/lenny-test" lint-cache-fill || echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier lints against a read-only cache, and fails if golangci-lint cannot open it" >&2'
-run='exec "$HOME/bin/lenny-test" gate --here "$@"'
+GOCACHE="$build_cache" go build -o "$GOTMPDIR/lenny-test" ./cmd/lenny-test
+cd /
+rm -rf "$build_cache" "$src"'
+fill='"$` + gateEnvHarness + `" lint-cache-fill || echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier lints against a read-only cache, and fails if golangci-lint cannot open it" >&2'
+run='exec "$` + gateEnvHarness + `" gate --here "$@"'
+install_harness() {
+	mkdir -p "$(dirname "$` + gateEnvHarness + `")"
+	install -o 0 -g 0 -m 0555 "$GOTMPDIR/lenny-test" "$` + gateEnvHarness + `"
+	rm -f "$GOTMPDIR/lenny-test"
+}
 lock_lint_cache() {
 	mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"
 	mount -o remount,bind,ro "$GOLANGCI_LINT_CACHE"
@@ -668,7 +704,9 @@ lock_lint_cache() {
 uid="${LENNY_GATE_UID:-0}"
 gid="${LENNY_GATE_GID:-0}"
 if [ "$uid" = 0 ]; then
-	sh -c "$prepare"
+	sh -c "$build"
+	install_harness
+	sh -c "$fill"
 	lock_lint_cache
 	exec sh -c "$run" lenny-test-gate "$@"
 fi
@@ -682,7 +720,9 @@ for d in "$LENNY_TEST_TMPDIR" /go/pkg/mod "$GOCACHE" "$GOLANGCI_LINT_CACHE" "$GO
 	if [ "$(stat -c %u "$d")" != "$uid" ]; then chown -R "$uid:$gid" "$d"; fi
 done
 export HOME=/home/gate USER="$(getent passwd "$uid" | cut -d: -f1)"
-setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$prepare"
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$build"
+install_harness
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$fill"
 lock_lint_cache
 exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
 

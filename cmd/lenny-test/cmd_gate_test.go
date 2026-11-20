@@ -252,8 +252,8 @@ func TestGateDockerRunArgsMountTheTreeTheGitDirAndTheCaches(t *testing.T) {
 		"--network host",
 		"TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1",
 		"sha256:feed sh -c",
-		"go mod verify\nmkdir -p \"$HOME/bin\"\n",
-		`GOCACHE="$build_cache" go build -o "$HOME/bin/lenny-test" ./cmd/lenny-test`,
+		"export GOWORK=off GOFLAGS=\"-buildvcs=false -mod=readonly\"\ngo mod verify\n",
+		`GOCACHE="$build_cache" go build -o "$GOTMPDIR/lenny-test" ./cmd/lenny-test`,
 		"gate --here",
 	} {
 		if !strings.Contains(args, want) {
@@ -404,16 +404,16 @@ func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
 // TestGateContainerScriptDropsToTheWorktreeOwner pins the steps of the
 // container script that run the gate unprivileged: it creates the
 // owner's user, adds the Docker socket's group, gives the user the cache
-// volumes, and runs the gate through setpriv, and it keeps running as
-// root when the owner is root.
+// volumes, and runs the build, the fill, and the gate through setpriv, and
+// it keeps running as root when the owner is root.
 func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 	for _, want := range []string{
-		"if [ \"$uid\" = 0 ]; then\n\tsh -c \"$prepare\"\n\tlock_lint_cache\n\texec sh -c \"$run\" lenny-test-gate \"$@\"\nfi",
+		"if [ \"$uid\" = 0 ]; then\n\tsh -c \"$build\"\n\tinstall_harness\n\tsh -c \"$fill\"\n\tlock_lint_cache\n\texec sh -c \"$run\" lenny-test-gate \"$@\"\nfi",
 		`useradd --uid "$uid" --gid "$gid"`,
 		`stat -c %g /var/run/docker.sock`,
 		`chown -R "$uid:$gid" "$d"`,
 		`exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`,
-		`exec "$HOME/bin/lenny-test" gate --here "$@"`,
+		`exec "$` + gateEnvHarness + `" gate --here "$@"`,
 	} {
 		if !strings.Contains(gateContainerScript, want) {
 			t.Errorf("the container script lacks %q", want)
@@ -424,16 +424,18 @@ func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 	}
 }
 
-// TestGateContainerScriptLocksTheLintCacheBeforeTheGate pins the order
-// that keeps golangci-lint's cache read-only to the test tiers: the
-// worktree's owner fills the cache, root then bind-mounts the cache
-// directory read-only over itself, and only then does the gate run, as
-// the owner and as root alike. The owner is given the cache directory, so
-// the fill can write it, and a missing cache variable stops the script.
+// TestGateContainerScriptLocksTheLintCacheBeforeTheGate pins the order of
+// the owner's path: the owner compiles lenny-test, root installs it
+// read-only, the owner fills golangci-lint's cache with it, root then
+// bind-mounts the cache directory read-only over itself, and only then
+// does the gate run. The owner is given the cache directory, so the fill
+// can write it, and a missing cache variable stops the script.
 func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 	s := gateContainerScript
 	for _, want := range []string{
-		`"$HOME/bin/lenny-test" lint-cache-fill ||`,
+		`"$` + gateEnvHarness + `" lint-cache-fill ||`,
+		`export ` + gateEnvHarness + `=` + gateHarnessPath,
+		`install -o 0 -g 0 -m 0555 "$GOTMPDIR/lenny-test" "$` + gateEnvHarness + `"`,
 		`mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"`,
 		`mount -o remount,bind,ro "$GOLANGCI_LINT_CACHE"`,
 		`"${GOLANGCI_LINT_CACHE:?}"`,
@@ -443,16 +445,17 @@ func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 			t.Errorf("the container script lacks %q", want)
 		}
 	}
-	userFill := strings.Index(s, `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$prepare"`)
+	setpriv := `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c `
+	userBuild := strings.Index(s, setpriv+`"$build"`)
+	userInstall := strings.LastIndex(s, "install_harness\n")
+	userFill := strings.Index(s, setpriv+`"$fill"`)
 	userLock := strings.LastIndex(s, "lock_lint_cache\n")
-	userRun := strings.Index(s, `exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run"`)
-	if userFill < 0 || userLock <= userFill || userRun <= userLock {
-		t.Errorf("the owner's path does not fill, lock, and then run the gate (fill %d, lock %d, run %d)", userFill, userLock, userRun)
+	userRun := strings.Index(s, "exec "+setpriv+`"$run"`)
+	if userBuild < 0 || userInstall <= userBuild || userFill <= userInstall || userLock <= userFill || userRun <= userLock {
+		t.Errorf("the owner's path does not build, install, fill, lock, and then run the gate (build %d, install %d, fill %d, lock %d, run %d)", userBuild, userInstall, userFill, userLock, userRun)
 	}
-	_, rest, _ := strings.Cut(s, "prepare='")
-	prepare, _, _ := strings.Cut(rest, "'")
-	if !strings.Contains(prepare, "lint-cache-fill") || strings.Contains(prepare, "gate --here") {
-		t.Errorf("the fill step does not fill the cache, or runs the gate before the cache is read-only:\n%s", prepare)
+	if fill := gateScriptVar(t, "fill"); !strings.Contains(fill, "lint-cache-fill") || strings.Contains(fill, "gate --here") {
+		t.Errorf("the fill step does not fill the cache, or runs the gate before the cache is read-only:\n%s", fill)
 	}
 }
 
@@ -468,17 +471,22 @@ func gateScriptVar(t *testing.T, name string) string {
 	return body
 }
 
-// gateFakeGo is a go command for the preparation step: `go mod verify`
-// succeeds, and `go build -o <out> <pkg>` records the GOCACHE it ran with
-// and that directory's listing, and writes to <out> a program that
-// appends its path and arguments to $LOG/calls.
+// gateFakeGo is a go command for the build step: `go mod verify` records
+// the directory and the settings it ran with, and `go build -o <out>
+// <pkg>` records the directory, the settings, the GOCACHE, that
+// directory's listing, and the files of cmd/lenny-test, and writes to
+// <out> a program that appends its path and arguments to $LOG/calls.
 const gateFakeGo = `#!/bin/sh
 set -e
 case "$1" in
-mod) exit 0 ;;
+mod)
+	printf '%s %s %s\n' "$PWD" "$GOWORK" "$GOFLAGS" > "$LOG/verify"
+	;;
 build)
+	printf '%s %s %s\n' "$PWD" "$GOWORK" "$GOFLAGS" > "$LOG/build"
 	printf '%s\n' "$GOCACHE" > "$LOG/build-cache"
 	ls -A "$GOCACHE" > "$LOG/build-cache-listing"
+	ls cmd/lenny-test > "$LOG/build-files"
 	printf '#!/bin/sh\necho "$0 $*" >> "$LOG/calls"\n' > "$3"
 	chmod +x "$3"
 	;;
@@ -486,34 +494,68 @@ build)
 esac
 `
 
-// TestGateBuildsTheHarnessWithAPrivateBuildCache runs the container's
-// preparation step and its gate step with a stand-in go command. The
-// compile of lenny-test uses a new, empty build cache under GOTMPDIR
-// rather than the shared GOCACHE, the script removes that cache after the
-// compile, and the binary the compile wrote is the one that fills the lint
-// cache and runs the gate (owner's answer to GT-15, 2026-11-20).
-func TestGateBuildsTheHarnessWithAPrivateBuildCache(t *testing.T) {
-	if _, err := exec.LookPath("sh"); err != nil {
-		t.Skip("blocked: sh is not on PATH")
-	}
-	bin, home, goTmp, shared, log := t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir(), t.TempDir()
+// gateBuildFixture returns a git repository whose HEAD holds go.mod and
+// cmd/lenny-test/main.go, with an uncommitted edit of main.go and an
+// untracked planted.go in cmd/lenny-test, and a directory holding the
+// fake go command.
+func gateBuildFixture(t *testing.T) (lintRepo, string) {
+	t.Helper()
+	r := newLintRepo(t, "main")
+	r.commit("go.mod", "module example.com/m\n\ngo 1.25\n", "module")
+	r.commit("cmd/lenny-test/main.go", "package main\n\nfunc main() {}\n", "harness")
+	r.write("cmd/lenny-test/main.go", "package main\n\nfunc main() { println() }\n")
+	r.write("cmd/lenny-test/planted.go", "package main\n")
+	bin := t.TempDir()
 	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(gateFakeGo), 0o755); err != nil {
 		t.Fatal(err)
 	}
+	return r, bin
+}
+
+// gateRunStep runs one single-quoted step of the container script in dir
+// with env and returns its combined output and error.
+func gateRunStep(t *testing.T, dir string, env []string, step string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("sh", append([]string{"-c", gateScriptVar(t, step), "lenny-test-gate"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestGateBuildsTheHarnessFromTheCommitWithAPrivateBuildCache runs the
+// container's build, fill, and gate steps with a stand-in go command in a
+// repository with an uncommitted edit and an untracked file. The build
+// compiles an export of HEAD, so neither the edit nor the untracked file
+// reaches the harness, runs go mod verify and go build there with
+// GOWORK=off and -mod=readonly, and uses a new, empty build cache under
+// GOTMPDIR rather than the shared GOCACHE, which it removes with the
+// export after the compile. The fill and the gate run the installed
+// binary (owner's answer to GT-15, 2026-11-20).
+func TestGateBuildsTheHarnessFromTheCommitWithAPrivateBuildCache(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("blocked: sh is not on PATH")
+	}
+	r, bin := gateBuildFixture(t)
+	goTmp, shared, log := t.TempDir(), t.TempDir(), t.TempDir()
 	if err := os.WriteFile(filepath.Join(shared, "planted"), []byte("x"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "HOME="+home, "GOTMPDIR="+goTmp, "GOCACHE="+shared, "LOG="+log)
+	harness := filepath.Join(t.TempDir(), "lenny-test")
+	env := append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GOTMPDIR="+goTmp, "GOCACHE="+shared, "LOG="+log, "GOWORK=", "GOFLAGS=", gateEnvHarness+"="+harness)
+	if out, err := gateRunStep(t, r.root, env, "build"); err != nil {
+		t.Fatalf("the build step failed: %v\n%s", err, out)
+	}
+	// The script's install_harness runs as root; the test moves the
+	// binary to the harness path as it does.
+	if err := os.Rename(filepath.Join(goTmp, "lenny-test"), harness); err != nil {
+		t.Fatalf("the build step left no binary in GOTMPDIR: %v", err)
+	}
 	for _, step := range []struct {
 		name string
 		args []string
-	}{
-		{"prepare", nil},
-		{"run", []string{"--base", "main"}},
-	} {
-		cmd := exec.Command("sh", append([]string{"-c", gateScriptVar(t, step.name), "lenny-test-gate"}, step.args...)...)
-		cmd.Env = env
-		if out, err := cmd.CombinedOutput(); err != nil {
+	}{{"fill", nil}, {"run", []string{"--base", "main"}}} {
+		if out, err := gateRunStep(t, r.root, env, step.name, step.args...); err != nil {
 			t.Fatalf("the %s step failed: %v\n%s", step.name, err, out)
 		}
 	}
@@ -524,6 +566,16 @@ func TestGateBuildsTheHarnessWithAPrivateBuildCache(t *testing.T) {
 		}
 		return strings.TrimSpace(string(b))
 	}
+	verify, build := strings.Fields(readLog("verify")), strings.Fields(readLog("build"))
+	if len(verify) != 4 || len(build) != 4 || verify[0] != build[0] || !pathWithin(build[0], goTmp) {
+		t.Fatalf("go mod verify ran with %q and go build with %q; want both in one export under GOTMPDIR %s", verify, build, goTmp)
+	}
+	if build[1] != "off" || build[2] != "-buildvcs=false" || build[3] != "-mod=readonly" || verify[1] != "off" || verify[3] != "-mod=readonly" {
+		t.Errorf("go build ran with GOWORK and GOFLAGS %q; want off and -buildvcs=false -mod=readonly", build[1:])
+	}
+	if files := readLog("build-files"); files != "main.go" {
+		t.Errorf("the export held %q in cmd/lenny-test; want the committed main.go alone", files)
+	}
 	cache := readLog("build-cache")
 	if cache == shared || !pathWithin(cache, goTmp) || cache == goTmp {
 		t.Errorf("the compile used GOCACHE=%s; want a new directory under GOTMPDIR %s rather than the shared cache %s", cache, goTmp, shared)
@@ -531,13 +583,30 @@ func TestGateBuildsTheHarnessWithAPrivateBuildCache(t *testing.T) {
 	if listing := readLog("build-cache-listing"); listing != "" {
 		t.Errorf("the compile's build cache was not empty: %q", listing)
 	}
-	if _, err := os.Stat(cache); !errors.Is(err, os.ErrNotExist) {
-		t.Errorf("the compile's build cache %s is left behind (stat: %v)", cache, err)
+	for _, left := range []string{cache, build[0], build[0] + ".tar"} {
+		if _, err := os.Stat(left); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the build step left %s behind (stat: %v)", left, err)
+		}
 	}
-	harness := filepath.Join(home, "bin", "lenny-test")
 	want := harness + " lint-cache-fill\n" + harness + " gate --here --base main"
 	if got := readLog("calls"); got != want {
 		t.Errorf("the harness calls:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestGateBuildRefusesAnExportThatDropsAFile checks that the build step
+// stops when an export-ignore attribute keeps a file of HEAD out of the
+// export, so the harness is never compiled from part of the commit.
+func TestGateBuildRefusesAnExportThatDropsAFile(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("blocked: sh is not on PATH")
+	}
+	r, bin := gateBuildFixture(t)
+	r.commit(".gitattributes", "cmd/lenny-test/main.go export-ignore\n", "drop the harness from the export")
+	env := append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GOTMPDIR="+t.TempDir(), "LOG="+t.TempDir())
+	out, err := gateRunStep(t, r.root, env, "build")
+	if err == nil || !strings.Contains(out, "export-ignore") {
+		t.Errorf("the build step: %v\n%s; want a failure naming the export-ignore attribute", err, out)
 	}
 }
 
