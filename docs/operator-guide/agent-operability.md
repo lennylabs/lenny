@@ -148,7 +148,7 @@ Scopes don't replace tenancy — a `tenant-admin` caller is still constrained to
 
 ### Issuing a scoped token
 
-Operators mint scope-narrowed tokens by calling `POST /v1/oauth/token` with an RFC 8693 token-exchange grant. The Token Service enforces that every value in the requested scope is present in the `subject_token.scope` (narrowing is monotonic; broadening is rejected with `invalid_scope`).
+Operators mint scope-narrowed tokens by calling `POST /v1/oauth/token` with an RFC 8693 token-exchange grant. The Token Service enforces that every value in the requested scope is present in the `subject_token.scope` (narrowing is monotonic; broadening is rejected with `invalid_scope`). An exchange without a `scope` parameter issues the `subject_token`'s scope unchanged, so a narrowed token cannot be exchanged for a broader one by omitting `scope`.
 
 ```bash
 curl -X POST https://lenny.example.com/v1/oauth/token \
