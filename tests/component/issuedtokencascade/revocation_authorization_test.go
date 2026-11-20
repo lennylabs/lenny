@@ -184,3 +184,136 @@ func TestARevocationRequestIsAcceptedOnlyFromTheOwnerOrAnAdministrator(t *testin
 		}
 	})
 }
+
+// spec: §13.3 (Credential Flow), §12.2 (Storage Roles)
+// diagnosis: a token narrowed from alice's token by bob, or a child bob
+// minted of alice's token, rotated itself into a token that alice's
+// revocation of her token did not reach, which means the rotation path of
+// RecordWithRotationAudit in pkg/storage/issuedtokenstore does not copy
+// the replaced row's parent_jti and act_sub onto the successor
+// (inheritLineage).
+func TestARotatedDerivedTokenStaysInItsAncestorsLineage(t *testing.T) {
+	t.Parallel()
+	h := startLineageHarness(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, h.pg)
+	alice := h.userToken(t, tenant, "alice@acme.com", "alice-idp-"+tenant)
+	bob := h.userToken(t, tenant, "bob@acme.com", "bob-idp-"+tenant)
+
+	root, rootJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
+	})
+	narrowed, narrowedJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: root, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	})
+	bobs, bobsJTI := h.mint(t, bob, tokenservice.Request{
+		SubjectToken: root, Scope: "tools:sessions:write", Audience: "lenny-gateway",
+	})
+	// Each derived token rotates itself: the caller is the token, and the
+	// request names its own audience and no scope.
+	rotatedJTIs := map[string]string{}
+	for name, tok := range map[string]string{"narrowing": narrowed, "bob's exchange": bobs} {
+		_, jti := h.mint(t, tok, tokenservice.Request{SubjectToken: tok, Audience: "lenny-gateway"})
+		row, err := h.store.Get(ctx, tenant, jti)
+		if err != nil {
+			t.Fatalf("Get %s: %v", jti, err)
+		}
+		if row.ParentJTI != rootJTI || row.ActSubject != "" {
+			t.Errorf("rotated %s parent_jti=%q act_sub=%q, want %s / empty", name, row.ParentJTI, row.ActSubject, rootJTI)
+		}
+		rotatedJTIs[name] = jti
+	}
+	if got := h.revokedState(t, ctx, tenant, narrowedJTI, bobsJTI); !got[narrowedJTI] || !got[bobsJTI] {
+		t.Fatalf("the rotations did not revoke the tokens they replaced: %v", got)
+	}
+
+	code, body := h.post(t, alice, tokenservice.Request{SubjectToken: root, RequestedTokenType: lineageRevokedType})
+	if code != http.StatusOK {
+		t.Fatalf("revocation of the root: status %d body %v", code, body)
+	}
+	for name, jti := range rotatedJTIs {
+		if got := h.revokedState(t, ctx, tenant, jti); !got[jti] {
+			t.Errorf("rotated %s is live after the root's revocation, want revoked", name)
+		}
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: a token child that bob minted of alice's token with his own
+// actor rotated itself into a token that the revocation of bob's actor
+// token did not reach, or the successor lost the act_sub of the child,
+// which means inheritLineage does not copy act_sub with parent_jti.
+func TestARotatedChildTokenStaysUnderItsActor(t *testing.T) {
+	t.Parallel()
+	h := startLineageHarness(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, h.pg)
+	alice := h.userToken(t, tenant, "alice@acme.com", "alice-idp-"+tenant)
+	bob := h.userToken(t, tenant, "bob@acme.com", "bob-idp-"+tenant)
+
+	actor, actorJTI := h.mint(t, bob, tokenservice.Request{
+		SubjectToken: bob, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	})
+	child, childJTI := h.mint(t, actor, tokenservice.Request{
+		SubjectToken: alice, ActorToken: actor, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	})
+	_, rotatedJTI := h.mint(t, child, tokenservice.Request{SubjectToken: child, Audience: "lenny-gateway"})
+	rotated, err := h.store.Get(ctx, tenant, rotatedJTI)
+	if err != nil {
+		t.Fatalf("Get %s: %v", rotatedJTI, err)
+	}
+	if rotated.ParentJTI != actorJTI || rotated.ActSubject != "bob@acme.com" {
+		t.Errorf("rotated child parent_jti=%q act_sub=%q, want %s / bob@acme.com", rotated.ParentJTI, rotated.ActSubject, actorJTI)
+	}
+
+	code, body := h.post(t, bob, tokenservice.Request{SubjectToken: actor, RequestedTokenType: lineageRevokedType})
+	if code != http.StatusOK {
+		t.Fatalf("revocation of the actor: status %d body %v", code, body)
+	}
+	got := h.revokedState(t, ctx, tenant, childJTI, rotatedJTI)
+	if !got[childJTI] || !got[rotatedJTI] {
+		t.Errorf("revoked state %v after the actor's revocation, want both revoked", got)
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: two revocation requests that revoke each other's caller
+// token returned an error other than ErrCallerRevoked, or both revoked,
+// which means RevokeCascadeByCaller does not retry a deadlocked
+// transaction, or the retried request did not re-read its caller row.
+func TestMutualRevocationRequestsRevokeOnce(t *testing.T) {
+	t.Parallel()
+	h := startLineageHarness(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, h.pg)
+	alice := h.userToken(t, tenant, "alice@acme.com", "alice-idp-"+tenant)
+
+	for i := 0; i < 20; i++ {
+		_, xJTI := h.mint(t, alice, tokenservice.Request{SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway"})
+		_, yJTI := h.mint(t, alice, tokenservice.Request{SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway"})
+		errs := make(chan error, 2)
+		start := make(chan struct{})
+		for _, pair := range [][2]string{{xJTI, yJTI}, {yJTI, xJTI}} {
+			go func(caller, root string) {
+				<-start
+				_, err := h.store.RevokeCascadeByCaller(ctx, tenant, caller, root, "explicit_revoke", "cascade_from_parent", time.Now())
+				errs <- err
+			}(pair[0], pair[1])
+		}
+		close(start)
+		var refused, accepted int
+		for j := 0; j < 2; j++ {
+			switch err := <-errs; {
+			case err == nil:
+				accepted++
+			case errors.Is(err, issuedtokenstore.ErrCallerRevoked):
+				refused++
+			default:
+				t.Fatalf("round %d: RevokeCascadeByCaller: %v", i, err)
+			}
+		}
+		if accepted != 1 || refused != 1 {
+			t.Fatalf("round %d: accepted %d refused %d, want one each", i, accepted, refused)
+		}
+	}
+}

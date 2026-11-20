@@ -292,7 +292,11 @@ func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, so
 		if _, aerr := auditstore.AppendInTx(ctx, tx, tok.TenantID, exchangeEventType, exchangePayload, at); aerr != nil {
 			return aerr
 		}
-		if ierr := insertIssued(ctx, tx, tok); ierr != nil {
+		inherited, lerr := inheritLineage(ctx, tx, tok, prevJTI)
+		if lerr != nil {
+			return lerr
+		}
+		if ierr := insertIssued(ctx, tx, inherited); ierr != nil {
 			return ierr
 		}
 		sub, ok, rerr := revokePrevious(ctx, tx, tok.TenantID, prevJTI, revokedReason, at)
@@ -303,6 +307,40 @@ func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, so
 		return "", false, mapUniqueViolation(err)
 	}
 	return revokedSub, revoked, nil
+}
+
+// inheritLineage returns tok with the lineage of the token it replaces:
+// the replaced row's parent_jti and act_sub, so the successor takes the
+// replaced token's place under its ancestors and the cascade from an
+// ancestor still reaches it, while the cascade from the replaced token
+// does not. A replaced token that is a root, or that has no row, leaves
+// both columns empty. Only a row with parent_jti set passes its lineage
+// on, so the successor never matches the impersonation predicate. A tok
+// that already carries a lineage is returned unchanged.
+//
+// spec: §13.3 (Credential Flow) "Lineage of derived tokens."
+func inheritLineage(ctx context.Context, tx pgx.Tx, tok IssuedToken, prevJTI string) (IssuedToken, error) {
+	if tok.ParentJTI != "" || tok.ActSubject != "" || prevJTI == "" {
+		return tok, nil
+	}
+	var parent, actSub *string
+	err := tx.QueryRow(ctx,
+		`SELECT parent_jti, act_sub FROM issued_tokens WHERE jti = $1 AND tenant_id = $2`,
+		prevJTI, tok.TenantID).Scan(&parent, &actSub)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return tok, nil
+	}
+	if err != nil {
+		return tok, fmt.Errorf("issuedtokenstore: read rotated token lineage: %w", err)
+	}
+	if parent == nil || *parent == "" {
+		return tok, nil
+	}
+	tok.ParentJTI = *parent
+	if actSub != nil {
+		tok.ActSubject = *actSub
+	}
+	return tok, nil
 }
 
 // revokePrevious stamps revoked_at/revoked_reason on the rotated token
@@ -543,7 +581,9 @@ type RevokedToken struct {
 }
 
 // RevokeCascade implements the §13.3 / §8.3 recursive
-// revocation: it revokes rootJTI and every delegation descendant
+// revocation with no caller check: it is the store-level helper for
+// callers that authorize the revocation themselves, and the Token
+// Service's revocation request uses RevokeCascadeByCaller. It revokes rootJTI and every delegation descendant
 // reachable through the parent_jti edge, in one statement via a
 // recursive CTE. The root row is stamped with rootReason; each
 // descendant with childReason. Already-revoked rows in the subtree are
@@ -575,6 +615,34 @@ func (s *Store) RevokeCascadeByCaller(ctx context.Context, tenantID, callerJTI, 
 	if at.IsZero() {
 		at = time.Now().UTC()
 	}
+	var (
+		out []RevokedToken
+		err error
+	)
+	for attempt := 0; attempt < cascadeDeadlockAttempts; attempt++ {
+		out, err = s.revokeCascadeByCallerOnce(ctx, tenantID, callerJTI, rootJTI, rootReason, childReason, at)
+		if !isDeadlock(err) {
+			break
+		}
+	}
+	return out, err
+}
+
+// cascadeDeadlockAttempts bounds the transactions RevokeCascadeByCaller
+// runs when Postgres aborts one as a deadlock victim. Two requests that
+// revoke each other's caller token deadlock on the caller-row share locks
+// at most once: after the survivor commits, the retried request reads its
+// own caller row as revoked.
+const cascadeDeadlockAttempts = 3
+
+// isDeadlock reports whether err is the Postgres deadlock_detected error.
+func isDeadlock(err error) bool {
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
+}
+
+// revokeCascadeByCallerOnce is one transaction of RevokeCascadeByCaller.
+func (s *Store) revokeCascadeByCallerOnce(ctx context.Context, tenantID, callerJTI, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
 	var out []RevokedToken
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		if callerJTI != "" {

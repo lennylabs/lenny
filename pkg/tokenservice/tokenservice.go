@@ -963,9 +963,11 @@ func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialec
 // re-read would treat as an impersonation bearer, so an actor token with
 // no jti records no lineage.
 //
-// A self-rotation starts a new lineage and records neither column, so
-// revoking the token it replaced, such as a leaked one, does not reach
-// the replacement. A row with both columns null is not an impersonation
+// A self-rotation does not name the token it replaces, so revoking that
+// token, such as a leaked one, does not reach the replacement. It returns
+// neither column, and the rotation store copies the replaced row's own
+// lineage onto the replacement, which keeps a rotated derived token under
+// its ancestors. A row with both columns null is not an impersonation
 // row.
 //
 // Every other exchange (scope narrowing, lease issuance, or an exchange

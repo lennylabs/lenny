@@ -29,8 +29,8 @@ func lineageClaims(sub, jti string, typ auth.TokenType) jwt.Claims {
 // actor still names the actor as its parent. Every other exchange without
 // an actor records the subject token's jti in parent_jti and leaves
 // act_sub empty: a narrowing by another caller and a lease issuance each
-// name their subject as the parent. A self rotation starts a new lineage
-// and records neither column. No row the Token Service writes matches the
+// name their subject as the parent. A self rotation does not name the
+// token it replaces, and the in-memory store records neither column. No row the Token Service writes matches the
 // impersonation predicate (act_sub set, parent_jti null).
 func TestIssuedRecordLineagePerExchangeType_spec_13_3(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))

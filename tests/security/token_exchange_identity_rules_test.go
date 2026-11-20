@@ -144,8 +144,8 @@ func TestAChildMintCannotCopyAnotherUsersTokenAtTheSameScope(t *testing.T) {
 		body := fmt.Sprintf(`{"grant_type":%q,"subject_token":%q,"actor_token":%q,"scope":%q,"audience":"lenny-gateway"}`,
 			"urn:ietf:params:oauth:grant-type:token-exchange", alice, bob, scope)
 		code, out := postIdentityExchange(t, srv, bob, body)
-		if code != http.StatusBadRequest || out["error"] != "invalid_scope" {
-			t.Errorf("scope %q: status %d body %v, want 400 invalid_scope", scope, code, out)
+		if code != http.StatusBadRequest || out["error"] != "invalid_scope" || out["error_description"] != "scope_not_narrowed" {
+			t.Errorf("scope %q: status %d body %v, want 400 invalid_scope scope_not_narrowed", scope, code, out)
 		}
 		if _, ok := out["access_token"]; ok {
 			t.Errorf("scope %q: bob received a child of alice's token at her scope", scope)
@@ -166,8 +166,8 @@ func TestAChildMintRefusesAnActorTokenThatIsNotTheCallers(t *testing.T) {
 	body := fmt.Sprintf(`{"grant_type":%q,"subject_token":%q,"actor_token":%q,"scope":"tools:health:read","audience":"lenny-gateway"}`,
 		"urn:ietf:params:oauth:grant-type:token-exchange", alice, bob)
 	code, out := postIdentityExchange(t, srv, carol, body)
-	if code != http.StatusBadRequest || out["error"] != "invalid_grant" {
-		t.Errorf("status %d body %v, want 400 invalid_grant", code, out)
+	if code != http.StatusBadRequest || out["error"] != "invalid_grant" || out["error_description"] != "actor_token_not_caller" {
+		t.Errorf("status %d body %v, want 400 invalid_grant actor_token_not_caller", code, out)
 	}
 	if _, ok := out["access_token"]; ok {
 		t.Errorf("carol received a child minted with bob's actor token")
