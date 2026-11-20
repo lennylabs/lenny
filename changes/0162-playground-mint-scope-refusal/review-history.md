@@ -9,3 +9,9 @@
   - Filed: [TOKX-I2](../../issues/TOKX/TOKX-I2-exchange-without-scope-issues-an-unrestricted-token.md), a token exchange that omits `scope` issues a token with no scope restriction (security 1, High, predates the branch).
   - Left for another change: [0149](../0149-tenant-scoping-identity/change.md) (TS-2) filters `scope` to `tools:` values at the verifier, after which an `apiKey` subject with `openid profile` mints `playground_allowed_scope` instead of the 401 this step adds, so 0149 updates the contract test case, the §10.2 failure-mode example, and the web playground page when it lands, and applies the same filter to the playground OIDC callback (security 2). Recorded here rather than edited into 0149, which belongs to program v1. The standard auth chain refuses an unparseable `scope` with `401 TOKEN_INVALID`, which the §15.1 catalog does not list, while the mint returns `401 UNAUTHORIZED`; 0149 TS-2 changes that chain's handling of the claim (general 3).
   - Accepted as built: the §10.2 failure-modes table repeats the two scope rows that §27.3.1 also lists, with the client action only in §27.3.1 (general 5). The `INTERNAL_ERROR` branch of `narrowSubjectScope` is unreachable while the allowed set is a constant of canonical values, and stays uncovered (general 10).
+
+## 2026-11-19, owner answers and landing
+
+- The owner settled O1 (option (a), question SM-2), O2 (option (a), question SM-3), and confirmed the absent-scope default (question SM-4) on the M3 readiness decision page. They are decisions 2 to 4.
+- 0162.S1 landed on the merge-gate verdict `PASS` of run `03c07cd8a1fbae415f4fdab5` on `74495debf`. An earlier run, `2a71ae1cbc48c653146dc189`, failed in the component and contract tiers on container start-up timeouts while the host's load average was about 26; no failure reached the code under test.
+- The change stays `In progress` until it is archived with its link rewrites, which the next records branch carries.
