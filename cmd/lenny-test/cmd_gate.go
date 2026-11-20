@@ -681,7 +681,9 @@ func runStreaming(name string, args ...string) error {
 // gateRunner holds the tier executors one gate run calls. Tests replace
 // them to run the gate's control flow without go test or Docker.
 type gateRunner struct {
-	static func() (string, string, *tierResult)
+	// static runs the static tier with the gate's --base, which the
+	// changed-line lint compares with.
+	static func(base string) (string, string, *tierResult)
 	plan   func(base string, rdepsDepth int, all bool) (resolvedSelector, error)
 	exec   map[string]tierExecFn
 	// precheck returns why a tier cannot run in this environment, or
@@ -753,7 +755,7 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 	v.Gate = &gateRecord{Base: o.base, MergeBase: mergeBase, Dirty: dirty, Environment: o.environment, All: o.all}
 
-	g.record(v, tierStatic, g.static)
+	g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(o.base) })
 
 	plan, err := g.plan(o.base, o.rdepsDepth, o.all)
 	if err != nil {

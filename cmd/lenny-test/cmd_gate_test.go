@@ -28,7 +28,9 @@ func stubGateRunner() gateRunner {
 		return verdictstatus.Pass, "", &tierResult{Total: 1, Passed: 1}
 	}
 	return gateRunner{
-		static: func() (string, string, *tierResult) { return verdictstatus.Pass, "", &tierResult{Total: 2, Passed: 2} },
+		static: func(string) (string, string, *tierResult) {
+			return verdictstatus.Pass, "", &tierResult{Total: 2, Passed: 2}
+		},
 		plan: func(string, int, bool) (resolvedSelector, error) {
 			return resolvedSelector{tiers: []tierPlan{
 				{name: tierStatic},
@@ -68,7 +70,7 @@ func TestGatePassesWhenEveryTierPasses(t *testing.T) {
 
 func TestGateRunsEveryTierAfterAFailureAndReportsEachFailure(t *testing.T) {
 	g := stubGateRunner()
-	g.static = func() (string, string, *tierResult) {
+	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "go vet failed", &tierResult{Total: 2, Failed: 1, Failures: []failureEntry{{Test: "go vet ./..."}}}
 	}
 	var unitRan atomic.Bool
@@ -616,7 +618,7 @@ func TestGateOnADirtyTreeIsUnverifiedWithTheReason(t *testing.T) {
 func TestGateFailureStaysFailOnADirtyTreeOutsideTheImage(t *testing.T) {
 	g := stubGateRunner()
 	g.state = func(string) (string, string, bool) { return "abc123", "def456", true }
-	g.static = func() (string, string, *tierResult) {
+	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "vet", &tierResult{Total: 1, Failed: 1}
 	}
 	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environmentErr: errors.New("outside")})
@@ -755,7 +757,7 @@ func TestGateDocsFilesExistInTheTree(t *testing.T) {
 
 func TestPrintGateSummaryNamesTheRunEveryFailureAndTheNotRunTiers(t *testing.T) {
 	g := stubGateRunner()
-	g.static = func() (string, string, *tierResult) {
+	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "", &tierResult{Total: 2, Failed: 1, Failures: []failureEntry{{Test: "go vet ./..."}}}
 	}
 	g.precheck[tierComponent] = func() error { return errors.New("no envtest") }
