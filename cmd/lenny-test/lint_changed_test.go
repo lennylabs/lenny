@@ -447,9 +447,9 @@ func exitError(t *testing.T, code int) error {
 }
 
 // stubLint returns a check over f in a temporary root whose register
-// carries the single count `pkg/b unused: 1`, whose merge base resolves
-// to b, or fails with resolveErr, whose patch is empty, and whose linter
-// is the pinned release.
+// carries the single count `pkg/b unused: 1`, as does the register at the
+// merge base, whose merge base resolves to b, or fails with resolveErr,
+// whose patch is empty, and whose linter is the pinned release.
 func stubLint(t *testing.T, f *fakeLint, b lintBase, resolveErr error) golangciLint {
 	t.Helper()
 	root := t.TempDir()
@@ -465,6 +465,9 @@ func stubLint(t *testing.T, f *fakeLint, b lintBase, resolveErr error) golangciL
 		version: func(context.Context, string, string) error { return nil },
 		exec:    f.exec,
 		scan:    func(context.Context, string) ([]string, error) { return nil, nil },
+		baseRegister: func(context.Context, string, string) (map[lintKey]int, bool, error) {
+			return map[lintKey]int{{pkg: "pkg/b", linter: "unused"}: 1}, true, nil
+		},
 	}
 }
 
@@ -733,6 +736,161 @@ func TestLintRefusesAMalformedRegister(t *testing.T) {
 	}
 }
 
+// baseRegisterOf returns a merge-base register reader that answers with
+// counts given as "<package> <linter>" keys, or with no register when
+// counts is nil.
+func baseRegisterOf(counts map[string]int) func(context.Context, string, string) (map[lintKey]int, bool, error) {
+	return func(context.Context, string, string) (map[lintKey]int, bool, error) {
+		if counts == nil {
+			return nil, false, nil
+		}
+		m := map[lintKey]int{}
+		for k, n := range counts {
+			pkg, linter, _ := strings.Cut(k, " ")
+			m[lintKey{pkg: pkg, linter: linter}] = n
+		}
+		return m, true, nil
+	}
+}
+
+// runLintCheckMessage runs the check through the static tier's classifier
+// and reducer and returns the tier status, the tier message the verdict
+// records, and the check's output.
+func runLintCheckMessage(l golangciLint) (string, string, string) {
+	o := runStaticCheck(staticCheck{name: "golangci-lint run", run: l.run, classify: classifyGolangciLint})
+	status, msg := reduceStaticOutcomes([]staticOutcome{o})
+	return status, msg, o.out
+}
+
+// TestLintReportsARaiseMadeWithTheFindingsItCovers checks that a branch
+// that adds findings and raises the register to cover them in the same
+// commit passes the tier, and that the raise appears in the tier message
+// the verdict records, naming both counts, so it cannot pass silently.
+func TestLintReportsARaiseMadeWithTheFindingsItCovers(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused", "pkg/b/c.go:4:unused", "pkg/c/c.go:1:errcheck"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	writeTestLintRegister(t, l.root, map[string]int{"pkg/b unused": 2, "pkg/c errcheck": 1})
+	status, msg, out := runLintCheckMessage(l)
+	if status != verdictstatus.Pass {
+		t.Fatalf("status %q; want pass (output %q)", status, out)
+	}
+	for _, want := range []string{
+		"2 raise(s) of " + golangciLintRegister,
+		"pkg/b unused: 2 in " + golangciLintRegister + " where the merge base carries 1",
+		"pkg/c errcheck: 1 in " + golangciLintRegister + " where the merge base carries 0",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("tier message lacks %q:\n%s", want, msg)
+		}
+	}
+	if !strings.Contains(out, lintRaiseMarker+" pkg/b unused") {
+		t.Errorf("output does not list the raise on a marked line:\n%s", out)
+	}
+}
+
+// TestLintFailsFindingsAddedWithoutTouchingTheRegister checks that a
+// branch that adds a finding and leaves the register as the merge base
+// carries it fails the tier and reports no raise.
+func TestLintFailsFindingsAddedWithoutTouchingTheRegister(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused", "pkg/b/c.go:4:unused"), wholeErr: exitError(t, 1)}
+	status, msg, out := runLintCheckMessage(stubLint(t, f, testLintBase, nil))
+	if status != verdictstatus.Fail {
+		t.Fatalf("status %q; want fail (output %q)", status, out)
+	}
+	if strings.Contains(out, lintRaiseMarker) || strings.Contains(msg, "raise(s)") {
+		t.Errorf("a register the branch did not edit is reported as raised:\n%s", out)
+	}
+	if !strings.Contains(out, "No count of "+golangciLintRegister+" is above the register at the merge base") {
+		t.Errorf("output does not say the register matches the merge base:\n%s", out)
+	}
+}
+
+// TestLintReportsARaiseWithNoFindingBehindIt checks that a count raised
+// by hand above the merge base is reported even when the tree's findings
+// stay at the merge base's count, and that a raise in a run that fails
+// for another reason is still listed in the output.
+func TestLintReportsARaiseWithNoFindingBehindIt(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	l.baseRegister = baseRegisterOf(map[string]int{"pkg/b unused": 1})
+	writeTestLintRegister(t, l.root, map[string]int{"pkg/b unused": 1, "pkg/d staticcheck": 3})
+	status, msg, out := runLintCheckMessage(l)
+	if status != verdictstatus.Fail || !strings.Contains(out, "commit the lowered register") {
+		t.Fatalf("status %q; want fail on the lowered count (output %q)", status, out)
+	}
+	if !strings.Contains(out, lintRaiseMarker+" pkg/d staticcheck: 3") || !strings.Contains(msg, "pkg/d staticcheck: 3") {
+		t.Errorf("the raise is not listed:\nmessage %s\noutput %s", msg, out)
+	}
+}
+
+// TestLintReportsEveryCountWhenTheMergeBaseHasNoRegister checks that a
+// merge base that carries no register makes each count of the branch's
+// register a raise.
+func TestLintReportsEveryCountWhenTheMergeBaseHasNoRegister(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	l.baseRegister = baseRegisterOf(nil)
+	status, msg, out := runLintCheckMessage(l)
+	if status != verdictstatus.Pass || !strings.Contains(out, "carries no "+golangciLintRegister) || !strings.Contains(msg, "pkg/b unused: 1 in") {
+		t.Errorf("status %q; want pass listing the raise (message %q, output %q)", status, msg, out)
+	}
+}
+
+// TestLintFailsWhenTheMergeBaseRegisterCannotBeRead checks that a
+// register the merge base holds but the check cannot read fails the tier
+// rather than reading as a register with no count.
+func TestLintFailsWhenTheMergeBaseRegisterCannotBeRead(t *testing.T) {
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	l.baseRegister = func(context.Context, string, string) (map[lintKey]int, bool, error) {
+		return nil, false, errors.New("the golangci-lint register at 0123 is not a regular file")
+	}
+	if status, out := runLintCheck(l); status != verdictstatus.Fail || !strings.Contains(out, "not a regular file") {
+		t.Errorf("status %q; want fail (output %q)", status, out)
+	}
+}
+
+// TestLintReadsTheRegisterAtTheMergeBase checks the git read of the
+// register at a commit: a commit without the register reads as absent, a
+// committed register reads back its counts rather than the working
+// tree's, and a register committed as a symbolic link or with content
+// that does not parse is an error.
+func TestLintReadsTheRegisterAtTheMergeBase(t *testing.T) {
+	r := newLintRepo(t, "main")
+	ctx := context.Background()
+	before := r.git("rev-parse", "HEAD")
+	if _, present, err := loadBaseLintRegister(ctx, r.root, before); err != nil || present {
+		t.Fatalf("commit without the register: present %v, err %v", present, err)
+	}
+	writeTestLintRegister(t, r.root, map[string]int{"pkg/b unused": 2})
+	r.git("add", golangciLintRegister)
+	r.git("commit", "-q", "-m", "register")
+	withRegister := r.git("rev-parse", "HEAD")
+	writeTestLintRegister(t, r.root, map[string]int{"pkg/b unused": 7})
+	got, present, err := loadBaseLintRegister(ctx, r.root, withRegister)
+	if err != nil || !present || len(got) != 1 || got[lintKey{pkg: "pkg/b", linter: "unused"}] != 2 {
+		t.Fatalf("committed register: %v, present %v, err %v; want pkg/b unused 2", got, present, err)
+	}
+	broken := r.commit(golangciLintRegister, "kind: [\n", "broken")
+	if _, _, err := loadBaseLintRegister(ctx, r.root, broken); err == nil {
+		t.Error("a register that does not parse at the commit read without an error")
+	}
+	if err := os.Remove(filepath.Join(r.root, golangciLintRegister)); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("elsewhere.yaml", filepath.Join(r.root, golangciLintRegister)); err != nil {
+		t.Fatal(err)
+	}
+	r.git("add", golangciLintRegister)
+	r.git("commit", "-q", "-m", "link")
+	if _, _, err := loadBaseLintRegister(ctx, r.root, r.git("rev-parse", "HEAD")); err == nil || !strings.Contains(err.Error(), "not a regular file") {
+		t.Errorf("a register committed as a symbolic link: err %v; want not a regular file", err)
+	}
+	if _, _, err := loadBaseLintRegister(ctx, r.root, "0000000000000000000000000000000000000000"); err == nil {
+		t.Error("an unknown commit read without an error")
+	}
+}
+
 // TestLintRegisterRoundTrips checks that the register the check writes
 // loads back with the same counts and drops a count of zero.
 func TestLintRegisterRoundTrips(t *testing.T) {
@@ -788,6 +946,9 @@ func TestLintIsUnverifiedWhenTheBaseCannotBeResolved(t *testing.T) {
 	}
 	if !strings.Contains(out, "merge base could not be resolved") || !strings.Contains(out, "unused 1") {
 		t.Errorf("output lacks the reason or the whole-tree findings:\n%s", out)
+	}
+	if !strings.Contains(out, "raises of "+golangciLintRegister+" were not checked") {
+		t.Errorf("output does not say that raises were not checked:\n%s", out)
 	}
 }
 

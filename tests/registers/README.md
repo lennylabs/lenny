@@ -206,4 +206,6 @@ finding a branch adds is fixed. A count rises only through a hand edit of
 the register, for a reason such as a package move, a golangci-lint
 upgrade, or a newly enabled linter. The register is under this directory,
 so the merge-gate review of `.claude/rules/git-workflow.md` ("Review
-changes to the merge gate") covers the edit and records the reason.
+changes to the merge gate") covers the edit and records the reason. The
+check compares the register with its copy at the merge base and lists
+each raised count in the verdict without failing the tier.

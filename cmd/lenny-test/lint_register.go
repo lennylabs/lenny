@@ -3,6 +3,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -229,11 +230,11 @@ type lintRegisterEntry struct {
 	Linters map[string]int `yaml:"linters"`
 }
 
-// loadLintRegister reads and validates the register. A missing,
-// malformed, or self-contradictory register is an error rather than an
-// empty set: a load that degraded to carrying nothing would fail every
-// count, and one that degraded to an unbounded count would exempt the
-// rise the register exists to stop.
+// loadLintRegister reads and validates the register in the working tree.
+// A missing, malformed, or self-contradictory register is an error rather
+// than an empty set: a load that degraded to carrying nothing would fail
+// every count, and one that degraded to an unbounded count would exempt
+// the rise the register exists to stop.
 func loadLintRegister(file string) (map[lintKey]int, error) {
 	if err := refuseNonRegularRegister(file, false); err != nil {
 		return nil, err
@@ -242,6 +243,11 @@ func loadLintRegister(file string) (map[lintKey]int, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read the golangci-lint register: %w", err)
 	}
+	return parseLintRegister(data)
+}
+
+// parseLintRegister parses and validates the register's content.
+func parseLintRegister(data []byte) (map[lintKey]int, error) {
 	var doc lintRegisterDoc
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		return nil, fmt.Errorf("parse the golangci-lint register %s: %w", golangciLintRegister, err)
@@ -280,6 +286,71 @@ func loadLintRegister(file string) (map[lintKey]int, error) {
 		}
 	}
 	return carried, nil
+}
+
+// loadBaseLintRegister reads the register as the commit base holds it,
+// with git rather than from the working tree. It reports false, with no
+// error, when the commit carries no register, as at a merge base that
+// predates it. A register the commit holds as a symbolic link or as
+// anything else but a regular file, a register that does not parse, and
+// a git failure are errors, so an unreadable base never reads as an
+// empty one.
+func loadBaseLintRegister(ctx context.Context, root, base string) (map[lintKey]int, bool, error) {
+	entry, err := gitOutput(ctx, root, "ls-tree", "-z", base, "--", golangciLintRegister)
+	if err != nil {
+		return nil, false, fmt.Errorf("read the golangci-lint register at %s: %w", shortCommit(base), err)
+	}
+	entry = strings.TrimSuffix(entry, "\x00")
+	if entry == "" {
+		return nil, false, nil
+	}
+	meta, _, _ := strings.Cut(entry, "\t")
+	fields := strings.Fields(meta)
+	if len(fields) != 3 || fields[1] != "blob" || (fields[0] != "100644" && fields[0] != "100755") {
+		return nil, false, fmt.Errorf("the golangci-lint register %s at %s is not a regular file (%s)", golangciLintRegister, shortCommit(base), meta)
+	}
+	body, err := gitOutput(ctx, root, "cat-file", "blob", fields[2])
+	if err != nil {
+		return nil, false, fmt.Errorf("read the golangci-lint register at %s: %w", shortCommit(base), err)
+	}
+	carried, err := parseLintRegister([]byte(body))
+	if err != nil {
+		return nil, false, fmt.Errorf("at the merge base %s: %w", shortCommit(base), err)
+	}
+	return carried, true, nil
+}
+
+// lintRaise is one count the branch's register carries above the count
+// the register at the merge base carries, or carries where the register
+// at the merge base has none. No run of the check writes a raise, so each
+// one is a hand edit, which the merge-gate review covers.
+type lintRaise struct {
+	key    lintKey
+	base   int
+	branch int
+}
+
+// lintRaiseMarker opens each line of the check's output that names a
+// raise. classifyGolangciLint collects those lines into the detail the
+// static tier records, so a raise appears in the verdict even when the
+// tier passes.
+const lintRaiseMarker = "REGISTER RAISE (the merge-gate review covers it):"
+
+// String renders the raise, naming both counts.
+func (r lintRaise) String() string {
+	return fmt.Sprintf("%s: %d in %s where the merge base carries %d", r.key, r.branch, golangciLintRegister, r.base)
+}
+
+// lintRaises returns each count of branch above its count in base, a
+// count base lacks being zero, ordered by package, then linter.
+func lintRaises(base, branch map[lintKey]int) []lintRaise {
+	var out []lintRaise
+	for _, k := range sortedLintKeys(branch) {
+		if branch[k] > base[k] {
+			out = append(out, lintRaise{key: k, base: base[k], branch: branch[k]})
+		}
+	}
+	return out
 }
 
 // refuseNonRegularRegister returns an error when the register is a

@@ -28,7 +28,9 @@ import (
 // run counts the findings of the whole tree, which include the findings
 // that predate the check, per package and linter, and compares the counts
 // with the register of finding counts (lint_register.go): a count above the
-// register fails the tier, and the findings within it are a warning. The
+// register fails the tier, and the findings within it are a warning. Each
+// count the branch's register carries above the register at the merge
+// base is a hand edit, listed for the merge-gate review. The
 // whole-tree run becomes fatal on any finding when the pre-existing
 // findings that GATE-I1 lists reach zero. The check is contributor
 // tooling, so this file carries no specification annotation.
@@ -240,6 +242,9 @@ type golangciLint struct {
 	// scan lists the Go source problems in root that hide code from the
 	// linter (lint_sources.go).
 	scan func(ctx context.Context, root string) ([]string, error)
+	// baseRegister reads the register as a commit holds it, reporting
+	// false when the commit carries none (loadBaseLintRegister).
+	baseRegister func(ctx context.Context, root, commit string) (map[lintKey]int, bool, error)
 }
 
 // newGolangciLint returns the check wired to the installed linter, git,
@@ -265,6 +270,8 @@ func newGolangciLint(root, base string) golangciLint {
 		version: checkGolangciLintVersion,
 		exec:    execGolangciLint,
 		scan:    scanLintSources,
+
+		baseRegister: loadBaseLintRegister,
 	}
 }
 
@@ -383,7 +390,8 @@ func golangciLintCache(base, userCache, root string) string {
 // merge base cannot be resolved, the output opens with the unverified
 // marker, so the tier reports that the check proved nothing rather than
 // passing; without a resolved merge base the changed-line run does not
-// happen. The whole-tree run happens whenever the linter is installed.
+// happen and the register's raises are not checked. The whole-tree run
+// happens whenever the linter is installed.
 func (l golangciLint) run() (string, error) {
 	if l.bin == "" {
 		return verdictstatus.UnverifiedMarker + " golangci-lint not found, so the lint did not run (run scripts/setup-dev.sh; the gate image installs it)", nil
@@ -395,15 +403,17 @@ func (l golangciLint) run() (string, error) {
 	if versionErr != nil {
 		unverified = append(unverified, versionErr.Error())
 	}
+	var base *lintBase
 	b, err := l.resolve(ctx, l.root, l.base)
 	if err != nil {
-		unverified = append(unverified, fmt.Sprintf("golangci-lint did not run on the changed lines: the merge base could not be resolved (%v); fetch the integration branch or pass --base", err))
+		unverified = append(unverified, fmt.Sprintf("golangci-lint did not run on the changed lines, and raises of %s were not checked: the merge base could not be resolved (%v); fetch the integration branch or pass --base", golangciLintRegister, err))
 	} else {
+		base = &b
 		section, runErr := l.changedLines(ctx, b)
 		sections = append(sections, section)
 		failure = runErr
 	}
-	section, treeErr := l.wholeTree(ctx, versionErr == nil)
+	section, treeErr := l.wholeTree(ctx, versionErr == nil, base)
 	sections = append(sections, section)
 	failure = errors.Join(failure, treeErr)
 	section, scanErr := l.sourceSection(ctx)
@@ -419,12 +429,29 @@ func (l golangciLint) run() (string, error) {
 // the output opens with the unverified marker, which the check writes as
 // its first line. The rest of the output is the linter's, which echoes
 // source lines, so a marker inside it is not the check's conclusion.
+//
+// Either way the detail names each raise of the register the output lists
+// on a line that opens with lintRaiseMarker, so the static tier records
+// the raise in the verdict even when the check passes. A line of the
+// linter's own output that opens with the marker can add a false entry
+// but cannot remove one the check wrote.
 func classifyGolangciLint(out string) (string, string) {
 	first, _, _ := strings.Cut(out, "\n")
-	if !strings.HasPrefix(first, verdictstatus.UnverifiedMarker) {
-		return verdictstatus.Pass, ""
+	status, detail := verdictstatus.Pass, ""
+	if strings.HasPrefix(first, verdictstatus.UnverifiedMarker) {
+		status, detail = verdictstatus.Unverified, strings.TrimSpace(strings.TrimPrefix(first, verdictstatus.UnverifiedMarker))
 	}
-	return verdictstatus.Unverified, strings.TrimSpace(strings.TrimPrefix(first, verdictstatus.UnverifiedMarker))
+	var raises []string
+	for _, line := range strings.Split(out, "\n") {
+		if r, ok := strings.CutPrefix(line, lintRaiseMarker); ok {
+			raises = append(raises, strings.TrimSpace(r))
+		}
+	}
+	if len(raises) > 0 {
+		note := fmt.Sprintf("%d raise(s) of %s by hand, each needing the merge-gate review that records its reason: %s", len(raises), golangciLintRegister, strings.Join(raises, "; "))
+		detail = strings.TrimPrefix(detail+"; "+note, "; ")
+	}
+	return status, detail
 }
 
 // changedLines runs golangci-lint with --new-from-patch over the diff
@@ -473,8 +500,11 @@ func (l golangciLint) changedLines(ctx context.Context, b lintBase) (string, err
 // check cannot read. When comparable is false, because the installed
 // golangci-lint is not the pinned release, the counts are reported and not
 // compared, since another release counts other findings; the check is
-// then unverified rather than passing.
-func (l golangciLint) wholeTree(ctx context.Context, comparable bool) (string, error) {
+// then unverified rather than passing. When base is set, the register is
+// also compared with the register at the merge base (registerRaises), and
+// each count the branch raised by hand is listed for the merge-gate
+// review without failing the tier.
+func (l golangciLint) wholeTree(ctx context.Context, comparable bool, base *lintBase) (string, error) {
 	report, err := os.CreateTemp("", "lenny-lint-*.json")
 	if err != nil {
 		return fmt.Sprintf("golangci-lint did not run on the whole tree: %v", err), fmt.Errorf("create the whole-tree report: %w", err)
@@ -505,13 +535,50 @@ func (l golangciLint) wholeTree(ctx context.Context, comparable bool) (string, e
 	if err != nil {
 		return summary + "\n" + err.Error(), err
 	}
+	raised, err := l.registerRaises(ctx, base, carried)
+	if err != nil {
+		return summary + "\n" + err.Error(), err
+	}
 	c := compareLintCounts(counted, carried)
 	if len(c.lowered) > 0 {
 		if err := writeLintRegister(filepath.Join(l.root, golangciLintRegister), c.kept); err != nil {
-			return summary + "\n" + err.Error(), err
+			return summary + "\n" + err.Error() + raised, err
 		}
 	}
-	return lintRegisterSection(summary, c, findings), lintRegisterError(c)
+	return lintRegisterSection(summary, c, findings) + raised, lintRegisterError(c)
+}
+
+// registerRaises compares the branch's register, carried, with the
+// register at the merge base and returns a section that lists each count
+// the branch raised (GT-8, 2026-11-20). A raise does not fail the tier,
+// because a count may rise through a hand edit that the merge-gate review
+// covers (GT-7), and each one is written on a line that opens with
+// lintRaiseMarker, which the classifier carries into the verdict. With no
+// merge base, the section says that raises were not checked; the run
+// already opens with the unverified marker. A register the merge base
+// holds but the check cannot read is an error.
+func (l golangciLint) registerRaises(ctx context.Context, base *lintBase, carried map[lintKey]int) (string, error) {
+	if base == nil {
+		return fmt.Sprintf("\nRaises of %s were not checked, because the merge base could not be resolved.", golangciLintRegister), nil
+	}
+	baseCounts, present, err := l.baseRegister(ctx, l.root, base.commit)
+	if err != nil {
+		return "", err
+	}
+	raises := lintRaises(baseCounts, carried)
+	if len(raises) == 0 {
+		return fmt.Sprintf("\nNo count of %s is above the register at the merge base %s.", golangciLintRegister, shortCommit(base.commit)), nil
+	}
+	var b strings.Builder
+	if !present {
+		fmt.Fprintf(&b, "\nThe merge base %s carries no %s, so each count of the branch's register is a raise:", shortCommit(base.commit), golangciLintRegister)
+	} else {
+		fmt.Fprintf(&b, "\nCounts of %s above the register at the merge base %s, which a hand edit raised and the merge-gate review covers:", golangciLintRegister, shortCommit(base.commit))
+	}
+	for _, r := range raises {
+		b.WriteString("\n" + lintRaiseMarker + " " + r.String())
+	}
+	return b.String(), nil
 }
 
 // lintSummary states how many findings the whole tree carries, per

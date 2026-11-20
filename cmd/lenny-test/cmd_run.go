@@ -1045,7 +1045,8 @@ func runStaticCheck(c staticCheck) staticOutcome {
 // failures at once. Otherwise the tier takes the strongest status any
 // classifier reported, by the same ranking the verdict applies: fail
 // outranks inconclusive, which outranks unverified, which outranks pass.
-// A check that reports nothing leaves the tier at pass.
+// A check that reports nothing leaves the tier at pass, and a check that
+// passes with a detail adds the detail to the message.
 func reduceStaticOutcomes(outcomes []staticOutcome) (string, string) {
 	var failed, notes []string
 	status := verdictstatus.Pass
@@ -1057,7 +1058,16 @@ func reduceStaticOutcomes(outcomes []staticOutcome) (string, string) {
 			failed = append(failed, fmt.Sprintf("%s failed:\n%s", o.name, o.out))
 			continue
 		}
-		if o.status == "" || o.status == verdictstatus.Pass {
+		if o.status == "" {
+			continue
+		}
+		if o.status == verdictstatus.Pass {
+			// A passing check's detail is a note the verdict keeps,
+			// such as a golangci-lint register raise that the
+			// merge-gate review covers.
+			if o.detail != "" {
+				notes = append(notes, fmt.Sprintf("%s passed: %s", o.name, o.detail))
+			}
 			continue
 		}
 		if tierStatusRank(o.status) > tierStatusRank(status) {
