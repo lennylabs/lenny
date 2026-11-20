@@ -16,7 +16,7 @@ import (
 	"gopkg.in/yaml.v3"
 )
 
-// The shrink-only register of the golangci-lint whole-tree run. The
+// The register of finding counts of the golangci-lint whole-tree run. The
 // register carries, for each Go package directory, the number of findings
 // each linter reports there. The whole-tree run fails the tier when a
 // count rises above the register or a package and linter the register
@@ -25,10 +25,12 @@ import (
 // in the same package, which the counts cannot tell apart. A count that
 // falls is written back to the register and also fails the run, so the
 // author commits the lowered register with the change, as the
-// section-citation ratchet does. The register is read and written only
-// as a regular file, so a symbolic link cannot point it at a file outside
-// the reviewed paths. The check is contributor tooling, so this file
-// carries no specification annotation.
+// section-citation ratchet does. No run raises a count: a count rises
+// only through a hand edit of the register, which the merge-gate review
+// covers because the register is under tests/registers/. The register is
+// read and written only as a regular file, so a symbolic link cannot
+// point it at a file outside the reviewed paths. The check is contributor
+// tooling, so this file carries no specification annotation.
 
 // golangciLintRegister is the repo-relative path of the register.
 const golangciLintRegister = "tests/registers/golangci-lint-findings.yaml"
@@ -355,5 +357,9 @@ const lintRegisterHeader = `# SPDX-License-Identifier: MIT
 # linter in the same package. A count that falls is written back here by
 # the run that measures the fall, and that run fails so that the author
 # commits the lowered count with the change. No run raises a count, and a
-# finding a branch adds is fixed rather than registered.
+# finding a branch adds is fixed. A count rises only through a hand edit
+# of this file, for a reason such as a package move, a golangci-lint
+# upgrade, or a newly enabled linter. The file is under tests/registers/,
+# so the merge-gate review of .claude/rules/git-workflow.md ("Review
+# changes to the merge gate") covers the edit and records the reason.
 `

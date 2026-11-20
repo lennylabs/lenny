@@ -27,7 +27,7 @@ import (
 // the integration branch, and any such finding fails the tier. The second
 // run counts the findings of the whole tree, which include the findings
 // that predate the check, per package and linter, and compares the counts
-// with the shrink-only register (lint_register.go): a count above the
+// with the register of finding counts (lint_register.go): a count above the
 // register fails the tier, and the findings within it are a warning. The
 // whole-tree run becomes fatal on any finding when the pre-existing
 // findings that GATE-I1 lists reach zero. The check is contributor
@@ -544,7 +544,7 @@ func lintRegisterSection(summary string, c lintComparison, findings []lintFindin
 	b.WriteString(summary)
 	if len(c.risen) > 0 {
 		risen := map[lintKey]bool{}
-		fmt.Fprintf(&b, "\ngolangci-lint finding counts above %s; fix the findings rather than raising the counts:", golangciLintRegister)
+		fmt.Fprintf(&b, "\ngolangci-lint finding counts above %s; fix the findings (a count rises only through a hand edit of the register, which the merge-gate review covers):", golangciLintRegister)
 		for _, r := range c.risen {
 			risen[r.key] = true
 			b.WriteString("\n  " + r.String())

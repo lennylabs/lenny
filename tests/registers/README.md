@@ -202,4 +202,8 @@ of the same linter in the same package keeps the count. The register is
 read and written only as a regular file. A count that falls
 is written back by the run that measures it, and that run fails so that
 the branch commits the lowered register. No run raises a count, and a
-finding a branch adds is fixed rather than registered.
+finding a branch adds is fixed. A count rises only through a hand edit of
+the register, for a reason such as a package move, a golangci-lint
+upgrade, or a newly enabled linter. The register is under this directory,
+so the merge-gate review of `.claude/rules/git-workflow.md` ("Review
+changes to the merge gate") covers the edit and records the reason.

@@ -588,7 +588,7 @@ func TestLintFailsWhenAWholeTreeCountRises(t *testing.T) {
 	if status != verdictstatus.Fail {
 		t.Fatalf("status %q; want fail (output %q)", status, out)
 	}
-	for _, want := range []string{"pkg/b unused: 2 finding(s) where " + golangciLintRegister + " carries 1", "pkg/b/b.go:9:1", "pkg/b/c.go:4:1", "rather than raising the counts"} {
+	for _, want := range []string{"pkg/b unused: 2 finding(s) where " + golangciLintRegister + " carries 1", "pkg/b/b.go:9:1", "pkg/b/c.go:4:1", "fix the findings (a count rises only through a hand edit"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("output lacks %q:\n%s", want, out)
 		}

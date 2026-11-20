@@ -14,7 +14,11 @@
 # linter in the same package. A count that falls is written back here by
 # the run that measures the fall, and that run fails so that the author
 # commits the lowered count with the change. No run raises a count, and a
-# finding a branch adds is fixed rather than registered.
+# finding a branch adds is fixed. A count rises only through a hand edit
+# of this file, for a reason such as a package move, a golangci-lint
+# upgrade, or a newly enabled linter. The file is under tests/registers/,
+# so the merge-gate review of .claude/rules/git-workflow.md ("Review
+# changes to the merge gate") covers the edit and records the reason.
 kind: golangci-lint-finding-count-baseline
 version: 1
 packages:
