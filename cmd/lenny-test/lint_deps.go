@@ -4,13 +4,16 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 
@@ -56,6 +59,14 @@ const lintProductMains = "./cmd/..."
 // the given arguments, in one build target, and returns its standard
 // output. Every listing sets the lint's build tags, so the packages are
 // the ones that target's build compiles with those tags.
+// Every target lists every main package under cmd/, although the release
+// builds some of them only for Linux, so the listings of the main packages
+// and of what they import run with -e: a package whose files the target's
+// build constraints all exclude is left out rather than failing the
+// listing, because that build does not compile it (owner's answer to
+// GT-19, 2026-11-20). Any other error a listed package carries, such as an
+// import that no module provides or a file whose package clause or import
+// block does not parse, fails the check (lintDepsList).
 // A go list failure, and a tree with no main package under cmd/, are
 // errors, so the check never passes on an empty listing.
 func productPackagesOutsideLint(ctx context.Context, root string, goList func(ctx context.Context, root string, args ...string) (string, error)) ([]string, error) {
@@ -72,15 +83,20 @@ func productPackagesOutsideLint(ctx context.Context, root string, goList func(ct
 	if err != nil {
 		return nil, err
 	}
-	mainsOut, err := goList(ctx, root, append([]string{tags, "-f", `{{if eq .Name "main"}}{{.ImportPath}}{{end}}`, lintProductMains}, hidden...)...)
+	listed, err := lintDepsList(ctx, root, goList, append([]string{tags, lintProductMains}, hidden...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list the main packages under %s: %w", lintProductMains, err)
 	}
-	mains := strings.Fields(mainsOut)
+	var mains []string
+	for _, p := range listed {
+		if p.Name == "main" {
+			mains = append(mains, p.ImportPath)
+		}
+	}
 	if len(mains) == 0 {
 		return nil, fmt.Errorf("no main package under %s", lintProductMains)
 	}
-	depsOut, err := goList(ctx, root, append([]string{tags, "-deps", "-f", "{{with .Module}}{{.Path}}{{end}} {{.ImportPath}}"}, mains...)...)
+	deps, err := lintDepsList(ctx, root, goList, append([]string{tags, "-deps"}, mains...)...)
 	if err != nil {
 		return nil, fmt.Errorf("list the packages the binaries under %s import: %w", lintProductMains, err)
 	}
@@ -93,15 +109,97 @@ func productPackagesOutsideLint(ctx context.Context, root string, goList func(ct
 		covered[p] = true
 	}
 	var outside []string
-	for _, line := range strings.Split(depsOut, "\n") {
-		mod, pkg, ok := strings.Cut(strings.TrimSpace(line), " ")
-		if !ok || mod != module || covered[pkg] {
+	for _, p := range deps {
+		if p.Module == nil || p.Module.Path != module || covered[p.ImportPath] {
 			continue
 		}
-		outside = append(outside, pkg)
+		outside = append(outside, p.ImportPath)
 	}
 	sort.Strings(outside)
 	return outside, nil
+}
+
+// lintDepsPackage is the part of a `go list -json` record the coverage
+// check reads.
+type lintDepsPackage struct {
+	ImportPath string
+	Name       string
+	Module     *struct{ Path string }
+	Error      *lintDepsError
+	DepsErrors []*lintDepsError
+}
+
+// lintDepsError is the part of a go list package error the check reads.
+type lintDepsError struct {
+	ImportStack []string
+	Err         string
+}
+
+// goListExcluded opens the error go list records for a package whose files
+// the build constraints of the listing's build all exclude.
+const goListExcluded = "build constraints exclude all Go files in "
+
+// excludedByConstraints reports whether e is the error of a package whose
+// files the build constraints of the listing's build all exclude.
+func excludedByConstraints(e *lintDepsError) bool {
+	return e != nil && strings.HasPrefix(e.Err, goListExcluded) && !strings.Contains(e.Err, "\n")
+}
+
+// lintDepsList runs `go list -e -json` with args through goList and
+// returns the packages it lists, leaving out each package whose files the
+// build constraints all exclude. With -e the go command lists a package it
+// cannot load, with the error in the package's Error field and in each
+// importer's DepsErrors, rather than failing, so every error in either
+// field other than a build-constraint exclusion fails the listing. A
+// package outside ./... therefore cannot drop out of the listing behind
+// -e: it is listed, or the listing fails, unless the build does not
+// compile it.
+func lintDepsList(ctx context.Context, root string, goList func(ctx context.Context, root string, args ...string) (string, error), args ...string) ([]lintDepsPackage, error) {
+	out, err := goList(ctx, root, append([]string{"-e", "-json=ImportPath,Name,Module,Error,DepsErrors"}, args...)...)
+	if err != nil {
+		return nil, err
+	}
+	var pkgs []lintDepsPackage
+	var problems []string
+	seen := map[string]bool{}
+	note := func(pkg string, e *lintDepsError) {
+		if e == nil || excludedByConstraints(e) {
+			return
+		}
+		msg := fmt.Sprintf("%s: %s", pkg, strings.ReplaceAll(e.Err, "\n", " "))
+		if len(e.ImportStack) > 0 && !slices.Equal(e.ImportStack, []string{pkg}) {
+			msg += " (import stack " + strings.Join(e.ImportStack, " -> ") + ")"
+		}
+		if !seen[msg] {
+			seen[msg] = true
+			problems = append(problems, msg)
+		}
+	}
+	dec := json.NewDecoder(strings.NewReader(out))
+	for {
+		var p lintDepsPackage
+		if err := dec.Decode(&p); err != nil {
+			if errors.Is(err, io.EOF) {
+				break
+			}
+			return nil, fmt.Errorf("read the go list output: %w", err)
+		}
+		if p.ImportPath == "" {
+			return nil, errors.New("read the go list output: a package record names no import path")
+		}
+		note(p.ImportPath, p.Error)
+		for _, e := range p.DepsErrors {
+			note(p.ImportPath, e)
+		}
+		if excludedByConstraints(p.Error) {
+			continue
+		}
+		pkgs = append(pkgs, p)
+	}
+	if len(problems) > 0 {
+		return nil, fmt.Errorf("go list reports packages it cannot load:\n  %s", strings.Join(problems, "\n  "))
+	}
+	return pkgs, nil
 }
 
 // hiddenCmdDirs returns, as ./-relative patterns, each directory under
