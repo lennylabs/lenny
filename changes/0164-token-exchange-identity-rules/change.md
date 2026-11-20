@@ -1,6 +1,6 @@
 # Token exchange narrowing and identity rules
 
-Status: `In progress`, revision 2, 2026-11-20.
+Status: `In progress`, revision 3, 2026-11-20.
 
 ## Problem
 
@@ -11,15 +11,16 @@ The reviews of 0163.S1 on 2026-11-19 filed five defects in the token exchange of
 - [TOKX-I5](../../issues/closed/TOKX/TOKX-I5-exchange-does-not-check-the-caller-identity.md) (Low): the exchange compares the caller with the subject on `tenant_id` only, although §13.3 **Client authentication on `/v1/oauth/token`.** requires a caller of another identity to narrow scope. A token derived without an `actor_token` records no parent, so the recursive revocation of its subject does not reach it.
 - [TOKX-I6](../../issues/closed/TOKX/TOKX-I6-impersonation-bearer-ignores-the-caller-scope.md) (Low): a platform-admin impersonation bearer carries no `scope` claim whatever the caller's scope.
 - [TOKX-I7](../../issues/closed/TOKX/TOKX-I7-token-exchanged-audit-payload-scope-fields.md) (Low): the `token.exchanged` row carries one `scope` field where §16.7 names `requested_scope` and `granted_scope`.
+- [TOKX-I9](../../issues/closed/TOKX/TOKX-I9-revocation-request-accepts-any-caller-and-a-revoked-root.md) (Medium), filed by the review of this step: the recursive-revocation request accepts any caller in the tenant and a revoked caller, so a holder of a leaked token that its owner rotated away from could revoke the owner's current token through the rotation edge. The same review found that a child mint lets a caller holding another user's token mint a child at that user's full scope (decisions 7 and 8).
 
 ## Scope
 
-The change covers the scope check, the origin check, and the caller-identity check of every exchange `POST /v1/oauth/token` serves, the lineage the Token Service records for the token an exchange issues, the scope claim of the impersonation bearer, and the scope fields of the `token.exchanged` row.
+The change covers the scope check, the origin check, and the caller-identity check of every exchange `POST /v1/oauth/token` serves, the lineage the Token Service records for the token an exchange issues, who may send the recursive-revocation request ([TOKX-I9](../../issues/closed/TOKX/TOKX-I9-revocation-request-accepts-any-caller-and-a-revoked-root.md)), the scope claim of the impersonation bearer, and the scope fields of the `token.exchanged` row.
 
 It leaves out:
 
 - The playground mint, `POST /v1/playground/token`, which narrows by intersection and which change 0162 settled.
-- The recursive-revocation request itself (`requested_token_type=...:access_token:revoked`). Its subject may carry the `origin: "playground"` claim, because revoking a playground bearer narrows nothing.
+- The origin check of the recursive-revocation request (`requested_token_type=...:access_token:revoked`). Its subject may carry the `origin: "playground"` claim, because revoking a playground bearer narrows nothing.
 - The other `token.exchanged` payload fields whose names differ from §16.7 (`subject_sub`, `jti`, and the absent `subject_token_jti` and `actor_sub`). The review of this step files them as an issue.
 
 ## Terms
@@ -37,9 +38,11 @@ It leaves out:
 
 The exchange reads scope values the way the scope gates read them. A requested value is accepted when it is canonical and the subject's scope grants it, so an operator can narrow a token that carries no `scope` claim, or a `tools:*` or `tools:<domain>:*` token, to any narrower set. A child mint keeps the `authorized_tools` entries its issued scope grants, which keeps the whole allowlist when the issued scope is absent.
 
-Three refusals close the paths by which an exchange outlives or outreaches its subject. A playground bearer is refused as `subject_token` or `actor_token` with `invalid_grant`. A different caller must request a scope strictly narrower than the subject's, so it cannot take a copy of another user's token at equal reach. A child mint with an `actor_token` keeps its own rules.
+Three refusals close the paths by which an exchange outlives or outreaches its subject. A playground bearer is refused as `subject_token` or `actor_token` with `invalid_grant`. A different caller must request a scope strictly narrower than the subject's, so it cannot take a copy of another user's token at equal reach. A child mint with an `actor_token` requires the actor token to belong to the caller, and a subject that belongs to another user than the actor must be narrowed strictly.
 
-Every derived token records a parent: the actor token for a child mint, as today, and the subject token for every other exchange. The recursive revocation of a token therefore reaches every token derived from it by rotation, narrowing, lease issuance, or an exchange from another caller.
+Every derived token records a parent, except the token a rotation issues: the actor token for a child mint, as today, and the subject token for every other exchange. The recursive revocation of a token therefore reaches every token derived from it by narrowing, lease issuance, or an exchange from another caller. A rotation starts a new lineage, so revoking a leaked token that its owner rotated away from leaves the owner's current token valid.
+
+The recursive-revocation request is accepted only from the token's own user or a tenant administrator, and is refused when the caller's own token is revoked. A root that is already revoked still cascades, so an owner finishes a cleanup with another live token.
 
 The impersonation bearer carries the impersonating caller's `scope` claim, and the `token.exchanged` row records both the requested scope and the granted scope.
 
@@ -72,7 +75,7 @@ When the exchange carries no `actor_token` and the caller is a different caller,
 
 ### TX-4 Lineage of every derived token
 
-`derivedLineage`, which replaces `delegationLineage`, returns the actor's `sub` and `jti` for an `actor_token` mint, as before, and an empty `act_sub` with the subject's `jti` as `parent_jti` for every other exchange. `RevokeCascade` walks `parent_jti`, so the revocation reaches every derived token. A row with `parent_jti` set is never an impersonation row under §13.3 **Platform-admin impersonation.** rule 2. A rotation records its predecessor as parent, so revoking a rotated-out token also revokes its successors; the rotation itself still revokes only the predecessor. Migration 0199 adds the partial index `(tenant_id, parent_jti) WHERE parent_jti IS NOT NULL`, so each step of the cascade walk reads an index rather than the tenant's rows.
+`derivedLineage`, which replaces `delegationLineage`, returns the actor's `sub` and `jti` for an `actor_token` mint, as before, nothing for a self-rotation (decision 7), whose store path `RecordWithRotationAudit` copies the replaced row's own `parent_jti` and `act_sub` onto the successor (`inheritLineage`), and an empty `act_sub` with the subject's `jti` as `parent_jti` for every other exchange. `RevokeCascade` walks `parent_jti`, so the revocation reaches every derived token. A row with `parent_jti` set is never an impersonation row under §13.3 **Platform-admin impersonation.** rule 2. A rotation does not name its predecessor, so revoking a rotated-out token does not reach its successor; the successor takes the predecessor's place under its ancestors, so a derived token cannot leave its ancestor's lineage by rotating, and a token derived from the predecessor before the rotation still names it. A self-rotation carries no `actor_token`, presents the caller token as the subject, and issues the subject's scope and audience, as §13.3 now states. The rotation itself revokes only the predecessor. A row with both columns null is not an impersonation row. Migration 0199 adds the partial index `(tenant_id, parent_jti) WHERE parent_jti IS NOT NULL`, so each step of the cascade walk reads an index rather than the tenant's rows.
 
 ### TX-5 Impersonation bearer scope
 
@@ -82,23 +85,33 @@ When the exchange carries no `actor_token` and the caller is a different caller,
 
 `exchangeAuditPayload` replaces `scope` with `requested_scope`, the request's `scope` parameter as split, and `granted_scope`, the issued scope. A rejected row carries `requested_scope` and no `granted_scope`.
 
+### TX-7 Child-mint identity
+
+`checkCallerIdentity` hands an exchange with an `actor_token` to `checkChildMintIdentity` (decision 8). It refuses an actor whose `sub` differs from the caller's with `invalid_grant` and reason `actor_token_not_caller`, and, when the subject's `sub` differs from the actor's, requires `strictlyNarrower` as TX-3 does, refusing otherwise with `invalid_scope` and reason `scope_not_narrowed`. A child whose subject, actor, and caller share a `sub` is unaffected.
+
+### TX-8 Revocation request authorization
+
+`handleRevocationRequest` checks the tenant as before, then `authorizeRevocation`: the caller's `sub` equals the subject's, or the caller holds `tenant-admin` or `platform-admin`; any other caller receives `403 unauthorized_client` (decision 9). The caller's roles are its platform-managed assignment from the users table (`userstore.PlatformRoles`, wired in `cmd/lenny-token-service` as on the gateway) when one exists, and its token's `roles` claim otherwise; a failed lookup refuses the request with `503 token_store_unavailable` or `500 token_exchange_failed`. The store method `RevokeCascadeByCaller` reads the caller token's `issued_tokens` row `FOR SHARE` in the revoking transaction and returns `ErrCallerRevoked`, which the handler maps to `401 invalid_client`, when that row is revoked. A caller with no row passes. `RevokeCascade` delegates to it with no caller. An already-revoked root still cascades. Two requests that revoke each other's caller token deadlock on the share locks at most once, and `RevokeCascadeByCaller` retries a transaction Postgres aborts as a deadlock victim, so the second request is refused.
+
 ## Worked example
 
-alice holds a platform-admin token with no `scope` claim. She exchanges it for `tools:health:* tools:diagnostics:read`: both values are canonical and the absent claim grants them, so the Token Service issues the narrowed token and records alice's token as its parent. bob, in the same tenant, presents alice's narrowed token as `subject_token` without `scope`: he is a different caller and the request is not strictly narrower, so the exchange returns `400 invalid_scope`. With `scope=tools:health:read` it is accepted, and the token he receives records alice's narrowed token as its parent. When alice revokes her original token with the revocation request, the cascade revokes her narrowed token and bob's.
+alice holds a platform-admin token with no `scope` claim. She exchanges it for `tools:health:* tools:diagnostics:read`: both values are canonical and the absent claim grants them, so the Token Service issues the narrowed token and records alice's token as its parent. bob, in the same tenant, presents alice's narrowed token as `subject_token` without `scope`: he is a different caller and the request is not strictly narrower, so the exchange returns `400 invalid_scope`. With `scope=tools:health:read` it is accepted, and the token he receives records alice's narrowed token as its parent. When alice revokes her original token with the revocation request, the cascade revokes her narrowed token and bob's. bob cannot send that request himself: he is neither alice nor a tenant administrator, so the Token Service returns `403 unauthorized_client`. Had alice rotated her original token away after a leak, a holder of the leaked token could not revoke her replacement: the leaked token is revoked, so the request is refused with `401 invalid_client`, and the replacement records no parent.
 
 ## Limits, and alternatives rejected
 
 - The options not chosen are listed with each decision in `decisions.md`.
-- A lineage that records the subject's parent for rotations makes the revocation of a rotated-out token reach its successors. The owner's answer to SM-7 records a parent for every exchange, and the change applies it to rotations too.
+- A rotation records no parent (decision 7), so a token derived from a rotated-out token after the rotation is unreachable from it, and the owner revokes a successor through the successor itself.
+- A `platform-admin` revokes through the revocation request only within its own tenant, because the tenant check runs first.
+- A refused revocation request writes no audit row ([TOKX-I12](../../issues/TOKX/TOKX-I12-refused-revocation-request-writes-no-audit-row.md)).
 - Recording a parent for every exchange lets a caller build a long chain of derived tokens. The index of TX-4 keys each step of the cascade, and the change sets no bound on the depth of a chain or on the duration of a cascade ([TOKX-I10](../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
 
 ## Specification and non-specification changes
 
-- `spec/13_security-model.md`: §13.3 the `scope` row of the RFC 8693 parameter table, **Scope narrowing enforcement.**, **Platform-admin impersonation.** rule 1, the recursive-revocation paragraph, and **Client authentication on `/v1/oauth/token`.**
+- `spec/13_security-model.md`: §13.3 the `scope` row of the RFC 8693 parameter table, **Scope narrowing enforcement.**, **Platform-admin impersonation.** rule 1, the recursive-revocation paragraph, **Lineage of derived tokens.**, the new **Recursive-revocation request authorization.**, and **Client authentication on `/v1/oauth/token`.**
 - `spec/12_storage-architecture.md`: §12.2 the `parent_jti` column and the indexes of `TokenIssuanceStore`.
 - `spec/25_agent-operability.md`: §25.1 **Issuing a scoped token.**
 - `spec/16_observability.md`: §16.7 `token.revoked` names the tokens derived from the revoked token as the reach of a cascade. The `token.exchanged` row adopts the §16.7 scope field names, with no edit there.
-- `pkg/tokenexchange`, `pkg/tokenservice`, `pkg/credential/impersonation`, and `pkg/gateway/api/admin` (`impersonation.go`).
+- `pkg/tokenexchange`, `pkg/tokenservice`, `pkg/storage/issuedtokenstore` (`RevokeCascadeByCaller`, `inheritLineage`), `cmd/lenny-token-service` (the platform role resolver), `pkg/credential/impersonation`, and `pkg/gateway/api/admin` (`impersonation.go`).
 - `migrations/0199_issued_tokens_parent_index`: the lineage index of TX-4.
 - Tests that sent non-canonical scope values (`sessions:read`) send canonical ones.
 - `tests/registers/spec-section-citations.yaml`: the counts of the packages whose code and tests the step changes.
@@ -106,9 +119,10 @@ alice holds a platform-admin token with no `scope` claim. She exchanges it for `
 ## Documentation
 
 - `docs/operator-guide/agent-operability.md` (operator): "Issuing a scoped token" states the grammar, the different-caller rule, and a working example.
-- `docs/client-guide/authentication.md` (client developer): the token exchange section states the grammar, the playground refusal, the different-caller rule, and the lineage of a derived token.
-- `docs/api/admin.md` (operator): the token exchange paragraph states the same rules, and the impersonation paragraph states the bearer's scope.
-- `docs/operator-guide/security.md` (operator): the bearer-token paragraph states the different-caller rule, the playground refusal, the revocation of derived tokens, and the impersonation bearer's scope.
+- `docs/client-guide/authentication.md` (client developer): the token exchange section states the grammar, the playground refusal, the different-caller rule, the child-mint rule, the lineage of a derived token and of a rotation, and who can revoke a token.
+- `docs/api/admin.md` (operator): the token exchange paragraph states the same rules, including the child-mint rule and the revocation request's callers, and the impersonation paragraph states the bearer's scope.
+- `docs/operator-guide/security.md` (operator): the bearer-token paragraph states the different-caller and child-mint rules, the playground refusal, the revocation of derived tokens and the rotation's new lineage, who can revoke a token, and the impersonation bearer's scope.
+- `docs/operator-guide/agent-operability.md` (operator): "Issuing a scoped token" also states who can revoke a token.
 - `docs/operator-guide/web-playground.md` (operator): the revocation paragraph states that a playground bearer cannot be exchanged for a token that outlives logout.
 
 ## Tests
@@ -124,3 +138,5 @@ Contract tier, in `tests/contract/oauth_token`: over HTTP, a narrowing of an uns
 Component tier, in `tests/component/issuedtokencascade`: on Postgres, the recursive revocation of a subject revokes a token narrowed from it and a token another caller derived from it. In `tests/component/migrations`: the migrated schema carries the lineage index. Cites §13.3 and §12.2.
 
 Security tier, in `tests/security`: with the Token Service built as `cmd/lenny-token-service` builds it, a different caller cannot copy another user's token at equal scope, and a playground bearer cannot be exchanged. Cites §13.3.
+
+Decisions 7 to 9 add the following tests. Unit tier, in `pkg/tokenexchange` and `pkg/tokenservice`: a child mint of another user's token refused at equal or no scope and accepted narrower; an actor token not the caller's refused; a same-user child mint unaffected; a rotation records no parent; a revocation request accepted from the owner, a tenant-admin, and a platform-admin, refused from another user and a tenant-viewer, and refused for a revoked caller. Contract tier, in `tests/contract/oauth_token`: the child-mint rules and the refusal of another user's revocation request over HTTP. Component tier, in `tests/component/issuedtokencascade`: on Postgres, a rotation's token of a root records no parent and survives the revocation of the token it replaced, whose holder revokes nothing; a rotated narrowing, a rotated other-caller exchange, and a rotated child stay under their ancestors; the cascade from an already-revoked root revokes the tokens derived from it; another user, an administrator, a revoked caller, and mutual revocations. Unit tier also covers the platform-managed role assignment and a failed lookup. Security tier, in `tests/security`: a child mint cannot copy another user's token, an actor token must be the caller's, and another user cannot revoke a user's token. Cites §13.3.

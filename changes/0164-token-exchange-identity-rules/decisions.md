@@ -2,7 +2,16 @@
 
 ## Open decisions
 
-None.
+1. O3. **Whether a rotation records the token it replaces after all, now that decision 9 refuses a revoked caller.** Raised by the security review of 0164.S1 (revision 3) on 2026-11-20 (finding 1). Under decision 7 a rotation records no parent. A holder of a leaked token T can rotate it first: the request with T as caller and subject at T's scope and audience is a self-rotation, so the holder receives T', which records no parent, and T is revoked. When the owner then revokes T, the cascade does not reach T', and the holder keeps T' until its `exp` (at most the subject's `exp` and the dialect cap, 24 hours for `lenny-gateway`). No row links T' to T, because the `token.exchanged` row carries no subject `jti` ([TOKX-I8](../../issues/TOKX/TOKX-I8-token-exchanged-audit-payload-field-names.md)), so the remedy is a full revoke of the user (§11.4). Decision 9 already refuses the denial of service decision 7 addressed in most cases: after the owner rotates away from T, T is revoked, so a request with T as caller is refused with `401 invalid_client`. A holder who derived a live token from T before the rotation can still revoke T and, through a rotation edge, the owner's successor. Options:
+   - (a) Recommended: restore the rotation edge (option (b) of O1). Revoking a leaked token then reaches every token rotated from it, including a successor the holder minted. The remaining denial of service needs a live token the holder derived from T before the rotation, and the owner's revocation of T revokes that token as well.
+   - (b) Keep decision 7, record the replaced `jti` on the rotation's row in a column the cascade does not walk, or as `subject_token_jti` on its `token.exchanged` row, and state in the operator security guide that a leaked token that may have been rotated is answered with a full revoke of the user.
+   - (c) Keep the step as built.
+   The general review of the same round found that a rotation that recorded no parent at all let any derived token leave its ancestor's lineage by rotating itself. The step now has the rotated token take the replaced token's own `parent_jti` and `act_sub`, which keeps decision 7 for a root token and keeps the parents decision 7 preserves for narrowings, other-caller exchanges, and child mints; option (a) supersedes that as well. The step is built as decision 7 states, with that inheritance, until the owner answers.
+2. O4. **Whether any token of the subject's user may send the revocation request.** Raised by the general review of 0164.S1 (revision 3) on 2026-11-20 (finding 9). Decision 9 accepts a caller whose `sub` equals the subject token's. An `a2a_delegation` child and a narrowed token carry the subject's `sub`, so a narrowly scoped token held by an agent pod can revoke the user's top-level tokens and everything derived from them, a denial of service from a compromised holder of a narrow token. Options:
+   - (a) Recommended: keep decision 9 as written. A narrow token of the user's revokes only tokens it presents as `subject_token`, which its holder must already hold, and the cost is a denial of service to the user rather than access.
+   - (b) Accept the user's own caller only when the caller token is the subject token or an ancestor of it in `parent_jti`.
+   - (c) Accept the user's own caller only when its token carries no `scope` claim or `tools:*`.
+   The step is built as (a).
 
 ## Decisions
 

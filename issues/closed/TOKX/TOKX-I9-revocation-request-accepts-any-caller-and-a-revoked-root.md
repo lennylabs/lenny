@@ -1,9 +1,12 @@
 ---
 id: TOKX-I9
-status: open
+status: closed
 kind: spec-defect
 severity: medium
 requirements: []
+change: 0164.S1
+closed: fixed
+closed-by: 0164.S1
 ---
 
 # The recursive-revocation request accepts any caller in the tenant and a revoked root
