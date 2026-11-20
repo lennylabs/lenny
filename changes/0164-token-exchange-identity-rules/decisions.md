@@ -2,7 +2,17 @@
 
 ## Open decisions
 
-None.
+1. O1. **Whether a rotation records the token it replaces as its parent.** Raised by the security review of 0164.S1 on 2026-11-20 (finding 1). Decision 3 records a parent for every exchange, and the step applies it to the self-rotation grant, so §13.3 **Lineage of derived tokens.** states that revoking a token a rotation replaced also revokes its successors. The revocation request accepts any caller in the tenant and a root that is already revoked ([TOKX-I9](../../issues/TOKX/TOKX-I9-revocation-request-accepts-any-caller-and-a-revoked-root.md)), so a holder of a leaked token that its owner rotated away from can revoke the owner's current token and everything derived from it. Options:
+   - (a) Recommended: a rotation records no parent, and §13.3 states that the rotation grant starts a new lineage. A token derived from the leaked token before the rotation still cascades from it, and the owner's successor does not.
+   - (b) Keep the rotation edge as built, and settle TOKX-I9 so that a revocation request refuses a revoked caller or a revoked root.
+   - (c) Keep the step as built.
+   The step is built as (c) until the owner answers.
+
+2. O2. **Whether a child mint whose subject is another user's token must narrow.** Raised by the security review of 0164.S1 on 2026-11-20 (finding 2). Decision 3 leaves `a2a_delegation` child minting unaffected. The Token Service does not tie the `actor_token` to the caller, and §13.3 lets the subject of a child mint be another principal's token, so bob, holding alice's token, sends it as `subject_token` with his own token as `actor_token` and no `scope`, and receives a child with alice's `sub` and her full scope. The child's parent is bob's token, so the recursive revocation of alice's token does not reach it. Options:
+   - (a) Recommended: apply the different-caller rule to a child mint whose subject's `sub` differs from the actor's, and require the actor's `sub` to equal the caller's.
+   - (b) Record a second lineage edge from the subject, which needs a column or table in `issued_tokens` beside `parent_jti`.
+   - (c) Keep child minting as built.
+   The step is built as (c) until the owner answers.
 
 ## Decisions
 

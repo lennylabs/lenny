@@ -1,9 +1,12 @@
 ---
 id: TOKX-I3
-status: open
+status: closed
 kind: spec-defect
 severity: medium
 requirements: []
+change: 0164.S1
+closed: fixed
+closed-by: 0164.S1
 ---
 
 # A token exchange cannot narrow a subject token that carries no `scope` claim
