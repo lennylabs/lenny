@@ -381,3 +381,96 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 ## Revision 79 (2026-11-16)
 
 The owner accepted three resolutions of conflicts between steps that the conversion of the moved designs into steps found (0113.S4). 0147.S7 depends on git in the helper (0153.S4) and on the pod layout's disk watch (0118.S4). 0147.S8 depends on 0127.S5, which carries the rewritten draft 0111, and only its staging part waits on 0153.S8. Before this, 0147 and 0153 each waited on the other. The same day, three gaps that the review of this conflict found were fixed: "Relationship to draft proposal 0111" names 0127.S5 as the step that carries the rewrite, 0147.S8 states that the carrier `PodSet.spec.warmClones` for every pool lands with 0127.S5, and the Tier 4 warm-up checkout test on an owned pool lands with 0147.S8's staging part.
+
+## M3 readiness review (2026-11-19)
+
+Trigger: review. Name: M3 readiness review. Revision 80 applies the findings of the review reports `0147-p1` and `0147-p2` and the conflicts that name this change in the consistency reports `program`, `tenancy-security`, `checkpoint-workspace`, `runtime-contract`, and `removals`, read against `main` at `092ef92f6`. No High finding was raised, so no skeptic verdict applies.
+
+Counts: 35 applied, 8 raised as open decisions (45 to 52), 2 returned as issues, 7 dropped or needing no edit here, and 1 already settled. Three findings are fixed only by edits to other changes, which the report lists: 0147-p1-F21 with 0147-p2-F14 (0121.S3) and 0147-p2-F13 with tenancy-security-C14 (0142).
+
+Applied:
+
+- 0147-p1-F1 and runtime-contract-C8: DR-1 and 0147.S1 state that the pool access check runs after the experiment routing step and before the claim until 0141.S1 lands the post-chain point; 0147.S4 and 0147.S7 depend on 0141.S1.
+- 0147-p1-F2 and runtime-contract-C8: 0147.S4 states that it builds the `registered` column and check under AR O8, and that 0119.S4 removes SD-P4 and `target_unsupervised` alone.
+- 0147-p1-F3: "Relationship to draft proposal 0111" and 0147.S8 split the warm-list rule set by pool kind between 0127.S5 (every pool) and 0147.S8 (owned pools).
+- 0147-p1-F5: DR-9's delegated-child row and "Who reaches a store" name the seam operations the platform tools seam uses (`GWSEAM-ResolveEnvironments`, `GWSEAM-IssueVCSToken`, `GWSEAM-MaterializeChild`, and new operations for the clone checks and the warm-list read checks); 0147.S4, 0147.S7, and 0147.S8 carry the decision-8 line.
+- 0147-p1-F8: "`oneSessionPerPod` and `sessionPolicy`" states the lock order of a tenant `PUT` and a template write; a `load_local` test covers the race.
+- 0147-p1-F9: DR-2 states the copy of a platform-derived runtime's `sessionPolicy` to its pools' rows under decision 7's mechanism, with a `unit` test, and 0147.S2 names it.
+- 0147-p1-F10: 0147.S11 depends on 0142.S1 and 0142.S2; 0147.S7 depends on 0152.S2 (part); 0147.S5 and 0147.S9 state that the `placement.*` rows and the reserved overlay land with 0136.S5.
+- 0147-p1-F11 and 0147-p2-F7: `closes` fields on 0147.S1 (F-5.1.26, F-10.6.25, F-5.1.31, F-17.6.27, F-17.6.28, F-5.2.67 part), 0147.S2 (F-5.1.27 part, F-5.1.28, F-5.1.29, F-5.1.30 part), 0147.S3 (F-7.5.17, F-8.7.16 part), 0147.S4 (F-8.3.13, F-5.1.32, F-5.1.30 part), and 0147.S10 (F-15.1.75); 0147.S1 states the shared closure of F-5.1.31 with 0137.S4.
+- 0147-p1-F12: "Current state" and "Costs of the capability" name `pkg/gateway/api/admin/routes.go` and the packages under `pkg/gateway/core/session`, `pkg/gateway/platformtools`, and `pkg/gateway/mcpfabric/mcpruntimes`; "Specification sections affected" names the `DERIVED` and `OWNPOOL` pages.
+- 0147-p1-F13: "Retirement" names `DELETE /v1/admin/runtimes/{name}/retire` with its refusal after the date and its event, and the §15.1 row of the stored-formats table lists both retire routes.
+- 0147-p1-F14: "Notice" runs the worker as a gateway leader job under `pkg/gateway/core/leaderjobs` with at-least-once delivery keyed by the outbox row; a `chaos` test covers a failover.
+- 0147-p1-F15: "Who turns it on" states that a tenant `PUT` within its grant entry passes while `enabled` is false.
+- 0147-p1-F16: the tenant `runtimeOptionsSchema` is bounded at 64 KiB, the bound §14 sets on `runtimeOptions`.
+- 0147-p1-F17: "Uploads" states that upload bytes count against `maxAssetUploadBytes` alone, as decision 44's cost states.
+- 0147-p1-F18: "`gitRepository` entries" refuses `declarer` in a tenant body except on an entry equal to a stored `platform`-declared one.
+- 0147-p1-F19 and 0147-p2-F9 (tiers): the "Tests" headings, `steps.md` 0147.S8, and the 2026-11-13 note in `decisions.md` use the tier names of change 0155.
+- 0147-p1-F20: `unit` and `integration` tests for `GET /v1/runtimes/{name}/meta/{key}` on a `--` name and for the CRD-only pool exemption.
+- 0147-p2-F2: DR-10 marks pods on a pool that already holds idle unmarked pods, defines `held`, and lists the values of `state` and `blockedBy`; `component` and `unit` tests cover them.
+- 0147-p2-F4: DR-12 lands in two steps; 0147.S6 keeps the plan and wire contract, the new 0147.S13 carries the start check and constant root and depends on 0118.S4 and 0145.S2, and 0147.S7 depends on 0147.S6, because DR-12 lands before DR-9.
+- 0147-p2-F5: 0147.S9 depends on 0136.S2 and renders no node placement for reserved pods; the overlay's tests move to 0136.S5.
+- 0147-p2-F6 and runtime-contract-C10: 0147.S12 moves route admission onto the tenant view and depends on 0141.S2; DR-8 states the interim reading of access rows; 0147.S4 names the capability override handlers.
+- 0147-p2-F8: the Documentation table gains `reference/workspace-plan.md` with `client-guide/session-lifecycle.md`, `reference/metrics.md` with `alerting/rules.yaml`, runbooks for both alerts, and `reference/cloudevents-catalog.md`; §24 and `operator-guide/lenny-ctl.md` name the commands under the existing `lenny-ctl admin` convention.
+- 0147-p2-F9: `drainAndDeletePodSet` and `syncPodSet` replace the former names, tied to RT-1's removal, and DF-16's evidence names `pkg/gateway/platformtools/delegation/service.go`.
+- 0147-p2-F10: DR-12 states the outcome of a failed command `cwd`, maps 0153's `setup_failed` with `reason: cwd`, and makes `workspace.working_directory_fallback` a session event.
+- 0147-p2-F12: DR-10 drains idle marked pods above `reservedPods` first on each reconcile.
+- 0147-p2-F15: tests for the `reservation` forbid, `TenantReservationUnmet`, the `GET` reservation fields, and a failed command `cwd`; the tests of decisions 45, 48, and 49 wait on those decisions.
+- 0147-p2-F16: DR-7 states what a `reservation` forbid matches.
+- 0147-p2-F17: DR-10 repeats the tie rule for the floor.
+- 0147-p2-F18: 0147.S3 depends on 0153.S1, which builds the adapter's run queue on 0145.S3's `setup` request, and narrows to the removal of the adapter-container exec, the specification text, and DF-4's tests.
+- 0147-p2-F11 (part): "Configuration by scope" gains rows for `controller.tuning.gitStoreFillTimeout`, `adapter.prestageTimeoutSeconds`, `gateway.maxFinalizingTimeoutSeconds`, and `gateway.workspaceSealMaxDurationCeilingSeconds`.
+- program-C14 (part): "Names" requires the whole name to match the PLC-7 pattern through `runtimestore.ValidateName`, and 0147.S4 depends on 0137.S4 (part).
+- tenancy-security-C11: 0147.S8 owns the environment predicate at write and render, reading TS-1's fields, with whichever of 0147.S8 and 0149.S1 lands second adding the case.
+- removals-C4: the `security` test of identical answers uses `GET /v1/runtimes/{name}` in place of `/v1/models`.
+
+Raised as open decisions:
+
+- 45, an earlier pod set after a change to a tenant's `inline` or `artifact` assets (0147-p1-F4, program-C14).
+- 46, a `platform-admin`'s write through the tenant route (0147-p1-F6).
+- 47, the create rate limit and the bound on soft-deleted runtimes (0147-p1-F7).
+- 48, the reservation floor across a rollout's weight crossing (0147-p2-F1).
+- 49, alias admission for runtime routes, shared with 0141 (0147-p2-F3, runtime-contract-C9).
+- 50, the capability keys the per-tenant override may narrow, settled in 0140 (runtime-contract-C7).
+- 51, a `tenant-admin`'s reads of a platform runtime's revisions, shared with 0140 (runtime-contract-C11).
+- 52, defaults of the settings that state none (0147-p2-F11).
+
+Dropped or needing no edit here:
+
+- 0147-p1-F22: the review proposes no fix, and the notes after "Decisions" already state that the table keeps each decision's words as written.
+- program-C12: the reading rule for §26, §19, and §22 successors belongs to the program, and 0147's §26 edits follow it unchanged.
+- checkpoint-workspace-C1: the choice is between 0131 and 0146; 0147's `checkpointPolicy` row states no pod hold or cap, so its text holds under every option.
+- checkpoint-workspace-C11: the trust point is 0131's and 0145's; 0147 states nothing about broker trust.
+- runtime-contract-C2: the report key is between 0139 and 0140; 0147 is named only as an example.
+- runtime-contract-C13: the MD-24 frame table is 0135's and 0139's; 0147's `cwd` on `session_start` stays as stated.
+- 0147-p1-F21 and 0147-p2-F14, and 0147-p2-F13 with tenancy-security-C14: the fix is in 0121 and 0142 alone.
+
+Already settled: runtime-contract-C15, because 0141.S2 already lists F-10.7.22 under `closes`.
+
+Returned as issues: DF-15 (F-13.4.24) and DF-18 (F-13.4.25), both High and open in `BUILD-GAPS.md`, which no step of any member change lists under `closes` (0147-p2-F7).
+
+Second pass: the requests that the fix agents of other changes returned to this change, 19 in all, were closed against revision 80 without raising the revision or changing the status. Counts: 8 applied, 4 raised as open decisions (53 to 56), 4 already recorded as open decisions, 3 already done, and 0 dropped. One clause of the request from 0149 is not applied, for the reason given below.
+
+Applied:
+
+- 0119 (0119-F6, runtime-contract-C8): 0147.S4 drops its `0119.S4 (part)` edge and states that 0119.S4 builds no part of the `registered` check, because SD-P4 and `target_unsupervised` exist only in design text; `0141.S1` was already in its `depends-on`.
+- 0126 (0126-F9): "Fields" gains an `allowDelegation` row (restrict-only; `false` always; `true` only over a base that is not `false`), and "Configuration by scope" gains the tenant default `delegation.allowByDefault`, `allowDelegation` on a tenant runtime entry, and `allowDelegation` on a derived runtime.
+- 0137 (0137-F10, 0137-F14, program-C14): the `POST /v1/admin/derived-runtimes` row of "API" calls `runtimestore.ValidateName` and refuses with `422 INVALID_DERIVED_RUNTIME` naming `name`, and 0147.S1 states that whichever of 0147.S1 and 0137.S4 lands second removes F-5.1.31 from its `closes`; "Names" and the `0137.S4 (part)` edge were already in place.
+- 0142 (conditional on 0142 decision 41): 0147.S11 states the parts its edge on 0142.S2 moves to if the owner chooses option (a).
+- 0144 (0144-F3, steps): 0147.S4 states the grant counter of `content_stop_epochs` and the append to `planOriginRuntimes`, landed by whichever of 0147.S4 and 0144.S1 lands second, because an edge to 0144.S1 closes a loop of partial dependencies through 0122.S1, 0140.S1, and 0147.S5; 0147.S10 names the retirement the content stop check reads; 0147.S11 gains `0144.S1 (part)` and raises the security counter in the activation transaction of a content forbid.
+- 0149 (tenancy-security-C11): 0147.S8 owns the warm-list environment predicate at write and at render with the `environmentScoped` suspension, and whichever of 0147.S8 and 0149.S1 lands second adds the environment case.
+- 0152 (0152-F6): 0147.S8 states that whichever of 0147.S8 and 0152.S2 lands second wires the repository check onto the warm list with the withholding and `withheldWarmEntries`, and 0147.S7 states that whichever of 0147.S7 and 0152.S3 lands second adds the refusal of a default clone's `write: always` under `prAuthoring: user`; no edge joins either pair.
+- 0153 (0153-F6): the DF-15 row's closing column names 0153.S2, 0153.S5, and 0153.S6 in place of "Its own proposal, or EG-3".
+
+Raised as open decisions:
+
+- 53, a warm list on a pool that runs no `netagent`, mirroring O14 of 0118 (0118-F7); "Warm list" under "Warm stores" names it.
+- 54, the commit key a slot repository records, mirroring decision 70 of 0127 (0127-p1-F1); "Restore" names it, and **Shared capacity.** and "Relationship to draft proposal 0111" now name 0127's open decision 69 where they defer to the rewrite of 0111.
+- 55, which step lands the reserved overlay's field, mirroring O11 of 0136 (0136-F5); DR-10's **Nodes.** names it, and 0147.S9 already depended on 0136.S2.
+- 56, whether a stop on write access is a content stop, mirroring decision 9 of 0144 (0144-F2); "Write scope" names it, and the `content_stop_epochs` row of the stored formats now names DR-4, DR-6 for the retirement read, and DR-7 with SO-2.
+
+Already recorded as open decisions: O8 of 0137 as decision 45; O19 of 0139 and O15 of 0140 as decision 50, which gains option (c) and follows 0140's revised recommendation; O13 of 0140 as decision 51, whose option (a) no longer carries the edge 0140.S1 already holds; and D22 of 0141 as decision 49.
+
+Already done: removals-C4 for 0138 (the `security` test uses `GET /v1/runtimes/{name}`, and no other test names a removed surface), runtime-contract-C10 for 0141 (0147.S12 and its edge to 0141.S2), and runtime-contract-C8 for 0141 (0147.S4 builds the `registered` check and depends on 0141.S1).
+
+Not applied: the clause of the 0149 request that 0127.S5 adds the environment case for platform-declared entries when it lands after both 0147.S8 and 0149.S1. 0147.S8 depends on 0127.S5, so 0127.S5 never lands after 0147.S8.

@@ -1,5 +1,43 @@
 # Decisions: 0144 Session derive
 
+## Open decisions
+
+The M3 readiness review of 2026-11-19 raised decisions 9 to 13, which continue the numbering of the settled decisions below. Each entry states the question, the options, a recommendation, and what it blocks.
+
+- **9. Whether a stop on write access is a content stop.** "Stops" raises the counters when a grant flag `allowWorkspaceFiles`, `allowSetupCommands`, or `allowGitClones` is set false, and when a security record version adds `all`, `setupCommands`, `workspaceFiles`, `gitClones`, or `floatingCloneRefs` to `derivedRuntimes.forbid` or sets `verbatimClientFiles: forbid`. [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#write-scope) and [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) add three stops on write access since: the grant flag `allowGitCloneWrites` and the forbids `writableDefaultClones` and `alwaysWritableClones`, which 0147 calls "the stop after a compromise". "Writes" re-checks a copied writable entry against the VCS pool's allowlist and `allowWrite`, the user's access, a target that reuses pods, and `prAuthoring: user`, and reads none of the three. A session from before such a stop, derived onto the platform base with `runtimeRef`, keeps the writable entry its default clone added and pushes under the patterns the stop was meant to remove.
+  - (a) Raise the grant counter when `allowGitCloneWrites` is set false, and the security counter when a version adds `writableDefaultClones` or `alwaysWritableClones`. Every earlier plan under that grant entry or tenant is then refused.
+  - (b) At the derive's bind, apply the rules of 0147's "Write scope" to each writable entry a default clone added, with the current grant flags and forbids, so the entry reads as read-only and appears in `readOnlyDefaultClones`. No counter rises, and the derive proceeds without the write.
+  - Recommendation: (b). The derive still works and loses only the write, which matches the rule in "Writes" that an entry that no longer passes reads as read-only rather than refusing the derive.
+  - Blocks: the "Stops" and "Writes" parts of 0144.S1 and the matching `security` test, and the counter rows of 0147.S4, 0147.S11, and 0142.S2. The same question concerns 0147 and 0142.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0144-F2)
+- **10. Pending client tool calls after a restore from an older checkpoint and on a stale derive.** O18 of [`0122-client-tools`](../0122-client-tools/decisions.md) raises this question on 0122 and on this change. A `from: latest` derive with `allowStale: true` can copy a pending set onto a snapshot older than the turn that issued it, so the derived runtime holds neither the client message that caused the turn nor the calls. A REST session restored from such a checkpoint keeps its set in the same way, and the `duplicate_id` rule of 0122's "CT-4" needs every call id the session ever used.
+  - (a) At a restore from a checkpoint older than the turn that issued the pending set, the gateway clears the set and emits a `tool_use` event with a restore reason, and a derive copies the pending set only when its snapshot is at or after that turn. `duplicate_id` covers the `message` and the current pending set.
+  - (b) The set stays, and the runtime fails the turn with `error`. `duplicate_id` keeps the session scope, with a bounded store of issued ids that a restore resets.
+  - (c) The gateway delivers the missing turn as history.
+  - Recommendation: (a), as 0122 recommends.
+  - Blocks: the pending-set copy of 0144.S1 and 0122.S1. The owner's answer is recorded in 0122 and here together.
+  - (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C7, 0122-F8)
+- **11. Whether 0144.S1 splits.** 0144.S1 carries the replay removal, the admission and row-build extraction, the transcript changes and the `from=client` read, `origin` across four carriers, the session row fields, the stored plan on every bind path, the resume change, the plan check function, the storage reservation and the upload copy, the stop counters and check, the OpenAPI document, and about thirteen documentation pages. Revision 23 gives it `depends-on` edges marked `(part)` for the parts that wait. Other records name the step: 0147.S7 depends on it for the plan check function, 0153.S6 for the derive path, 0122.S1's text names its rewrite of the derive handler, issue CAPISES-I3 is planned for it, and milestone M4 of [`programs/v1.md`](../programs/v1.md) lists it.
+  - (a) Split it into four steps, each with its own `closes` and `depends-on`: 0144.S1 one route and admission (the replay removal, the row build, the gates, F-15.1.78, CAPISES-I3, and the `runtimeRef` half of F-15.1.76); 0144.S2 client messages (the transcript sender and delivery state, `from=client`, the client tool rules of CT-7, and F-15.1.77), after 0135.S1 and 0122.S1; 0144.S3 modes and the plan copy (`from`, `origin`, the row columns, uploads, the reservation, F-7.3.36, and the plan check function), after 0147.S3, 0118.S1, and 0119.S1; and 0144.S4 stops. 0147.S7 and 0153.S6 then depend on 0144.S3, and M4 lists the four steps.
+  - (b) Keep one step with the `(part)` edges of revision 23.
+  - Recommendation: (a). Each part is a reviewable branch, and the parts that wait on other changes no longer hold back the admission fix that closes CAPISES-I3.
+  - Blocks: the board's view of 0144.S1, and the edits to 0147.S7, 0153.S6, 0122.S1, and the program that option (a) needs.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0144-F4)
+- **12. The lifetime of a copied upload, and uploads to a derived session.** Under `from: start` each upload is copied to the new session with a new `uploadRef`, and the change does not state when a copy expires. "Costs" counts "7 days after each upload". The derive response also keeps its `uploadToken`, so a client can upload to the derived session, and an upload no plan names is not materialized, so such an upload uses the tenant's storage quota with no effect.
+  - (a) A copy keeps the expiry of the upload it copies, so a chain of `from: start` derives does not extend an upload past the source's lifetime, and an upload to a derived session is accepted and documented as having no effect.
+  - (b) A copy expires `UploadDefaultTTL` (7 days) after the copy, bounded by the tenant's `retention.sessionArtifactHours`, and an upload to a derived session is accepted and documented as having no effect.
+  - (c) Either lifetime, and an upload to a session whose plan is bound and names no further upload is refused with `400 VALIDATION_ERROR`.
+  - Recommendation: (a). The copy then follows the source's retention, and the upload routes keep their current rules.
+  - Blocks: the upload copy of 0144.S1, its `integration` test, and the "Costs" and documentation rows on the upload lifetime.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0144-F13)
+- **13. What restores the storage counter after a replica ends during a derive.** A `from: start` derive makes one `Reserve` on the tenant's storage counter before it copies the uploads. `undoDerivedWrites` releases it only on a failure inside the process. A replica that ends between the `Reserve` and the insert leaves the counter raised. The tree rebuilds the counter from the Postgres byte total only at gateway startup and on a Redis recovery edge (`pkg/quota/storagequota/recovery.go`), and that total counts outstanding checkpoint reservations alone.
+  - (a) Accept the drift until the next rebuild, and state it in the operator documentation.
+  - (b) Record the derive's reservation durably beside the checkpoint reservations that the byte total reads, and release a reservation whose derived session never inserted its row after a timeout.
+  - (c) Copy the uploads first and charge the counter in the insert's step, deleting the copies when the charge would pass the limit.
+  - Recommendation: (b). It uses the recovery path the checkpoint reservations already have, and the counter stays correct without a restart.
+  - Blocks: the reservation part of 0144.S1 and its `chaos` test.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0144-F15, 0144-F8)
+
 ## Owner's choice
 
 On 2026-11-04 the owner wrote: "I would change derive + replay so that everything is a derive with two options: derive at start of session or derive at now/the latest checkpoint. A new API can return the user messages from the source session and the client can choose to replay them (how it's up to the client)."

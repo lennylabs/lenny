@@ -28,4 +28,109 @@
 
 ## Open decisions
 
-The owner settled O1 to O13 on 2026-11-14 ("Decisions"), and no decision is open. The owner confirmed on 2026-11-15 the codes that revision 3 chose within O11, `INTERRUPT_UNSUPPORTED` at HTTP `409` and `INTERRUPT_TIMEOUT` at HTTP `504`, which reuses the status that the `Interrupt` RPC already returns at the deadline, and settled the `poolAttach` question of "RO-4" as S2.
+The owner settled O1 to O13 on 2026-11-14 ("Decisions"). The owner confirmed on 2026-11-15 the codes that revision 3 chose within O11, `INTERRUPT_UNSUPPORTED` at HTTP `409` and `INTERRUPT_TIMEOUT` at HTTP `504`, which reuses the status that the `Interrupt` RPC already returns at the deadline, and settled the `poolAttach` question of "RO-4" as S2.
+
+The M3 readiness review of 2026-11-19 raised O14 to O26, and its second pass raised O27 to O29 at the request of other member changes. Each entry states the question, the options, a recommendation, and what it blocks. Several are conflicts with other member changes, which record the same question under their own numbers.
+
+- **O14. Which step wires the event stream's live tail across replicas.** This change makes `GET /v1/sessions/{id}/events` the only stream that every adapter and every Lenny client reads ("RO-1", "RO-3", "RO-10"). §28.5.7 (`CH-EVENTRELAY`) and the §29 forwarding table already state that the serving replica reads the live tail from the relay, and "Specification changes" keeps that mechanism. In the tree, a reader on a replica that does not hold the session receives the relay's history and then no live events, because `RedisRelay.LiveFromCursor` in `pkg/gateway/streamproxy/sessionevents` has no caller ([CHSTORE-I2](../../issues/CHSTORE/CHSTORE-I2-sse-live-tail-across-replicas.md)), and no member step closes CHSTORE-I2. Until a step does, the conformance kit's stream check and the `chaos` test of "Tests" fail with more than one gateway replica, and 0138.S5's pin rule blocks.
+  - (a) 0138.S1 closes CHSTORE-I2. Its decision-8 line then also names `GWSEAM-Subscribe`, whose mechanism changes, and the step states two rules: the relay read starts from the last sequence number of the backlog, so that no event falls between the history and the blocking read, and a replica that holds the session drops duplicates by `SeqNum` between its local bus and the relay.
+  - (b) A step of another member change, or a new step, closes CHSTORE-I2, and 0138.S5 depends on it. No member change owns the stream area's build gaps today, so this option needs the owner to name the step.
+  - Recommendation: (a), because this change is the one that makes the event stream the only stream.
+  - Blocks: the `closes` entry and the decision-8 line of 0138.S1, and 0138.S5.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F1, which the verification downgraded from High to Medium)
+- **O15. Which revocations close an open event stream.** "RO-1" and O13 close a stream when its bearer's `jti` is revoked, for every reader. In the tree only playground bearers have a `jti` revocation store (`pkg/auth/authmw/auth.go` checks it for bearers whose origin is the playground), the stream proxy checks neither expiry nor revocation, and the design does not state which revocation applies to an externally issued OIDC bearer, a Token Service bearer, or an impersonation bearer. Revision 7 keeps `GWSEAM-IsBearerRevoked` for the stream proxy and adds the bearer's expiry to `GWSEAM-RequestCaller` in 0138.S1, which every option below needs.
+  - (a) The playground revocation store and the Token Service's revocation of the bearers it issues, impersonation bearers included, checked on an open stream at the interval at which the WebSocket checks today (2 seconds); an externally issued OIDC bearer closes at `exp` alone.
+  - (b) (a), plus a revocation list of external OIDC bearers by `jti` that an administrator writes.
+  - (c) The playground store alone; every other bearer closes at `exp`.
+  - Recommendation: (a). It closes every bearer whose revocation Lenny records, and Lenny learns of an external identity provider's revocation only through introspection, which the design does not add.
+  - Blocks: 0138.S1's stream close, its `integration` test, and the "Streams" documentation entry.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F2)
+- **O16. How `binding: header` and R14 reach the gateway through ingress.** "RO-4", **The adapter hop.**, states that ingress strips every `Lenny-*` and `X-Forwarded-*` header a client sends. A registration that is not first-party defaults to `binding: header` (O13) and names itself with `Lenny-Resource`, the adapter listener requires a client certificate, and the public listener sits behind ingress, so header binding fails closed for every such adapter: its `adapter-only` tokens answer `401 TOKEN_INVALID`. R14's `Lenny-Client-Protocol` is stripped for direct clients as well, which ROR-12 says can use every addition.
+  - (a) Ingress strips only the `Lenny-*` headers that ingress itself sets, and passes `Lenny-Resource` and `Lenny-Client-Protocol` from clients. The gateway reads `Lenny-Resource` only to narrow and `Lenny-Client-Protocol` only for attribution.
+  - (b) Every adapter uses the adapter listener with a client certificate, and `binding: header` leaves the registry, which changes the default that O13 settled.
+  - Recommendation: (a). Narrowing only removes authority, so a forged `Lenny-Resource` grants nothing, and R14 is attribution only.
+  - Blocks: 0138.S2, the `security` test of header stripping, and the ingress templates of 0138.S5.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F3)
+- **O17. Where R3's turn record lives.** R3 exposes each turn durably, from the `turn_end` payload (MD-20) and the transcript. No member change defines a per-turn record: MD-4 of [`0135-message-delivery`](../0135-message-delivery/change.md) records whether a turn is open and its ordinal, [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) records `last_turn_end` on the session row, and the code bullet of this change lists no turns table. The question is a conflict with 0135 and 0146.
+  - (a) 0135 defines a turn record (tenant, session, turn, status, cause, consumed messages with their output positions, usage by source, client tool calls, `firstSeq`, `lastSeq`, and timestamps) with its migration, retention, and erasure, in the step that adds MD-20, and R3 reads it.
+  - (b) 0138.S1 adds the same record, its migration, retention, and erasure, filled from `turn_end` and the transcript.
+  - Recommendation: (a), because 0135 defines the turn and its `turn_end` event.
+  - Blocks: R3 in 0138.S1 and its `component` test.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F4)
+- **O18. The turn status vocabulary, and what R19 writes to `last_turn_end`.** R3 reports `cut` with its cause, but `turn_end.status` in MD-20 of [`0135-message-delivery`](../0135-message-delivery/change.md) is `completed`, `failed`, `interrupted`, or `runtime_exit`, and [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) records a cut per session through `last_turn_end: cut` and `resume_notice_due`. R19 ends a turn `interrupted` and leaves the session `idle`, and states nothing about `last_turn_end`, which 0146's close rule reads, while 0146 SL-3 says the end-of-turn `message` of a turn that `interrupt_request` stopped leaves `last_turn_end: cut`. Both options add `cut` to `turn_end.status` in MD-20, with `error` naming the cause (`suspension`, `idle_timeout`, or `turn_lost`), and use the same set in R3.
+  - (a) R19 writes `last_turn_end: cut`, so a close after an interrupt records `cancelled`, and R16 refuses a continuation until a later turn ends `completed`.
+  - (b) R19 writes `last_turn_end: message`, so a close records `completed`, and R16 accepts a continuation after an `interrupted` turn.
+  - Recommendation: (a). It agrees with 0146 SL-3 and with R16's condition 2 as written. [`0135-message-delivery`](../0135-message-delivery/decisions.md) (its O12) and [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md) (its SL-Q6) record the same question.
+  - Blocks: R3 and R19 in 0138.S1, MD-20 in 0135, and SL-3 in 0146.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F4, client-api-sessions-C6)
+- **O19. How Lenny records the steps that O8 moves to adapter projects.** Under O8, AM-B and AM-C (0120.S2 and 0120.S3), CT-B (0122.S2), MP-1 to MP-4 and MP-9 (0134.S1 and 0134.S2), and MD-8's surface rules (0135.S2) belong to adapter projects, and all of them are `Planned` Lenny steps that the board lists as blocked work. [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/decisions.md) (its O21) and [`0122-client-tools`](../0122-client-tools/decisions.md) (its O11) record the same question for their steps.
+  - (a) Set each such step to `Cancelled` in Lenny with a pointer to the adapter repository that 0138.S5 creates, keeping its entry as the record.
+  - (b) Keep the steps as records under a new status that the board excludes.
+  - Recommendation: (a). The step statuses already allow `Cancelled`, and the board then stops counting work that no Lenny branch carries.
+  - Blocks: the board's count of ready and blocked work, and the move of 0120, 0122, 0134, and 0135 to `Implemented`.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F8)
+- **O20. The in-gateway MCP, translator, and A2A surfaces before 0138.S6.** 0138.S6 goes last "so that the MCP surface and the playground never disappear between steps". Earlier steps of [`0135-message-delivery`](../0135-message-delivery/change.md), [`0146-session-lifecycle`](../0146-session-lifecycle/change.md), [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md), and [`0122-client-tools`](../0122-client-tools/change.md) remove `PodExecutor.Send`, which the translators call, drop output from the send response, rename MCP tools, and state translator work that their own banners move out. 0122 (its O12), 0120 (its O14), 0135 (its O17), and 0146 (its SL-Q4) record the same question.
+  - (a) The surfaces that leave may stop working from the first step that changes what they call; each earlier step deletes or stubs the surface code it would otherwise port, and 0138.S6 removes the rest.
+  - (b) The surfaces keep working until 0138.S6, and each earlier step ports the translators and the MCP tools onto `Deliver`, receipts, and the renamed routes.
+  - (c) A new early step of this change removes the MCP and translator surfaces ahead of 0135.S1, which leaves MCP clients without a path until the MCP adapter ships in 0138.S5.
+  - Recommendation: (a). Lenny has no deployments to protect, and the program allows no transition mode for behavior a member change removes.
+  - Blocks: the ordering sentence of 0138.S6, and what the earlier steps of 0120, 0122, 0135, and 0146 do to the surfaces.
+  - (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C12, 0138-F8)
+- **O21. Cold continuation of a client tool round trip over REST.** "RO-10" has every provider adapter continue a conversation cold by creating a session with the history in `conversation.entries` (R15), and a Chat Completions cold turn places the client's tool results in the new session's history. [`0122-client-tools`](../0122-client-tools/change.md) states that REST has no cold path with history, refuses `toolResults` on a session with no pending calls, and under its O4 refuses client tools on `one_shot` runtimes, and AM-4's entries carry only `role`, `content`, and `new`. 0122 (its O13) and 0120 (its O22) record the same question.
+  - (a) Add a REST cold form and withdraw 0122's O4: entries carry `clientToolCalls` on assistant entries and `toolResults` on user entries, and a new session's first message may carry results that answer the calls of its last marked assistant entry.
+  - (b) Add the same cold form and keep 0122's O4 for `one_shot` runtimes.
+  - (c) Add no REST cold path, and "RO-10" states that a provider adapter cannot continue a tool round trip cold, so a `412` on R16 after a turn with calls fails the client's request.
+  - Recommendation: (a). This change sends a request cold on every failed conditional send, after an expiry, after a recovery to an older checkpoint, and after an edited history, so the cold branch is common.
+  - Blocks: R15 in 0138.S1, the provider adapters of 0138.S5, and 0122.S1.
+  - (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C1)
+- **O22. Retraction of client tool calls on a session that a provider adapter drives.** CT-5 of [`0122-client-tools`](../0122-client-tools/change.md) and MD-11 of [`0135-message-delivery`](../0135-message-delivery/change.md) answer a retraction with `retracted` on a REST session and `too_late` on a provider surface. Under this change a provider adapter creates ordinary sessions, R14's header is never read for a decision, and R18 is withdrawn, so the gateway applies the REST rule to every session, and an adapter's forwarded results for a retracted call meet `409 CLIENT_TOOL_CALLS_RETRACTED`. 0122 (its O14) and 0135 (its O21) record the same question.
+  - (a) One Lenny behavior, the REST row; the provider adapters drop results for retracted calls, using the `retracted` event or the `409` details, and the provider rows leave CT-5 and MD-11 for the adapters.
+  - (b) A session-creation field that an adapter sets, under which a retraction answers `too_late`, which brings back part of R18 and needs a capability tag under "RO-4".
+  - Recommendation: (a).
+  - Blocks: the provider adapters' retraction handling in 0138.S5, and the retraction rows that land with 0135.S2.
+  - (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C4)
+- **O23. Which step adds `capabilities.childSessions`, and where the `inputPolicy` rule for `ask_question` lands.** 0126.S1 of [`0126-delegation-availability`](../0126-delegation-availability/change.md) waits for 0135.S5 for `capabilities.childSessions`, 0135.S5 depends on 0126.S1 for the same field, and DA-4 omits `ask_question` on a session created with `inputPolicy: decline`, a field that arrives with 0138.S1, which lands after both. 0126 (its O9) and 0135 (its O22) record the same question. The consistency reports disagree: client-api-sessions-C9 recommends that 0126.S1 own the field, and program-C9 recommends that 0135.S5 own it.
+  - (a) 0126.S1 owns `capabilities.childSessions`, and DA-4's `ask_question` rule for `inputPolicy: decline` moves to 0138.S1.
+  - (b) 0135.S5 owns the field, 0126's capability check lands in a later 0126 step after 0135.S5, and the `inputPolicy` rule moves to that step.
+  - (c) 0135.S5 adds the field and the condition, as program-C9 states, and the `inputPolicy` rule moves to 0138.S1. This is option (c) of 0126's O9.
+  - Recommendation: (a).
+  - Blocks: the content of 0138.S1 under R12, 0126.S1, and 0135.S5.
+  - (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C9)
+- **O24. Whether 0138.S1 and 0138.S5 are split.** 0138.S1 carries fifteen REST additions, the download origin with its own key and listener, the event stream rules moved from §15.2, and the stream close on one branch, with no internal order. 0138.S5 carries Lenny's conformance kit, the umbrella chart's dependencies, and the creation of the adapter repositories with their first releases, which cannot land on a Lenny branch, and its chart pins need adapter releases that passed the kit.
+  - (a) Split 0138.S1 into reads (R1 to R3, R8, and R17), send rules (R5, R15, and R16), input (R4 and R12), R19, and R13 with the download origin, with R7 and R14, which the review did not place, in the first of them. Split 0138.S5 into the kit (Lenny), the adapter repositories and releases (outside Lenny, recorded as an external milestone or as validation owed), and the chart pins (Lenny, after the releases).
+  - (b) Split only 0138.S5 as in (a), and state an internal order for 0138.S1.
+  - (c) Keep both steps as they are.
+  - Recommendation: (a). Each branch then carries one reviewable part, and the work outside Lenny's repository leaves the Lenny steps.
+  - Blocks: the step identifiers of this change, and the edges that other changes take on 0138.S1 and 0138.S5 (0151.S8 among them).
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F9)
+- **O25. Whether 0138.S1 takes GWSTREAM-I1 and 0138.S4 takes CLIADM-I3.** [GWSTREAM-I1](../../issues/GWSTREAM/GWSTREAM-I1-event-bus-tenant-binding-gaps.md) names 0138.S1 as a natural place to tighten the event bus's tenant binding. [CLIADM-I3](../../issues/CLIADM/CLIADM-I3-session-client-timeout-shorter-than-start.md) concerns the 30-second timeout of the `lenny session` client, whose calls 0138.S4 moves onto REST.
+  - (a) 0138.S1 closes GWSTREAM-I1, and 0138.S4 closes CLIADM-I3.
+  - (b) Neither step takes them, and they wait for the stream and CLI areas.
+  - Recommendation: (a), because each step already rewrites the code each issue names.
+  - Blocks: the `closes` entries of 0138.S1 and 0138.S4.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F14)
+- **O26. Who may target a URL under `webhooks.internalTargets`.** R6 admits a private address under `webhooks.internalTargets` for every requester, while the `webhookTargets` restriction applies only to `adapter-only` tokens. A direct client can therefore create up to `webhooks.maxPerSession` subscriptions per session that target the A2A push relay. The relay refuses them, because the derived secret and the sealed data cannot be forged ("RO-9"), so the exposure is load on the relay.
+  - (a) A target under `webhooks.internalTargets` is admitted only on a narrowed request whose registration lists the prefix in `webhookTargets`. An operator who lists an in-cluster consumer for direct REST clients loses that path.
+  - (b) Keep the rule as written.
+  - Recommendation: (a). The prefixes exist so that the push relay can be a target, and only the A2A adapter's requests need it.
+  - Blocks: R6's target rule in 0138.S3 and its `security` test.
+  - (raised by the M3 readiness review, 2026-11-19; sources: 0138-F16)
+- **O27. Whether the public runtime index of R8 reports `runtimeRevision`.** "Discovery" under RV-2 of [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) has each discovery entry report `runtimeRevision`, and R8's `GET /v1/public-runtimes` is an unauthenticated route that answers the same for every caller, so an anonymous caller would see rollout activity. R8 as written lists each runtime's name and the keys of its public entries.
+  - (a) The public index omits `runtimeRevision`, and only the authenticated `GET /v1/runtimes` and `GET /v1/runtimes/{name}` report it.
+  - (b) The public index reports `runtimeRevision` as authenticated discovery does.
+  - Recommendation: (a). An anonymous caller is always shown the highest-weight revision, and the number gives it nothing it needs.
+  - Blocks: R8 in 0138.S1, its §15.1 row, and 0140.S1's discovery task. 0140 records the same question as its O18.
+  - (raised by the M3 readiness review, 2026-11-19; requested by change 0140)
+- **O28. Which part of 0146.S1 0138.S1 depends on if 0146.S1 is split.** SL-Q10 of [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md) asks whether 0146.S1 splits into a states step ("SL-1", "SL-10"), a suspension step ("SL-3" to "SL-5"), an idle and dormancy step ("SL-6"), and a close and cascade step ("SL-7", "SL-9"), and its option (a) re-points each edge that other changes hold on 0146.S1. 0138.S1 needs SL's routes, the `dormant` wake that R16 reads, the `interrupt_request` that R19 sends, and the `last_turn_end` record that O18 settles.
+  - (a) Under SL-Q10 (a), 0138.S1 depends on every split step, because SL's routes span them.
+  - (b) Under SL-Q10 (a), 0138.S1 depends on the states, suspension, and idle and dormancy steps alone, which hold what R3, R16, and R19 read, and 0138.S5 depends on the close and cascade step for the adapters that close sessions.
+  - Recommendation: (a). R3, R16, and R19 read state from each part, and one edge per split step keeps 0138.S1 from landing against a partial lifecycle. Under SL-Q10 (b) the edge on 0146.S1 stays as it is.
+  - Blocks: the `depends-on` entry of 0138.S1 once SL-Q10 is settled. 0146 records the split as its SL-Q10.
+  - (raised by the M3 readiness review, 2026-11-19; requested by change 0146)
+- **O29. Where the VCS webhook route of UG-4 sits among the gateway's routes.** UG-4 of [`0152-user-git-identity`](../0152-user-git-identity/change.md) adds a public webhook ingress to the gateway with signature verification, and no route for it appears in this change's routes, its "Routing" table under "RO-5", or the eligibility marks of "RO-4". ROR-1 states that the gateway serves one client API and no route on a protocol path, so the webhook route is a gateway route outside the client API, as R13's download origin and the RFC 9728 documents of R9 are.
+  - (a) One route per VCS pool, whose path names the pool, so the pool gives the tenant. This change lists it on the gateway's own route, unmarked by `x-lenny-adapter-eligible` so that no adapter may call it, and authenticated by the delivery's signature against the pool's webhook secret rather than by a bearer.
+  - (b) One platform route for every tenant, which resolves the tenant from the delivery's App installation identifier through the VCS pools that name that App, listed in the same way.
+  - (c) No ingress, with UG-4's sweep polling open pull requests and reviews, so this change lists no route.
+  - Recommendation: (a), as 0152 recommends. A forged or misrouted delivery reaches only the pool its path names, and each pool has its own secret.
+  - Blocks: the routes of 0138.S1 and the "Routing" table of 0138.S5, and 0152.S4. 0152 records the same question as its decision 56.
+  - (raised by the M3 readiness review, 2026-11-19; requested by change 0152)

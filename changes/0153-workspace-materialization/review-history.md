@@ -67,3 +67,77 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 
 The owner accepted three resolutions of conflicts between steps that the conversion of the moved designs into steps found (0113.S4). 0153.S4 and 0153.S8 depend on the generic stores, warm list, and `prestage` of 0127.S5 and on the fill of 0153.S9, in place of 0147.S8, which removes a dependency loop with 0147. Tenant entries and withheld trees arrive with 0147.S8's staging part.
 - 2026-11-17. Decision 8 of [0117](../0117-gateway-package-layout/decisions.md), settled by the owner, assigns this change the edits to the gateway seam interface page and `pkg/gateway/seam` for the mechanisms it changes. Added a line naming the operations to 0153.S3 in `steps.md`, and the decision to `decisions.md`.
+
+## M3 readiness review (2026-11-19)
+
+Revision 15, 2026-11-19. Trigger: review. Name: M3 readiness review. The review read revision 14 against `main` at `092ef92f6` (`scratchpad/m3-readiness/reviews/0153.md`), with the skeptic's verdicts on its High findings (`scratchpad/m3-readiness/verified/0153.md`) and the consistency reports `pod-structure`, `checkpoint-workspace`, `program`, and `removals`. The skeptic confirmed 0153-F1 as High and downgraded 0153-F2 to Medium. The status stays `Draft`.
+
+Counts: 23 applied (wholly or in part), 9 raised as open decisions (O10 to O18), 0 returned as issues, and 4 dropped. Parts of 0153-F10 and 0153-F16 were dropped, as listed below.
+
+Applied:
+
+- 0153-F3, in part: "WM-4" **While staging.** no longer says that a slot holds staging space only while the helper applies its current source; it states that a slot holds at most one content source and that the source holds its space through the sources before it in plan order. The per-slot cap is O13.
+- 0153-F5, in part, with pod-structure-C7 in part: 0153.S9 holds the fill program, the store fill, the pristine trees, and the adapter's delete-only use of the store volume, and points to 0118.S4 for the init container and to 0127.S5 for `netagent`'s attribution of the fill's UID. 0153.S2 states that 0118.S4 renders `lenny-spool` and that this step lands the staging accounting. The worker's ownership is O14, and the 0127.S3 sentence on the fetch grant is returned as an edit needed in 0127.
+- 0153-F6: `closes` entries. 0153.S1 closes T-7.5.4; 0153.S2 closes F-13.4.24 (part) and F-8.7.16 (part), the materializer half that 0147.S3 names; 0153.S3 closes T-7.4.1, T-7.4.2, T-7.4.3, and T-7.4.13; 0153.S5 and 0153.S6 close the remaining parts of F-13.4.24. Each step names its part. F-7.5.17 stays with 0145.S3 and 0147.S3, which already list it.
+- 0153-F7 and checkpoint-workspace-C2, in part: 0153.S2 depends on 0131.S7; 0153.S8 depends on 0131.S4, the only direction that closes no cycle, and its description adds `prestageTimeoutSeconds`, the skip with `lenny_prestage_skipped_total` and `PrestageSkipped`, the runtime write's `Warning`, and the contribution with the file-index record; 0153.S4 names the fetch-grant client of WMR-24; 0153.S5 depends on `0135.S5 (part)` for its import part; 0153.S9 waits on the `lenny-store-fill` feasibility validation; and every item of "Validation owed" names the step that waits on it. The ownership of `capture-copy` and `restore-complete` is O17.
+- 0153-F8, in part: the `GWSEAM-WriteWorkspace` reshaping moves from 0153.S3 to 0153.S5, and 0153.S3's decision-8 line depends on O15. "WM-12" states how a mid-session upload reaches the gateway in the tree. The metric emitters are O15, and the mid-session upload's bytes and archives are O16.
+- 0153-F9: 0153.S2 states that its helper applies the internal `symlink` source of the gateway's extraction under the link rules of "WM-9" until 0153.S3 removes it, and that each extracted entry is one staged source.
+- 0153-F10 and program-C16, in part: the paths name `pkg/gateway/core/session/podsession` and `pkg/runtime/runtimestore`. The Tests table uses tier names, the Pod Security admission row is `security`, the Kata and user-namespace part of the store-fill test moves to `e2e_cloud`, and the `docs` row runs the general gates and catalog checks in place of the prose test. "Specification changes" gains **Target pages.**, naming the placeholder pages that list this change and noting 0119's heading renames, and a paragraph after "Requirements" states that each WMR takes a page-coded identifier on the page that absorbs its section.
+- 0153-F11: "WM-15" states that a bind after a cancelled `prestage` waits for the `discard` that follows it, bounded by `adapter.discardTimeoutSeconds`, in place of "staging never delays a bind"; **Timeout (D26).** follows.
+- 0153-F12: "WM-7" states that `restore-complete` and `materialize` are two helper runs.
+- 0153-F13: "WM-10" no longer lists `overlay` among the runs a fetch grant covers. The matching sentence of 0127 is returned as an edit needed there.
+- 0153-F14: "WM-4" step 4 has the helper receive content messages with `MSG_CMSG_CLOEXEC`.
+- 0153-F15: "WM-10" and WMR-24 have the adapter send the slot's next `setup` only after `netagent` acknowledges the revocation, and an `e2e_kind` test follows. The acknowledgment on `CH-FETCHGRANT` is returned as an edit needed in 0127.
+- 0153-F16, in part: "Documentation" names existing pages (`docs/reference/adapter-contract.md`, `docs/client-guide/session-lifecycle.md`, `docs/client-guide/error-handling.md`, and `docs/reference/glossary.md`) and adds `docs/reference/error-catalog.md` and `docs/reference/workspace-plan.md`.
+- 0153-F17, in part: tests for the warning cap (`unit`), `content_mismatch` and a failed or timed-out store fill (`integration`), and the grant's revocation (`e2e_kind`). The tests for a `setsid` child of `prestage` and a stopped helper holding staging follow O10 and O13.
+- 0153-F18: WMR-27 and WMR-28 follow WMR-26.
+- 0153-F20: the "Validation record" states that the runs' code and logs did not persist and that a **[measured]** claim can be re-checked only by repeating its run.
+- 0153-F21: the §15.1 row states that `UPLOAD_ARCHIVE_LIMIT_EXCEEDED` also carries `size_limit`, `git_tree_limit`, and `content_mismatch`.
+- checkpoint-workspace-C9, with the request in 0131's "Changes requested of other designs": "WM-10" states that `capture-copy` is incremental under 0131's decision D6, and "WM-10" and the run-bound table of "WM-11" bound it by the remaining budget of its checkpoint, with a checkpoint whose copy is cut short proceeding.
+- checkpoint-workspace-C10: the checkpoint exception of "WM-9" covers a derive's source packs, platform packs, and a child's packs under the gateway's grants and S4.
+- program-C5, in part: the settled O1 to O9 move from "Open decisions" to "Settled open decisions O1 to O9" under "Decisions", so the board counts only questions that wait on the owner.
+- Found while checking 0153-F10: the §7.4 row said that a source that waits past its run's deadline fails with `staging_limit`; it now says `staging_timeout`, as "WM-4" and D24 state.
+
+Raised as open decisions:
+
+- O10: whether a process that escapes a `prestage` run can reach the next session, with the skeptic's note on the residue in an adopted `.git` (0153-F1, pod-structure-C2; with 0145's O18 and 0131's D24).
+- O11: from which run the adapter distrusts a slot's broker replies (checkpoint-workspace-C11, 0153-F1; with 0145's O24 and 0131's D24).
+- O12: the RPC that carries the adapter's request for one content source, with the skeptic's `GatewayControl` option (0153-F2).
+- O13: a per-slot cap on staging and when a source is staged (0153-F3).
+- O14: which step owns the `CH-SUPERVISE` worker and what a `freeze` does during a `cleanup` run (0153-F4, 0153-F5, 0153-F19, pod-structure-C6, checkpoint-workspace-C3, pod-structure-C7; with 0145's O20).
+- O15: which process emits the extraction-abort metric and the new metrics (0153-F8).
+- O16: where a mid-session upload's bytes wait and whether it accepts archives (0153-F8; with 0138).
+- O17: which step owns the `capture-copy` and `restore-complete` wiring (checkpoint-workspace-C2; with 0131's D27).
+- O18: how a `sealOnly` or `none` session resumes after pod loss (checkpoint-workspace-C4; with 0131's D30, 0146, and 0140).
+
+Dropped:
+
+- program-C1: a question for the program's reading guidance on the specification lane; the "Target pages" paragraph points to it, and it is returned as an edit needed in the program.
+- program-C8: none of its sentences is in this change.
+- program-C9: the only sentence naming this change is 0127.S3's, returned as an edit needed in 0127; 0153.S4 already depends on 0127.S3.
+- checkpoint-workspace-C8: "WM-13" already repeats the first bind for a resume before the first checkpoint, which 0131 now states, so this change needs no edit.
+- 0153-F10, the part that says the `integration` tier has no agent pods: TESTING.md lists agent pods in the compose stack of `integration`, so the two-slot rows stay there.
+- 0153-F16, the part that names `docs/reference/cloudevents-catalog.md`: `PrestageSkipped` is a Kubernetes event on the `AgentPod`, and the catalog holds neither Kubernetes events nor the plan warnings, so no row is added.
+
+Second pass, 2026-11-19. The pass closed the 11 edits that the fix agents of other changes requested of this change. Counts: 3 applied, 4 already done by this change's first pass, 3 raised as open decisions, which add the six decisions O19 to O24, 1 already recorded as open decisions, and 0 dropped.
+
+Applied:
+
+- 0121 (0121-F23): 0153.S7 uses the chart value `runtimes.minSlotMemoryBytes` that 0121.S1 adds, and the `charts/` row of "Non-specification changes" no longer lists it.
+- 0144 (0144-F5): 0153.S6 states that it delivers and tests the helper, broker, and slot-UID parts of 0144's derive cases.
+- 0147 (0147-p2-F4): 0153.S1 depends on 0147.S6 for the `setup` request's `cwd`. The `closes` half (F-8.7.16 and F-13.4.24 on 0153.S2) was already done.
+
+Already done: 0131's requests on incremental `capture-copy` in "WM-10" (0131-p1-F8), the run bound of "WM-11" (checkpoint-workspace-C9), the checkpoint exception of "WM-9" (checkpoint-workspace-C10), and 0153.S2's edge to 0131.S7 (checkpoint-workspace-C2).
+
+Already recorded: 0145's request that WMR-12, WMR-14, 0153.S1, "WM-3", and "WM-15" follow its O20, O18, and O24 is held by O14, O10, and O11.
+
+Raised as open decisions:
+
+- O19: which step renders the `lenny-store-fill` init container and how 0118.S4 is ordered against 0145.S1 (requested by 0118; matches 0118's O11). The ownership half of 0118's request on 0153.S9 and 0153.S2 was already done.
+- O20: the usable size of a slot volume and a disk-watch trip with no session bound (requested by 0118; matches 0118's O13).
+- O21: a pod with a non-empty warm list on a pool that runs no `netagent` (requested by 0118; matches 0118's O14).
+- O22: the commit key a slot repository records, `lenny.baseCommit` against `lenny.storeCommit` (requested by 0127; matches 0127's decision 70, and names its decision 69).
+- O23: how the child-file import is ordered against 0153.S5 (requested by 0135; matches 0135's O18).
+- O24: which step closes F-8.7.17 (requested by 0135; matches 0135's O19).
+
+0153.S5, 0153.S8, and 0153.S9 name the new decisions that block them.

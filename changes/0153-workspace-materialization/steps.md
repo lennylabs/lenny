@@ -4,6 +4,8 @@
 
 **The materialization spike, 2026-11-12.** A kind v1.35.0 cluster on Docker Desktop for arm64, kernel 6.12.76-linuxkit, with runc and with gVisor `release-20261109.0` on the systrap platform, in a namespace enforcing Pod Security Standards Restricted, with read-only root filesystems. The slot ran as UID 20000 and the adapter as UID 10000. The spike ran on the layout before SI D10, with the worker's working directory at the volume root `/workspace/slots` and the helper staged in `/stage`, and its results carry over to the owner's final layout, where the volume root is `/workspace` and the helper is in `/lenny/bin` **[inference]**. The cluster has been deleted. Its code and logs were under the session scratchpad's `spike-mat/`: `sup/` held `fdin.c` and the patched supervisor, `sm/` held the helper (`mat.go`) and the adapter (`adapter.go`, `proto.go`), `k8s/gen.sh` rendered the pods, and `logs/` held the runs `mr` and `mg` (runc and gVisor, 512Mi slot), `eq-mr` and `eq-mg` (equal 1Gi limits), and `mr-mem`, `mr-mem1g`, and `mr-mem1g-b` (memory runs).
 
+The code and logs of every run below lived in a session scratchpad that did not persist, and this change has no `evidence/` folder. The tables below are the only record of the results, so a **[measured]** claim can be re-checked only by repeating its run.
+
 **Protocol, as the materialization spike built it.** The spike's prototype passed content descriptors on `setup` itself, at descriptor 6 and above, and ran a synchronous worker. The asynchronous-worker spike below replaced both.
 
 | Check | Result, runc and gVisor |
@@ -90,23 +92,23 @@ Helper resident memory: 20 to 33 MB for 100,000 files in `tar.gz`, 61 to 75 MB i
 
 ## Validation owed
 
-- Slot memory and the memory-cgroup behaviour of materialization on managed node filesystems on EKS, GKE, and AKS, with `runtimes.minSlotMemoryBytes` and pacing, at 512Mi, 1Gi, and 2Gi, with 1 GiB and 4 GiB plans run back to back, and the cause of both kills in the memory runs.
-- x86_64; every run was arm64.
-- The pinned git built static and staged `0111`, and every O11 step in the helper: init, alternates, the fetch through `netagent`, the tree-size check, checkout, the move, the index refresh with and without the 1 s wait, the capture copy, and restore completion.
-- The fetch grant in `netagent`. SI O9's attribution under runc, gVisor, and Kata is measured: the AWS spike of 2026-11-14 found that runc answers `sock_diag`, and gVisor and Kata answer only `/proc/net/tcp`, with the right slot UID on every answering reader ([its report, "Test 1: per-slot attribution"](../0118-agent-pod-layout/evidence/attribution-and-quota-spike/RESULTS.md#test-1-per-slot-attribution); [`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants), revision 83). The grant itself, with the production `netagent`, is still owed.
-- The overlay directory under the owner's final layout, with the working directory at the volume root, the no-replace fallback, and a checkpoint walk running during an overlay.
-- The gap that a directory-descriptor cache would close, on gVisor and on managed nodes (D13).
-- The content socket: one source at a time with done pipes under runc, gVisor, and Kata, the cost per source for plans of many small uploads, truncation of a staged file the helper still holds, and the descriptor checks of "WM-4" on a descriptor received over a socket.
-- `FICLONE` from the spool into the workspace on the node filesystems of EKS, GKE, and AKS, and the fallbacks under gVisor and Kata.
-- The warm-up checkout: `prestage` times for Chromium and Linux by checkout and by reflink rebuild; whether the index refresh after `git read-tree` re-reads every file, and whether a copied index under `core.checkStat=minimal` avoids it; the cost of deleting an unused Chromium tree in the background and its effect on the session's own disk use and broker latency; and the incremental checkout at bind when the commit moved.
-- Kata, through a kubelet.
-- A distroless runtime image, which has no shell and no git of its own.
-- `pidfd_getfd` and `ptrace` from a sibling against the helper and its git children, under the RuntimeDefault seccomp profile and gVisor.
-- `RLIMIT_FSIZE` and `SIGXFSZ` under gVisor through a kubelet, and the empty environment with the pinned git.
-- `lenny-store-fill`'s feasibility, which the owner made a condition of D20: the stores readable by every slot's UID; the adapter's deletion of a store whose files the fill's UID owns, on runc, gVisor, Kata `block-plain` with the dedicated `fsGroup`, and Kata virtio-fs; `netagent`'s attribution of the fill's UID as the platform fill; and the fill's UID mapped within the pod's range under user namespaces. The hostile-repository stress test suite of D23 runs as tests on runc, gVisor, and Kata: setgid and setuid files, symbolic-link and hard-link farms, deep and wide trees, directories of mode `000`, name collisions, very large files, and a deletion racing a slot's reads, as PL's "Validation owed" lists it.
-- The shared staging space under concurrent imports on a pod with four slots: the waits, the order, and the spool's kubelet count against `spoolSizeLimitBytes` on gVisor's default mount.
-- The helper's writeback pacing and its effect on the 512Mi throttling.
-- The earliest runsc release that supports the supervisor's `close_range`, `openat2`, and `STATX_MNT_ID`; `release-20261109.0` is verified.
+- Slot memory and the memory-cgroup behaviour of materialization on managed node filesystems on EKS, GKE, and AKS, with `runtimes.minSlotMemoryBytes` and pacing, at 512Mi, 1Gi, and 2Gi, with 1 GiB and 4 GiB plans run back to back, and the cause of both kills in the memory runs. Waits on it: 0153.S7.
+- x86_64; every run was arm64. Waits on it: 0153.S2 and 0153.S4.
+- The pinned git built static and staged `0111`, and every O11 step in the helper: init, alternates, the fetch through `netagent`, the tree-size check, checkout, the move, the index refresh with and without the 1 s wait, the capture copy, and restore completion. Waits on it: 0153.S4.
+- The fetch grant in `netagent`. SI O9's attribution under runc, gVisor, and Kata is measured: the AWS spike of 2026-11-14 found that runc answers `sock_diag`, and gVisor and Kata answer only `/proc/net/tcp`, with the right slot UID on every answering reader ([its report, "Test 1: per-slot attribution"](../0118-agent-pod-layout/evidence/attribution-and-quota-spike/RESULTS.md#test-1-per-slot-attribution); [`0127-egress-and-git`, "Slot attribution and fetch grants"](../0127-egress-and-git/change.md#slot-attribution-and-fetch-grants), revision 83). The grant itself, with the production `netagent`, is still owed. Waits on it: 0153.S4.
+- The overlay directory under the owner's final layout, with the working directory at the volume root, the no-replace fallback, and a checkpoint walk running during an overlay. Waits on it: 0153.S5.
+- The gap that a directory-descriptor cache would close, on gVisor and on managed nodes (D13). No step waits on it; it decides whether a later release adds the cache.
+- The content socket: one source at a time with done pipes under runc, gVisor, and Kata, the cost per source for plans of many small uploads, truncation of a staged file the helper still holds, and the descriptor checks of "WM-4" on a descriptor received over a socket. Waits on it: 0153.S2.
+- `FICLONE` from the spool into the workspace on the node filesystems of EKS, GKE, and AKS, and the fallbacks under gVisor and Kata. Waits on it: 0153.S2 for staged uploads and 0153.S8 for the reflink rebuild.
+- The warm-up checkout: `prestage` times for Chromium and Linux by checkout and by reflink rebuild; whether the index refresh after `git read-tree` re-reads every file, and whether a copied index under `core.checkStat=minimal` avoids it; the cost of deleting an unused Chromium tree in the background and its effect on the session's own disk use and broker latency; and the incremental checkout at bind when the commit moved. Waits on it: 0153.S8.
+- Kata, through a kubelet. Waits on it: 0153.S2.
+- A distroless runtime image, which has no shell and no git of its own. Waits on it: 0153.S4.
+- `pidfd_getfd` and `ptrace` from a sibling against the helper and its git children, under the RuntimeDefault seccomp profile and gVisor. Waits on it: 0153.S2.
+- `RLIMIT_FSIZE` and `SIGXFSZ` under gVisor through a kubelet, and the empty environment with the pinned git. Waits on it: 0153.S1 for `RLIMIT_FSIZE` and 0153.S4 for the pinned git.
+- `lenny-store-fill`'s feasibility, which the owner made a condition of D20: the stores readable by every slot's UID; the adapter's deletion of a store whose files the fill's UID owns, on runc, gVisor, Kata `block-plain` with the dedicated `fsGroup`, and Kata virtio-fs; `netagent`'s attribution of the fill's UID as the platform fill; and the fill's UID mapped within the pod's range under user namespaces. The hostile-repository stress test suite of D23 runs as tests on runc, gVisor, and Kata: setgid and setuid files, symbolic-link and hard-link farms, deep and wide trees, directories of mode `000`, name collisions, very large files, and a deletion racing a slot's reads, as PL's "Validation owed" lists it. Waits on it: 0153.S9, which the owner's condition on D20 gates.
+- The shared staging space under concurrent imports on a pod with four slots: the waits, the order, and the spool's kubelet count against `spoolSizeLimitBytes` on gVisor's default mount. Waits on it: 0153.S2 and 0153.S5.
+- The helper's writeback pacing and its effect on the 512Mi throttling. Waits on it: 0153.S7.
+- The earliest runsc release that supports the supervisor's `close_range`, `openat2`, and `STATX_MNT_ID`; `release-20261109.0` is verified. Waits on it: 0153.S1.
 
 ## Steps
 
@@ -114,31 +116,42 @@ Helper resident memory: 20 to 33 MB for 100,000 files in `tar.gz`, 61 to 75 MB i
 - status: Planned
 - aliases: [WM-A, WM-3, WM-11]
 - lanes: [specification, code, documentation]
-- depends-on: [0145.S1, 0145.S3]
+- depends-on: [0145.S1, 0145.S3, 0147.S6]
+- closes: [T-7.5.4]
 
-The supervisor's asynchronous worker and `setup` with descriptors, log pipes, cancellation by close, the process-group kill, `env`, `cwd`, `RLIMIT_FSIZE`, the refusal rule, and the adapter's per-slot run queue.
+The supervisor's asynchronous worker and `setup` with descriptors, log pipes, cancellation by close, the process-group kill, `env`, `cwd`, `RLIMIT_FSIZE`, the refusal rule, and the adapter's per-slot run queue, which sends each setup command of `RunSetup` as its own `setup`. Which of this step and [0145.S3](../0145-session-isolation/steps.md#steps) owns the worker and its refusal rule, and what a `freeze` does during a `cleanup` run, is open decision O14 in `decisions.md`, which matches O20 of `0145-session-isolation`.
 
-The step needs SI-A (slot containers, [0145.S1](../0145-session-isolation/steps.md#steps)) and SI-C (D6's `setup`, [0145.S3](../0145-session-isolation/steps.md#steps)).
+It closes T-7.5.4: `RunSetup` sends one `setup` per command, and the `contract` tests of `setup` and `setupdone` replace the missing contract test of `RunSetup`.
+
+The step needs SI-A (slot containers, [0145.S1](../0145-session-isolation/steps.md#steps)) and SI-C (D6's `setup`, [0145.S3](../0145-session-isolation/steps.md#steps)). It also needs DR-12's plan and wire contract ([0147.S6](../0147-tenant-derived-runtimes/steps.md#steps)), which adds `setupCommands[].cwd`, the field the `setup` request's `cwd` carries.
 
 ### 0153.S2 lenny-materialize for files and uploads
 - status: Planned
 - aliases: [WM-B, WM-1, WM-2, WM-4, WM-5, WM-6, WM-7, WM-8, WM-16]
 - lanes: [specification, code, documentation]
-- depends-on: [0153.S1, 0145.S2, 0118.S4]
+- depends-on: [0153.S1, 0145.S2, 0118.S4, 0131.S7]
+- closes: [F-13.4.24 (part), F-8.7.16 (part)]
 
 `lenny-materialize` for `inlineFile`, `mkdir`, and `uploadFile`; per-source staging, the content socket and done pipes, `spoolSizeLimitBytes` with the shared staging space, its wait, its admission floor, and the gateway's refusal at upload, reflink clones of staged files, the plan memfd, and result validation; staging in `/lenny/bin`; pre-start `materialize` with the working-directory check through the broker.
 
-The step needs SI-B (the broker, [0145.S2](../0145-session-isolation/steps.md#steps)) and PL-B ([0118.S4](../0118-agent-pod-layout/steps.md#steps)).
+Until 0153.S3 removes the gateway's extraction, the gateway's `rewriteExtractedSources` still sends each archive entry as an `uploadFile` source, with `mkdir` sources and the internal `symlink` source variant. The helper of this step therefore also applies the internal `symlink` source under the link rules of "WM-9", and each extracted entry is one staged content source, which "Limits" names as the inefficient case.
+
+The step needs SI-B (the broker, [0145.S2](../0145-session-isolation/steps.md#steps)) and PL-B ([0118.S4](../0118-agent-pod-layout/steps.md#steps)), which renders `lenny-spool` with `spoolSizeLimitBytes` as its `sizeLimit`; this step lands the staging accounting, its wait, and its admission floor. The staging space and its admission floor use `checkpointCaptureBudgetBytes` and `spoolHeadroomFactor`, which IC-7 ([0131.S7](../0131-incremental-checkpoint/steps.md#steps)) defines. The carrier of the per-source request on `PrepareWorkspace` is open decision O12 in `decisions.md`.
+
+It closes the part of F-13.4.24 that covers pre-start writes without a seed: every write of `inlineFile`, `mkdir`, and `uploadFile` sources resolves under `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS` at the slot UID. It closes the materializer half of F-8.7.16, a parent's exports written into the child by the helper at the child's slot UID; [0147.S3](../0147-tenant-derived-runtimes/steps.md#steps) closes the setup-command half.
 
 ### 0153.S3 Archive extraction in the helper
 - status: Planned
 - aliases: [WM-C, WM-9]
 - lanes: [specification, code, documentation]
 - depends-on: [0153.S2]
+- closes: [T-7.4.1, T-7.4.2, T-7.4.3, T-7.4.13]
 
-Archive extraction in the helper and its removal from the gateway; the §7.4 and §13.4 rewrite. The gateway's extraction stays until 0153.S3 lands, so nothing breaks between steps.
+Archive extraction in the helper and its removal from the gateway, the internal `symlink` source variant included; the §7.4 and §13.4 rewrite. The gateway's extraction stays until 0153.S3 lands, and 0153.S2's helper applies the sources it emits, so nothing breaks between steps.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-RecordExtractionAbort` and reshapes `GWSEAM-WriteWorkspace`, as archive extraction leaves the gateway (WM-9).
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-RecordExtractionAbort`, as archive extraction leaves the gateway (WM-9), unless open decision O15 keeps the gateway counting `lenny_upload_extraction_aborted_total`, in which case it reshapes the operation to count the reasons that `FinalizeWorkspace` maps.
+
+It closes T-7.4.1 and T-7.4.2 with the helper's tests against the hostile archives of "Validation record", at `unit` and at `component` through the content socket, which replace the gateway extractor those findings name. It closes T-7.4.3 and T-7.4.13 because the mechanisms they leave untested, the post-promotion symlink re-validation and the Upload Handler's extraction isolation, leave the tree with this step.
 
 ### 0153.S4 Git in the helper
 - status: Planned
@@ -146,7 +159,7 @@ Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this st
 - lanes: [specification, code, documentation]
 - depends-on: [0153.S2, 0127.S3, 0131.S1, 0127.S5 (part), 0153.S9 (part)]
 
-Git in the helper: the pinned git, `gitClone`, the tree-size check, the index refresh, `capture-copy`, and `restore-complete`.
+Git in the helper: the pinned git, `gitClone`, the tree-size check, the index refresh, `capture-copy`, and `restore-complete`, and the adapter's fetch-grant client of WMR-24, which registers a grant before a fetching helper run and revokes it at `setupdone`. Which step owns the adapter's calls to `capture-copy` and `restore-complete`, given that [0131.S1](../0131-incremental-checkpoint/steps.md#steps) runs them and this step depends on it, is open decision O17 in `decisions.md`, which matches D27 of `0131-incremental-checkpoint`.
 
 The step needs EG proposal 3 ([0127.S3](../0127-egress-and-git/steps.md#steps)), which is also the egress step that carries the fetch grant, and the IC change for the capture copy, which is IC-1's "Git repositories" ([0131.S1](../0131-incremental-checkpoint/steps.md#steps)). Its store parts, step 2 of WM-10 (alternates), `capture-copy`, and `restore-complete`, need the stores of the rewritten draft 0111 ([0127.S5](../0127-egress-and-git/steps.md#steps)) and their fill (0153.S9), and land with them or after them. 0153.S3 and 0153.S4 can land in either order after 0153.S2.
 
@@ -154,19 +167,29 @@ The step needs EG proposal 3 ([0127.S3](../0127-egress-and-git/steps.md#steps)),
 - status: Planned
 - aliases: [WM-E, WM-12]
 - lanes: [specification, code, documentation]
-- depends-on: [0153.S2, 0131.S1, 0135.S5]
+- depends-on: [0153.S2, 0131.S1, 0135.S5 (part)]
+- closes: [F-13.4.24 (part)]
 
 Mid-session `overlay` for uploads and child-file imports, `discard`, and the checkpoint's skip of the reserved names.
 
-The step needs IC-1 ([0131.S1](../0131-incremental-checkpoint/steps.md#steps)) and the MD-26 proposal ([0135.S5](../0135-message-delivery/steps.md#steps)).
+The step needs IC-1 ([0131.S1](../0131-incremental-checkpoint/steps.md#steps)), and its child-file import part needs the MD-26 proposal ([0135.S5](../0135-message-delivery/steps.md#steps)); the mid-session upload part does not. How the import is ordered against this step is open decision O23 in `decisions.md`, which matches O18 of `0135-message-delivery`.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operation it changes. It reshapes `GWSEAM-WriteWorkspace`, which carries a mid-session upload's file contents to the session core today, as open decision O16 settles where a mid-session upload's bytes wait.
+
+It closes the part of F-13.4.24 that covers writes into a live tree: an overlay moves each entry into place under `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, and a write through a link the agent planted fails with `path_crosses_symlink`.
 
 ### 0153.S6 Resume, derive, and snapshotless rebuild
 - status: Planned
 - aliases: [WM-F, WM-13]
 - lanes: [specification, code, documentation]
 - depends-on: [0153.S2, 0153.S4, 0131.S5, 0144.S1]
+- closes: [F-13.4.24 (part)]
 
 Resume, derive, and the snapshotless rebuild through the helper.
+
+It delivers and tests the helper, broker, and slot-UID parts of the derive cases of [`0144-session-derive`](../0144-session-derive/change.md): `from: latest` restores the snapshot through the slot's broker and runs `restore-complete`, `from: start` runs `materialize` from the copied plan, and each creates entries owned by the slot UID. [0144.S1](../0144-session-derive/steps.md#steps) tests the snapshot restore and the plan rebuild on the bind paths the tree has when it lands.
+
+It closes the last part of F-13.4.24: a source applied over a restored seed resolves under `openat2` with `RESOLVE_BENEATH | RESOLVE_NO_SYMLINKS`, so a chained link the seed carries fails the write with `path_crosses_symlink` rather than redirecting it.
 
 The step needs IC-5 ([0131.S5](../0131-incremental-checkpoint/steps.md#steps)) and SD-1 ([0144.S1](../0144-session-derive/steps.md#steps)).
 
@@ -176,7 +199,7 @@ The step needs IC-5 ([0131.S5](../0131-incremental-checkpoint/steps.md#steps)) a
 - lanes: [specification, code, documentation]
 - depends-on: [0121.S1]
 
-`runtimes.minSlotMemoryBytes` and writeback pacing.
+Writeback pacing in the helper, and the slot memory floor of "WM-14" against the chart value `runtimes.minSlotMemoryBytes`. [0121.S1](../0121-billing-resource-attribution/steps.md#steps) adds that chart value and the checks that read it, and this step uses the value rather than adding it.
 
 The step waits on the validation of "Validation owed", and on billing decision 7's mapping, which BR-1 ([0121.S1](../0121-billing-resource-attribution/steps.md#steps)) carries.
 
@@ -184,9 +207,9 @@ The step waits on the validation of "Validation owed", and on billing decision 7
 - status: Planned
 - aliases: [WM-H, WM-15]
 - lanes: [specification, code, documentation]
-- depends-on: [0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1]
+- depends-on: [0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4]
 
-The warm-up checkout: `prestage` of the `gitRepository` entries with `prestage: true`, adoption at bind by the first source of each repository, the background `discard`, and the reflink rebuild.
+The warm-up checkout: `prestage` of the `gitRepository` entries with `prestage: true`, adoption at bind by the first source of each repository, the background `discard`, and the reflink rebuild; `prestageTimeoutSeconds` on a Runtime and on a pool with its rendering onto the adapter (D26); the skip of an entry with `lenny_prestage_skipped_total` and the `PrestageSkipped` event on the `AgentPod`; the runtime write's `Warning` when the staged trees exceed half of `workspaceSizeLimitBytes`; and the contribution of the staged trees to the platform chunk sets on `CH-SOURCECHUNKS`, which IC-4 ([0131.S4](../0131-incremental-checkpoint/steps.md#steps)) adds, with the record of each staged file's identity that seeds the file index at adoption. An edge from 0131.S4 to this step would close a cycle, so this step depends on 0131.S4. How a process that escapes a `prestage` run is contained is open decision O10 in `decisions.md`, and the trust point of the contribution's reads is O11. The usable size of a slot volume that the staged trees are checked against is O20, which matches O13 of `0118-agent-pod-layout`, and the commit key a staged repository records is O22, which matches decision 70 of `0127-egress-and-git`.
 
 The step needs PL-D (no pre-launch, [0118.S2](../0118-agent-pod-layout/steps.md#steps)), the warm list and `prestage` of the rewritten draft 0111 ([0127.S5](../0127-egress-and-git/steps.md#steps), decision 67 of 0127), and the RV proposal that adds `prestage` (D29 of that design, [0140.S1](../0140-runtime-revisions/steps.md#steps)). It lands after pre-launched runtimes are gone, because a pre-launched process could hold a staged tree open. Tenant entries and trees staged from withheld stores arrive with the staging part of DR-11 ([0147.S8](../0147-tenant-derived-runtimes/steps.md#steps)).
 
@@ -196,6 +219,6 @@ The step needs PL-D (no pre-launch, [0118.S2](../0118-agent-pod-layout/steps.md#
 - lanes: [specification, code, documentation]
 - depends-on: [0118.S4, 0127.S5]
 
-`lenny-store-fill`: the init container, the store fill and the pristine trees moved out of the adapter, the adapter's delete-only use of the store volume, and `netagent`'s attribution of the fill's UID.
+`lenny-store-fill`: the fill program, the store fill and the pristine trees moved out of the adapter, and the adapter's delete-only use of the store volume. [0118.S4](../0118-agent-pod-layout/steps.md#steps) renders the init container and its volumes, and [0127.S5](../0127-egress-and-git/steps.md#steps) lands `netagent`'s attribution of the fill's UID. Which step renders the init container is open decision O19 in `decisions.md`, which matches O11 of `0118-agent-pod-layout`, and what a pod with a non-empty warm list does on a pool that runs no `netagent` is O21, which matches 0118's O14.
 
-The step needs PL-B ([0118.S4](../0118-agent-pod-layout/steps.md#steps)) and the egress proposal that carries decision 61, which is EG-5 ([0127.S5](../0127-egress-and-git/steps.md#steps)).
+The step needs PL-B ([0118.S4](../0118-agent-pod-layout/steps.md#steps)) and the egress proposal that carries decision 61, which is EG-5 ([0127.S5](../0127-egress-and-git/steps.md#steps)). It waits on the `lenny-store-fill` feasibility validation of "Validation owed", which the owner made a condition of D20.

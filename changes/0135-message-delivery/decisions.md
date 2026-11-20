@@ -1,5 +1,208 @@
 # Decisions: 0135 Message delivery
 
+## Open decisions
+
+The M3 readiness review of 2026-11-19 raised O6 to O23, and its second pass raised O24 and O25 at the request of other changes. O1 to O5 are settled and sit under "Decisions".
+
+**O6. How 0135.S1 is ordered against 0145.S1 and 0145.S3. Open.**
+
+The target text of "MD-4", "MD-11", and "MD-24" takes a frame's session from the connection's slot, which is RPR-18 of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) and rests on one session per runtime process, SI-C of [`0145-session-isolation`](../0145-session-isolation/steps.md#steps) (0145.S3). "MD-2" reads the injection fields from the session's revision, which 0140.S1 adds, and places `interrupt_request` on `CH-MSGSOCK`, which 0139.S1 moves. 0139.S1 depends on 0135.S5, and 0140.S1 on 0139.S1, so 0135.S1 cannot depend on either without a cycle. Revision 25 states in "MD-2", "MD-4", and `steps.md` what each step builds against until 0139.S1 and 0140.S1 land: the tree's routing of session-scoped frames (an addressed frame to its session, an unaddressed one to the stream's binding while the pod holds at most one slot), the runtime record and the existing per-tenant override, and `integrationLevel: full` with `interrupt_request` on `CH-RUNTIMEOPS`. What remains open is whether 0135.S1 also waits for 0145.
+
+- (a) 0135.S1 takes no edge to 0145 and builds against the interim statements, and 0139.S1 converts the routing after 0145.S1 and 0145.S3.
+- (b) 0135.S1 gains `depends-on: [0145.S1, 0145.S3]` and lands the adapter half of RPR-18 for the frames it adds, and 0139.S1 records that the rule arrived with 0135.S1. This puts 0118.S1, on which 0145.S1 depends, and the slot-container work ahead of the delivery core.
+- (c) RPR-18 and the capability catalog move out of 0139.S1 into an earlier 0139 step that 0135.S1 depends on.
+- (d) The frames 0135.S1 adds carry an optional `sessionId` until 0139.S1, which the tree already accepts.
+
+**Recommendation: (a).** The skeptic's verification of 0135-p1-F1 found that the frames 0135.S1 adds route under the tree's rule as today's `response` frame does, and that the 0145 edges of (b), which the review and the consistency report recommended, would hold the delivery core behind the slot-container work without closing a gap. It blocks 0135.S1, and through it 0135.S4 and 0135.S5. The other changes are [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md), [`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md), and [`0145-session-isolation`](../0145-session-isolation/decisions.md). The matching decision is O21 of 0139, whose option (a) is (b) here, whose (b) is (c) here, and whose (c) is (d) here. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F1, runtime-contract-C3)
+
+**O7. What bounds what a runtime can make the gateway and Redis hold or emit. Open.**
+
+The agent pod runs untrusted code, and the gateway replica and the Redis shard that serve a session are shared across tenants. Revision 25 writes an `output_file_exports` row only for a part that enters the export queue (0135-p1-F6). These growths remain unbounded:
+
+1. A streaming part ("MD-16"): `append` has no total size, and nothing bounds the number of streaming parts open at once. The gateway holds a part's deltas on a session with a `PostAgentOutput` interceptor, and the design does not say where a completed part is assembled for the transcript on a session without one, or whether §28.5.3's 50 MB staged-part ceiling applies to the running total.
+2. Activity state ("MD-15"): `activity.snapshotMaxBytes` (8 MiB) is checked only at `start`, so `update`, `patch`, and `append` grow the Redis hash and the gateway's copy without bound. `open_limit` is the reason of a `start`, and `oversize` is the adapter's per-frame reason, so an operation past the bound has no reason.
+3. File parts ("MD-18"): a runtime can emit file parts that fail before the export queue at stdout speed, each with an event and a frame, and every unacknowledged notice of a part with a row is resent after each resume.
+4. Warnings ("MD-24", "MD-20"): an unknown frame type is reported once per type per session, which needs an unbounded set of seen types, and each malformed frame, each unknown part `id`, and each `llm_request_completed` produces an event, so a flood evicts the session's other events from the stream of 256 entries and the replay buffer of 512.
+5. A watched child ("MD-25"): nothing states whether the adapter buffers, drops with `gap_detected`, or stalls when the parent's runtime reads stdin slower than the child writes deltas.
+
+- (a) A per-part cap equal to the §28.5.3 staged-part ceiling of 50 MB, past which the part ends `failed` with a new reason `part_too_large` and the gateway drops what it held; at most `output.maxOpenStreamingParts` (16 by default) streaming parts open per session, with completed parts assembled in the gateway's memory under those caps; `activity.snapshotMaxBytes` checked on every operation, with an operation that would exceed it dropped with a new reason `snapshot_limit` and a `lost` event; at most `files.maxPartsPerMinute` (60 by default) file parts per session per minute, past which a part ends `failed` with `rate_limited`; notices resent after a resume for the newest 16 unacknowledged parts; `runtime_warning` limited by a per-session token bucket (10 per minute by default) with one summary event that carries the count of suppressed warnings and a counter for them, a seen-type set of at most 64 types, and `source: "runtime"` usage events coalesced to one per second; and a watched stream buffered by the adapter up to `watch.maxBufferedBytes` (1 MiB by default) per watch, past which it drops the watch's oldest deltas and writes `gap_detected`.
+- (b) The mechanisms of (a), with defaults the owner sets.
+- (c) Bound the streaming part and the activity state alone, and record the rate of file parts, warnings, and watched deltas as entries of "Limits".
+
+**Recommendation: (a).** Items 1 and 2 let one session exhaust a shared gateway replica or Redis shard, and the others let a runtime push a session's own events out of its client's replay, so each needs a bound with a stated failure, and every new setting is operator-tunable. It blocks 0135.S4 (items 1 to 3) and 0135.S5 (items 4 and 5), and a `security` test for each bound. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F2, 0135-p1-F6, 0135-p2-F5, 0135-p2-L10)
+
+**O8. What an end-of-turn `message` without `consumed` consumes. Open.**
+
+Under B-O6 and MDR-8, the frame consumes every message that is `delivered` when it arrives. `delivered` means written to `CH-ATTACH`, not read by the runtime, so a message the gateway writes just before the frame arrives is attributed to a turn that never saw it. For a child, the runtime's later answer to that message then finds nothing `delivered`, is recorded as unsolicited, and counts against the child's `messagingRateLimit`, which "MD-9" says a reply to the parent must never meet. The cold-history order and the consumption attribution that R2 and R3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) expose are also wrong for that message.
+
+- (a) Without `consumed`, an end-of-turn `message` consumes the turn's causing message and every message written before the turn opened. A message written into an open turn stays `delivered` until a frame lists it or a later end-of-turn `message` without `consumed` closes a turn that it opened.
+- (b) Keep the rule, document the race in "Limits", and require `steer` runtimes to write `consumed`, with a `conformance` case.
+- (c) Restore revision 9's rule, which attributed the frame to the oldest `delivered` message.
+
+**Recommendation: (a).** It keeps B-O6's default for a runtime that handles one message per turn and removes the misattribution for a message that arrived during the turn. It blocks 0135.S1. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F3)
+
+**O9. Whether 0135.S4 is split. Open.**
+
+0135.S4 carries "MD-15" to "MD-21", the SDK calls, the reference-adapter translation, the seal window, the post-terminal deadline, the claim orphan bound, and the grant window, over 27 specification sections. It depends on 0131.S1 to 0131.S7 only because of "MD-18", and 0135.S3 and 0135.S5 depend on it, so every step that depends on 0135.S5 (0139.S1, 0140.S1 through it, 0138.S1, 0146.S2, 0151.S8, 0153.S5, and 0119.S3) waits for all of 0131.
+
+- (a) Split 0135.S4 into (i) activity, output streaming, reasoning, usage events, the surfaces, and the frame reader parts of "MD-6", depending on 0135.S1 alone; (ii) harness approvals ("MD-19"); (iii) the seal window, `post_terminal_until`, and the claim orphan bound (A19, A22, A23, F-5.2.57); and (iv) file exports ("MD-18"), depending on 0131. 0135.S3 depends on (i) and (ii), 0135.S5 depends on (i) and takes `(iv) (part)` for "MD-26", and the `0135.S4 (part)` edge of [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/steps.md#steps) names (iv).
+- (b) Keep 0135.S4 whole.
+
+**Recommendation: (a).** Only the file exports need the checkpoint machinery, and the split lets the rest of the program proceed without it. It blocks 0135.S3, 0135.S4, 0135.S5, and the steps that depend on 0135.S5. The other change is [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/decisions.md), whose step edge names 0135.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F10)
+
+**O10. Which change builds the output-file export stream and its tables. Open.**
+
+"MD-18" and IC-3 and IC-4 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/change.md) both define `ExportOutputFile`, its messages, `CH-OUTPUTFILE`, `output_files`, `output_file_packs`, and `output_file_exports`, and neither step list says which step builds them. 0131.S3 would build the stream before this change has a file part to drive it, and 0135.S4 depends on 0131.S3 and 0131.S4.
+
+- (a) 0131's steps build the shared pack messages, the catalog, and reclamation, and 0135.S4 (or its export part under O9) builds `ExportOutputFile`, `CH-OUTPUTFILE`, `output_files`, `output_file_packs`, and `output_file_exports`; IC-3 and IC-4 mark those parts as landing with it.
+- (b) 0131.S3 and 0131.S4 build them, and 0135.S4 builds only the part handling and the adapter's freeze.
+
+**Recommendation: (a).** The export stream exists to serve file parts, which this change defines, and the shared pack machinery stays with the checkpoint design. It blocks 0135.S4 and 0131.S3 and 0131.S4. The other change is [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F11)
+
+**O11. Whether a suspended session's pod hold extends past `maxSuspendedPodHoldSeconds` for running exports. Open.**
+
+"MD-18" **Suspension** releases the pod only after the exports already started end, at most `exportTimeoutSeconds` (900 s) after the hold ends. The state table and SL-4 of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) release the pod when the hold ends. Both edit §6.2.
+
+- (a) 0146's state table and SL-4 state the extension for exports already started, bounded by `exportTimeoutSeconds`.
+- (b) At the end of the hold, the gateway fails running exports with `suspend_hold_expired` too, as this change already does for a suspension that releases the pod at once (B18), and the runtime emits the files again after the resume.
+
+**Recommendation: (a).** An export is the adapter's work, and failing it at the end of the hold throws away an upload that is nearly done. It blocks 0135.S4 and 0146.S1. The other change is [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F12, client-api-sessions-C8)
+
+**O12. The `turn_end` status vocabulary for a cut turn. Open.**
+
+"MD-20" gives `turn_end.status` the values `completed`, `failed`, `interrupted`, and `runtime_exit`. R3 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) adds `cut` with its cause, and [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) records `last_turn_end: cut` for a turn a suspension, the idle clock, or a pod loss cut, and reports an idle cut as `turn_end` with `error: "idle_timeout"`. The status of each cut, its AG-UI mapping to `RUN_FINISHED` or `RUN_ERROR`, what R19's interrupt writes to `last_turn_end`, and whether R16 accepts a continuation after an interrupted turn are not stated.
+
+- (a) `turn_end.status` gains `cut`, with `error` naming the cause (`suspension`, `idle_timeout`, `turn_lost`, or `close`), mapped to `RUN_ERROR`. R3 and 0146 use the same set. R19's interrupt writes `last_turn_end: cut`, so a close records `cancelled` and R16 refuses a continuation until a later turn completes.
+- (b) As (a), except that R19 writes `last_turn_end: message`, so a close records `completed` and R16 accepts the interrupted turn.
+- (c) Keep the four values and report a cut as `failed` with `error` naming the cause.
+
+**Recommendation: (a).** One vocabulary across the three changes lets a client read a cut from the event alone. It blocks 0135.S1, 0135.S4, 0138.S1, and 0146.S1. The other changes are [`0138-rest-only-client-api`](../0138-rest-only-client-api/decisions.md) and [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F13, 0135-p2-L2, client-api-sessions-C6)
+
+**O13. What inbox overflow does to child events. Open.**
+
+§7.2 bounds the inbox at `maxInboxSize`, 500 by default, and drops the oldest entry on overflow, and "MD-3" keeps `dropped` for overflow. "MD-22" holds child events without TTL while the parent is `dormant`, `suspended`, or `blocked`, because the child cannot send them again (MDR-51). A paused parent with active children therefore loses its oldest child events, an `ended` event among them, which breaks MDR-37, and a compromised child that sends `send_update` at 30 per minute fills a queue-only parent's inbox during a long turn and evicts the parent's own client's queued messages.
+
+- (a) A per-child cap on the child events held in a parent's inbox, past which the gateway refuses the child's `send_update` and mid-turn `message` with a refusal the child sees, never refuses an `end_of_turn`, `ended`, or `awaiting_client_action` event, and never evicts a message from the parent's own client in favour of a child event.
+- (b) An eviction order that evicts mid-turn `message` events first and never an `end_of_turn`, `ended`, or `awaiting_client_action` event or a client message.
+- (c) Keep the drop and weaken MDR-37.
+
+**Recommendation: (a), with the protection of client messages from (b).** It keeps each child event's delivery exactly once and moves the backpressure to the sender. The cap needs a default. It blocks 0135.S1 (the overflow rule of "MD-3") and 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F3)
+
+**O14. Which watched events pass the parent's content policy. Open.**
+
+"MD-25" delivers a watched child's `output`, `activity`, `turn_start`, `turn_end`, `usage`, `tool_use`, and `message_state` events, and runs the parent's `contentPolicy` and `PreMessageDelivery` interceptors only on `output` parts. An `activity` `detail` can carry a tool's output and `tool_use` carries arguments and results, so text a child produced reaches the parent's runtime unscanned, while MDR-52 says no part of a watched stream does, and B-O5 requires the receiving environment's rules on every message between environments.
+
+- (a) Run the parent's interceptors on every watched event whose payload carries content: `activity` `detail`, `summary`, and `title`, and `tool_use` arguments and results.
+- (b) Withhold the content of `activity` and `tool_use` from the watch, and deliver `output`, `turn_start`, `turn_end`, `usage`, and `message_state`.
+- (c) Narrow MDR-52 to output parts.
+
+**Recommendation: (a).** B13 asked for parity with a root client, and an edge between environments has to meet the receiving environment's rules. It blocks 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F4)
+
+**O15. How an imported child file is scanned. Open.**
+
+"MD-26" invokes `contentPolicy.interceptorRef` at `PreExportMaterialization` once per imported file before a grant is signed. That phase's payload carries `content_bytes`, §8.3 caps a scanned file at `contentPolicy.maxExportedFileSize` (10 MiB) with `EXPORT_FILE_SCAN_SIZE_EXCEEDED`, and the gateway holds no bytes of an output file, which may be 5 GiB. The design does not say how the gateway obtains the bytes, what happens to a file over the scan limit, or what a `MODIFY` answer does.
+
+- (a) With scanning on, the gateway renders the file from its packs for the scan, as the download does, refuses a file over `maxExportedFileSize` with `EXPORT_FILE_SCAN_SIZE_EXCEEDED` before any grant, treats `MODIFY` as a refusal, and records the decision in the import's audit.
+- (b) Scan once at the child's release, under the parent's interceptor.
+- (c) No scan for imports, documented as a limit.
+
+**Recommendation: (a).** It is the smallest change that keeps §8.7's control on files that cross from child to parent. It blocks 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F6)
+
+**O16. How a download of an output file is authorized. Open.**
+
+"MD-18" and "MD-21" serve output files through `GET /v1/blobs/{ref}`. The route registers with `seam.AccessTenant` (`pkg/gateway/uploadhandler/handler.go`), and the handler checks only that the blob's tenant matches the caller's, so any principal of the tenant who obtains a ref, from a shared transcript, a log, or a webhook, can download the file whatever its access to the session.
+
+- (a) A ref that names an output file requires read access to the owning session through `GWSEAM-AuthorizeSession`, and a caller without it receives `404`. 0135.S4 records the seam change under decision 8 of [0117](../0117-gateway-package-layout/decisions.md).
+- (b) Output-file refs become unguessable capabilities with an expiry, which the signed download URLs of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) could supply.
+
+**Recommendation: (a).** It authorizes the file as the session's other subresources are authorized. It blocks 0135.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F8)
+
+**O17. The scope of 0135.S2 and the in-gateway surfaces before 0138.S6. Open.**
+
+O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) moves the provider surfaces and the MCP client endpoint out of Lenny, and 0138.S6 removes them last so that they keep working between steps. 0135.S1 removes `PodExecutor.Send`, which the translators call, and 0135.S2 still lands "MD-8", depends on 0120.S1, and states no order against 0138's removal. Revision 25 marks the specification rows, the translator item, the provider and MCP test cases, and the second worked example as adapter material, and states that the turn waiter has no caller in Lenny.
+
+- (a) The surfaces that leave may break from the first step that changes what they call: 0135.S1 deletes or stubs the translators' calls, 0138.S6 removes the rest, and 0135.S2 is reduced to "MD-10", the client-call rows of "MD-11", the cold-history rule for the paths that stay, and the consumption attribution of "MD-8", lands after the 0138 step that removes the translators, and drops its edge to 0120.S1 if nothing left needs it.
+- (b) The surfaces keep working: 0135.S1 and 0135.S2 port the translators to `Deliver`, and 0138.S6 removes them.
+- (c) The removal moves into a new early 0138 step ahead of 0135.S1, which leaves MCP clients without a path until 0138.S5.
+
+**Recommendation: (a).** No code is written for surfaces that the target state removes. It blocks 0135.S1, 0135.S2, 0120.S1, 0122.S1, and 0138.S6. The other changes are [`0138-rest-only-client-api`](../0138-rest-only-client-api/decisions.md), [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/decisions.md), [`0122-client-tools`](../0122-client-tools/decisions.md), and [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F10, 0135-p1-F7, client-api-sessions-C12)
+
+**O18. How the child-file import is ordered against 0153.S5. Open.**
+
+"MD-26" writes an imported file only through the materialization helper's `overlay`, which 0153.S5 of [`0153-workspace-materialization`](../0153-workspace-materialization/steps.md#steps) builds, and 0153.S5 depends on 0135.S5 for the `ImportFile` proposal. 0135.S5 neither depends on 0153.S5 nor marks its import as a part, so either 0135.S5 ships an import that cannot write or the two steps wait on each other.
+
+- (a) A new step of this change carries "MD-26" and depends on 0135.S5 and 0153.S5, and 0153.S5's edge becomes `0135.S5 (part)`, naming the `ImportFile` stream.
+- (b) 0135.S5 takes `0153.S5 (part)` for the import's write, and 0153.S5 takes `0135.S5 (part)` for the stream.
+
+**Recommendation: (a).** 0135.S5 is already a large step, and a separate import step makes the wait an edge that the board reads. It blocks 0135.S5 and 0153.S5. The other change is [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F11)
+
+**O19. Which steps settle F-8.7.17, the `artifacts/{path}` route, and the unary `SendMessage` RPC. Open.**
+
+Three findings that this change names have no settled owner or outcome:
+
+1. F-8.7.17 (`ExportPaths` checks a resolved path and then reads by path, so a parent agent that wins the race exports a file such as the adapter's token; High in `BUILD-GAPS.md`) is MDF-12. "MD-18" does not use `ExportPaths`, and no step of any change lists the finding in `closes`. The file-descriptor broker of [`0145-session-isolation`](../0145-session-isolation/change.md#si-5-the-supervisor-file-descriptor-broker) (0145.S2) is the fix the finding proposes, and [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) keeps `ExportPaths` "through the broker".
+2. F-15.1.84 (MDF-11): §15.1 lists `GET /v1/sessions/{id}/artifacts/{path}`, which the gateway does not register, and the §15.1 row of "Specification changes" says the route is "registered or removed" without choosing. 0135.S4 lists the finding in `closes`.
+3. CHGWPOD-I16: the unary `SendMessage` RPC does not check the coordination generation. `Deliver` writes on the `CH-ATTACH` stream ("MD-6"), and `adapterclient.Client.SendMessage` has no caller in `pkg/gateway` today.
+
+- (a) 0145.S2 lists F-8.7.17 in `closes`; 0135.S4 removes the `artifacts/{path}` route from §15.1, because "MD-18" lists output files through `GET /v1/sessions/{id}/artifacts` and serves them through `GET /v1/blobs/{ref}`; 0135.S1 deletes the unary `SendMessage` RPC and closes CHGWPOD-I16 as obsolete.
+- (b) 0153's broker step lists F-8.7.17 in `closes`; 0135.S4 registers the `artifacts/{path}` route; 0135.S1 keeps `SendMessage` and adds the generation check.
+
+**Recommendation: (a).** The broker is the mechanism that closes the race, the per-path route duplicates the listing and the blob download, and the RPC has no caller once every write goes through `Deliver`. It blocks 0135.S1, 0135.S4, and 0145.S2. The other changes are [`0145-session-isolation`](../0145-session-isolation/decisions.md) and [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0135-p1-F9, 0135-p2-F12)
+
+**O20. How harness approvals sit in SO-5a. Open.**
+
+This change asks SO-5a of [`0142-security-oversight`](../0142-security-oversight/change.md) to gain `target: "harness"`, `updatedInput` on approve, `harnessApprovals`, `source` on the approval audit record, the root's routes for a descendant's approval, and the rule that no parent answers a descendant's approval. SO-5a states none of them, says that every platform call reaches the gateway from a `tool_call` frame, and says that a rule matches only names on the `platform` server, so how a harness approval meets `approver: security`, `showArguments`, and `approvals.timeoutSeconds` is undefined.
+
+- (a) Harness approvals never route to a security approver, `approvals.tools` rules match platform tools alone, the approval timeout and the audit record of SO-5a apply to harness approvals, and 0142 states harness approvals in SO-5a.
+- (b) `approvals.tools` rules may match harness tool names and route them to a security approver.
+
+**Recommendation: (a).** The harness runs the tool and Lenny cannot enforce the decision ("MD-19", **Boundary.**), so a security approver's decision would carry no more force than a person's. It blocks 0135.S4 and the 0142 step that lands SO-5a. The other change is [`0142-security-oversight`](../0142-security-oversight/decisions.md), whose open decision 37 is the matching decision; its option (b) is (a) here, and its option (a) is (b) here. 0142.S6 depends on 0135.S4 for the reshaped approval seam operations and for the approval wait off the session's frame reader (0142-F5). (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F13, tenancy-security-C8)
+
+**O21. How retraction of a client tool call behaves on a session a provider adapter created. Open.**
+
+The "MD-11" table and CT-5 of [`0122-client-tools`](../0122-client-tools/change.md) retract a pending call on a REST session and answer `too_late` on a provider-surface session. Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), a provider adapter creates ordinary REST sessions, Lenny never reads the protocol header for a decision, and R18 is withdrawn, so the gateway applies the REST row to every session, and an adapter's forwarded results meet `409 CLIENT_TOOL_CALLS_RETRACTED`.
+
+- (a) Lenny keeps the REST behaviour alone. The adapters drop results for retracted calls, using the retraction event or the details of the `409`, and the provider rows of "MD-11" and CT-5 move to the adapters.
+- (b) A session-creation field that an adapter sets selects the provider behaviour, which brings back part of R18 and needs an RO-4 capability tag.
+
+**Recommendation: (a).** It keeps one behaviour in Lenny, which is what O8 of 0138 asks. It blocks 0135.S2 and 0122.S1. The other changes are [`0122-client-tools`](../0122-client-tools/decisions.md) and [`0138-rest-only-client-api`](../0138-rest-only-client-api/decisions.md), which record the same question as their O14 and O22, and the owner's answer applies to the provider row of the "MD-11" table. (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C4)
+
+**O22. Which step owns `capabilities.childSessions`. Open.**
+
+0126.S1 of [`0126-delegation-availability`](../0126-delegation-availability/steps.md#steps) says its `childSessions` condition lands with or after 0135.S5, while 0135.S5 depends on 0126.S1 for the capability, and both stage the §5.1 field. DA-4's `ask_question` rule reads `inputPolicy`, which 0138.S1 adds after 0135.S5. DAR-7 requires every reference runtime of §26 that delegates today to declare the capability in the same change, while "Validation owed" in `steps.md` leaves open whether each reference harness can show its model a message's sender, which decides the declaration.
+
+- (a) 0126.S1 owns `capabilities.childSessions`; this change's §5.1 row drops the declaration and "MD-22" points to 0126; DA-4's `inputPolicy` rule moves to 0138.S1; and a reference runtime declares the capability only once its harness passes the validation item.
+- (b) 0135.S5 owns the capability, 0126's capability check lands in a second 0126 step after 0135.S5, and the `inputPolicy` rule moves to that step.
+
+**Recommendation: (a).** The capability gates delegation, which 0126 owns, and the edge then runs one way. It blocks 0126.S1, 0135.S5, and 0138.S1. The other changes are [`0126-delegation-availability`](../0126-delegation-availability/decisions.md) and [`0138-rest-only-client-api`](../0138-rest-only-client-api/decisions.md). The matching decisions are O9 of 0126, whose option (a) is (a) here, and O23 of 0138. client-api-sessions-C9 recommends that 0126 own the capability, and program-C9 recommends that 0135.S5 own it, which is option (c) of 0126's O9. (raised by the M3 readiness review, 2026-11-19; sources: client-api-sessions-C9, 0135-p2-L12, program-C9)
+
+**O23. The runtime frame named `activity` and the SDK call `reportActivity`, which two changes define. Open.**
+
+"MD-15" defines a runtime frame `activity`, capped at 1 MiB, with operations on a session's activities that reach clients and the transcript, and the SDK call `reportActivity` in TypeScript. FE-6 of [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md) defines a runtime frame `activity` and an SDK call `reportActivity` for a 4 KiB evidence report that travels to `lenny-evidence` on a new channel, `CH-ACTIVITYREPORT`. The adapter cannot route one frame name to both.
+
+- (a) 0128 renames its frame and its SDK call, for example to `activity_report` and `reportToolActivity`, updates its tests, and registers the frame under the naming law.
+- (b) 0128's record becomes a reserved kind of this change's `activity` frame, with a stated route to `lenny-evidence` and 0128's size bound.
+
+**Recommendation: (a).** The two frames carry different content to different destinations under different size limits, so one name for both would make the adapter's routing depend on the payload. It blocks 0135.S4 and the 0128 step that lands FE-6. The other change is [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/decisions.md), whose O2 is the matching decision. (raised by the M3 readiness review, 2026-11-19; sources: tenancy-security-C5)
+
+**O24. How a part larger than the 4 MiB result bound reaches a parent's runtime. Open.**
+
+"RP-3" **Large results.** of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) has the gateway dereference every `lenny-blob://` reference in a platform tool result and inline it before it checks the result against grpc-go's 4 MiB receive limit, and answer `RESULT_TOO_LARGE` above it. §28.5.3 stages a part from 64 KB to 50 MB in the artifact store with a `lenny-blob://` reference, and MDR-37 delivers a child's end-of-turn event once, as the result of a pending `await_child_sessions` call. A parent whose child ended its turn with a part over 4 MiB therefore receives `RESULT_TOO_LARGE` and loses the event, and each repeated call fetches up to 50 MB into a shared gateway replica's memory before the refusal.
+
+- (a) The gateway reads the sizes of referenced blobs from their metadata before it fetches any. A part that would exceed the bound is replaced by a stub that names it, and the runtime fetches the part through the file-import path of "MD-26". A refused result does not consume the child event, which stays `pending` under MDR-37.
+- (b) The gRPC receive limit for `CallPlatformToolResponse` rises to cover a 50 MB part, with the size check from metadata before the fetch.
+
+**Recommendation: (a).** No large payload crosses `LNK-GWCONTROL`, and the runtime reads a large part through the path that already moves files. It blocks 0135.S5 and 0139.S2. The other change is [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md), whose O17 is the matching decision. (raised by the M3 readiness review, 2026-11-19; requested by change 0139)
+
+**O25. Which 0146 steps 0135.S1 and 0135.S5 bind to if 0146.S1 is split. Open.**
+
+SL-Q10 of [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md) asks whether 0146.S1 is split into the states, the store migration, and the caps ("SL-1", "SL-10"), which shares the branch of 0135.S1; suspension and tree suspension ("SL-3", "SL-4", "SL-5"); idle and dormancy ("SL-6"); and close and cascade ("SL-7", "SL-9"). 0135.S1 shares one branch with 0146.S1, and 0135.S5 depends on 0146.S1 for the states `idle`, `dormant`, `suspended`, and `blocked`, in which "MD-22" holds child events and from which "Waking a parent" resumes a parent.
+
+- (a) Under SL-Q10 (a), 0135.S1 shares the branch of the states step alone, and the 0135.S5 edge on 0146.S1 is re-pointed to the states step, the suspension step, and the idle-and-dormancy step.
+- (b) Under SL-Q10 (b), 0146.S1 stays whole, and both entries stay as written.
+
+**Recommendation: (a)**, following the recommendation of SL-Q10. The edit to `steps.md` follows the owner's answer to SL-Q10 and needs no separate choice once the split steps have identifiers. It blocks 0135.S1 and 0135.S5. The other change is [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md), whose SL-Q10 is the matching decision. (raised by the M3 readiness review, 2026-11-19; requested by change 0146)
+
 ## Decisions
 
 Settled by the owner on 2026-11-09. S1 to S10 are the investigation's recommendations, which correspond to its decisions D1 to D10, and the owner accepted them generally with the additions in the rows below:
@@ -126,7 +329,7 @@ Applied on 2026-11-13 with revision 15, from the owner's decisions of 2026-11-12
 
 | ID | Question | Decision | Where |
 | :-- | :-- | :-- | :-- |
-| PL O2 | Which files a runtime offers to the user. | The owner accepted O2 of [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md#open-decisions) as recommended: a file reaches the user as an output file only when the runtime emits a `file` part naming it, and §26's `/workspace/output/` convention is removed. | MD-18 |
+| PL O2 | Which files a runtime offers to the user. | The owner accepted O2 of [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md#settled-open-decisions-o1-to-o10) as recommended: a file reaches the user as an output file only when the runtime emits a `file` part naming it, and §26's `/workspace/output/` convention is removed. | MD-18 |
 | WM O4 | Where a child-file import waits before it is written. | The owner replaced the options with a files-only mechanism: the adapter stages each verified file on the spool volume and passes its descriptor to the helper over a socketpair, one file at a time in one helper run, and deletes the staging file once the helper has applied it. There is no streaming path ([`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md#open-decisions)). | MD-26 |
 | SI D4, RP RPR-18 | Which session a frame acts for. | A runtime process serves one session, and a frame's session is the session of the slot whose connection carries it ([`0139-runtime-protocol`](../0139-runtime-protocol/change.md#requirements), RPR-18). | MD-24 |
 | RP D5 | The adapter-local tools. | Retired by the owner on 2026-11-12 ([`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#decisions)). | MD-2 |

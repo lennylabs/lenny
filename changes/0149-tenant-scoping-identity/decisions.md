@@ -46,4 +46,81 @@ Decided by the owner on 2026-11-13, in the answers to the consolidated list of o
 - **Decision 30, a denied warm-list host on a concurrent pod with slot attribution.** The owner answered "13 ok", settling [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/decisions.md#decisions) decision 41: the session is refused with `ENVIRONMENT_POLICY_NOT_ENFORCEABLE` naming the entry, and this design lists the case under that code ("Pods with several slots", "Failure behaviour").
 - **Decision 31, user credentials on pods with several slots.** The owner answered "4 ok", settling [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) decision 41 and [`0152-user-git-identity`](../0152-user-git-identity/decisions.md#decisions) decision 52 together: user credential bindings, `lockEgressToHosts`, and a user git identity are allowed on a pool whose status records slot attribution, and refused on a pool whose status records the union fallback and on a recycled or used pod. The owner asked for a spike that measures which runtime classes answer slot attribution, which the egress design owes.
 
-No decision in this document remains open.
+Decisions 1 to 31 above are settled.
+
+## Open decisions
+
+The M3 readiness review of 2026-11-19 raised decisions 32 to 40, and its second pass raised decisions 41 and 42.
+
+- **Decision 32, what the delegation gate reads for a session with E = ∅.** Open. TS-3 gates a session with an environment on its stored E, and leaves a session with E = ∅ on "the existing check" ("The gate reads the session."). That check resolves environments from the in-pod principal, which `WithSessionPrincipal` builds with no groups, and it is the defect F-10.6.16 records. The transparent path is the default create path, so under `noEnvironmentPolicy: allow-all` an agent in a group member's transparent session can delegate to any runtime of the tenant, including runtimes the owner's transparent filter hides, and under `deny-all` it cannot delegate at all. 0149.S3 lists F-10.6.16 under `closes`.
+  - (a) At create, store the owner's resolved environment memberships, or the transparent runtime set, on the session row, and gate an E = ∅ delegation on that record, with a `security` tier test for a group member under each `noEnvironmentPolicy` value. This matches "membership is a check at create".
+  - (b) Re-resolve the owner's current memberships from stored rows at each delegation. This needs a stored group source, which only `group_source: scim` provides.
+  - (c) Restrict an E = ∅ session to runtimes that no environment selects, plus every runtime under `noEnvironmentPolicy: allow-all` for a caller with no membership.
+  - (d) Keep today's check and narrow 0149.S3's `closes` to `F-10.6.16 (part)`.
+
+  **Recommendation: (a).** It blocks 0149.S3, and through it 0149.S1, 0149.S10, 0149.S11, 0126.S1, 0147.S4, and 0147.S12. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p1-F1)
+
+- **Decision 33, which entries `lifecycleSubjects` accepts.** Open. The SCIM deprovisioning table of TS-8 refuses a lifecycle write on a security principal "unless `scim:<source_id>` is in the `lifecycleSubjects` list", and the deployment-source login hold of **Matching a directory user to a token.** follows the same rule. "Caller-type namespaces." in this change states that `lifecycleSubjects` takes only `~svc~` subjects, [`0142-security-oversight`](../0142-security-oversight/change.md) refuses any other subject entry with `422 VALIDATION_ERROR`, and [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) item 2 checks the same prefix. Built literally, a `security-admin` cannot write the SCIM entry, so SCIM never deprovisions a security principal, which 0142's posture row and its **IdP removal** residual risk assume it does. The failure is closed and visible: the write is refused per user and reported.
+  - (a) `lifecycleSubjects` accepts two entry kinds: a Lenny subject in the `~svc~` namespace, and `scim:<source_id>` naming a source of the same tenant whose row exists, refused with `422 VALIDATION_ERROR` otherwise. A `scim:` entry for a retired or deleted source stops matching, and the activation preflight reports it. The login hold of the deployment source is admitted by the `scim:<source_id>` entry of that source. 0142's row and its tests, the "Caller-type namespaces." sentence here, and 0143 item 2 are restated, with a `unit` validator case and an `integration` SCIM case.
+  - (b) Give each SCIM credential a `~svc~`-namespaced subject, such as `~svc~scim~<source_id>`, and list that. No token carries such a subject, so the credential needs a mapping to it.
+  - (c) SCIM never deprovisions a security principal. The `scim:<source_id>` rule leaves TS-8, the SCIM half of 0142.S2 and of its residual risk goes, and a principal's departure needs a `~svc~` sync worker or a `security-admin`.
+
+  **Recommendation: (a).** It needs no new subject form, and 0142 already reports SCIM refusals in those terms. It blocks 0149.S8 and 0142.S2. The other changes are [`0142-security-oversight`](../0142-security-oversight/decisions.md), which records the same question as its decision 36, and [`0143-service-account-credentials`](../0143-service-account-credentials/decisions.md), which records it as O11. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p2-F1, tenancy-security-C1)
+
+- **Decision 34, whether 0149.S5 stays a `Planned` step of the v1 program.** Open. Decision 7 defers TS-5, and 0149.S5 is still `Planned`. A `Planned` step keeps the change from reaching `Implemented`, and keeps the program's exit criteria for the area from being met.
+  - (a) Mark 0149.S5 `Cancelled` with the reason in `review-history.md`, and track delegated environment administration as work after v1.
+  - (b) Keep it `Planned`, and state in the program that the v1 close excludes it.
+
+  **Recommendation: (a).** It blocks no step. It blocks the change from reaching `Implemented`. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p1-L6)
+
+- **Decision 35, whether a subject removed through `DELETE` can return.** Open. TS-4 refuses a `DELETE`d row as a `full_revoke` row is, and `reinstate` does not revive it. `Memory.Create` answers `ErrAlreadyExists` for the existing row, and no route clears `DeletedAt`, so a subject deleted by mistake is locked out for good. An IdP subject is immutable, so the person cannot return under another subject from the same source.
+  - (a) A `platform-admin` restores a `DELETE`d row with a justification, through a route that writes an audit event, and the restore runs the ordering rule of TS-4.
+  - (b) A `DELETE` is permanent, and "Residual risks" states it.
+
+  **Recommendation: (a)**, so that a mistaken delete is not permanent for an immutable IdP subject. It blocks 0149.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p2-F3)
+
+- **Decision 36, the defaults of the identity settings that have no value.** Open. Revision 43 names these Helm values, which the text described only by behaviour, and none has a default: `identity.sourcesPerTenant`, `identity.scim.credentialsPerSource`, `identity.scim.usersPerSource`, `identity.scim.groupsPerSource`, `identity.scim.membershipsPerUser`, `identity.registry.pollSeconds`, `identity.registry.maxSnapshotAgeSeconds`, and `identity.userUpsertLimitPerClass`. The poll interval and the snapshot age bound how long a retired source still verifies on a replica that missed the version announcement.
+  - (a) Adopt these defaults: 5 sources per tenant; 5 SCIM credentials, 100000 users, 10000 groups, and 1000 memberships per user per source; a 30-second poll; a 300-second snapshot age; and 10000 upserts per class.
+  - (b) Other values the owner names.
+
+  **Recommendation: (a).** The figures are judgments and are untested. It blocks 0149.S4, 0149.S6, and 0149.S8. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p1-L7, 0149-p2-F5, 0149-p2-F11)
+
+- **Decision 37, the groups of a `service` or `agent` caller under `group_source: scim`.** Open. Under `group_source: scim`, the auth middleware replaces `Principal.Groups` from `directory_group_members` for IdP tokens and Lenny-issued tokens alike. The SCIM server provisions persons alone, so a `~svc~` or `~agt~` caller of such a source receives an empty group set and loses every `oidc-group` environment membership. Decision 19 forbids merging the two sources.
+  - (a) The replacement applies to persons alone, and a `service` or `agent` caller keeps the groups of its token.
+  - (b) The replacement applies to every caller, and a service caller needs a subject member in each environment.
+
+  **Recommendation: (b)**, because it keeps decision 19's rule that a source has one group source, and a subject member names the service account explicitly. It blocks 0149.S9. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p2-F14)
+
+- **Decision 38, SCIM edge cases that TS-8 and TS-9 leave open.** Open. These cases have no stated rule.
+  - An erasure job addresses an unbound directory row by SCIM `id`, and the erasure route is keyed on `userId`. Recommendation: the erasure route accepts `scimId` with `sourceName` for a row with no bound subject.
+  - A `POST /Users` that re-provisions an `externalId` after `DELETE /Users/{id}` meets a user row still held by this source. Recommendation: a new row's `active: true` clears this source's hold alone, as `active: true` does on an existing row.
+  - The read of `directory_users` on every deployment-source IdP token is cached with no stated bound. Recommendation: 30 seconds with invalidation through Redis on a SCIM write, as the group read under TS-9.
+  - Failed authentication is rate limited per source address, which behind the ingress is the ingress address. Recommendation: the address from the forwarded header the ingress sets, read only from the ingress's own addresses.
+
+  Each item is a choice between the recommendation and leaving the case unstated. It blocks 0149.S8 and 0149.S9. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p2-F15)
+
+- **Decision 39, whether a `security-admin`'s hold is separate from a `tenant-admin`'s.** Open. A caller holding `manage_users` or `security-admin` is in the `admin` hold class, and an `admin` caller can clear other classes. A `tenant-admin` can therefore clear an incident hold that a `security-admin` placed on a subject with no security role, such as a second `tenant-admin` account an attacker controls.
+  - (a) Add a `security` hold class for `security-admin` callers, which only a `security-admin` or a `platform-admin` can clear.
+  - (b) Keep one `admin` class, and state the limit under "Residual risks".
+
+  **Recommendation: (a)**, because 0142 gives the security team authority a `tenant-admin` cannot undo elsewhere. It blocks 0149.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p2-F16)
+
+- **Decision 40, whether 0149.S6 splits.** Open. 0149.S6 carries the source record and its state machine, the activation rule with delays and approvals, `pending_version` with approval digests, the verifier registry and its snapshot, per-issuer caches, shared issuers with pins and DNS TXT proofs, the domain-pin lapse sweeps and the deployment-level hold, per-source callbacks and the resolver, the sealed client secret with the Token Service's code exchange, and the Token Service's egress rules. It spans `pkg/auth/jwt`, `pkg/gateway/playground`, `pkg/tokenservice`, both binaries, and the chart, and 0143.S1, 0151.S2, and 0149.S7 and 0149.S8 wait on it. The review proposed four steps: the record, the registry, the active-source check, and canonical subjects; browser login and per-source callbacks; shared issuers, pins, and domain proofs; and the client secret and the Token Service's egress. The cut is not clean: the registry runs on the Token Service, which cannot reach a customer issuer without the egress rule, and browser login sends the code through the Token Service when a source has a secret.
+  - (a) Split into four steps as the review proposed, with the registry step depending on the egress step and the browser login step on the client secret step, and 0151.S2 and 0123.S1 re-pointed to the browser login step.
+  - (b) Split into two steps: the record, the registry, canonical subjects, the client secret, and the Token Service's egress; then browser login, callbacks, shared issuers, pins, and proofs.
+  - (c) Keep 0149.S6 whole.
+
+  **Recommendation: (b).** It separates the parts other changes wait on (0143.S1 needs canonical subjects, 0151.S2 needs browser login) without a step that cannot run on its own. It blocks 0149.S6 and the steps that wait on it. 0149.S3 was split under the same finding, into 0149.S3, 0149.S10, and 0149.S11, because its parts have no such coupling. (raised by the M3 readiness review, 2026-11-19; sources: 0149-p1-F8)
+
+- **Decision 41, an RFC 7523 `jwt-bearer` grant on `/v1/oauth/token`.** Open. [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/decisions.md) records M8, a request that this change consider a `jwt-bearer` grant (RFC 7523) on `POST /v1/oauth/token` that accepts the body the Anthropic SDKs send under workload identity federation (`assertion`, `federation_rule_id`, `organization_id`, `service_account_id`, and an optional `workspace_id`), maps the federation rule to a tenant and a principal, and returns a Lenny bearer as `access_token`. An SDK that points its base URL at the gateway could then refresh its credential without a static key. §13.3 names RFC 6749 and RFC 8693 for that route and no `jwt-bearer` grant, and this change does not mention one. [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) RO-11 removes `/v1/messages` from Lenny, so the Anthropic adapter becomes a separate project that reaches Lenny through its REST API.
+  - (a) TS-6 adds the grant: a federation rule record per tenant that names an identity source, the accepted assertion claims, and the principal the rule maps to, with the source's verifier checking the assertion and the active-source check of TS-6 applying to it. The specification edits go to §13.3 and §15.1, and tests cover a valid assertion, a retired source, and a rule of another tenant.
+  - (b) Lenny adds no grant. The Anthropic adapter project exchanges a workload's assertion for a Lenny bearer through the existing token exchange (RFC 8693) with the assertion as `subject_token` from an active identity source, and M8 moves to that project's records.
+  - (c) Defer the grant past v1, and record M8 as a request held for work after v1.
+
+  **Recommendation: (b).** The existing token exchange already accepts an upstream token from an active source, and a separate grant with its own rule record would add an authentication path to Lenny core for one client family. It blocks no step of this change. (raised by the M3 readiness review, 2026-11-19; requested by change 0120; mirrors 0120 M8 and 0120-L7)
+
+- **Decision 42, which change owns the resolver part of SA-6, and the order of 0149.S8 against 0143.S1.** Open. [`0143-service-account-credentials`](../0143-service-account-credentials/decisions.md) 0143.S1 states that it lands SA-6, the `~svc~` and `~agt~` caller-type namespaces, and this change specifies and tests the same resolver refusal with `SUBJECT_RESERVED` under "Caller-type namespaces." and in its §10.2 edit list. Registry step 7 of TS-6 states that 0143.S1, which depends on 0149.S6, adds the namespace stripping. 0149.S8 refuses a SCIM write that names a `~svc~` subject, and no edge orders 0149.S8 against 0143.S1, so a validation that lands first can refuse every entry while no principal carries the prefix.
+  - (a) 0143.S1 owns the resolver and token-issuance part of SA-6, and 0149.S6 keeps the reservation of the source identifiers `svc` and `agt`. 0149.S8 either depends on 0143.S1 (part) or states that whichever of 0149.S8 and 0143.S1 lands second adds the namespace case.
+  - (b) 0149.S6 owns the resolver part of SA-6, 0143.S1 depends on it as today and keeps SA-1 and the subject-naming writes, and 0149.S8 needs no edge on 0143.S1.
+
+  **Recommendation: (a)**, as 0143 recommends, because SA-6 exists for service account credentials and 0143.S1 already lands the writes that name a subject. It blocks 0149.S8 and 0143.S1. (raised by the M3 readiness review, 2026-11-19; requested by change 0143; mirrors 0143 O9)

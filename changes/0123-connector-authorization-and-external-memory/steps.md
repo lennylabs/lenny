@@ -2,14 +2,15 @@
 
 ## Validation owed
 
-> **Withdrawn in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The OIDC availability item stays live for CA-0. The other items are withdrawn.
+> **Withdrawn in revision 17, 2026-11-15, under [`0124-connector-removal`](../0124-connector-removal/change.md).** The owner decided on 2026-11-15 to remove connectors: "Yes, let's drop connectors." The text below is kept as the record of this design before that decision and no longer states Lenny's behaviour. The OIDC availability item stays live for CA-0, and the pgvector item, added on 2026-11-19, is live for CA-10. The other items are withdrawn.
 
 | Item | Blocks | How |
 | :-- | :-- | :-- |
 | Codex behaviour on a failed `tools/list` and `list_changed` | A `deferredToolDiscovery: true` claim for Codex. The path for `deferredToolDiscovery: false` needs no answer. | Run a current, logged-in Codex headless, through the bridge, against a stub that fails `tools/list` and then notifies. Claude Code 2.1.317 is measured under "CA-9". |
 | Bridge transport in a pod, on a tool connection of the slot with the peer UID check | "CA-9" | Round trip in the conformance suite, for each CLI. Claude Code passed on macOS with filesystem sockets against the earlier adapter servers. |
 | Interaction store lookup by tenant, user, connector, and environment | "CA-1" step 6 | Read `interactionstore` at proposal time. A new index may be needed. |
-| OIDC availability on the start page in `apiKey` and dev modes, where a user authenticates with an API key or, under `global.devMode=true`, with no credential, rather than through an OIDC login | "CA-0" | Settle it in that proposal, since the start page is shared with UC-2. |
+| OIDC availability on the start page in `apiKey` and dev modes, where a user authenticates with an API key or, under `global.devMode=true`, with no credential, rather than through an OIDC login | "CA-0" | Open decision O2 in `decisions.md` settles it, since the start page is shared with UC-2. |
+| Database tests that name the pgvector image only as their Postgres container | 0123.S2 | Live. List the tests that start `tests/testinfra/containers/postgres.go` with `pgvector/pgvector:pg16` and use no `vector` type, and change the default image if open decision O4 removes the prerequisite. |
 | MCP resource indicator requirement | "CA-2" | Read the MCP authorization page, and test a server that enforces audience. |
 
 ## Steps
@@ -24,15 +25,24 @@
 
 Shared OAuth link flow ([CA-0](change.md#ca-0-shared-oauth-link-flow)) in `pkg/connectoroauth`, with today's §9.3 handlers converted to it. Closes the account-link defect. It lands first, and [UC-2](../0151-user-credential-delivery/change.md#uc-2-the-oauth2link-source-and-account-linking) depends on it.
 
+Open decision O1 settles what this step builds and when it lands: the start page logs in through the "Browser login" that 0149.S6 lands, which this entry does not list in `depends-on`, and 0124.S1, which depends on this step, deletes the §9.3 handlers that it converts. Open decisions O2 and O5 also touch this step. The §9.3 handlers are in the API front, `handleAuthorizeConnector` and `handleConnectorOAuthCallback` in `pkg/gateway/api/admin/connector_oauth.go`, and the API front may import `pkg/connectoroauth`, which `tests/static/lint/gatewaylayout/confined.go` confines. The package carries the name that CR-1 of [`0124-connector-removal`](../0124-connector-removal/change.md) gives it.
+
 [`0151-user-credential-delivery`, "Defects found while verifying"](../0151-user-credential-delivery/change.md#defects-found-while-verifying) rates the account-link defect High wherever a connector is a confidential client, which is why this step comes first.
 
 ### 0123.S2 Memory removal and external pattern documentation
 - status: Planned
 - aliases: [CA-G, CA-10]
 - lanes: [specification, code, documentation]
-- depends-on: [0124.S1]
+- depends-on: [0124.S1, 0132.S1]
+- closes: [T-9.4.1, T-9.4.2, T-9.4.3, T-9.4.4, T-9.4.5, T-9.4.6, T-9.4.7, T-9.4.8, T-9.4.9, T-12.1.2, T-12.8.11, F-10.2.36, F-13.3.26 (part), T-12.2.4 (part)]
 
-Memory removal ([CA-10](change.md#ca-10-removing-built-in-memory)) and the external pattern documentation. It depends on CR-A of the removal design so that the documented egress pattern replaces built-in memory when memory goes. Before revision 17 it depended on CA-A through CA-F, so that the documented replacement worked when memory went.
+Memory removal ([CA-10](change.md#ca-10-removing-built-in-memory)) and the external pattern documentation. It depends on CR-A of the removal design so that the documented egress pattern replaces built-in memory when memory goes. Before revision 17 it depended on CA-A through CA-F, so that the documented replacement worked when memory went. Open decision O3 settles whether that edge stays, or whether this step lands the removal alone and another step lands `externalDataNotErased` and the tutorial after the steps that deliver the bindings and links they read. Open decision O4 settles whether migrations 0032 and 0044 stay.
+
+It depends on 0132.S1, which removes the semantic cache, so that the embedder code leaves with the memory store rather than moving into `semanticcache`.
+
+It closes the findings that exist only for built-in memory. Of F-13.3.26 it closes the memory write part, the admission of an impersonation bearer on memory writes, because the route leaves; 0151.S1 and 0151.S3 close its other parts. Of T-12.2.4 it closes the `MemoryStore` part, because the `agent_memory` table leaves.
+
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes the memory write, query, and delete routes from "Route registration" of the platform tools seam, and the memory routes from the `platformtools` row of `pkg/gateway/ARCHITECTURE.md`. It deletes the three rows with `removed-by: '0123'` from `tests/registers/gateway-layout.yaml` and the rows for `memorystore` and `memorystoretest` from `tests/registers/spec-section-citations.yaml` in the commit that deletes the packages. Both registers are under `tests/registers/`, so the branch is reviewed with the `review` skill over its diff before it merges, under "Review changes to the merge gate" in `.claude/rules/git-workflow.md`.
 
 ### Notes on the steps
 

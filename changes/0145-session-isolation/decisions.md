@@ -1,5 +1,142 @@
 # Decisions: 0145 Session isolation
 
+## Open decisions
+
+The M3 readiness review of 2026-11-19 raised O14 to O24, and its second pass raised O25 to O27 at the request of other changes. O2 to O13 are settled and sit under "Decisions", in "Settled open decisions O2 to O13".
+
+**O14. When a pod that holds a dead slot runs the pod-wide scrub and retires. Open.**
+
+A dead slot counts in the pod's occupancy for the pod's life (SIR-15, "SI-4"), and both pod-level boundaries of "SI-3" are keyed on occupancy reaching zero: the pod-wide scrub ("When a recycling pod's occupancy reaches zero") and the **Runtime refused** retirement of SIR-41 ("once its occupancy reaches zero"). A `dead:<n>` member is never removed (SIR-42), so neither boundary fires on a pod that holds a dead slot. A pod with 4 slots and one dead slot stays below the replacement trigger of 2; after a refusal that is not retryable it accepts no binds and never retires, and on a recycling pool it never runs the pod-wide scrub between occupancies. [RP-1](../0139-runtime-protocol/change.md#rp-1-handshake), **The pod set.**, states the boundary differently: "once none of its slots holds a session it exits with the refusal as its termination reason".
+
+- (a) Define the boundary as "no live session holds the pod": occupancy minus the `dead:<n>` members equals zero. At that boundary a pod that holds a dead slot retires, with `runtime_refused` after a refusal that stops binds and otherwise with a non-counting dead-slot reason, and a pod with no dead slot runs the pod-wide scrub as today.
+- (b) Define the same boundary, and at it run the pod-wide scrub and keep serving on the live slots.
+- (c) Keep the text as written, and accept idle pods that never retire until the replacement trigger or the uptime limit retires them.
+
+**Recommendation: (a).** It matches RP-1's wording, keeps the scrub rules simple, and a pod with a dead slot has already lost capacity. It blocks 0145.S6 (SIR-41, SI-3 **The pod-wide scrub.** and **Retirement (D37, SIR-41).**, and the `unit` and `e2e_kind` tests of occupancy and retirement with a dead slot). The other change is [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md), whose RP-1 states the boundary and whose open O14 decides whether a refusal stops binds on the pod set at all. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F1)
+
+**O15. Which step builds the gateway's `CH-ADAPTEREVENTS` consumer and the gateway half of dead slots. Open.**
+
+"SI-4" has the adapter report a dead slot on `CH-ADAPTEREVENTS`, and D38 and the §4.7.1 row have `ReportSessionScrub` report `dead`. No production code under `pkg/` or `cmd/` consumes `CH-ADAPTEREVENTS` today (issue CHPODGW-I3, open), and no step names the consumer. 0145.S1 lists "dead slots and the recorded slot count", while 0145.S6 lists "dead slots in place of `leaked` slots with `agent_pod_state.dead_slots` and their rehydration" and carries the decision-8 line for `GWSEAM-RecordLeak`. If 0145.S1 adds `dead:<n>` members and 0145.S6 adds the column that records them, two slot states coexist between the steps and SIR-42 does not hold. [0139.S1](../0139-runtime-protocol/steps.md#steps) adds its `runtime_handshake` event to the consumer "that 0145.S1 lands".
+
+- (a) 0145.S1 builds the consumer and all of D38: the `dead:<n>` member, the `dead_slots` column, rehydration, the Postgres fallback's count, and the merge of `leaked` into the dead slot, with the decision-8 line for `GWSEAM-RecordLeak` moved to it. 0145.S6 keeps the recycling of D36, D37, and D39, and the closes entries for F-5.2.55, F-5.2.60, F-5.2.45, and T-6.2.3 move to 0145.S1 with CHPODGW-I3.
+- (b) 0145.S1 builds the consumer and the adapter's per-slot not-live state, and reports a failed release as `leaked` until 0145.S6 lands the gateway half of D38. Two slot states then coexist on `main` between the steps.
+- (c) 0139.S1 builds the consumer, and 0145.S6, which then depends on it, lands the gateway half. 0139's records change to match.
+
+**Recommendation: (a).** It lands D38 whole with no interim slot state, and it matches 0139's records. Under every option the owning step also states one rule for each of the following, which the review found unstated: the gateway writes a dead slot's index idempotently from both reports, so `CH-ADAPTEREVENTS` and `ReportSessionScrub` cannot disagree; any replica that holds the pod's stream consumes the event when no session is bound, and the adapter reports every dead slot again when the stream reconnects; and the result of SI-9's detection reaches the controller through a record the controller reads, such as the pool's status written by the consuming replica, because the controller is not a party to `CH-ADAPTEREVENTS`. It blocks 0145.S1, 0145.S6, and 0139.S1's `runtime_handshake` consumer. The other change is [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0145-F2, 0145-F6, CHPODGW-I3)
+
+**O16. How the slot release maps onto `Shutdown`, its clean-exit flag, the slot-identifier reclaim hold, and the gateway's removal of the slot member. Open.**
+
+The change does not mention `Shutdown`. Today's §5.2 binds the per-slot cleanup to it: "the clean-exit flag on the `Shutdown` response" and the "Slot-identifier reclaim hold" column of the per-slot cleanup table. The release of "SI-3" waits for the seal checkpoint and the exports, runs the pool's cleanup commands under their deadline, and runs two Sweeps, each with a time backstop of 4 minutes, so it can last minutes. If the gateway removes the session's member when `Shutdown` returns and before the release completes, the next bind can find no live free slot, and the adapter's answer is undefined. The §5.2 table also has rows whose outcome is not `leaked`, such as "Slot of either kind, released outside a `Shutdown`" with "Not entered, because nothing carries the outcome", and a pre-`running` row whose failed cleanup enters `leaked` with no report; the change's §5.2 row removes only the row whose outcome is `leaked`.
+
+- (a) `Shutdown` answers when step 7 of the release, the emptiness check, has passed or failed, and its clean-exit flag reports that outcome. The gateway removes the session's member, and ends the slot identifier's reclaim hold, after the answer. The RPC's deadline is the sum of the release's own bounds. Every row of the §5.2 per-slot cleanup table maps to `released` or `dead`.
+- (b) `Shutdown` answers after End, and the gateway removes the member then. The adapter holds a releasing slot as not free, and answers a bind that finds no live free slot with a retryable refusal under a named code, which the gateway retries on another pod. Every row of the table maps to `released` or `dead`.
+
+**Recommendation: (a).** The reservation then never admits a bind that the pod cannot serve, and no new refusal code or retry path is needed. It blocks 0145.S3 (the release) and the §4.7.1 and §5.2 rows of "Specification changes". (raised by the M3 readiness review, 2026-11-19; sources: 0145-F3, 0145-F2)
+
+**O17. How 0145.S1 is ordered against 0118.S4, which renders the per-slot volumes. Open.**
+
+0145.S1 lands the slot containers, and [0118.S4](../0118-agent-pod-layout/steps.md#steps) renders the per-slot volumes of PL-5 that they mount. Neither builds alone: slot containers on today's pod-shared volumes would put the per-slot `0444` credential file of "SI-7" where every slot can read it once `lenny-cred-readers` and the pod-level `fsGroup` leave, and per-slot volumes have no container to mount them without slot containers. Both steps carry only `depends-on: [0118.S1]`, and their former "same release" sentences named each other as the renderer.
+
+- (a) One shared branch for 0118.S4's pod rendering and 0145.S1.
+- (b) 0145.S1 depends on 0118.S4, which renders the volumes into today's single runtime container first. This needs a transitional mount layout, which the program's rule against transition modes forbids.
+- (c) 0118.S4 depends on 0145.S1, which leaves 0145.S1 writing per-slot credential files onto shared volumes until 0118.S4 lands.
+
+**Recommendation: (a).** The rendering and the slot containers cannot be separated without an insecure or broken intermediate state. 0145.S2 and 0145.S3 depend on 0118.S4 for the paths of PL-3, so an edge from 0118.S4 to 0145.S2, as 0118's O11 (b) proposes for the disk watch, would close a cycle with them; 0118's O11 (a) puts the disk watch in a separate step that depends on 0145.S2 and 0145.S3 instead. The other change is [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md), whose O11 records the same question with the disk watch's waits as further options. It blocks 0145.S1, and through it 0145.S2 to 0145.S6, and 0118.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F4, pod-structure-C1, program-C8)
+
+**O18. Whether a process that escapes a `prestage` run can reach the next session. Open.**
+
+The release ends with a `prestage` helper run after its last End and Sweep (step 9 of "SI-3"), and a bind sends `launch` with no End before it (steps 2 to 4). [WM-3](../0153-workspace-materialization/change.md#wm-3-the-protocol) states that "A process that left the group with `setsid` survives until the next End", and `launch_not_permitted` covers only `cleanup` runs. The helper parses untrusted git content, so a process that escapes `prestage` runs beside the next session's runtime under the same slot UID, which SIR-13 forbids.
+
+- (a) After every `prestage` run, completed or cancelled, the adapter sends `end` and waits for `ended` before the slot accepts a bind, and the supervisor refuses `launch` with `launch_not_permitted` after a `prestage` run until an attested End.
+- (b) End becomes the first request of every bind.
+- (c) Accept the residual and document it, which contradicts SIR-13.
+
+**Recommendation: (a).** It closes the window where the untrusted input is parsed, and the supervisor enforces it. A `security` test with a `setsid` child of `prestage` follows under (a) or (b). It blocks 0145.S3 (the release order and the launch permission) and 0153.S8. The other changes are [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md) (WM-3 and WM-15) and [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md), whose trust statement relies on the release. (raised by the M3 readiness review, 2026-11-19; sources: pod-structure-C2)
+
+**O19. Which step owns `AgentPod.spec.slotCount`, and where the gateway reads the recorded count. Open.**
+
+"SI-4" has the controller record the slot count in `AgentPod.spec.slotCount` and the reservation compare occupancy against it (SIR-16). [0137.S2](../0137-pod-lifecycle-controller/steps.md#steps) adds `spec.slotCount` and the pod set's `maxConcurrentSessionsPerPod`, and depends on 0145.S1 for "the slot count's reader", so the writer and the reader land before the fields exist. In the tree, `slotcounter.Counter.Reserve` takes the ceiling per call from the pool (`MaxConcurrentSessions` in `pkg/gateway/core/session/podsession/slotbinder.go`), `PodRecyclePolicy` carries the pool value, and `agentpodstate.PodState` has no slot-count field, so the gateway has no defined source for the recorded count at reservation time, for the whole-pod trigger, or in the Postgres fallback.
+
+- (a) 0145.S1 adds and writes `spec.slotCount` and the PoolScalingController's copy of `maxConcurrentSessionsPerPod`, and 0137.S2 names them in its kind tables only and drops its edge to 0145.S1.
+- (b) A new 0137 step that 0145.S1 depends on adds the fields. This reverses an existing edge and needs 0137.S1 first.
+
+**Recommendation: (a).** SI-4 is the first writer and reader. Under either option, the recommended source for the gateway is a `slot_count` column of `agent_pod_state` written by the mirror and returned by `GWSEAM-InspectForRecycle`, the WarmPoolController is named as the setter, and the slot count is excluded from 0137's "The whole pool" lookups of the pool record. It blocks 0145.S1 and 0137.S2. The other change is [`0137-pod-lifecycle-controller`](../0137-pod-lifecycle-controller/decisions.md), whose O7 records the same question. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F7, pod-structure-C5)
+
+**O20. Which step owns the `CH-SUPERVISE` worker and its refusal rule, and what a `freeze` does during a `cleanup` run. Open.**
+
+0145.S3 builds "the asynchronous worker and the whole `CH-SUPERVISE` protocol", and [0153.S1](../0153-workspace-materialization/steps.md#steps), which depends on it, builds "The supervisor's asynchronous worker and `setup` with descriptors, log pipes, cancellation by close, the process-group kill, ... the refusal rule". SIR-23 serves a `freeze` during a `cleanup` run after killing the cleanup worker's process group, because a `cleanup` run has no cancel pipe. WMR-12 answers every request other than `fs`, `ping`, and `end` with `worker_busy` during any run, and WMR-14 cancels a run only by closing the cancel pipe, so under WMR-12 a `freeze` waits for the cleanup deadline. [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md), "Behind a setup run", covers only a `setup` run.
+
+- (a) 0145.S3 is the only owner of the worker, the refusal rule, and the `freeze` exception, and SIR-23 stands. WMR-12 and WMR-14 point to SIR-23, scoped to `setup` runs, 0153.S1 keeps the `setup` members and the helper's descriptor layout, and 0128 cites "SI-3" and states the `cleanup` case.
+- (b) 0153.S1 owns the worker under WMR-12, `cleanup` runs get a cancel pipe, and SIR-23's exception leaves.
+
+**Recommendation: (a).** This change owns the `CH-SUPERVISE` protocol, and (a) needs no new descriptor on `cleanup`. It blocks 0145.S3 and 0153.S1, and 0128's FE-1. The other changes are [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md) and [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/decisions.md), whose O8 relies on the answer. (raised by the M3 readiness review, 2026-11-19; sources: pod-structure-C6, checkpoint-workspace-C3, pod-structure-C7, 0145-F23)
+
+**O21. Whether a transient slot failure still counts toward the whole-pod replacement trigger. Open.**
+
+D38 removes the `leaked` slot, and a dead slot counts toward the trigger. Today's §5.2 **Failure isolation:** also counts `failed` slots within a rolling 5-minute window, kept in a per-replica in-memory ledger (`pkg/gateway/core/session/slothealth`, F-5.2.45). Under "SI-3" a runtime exit and a link failure already make the slot dead, and the change does not say which transient causes remain or whether they still count.
+
+- (a) Only dead slots count toward the trigger, and the rolling-window count of `failed` slots and its per-replica ledger leave.
+- (b) Transient failures still count within the window. The change names the causes that remain transient, and the ledger moves to a store the replicas share.
+
+**Recommendation: (a).** Every failure that shows a slot cannot serve already makes it dead, and (a) removes the per-replica ledger rather than moving it. It blocks the step that lands the trigger's dead-slot count (0145.S6, or 0145.S1 under O15 (a)) and the §5.2 **Failure isolation:** row. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F17)
+
+**O22. What keeps another container from taking a slot's `CH-SUPERVISE` name in nonce-only mode. Open.**
+
+In nonce-only mode no peer UID is checked. "SI-2" argues that another container cannot take a supervise connection because "every client check refuses them", which does not hold in that mode. A container outside the platform's, started before the adapter binds slot `n`'s names, could hold `@lenny-supervise-<n>` and receive the supervisor's connection. Whether the agent-pod webhook admits a container outside PL-1's blueprint is unverified, and "SI-2" names deployer containers as present.
+
+- (a) The `lenny-pod-security` webhook refuses an agent pod with a container outside PL-1's blueprint, and "SI-2" states it.
+- (b) The adapter fails the pod when it cannot bind any slot's name at start, and "SI-2" states that a container that binds a name first fails the pod before any supervisor connects.
+- (c) Both.
+
+**Recommendation: (b).** It closes the window without removing deployer containers, and the adapter already binds every name at start. It blocks 0145.S1 (the SI-2 text and its `security` test). (raised by the M3 readiness review, 2026-11-19; sources: 0145-F21)
+
+**O23. Whether 0145.S1 is split, and how a slot's runtime launches before 0145.S3. Open.**
+
+0145.S1 carries slot containers, socket names and two-way checks, the drain, dead slots, the slot count, credentials and manifests, the canary check, every webhook rule, and the SDK server-UID check, across the controller, the adapter, the gateway, the webhooks, and the SDKs. It does not say how a slot's runtime launches between 0145.S1 and 0145.S3, which lands the launch at bind.
+
+- (a) Split 0145.S1 into the rendering and the webhooks (on the branch O17 settles), the sockets and the two-way checks, and the dead-slot work (as O15 settles), and state that until 0145.S3 lands each slot container's supervisor launches its runtime process before READY and after each release, as today's `restart` pod does.
+- (b) Keep 0145.S1 whole and state the same interim launch.
+
+**Recommendation: (a).** The parts land under different open decisions, and smaller steps keep each branch reviewable. It blocks 0145.S1. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F22)
+
+**O24. From which run in a slot the adapter treats broker replies as untrusted. Open.**
+
+SIR-22 and **The pinned root (SIR-22).** of "SI-5" start the distrust at "the first run of the supervisor's worker for the first session bound to the slot", and [IC S6](../0131-incremental-checkpoint/change.md#security-properties) trusts the broker's replies during the platform chunk-set contribution because no session code has run. Before READY, and after every release, the slot's `prestage` runs the pinned git as the slot UID over warm-list repositories ([WM-15](../0153-workspace-materialization/change.md#wm-15-warm-up-checkout-and-reflink-rebuild)), which WM-9 classes as untrusted content and which include tenant-controlled repositories on tenant-derived runtimes, and the contribution follows the first `prestage`.
+
+- (a) Move the trust point to the first worker run in the slot, `prestage` included. The adapter records the pin before that run, and the contribution's reads and the restore at bind take the descriptor checks of SIR-21 and IC S6 under distrust, which already exist.
+- (b) Keep SIR-22 as written, and 0131 states the residual and accepts it.
+
+**Recommendation: (a).** The checks exist already, and (a) removes a trust assumption that `prestage` does not meet. It blocks 0145.S2 (SIR-22 and the pinned root) and the contribution rules of 0131. The other change is [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md), whose open D24 decides the same trust point together with the seeding of the file index. (raised by the M3 readiness review, 2026-11-19; sources: checkpoint-workspace-C11)
+
+**O25. The chart keys of the platform containers' requests, and the memory limits of the slot containers. Open.**
+
+"SI-9" gives `adapter`, `netagent`, and `keepalive` their chart values and each slot container "a memory request and limit of the remaining memory divided by the slot count". The billing design's **Container mapping.** names `adapterResources` as a chart value that the chart does not carry, gives `keepalive` "its own minimal chart request" with no key and no default, and a class states `requests.memory` and `limits.memory` separately, while `netagent` has a 128 MiB request and a 512 MiB limit.
+
+- (a) `adapter.resources` and `keepalive.resources` as chart keys, in the spelling of `netagent.resources` and `storeFill.resources`, with defaults the owner sets. Each slot's memory request is the class's `requests.memory` less the other containers' requests, divided by the slot count, and each slot's memory limit is the class's `limits.memory` less the other containers' limits, divided by the slot count, so the containers' memory limits sum to the class's `limits.memory`.
+- (b) The same keys, with each slot's memory request and limit both taken from `requests.memory` less the other containers' requests, as written today, so the pod's effective memory limit exceeds the class's `limits.memory` by the platform containers' limit headroom.
+
+**Recommendation: (a).** It keeps O4 (a), per-slot memory limits that sum with the platform containers' limits to the pod's memory, true against the class's `limits.memory`. It blocks 0145.S4 and the **Rule.** of "SI-9". The other change is [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/decisions.md#open-decisions), whose open decision 27 is the same question with the same options. (raised by the M3 readiness review, 2026-11-19; requested by change 0121)
+
+**O26. Whether 0135.S1 waits for 0145.S1 and 0145.S3. Open.**
+
+The frames that 0135.S1 adds take their session from the connection's slot, which RPR-18 of [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) states and which rests on one session per runtime process, landed by 0145.S3. 0139.S1 depends on 0135.S5, which depends on 0135.S1, so 0135.S1 cannot depend on 0139.S1 without a cycle. 0135 states what its steps build against until 0139.S1 lands: the tree's routing of session-scoped frames, under which an unaddressed frame goes to the stream's binding while the pod holds at most one slot.
+
+- (a) 0135.S1 takes no edge to this change and builds against those interim statements, and 0139.S1 converts the routing after 0145.S1 and 0145.S3. No record of this change changes.
+- (b) 0135.S1 depends on 0145.S1 and 0145.S3 and lands the adapter half of RPR-18 for the frames it adds. 0145.S1 and 0145.S3 then gate the delivery core, and through 0145.S1 so do 0118.S1, 0118.S3, 0119.S1, and 0119.S2.
+- (c) RPR-18 and the capability catalog move out of 0139.S1 into an earlier 0139 step that 0135.S1 depends on.
+- (d) The frames 0135.S1 adds carry an optional `sessionId` until 0139.S1, which conflicts with D27 and with the program's rule against transition modes.
+
+**Recommendation: (a).** The skeptic's verification in 0135 found that the frames 0135.S1 adds route under the tree's rule as today's `response` frame does, so (b) holds the delivery core behind the slot-container work without closing a gap. 0139 recommends (b) in its O21, so the owner settles the two entries together. It blocks no step of this change under (a), (c), or (d), and under (b) it adds 0135.S1 as a dependent of 0145.S1 and 0145.S3. The other changes are [`0135-message-delivery`](../0135-message-delivery/decisions.md#open-decisions), whose O6 lists these options in this order, and [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#open-decisions), whose O21 (a) is (b) here, O21 (b) is (c) here, and O21 (c) is (d) here. (raised by the M3 readiness review, 2026-11-19; requested by changes 0135 and 0139)
+
+**O27. Whether 0145.S2 closes F-8.7.17. Open.**
+
+F-8.7.17 (High, open in `BUILD-GAPS.md`) records that `addExportFile` in `pkg/adapter/exportpaths.go` resolves a path, checks it against the workspace root, and then reads by path, so an agent that swaps a directory for a symbolic link between the two exports a file the adapter can read, such as its token or another slot's file. 0145.S2 moves the adapter's exports onto the broker's descriptors ("SI-6"), which opens every component under `openat2` confinement and reads the passed descriptor, the fix the finding proposes. No step of any change lists the finding in `closes`. [`0153-workspace-materialization`](../0153-workspace-materialization/change.md) keeps `ExportPaths` in the adapter "through the broker".
+
+- (a) 0145.S2 lists F-8.7.17 in `closes`, with a `security` test that swaps a directory for a symbolic link after resolution and checks that the export reads nothing outside the slot.
+- (b) A 0153 step that moves `ExportPaths` onto the broker lists it.
+
+**Recommendation: (a).** The broker that closes the race lands in 0145.S2, and that step already moves the export onto it. It blocks the `closes` list of 0145.S2. The other changes are [`0135-message-delivery`](../0135-message-delivery/decisions.md#open-decisions), whose O19 item 1 is this question with the same options, and [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md). (raised by the M3 readiness review, 2026-11-19; requested by change 0135)
+
 ## Decisions
 
 | # | Question | Owner's answer | Applied in |
@@ -44,11 +181,11 @@
 | D38 | Leaked and dead slots (2026-11-16). | Item 4, "ok": the `leaked` slot merges into the dead slot, one state that counts in occupancy for the pod's life and toward the whole-pod replacement trigger. The metric `lenny_adapter_leaked_slots` becomes `lenny_adapter_dead_slots`, and the `leaked` sub-state, its row, and its column of the §5.2 scrub model table leave. The pod state mirror gains the column `dead_slots`, the slot indexes of the pod's dead slots, which the gateway writes when it adds a `dead:<n>` member, and rehydration reads it with the session rows and restores the `dead:<n>` members. Today's rehydration loses every `leaked` member in the same way. | SI-4, SIR-15, SIR-42 |
 | D39 | Scrub profiles after the per-slot release (2026-11-16). | Item 5, "ok": `recycle.scrubProfile` keeps `standard` and `vm-restart`, and `in-place` and `acknowledgeMicrovmResidualState` leave. `in-place` existed because `standard` was refused on pools with `allowCrossTenantReuse`, which [`0136-placement`](../0136-placement/change.md#removals) removes, and with the tenant pin on every pool, `in-place` on a microVM pool is `standard` plus an acknowledgment. The documentation states, under `standard` on a microVM pool, the guest-kernel state that persists across the pinned tenant's sessions. `onScrubFailure` and `maxScrubFailures` apply to the pod-wide scrub alone, and a failed slot release always makes the slot dead and never takes the `warn` path. The owner confirmed on the same day ("ok, keep it as written") that a `cleanup` run answered with `cleanup_failed` or `cleanup_timeout` fails the release and makes the slot dead, and that on a pod with several slots the pod drains only through the whole-pod replacement trigger. | SI-3, SI-4, SIR-43 |
 
-**Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0145.S6, whose entries in `steps.md` name the operations.
+**Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0145.S1 for `GWSEAM-InspectForRecycle`, which serves the pod's recorded slot count (SIR-16), and 0145.S6 for the pod recycle operations, whose entries in `steps.md` name the operations. O15 decides which step carries `GWSEAM-RecordLeak`.
 
-## Open decisions
+### Settled open decisions O2 to O13
 
-The owner settled every open decision of revision 3 on 2026-11-12, and O12 and O13 on 2026-11-13. The owner's answers of 2026-11-13 to the consolidated list added D28 to D31 to "Decisions", and the owner's answers of 2026-11-14 added D32 and D33. The owner's answers of 2026-11-16 to the specification migration spike added D36 to D39. No decision is open. Each keeps its label for the references other designs make to it.
+The owner settled every open decision of revision 3 on 2026-11-12, and O12 and O13 on 2026-11-13. The owner's answers of 2026-11-13 to the consolidated list added D28 to D31 to "Decisions", and the owner's answers of 2026-11-14 added D32 and D33. The owner's answers of 2026-11-16 to the specification migration spike added D36 to D39. Each entry below is settled and keeps its label for the references other designs make to it. The M3 readiness review of 2026-11-19 moved them here from "Open decisions" so that the board counts only the questions that wait on the owner.
 
 **O2. What a checkpoint does with a metadata-only entry. Settled 2026-11-12: (a).** The checkpoint records each such entry's type, mode, and times, a restore creates it empty with that mode (a socket is not recreated), and the checkpoint's metadata record lists each path as `metadata_only`, with a session warning event and a metric. The options not taken were failing the checkpoint and having the supervisor change the mode to open the entry.
 

@@ -1,5 +1,108 @@
 # Decisions: 0139 Runtime protocol
 
+## Open decisions
+
+The M3 readiness review of 2026-11-19 raised O14 to O22, and its second pass raised O23 at the request of change 0119. O1 to O13 are settled and sit under "Decisions", in "Settled open decisions O1 to O13".
+
+**O14. Whether one session's handshake may decide claims for a whole pod set. Open.**
+
+"RP-1" records a refusal that is not retryable on the pod set and claims none of its pods again, and "RP-1" **Report.** stores the last report of each pod set, which the claim-time check of "RP-2" applies to every later session. D8 accepted the pod-set-wide stop on the ground that every pod of a pod set runs the same image. The handshake comes from an untrusted party: setup commands carry the client's `workspacePlan.setupCommands[]` (§14), a process a setup command leaves running with `setsid` survives until the next End ("The run" of [`0153-workspace-materialization`](../0153-workspace-materialization/change.md)), and such a process "can still connect in the launched process's place" ([`0145-session-isolation`](../0145-session-isolation/change.md), **Setup commands before the launch.**). It can write a `hello` with an unsupported version, which stops every later claim of a pod set that other tenants share, or a valid `hello` with a narrower offer, which becomes the last report and refuses later sessions with `RUNTIME_CAPABILITY_MISSING`. A wrapper's offer can also differ between sessions for benign reasons, because the runtime process receives the session's `env`, workspace, and working directory. The adapter image is not a pod-affecting field of 0140's pod hash, so during a platform upgrade one pod set can hold pods with two adapter versions, and an `unsupported_version` refusal from one blocks the other (unverified against the chart).
+
+- (a) The adapter runs a probe handshake at warm-up, with no session input and before any setup command, and only its result is recorded on the pod set. A session's refusal affects only that session and its slot, with a metric and an alert. This launches a runtime process before bind, which D6 removed, so D6 is reopened.
+- (b) A session's handshake never changes pod-set state. Refusals and offers become metrics, the revision-mismatch view, and an alert, and an operator retires the revision. The adapter's check at launch is the only capability gate, and the gateway's claim-time check and the pod-set stop leave.
+- (c) Keep the pod-set record, but act only on refusals from several distinct pods and sessions, and never let a refusal overwrite a successful offer. One tenant with several sessions on several pods can still meet the threshold, and a forged `hello` with a narrower offer is not covered.
+
+**Recommendation: (b).** It removes the attack and the benign variance without a new mechanism, and keeps D6. D8 is restated under any option, because it records the pod-set-wide stop as accepted. Whichever option is chosen, the `security` test of "Tests" with a `setsid` process that writes a forged `hello` applies. It blocks 0139.S1 ("RP-1", "RP-2", RPR-3, and the `PodSet` condition), O15, and O20. (raised by the M3 readiness review, 2026-11-19; sources: 0139-F1, 0139-L7)
+
+**O15. Which object keys the recorded handshake report and refusal, where it is stored, and which `PodSet` objects the claim-time check reads. Open.**
+
+"RP-1" and "RP-2" record the report "on the pod set" and read "the pod set of the chosen revision", and name no store, key, or writer. [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) creates one `PodSet` per pool and pod-set key, named `<pool>.<key16>`, and builds a revision's claim set from "every `PodSet` of the pool whose `spec.podHash` is that pod hash", so the claim set can hold several `PodSet` objects, and owned pools have their own. The record must survive a replica restart and be read by every replica. Under O14 (b) only the mismatch view and the metrics remain of the record.
+
+- (a) Key the record by `PodSet` object. A Postgres table keyed by `PodSet` name holds the offer, the refusal reason, and the time, written by the replica that consumes `runtime_handshake` on `CH-ADAPTEREVENTS`, with its migration; a later report replaces an earlier one as O14 settles; and the claim-time check reads the record of every `PodSet` in the claim set. 0140 names the store beside `PodSet`.
+- (b) Key the record by pod hash across pools. A refusal then crosses pool and tenant boundaries, so a tenant's owned pool can stop platform pools.
+
+**Recommendation: (a).** It confines a record to the pods that produced it and matches 0140's pod-set model. The other change is [`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md), which records the same question as its O14. It blocks 0139.S1 and task 5 of 0140.S1. (raised by the M3 readiness review, 2026-11-19; sources: 0139-F3, runtime-contract-C2)
+
+**O16. What a `no_hello` refusal does at finalize and at delegated-child creation. Open.**
+
+"RP-1" retries a `no_hello` refusal "under the pre-attached failure retry of §6.2 for a creation". §6.2 **Scope:** limits that retry to the §7.1 creation of `POST /v1/sessions/start` and makes one attempt, claiming no replacement pod, for `POST /v1/sessions/{id}/finalize` and for delegated-child materialization (§8.2). Under D6 the runtime launches at bind, which on the create-then-finalize path is at finalize, so the common creation path and delegated children get one attempt. No member change widens §6.2's scope.
+
+- (a) A `no_hello` refusal at finalize or at child creation fails the request with `RUNTIME_HANDSHAKE_REFUSED` and is not retried.
+- (b) Extend §6.2's retry to those binds, and state how the eagerly claimed pod is replaced.
+
+**Recommendation: (a).** (b) reopens the eager-claim design of proposal 0007. It blocks 0139.S1. (raised by the M3 readiness review, 2026-11-19; sources: 0139-F5)
+
+**O17. How a part larger than the 4 MiB result bound reaches a runtime, and when the gateway checks the size. Open.**
+
+"RP-3" **Large results.** has the gateway dereference every `lenny-blob://` reference in a result and inline it before it checks the result against grpc-go's 4 MiB receive limit, and answer `RESULT_TOO_LARGE` above it. [`0135-message-delivery`](../0135-message-delivery/change.md) stages parts from 64 KB to 50 MB with a `lenny-blob://` reference, and its MDR-37 delivers a child's end-of-turn event once, as the result of a pending `await_child_sessions` call. A parent whose child ended its turn with a part over 4 MiB receives `RESULT_TOO_LARGE` and loses the event, and repeated calls drive fetches of up to 50 MB each into a shared gateway replica's memory before each refusal.
+
+- (a) The gateway reads the sizes of referenced blobs from their metadata before it fetches any. A part that would exceed the bound is replaced by a stub that names it, and the runtime fetches the part through the file-import path of "MD-26". A refused result does not consume the child event.
+- (b) Raise the gRPC receive limit for `CallPlatformToolResponse` to cover a 50 MB part, with the size check from metadata before the fetch.
+
+**Recommendation: (a).** No large payload crosses `LNK-GWCONTROL`, and the runtime reads a large part through the path that already moves files. The other change is [`0135-message-delivery`](../0135-message-delivery/decisions.md). It blocks 0139.S2. (raised by the M3 readiness review, 2026-11-19; sources: 0139-F6)
+
+**O18. Whether a runtime's `approvalRequired` flag on `tool_call` survives the move to `CallPlatformTool`. Open.**
+
+`schemas/lenny-adapter-jsonl.schema.json` lets a runtime set `approvalRequired: true` on a `tool_call` to have the call held for the user's approval, and `CallPlatformToolRequest` in `schemas/lenny-adapter.proto` carries only `session_id`, `tool_name`, and `arguments`. "RP-3" states that tool approval is unchanged and names no carrier for the flag. "SO-5" of [`0142-security-oversight`](../0142-security-oversight/change.md) holds a call only when the frame reaches `maybeGateToolCall` with the flag. Built as written, 0139.S2 drops the flag, and a call the runtime flagged runs at once.
+
+- (a) Carry `approvalRequired` through `CallPlatformToolRequest`, and have the gateway hold a flagged call.
+- (b) Retire the member, so approval comes from `approvals.tools` rules alone. A frame that carries the member is ignored under "MD-24" and the documentation states it, or is refused.
+
+**Recommendation: (a).** It keeps a control that runtimes have today. The other change is [`0142-security-oversight`](../0142-security-oversight/decisions.md), whose SO-5a follows the answer. It blocks 0139.S2 and the step of 0142 that lands SO-5a. (raised by the M3 readiness review, 2026-11-19; sources: 0139-F7)
+
+**O19. Which capability keys the per-tenant override may narrow. Open.**
+
+"RP-2" **Dependency rules.** gives the example that clearing `conversationInput` for a tenant also clears `clientTools.supported` and `clientTools.customTools`. D17 of [`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md) and DR-8 of [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) let the override narrow only `capabilities.interaction` and `capabilities.injection`. Whether a tenant can narrow `childSessions`, `clientTools`, `conversationInput`, `checkpoint`, or `midSessionUpload` is undefined, and the override's write validator needs a closed list.
+
+- (a) Keep D17's list, and restate this change's example as `injection.supported: false` clearing `multi_turn` and `steer`.
+- (b) Extend narrowing to every boolean capability, with edits to D17, RVR-15, and DR-8.
+
+**Recommendation: (a).** It matches two changes, a settled decision, and a test. The other changes are [`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md), which records the same question as its O15 and settles the key list in RV-1, and [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/decisions.md). It blocks 0139.S1 and 0140.S1. (raised by the M3 readiness review, 2026-11-19; sources: runtime-contract-C7)
+
+**O20. Where the capability check runs: this change's two checks, or 0140's check at bind against a report on the pod's row. Open.**
+
+"RP-2", under O2 (d) as restated for D6, checks a session's effective capabilities in the gateway before the claim against the pod set's recorded report, and in the adapter at launch against the runtime process's `hello`, because no report exists on a pod before its bind. [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) "Capability check at bind (D23)." compares the session's effective capabilities "with the handshake report stored on the pod's row" when the gateway binds the session, and its Terms row, `podsession` row, and `unit` test follow. [`0141-runtime-routing`](../0141-runtime-routing/change.md) follows this change. Under the program's rule for members that disagree, the conflict is recorded here and on 0140. Revision 14 restated this change's instruction to 0140, which still described the older model.
+
+- (a) Adopt this change's two checks. 0140 restates D23, the RV-2 paragraph, the Terms row, the `podsession` row, and the test to match, together with the outcome of O14 and O15.
+- (b) Adopt 0140's check at bind against a report on the pod's row, which needs a report before bind that D6 rules out.
+
+**Recommendation: (a).** It is the settled O2 (d) of this change, which 0141 already follows. Under O14 (b) the claim-time check leaves, and the adapter's check at launch remains the one check. The other changes are [`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md) and [`0141-runtime-routing`](../0141-runtime-routing/decisions.md). It blocks 0139.S1 and task 5 of 0140.S1. (raised by the M3 readiness review, 2026-11-19; sources: 0139-F8, runtime-contract-C1)
+
+The same review's pass over 0140 restated D23, the "RV-2" paragraph, the Terms row, the `podsession` row, and the `unit` test to option (a), on the ground that D23 defers to the settled O2 (d), and raised no decision there. [`0141-runtime-routing`](../0141-runtime-routing/change.md) asked that the question stay recorded here. What remains for the owner is to confirm (a).
+
+**O21. How 0135's steps build before the frame rules and the capability catalog of 0139.S1 land. Open.**
+
+0135.S1 adds frames without `sessionId`, reads the `interrupt` capability, places `interrupt_request` on `CH-MSGSOCK`, and reads `injection.modes` from the session's revision. These rest on 0139.S1 (RPR-18 and the catalog), on 0145.S1 and 0145.S3, and on 0140.S1, which all land later. 0139.S1 depends on 0135.S5, which depends on 0135.S1, so an edge from 0135.S1 to 0139.S1 closes a cycle. The tree's adapter rejects unaddressed frames on a pod holding more than one slot (`pkg/adapter/attach.go`).
+
+- (a) Give 0135.S1 `depends-on: [0145.S1, 0145.S3]`, which creates no cycle, and state in 0135.S1, 0135.S4, and 0135.S5 what each builds against before 0139.S1 and 0140.S1 land, naming those steps as the conversions. Restate "MD-2" in capability terms.
+- (b) Move RPR-18 and the capability catalog out of 0139.S1 into an earlier step of this change that 0135.S1 can depend on.
+- (c) Keep an optional `sessionId` on the new frames until 0139.S1, which conflicts with AR O5 (b) and with the program's rule against transition modes.
+- (d) 0135.S1 takes no edge to 0145 and builds against the interim statements of its revision 25: the tree's routing of session-scoped frames, the runtime record and the existing per-tenant override, and `integrationLevel: full` with `interrupt_request` on `CH-RUNTIMEOPS`. 0139.S1 converts them after 0145.S1 and 0145.S3, as `steps.md` states.
+
+**Recommendation: (a).** It needs no new step here and no transition mode. The other changes are [`0135-message-delivery`](../0135-message-delivery/decisions.md), [`0145-session-isolation`](../0145-session-isolation/decisions.md), and [`0140-runtime-revisions`](../0140-runtime-revisions/decisions.md). It blocks 0135.S1, 0135.S4, and 0135.S5, and under (b) the step split of this change. (raised by the M3 readiness review, 2026-11-19; sources: runtime-contract-C3)
+
+0135 records the question as its O6, whose (a) is (d) here, whose (b) is (a) here, whose (c) is (b) here, and whose (d) is (c) here. 0135 recommends its (a), which is (d) here, because the skeptic's verification of 0135-p1-F1 found that the frames 0135.S1 adds route under the tree's rule as today's `response` frame does, and that the 0145 edges would hold the delivery core behind the slot-container work without closing a gap. The two records recommend different options, and the owner's answer settles both. Option (d) was added in the second pass of the review, at the request of change 0135.
+
+**O22. The behaviour of `UpdateAvailability` around handoffs, early arrival, and failure. Open.**
+
+"RP-4" has the coordinating replica compare `delegation` and `questions` with "what it last sent" and call `UpdateAvailability` before the turn's first message. Revision 14 states that the call carries the `coordination_generation` stamp that §28.5.1 requires of every gateway-to-pod RPC. It does not state where the replica keeps what it last sent, what a new coordinator does after a handoff, what the adapter does with a call that arrives before `session_start`, or what the gateway does when the call fails before the turn's first message.
+
+- (a) The coordinating replica keeps what it last sent in memory. A new coordinator treats nothing as sent and calls `UpdateAvailability` at the next turn. The adapter answers a call that arrives before `session_start` without writing a frame, because `session_start` carries a fresh computation. A failed call does not hold the turn: the gateway writes the message and sends the notice again at the next turn.
+- (b) The last values sent are stored on the session row, so a new coordinator compares against them, and a failed call fails the turn's delivery and is retried under delivery's retry.
+
+**Recommendation: (a).** Availability is advice, and the gateway checks every call when it arrives (RPR-9), so a lost or repeated notice changes no enforcement. It blocks 0139.S2. (raised by the M3 readiness review, 2026-11-19; sources: 0139-L4)
+
+[`0126-delegation-availability`](../0126-delegation-availability/change.md) (0126-F16) asks that a replica with no recorded last-sent value, after a handoff or a restart, send the notice at the first turn it opens, which is the handoff rule of (a). "RP-4" states it once this decision is settled.
+
+**O23. Whether the renames of §5.2 and §4.7.9 stand. Open.**
+
+"Specification changes" repeats the renames that O7 (a) of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md) settled on 2026-11-13: §5.2 becomes "Pool Configuration" and §4.7.9 becomes "Runtime Startup Sequence", through the anchor-redirect map. Change 0115 landed afterwards, and "Successor stubs" in `spec/conventions.md` states that the heading and the anchor of a numbered section do not change while any section citation points at them. Many Go annotations cite §5.2 and §4.7.9.
+
+- (a) Withdraw the renames. The numbered headings stay until their area migrates, and the §5.2 and §4.7.9 rows here drop their rename.
+- (b) Keep the renames, and amend "Successor stubs" in `spec/conventions.md` to allow a rename through the anchor-redirect map.
+
+**Recommendation: (a).** A rename has no lasting effect once the sections are successor stubs, and it would touch annotations that the area change replaces. The matching decision is open decision 5 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md), which owns the renames. It blocks the §5.2 and §4.7.9 rows of 0139.S1. (raised by the M3 readiness review, 2026-11-19; requested by change 0119; mirrors 0119 open decision 5)
+
 ## Decisions
 
 > **Revision 10.** [`0124-connector-removal`](../0124-connector-removal/change.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). A statement in this section about connectors, `connector:<id>`, the connector client, connector links, `deferredToolDiscovery`, `tool_progress`, or `toolProgress` that the edits of revision 10 did not rewrite is withdrawn and kept as the record. The platform statements stand.
@@ -23,11 +126,11 @@ The owner proposed the move of the platform MCP server and the handshake on 2026
 
 **Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0139.S2, whose entries in `steps.md` name the operations.
 
-## Open decisions
+### Settled open decisions O1 to O13
 
 > **Revision 10.** [`0124-connector-removal`](../0124-connector-removal/change.md) removes connectors under the owner's decision of 2026-11-15 ("Yes, let's drop connectors."). In this section, every statement about `connector:<id>`, `CallConnectorTool`, `ListConnectorTools`, `ListSessionConnectors`, `CH-MCP-CONNECTOR`, connector links, `deferredToolDiscovery`, `tool_progress`, `toolProgress`, and `gateway.toolProgressMinIntervalMs` is withdrawn and kept as the record, and the removal design's own section of the same name governs those items. The platform statements stand.
 
-No decision is open. The owner settled O1 to O9 and O11 on 2026-11-12 with "go with your recommendations" (D7), session isolation retired O10, the owner settled O12 as D5, and the owner settled O13 on 2026-11-13 as D10. Each settled entry keeps its options and its reasoning as a record, and states the option taken.
+The owner settled O1 to O9 and O11 on 2026-11-12 with "go with your recommendations" (D7), session isolation retired O10, the owner settled O12 as D5, and the owner settled O13 on 2026-11-13 as D10. Each settled entry keeps its options and its reasoning as a record, and states the option taken.
 
 **O1. The versioning scheme.**
 
