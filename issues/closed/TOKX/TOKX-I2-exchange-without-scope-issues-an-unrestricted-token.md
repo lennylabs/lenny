@@ -1,9 +1,12 @@
 ---
 id: TOKX-I2
-status: open
+status: closed
 kind: spec-defect
 severity: high
 requirements: []
+change: 0163.S1
+closed: fixed
+closed-by: 0163.S1
 ---
 
 # A token exchange that omits `scope` issues a token with no scope restriction
