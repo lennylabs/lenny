@@ -34,7 +34,7 @@ It leaves out:
 | :-- | :-- |
 | Subject | The principal the mint narrows from: the pasted bearer in `apiKey` mode, or the validated OIDC principal of the session record in `oidc` mode (§10.2, **Playground mint invariants**). |
 | `playground_allowed_scope` | The fixed set of scopes a playground bearer may carry, defined in §25.1 (**Playground-allowed scope set.**) and held in `playgroundAllowedScope` in `pkg/gateway/playground/token.go`. |
-| Absent claim | A `scope` claim that is missing or empty. §25.1 reads it as no scope restriction. |
+| Absent claim | A `scope` claim that is missing. §25.1 reads it as no scope restriction, and the mint and the auth chain read an empty or whitespace-only claim the same way. |
 | Disjoint subject scope | A subject `scope` claim that parses and whose intersection with `playground_allowed_scope` holds no value. |
 | Unparseable subject scope | A subject `scope` claim with a value the §25.1 canonical form refuses, such as `openid` or `bogusdomain:read`. |
 

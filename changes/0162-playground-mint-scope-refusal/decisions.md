@@ -2,7 +2,9 @@
 
 ## Open decisions
 
-None.
+- **O1. What the playground does with an ID token whose `scope` claim is not a string.** `extractSubject` in `pkg/gateway/playground/oidc.go` reads the claim with `stringClaim`, which returns the empty string for a JSON array, so an ID token carrying `"scope": ["openid", "profile"]` is stored as an absent claim and minted with `playground_allowed_scope`, while the string `"openid profile"` is refused with 401. The ceiling still bounds the result, and the subject had no scope restriction under either reading, so no privilege is gained. Raised by the general review of 0162.S1 (finding 4). Options: (a) file an issue under PLAY and settle it with the scope-claim handling of [0149](../0149-tenant-scoping-identity/change.md) (TS-2), which filters `scope` to `tools:` values at the verifier; (b) widen 0162 to treat a present non-string `scope` as unparseable at the callback or the mint. Recommendation: (a), because 0149 changes how every verifier reads the claim and the playground callback should follow that reading rather than a rule of its own.
+
+- **O2. Whether a refused `oidc`-mode mint names the user in its audit event.** `playground.bearer_mint_rejected` carries `tenant_id`, `subject_jti`, `subject_typ`, `invariant_violated`, and `ingress_path` (§10.2, **Playground mint invariants**). An `oidc`-mode subject is a session record with no `jti`, so the scope refusals this change adds in `oidc` mode emit an event with an empty `subject_jti` that an operator cannot trace to a user. Raised by the security review of 0162.S1 (finding 3). Options: (a) add `user_id` to the event field set, filled on every refusal, in a later change; (b) add it in 0162 before it merges; (c) keep the field set. Recommendation: (a), because the field set is shared with the `apiKey` refusals and the §13.3 rejection discipline, and the gap does not weaken the refusal itself.
 
 ## Decisions
 
