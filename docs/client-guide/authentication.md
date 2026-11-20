@@ -129,11 +129,14 @@ grant_type=urn%3Aietf%3Aparams%3Aoauth%3Agrant-type%3Atoken-exchange
   "access_token": "eyJhbGciOi...",
   "issued_token_type": "urn:ietf:params:oauth:token-type:jwt",
   "token_type": "Bearer",
-  "expires_in": 900
+  "expires_in": 900,
+  "scope": "tools:diagnostics:read tools:pools:read"
 }
 ```
 
-**Scope narrowing is monotonic.** An exchange may only request a `scope` that is a subset of the `subject_token`'s existing scope. Broadening is rejected with `invalid_scope`. See [Security -> Credential Flow](../operator-guide/security.md) for the full claim-mapping table and scope-narrowing rules.
+The response `scope` field carries the scope of the issued token. It is omitted when the issued token carries no `scope` claim.
+
+**Scope narrowing is monotonic.** An exchange may only request a `scope` that is a subset of the `subject_token`'s existing scope. Broadening is rejected with `invalid_scope`. A request whose `scope` parameter is absent or empty receives the `subject_token`'s scope unchanged, so the issued token is never broader than the token it was exchanged from; a `subject_token` with no `scope` claim yields a token with no `scope` claim, which carries no scope restriction. An exchange whose `subject_token` is the caller's own bearer token, with the same audience and scope, is a rotation: the Token Service revokes the presented token when it issues the new one. See [Security -> Credential Flow](../operator-guide/security.md) for the full claim-mapping table and scope-narrowing rules.
 
 This endpoint serves self and service-principal rotation. The bootstrap admin credential rotates through a dedicated route instead: `lenny-ctl admin users rotate-token --user lenny-admin` calls `POST /v1/admin/users/{user}/rotate-token`, and the gateway mints the new admin token in process and patches the `lenny-admin-token` Secret without going through `/v1/oauth/token`.
 

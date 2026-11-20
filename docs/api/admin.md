@@ -858,7 +858,7 @@ Canonical OAuth token endpoint (RFC 6749 + RFC 8693 token exchange). Used across
 | End users | Rotate their own session token | user `subject_token` |
 | `lenny-ops` (internal) | Mint short-lived scoped tokens for agent-operability calls | operator `subject_token` + requested scope |
 
-For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For `a2a_delegation` child-token minting, additionally supply `actor_token=<delegating_caller_token>`, set to the delegating caller's token, and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's.
+For rotation, use `grant_type=urn:ietf:params:oauth:grant-type:token-exchange` with `subject_token=<current_token>` and `requested_token_type` matching the subject. For `a2a_delegation` child-token minting, additionally supply `actor_token=<delegating_caller_token>`, set to the delegating caller's token, and a narrowed `scope` string. Scope narrowing is enforced server-side: the response token's scope is always a subset of the parent's. A request without `scope` receives the `subject_token`'s scope unchanged.
 
 The caller token (the `Authorization` bearer, which authenticates the client) must not be a web playground bearer, which carries the `origin: "playground"` claim. The Token Service refuses a playground bearer as the caller token with `401 invalid_client`; the playground obtains new bearers through `POST /v1/playground/token` instead. A playground bearer may still appear as the `subject_token`.
 
