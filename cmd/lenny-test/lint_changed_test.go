@@ -1052,8 +1052,13 @@ jobs:
   cross:
     strategy:
       matrix:
-        goos: [freebsd]
-        goarch: [amd64, arm64]
+        goos: [freebsd, windows]
+        goarch: [amd64, 386]
+    steps:
+      - env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: go build ./cmd/x
   plain:
     steps:
       - run: echo
@@ -1066,7 +1071,7 @@ jobs:
 	for _, tg := range got {
 		names = append(names, tg.String())
 	}
-	if want := []string{"darwin/arm64", "freebsd/amd64", "freebsd/arm64", "linux/amd64", "linux/arm"}; !slices.Equal(names, want) {
+	if want := []string{"darwin/arm64", "freebsd/386", "freebsd/amd64", "linux/amd64", "linux/arm", "windows/386", "windows/amd64"}; !slices.Equal(names, want) {
 		t.Errorf("targets %v; want %v", names, want)
 	}
 	for name, bad := range map[string]string{
@@ -1075,7 +1080,12 @@ jobs:
 		"goos alone":           "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - { goos: linux }\n",
 		"goarch list alone":    "jobs:\n  a:\n    strategy:\n      matrix:\n        goarch: [amd64]\n",
 		"a bad platform":       "jobs:\n  a:\n    steps:\n      - with:\n          platforms: linux\n",
-		"a templated goos":     "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - { goos: ${{ x }}, goarch: amd64 }\n",
+		"a templated goos":     "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - goos: \"${{ x }}\"\n            goarch: amd64\n",
+		"a goos list alone":    "jobs:\n  a:\n    strategy:\n      matrix:\n        goos: [linux]\n",
+		"a list as goos":       "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - { goos: [linux], goarch: amd64 }\n",
+		"an env GOOS":          "jobs:\n  a:\n    strategy:\n      matrix:\n        include:\n          - { os: darwin, goarch: arm64, goos: linux }\n    steps:\n      - env:\n          GOOS: ${{ matrix.os }}\n",
+		"a job env GOARCH":     "jobs:\n  a:\n    env:\n      GOARCH: arm64\n    steps:\n      - with:\n          platforms: linux/amd64\n",
+		"a script GOOS":        "jobs:\n  a:\n    steps:\n      - with:\n          platforms: linux/amd64\n      - run: GOOS=darwin go build ./cmd/x\n",
 	} {
 		if _, err := releaseTargets([]byte(bad)); err == nil {
 			t.Errorf("%s: no error", name)

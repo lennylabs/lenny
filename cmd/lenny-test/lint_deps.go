@@ -231,17 +231,31 @@ func lintDepsTargets(root string) ([]lintTarget, error) {
 }
 
 // releaseWorkflow is the part of a GitHub Actions workflow that names
-// build targets: each job's matrix, and the inputs of each step.
+// build targets: each job's matrix, environment, and steps.
 type releaseWorkflow struct {
 	Jobs map[string]struct {
 		Strategy struct {
 			Matrix yaml.Node `yaml:"matrix"`
 		} `yaml:"strategy"`
+		Env   map[string]yaml.Node `yaml:"env"`
 		Steps []struct {
 			With map[string]yaml.Node `yaml:"with"`
+			Env  map[string]yaml.Node `yaml:"env"`
+			Run  string               `yaml:"run"`
 		} `yaml:"steps"`
 	} `yaml:"jobs"`
 }
+
+// releaseTargetEnv is the only value the release workflow may give GOOS
+// and GOARCH in an env block: the matrix value the reading takes the
+// target from.
+var releaseTargetEnv = map[string]string{
+	"GOOS":   "${{ matrix.goos }}",
+	"GOARCH": "${{ matrix.goarch }}",
+}
+
+// releaseRunTarget finds a GOOS or GOARCH assignment in a step's script.
+var releaseRunTarget = regexp.MustCompile(`\bGO(OS|ARCH)=`)
 
 // releaseTargets returns, sorted and without duplicates, the build targets
 // the release workflow body names in either of the two forms it uses:
@@ -250,15 +264,22 @@ type releaseWorkflow struct {
 //     top level carries goos and goarch lists, which give every pair. The
 //     cross-compiled CLI archives use this form.
 //   - A step input named platforms that lists os/arch pairs separated by
-//     commas or new lines, as docker/build-push-action reads it. A variant
-//     after a second slash is dropped, because the go command's listing
-//     does not depend on it. The images use this form.
+//     commas or new lines, as docker/build-push-action reads it. The images
+//     use this form. A variant after a second slash, such as v7 in
+//     linux/arm/v7, is ignored, so the listing reads the go command's
+//     default for that architecture's GOARM, GOAMD64, or GOARM64 setting.
 //
-// A matrix that is not a mapping, such as an expression the workflow
-// evaluates, an entry that names only one of goos and goarch, a platform
-// that is not an os/arch pair, and a workflow that names no target are
-// errors, so a change of form fails the check rather than dropping a
-// target from it.
+// The reading refuses the forms that would set a target it does not read:
+// a matrix that is not a mapping, such as an expression the workflow
+// evaluates; a matrix include entry that names only one of goos and
+// goarch; a goos or goarch value that is not a plain name; a platform that
+// is not an os/arch pair; a job or step env block that sets GOOS or GOARCH
+// to anything other than the matrix's goos or goarch; and a step script
+// that assigns GOOS or GOARCH. A workflow that names no target is an
+// error too. A form the reading does not look at, such as a matrix entry
+// whose keys have other names that a build step reads through another
+// variable, or a reusable workflow a job calls, can still name a target
+// the reading misses.
 func releaseTargets(body []byte) ([]lintTarget, error) {
 	var wf releaseWorkflow
 	if err := yaml.Unmarshal(body, &wf); err != nil {
@@ -279,7 +300,16 @@ func releaseTargets(body []byte) ([]lintTarget, error) {
 		for _, t := range targets {
 			seen[t] = true
 		}
+		if err := checkTargetEnv(job.Env); err != nil {
+			return nil, fmt.Errorf("job %s: %w", name, err)
+		}
 		for i, step := range job.Steps {
+			if err := checkTargetEnv(step.Env); err != nil {
+				return nil, fmt.Errorf("job %s, step %d: %w", name, i+1, err)
+			}
+			if releaseRunTarget.MatchString(step.Run) {
+				return nil, fmt.Errorf("job %s, step %d: the script assigns GOOS or GOARCH, which the reading of build targets does not follow; set them in the step's env from the matrix", name, i+1)
+			}
 			node, ok := step.With["platforms"]
 			if !ok {
 				continue
@@ -307,9 +337,26 @@ func releaseTargets(body []byte) ([]lintTarget, error) {
 	return out, nil
 }
 
+// checkTargetEnv refuses an env block that sets GOOS or GOARCH to anything
+// other than the matrix value releaseTargetEnv names.
+func checkTargetEnv(env map[string]yaml.Node) error {
+	for name, want := range releaseTargetEnv {
+		v, ok := env[name]
+		if !ok {
+			continue
+		}
+		if v.Kind != yaml.ScalarNode || strings.TrimSpace(v.Value) != want {
+			return fmt.Errorf("env sets %s to %q, and the reading of build targets follows only %s", name, v.Value, want)
+		}
+	}
+	return nil
+}
+
 // matrixTargets returns the targets a job matrix names: one per include
 // entry that carries goos and goarch, and every pair of the top-level goos
-// and goarch lists. A job with no matrix names none.
+// and goarch lists. A job with no matrix names none. Each value is read as
+// the scalar text the workflow holds, so an unquoted number such as 386 is
+// a name like any other.
 func matrixTargets(m yaml.Node) ([]lintTarget, error) {
 	if m.Kind == 0 {
 		return nil, nil
@@ -317,25 +364,30 @@ func matrixTargets(m yaml.Node) ([]lintTarget, error) {
 	if m.Kind != yaml.MappingNode {
 		return nil, errors.New("the matrix is not a mapping, so its build targets cannot be read")
 	}
-	var matrix map[string]any
+	var matrix map[string]yaml.Node
 	if err := m.Decode(&matrix); err != nil {
 		return nil, fmt.Errorf("read the matrix: %w", err)
 	}
 	var out []lintTarget
 	if include, ok := matrix["include"]; ok {
-		entries, ok := include.([]any)
-		if !ok {
+		if include.Kind != yaml.SequenceNode {
 			return nil, errors.New("the matrix include is not a list")
 		}
-		for i, e := range entries {
-			entry, ok := e.(map[string]any)
-			if !ok {
+		for i, e := range include.Content {
+			if e.Kind != yaml.MappingNode {
 				return nil, fmt.Errorf("matrix include entry %d is not a mapping", i+1)
+			}
+			var entry map[string]yaml.Node
+			if err := e.Decode(&entry); err != nil {
+				return nil, fmt.Errorf("matrix include entry %d: %w", i+1, err)
 			}
 			goos, hasOS := entry["goos"]
 			goarch, hasArch := entry["goarch"]
 			if !hasOS && !hasArch {
 				continue
+			}
+			if !hasOS || !hasArch {
+				return nil, fmt.Errorf("matrix include entry %d names only one of goos and goarch", i+1)
 			}
 			t, err := targetOf(goos, goarch)
 			if err != nil {
@@ -349,16 +401,11 @@ func matrixTargets(m yaml.Node) ([]lintTarget, error) {
 	if !hasOS && !hasArch {
 		return out, nil
 	}
-	oses, err := stringList(goosList)
-	if err != nil || !hasArch {
-		return nil, errors.New("the matrix carries goos and goarch only as two lists of strings")
+	if !hasOS || !hasArch {
+		return nil, errors.New("the matrix carries only one of the goos and goarch lists")
 	}
-	arches, err := stringList(goarchList)
-	if err != nil {
-		return nil, errors.New("the matrix carries goos and goarch only as two lists of strings")
-	}
-	for _, goos := range oses {
-		for _, goarch := range arches {
+	for _, goos := range scalarList(goosList) {
+		for _, goarch := range scalarList(goarchList) {
 			t, err := targetOf(goos, goarch)
 			if err != nil {
 				return nil, err
@@ -369,47 +416,48 @@ func matrixTargets(m yaml.Node) ([]lintTarget, error) {
 	return out, nil
 }
 
-// stringList returns v as a list of strings, accepting a single string.
-func stringList(v any) ([]string, error) {
-	switch v := v.(type) {
-	case string:
-		return []string{v}, nil
-	case []any:
-		out := make([]string, 0, len(v))
-		for _, e := range v {
-			s, ok := e.(string)
-			if !ok {
-				return nil, fmt.Errorf("%v is not a string", e)
-			}
-			out = append(out, s)
-		}
-		return out, nil
+// scalarList returns the items of a list node, or the node itself when it
+// is not a list, so that targetOf refuses any item that is not a scalar.
+func scalarList(n yaml.Node) []yaml.Node {
+	if n.Kind != yaml.SequenceNode {
+		return []yaml.Node{n}
 	}
-	return nil, fmt.Errorf("%v is not a list of strings", v)
+	out := make([]yaml.Node, 0, len(n.Content))
+	for _, c := range n.Content {
+		out = append(out, *c)
+	}
+	return out
 }
 
-// targetOf returns the target of a goos and a goarch value, which must
-// both be strings of the form the go command takes.
-func targetOf(goos, goarch any) (lintTarget, error) {
-	osName, okOS := goos.(string)
-	archName, okArch := goarch.(string)
-	if !okOS || !okArch || !lintTargetName.MatchString(osName) || !lintTargetName.MatchString(archName) {
-		return lintTarget{}, fmt.Errorf("goos %v and goarch %v are not both names of the form the go command takes", goos, goarch)
+// targetOf returns the target of a goos and a goarch node, which must both
+// be scalars whose text has the form the go command takes.
+func targetOf(goos, goarch yaml.Node) (lintTarget, error) {
+	if goos.Kind != yaml.ScalarNode || goarch.Kind != yaml.ScalarNode {
+		return lintTarget{}, errors.New("goos and goarch are not both plain values")
 	}
-	return lintTarget{goos: osName, goarch: archName}, nil
+	return targetOfNames(goos.Value, goarch.Value)
+}
+
+// targetOfNames returns the target of a GOOS and a GOARCH name, which
+// must both have the form the go command takes.
+func targetOfNames(goos, goarch string) (lintTarget, error) {
+	if !lintTargetName.MatchString(goos) || !lintTargetName.MatchString(goarch) {
+		return lintTarget{}, fmt.Errorf("goos %q and goarch %q are not both names of the form the go command takes", goos, goarch)
+	}
+	return lintTarget{goos: goos, goarch: goarch}, nil
 }
 
 // lintTargetName is the form of a GOOS or GOARCH value.
 var lintTargetName = regexp.MustCompile(`^[a-z0-9]+$`)
 
-// parsePlatform reads an os/arch platform, dropping a variant after a
+// parsePlatform reads an os/arch platform, ignoring a variant after a
 // second slash.
 func parsePlatform(p string) (lintTarget, error) {
 	parts := strings.Split(p, "/")
 	if len(parts) < 2 || len(parts) > 3 {
 		return lintTarget{}, fmt.Errorf("platform %q is not os/arch", p)
 	}
-	t, err := targetOf(parts[0], parts[1])
+	t, err := targetOfNames(parts[0], parts[1])
 	if err != nil {
 		return lintTarget{}, fmt.Errorf("platform %q: %w", p, err)
 	}
