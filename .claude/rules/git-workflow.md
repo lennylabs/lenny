@@ -8,6 +8,8 @@ Integration history is explicit, `main` stays green, and branches are short-live
 
 ## Merge only on a green gate verdict
 
+<!-- SUSPENDED for the v1 program (owner's decision of 2026-11-23, while the owner is the only contributor). Restore the text in this comment, and delete the v1 text that follows it, when the v1 program completes or when a collaborator joins, whichever comes first. The v1 program record (changes/programs/v1.md, "Decisions") lists every suspended block.
+
 - A branch merges only when the merge-gate verdict for its head commit is `PASS`. `lenny-test gate` runs the merge gate in the gate container and writes the verdict to `tests/results/gate-<run>.json`; `.claude/rules/test-coverage.md` ("Gates") states the tiers it runs. The verdict counts for the head only when its `trigger.git_revision` is the branch head, its `gate.dirty` is false, and its `gate.integration_merge_base` is the output of `git merge-base refs/heads/main <head>`. A commit added to the branch after the run, including a conflict resolution, needs a new verdict.
 - A records-only commit is the one exception: a commit after a `PASS` verdict keeps that verdict when both of the following hold.
   1. Every path the commit touches is under `changes/` (the step's digest, which records the verdict, the step statuses, and the board), or is `docs/about/status.md` with every changed line between its `<!-- generated:status -->` and `<!-- /generated:status -->` markers.
@@ -16,6 +18,16 @@ Integration history is explicit, `main` stays green, and branches are short-live
   A commit that touches any other path, or any line of `docs/about/status.md` outside the markers, needs a new verdict.
 - The merge commit message or the step's digest names the verdict's run identifier, so the green run behind each merge can be found.
 - `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges. Revert the merge that introduced the failure with `git revert -m 1 <merge>` when the fix is not immediate.
+-->
+
+**v1 merge policy.** While the owner is the only contributor to the v1 program, a branch merges without a merge-gate verdict for its head, and the full merge gate runs on `main` after the merge.
+
+- **A branch that touches only records and documentation** merges when the records checks and the secret scan pass on its head: `python3 scripts/changes/changes.py check`, `python3 scripts/changes/changes.py board --check`, `python3 scripts/changes/changes.py status-page --check`, and `lenny-test secretscan` with exit code 0 and the verdict `PASS`. A branch that touches `docs/` also runs `lenny-test --tier docs`. Records and documentation are the paths under `changes/`, `issues/`, `docs/`, `.claude/rules/`, and `.claude/skills/`, and the root-level markdown records.
+- **Any other branch** merges when `lenny-test run --changed` passes on its committed head with a clean tree, and the secret scan passes on that head. `lenny-test run --changed` runs the static, unit, component, and contract tiers the diff reaches. The integration tier and the docs tier run in the gate on `main`.
+- **The gate on `main`.** After one or more merges, run `lenny-test gate` on the head of `main`, one run at a time, at a moment when no other tests load the machine. A run covers every merge since the last run on `main`. A merge may land while a run is in progress.
+- **A red gate on `main`.** When the latest finished run on `main` is `FAIL` or `UNVERIFIED`, the failure is fixed or reverted before the next merge. Revert the merge that introduced it with `git revert -m 1 <merge>` when the fix is not immediate. A failure that a rerun on the same commit does not reproduce, such as a container start timeout under load, is a load failure and is rerun rather than fixed.
+- **Records.** Each merge commit message names the checks run on the branch head, and the identifier and commit of the latest finished gate run on `main`. A step's digest records the targeted runs, and the gate run on `main` that first covered the step when one has finished.
+- The review rule under "Review changes to the merge gate" still applies before a merge.
 
 ## Review changes to the merge gate
 
@@ -45,6 +57,8 @@ Integration history is explicit, `main` stays green, and branches are short-live
 
 ## How to apply when merging
 
+<!-- SUSPENDED for the v1 program (owner's decision of 2026-11-23, while the owner is the only contributor). Restore the text in this comment, and delete the v1 text that follows it, when the v1 program completes or when a collaborator joins, whichever comes first. The v1 program record (changes/programs/v1.md, "Decisions") lists every suspended block.
+
 1. Confirm the feature branch's work is complete, run `lenny-test gate` on its committed head, and confirm the verdict is `PASS` for that commit with a clean tree. Do not merge on any other verdict. When a records-only commit follows the verdict, run the records checks and `lenny-test secretscan` on that commit, and confirm that each passes, before relying on the verdict.
 2. Run `git merge-base refs/heads/main <head>` and confirm that its output equals the verdict's `gate.integration_merge_base`. The full ref name keeps a tag named `main` from standing in for the branch, as in the gate. When the two differ, or the verdict carries no `gate.integration_merge_base`, run the gate again on the head rather than merge.
 3. When the branch's diff touches a path that "Review changes to the merge gate" names, confirm that the `review` skill ran over that diff and that no finding awaits the owner.
@@ -52,6 +66,17 @@ Integration history is explicit, `main` stays green, and branches are short-live
 5. Delete the local branch with `git branch -d`, and delete the remote branch with `git push origin --delete` when it was pushed.
 6. Push the updated integration branch.
 7. When the merge-gate tiers fail on `main` afterwards, fix or revert before the next merge.
+-->
+
+v1 merge steps, under the v1 merge policy in "Merge only on a green gate verdict":
+
+1. Confirm that the latest finished gate run on `main` is `PASS`, or that its failure has been fixed or reverted.
+2. Run the checks the v1 merge policy names for the branch on its committed head, and confirm that each passes.
+3. When the branch's diff touches a path that "Review changes to the merge gate" names, confirm that the `review` skill ran over that diff and that no finding awaits the owner.
+4. Merge into the target with `git merge --no-ff`, with a message naming what the branch implemented, the checks run, and the latest gate run on `main`.
+5. Delete the local branch with `git branch -d`, and delete the remote branch with `git push origin --delete` when it was pushed.
+6. Push the updated integration branch.
+7. Run `lenny-test gate` on the head of `main` when the machine is otherwise idle, and fix or revert a failure before the next merge.
 
 ## Escape hatches
 
