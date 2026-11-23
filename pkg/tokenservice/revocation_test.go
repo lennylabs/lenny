@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
@@ -21,9 +23,10 @@ import (
 // the handler's §13.3 recursive-revocation branch can be
 // exercised without Postgres.
 type fakeRevocationStore struct {
-	revoked []issuedtokenstore.RevokedToken
-	err     error
-	gotRoot string
+	revoked   []issuedtokenstore.RevokedToken
+	err       error
+	gotCaller string
+	gotRoot   string
 	gotRoot2Reason,
 	gotChildReason string
 }
@@ -32,7 +35,8 @@ func (f *fakeRevocationStore) Record(context.Context, issuedtokenstore.IssuedTok
 	return nil
 }
 
-func (f *fakeRevocationStore) RevokeCascade(_ context.Context, _, rootJTI, rootReason, childReason string, _ time.Time) ([]issuedtokenstore.RevokedToken, error) {
+func (f *fakeRevocationStore) RevokeCascadeByCaller(_ context.Context, _, callerJTI, rootJTI, rootReason, childReason string, _ time.Time) ([]issuedtokenstore.RevokedToken, error) {
+	f.gotCaller = callerJTI
 	f.gotRoot = rootJTI
 	f.gotRoot2Reason = rootReason
 	f.gotChildReason = childReason
@@ -210,5 +214,180 @@ func TestHandlerRecursiveRevocationUnknownRoot_spec_16_7_5(t *testing.T) {
 	resp := doExchange(t, srv, caller, Request{GrantType: grantTypeExchange, SubjectToken: subject, RequestedTokenType: revokedTokenType})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400", resp.StatusCode)
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// A recursive-revocation request is accepted from the subject token's own
+// user and from a caller holding tenant-admin or platform-admin in the
+// tenant. Another user in the tenant without an administrator role is
+// refused with 403 unauthorized_client, and the store revokes nothing.
+// The store receives the caller token's jti for the revoked-caller check.
+func TestHandlerRecursiveRevocationAcceptsTheOwnerOrATenantAdministrator(t *testing.T) {
+	cases := []struct {
+		name       string
+		callerSub  string
+		roles      []auth.Role
+		wantStatus int
+	}{
+		{"the token's own user", "alice@acme.com", nil, http.StatusOK},
+		{"a tenant-admin", "carol@acme.com", []auth.Role{auth.RoleTenantAdmin}, http.StatusOK},
+		{"a platform-admin", "carol@acme.com", []auth.Role{auth.RolePlatformAdmin}, http.StatusOK},
+		{"another user", "bob@acme.com", []auth.Role{auth.RoleUser}, http.StatusForbidden},
+		{"a tenant-viewer", "bob@acme.com", []auth.Role{auth.RoleTenantViewer}, http.StatusForbidden},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &fakeRevocationStore{revoked: []issuedtokenstore.RevokedToken{{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true}}}
+			auditor := &recordingAuditor{}
+			srv, signer := revocationServer(t, store, auditor, nil)
+			caller := mintToken(t, signer, jwt.Claims{Subject: c.callerSub, TenantID: "acme", JWTID: "caller-jti", Typ: auth.TokenUserBearer, Roles: c.roles})
+			subject := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "root-jti", Typ: auth.TokenUserBearer})
+
+			status, env := decodeExchange(t, doExchange(t, srv, caller, Request{GrantType: grantTypeExchange, SubjectToken: subject, RequestedTokenType: revokedTokenType}))
+			if status != c.wantStatus {
+				t.Fatalf("status %d body %v, want %d", status, env, c.wantStatus)
+			}
+			if status == http.StatusOK {
+				if store.gotRoot != "root-jti" || store.gotCaller != "caller-jti" {
+					t.Errorf("cascade (caller %q, root %q), want (caller-jti, root-jti)", store.gotCaller, store.gotRoot)
+				}
+				return
+			}
+			if env["error"] != "unauthorized_client" {
+				t.Errorf("error = %v, want unauthorized_client", env["error"])
+			}
+			if store.gotRoot != "" {
+				t.Errorf("a refused revocation reached the store with root %q", store.gotRoot)
+			}
+			if len(revokedPayloads(t, auditor.snapshot())) != 0 {
+				t.Errorf("a refused revocation wrote token.revoked rows")
+			}
+		})
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// A revocation request whose caller token the store reports as revoked is
+// refused with 401 invalid_client and writes no token.revoked row.
+func TestHandlerRecursiveRevocationRefusesARevokedCaller(t *testing.T) {
+	store := &fakeRevocationStore{err: issuedtokenstore.ErrCallerRevoked}
+	auditor := &recordingAuditor{}
+	srv, signer := revocationServer(t, store, auditor, nil)
+	caller := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "leaked-jti", Typ: auth.TokenUserBearer})
+	subject := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "root-jti", Typ: auth.TokenUserBearer})
+
+	status, env := decodeExchange(t, doExchange(t, srv, caller, Request{GrantType: grantTypeExchange, SubjectToken: subject, RequestedTokenType: revokedTokenType}))
+	if status != http.StatusUnauthorized || env["error"] != "invalid_client" {
+		t.Fatalf("status %d body %v, want 401 invalid_client", status, env)
+	}
+	if store.gotCaller != "leaked-jti" {
+		t.Errorf("caller jti passed to the store = %q, want leaked-jti", store.gotCaller)
+	}
+	if len(revokedPayloads(t, auditor.snapshot())) != 0 {
+		t.Errorf("a refused revocation wrote token.revoked rows")
+	}
+}
+
+// fakePlatformRoles is a PlatformRoleResolver with one fixed answer that
+// counts its lookups.
+type fakePlatformRoles struct {
+	roles   []auth.Role
+	found   bool
+	err     error
+	lookups int
+}
+
+func (f *fakePlatformRoles) ResolveRoles(context.Context, string, string) ([]auth.Role, bool, error) {
+	f.lookups++
+	return f.roles, f.found, f.err
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// The caller's administrator role for a recursive-revocation request is
+// its platform-managed assignment when one exists: an assignment without
+// tenant-admin refuses a caller whose roles claim lists it, and an
+// assignment with tenant-admin admits a caller whose claim lists none. No
+// assignment leaves the claim authoritative. A failed lookup refuses the
+// request without revoking: 503 token_store_unavailable for a Postgres
+// outage and 500 token_exchange_failed otherwise. The token's own user is
+// accepted without a lookup.
+func TestHandlerRecursiveRevocationResolvesThePlatformRoleAssignment(t *testing.T) {
+	cases := []struct {
+		name       string
+		callerSub  string
+		claim      []auth.Role
+		resolver   *fakePlatformRoles
+		wantStatus int
+		wantError  string
+		wantLookup int
+	}{
+		{
+			"assignment demotes a claimed tenant-admin", "bob@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{roles: []auth.Role{auth.RoleUser}, found: true}, http.StatusForbidden, "unauthorized_client", 1,
+		},
+		{
+			"empty assignment demotes a claimed platform-admin", "bob@acme.com",
+			[]auth.Role{auth.RolePlatformAdmin},
+			&fakePlatformRoles{found: true}, http.StatusForbidden, "unauthorized_client", 1,
+		},
+		{
+			"assignment grants tenant-admin", "carol@acme.com", nil,
+			&fakePlatformRoles{roles: []auth.Role{auth.RoleTenantAdmin}, found: true}, http.StatusOK, "", 1,
+		},
+		{
+			"no assignment keeps the claim", "carol@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{}, http.StatusOK, "", 1,
+		},
+		{
+			"Postgres outage fails closed", "carol@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{err: &pgconn.PgError{Code: "08006"}}, http.StatusServiceUnavailable, "token_store_unavailable", 1,
+		},
+		{
+			"other lookup failure fails closed", "carol@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{err: errors.New("decode failed")}, http.StatusInternalServerError, "token_exchange_failed", 1,
+		},
+		{
+			"the token's own user needs no lookup", "alice@acme.com", nil,
+			&fakePlatformRoles{err: errors.New("unreachable")}, http.StatusOK, "", 0,
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			store := &fakeRevocationStore{revoked: []issuedtokenstore.RevokedToken{{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true}}}
+			signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
+			srv := mustNewServer(t, Options{
+				CapabilityTokenTTL: 15 * time.Minute,
+				Signer:             jwtsign.HMAC(signer),
+				Verifier:           signer,
+				Issuer:             "https://lenny.dev.test/token",
+				IssuedTokens:       store,
+				Auditor:            &recordingAuditor{},
+				PlatformRoles:      c.resolver,
+			})
+			caller := mintToken(t, signer, jwt.Claims{Subject: c.callerSub, TenantID: "acme", JWTID: "caller-jti", Typ: auth.TokenUserBearer, Roles: c.claim})
+			subject := mintToken(t, signer, jwt.Claims{Subject: "alice@acme.com", TenantID: "acme", JWTID: "root-jti", Typ: auth.TokenUserBearer})
+
+			status, env := decodeExchange(t, doExchange(t, srv, caller, Request{GrantType: grantTypeExchange, SubjectToken: subject, RequestedTokenType: revokedTokenType}))
+			if status != c.wantStatus {
+				t.Fatalf("status %d body %v, want %d", status, env, c.wantStatus)
+			}
+			if c.wantError != "" && env["error"] != c.wantError {
+				t.Errorf("error = %v, want %s", env["error"], c.wantError)
+			}
+			if (status == http.StatusOK) != (store.gotRoot == "root-jti") {
+				t.Errorf("store reached with root %q on status %d", store.gotRoot, status)
+			}
+			if c.resolver.lookups != c.wantLookup {
+				t.Errorf("role lookups = %d, want %d", c.resolver.lookups, c.wantLookup)
+			}
+		})
 	}
 }

@@ -55,7 +55,7 @@ func mintKeySet(t *testing.T, signer jwt.Signer, jti, origin string) string {
 		Subject:  "alice@acme.com",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:read sessions:write",
+		Scope:    "tools:sessions:read tools:sessions:write",
 		Audience: []string{"lenny-gateway"},
 		IssuedAt: now.Unix(),
 		Expiry:   now.Add(time.Hour).Unix(),
@@ -74,7 +74,7 @@ func narrowing(subject string) tokenservice.Request {
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	}
 }
@@ -103,21 +103,37 @@ func TestOAuthTokenRefusesPlaygroundOriginCaller_spec_13_3(t *testing.T) {
 	}
 }
 
-// spec: 13.3 (Credential Flow) "Client authentication on /v1/oauth/token"
-// diagnosis: a non-playground caller presenting a playground-origin
-// subject_token was refused. §13.3 refuses a playground-origin token
-// only as the caller token; an origin check that also reaches the
-// subject_token refuses an exchange that narrows a playground bearer.
-func TestOAuthTokenAcceptsPlaygroundOriginSubjectToken_spec_13_3(t *testing.T) {
+// spec: §13.3 (Credential Flow)
+// diagnosis: a mint whose subject_token or actor_token carries origin
+// "playground" was accepted, or refused with a status, error, or reason
+// other than 400 invalid_grant subject_token_playground or
+// actor_token_playground. A token derived from a playground bearer
+// carries no origin claim, so it escapes the playground logout revocation
+// and the playground session caps.
+func TestOAuthTokenRefusesPlaygroundOriginSourceTokens(t *testing.T) {
 	ts, signer := newKeySetTestServer(t)
 	caller := mintKeySet(t, signer, "jti-caller", "")
-	subject := mintKeySet(t, signer, "jti-pg-subject", jwt.OriginPlayground)
+	plain := mintKeySet(t, signer, "jti-plain", "")
+	playground := mintKeySet(t, signer, "jti-pg", jwt.OriginPlayground)
 
-	resp, body := exchange(t, ts, caller, narrowing(subject))
-	if resp.StatusCode != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body %v", resp.StatusCode, body)
-	}
-	if tok, _ := body["access_token"].(string); tok == "" {
-		t.Errorf("no access_token in 200 body: %v", body)
+	childOfPlaygroundActor := narrowing(plain)
+	childOfPlaygroundActor.ActorToken = playground
+	childOfPlaygroundActor.ActorTokenType = "urn:ietf:params:oauth:token-type:jwt"
+	for _, c := range []struct {
+		name, wantReason string
+		req              tokenservice.Request
+	}{
+		{"playground subject_token", "subject_token_playground", narrowing(playground)},
+		{"playground actor_token", "actor_token_playground", childOfPlaygroundActor},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			resp, body := exchange(t, ts, caller, c.req)
+			if resp.StatusCode != http.StatusBadRequest || body["error"] != "invalid_grant" || body["error_description"] != c.wantReason {
+				t.Fatalf("status = %d body %v, want 400 invalid_grant %s", resp.StatusCode, body, c.wantReason)
+			}
+			if _, ok := body["access_token"]; ok {
+				t.Errorf("refusal body carries an access_token: %v", body)
+			}
+		})
 	}
 }

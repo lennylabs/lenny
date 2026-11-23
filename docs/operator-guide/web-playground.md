@@ -65,6 +65,6 @@ The gateway applies a Content-Security-Policy to every `/playground/*` response 
 
 Logout, user invalidation, idle timeout, and admin revocation all drive the same revocation path: the gateway deletes the Redis session record, writes a per-bearer deny-list entry, and publishes the revocation to peer replicas. A logout endpoint returns success only after the revocation writes commit.
 
-Revocation covers the playground bearer itself and leaves alone any token already exchanged from it. A caller that holds a playground bearer and also holds another Lenny token in the same tenant can present the bearer as the `subject_token` of `POST /v1/oauth/token`. The Token Service refuses a playground bearer only as the caller token, so the exchange succeeds, before or after logout, and yields a child token that stays valid until the bearer's original expiry. Logout does not revoke that child token. The `auth.capabilityTokenTtlSeconds` lifetime bounds this exposure.
+Revocation covers the playground bearer itself, and no other token derives from it. The Token Service refuses a playground bearer as the caller of `POST /v1/oauth/token` with `401 invalid_client`, and as the `subject_token` or `actor_token` of an exchange with `400 invalid_grant`, so a playground bearer cannot be exchanged for a token that outlives logout.
 
 Enable `apiKey` mode only when an upstream component authenticates the caller, because the mode trusts the supplied bearer. Restrict `dev` mode to local installs, because it mints tokens without admission material.

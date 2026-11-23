@@ -112,13 +112,13 @@ func TestRotationHappyPath(t *testing.T) {
 		Subject:  "alice@acme.com",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:read sessions:write",
+		Scope:    "tools:sessions:read tools:sessions:write",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -149,7 +149,7 @@ func TestRotationHappyPath(t *testing.T) {
 	if out.Typ != auth.TokenUserBearer {
 		t.Errorf("issued typ: want user_bearer, got %q", out.Typ)
 	}
-	if out.Scope != "sessions:read" {
+	if out.Scope != "tools:sessions:read" {
 		t.Errorf("issued scope: want narrowed, got %q", out.Scope)
 	}
 }
@@ -162,13 +162,13 @@ func TestScopeBroadeningRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read tools:admin:write", // broadens
+		Scope:            "tools:sessions:read tools:admin:write", // broadens
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusBadRequest {
@@ -187,17 +187,17 @@ func TestCrossTenantExchangeRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	caller := mint(t, signer, jwt.Claims{
 		Subject: "operator@globex.com", TenantID: "globex",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	resp, body := exchange(t, ts, caller, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusBadRequest {
@@ -220,12 +220,12 @@ func TestChildMintingProducesA2ADelegation(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	actor := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
 		Typ: auth.TokenSessionCapability, DelegationDepth: 1,
-		Scope: "sessions:read", SessionID: "sess_parent",
+		Scope: "tools:sessions:read", SessionID: "sess_parent",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -233,7 +233,7 @@ func TestChildMintingProducesA2ADelegation(t *testing.T) {
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		ActorToken:       actor,
 		ActorTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -260,18 +260,18 @@ func TestExpiredSubjectRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	caller := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 		Expiry: farPastExpiry,
 	})
 	resp, body := exchange(t, ts, caller, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusBadRequest {
@@ -291,7 +291,7 @@ func TestCallerTypeElevationRejected(t *testing.T) {
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "agent", TenantID: "acme",
 		Typ: auth.TokenServiceToken, CallerType: "agent",
-		Scope: "sessions:read",
+		Scope: "tools:sessions:read",
 	})
 	// We need to verify the caller_type rule fires when requested
 	// type is elevated. The request body has no "caller_type" field —
@@ -303,7 +303,7 @@ func TestCallerTypeElevationRejected(t *testing.T) {
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -320,13 +320,13 @@ func TestMissingCallerRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	b, _ := json.Marshal(tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	req, _ := http.NewRequest(http.MethodPost, ts.URL+"/v1/oauth/token", bytes.NewReader(b))
@@ -349,7 +349,7 @@ func TestUnsupportedGrantTypeRejected(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "client_credentials",
@@ -373,14 +373,14 @@ func TestPerDialectCapCapsExp(t *testing.T) {
 	ts, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 		Expiry: beyond24hExpiry, // beyond 24h dialect cap
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
 	})
@@ -416,7 +416,7 @@ func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 	t.Cleanup(ts.Close)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 		Audience: []string{"lenny-gateway", "lenny-ops"},
 		Expiry:   beyond24hExpiry,
 	})
@@ -424,7 +424,7 @@ func TestPerDialectCapCapsExpForMultiValueAudience(t *testing.T) {
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway lenny-ops",
 		ExpiresIn:        expiresInPtr(int64((48 * time.Hour).Seconds())),
 	})

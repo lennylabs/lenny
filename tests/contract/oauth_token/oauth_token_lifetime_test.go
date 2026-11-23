@@ -71,13 +71,13 @@ func TestOAuthTokenDefaultLifetimeIsCapabilityTokenTTL_spec_10_2(t *testing.T) {
 	ts, signer := newLifetimeServer(t, now)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        tokenExchangeGrant,
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -97,13 +97,13 @@ func TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2(t *testing.T) {
 	ts, signer := newLifetimeServer(t, time.Now().UTC())
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:    tokenExchangeGrant,
 		SubjectToken: subject,
-		Scope:        "sessions:read",
+		Scope:        "tools:sessions:read",
 		Audience:     "lenny-gateway",
 		ExpiresIn:    expiresInPtr(0),
 	})
@@ -114,7 +114,7 @@ func TestOAuthTokenRejectsExpiresInBelowMinimum_spec_10_2(t *testing.T) {
 	status, formBody := formTokenRequest(t, ts, subject, url.Values{
 		"grant_type":    {tokenExchangeGrant},
 		"subject_token": {subject},
-		"scope":         {"sessions:read"},
+		"scope":         {"tools:sessions:read"},
 		"audience":      {"lenny-gateway"},
 		"expires_in":    {"59"},
 	})
@@ -134,14 +134,14 @@ func TestOAuthTokenOversizedExpiresInClampsToDialectCap_spec_10_2(t *testing.T) 
 	ts, signer := newLifetimeServer(t, now)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 		Expiry: now.Add(48 * time.Hour).Unix(),
 	})
 	for _, expiresIn := range []int64{18446744134, 1 << 62} {
 		resp, body := exchange(t, ts, subject, tokenservice.Request{
 			GrantType:    tokenExchangeGrant,
 			SubjectToken: subject,
-			Scope:        "sessions:read",
+			Scope:        "tools:sessions:read",
 			Audience:     "lenny-gateway",
 			ExpiresIn:    expiresInPtr(expiresIn),
 		})

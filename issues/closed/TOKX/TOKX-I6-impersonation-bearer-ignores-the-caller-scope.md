@@ -1,9 +1,12 @@
 ---
 id: TOKX-I6
-status: open
+status: closed
 kind: spec-defect
 severity: low
 requirements: []
+change: 0164.S1
+closed: fixed
+closed-by: 0164.S1
 ---
 
 # A platform-admin impersonation bearer carries no scope claim whatever the caller's scope

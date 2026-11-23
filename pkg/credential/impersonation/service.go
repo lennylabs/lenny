@@ -151,6 +151,10 @@ type IssueRequest struct {
 	// the caller's user row under CallerTenantID.
 	CallerTenantID string
 	CallerJTI      string
+	// CallerScope is the raw `scope` claim of the caller's bearer, empty
+	// when the bearer carries none. The minted bearer carries it, so an
+	// impersonation never reaches beyond the caller's own scope.
+	CallerScope string
 }
 
 // Issue establishes an impersonation session in the §13.3 rule 1 order.
@@ -184,6 +188,7 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, 
 		Reason:         req.Reason,
 		TicketRef:      req.TicketRef,
 		Duration:       req.Duration,
+		Scope:          strings.TrimSpace(req.CallerScope),
 		IssuedAt:       now,
 		ExpiresAt:      now.Add(req.Duration),
 	}
@@ -245,8 +250,12 @@ func (s *Service) appendStarted(ctx context.Context, t Ticket) error {
 	return err
 }
 
-// sign mints the target-user bearer whose jti is the session id and whose
-// exp is the started event's time plus the requested duration.
+// sign mints the target-user bearer whose jti is the session id, whose
+// scope claim is the caller's scope claim, and whose exp is the started
+// event's time plus the requested duration. An empty Ticket.Scope leaves
+// the claim absent.
+//
+// spec: §13.3 (Credential Flow) "Platform-admin impersonation." rule 1.
 func (s *Service) sign(ctx context.Context, t Ticket, roles []auth.Role) (string, error) {
 	signed, err := s.signer.Sign(ctx, jwt.Claims{
 		Issuer:     s.cfg.Issuer,
@@ -260,6 +269,7 @@ func (s *Service) sign(ctx context.Context, t Ticket, roles []auth.Role) (string
 		CallerType: "human",
 		Roles:      roles,
 		Typ:        auth.TokenUserBearer,
+		Scope:      t.Scope,
 	})
 	if err != nil {
 		return "", fmt.Errorf("impersonation: mint bearer: %w", err)
@@ -282,7 +292,8 @@ func (s *Service) record(ctx context.Context, t Ticket, signed, callerTenantID s
 }
 
 // impersonationRow builds the issued_tokens row of a minted bearer: the
-// target's tenant and sub, act_sub set to the admin, and no parent.
+// target's tenant and sub, the bearer's scope, act_sub set to the admin,
+// and no parent.
 //
 // spec: §13.3 (Platform-admin impersonation, rules 1 (c) and 2).
 func impersonationRow(t Ticket, signed string, audience []string) issuedtokenstore.IssuedToken {
@@ -292,6 +303,7 @@ func impersonationRow(t Ticket, signed string, audience []string) issuedtokensto
 		TenantID:   t.TargetTenantID,
 		Subject:    t.TargetUserID,
 		TokenHash:  sum[:],
+		Scope:      strings.Fields(t.Scope),
 		Audience:   strings.Join(audience, " "),
 		Audiences:  audience,
 		IssuedAt:   t.IssuedAt,

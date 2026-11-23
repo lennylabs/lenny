@@ -211,8 +211,8 @@ func TestReaderDocsStateCapabilityTokenLifetimeAndCallerRefusal_spec_13_3(t *tes
 		},
 		{
 			page:       "operator-guide/web-playground.md",
-			contains:   []string{"capabilityTokenTtlSeconds: 900", "Logout does not revoke that child token."},
-			notContain: []string{"bearerTtlSeconds"},
+			contains:   []string{"capabilityTokenTtlSeconds: 900", "cannot be exchanged for a token that outlives logout"},
+			notContain: []string{"bearerTtlSeconds", "Logout does not revoke that child token."},
 		},
 	})
 }

@@ -185,7 +185,7 @@ func TestStandaloneTokenServiceResolvesGatewayProvisionedAuditSequence_spec_13_3
 	now := time.Now().UTC()
 	tok := issuedtokenstore.IssuedToken{
 		JTI: "jti-ts-1", TenantID: tenant, Subject: "alice@acme.com",
-		TokenHash: []byte("h"), Scope: []string{"sessions:read"},
+		TokenHash: []byte("h"), Scope: []string{"tools:sessions:read"},
 		Audience: "lenny-gateway", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
 	row, err := store.RecordWithAudit(ctx, tok, nil, string(auditcatalog.EventTokenExchanged),

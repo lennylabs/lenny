@@ -7,9 +7,11 @@ package main
 // spec annotation.
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -42,7 +44,10 @@ func stubGateRunner() gateRunner {
 		exec:     map[string]tierExecFn{tierUnit: pass, tierComponent: pass, tierContract: pass, tierIntegration: pass},
 		precheck: map[string]func() error{},
 		docs:     func() (string, string, *tierResult) { return verdictstatus.Pass, "", &tierResult{Total: 3, Passed: 3} },
-		state:    func(string) (string, string, bool) { return "abc123", "def456", false },
+		state:    func() (string, bool) { return "abc123", false },
+		bases: func(string) gateBases {
+			return gateBases{used: "def456", integration: "def456", integrationRef: "main"}
+		},
 	}
 }
 
@@ -63,24 +68,78 @@ func TestGatePassesWhenEveryTierPasses(t *testing.T) {
 	if v.Trigger.Mode != "gate" || v.Trigger.GitRevision != "abc123" {
 		t.Errorf("trigger %+v; want mode gate at abc123", v.Trigger)
 	}
-	if v.Gate == nil || v.Gate.Base != "main" || v.Gate.MergeBase != "def456" || v.Gate.Environment != "lenny-gate:test" {
+	if v.Gate == nil || v.Gate.Base != "main" || v.Gate.MergeBase != "def456" || v.Gate.IntegrationMergeBase != "def456" || v.Gate.Environment != "lenny-gate:test" {
 		t.Errorf("gate record %+v", v.Gate)
 	}
 }
 
-// TestGatePassesItsBaseToTheStaticTier checks that the merge gate's
-// --base reaches the static tier, which the changed-line lint compares
-// with.
+// TestGatePassesItsBaseToTheStaticTier checks that the static tier, which
+// the changed-line lint compares with, and the changed plan get the merge
+// base the gate resolved for its --base and recorded, rather than the ref,
+// and get the ref when the merge base cannot be resolved.
 func TestGatePassesItsBaseToTheStaticTier(t *testing.T) {
 	g := stubGateRunner()
-	var got string
+	var gotStatic, gotPlan string
 	g.static = func(base string) (string, string, *tierResult) {
-		got = base
+		gotStatic = base
 		return verdictstatus.Pass, "", &tierResult{Total: 1, Passed: 1}
 	}
+	plan := g.plan
+	g.plan = func(base string, depth int, all bool) (resolvedSelector, error) {
+		gotPlan = base
+		return plan(base, depth, all)
+	}
 	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
-	if got != "release-1" {
-		t.Errorf("static tier got base %q; want release-1", got)
+	if gotStatic != "def456" || gotPlan != "def456" {
+		t.Errorf("static tier got %q and plan %q; want the resolved merge base def456", gotStatic, gotPlan)
+	}
+	g.bases = func(string) gateBases { return gateBases{usedErr: errors.New("bad revision")} }
+	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+	if gotStatic != "release-1" || gotPlan != "release-1" {
+		t.Errorf("an unresolved base: static tier got %q and plan %q; want release-1", gotStatic, gotPlan)
+	}
+}
+
+// TestGateIsUnverifiedWhenTheStateChangesDuringTheRun checks that a gate
+// whose HEAD, tree state, or merge bases differ after the last tier from
+// what it read before the static tier is UNVERIFIED with the change named.
+func TestGateIsUnverifiedWhenTheStateChangesDuringTheRun(t *testing.T) {
+	for name, tc := range map[string]struct {
+		state func(int) (string, bool)
+		bases func(int) gateBases
+		want  string
+	}{
+		"HEAD moves": {
+			state: func(n int) (string, bool) { return map[int]string{1: "abc123", 2: "fff999"}[n], false },
+			want:  "HEAD from abc123 to fff999",
+		},
+		"the tree changes": {
+			state: func(n int) (string, bool) { return "abc123", n == 2 },
+			want:  "uncommitted changes from false to true",
+		},
+		"main moves": {
+			bases: func(n int) gateBases {
+				b := gateBases{used: "def456", integration: "def456", integrationRef: "main"}
+				if n == 2 {
+					b.integration = "aaa111"
+				}
+				return b
+			},
+			want: "the merge base with the integration branch from def456 to aaa111",
+		},
+	} {
+		g := stubGateRunner()
+		states, bases := 0, 0
+		if tc.state != nil {
+			g.state = func() (string, bool) { states++; return tc.state(states) }
+		}
+		if tc.bases != nil {
+			g.bases = func(string) gateBases { bases++; return tc.bases(bases) }
+		}
+		v := runStubGate(g)
+		if v.Verdict != verdictstatus.VerdictUnverified || len(v.Gate.Unverified) != 1 || !strings.Contains(v.Gate.Unverified[0], tc.want) {
+			t.Errorf("%s: verdict %q, reasons %q; want UNVERIFIED naming %q", name, v.Verdict, v.Gate.Unverified, tc.want)
+		}
 	}
 }
 
@@ -247,7 +306,8 @@ func TestGateDockerRunArgsMountTheTreeTheGitDirAndTheCaches(t *testing.T) {
 		"--network host",
 		"TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1",
 		"sha256:feed sh -c",
-		"go mod verify\nmkdir -p \"$HOME/bin\"\ngo build",
+		"export GOWORK=off GOFLAGS=\"-buildvcs=false -mod=readonly\"\ngo mod verify\n",
+		`GOCACHE="$build_cache" go build -o "$GOTMPDIR/lenny-test" ./cmd/lenny-test`,
 		"gate --here",
 	} {
 		if !strings.Contains(args, want) {
@@ -384,6 +444,7 @@ func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
 		"-e " + gateEnvGID + "=20",
 		"-e GIT_OPTIONAL_LOCKS=0",
 		"-e GOFLAGS=-buildvcs=false",
+		"-e GIT_NO_REPLACE_OBJECTS=1",
 	} {
 		if !strings.Contains(args, want) {
 			t.Errorf("docker run args lack %q:\n%s", want, args)
@@ -397,16 +458,16 @@ func TestGateDockerRunArgsGrantWhatTheTestsNeed(t *testing.T) {
 // TestGateContainerScriptDropsToTheWorktreeOwner pins the steps of the
 // container script that run the gate unprivileged: it creates the
 // owner's user, adds the Docker socket's group, gives the user the cache
-// volumes, and runs the gate through setpriv, and it keeps running as
-// root when the owner is root.
+// volumes, and runs the build, the fill, and the gate through setpriv, and
+// it keeps running as root when the owner is root.
 func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 	for _, want := range []string{
-		`if [ "$uid" = 0 ]; then exec sh -c "$run" lenny-test-gate "$@"; fi`,
+		"if [ \"$uid\" = 0 ]; then\n\tsh -c \"$build\"\n\tinstall_harness\n\tsh -c \"$fill\" || fill_failed\n\tlock_lint_cache\n\texec sh -c \"$run\" lenny-test-gate \"$@\"\nfi",
 		`useradd --uid "$uid" --gid "$gid"`,
 		`stat -c %g /var/run/docker.sock`,
 		`chown -R "$uid:$gid" "$d"`,
 		`exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`,
-		`exec "$HOME/bin/lenny-test" gate --here "$@"`,
+		`exec "$` + gateEnvHarness + `" gate --here "$@"`,
 	} {
 		if !strings.Contains(gateContainerScript, want) {
 			t.Errorf("the container script lacks %q", want)
@@ -414,6 +475,229 @@ func TestGateContainerScriptDropsToTheWorktreeOwner(t *testing.T) {
 	}
 	if strings.Index(gateContainerScript, "-delete") > strings.Index(gateContainerScript, "setpriv") {
 		t.Error("the container script empties the fixture root after dropping root, so it cannot remove what a root run left")
+	}
+}
+
+// TestGateContainerScriptLocksTheLintCacheBeforeTheGate pins the order of
+// the owner's path: the owner compiles lenny-test, root installs it
+// read-only, the owner fills golangci-lint's cache with it, root then
+// bind-mounts the cache directory read-only over itself, and only then
+// does the gate run. The owner is given the cache directory, so the fill
+// can write it, and a missing cache variable stops the script.
+func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
+	s := gateContainerScript
+	for _, want := range []string{
+		`fill='"$` + gateEnvHarness + `" lint-cache-fill'`,
+		`sh -c "$fill" || fill_failed`,
+		`export ` + gateEnvHarness + `=` + gateHarnessPath,
+		`install -o 0 -g 0 -m 0555 "$GOTMPDIR/lenny-test" "$` + gateEnvHarness + `"`,
+		`mount --bind "$GOLANGCI_LINT_CACHE" "$GOLANGCI_LINT_CACHE"`,
+		`mount -o remount,bind,ro "$GOLANGCI_LINT_CACHE"`,
+		`"${GOLANGCI_LINT_CACHE:?}"`,
+		`"$GOCACHE" "$GOLANGCI_LINT_CACHE" "$GOTMPDIR"; do`,
+	} {
+		if !strings.Contains(s, want) {
+			t.Errorf("the container script lacks %q", want)
+		}
+	}
+	setpriv := `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c `
+	userBuild := strings.Index(s, setpriv+`"$build"`)
+	userInstall := strings.LastIndex(s, "install_harness\n")
+	userFill := strings.Index(s, setpriv+`"$fill" || fill_failed`)
+	userLock := strings.LastIndex(s, "lock_lint_cache\n")
+	userRun := strings.Index(s, "exec "+setpriv+`"$run"`)
+	if userBuild < 0 || userInstall <= userBuild || userFill <= userInstall || userLock <= userFill || userRun <= userLock {
+		t.Errorf("the owner's path does not build, install, fill, lock, and then run the gate (build %d, install %d, fill %d, lock %d, run %d)", userBuild, userInstall, userFill, userLock, userRun)
+	}
+	if fill := gateScriptVar(t, "fill"); !strings.Contains(fill, "lint-cache-fill") || strings.Contains(fill, "gate --here") {
+		t.Errorf("the fill step does not fill the cache, or runs the gate before the cache is read-only:\n%s", fill)
+	}
+}
+
+// TestGateContainerScriptReportsAFillThatDidNotFinish runs the container
+// script's fill_failed function after a fill that fails and after one that
+// finishes. A failed fill logs one warning line and exports the variable
+// that turns the static tier's golangci-lint runs to a private cache, and
+// the gate step inherits it; a finished fill sets nothing.
+func TestGateContainerScriptReportsAFillThatDidNotFinish(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("blocked: sh is not on PATH")
+	}
+	// A gate whose own fill did not finish runs this test with the
+	// variable set; the finished-fill case must not inherit it.
+	t.Setenv(gateEnvLintFill, "")
+	_, rest, ok := strings.Cut(gateContainerScript, "\nfill_failed() {\n")
+	if !ok {
+		t.Fatal("the container script defines no fill_failed function")
+	}
+	body, _, _ := strings.Cut(rest, "\n}\n")
+	fn := "fill_failed() {\n" + body + "\n}\n"
+	for fill, want := range map[string]string{"false": gateLintFillFailed, "true": ""} {
+		cmd := exec.Command("sh", "-c", "set -e\n"+fn+"sh -c "+fill+" || fill_failed\nsh -c 'printf %s \"${"+gateEnvLintFill+":-}\"'")
+		cmd.Env = os.Environ()
+		var stdout, stderr strings.Builder
+		cmd.Stdout, cmd.Stderr = &stdout, &stderr
+		if err := cmd.Run(); err != nil {
+			t.Fatalf("fill %s: %v\n%s", fill, err, stderr.String())
+		}
+		if stdout.String() != want {
+			t.Errorf("fill %s: the gate step sees %s=%q; want %q", fill, gateEnvLintFill, stdout.String(), want)
+		}
+		warned := strings.Count(stderr.String(), "\n")
+		if (want != "" && (warned != 1 || !strings.Contains(stderr.String(), "private, empty cache"))) || (want == "" && warned != 0) {
+			t.Errorf("fill %s: logged %q", fill, stderr.String())
+		}
+	}
+}
+
+// gateScriptVar returns the body of the single-quoted shell variable name
+// that the container script assigns.
+func gateScriptVar(t *testing.T, name string) string {
+	t.Helper()
+	_, rest, ok := strings.Cut(gateContainerScript, "\n"+name+"='")
+	if !ok {
+		t.Fatalf("the container script assigns no %s", name)
+	}
+	body, _, _ := strings.Cut(rest, "'")
+	return body
+}
+
+// gateFakeGo is a go command for the build step: `go mod verify` records
+// the directory and the settings it ran with, and `go build -o <out>
+// <pkg>` records the directory, the settings, the GOCACHE, that
+// directory's listing, and the files of cmd/lenny-test, and writes to
+// <out> a program that appends its path and arguments to $LOG/calls.
+const gateFakeGo = `#!/bin/sh
+set -e
+case "$1" in
+mod)
+	printf '%s %s %s\n' "$PWD" "$GOWORK" "$GOFLAGS" > "$LOG/verify"
+	;;
+build)
+	printf '%s %s %s\n' "$PWD" "$GOWORK" "$GOFLAGS" > "$LOG/build"
+	printf '%s\n' "$GOCACHE" > "$LOG/build-cache"
+	ls -A "$GOCACHE" > "$LOG/build-cache-listing"
+	ls cmd/lenny-test > "$LOG/build-files"
+	printf '#!/bin/sh\necho "$0 $*" >> "$LOG/calls"\n' > "$3"
+	chmod +x "$3"
+	;;
+*) exit 2 ;;
+esac
+`
+
+// gateBuildFixture returns a git repository whose HEAD holds go.mod and
+// cmd/lenny-test/main.go, with an uncommitted edit of main.go and an
+// untracked planted.go in cmd/lenny-test, and a directory holding the
+// fake go command.
+func gateBuildFixture(t *testing.T) (lintRepo, string) {
+	t.Helper()
+	r := newLintRepo(t, "main")
+	r.commit("go.mod", "module example.com/m\n\ngo 1.25\n", "module")
+	r.commit("cmd/lenny-test/main.go", "package main\n\nfunc main() {}\n", "harness")
+	r.write("cmd/lenny-test/main.go", "package main\n\nfunc main() { println() }\n")
+	r.write("cmd/lenny-test/planted.go", "package main\n")
+	bin := t.TempDir()
+	if err := os.WriteFile(filepath.Join(bin, "go"), []byte(gateFakeGo), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return r, bin
+}
+
+// gateRunStep runs one single-quoted step of the container script in dir
+// with env and returns its combined output and error.
+func gateRunStep(t *testing.T, dir string, env []string, step string, args ...string) (string, error) {
+	t.Helper()
+	cmd := exec.Command("sh", append([]string{"-c", gateScriptVar(t, step), "lenny-test-gate"}, args...)...)
+	cmd.Dir = dir
+	cmd.Env = env
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
+// TestGateBuildsTheHarnessFromTheCommitWithAPrivateBuildCache runs the
+// container's build, fill, and gate steps with a stand-in go command in a
+// repository with an uncommitted edit and an untracked file. The build
+// compiles an export of HEAD, so neither the edit nor the untracked file
+// reaches the harness, runs go mod verify and go build there with
+// GOWORK=off and -mod=readonly, and uses a new, empty build cache under
+// GOTMPDIR rather than the shared GOCACHE, which it removes with the
+// export after the compile. The fill and the gate run the installed
+// binary (owner's answer to GT-15, 2026-11-20).
+func TestGateBuildsTheHarnessFromTheCommitWithAPrivateBuildCache(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("blocked: sh is not on PATH")
+	}
+	r, bin := gateBuildFixture(t)
+	goTmp, shared, log := t.TempDir(), t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(shared, "planted"), []byte("x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	harness := filepath.Join(t.TempDir(), "lenny-test")
+	env := append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GOTMPDIR="+goTmp, "GOCACHE="+shared, "LOG="+log, "GOWORK=", "GOFLAGS=", gateEnvHarness+"="+harness)
+	if out, err := gateRunStep(t, r.root, env, "build"); err != nil {
+		t.Fatalf("the build step failed: %v\n%s", err, out)
+	}
+	// The script's install_harness runs as root; the test moves the
+	// binary to the harness path as it does.
+	if err := os.Rename(filepath.Join(goTmp, "lenny-test"), harness); err != nil {
+		t.Fatalf("the build step left no binary in GOTMPDIR: %v", err)
+	}
+	for _, step := range []struct {
+		name string
+		args []string
+	}{{"fill", nil}, {"run", []string{"--base", "main"}}} {
+		if out, err := gateRunStep(t, r.root, env, step.name, step.args...); err != nil {
+			t.Fatalf("the %s step failed: %v\n%s", step.name, err, out)
+		}
+	}
+	readLog := func(name string) string {
+		b, err := os.ReadFile(filepath.Join(log, name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		return strings.TrimSpace(string(b))
+	}
+	verify, build := strings.Fields(readLog("verify")), strings.Fields(readLog("build"))
+	if len(verify) != 4 || len(build) != 4 || verify[0] != build[0] || !pathWithin(build[0], goTmp) {
+		t.Fatalf("go mod verify ran with %q and go build with %q; want both in one export under GOTMPDIR %s", verify, build, goTmp)
+	}
+	if build[1] != "off" || build[2] != "-buildvcs=false" || build[3] != "-mod=readonly" || verify[1] != "off" || verify[3] != "-mod=readonly" {
+		t.Errorf("go build ran with GOWORK and GOFLAGS %q; want off and -buildvcs=false -mod=readonly", build[1:])
+	}
+	if files := readLog("build-files"); files != "main.go" {
+		t.Errorf("the export held %q in cmd/lenny-test; want the committed main.go alone", files)
+	}
+	cache := readLog("build-cache")
+	if cache == shared || !pathWithin(cache, goTmp) || cache == goTmp {
+		t.Errorf("the compile used GOCACHE=%s; want a new directory under GOTMPDIR %s rather than the shared cache %s", cache, goTmp, shared)
+	}
+	if listing := readLog("build-cache-listing"); listing != "" {
+		t.Errorf("the compile's build cache was not empty: %q", listing)
+	}
+	for _, left := range []string{cache, build[0], build[0] + ".tar"} {
+		if _, err := os.Stat(left); !errors.Is(err, os.ErrNotExist) {
+			t.Errorf("the build step left %s behind (stat: %v)", left, err)
+		}
+	}
+	want := harness + " lint-cache-fill\n" + harness + " gate --here --base main"
+	if got := readLog("calls"); got != want {
+		t.Errorf("the harness calls:\n%s\nwant:\n%s", got, want)
+	}
+}
+
+// TestGateBuildRefusesAnExportThatDropsAFile checks that the build step
+// stops when an export-ignore attribute keeps a file of HEAD out of the
+// export, so the harness is never compiled from part of the commit.
+func TestGateBuildRefusesAnExportThatDropsAFile(t *testing.T) {
+	if _, err := exec.LookPath("sh"); err != nil {
+		t.Skip("blocked: sh is not on PATH")
+	}
+	r, bin := gateBuildFixture(t)
+	r.commit(".gitattributes", "cmd/lenny-test/main.go export-ignore\n", "drop the harness from the export")
+	env := append(os.Environ(), "PATH="+bin+string(os.PathListSeparator)+os.Getenv("PATH"), "GOTMPDIR="+t.TempDir(), "LOG="+t.TempDir())
+	out, err := gateRunStep(t, r.root, env, "build")
+	if err == nil || !strings.Contains(out, "export-ignore") {
+		t.Errorf("the build step: %v\n%s; want a failure naming the export-ignore attribute", err, out)
 	}
 }
 
@@ -598,6 +882,90 @@ func TestGateOutsideTheGateImageIsUnverifiedWithTheReason(t *testing.T) {
 	}
 }
 
+// TestGateWithABaseOtherThanTheIntegrationMergeBaseIsUnverified checks
+// that a gate whose --base gives another merge base than the merge base of
+// HEAD with the integration branch, or whose merge bases cannot be
+// resolved, is UNVERIFIED with the reason, and that a FAIL stays FAIL
+// (owner's answer to GT-18, 2026-11-20).
+func TestGateWithABaseOtherThanTheIntegrationMergeBaseIsUnverified(t *testing.T) {
+	for name, tc := range map[string]struct {
+		bases gateBases
+		want  string
+	}{
+		"a later commit":          {gateBases{used: "f1f1f1", integration: "def456", integrationRef: "main"}, "--base f1..HEAD compares with f1f1f1, and the merge base of HEAD with main is def456"},
+		"no merge base of --base": {gateBases{usedErr: errors.New("bad revision"), integration: "def456", integrationRef: "main"}, "the merge base of --base f1..HEAD could not be resolved (bad revision)"},
+		"no integration branch":   {gateBases{used: "def456", integrationErr: errors.New("no merge base with main or origin/main")}, "the merge base of HEAD with the integration branch could not be resolved"},
+	} {
+		g := stubGateRunner()
+		g.bases = func(string) gateBases { return tc.bases }
+		v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+		if v.Verdict != verdictstatus.VerdictUnverified {
+			t.Errorf("%s: verdict %q; want %q", name, v.Verdict, verdictstatus.VerdictUnverified)
+		}
+		if len(v.Gate.Unverified) != 1 || !strings.Contains(v.Gate.Unverified[0], tc.want) {
+			t.Errorf("%s: unverified reasons %q; want one containing %q", name, v.Gate.Unverified, tc.want)
+		}
+		g.static = func(string) (string, string, *tierResult) {
+			return verdictstatus.Fail, "lint", &tierResult{Total: 1, Failed: 1}
+		}
+		if v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"}); v.Verdict != verdictstatus.VerdictFail {
+			t.Errorf("%s: a failing gate's verdict %q; want %q", name, v.Verdict, verdictstatus.VerdictFail)
+		}
+	}
+}
+
+// TestGateBasesCompareTheBaseWithTheIntegrationMergeBase resolves both
+// merge bases in a repository whose branch raises a register after the
+// fork from main: --base main and the range from the fork point give the
+// merge base with main, and a range or a ref that starts past the fork
+// point gives another commit, which gateBaseError refuses. In a clone
+// without main, the integration merge base is taken against origin/main.
+func TestGateBasesCompareTheBaseWithTheIntegrationMergeBase(t *testing.T) {
+	r := newLintRepo(t, "main")
+	fork := r.git("rev-parse", "HEAD")
+	r.git("checkout", "-q", "-b", "feature")
+	raise := r.commit("register.yaml", "raised: 2\n", "raise the register")
+	r.commit("b.go", "package m\n", "branch")
+	ctx := context.Background()
+	for _, base := range []string{"main", fork + "..HEAD"} {
+		b := resolveGateBases(ctx, r.root, base)
+		if b.used != fork || b.integration != fork || b.integrationRef != "main" || gateBaseError(base, b) != nil {
+			t.Errorf("--base %s: %+v (error %v); want both at the fork point %s", base, b, gateBaseError(base, b), fork)
+		}
+	}
+	for _, base := range []string{raise + "..HEAD", raise, "feature"} {
+		b := resolveGateBases(ctx, r.root, base)
+		if err := gateBaseError(base, b); err == nil || b.integration != fork {
+			t.Errorf("--base %s: %+v; want an error, with the integration merge base at %s", base, b, fork)
+		}
+	}
+	if err := gateBaseError("main..feature~1", resolveGateBases(ctx, r.root, "main..feature~1")); err == nil || !strings.Contains(err.Error(), "could not be resolved") {
+		t.Errorf("a range that does not end at HEAD: %v; want an error", err)
+	}
+
+	if err := gateBaseError("", resolveGateBases(ctx, r.root, "")); err == nil || !strings.Contains(err.Error(), "--base is empty") {
+		t.Errorf("an empty --base: %v; want an error", err)
+	}
+	if code := runGate([]string{"--base", ""}); code != 2 {
+		t.Errorf("runGate with an empty --base = %d; want the usage exit code 2", code)
+	}
+
+	// A tag named main does not stand in for the branch.
+	r.git("tag", "main", "HEAD")
+	if b := resolveGateBases(ctx, r.root, "main"); b.integration != fork || b.integrationRef != "main" {
+		t.Errorf("with a tag named main: %+v; want the integration merge base with the branch at %s", b, fork)
+	}
+
+	clone := newLintRepo(t, "trunk")
+	cloneFork := clone.git("rev-parse", "HEAD")
+	clone.git("update-ref", "refs/remotes/origin/main", cloneFork)
+	clone.commit("b.go", "package m\n", "branch")
+	b := resolveGateBases(ctx, clone.root, "origin/main")
+	if b.integration != cloneFork || b.integrationRef != "origin/main" || gateBaseError("origin/main", b) != nil {
+		t.Errorf("a clone without main: %+v; want both at %s against origin/main", b, cloneFork)
+	}
+}
+
 // TestGateWithANarrowedDependentWalkIsUnverified pins that a gate run with
 // --rdeps-depth at or above zero cannot pass: the merge gate runs the
 // changed packages and every dependent, and the verdict records the depth.
@@ -616,7 +984,7 @@ func TestGateWithANarrowedDependentWalkIsUnverified(t *testing.T) {
 
 func TestGateOnADirtyTreeIsUnverifiedWithTheReason(t *testing.T) {
 	g := stubGateRunner()
-	g.state = func(string) (string, string, bool) { return "abc123", "def456", true }
+	g.state = func() (string, bool) { return "abc123", true }
 	v := runStubGate(g)
 	if v.Verdict != verdictstatus.VerdictUnverified || exitCodeFor(v.Verdict) == 0 {
 		t.Fatalf("verdict %q; want %q with a non-zero exit on a dirty tree", v.Verdict, verdictstatus.VerdictUnverified)
@@ -632,9 +1000,28 @@ func TestGateOnADirtyTreeIsUnverifiedWithTheReason(t *testing.T) {
 	}
 }
 
+// TestGateSummaryPrintsARegisterRaiseOfAPassingTier checks that the
+// printed summary names each golangci-lint register raise that a passing
+// static tier records in its detail, so the raise is visible without
+// reading the verdict file.
+func TestGateSummaryPrintsARegisterRaiseOfAPassingTier(t *testing.T) {
+	g := stubGateRunner()
+	raise := "golangci-lint run passed: 1 " + lintRaiseNote + ", each needing the merge-gate review that records its reason: pkg/b unused: 2"
+	g.static = func(string) (string, string, *tierResult) {
+		return verdictstatus.Pass, "budget note\n" + raise, &tierResult{Total: 1, Passed: 1}
+	}
+	v := runStubGate(g)
+	var b strings.Builder
+	v.finalize()
+	printGateSummary(&b, v, "x")
+	if !strings.Contains(b.String(), "NOTE "+raise) || strings.Contains(b.String(), "NOTE budget note") {
+		t.Errorf("summary does not print the raise alone:\n%s", b.String())
+	}
+}
+
 func TestGateFailureStaysFailOnADirtyTreeOutsideTheImage(t *testing.T) {
 	g := stubGateRunner()
-	g.state = func(string) (string, string, bool) { return "abc123", "def456", true }
+	g.state = func() (string, bool) { return "abc123", true }
 	g.static = func(string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "vet", &tierResult{Total: 1, Failed: 1}
 	}

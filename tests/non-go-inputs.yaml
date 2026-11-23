@@ -168,11 +168,14 @@ inputs:
       - "tests/groups.yaml"
       - "tests/groups.subsets.yaml"
       - "tests/flake-budget.yaml"
+      - ".github/workflows/release.yml"
     runs:
       - cmd/lenny-test
     reason: >-
       The harness's tests read the committed selection files and the flake
-      budget, and its secret-scan coverage test reads the gate image's Dockerfile.
+      budget, its secret-scan coverage test reads the gate image's Dockerfile,
+      and its test of the golangci-lint check's build targets reads the
+      release workflow.
   - paths: ["tests/flake-budget.yaml"]
     runs:
       - integration

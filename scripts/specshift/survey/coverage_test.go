@@ -240,6 +240,28 @@ func TestCoverageSkipsAnIssueRecordWhoseFrontMatterDoesNotParse(t *testing.T) {
 	}
 }
 
+func TestCoverageLeavesOutAReservedIssueCodeWithoutAReport(t *testing.T) {
+	t.Parallel()
+	f := newFixture(t)
+	// GATE belongs to no page: its record covers nothing and is not
+	// reported, while a folder that is neither a page code nor reserved
+	// is reported.
+	f.write(map[string]string{
+		"issues/GATE/GATE-I1-lint.md":  "---\nid: GATE-I1\nstatus: open\nrequirements: [POOL-R3]\n---\n",
+		"issues/NOPAGE/NOPAGE-I1-x.md": "---\nid: NOPAGE-I1\nstatus: open\nrequirements: [POOL-R3]\n---\n",
+	})
+	rep := coverageOf(t, f)
+	if got := uncoveredIDs(rep); got != "POOL-R3" {
+		t.Errorf("uncovered %q; want POOL-R3, because neither record names a page code", got)
+	}
+	if skippedNaming(rep, "issues/GATE/") {
+		t.Errorf("skipped %v; a reserved issue code is reported", rep.Skipped)
+	}
+	if !skippedNaming(rep, "issues/NOPAGE/NOPAGE-I1-x.md") {
+		t.Errorf("skipped %v; want the record under an unregistered code named", rep.Skipped)
+	}
+}
+
 func TestCoverageSkipsASymlinkedIssueRecord(t *testing.T) {
 	t.Parallel()
 	f := newFixture(t)
