@@ -8,6 +8,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
+| Building | 1 |
 | Ready | 1 |
 | Waiting on decisions | 35 |
 | Blocked | 149 |
@@ -53,6 +54,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0167.S1](0167-token-model-fixes/steps.md#0167s1-token-rule-fixes-from-the-formal-model) | Token rule fixes from the formal model | Building |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -288,3 +290,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
+| [0167](0167-token-model-fixes/change.md) | Token rule fixes from the formal model | `In progress` | 0 of 1 | 0 |
