@@ -25,6 +25,10 @@ const (
 	// SourceActorToken is the exchange's actor_token, present on an
 	// a2a_delegation child mint (§13.3).
 	SourceActorToken SourceRole = "actor_token"
+	// SourceCallerToken is the exchange's caller token, the
+	// Authorization: Bearer token. The re-read refuses it only when it is
+	// revoked; the impersonation predicate is not applied to it.
+	SourceCallerToken SourceRole = "caller_token"
 )
 
 // SourceToken is one token the issuance transaction re-reads under the
@@ -54,8 +58,8 @@ func (e *SourceRevokedError) Error() string {
 	return fmt.Sprintf("issuedtokenstore: %s %q revoked at %s", e.Role, e.JTI, e.RevokedAt.UTC().Format(time.RFC3339Nano))
 }
 
-// Reason returns the §13.3 invalid_grant reason for the revoked source:
-// subject_token_revoked or actor_token_revoked.
+// Reason returns the §13.3 step (1a) reason for the revoked source:
+// subject_token_revoked, actor_token_revoked, or caller_token_revoked.
 func (e *SourceRevokedError) Reason() string { return string(e.Role) + "_revoked" }
 
 // SourceImpersonationError reports that the §13.3 write-before-issue
@@ -124,7 +128,8 @@ func lockAndRecheck(ctx context.Context, tx pgx.Tx, tenantID string, sources []S
 // jtis in one statement and returns a *SourceRevokedError naming the first
 // listed source whose row has revoked_at set. When no source is revoked it
 // returns a *SourceImpersonationError naming the first listed source whose
-// row is an impersonation row. Revocation is checked across every source
+// row is an impersonation row, leaving out a caller-token source, whose
+// row is checked for revocation only. Revocation is checked across every source
 // before impersonation, so a live impersonation subject with a revoked
 // actor reports the revoked actor. Sources are checked in list order, so a
 // caller that lists the subject before the actor reports the subject when
@@ -149,6 +154,9 @@ func recheckSources(ctx context.Context, tx pgx.Tx, sources []SourceToken) error
 		}
 	}
 	for _, src := range sources {
+		if src.Role == SourceCallerToken {
+			continue
+		}
 		if st, ok := states[src.JTI]; ok && st.impersonation {
 			return &SourceImpersonationError{Role: src.Role, JTI: src.JTI}
 		}

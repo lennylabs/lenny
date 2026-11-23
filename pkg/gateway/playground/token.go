@@ -3,6 +3,7 @@
 package playground
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/common/scopes"
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
+	"github.com/lennylabs/lenny/pkg/storage/pgtenant"
 )
 
 // playgroundAllowedScope is the §27.3 / §10.2 playground_allowed_scope
@@ -272,6 +274,74 @@ func (h *Handler) admitSubjectRow(w http.ResponseWriter, r *http.Request, claims
 	return false
 }
 
+// recordBearer records the minted bearer in issued_tokens before it is
+// returned, with the pasted subject's jti as its parent in the apiKey mode
+// and no parent in the oidc and dev modes, whose subject carries no jti.
+// The record re-reads the subject's row under the per-tenant audit
+// advisory lock, so a subject revoked after admitSubjectRow read it
+// refuses the mint as admitSubjectRow does. A Postgres outage refuses the
+// mint with 503 SERVICE_UNAVAILABLE and any other failure with 500
+// INTERNAL_ERROR. It returns true when the mint may proceed. A nil store
+// records nothing.
+//
+// spec: §10.2 (Playground mint invariants, invariant 6), §13.3 (Credential
+// Flow: Lineage of derived tokens; Write-before-issue ordering, step (1a)).
+func (h *Handler) recordBearer(w http.ResponseWriter, r *http.Request, subject, minted jwt.Claims, signed string) bool {
+	if h.issued == nil {
+		return true
+	}
+	hash := sha256.Sum256([]byte(signed))
+	row := issuedtokenstore.IssuedToken{
+		JTI:       minted.JWTID,
+		TenantID:  minted.TenantID,
+		Subject:   minted.Subject,
+		TokenHash: hash[:],
+		Scope:     strings.Fields(minted.Scope),
+		Audience:  strings.Join(minted.Audience, " "),
+		Audiences: append([]string(nil), minted.Audience...),
+		IssuedAt:  time.Unix(minted.IssuedAt, 0).UTC(),
+		ExpiresAt: time.Unix(minted.Expiry, 0).UTC(),
+		ParentJTI: subject.JWTID,
+	}
+	var sources []issuedtokenstore.SourceToken
+	if subject.JWTID != "" {
+		sources = []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: subject.JWTID}}
+	}
+	err := h.issued.RecordWithSources(r.Context(), row, sources)
+	if err == nil {
+		return true
+	}
+	if reason, ok := sourceRefusal(err); ok {
+		h.emitMintRejected(r, subject.TenantID, subject.JWTID, string(subject.Typ), reason)
+		writeError(w, http.StatusUnauthorized, "LENNY_PLAYGROUND_BEARER_TYPE_REJECTED",
+			"the pasted bearer token is refused by the write-before-issue re-read: "+reason,
+			map[string]any{"subjectTyp": string(subject.Typ)})
+		return false
+	}
+	if pgtenant.IsUnavailable(err) {
+		writeError(w, http.StatusServiceUnavailable, "SERVICE_UNAVAILABLE",
+			"the playground bearer could not be recorded during a Postgres outage", nil)
+		return false
+	}
+	writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+		"the playground bearer could not be recorded", nil)
+	return false
+}
+
+// sourceRefusal returns the step (1a) reason of a revoked or
+// impersonation source the record refused.
+func sourceRefusal(err error) (string, bool) {
+	var revoked *issuedtokenstore.SourceRevokedError
+	if errors.As(err, &revoked) {
+		return revoked.Reason(), true
+	}
+	var imp *issuedtokenstore.SourceImpersonationError
+	if errors.As(err, &imp) {
+		return imp.Reason(), true
+	}
+	return "", false
+}
+
 // refusalReason returns the step (1a) reason a SourceRefusal error
 // carries.
 func refusalReason(err error) string {
@@ -351,6 +421,9 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	signed, err := h.signer.Sign(r.Context(), out)
 	if err != nil {
 		writeSigningUnavailable(w, err, "the playground JWT mint failed: "+err.Error())
+		return
+	}
+	if !h.recordBearer(w, r, subject, out, signed) {
 		return
 	}
 

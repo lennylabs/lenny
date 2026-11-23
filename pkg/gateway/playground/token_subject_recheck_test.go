@@ -18,17 +18,30 @@ import (
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
-// fakeIssuedTokens is an IssuedTokenReader returning one fixed row or
-// error, and recording the tenant and jti it was asked for.
+// fakeIssuedTokens is an IssuedTokens returning one fixed row or error,
+// recording the tenant and jti it was asked for, and recording the rows
+// and sources RecordWithSources received, failing it with recordErr.
 type fakeIssuedTokens struct {
 	row              issuedtokenstore.IssuedToken
 	err              error
 	gotTenant, gotID string
+	recordErr        error
+	recorded         []issuedtokenstore.IssuedToken
+	recordSources    [][]issuedtokenstore.SourceToken
 }
 
 func (f *fakeIssuedTokens) Get(_ context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error) {
 	f.gotTenant, f.gotID = tenantID, jti
 	return f.row, f.err
+}
+
+func (f *fakeIssuedTokens) RecordWithSources(_ context.Context, tok issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken) error {
+	f.recordSources = append(f.recordSources, sources)
+	if f.recordErr != nil {
+		return f.recordErr
+	}
+	f.recorded = append(f.recorded, tok)
+	return nil
 }
 
 // countingSigner counts Sign calls and delegates to an HMAC signer.
@@ -47,7 +60,7 @@ func (c *countingSigner) KeyID() string { return c.inner.KeyID() }
 // postAPIKeyMint posts a pasted user_bearer to an apiKey-mode handler wired
 // with issued and returns the response, the decoded envelope, the signer
 // call count, and the mint rejections emitted.
-func postAPIKeyMint(t *testing.T, issued IssuedTokenReader) (int, errorEnvelope, int32, []MintRejectedEvent) {
+func postAPIKeyMint(t *testing.T, issued IssuedTokens) (int, errorEnvelope, int32, []MintRejectedEvent) {
 	t.Helper()
 	verifier := devSigner()
 	pasted, err := verifier.Sign(jwt.Claims{

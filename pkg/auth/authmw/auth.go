@@ -70,6 +70,11 @@ type Principal struct {
 	// Lenny-issued JWT, and under the dev-headers path (no JWT).
 	JTI string
 
+	// Expiry is the caller bearer's JWT `exp` claim, zero when the bearer
+	// carries none, on the pod path, and under the dev-headers path. The
+	// platform-admin impersonation mint bounds its bearer by it.
+	Expiry time.Time
+
 	// Origin is the §27.3 token-origin claim copied verbatim from the
 	// JWT `origin` field. It is "playground" on every session-capability
 	// JWT minted for a /playground/* request (all three playground auth
@@ -587,6 +592,7 @@ func (m *middleware) serveBearer(w http.ResponseWriter, r *http.Request, token s
 		Groups:     append([]string(nil), claims.Groups...),
 		Scopes:     scopeSet,
 		JTI:        claims.JWTID,
+		Expiry:     claims.ExpiryTime(),
 		// spec: §27.3 — carry the mode-agnostic origin claim onto
 		// the principal so the session-creation path can detect a
 		// /playground/*-originated session and apply the §27.6 caps +

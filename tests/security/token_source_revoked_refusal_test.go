@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -42,6 +44,7 @@ type sourceRevokedHarness struct {
 	signer *jwt.HMACSigner
 	store  *issuedtokenstore.Store
 	tenant string
+	pool   *pgxpool.Pool
 }
 
 func newSourceRevokedHarness(t *testing.T) *sourceRevokedHarness {
@@ -75,7 +78,7 @@ func newSourceRevokedHarness(t *testing.T) *sourceRevokedHarness {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	return &sourceRevokedHarness{srv: srv, signer: signer, store: store, tenant: tenant}
+	return &sourceRevokedHarness{srv: srv, signer: signer, store: store, tenant: tenant, pool: pg.Pool}
 }
 
 // record signs claims for jti and records the token as issued, so the

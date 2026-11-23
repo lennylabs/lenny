@@ -313,20 +313,26 @@ type Handler struct {
 	tenants  TenantRegistry
 	sessions SessionStore
 	oidc     OIDCExchanger
-	issued   IssuedTokenReader
+	issued   IssuedTokens
 	metrics  *Metrics
 	audit    AuditEmitter
 	now      func() time.Time
 }
 
-// IssuedTokenReader reads one issued_tokens row so the apiKey mint can
-// apply §13.3 "Write-before-issue ordering" step (1a) to the pasted
-// subject. *issuedtokenstore.Store satisfies it.
-// spec: §10.2 (Playground mint invariants, invariant 1).
-type IssuedTokenReader interface {
+// IssuedTokens is the issued-token index the playground mint reads and
+// writes: it reads the pasted subject's row so the apiKey mint can apply
+// §13.3 "Write-before-issue ordering" step (1a) to it, and it records
+// every minted bearer with the pasted subject as its parent.
+// *issuedtokenstore.Store satisfies it.
+// spec: §10.2 (Playground mint invariants, invariants 1 and 6).
+type IssuedTokens interface {
 	// Get returns the row for jti in tenantID, or
 	// issuedtokenstore.ErrNotFound when the token has no row.
 	Get(ctx context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error)
+	// RecordWithSources records tok after it re-reads sources under the
+	// per-tenant audit advisory lock, and returns the step (1a) refusal
+	// of a revoked or impersonation source without recording.
+	RecordWithSources(ctx context.Context, tok issuedtokenstore.IssuedToken, sources []issuedtokenstore.SourceToken) error
 }
 
 // Options configures New.
@@ -359,11 +365,13 @@ type Options struct {
 
 	// IssuedTokens reads the pasted subject's issued_tokens row so the
 	// apiKey mint refuses a subject that §13.3 step (1a) rejects: a
-	// revoked token or a platform-admin impersonation bearer. The gateway
-	// sets it whenever it has a Postgres pool. A nil reader skips the
-	// read; without the pool the gateway also registers no impersonation
-	// route, so no impersonation bearer exists to paste.
-	IssuedTokens IssuedTokenReader
+	// revoked token or a platform-admin impersonation bearer, and records
+	// every minted bearer with the pasted subject as its parent. The
+	// gateway sets it whenever it has a Postgres pool. A nil store skips
+	// the read and the record; without the pool the gateway also
+	// registers no impersonation route, so no impersonation bearer exists
+	// to paste, and no recursive revocation exists to reach the bearer.
+	IssuedTokens IssuedTokens
 
 	// Metrics is the §27.8 metric set. A nil Metrics disables metric
 	// emission (the handler still serves).

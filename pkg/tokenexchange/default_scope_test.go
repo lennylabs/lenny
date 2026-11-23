@@ -117,6 +117,7 @@ func TestValidateChildMintWithoutScopeIntersectsAuthorizedToolsWithTheSubjectSco
 	subject.AuthorizedTools = []string{"tools:health:read", "tools:pool:write"}
 	actor := validSubject()
 	actor.DelegationDepth = 1
+	actor.Scope = subject.Scope
 	got, err := Validate(Request{
 		Subject:      subject,
 		Actor:        &actor,

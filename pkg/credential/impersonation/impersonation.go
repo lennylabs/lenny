@@ -55,6 +55,11 @@ type Ticket struct {
 	// IssuedAt and ExpiresAt bound the minted bearer's validity.
 	IssuedAt  time.Time
 	ExpiresAt time.Time
+	// CallerTenantID and CallerJTI name the platform-admin's own bearer
+	// that started the session; the bearer's row records them as its
+	// impersonator link.
+	CallerTenantID string
+	CallerJTI      string
 }
 
 // Session is one active impersonation session as the

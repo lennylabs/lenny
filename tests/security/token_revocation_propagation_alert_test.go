@@ -77,8 +77,8 @@ type revStore struct {
 
 func (s *revStore) Record(context.Context, issuedtokenstore.IssuedToken) error { return nil }
 
-func (s *revStore) RevokeCascadeByCaller(_ context.Context, _, _, _, _, _ string, _ time.Time) ([]issuedtokenstore.RevokedToken, error) {
-	return s.revoked, nil
+func (s *revStore) RevokeLineage(context.Context, issuedtokenstore.LineageRevocation) (issuedtokenstore.CascadeResult, error) {
+	return issuedtokenstore.CascadeResult{Revoked: s.revoked}, nil
 }
 
 // tokenRevocationLagRule returns the shipped TokenRevocationPropagationLag

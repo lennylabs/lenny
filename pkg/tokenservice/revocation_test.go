@@ -24,26 +24,30 @@ import (
 // exercised without Postgres.
 type fakeRevocationStore struct {
 	revoked   []issuedtokenstore.RevokedToken
+	subtree   []string
 	err       error
 	gotCaller string
 	gotRoot   string
 	gotRoot2Reason,
 	gotChildReason string
+	// gotRootRow is the row the request supplied for a root without one.
+	gotRootRow issuedtokenstore.IssuedToken
 }
 
 func (f *fakeRevocationStore) Record(context.Context, issuedtokenstore.IssuedToken) error {
 	return nil
 }
 
-func (f *fakeRevocationStore) RevokeCascadeByCaller(_ context.Context, _, callerJTI, rootJTI, rootReason, childReason string, _ time.Time) ([]issuedtokenstore.RevokedToken, error) {
-	f.gotCaller = callerJTI
-	f.gotRoot = rootJTI
-	f.gotRoot2Reason = rootReason
-	f.gotChildReason = childReason
+func (f *fakeRevocationStore) RevokeLineage(_ context.Context, req issuedtokenstore.LineageRevocation) (issuedtokenstore.CascadeResult, error) {
+	f.gotCaller = req.CallerJTI
+	f.gotRoot = req.Root.JTI
+	f.gotRootRow = req.Root
+	f.gotRoot2Reason = req.RootReason
+	f.gotChildReason = req.ChildReason
 	if f.err != nil {
-		return nil, f.err
+		return issuedtokenstore.CascadeResult{}, f.err
 	}
-	return f.revoked, nil
+	return issuedtokenstore.CascadeResult{Revoked: f.revoked, Subtree: f.subtree}, nil
 }
 
 func revokedPayloads(t *testing.T, rows []recordedAudit) []revokedAuditPayload {

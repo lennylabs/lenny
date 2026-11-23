@@ -11,12 +11,15 @@
 //     tools:* grant every value); a request without scope issues
 //     subject.scope
 //   - A caller other than the subject must request a strictly narrower
-//     scope; with an actor_token, the actor must be the caller, and a
-//     subject other than the actor must be narrowed strictly
+//     scope; with an actor_token, the actor must be the caller, a
+//     subject other than the actor must be narrowed strictly, and the
+//     actor's scope must grant the child's scope
 //   - A playground-origin subject or actor is refused
 //   - Tenant match: issued.tenant_id == subject.tenant_id == caller.tenant_id
-//   - delegation_depth: child = parent + 1 (with actor_token);
-//     rotation preserves
+//   - delegation_depth: child = actor + 1 (with actor_token);
+//     other exchanges preserve the subject's
+//   - act: the actor's identity with an actor_token; otherwise copied
+//     from the subject
 //   - caller_type cannot elevate
 //   - audience cannot broaden (cannot add to subject's audiences)
 //   - typ rules: only a2a_delegation child-minting (with actor_token)
@@ -92,6 +95,11 @@ type Token struct {
 	// Origin is the token's `origin` claim. OriginPlayground marks a
 	// playground bearer, which Validate refuses as a subject or actor.
 	Origin string
+	// Act is the token's RFC 8693 `act` claim, nil when it carries none.
+	// Validate copies a subject's Act onto a token issued without an
+	// actor_token, so a narrowed or rotated delegation child keeps the
+	// name of its delegator.
+	Act *Actor
 }
 
 // OriginPlayground is the `origin` claim value of a playground bearer.
@@ -162,9 +170,9 @@ type Issued struct {
 	AuthorizedTools []string
 	Exp             time.Time
 	// Act is the §13.3 RFC 8693 `act` claim of the issued token: the
-	// actor token's sub, tenant_id, session_id, and delegation_depth.
-	// Validate sets it when the request carries an actor_token, and only
-	// then; it is nil for rotation, scope narrowing, and lease issuance.
+	// actor token's sub, tenant_id, session_id, and delegation_depth when
+	// the request carries an actor_token, and otherwise a copy of the
+	// subject's `act` claim, nil when the subject carries none.
 	Act *Actor
 }
 
@@ -192,6 +200,46 @@ func actorOf(t *Token) *Actor {
 		SessionID:       t.SessionID,
 		DelegationDepth: t.DelegationDepth,
 	}
+}
+
+// issuedAct returns the `act` claim of the issued token: the actor token's
+// identity on a child-minting exchange, and a copy of the subject's `act`
+// claim on every other exchange, nil when the subject carries none.
+//
+// spec: §13.3 (Credential Flow) "Lenny JWT claim structure" (the `act`
+// row).
+func issuedAct(actor *Token, subjectAct *Actor) *Actor {
+	if actor != nil {
+		return actorOf(actor)
+	}
+	if subjectAct == nil {
+		return nil
+	}
+	cp := *subjectAct
+	return &cp
+}
+
+// checkActorCoversChild refuses a child-minting exchange whose issued scope
+// the actor token's scope does not grant, so a child is never broader than
+// the token that delegates it. An actor with an absent scope claim grants
+// every issued scope. An issued scope with no value carries no restriction,
+// so it is granted only by an actor whose scope grants tools:*. A nil actor
+// (an exchange without an actor_token) is not checked.
+//
+// spec: §13.3 (Credential Flow) "Client authentication on
+// /v1/oauth/token."
+func checkActorCoversChild(actor *Token, issuedScope []string) error {
+	if actor == nil || len(actor.Scope) == 0 {
+		return nil
+	}
+	required := issuedScope
+	if len(required) == 0 {
+		required = []string{scopes.AllTools}
+	}
+	if grantsAll(actor.Scope, required) {
+		return nil
+	}
+	return &ExchangeError{Code: "invalid_scope", Reason: "scope_exceeds_actor"}
 }
 
 // SkewAllowance is the §13.3 ±1s server-side skew on expiry checks.
@@ -245,6 +293,9 @@ func Validate(r Request) (Issued, error) {
 		return Issued{}, err
 	}
 	if err := checkCallerIdentity(r); err != nil {
+		return Issued{}, err
+	}
+	if err := checkActorCoversChild(r.Actor, issuedScope); err != nil {
 		return Issued{}, err
 	}
 
@@ -330,9 +381,7 @@ func Validate(r Request) (Issued, error) {
 		AuthorizedTools: authorizedTools,
 		Typ:             issuedTyp,
 		Exp:             exp,
-		// spec: §13.3 "Lenny JWT claim structure" — `act` is "Set when
-		// `actor_token` is present".
-		Act: actorOf(r.Actor),
+		Act:             issuedAct(r.Actor, r.Subject.Act),
 	}, nil
 }
 

@@ -293,8 +293,11 @@ func TestValidateChildAllowlistFollowsTheIssuedScopeGrant(t *testing.T) {
 			subject := validSubject()
 			subject.Scope = c.subjectScope
 			subject.AuthorizedTools = tools
+			// The actor carries no scope claim, so it grants every child
+			// scope and the case isolates the allowlist rule.
 			actor := validSubject()
 			actor.Typ = TypeSessionCapability
+			actor.Scope = nil
 			got, err := exchangeOf(subject, subject, &actor, c.requested)
 			if err != nil {
 				t.Fatalf("child mint should succeed, got %v", err)

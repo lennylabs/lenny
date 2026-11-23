@@ -147,10 +147,14 @@ type IssueRequest struct {
 	// minted bearer so the impersonation reflects the user's authority.
 	TargetRoles []auth.Role
 	// CallerTenantID and CallerJTI identify the caller's own bearer. The
-	// caller check reads its issued_tokens row, and the record fence reads
-	// the caller's user row under CallerTenantID.
+	// caller check reads its issued_tokens row, the record fence reads
+	// the caller's user row under CallerTenantID, and the bearer's row
+	// records both as its impersonator link.
 	CallerTenantID string
 	CallerJTI      string
+	// CallerExpiry is the exp of the caller's own bearer, zero when it
+	// carries none. The minted bearer expires no later than it.
+	CallerExpiry time.Time
 	// CallerScope is the raw `scope` claim of the caller's bearer, empty
 	// when the bearer carries none. The minted bearer carries it, so an
 	// impersonation never reaches beyond the caller's own scope.
@@ -190,7 +194,12 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, 
 		Duration:       req.Duration,
 		Scope:          strings.TrimSpace(req.CallerScope),
 		IssuedAt:       now,
-		ExpiresAt:      now.Add(req.Duration),
+		ExpiresAt:      bearerExpiry(now, req.Duration, req.CallerExpiry),
+		CallerTenantID: req.CallerTenantID,
+		CallerJTI:      req.CallerJTI,
+	}
+	if !t.ExpiresAt.After(now) {
+		return Ticket{}, "", fmt.Errorf("%w: the caller's bearer expires at the issue instant", ErrIssuanceRefused)
 	}
 	if err := s.appendStarted(ctx, t); err != nil {
 		return Ticket{}, "", err
@@ -203,6 +212,19 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, 
 		return Ticket{}, "", err
 	}
 	return t, signed, nil
+}
+
+// bearerExpiry returns the exp of an impersonation bearer issued at now:
+// now plus the requested duration, and no later than the caller bearer's
+// exp when the caller's bearer carries one, truncated to whole seconds.
+//
+// spec: §13.3 (Credential Flow) "Platform-admin impersonation." rule 1.
+func bearerExpiry(now time.Time, duration time.Duration, callerExpiry time.Time) time.Time {
+	exp := now.Add(duration)
+	if !callerExpiry.IsZero() && callerExpiry.Before(exp) {
+		exp = callerExpiry.Truncate(time.Second)
+	}
+	return exp
 }
 
 // validate checks the required fields and the duration range.
@@ -251,9 +273,9 @@ func (s *Service) appendStarted(ctx context.Context, t Ticket) error {
 }
 
 // sign mints the target-user bearer whose jti is the session id, whose
-// scope claim is the caller's scope claim, and whose exp is the started
-// event's time plus the requested duration. An empty Ticket.Scope leaves
-// the claim absent.
+// scope claim is the caller's scope claim, and whose exp is Ticket's
+// ExpiresAt, which bearerExpiry computes. An empty Ticket.Scope leaves the
+// claim absent.
 //
 // spec: §13.3 (Credential Flow) "Platform-admin impersonation." rule 1.
 func (s *Service) sign(ctx context.Context, t Ticket, roles []auth.Role) (string, error) {
@@ -293,22 +315,29 @@ func (s *Service) record(ctx context.Context, t Ticket, signed, callerTenantID s
 
 // impersonationRow builds the issued_tokens row of a minted bearer: the
 // target's tenant and sub, the bearer's scope, act_sub set to the admin,
-// and no parent.
+// no parent, and the impersonator link naming the caller's own bearer,
+// which a caller without a jti leaves empty.
 //
 // spec: §13.3 (Platform-admin impersonation, rules 1 (c) and 2).
 func impersonationRow(t Ticket, signed string, audience []string) issuedtokenstore.IssuedToken {
 	sum := sha256.Sum256([]byte(signed))
+	impersonatorTenant := ""
+	if t.CallerJTI != "" {
+		impersonatorTenant = t.CallerTenantID
+	}
 	return issuedtokenstore.IssuedToken{
-		JTI:        t.ID,
-		TenantID:   t.TargetTenantID,
-		Subject:    t.TargetUserID,
-		TokenHash:  sum[:],
-		Scope:      strings.Fields(t.Scope),
-		Audience:   strings.Join(audience, " "),
-		Audiences:  audience,
-		IssuedAt:   t.IssuedAt,
-		ExpiresAt:  t.ExpiresAt,
-		ActSubject: t.AdminSub,
+		ImpersonatorTenantID: impersonatorTenant,
+		ImpersonatorJTI:      t.CallerJTI,
+		JTI:                  t.ID,
+		TenantID:             t.TargetTenantID,
+		Subject:              t.TargetUserID,
+		TokenHash:            sum[:],
+		Scope:                strings.Fields(t.Scope),
+		Audience:             strings.Join(audience, " "),
+		Audiences:            audience,
+		IssuedAt:             t.IssuedAt,
+		ExpiresAt:            t.ExpiresAt,
+		ActSubject:           t.AdminSub,
 	}
 }
 

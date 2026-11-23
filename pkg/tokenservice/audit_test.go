@@ -180,8 +180,8 @@ type txStore struct {
 // fakeRecheck mirrors the issuedtokenstore step (1a) re-read: it returns
 // a *SourceRevokedError for the first listed source whose jti is in
 // revoked and, when none is revoked, a *SourceImpersonationError for the
-// first listed source whose jti is in impersonation, checking sources in
-// list order.
+// first listed source other than the caller token whose jti is in
+// impersonation, checking sources in list order.
 func fakeRecheck(sources []issuedtokenstore.SourceToken, revoked map[string]time.Time, impersonation map[string]bool) error {
 	for _, src := range sources {
 		if at, ok := revoked[src.JTI]; ok && src.JTI != "" {
@@ -189,6 +189,9 @@ func fakeRecheck(sources []issuedtokenstore.SourceToken, revoked map[string]time
 		}
 	}
 	for _, src := range sources {
+		if src.Role == issuedtokenstore.SourceCallerToken {
+			continue
+		}
 		if impersonation[src.JTI] && src.JTI != "" {
 			return &issuedtokenstore.SourceImpersonationError{Role: src.Role, JTI: src.JTI}
 		}

@@ -1038,7 +1038,7 @@ func platformAdminServiceAccountRoles(accounts []string) map[string][]auth.Role 
 // *issuedtokenstore.Store over a nil pool keeps the handler's nil check
 // meaningful.
 // spec: §10.2 (Playground mint invariants, invariant 1).
-func playgroundIssuedTokens(pool *pgxpool.Pool) playground.IssuedTokenReader {
+func playgroundIssuedTokens(pool *pgxpool.Pool) playground.IssuedTokens {
 	if pool == nil {
 		return nil
 	}
