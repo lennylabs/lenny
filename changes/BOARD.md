@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Building | 1 |
 | Ready | 4 |
 | Waiting on decisions | 32 |
-| Blocked | 150 |
+| Blocked | 151 |
 | Landed | 18 |
 | Cancelled | 1 |
 
@@ -240,6 +240,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
 | [0165.S2](0165-token-rules-model/steps.md#0165s2-generated-property-tests-against-the-token-service) | Generated property tests against the Token Service | Blocked | 0165.S1 |
+| [0168.S1](0168-token-fixes/steps.md#0168s1-token-rule-fixes-from-the-property-tests) | Token rule fixes from the property tests | Blocked | 0165.S1, 0165.S2 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
 | [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Landed |  |
@@ -294,3 +295,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
 | [0165](0165-token-rules-model/change.md) | A formal model of the token rules | `In progress` | 0 of 2 | 0 |
 | [0167](0167-token-model-fixes/change.md) | Token rule fixes from the formal model | `In progress` | 1 of 1 | 2 |
+| [0168](0168-token-fixes/change.md) | Token rule fixes from the property tests | `Draft` | 0 of 1 | 2 |
