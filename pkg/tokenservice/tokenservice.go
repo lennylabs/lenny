@@ -1443,11 +1443,10 @@ var errNoCrossTenantReads = errors.New("no cross_tenant_read emitter is configur
 // revokeImpersonationsFrom ends the impersonation sessions a recursive
 // revocation reaches: it revokes, in every tenant, the active
 // impersonation rows whose impersonator link names the request's tenant
-// and a jti of the cascade's subtree, writes a token.revoked row for each
-// in the row's tenant with the request's root as cascade root, propagates
-// each, and emits one cross_tenant_read event after the revocation
-// commits. An emit failure is logged and does not undo the revocation. It
-// returns the number of rows it revoked. A store without the
+// and a jti of the cascade's subtree, audits and propagates each ended
+// session through emitTokenRevoked under the session's own tenant, and
+// then emits one cross_tenant_read event, whose failure it logs and
+// otherwise ignores, because the rows are already revoked. It returns the number of rows it revoked. A store without the
 // impersonator-link surface (the in-memory dev store) ends nothing.
 //
 // spec: §13.3 (Credential Flow) "Lineage of derived tokens.",

@@ -76,7 +76,7 @@ packages:
     - package: cmd/runtimes/supervise-probe
       count: 2
     - package: migrations
-      count: 97
+      count: 99
     - package: pkg/adapter
       count: 1430
     - package: pkg/adapter/embeddedcheckpoint
@@ -300,7 +300,7 @@ packages:
     - package: pkg/credential/denylist/propagator
       count: 2
     - package: pkg/credential/impersonation
-      count: 52
+      count: 55
     - package: pkg/credential/impersonation/impersonationtest
       count: 1
     - package: pkg/credential/revocation
@@ -352,7 +352,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1313
+      count: 1314
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret
@@ -564,7 +564,7 @@ packages:
     - package: pkg/gateway/platformtools/treerecovery
       count: 16
     - package: pkg/gateway/playground
-      count: 111
+      count: 119
     - package: pkg/gateway/replica/devmode
       count: 4
     - package: pkg/gateway/replica/gatewayleader
@@ -890,7 +890,7 @@ packages:
     - package: pkg/storage/failopen
       count: 41
     - package: pkg/storage/issuedtokenstore
-      count: 62
+      count: 70
     - package: pkg/storage/legalholdreconciler
       count: 23
     - package: pkg/storage/partitionmaint
@@ -938,9 +938,9 @@ packages:
     - package: pkg/tierpromotion
       count: 25
     - package: pkg/tokenexchange
-      count: 24
+      count: 29
     - package: pkg/tokenservice
-      count: 192
+      count: 202
     - package: pkg/tokenservice/cache
       count: 16
     - package: pkg/tokenservice/promemit
@@ -1014,7 +1014,7 @@ packages:
     - package: tests/component/healthchecks
       count: 11
     - package: tests/component/issuedtokencascade
-      count: 22
+      count: 29
     - package: tests/component/leasedenial
       count: 8
     - package: tests/component/leases
@@ -1160,7 +1160,7 @@ packages:
     - package: tests/contract/multiprotocol_journey
       count: 4
     - package: tests/contract/oauth_token
-      count: 42
+      count: 45
     - package: tests/contract/ocsf_audit
       count: 29
     - package: tests/contract/ops_endpoints
@@ -1228,7 +1228,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 558
+      count: 562
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

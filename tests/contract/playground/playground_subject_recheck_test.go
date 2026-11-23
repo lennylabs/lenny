@@ -19,12 +19,17 @@ import (
 	"github.com/lennylabs/lenny/tests/testinfra/jwtsign"
 )
 
-// impersonationRows is a playground.IssuedTokenReader that reports every
-// jti as a live platform-admin impersonation row.
+// impersonationRows is a playground.IssuedTokens that reports every jti
+// as a live platform-admin impersonation row. Its record is never reached,
+// because the mint refuses the subject before it signs.
 type impersonationRows struct{}
 
 func (impersonationRows) Get(_ context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error) {
 	return issuedtokenstore.IssuedToken{JTI: jti, TenantID: tenantID, Subject: "bob", ActSubject: "alice"}, nil
+}
+
+func (impersonationRows) RecordWithSources(context.Context, issuedtokenstore.IssuedToken, []issuedtokenstore.SourceToken) error {
+	return nil
 }
 
 // spec: 10.2 (Playground mint invariants, invariant 1), 15.1 (REST API) the LENNY_PLAYGROUND_BEARER_TYPE_REJECTED catalog row, 13.3 (Credential Flow: Platform-admin impersonation, rule 5)

@@ -56,8 +56,8 @@ func TestPlaygroundAPIKeyMintRecordsTheBearerUnderTheSubject(t *testing.T) {
 //
 // A record that the in-lock re-read refuses, because the subject was revoked
 // after the pre-sign read, refuses the mint as the pre-sign read does and
-// returns no bearer. A Postgres outage refuses it with 503
-// SERVICE_UNAVAILABLE and any other record failure with 500 INTERNAL_ERROR.
+// returns no bearer. An unavailable Postgres maps to SERVICE_UNAVAILABLE,
+// and every other record error to INTERNAL_ERROR.
 func TestPlaygroundMintRefusesABearerItCannotRecord(t *testing.T) {
 	cases := []struct {
 		name       string

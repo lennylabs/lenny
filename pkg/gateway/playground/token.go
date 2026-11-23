@@ -279,8 +279,8 @@ func (h *Handler) admitSubjectRow(w http.ResponseWriter, r *http.Request, claims
 // and no parent in the oidc and dev modes, whose subject carries no jti.
 // The record re-reads the subject's row under the per-tenant audit
 // advisory lock, so a subject revoked after admitSubjectRow read it
-// refuses the mint as admitSubjectRow does. A Postgres outage refuses the
-// mint with 503 SERVICE_UNAVAILABLE and any other failure with 500
+// refuses the mint as admitSubjectRow does. It maps an unavailable
+// Postgres to SERVICE_UNAVAILABLE and every other record error to
 // INTERNAL_ERROR. It returns true when the mint may proceed. A nil store
 // records nothing.
 //

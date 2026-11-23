@@ -73,8 +73,10 @@ func TestRevokeLineageRecordsARootWithoutARow(t *testing.T) {
 	ctx := context.Background()
 	tenant := freshTenant(t, ctx, pg)
 	record(t, issuedtokenstore.IssuedToken{JTI: "narrowed", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "id-token"})
-	record(t, issuedtokenstore.IssuedToken{JTI: "rotated", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "narrowed",
-		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "rotated", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "narrowed",
+		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced",
+	})
 	record(t, issuedtokenstore.IssuedToken{JTI: "successor", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "rotated"})
 
 	now := time.Now().UTC().Truncate(time.Second)
@@ -190,8 +192,10 @@ func TestImpersonatorLinkEndsTheSessionAcrossTenants(t *testing.T) {
 	}
 	// A delegation child that happens to carry the same link columns is not
 	// an impersonation row and is left alone.
-	record(t, issuedtokenstore.IssuedToken{JTI: "child", TenantID: targetTenant, Subject: "alice@initech.com",
-		ActSubject: "carol@globex.com", ParentJTI: "p", ImpersonatorTenantID: adminTenant, ImpersonatorJTI: "carol-bearer"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "child", TenantID: targetTenant, Subject: "alice@initech.com",
+		ActSubject: "carol@globex.com", ParentJTI: "p", ImpersonatorTenantID: adminTenant, ImpersonatorJTI: "carol-bearer",
+	})
 
 	ended, err := store.RevokeImpersonationsByImpersonator(ctx, adminTenant, []string{"carol-root", "carol-bearer"}, "cascade_from_parent", now)
 	if err != nil {
@@ -225,11 +229,15 @@ func TestRevokeBySubjectFollowsTheLineage(t *testing.T) {
 	ctx := context.Background()
 	tenant := freshTenant(t, ctx, pg)
 	record(t, issuedtokenstore.IssuedToken{JTI: "alice-a", TenantID: tenant, Subject: "alice@acme.com"})
-	record(t, issuedtokenstore.IssuedToken{JTI: "bob-child", TenantID: tenant, Subject: "bob@acme.com",
-		ActSubject: "alice@acme.com", ParentJTI: "alice-a"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "bob-child", TenantID: tenant, Subject: "bob@acme.com",
+		ActSubject: "alice@acme.com", ParentJTI: "alice-a",
+	})
 	record(t, issuedtokenstore.IssuedToken{JTI: "bob-narrowed", TenantID: tenant, Subject: "bob@acme.com", ParentJTI: "bob-child"})
-	record(t, issuedtokenstore.IssuedToken{JTI: "alice-old", TenantID: tenant, Subject: "alice@acme.com",
-		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "alice-old", TenantID: tenant, Subject: "alice@acme.com",
+		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced",
+	})
 	record(t, issuedtokenstore.IssuedToken{JTI: "carol-from-old", TenantID: tenant, Subject: "carol@acme.com", ParentJTI: "alice-old"})
 	record(t, issuedtokenstore.IssuedToken{JTI: "bob-own", TenantID: tenant, Subject: "bob@acme.com"})
 
@@ -262,8 +270,10 @@ func TestRecordWithAuditRefusesARevokedCaller(t *testing.T) {
 	ctx := context.Background()
 	tenant := freshTenant(t, ctx, pg)
 	record(t, issuedtokenstore.IssuedToken{JTI: "subject", TenantID: tenant, Subject: "alice@acme.com"})
-	record(t, issuedtokenstore.IssuedToken{JTI: "caller", TenantID: tenant, Subject: "alice@acme.com",
-		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "caller", TenantID: tenant, Subject: "alice@acme.com",
+		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced",
+	})
 	record(t, issuedtokenstore.IssuedToken{JTI: "imp-caller", TenantID: tenant, Subject: "alice@acme.com", ActSubject: "admin@acme.com"})
 	now := time.Now().UTC()
 	mint := func(jti, caller string) error {
