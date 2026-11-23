@@ -237,9 +237,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
-| [0166.S1](0166-delegation-primitives/steps.md#0166s1-session-grant-and-parent-link) | Session grant and parent link | Blocked | 0146.S1, 0149.S3, 0149.S10; a part waits on 0142.S2, 0139.S2, 0138.S1 |
+| [0166.S1](0166-delegation-primitives/steps.md#0166s1-session-grant-and-parent-link) | Session grant and parent link | Blocked | 0126.S1, 0141.S1, 0146.S1, 0149.S3, 0149.S10; a part waits on 0142.S2, 0139.S2, 0138.S1 |
 | [0166.S2](0166-delegation-primitives/steps.md#0166s2-carved-budget) | Carved budget | Blocked | 0166.S1, 0133.S3 |
-| [0166.S3](0166-delegation-primitives/steps.md#0166s3-reference-extension-events-and-tools) | Reference extension, events, and tools | Blocked | 0166.S1, 0166.S2, 0139.S2; a part waits on 0135.S5, 0146.S2, 0122.S1, 0153.S5, 0138.S1, 0138.S3 |
+| [0166.S3](0166-delegation-primitives/steps.md#0166s3-reference-extension-and-parent-controls) | Reference extension and parent controls | Blocked | 0166.S1, 0166.S2, 0139.S2; a part waits on 0135.S5, 0146.S2, 0122.S1, 0153.S5 |
 | [0166.S4](0166-delegation-primitives/steps.md#0166s4-removal-of-built-in-delegation) | Removal of built-in delegation | Blocked | 0166.S3 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
