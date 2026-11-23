@@ -15,7 +15,7 @@ The non-specification lane adds the Alloy 6 model under `tests/formal/tokens/` (
 The specification lane states the property list of "Properties" in `change.md` in §13.3 (Credential Flow), as the invariants the rules of that section keep, with the owner's answers in decisions 2 to 12. It waits until change 0167 lands, because 0167 carries the fixes of decisions 3 to 11 and edits the same paragraphs of §13.3 next, and two branches editing them in parallel would conflict. Change 0164 (token exchange narrowing and identity rules), which edited those paragraphs before, merged to `main` with 0164.S1. The specification lane lands on this step's branch, after `main` with 0167 is merged into it, before the step merges. The dependency is stated here rather than in the `depends-on` field, because 0167 is not yet on `main`.
 
 ### 0165.S2 Generated property tests against the Token Service
-- status: Planned
+- status: Building
 - lanes: [code]
 - depends-on: [0165.S1]
 
