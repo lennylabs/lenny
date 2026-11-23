@@ -890,7 +890,7 @@ packages:
     - package: pkg/storage/failopen
       count: 41
     - package: pkg/storage/issuedtokenstore
-      count: 70
+      count: 71
     - package: pkg/storage/legalholdreconciler
       count: 23
     - package: pkg/storage/partitionmaint
@@ -940,7 +940,7 @@ packages:
     - package: pkg/tokenexchange
       count: 29
     - package: pkg/tokenservice
-      count: 202
+      count: 203
     - package: pkg/tokenservice/cache
       count: 16
     - package: pkg/tokenservice/promemit
@@ -1014,7 +1014,7 @@ packages:
     - package: tests/component/healthchecks
       count: 11
     - package: tests/component/issuedtokencascade
-      count: 29
+      count: 30
     - package: tests/component/leasedenial
       count: 8
     - package: tests/component/leases
