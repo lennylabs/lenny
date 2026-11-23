@@ -1,6 +1,6 @@
 # A formal model of the token rules
 
-Status: `In progress`, revision 1, 2026-11-20.
+Status: `In progress`, revision 2, 2026-11-23.
 
 ## Problem
 
@@ -10,13 +10,13 @@ The owner asked on 2026-11-20 for a formal model that states the properties the 
 
 ## Scope
 
-The change covers the rules that issue, narrow, delegate, impersonate, and revoke bearer tokens: the RFC 8693 exchange on `POST /v1/oauth/token` (self-rotation, narrowing, exchange by another caller, and `a2a_delegation` child minting), the recursive-revocation request, the platform-admin impersonation mint, the playground mint, and step 5 of the full revoke of a user. The target state is `main` with change 0164 as decided, including the owner's answers SM-9, SM-10, and SM-11 of 2026-11-20.
+The change covers the rules that issue, narrow, delegate, impersonate, and revoke bearer tokens: the RFC 8693 exchange on `POST /v1/oauth/token` (self-rotation, narrowing, exchange by another caller, and `a2a_delegation` child minting), the recursive-revocation request, the platform-admin impersonation mint, the playground mint, and step 5 of the full revoke of a user. The target state is `main` with change 0164 as decided, including the owner's answers SM-9, SM-10, and SM-11 of 2026-11-20 and SM-12 and SM-13 of 2026-11-22. The model was written against 0164.S1 revision 3, which built SM-9 to SM-11 with a rotation that inherits the replaced token's parent (`RotInherit`). SM-12 restored the rotation edge as 0164 decision 10 (`RotEdge`), which the model already checks as a variant; "Model results" states which checks ran under which variant.
 
 It leaves out:
 
-- Concurrent orderings: revocation during issuance, a rotation racing a child mint, and write-before-issue across replicas. A TLA+ model of those orderings is a candidate, described under "Limits, and alternatives rejected", and is not a step.
+- Concurrent orderings: revocation during issuance, a rotation racing a child mint, and write-before-issue across replicas. A TLA+ model of those orderings is a candidate, described under "Limits, and alternatives rejected", and is not a step; decision 14 holds it until step 0165.S2 is done.
 - Audiences, the per-dialect lifetime caps, `authorized_tools`, `session_id`, rate limits, credential-lease issuance (an internal exchange with the narrowing lineage), and the end of an impersonation session.
-- Fixing the rules. The open decisions list the smallest rule change for each counterexample; a later change, or a revision of 0164, carries the fixes the owner chooses.
+- Fixing the rules. The decisions record the rule change the owner chose for each counterexample. Change 0164 carries the answers to CX-2 and CX-13 (its decisions 10 and 11), and change 0166 carries the others (decision 13).
 
 ## Terms
 
@@ -41,7 +41,7 @@ Step 0165.S2 checks the same properties against the Token Service code, with Go 
 
 ## Requirements
 
-None by identifier. §13.3 is content of the placeholder page TOKX and carries no requirement identifiers yet. The specification lane of 0165.S1 adds the property list to §13.3 after 0164.S1 merges.
+None by identifier. §13.3 is content of the placeholder page TOKX and carries no requirement identifiers yet. The specification lane of 0165.S1 adds the property list to §13.3 after change 0166 edits §13.3.
 
 ## Properties
 
@@ -65,68 +65,70 @@ The model ran on 2026-11-20 with Alloy 6.2.0, the latest release, using `org.all
 Scopes:
 
 - **Base.** Up to 3 users, 2 tenants, 6 tokens, and 6 operations (7 states), with a 4-bit integer width for depth and expiry. Every `run` and every base `check` uses it.
-- **Large.** Up to 4 users, 2 tenants, 8 tokens, and 8 operations (9 states), for the properties that hold at the base scope, against the build.
+- **Large.** Up to 4 users, 2 tenants, 8 tokens, and 8 operations (9 states), for the properties that hold at the base scope, against `RotInherit`, the rotation rule built when the large-scope run started.
 
-Every witness (`show_*`) found its scenario at the base scope: a sign-in, a rotation, a narrowing of an unscoped token, an exchange by another caller, a child mint, a child mint with another user's subject, a revocation that cascades, a revocation by an administrator, a cross-tenant impersonation, a playground mint from a scoped subject, a full revoke that revokes, and a leak. No property holds vacuously.
+Every witness (`show_*`) found its scenario at the base scope under `RotInherit`: a sign-in, a rotation, a narrowing of an unscoped token, an exchange by another caller, a child mint, a child mint with another user's subject, a revocation that cascades, a revocation by an administrator, a cross-tenant impersonation, a playground mint from a scoped subject, a full revoke that revokes, and a leak. No property holds vacuously.
 
-Results against 0164.S1 as built (`RotInherit`), with the variants where they differ:
+The model checks every property against `RotInherit`, the rotation rule of 0164.S1 revision 3 (commands ending in `_built`), and the lineage and revocation properties of P3 and P4 also against `RotEdge` (`_edge`) and `RotCut` (`_cut`). `RotEdge` is the rotation rule as built since 0164 decision 10, so the `RotEdge` column holds the results for the build. The rows with "not checked" in that column ran under `RotInherit` only; the rerun of the model against change 0166 (decision 13) checks them under `RotEdge`. The large scope ran under `RotInherit` only. No command was rerun for this revision.
 
-| Property | Assertion | Base scope | Large scope |
-| :-- | :-- | :-- | :-- |
-| P1 | `P1_rule_a` | holds | holds |
-| P1 | `P1_no_broader_than_subject` | holds | holds |
-| P1 | `P1_impersonation_no_broader_than_caller` | holds | holds |
-| P1 | `P1_no_broader_than_lineage_parent` | fails (CX-6) | |
-| P1 | `P1_playground_never_unrestricted` | holds | holds |
-| P2 | `P2_tenant_preserved` | holds | holds |
-| P2 | `P2_cross_tenant_only_by_impersonation` | holds | holds |
-| P3 | `P3_cascade_reaches_lineage` | holds in every variant | holds |
-| P3 | `P3_nothing_outside_lineage` | holds in every variant | holds |
-| P3 | `P3_rotation_revokes_only_its_subject` | holds in every variant | |
-| P3 | `P3_derived_sm9` | holds in every variant | |
-| P3 | `P3_derived_through_rotation` | holds for `RotInherit` and `RotEdge`; fails for `RotCut` (CX-1) | |
-| P3 | `P3_derived_child_subject` | fails in every variant (CX-12) | |
-| P3 | `P3_derived_playground` | fails in every variant (CX-3) | |
-| P3 | `P3_derived_impersonation` | fails in every variant (CX-4) | |
-| P3 | `P3_every_lineage_root_revocable` | fails in every variant (CX-5) | |
-| P3 | `O3_revoking_replaced_token_spares_successor` | holds for `RotInherit` and `RotCut`; fails for `RotEdge` (CX-2) | |
-| P3 | `O3_revocation_reaches_successors` | fails for `RotInherit` and `RotCut` (CX-2); holds for `RotEdge` | |
-| P4 | `P4_revocation_authority` | holds in every variant | holds |
-| P4 | `P4_revoked_caller_cannot_revoke` | holds in every variant | holds |
-| P4 | `O4_narrow_caller_revokes_only_narrower` | fails in every variant (CX-13) | |
-| P4 | `O4_revocation_bounded_by_holding` | holds in every variant | |
-| P5 | `P5_other_identity_strictly_narrower` | fails (CX-7) | |
-| P5 | `P5_child_other_identity_strictly_narrower` | fails (CX-7) | |
-| P5 | `P5_no_identity_escalation` | holds | holds |
-| P5 | `P5_actor_is_caller` | holds | holds |
-| P6 | `P6_playground_never_a_source` | holds | holds |
-| P7 | `P7_child_depth_and_act` | holds | holds |
-| P7 | `P7_depth_monotone_along_lineage` | holds | not completed: stopped after about 48 hours |
-| P7 | `P7_depth_not_below_subject` | fails (CX-8) | |
-| P7 | `P7_delegated_token_names_actor` | fails (CX-9) | |
-| P8 | `P8_revoked_caller_cannot_mint` | fails (CX-10) | |
-| P9 | `P9_lifetime_bounded_by_subject_and_actor` | holds | holds |
-| P9 | `P9_impersonation_bounded_by_caller` | fails (CX-4) | |
-| P9 | `P9_lifetime_bounded_by_lineage_parent` | holds | not completed: stopped after about 45 minutes |
-| P10 | `P10_full_revoke_reaches_delegations` | fails (CX-11) | |
+| Property | Assertion | Base, `RotEdge` (built) | Base, `RotInherit` | Base, `RotCut` | Large, `RotInherit` |
+| :-- | :-- | :-- | :-- | :-- | :-- |
+| P1 | `P1_rule_a` | not checked | holds | not checked | holds |
+| P1 | `P1_no_broader_than_subject` | not checked | holds | not checked | holds |
+| P1 | `P1_impersonation_no_broader_than_caller` | not checked | holds | not checked | holds |
+| P1 | `P1_no_broader_than_lineage_parent` | not checked | fails (CX-6) | not checked | |
+| P1 | `P1_playground_never_unrestricted` | not checked | holds | not checked | holds |
+| P2 | `P2_tenant_preserved` | not checked | holds | not checked | holds |
+| P2 | `P2_cross_tenant_only_by_impersonation` | not checked | holds | not checked | holds |
+| P3 | `P3_cascade_reaches_lineage` | holds | holds | holds | holds |
+| P3 | `P3_nothing_outside_lineage` | holds | holds | holds | holds |
+| P3 | `P3_rotation_revokes_only_its_subject` | holds | holds | holds | |
+| P3 | `P3_derived_sm9` | holds | holds | holds | |
+| P3 | `P3_derived_through_rotation` | holds | holds | fails (CX-1) | |
+| P3 | `P3_derived_child_subject` | fails (CX-12) | fails (CX-12) | fails (CX-12) | |
+| P3 | `P3_derived_playground` | fails (CX-3) | fails (CX-3) | fails (CX-3) | |
+| P3 | `P3_derived_impersonation` | fails (CX-4) | fails (CX-4) | fails (CX-4) | |
+| P3 | `P3_every_lineage_root_revocable` | fails (CX-5) | fails (CX-5) | fails (CX-5) | |
+| P3 | `O3_revoking_replaced_token_spares_successor` | fails (CX-2) | holds | holds | |
+| P3 | `O3_revocation_reaches_successors` | holds | fails (CX-2) | fails (CX-2) | |
+| P4 | `P4_revocation_authority` | holds | holds | holds | holds |
+| P4 | `P4_revoked_caller_cannot_revoke` | holds | holds | holds | holds |
+| P4 | `O4_narrow_caller_revokes_only_narrower` | fails (CX-13) | fails (CX-13) | fails (CX-13) | |
+| P4 | `O4_revocation_bounded_by_holding` | holds | holds | holds | |
+| P5 | `P5_other_identity_strictly_narrower` | not checked | fails (CX-7) | not checked | |
+| P5 | `P5_child_other_identity_strictly_narrower` | not checked | fails (CX-7) | not checked | |
+| P5 | `P5_no_identity_escalation` | not checked | holds | not checked | holds |
+| P5 | `P5_actor_is_caller` | not checked | holds | not checked | holds |
+| P6 | `P6_playground_never_a_source` | not checked | holds | not checked | holds |
+| P7 | `P7_child_depth_and_act` | not checked | holds | not checked | holds |
+| P7 | `P7_depth_monotone_along_lineage` | not checked | holds | not checked | not completed: stopped after about 48 hours |
+| P7 | `P7_depth_not_below_subject` | not checked | fails (CX-8) | not checked | |
+| P7 | `P7_delegated_token_names_actor` | not checked | fails (CX-9) | not checked | |
+| P8 | `P8_revoked_caller_cannot_mint` | not checked | fails (CX-10) | not checked | |
+| P9 | `P9_lifetime_bounded_by_subject_and_actor` | not checked | holds | not checked | holds |
+| P9 | `P9_impersonation_bounded_by_caller` | not checked | fails (CX-4) | not checked | |
+| P9 | `P9_lifetime_bounded_by_lineage_parent` | not checked | holds | not checked | not completed: stopped after about 45 minutes |
+| P10 | `P10_full_revoke_reaches_delegations` | not checked | fails (CX-11) | not checked | |
+
+An empty cell in the large-scope column marks a check that was not run at that scope: the base scope found a counterexample, or, for `P3_rotation_revokes_only_its_subject`, `P3_derived_sm9`, `P3_derived_through_rotation`, and the O3 and O4 checks, the large-scope command list left it out.
 
 The O3 scenarios are `run` commands: `O3_leak_holder_revokes_owner_successor` is impossible for `RotCut` and `RotInherit` and found for `RotEdge`, and `O3_leak_holder_keeps_successor` is found for `RotCut` and `RotInherit` and impossible for `RotEdge`.
 
-The base checks took between a few seconds and about 35 minutes each on a shared laptop; the derivation checks that follow rotation chains (`P3_derived_through_rotation`) are the slowest. At the large scope, the checks that compare depth or expiry along the lineage (`P7_depth_monotone_along_lineage` and `P9_lifetime_bounded_by_lineage_parent`) did not finish and were stopped; they hold at the base scope, and step 0165.S2 checks them on longer sequences. Every other large-scope check finished within minutes and found no counterexample. `P3_derived_through_rotation` was left out of the large scope because it took about 35 minutes at the base scope.
+The base checks took between a few seconds and about 35 minutes each on a shared laptop; the derivation checks that follow rotation chains (`P3_derived_through_rotation`) are the slowest. At the large scope, the checks that compare depth or expiry along the lineage (`P7_depth_monotone_along_lineage` and `P9_lifetime_bounded_by_lineage_parent`) did not finish and were stopped; they hold at the base scope, the owner accepted the base-scope results (decision 14), and step 0165.S2 checks them on longer sequences. Every other large-scope check finished within minutes and found no counterexample. `P3_derived_through_rotation` was left out of the large scope because it took about 35 minutes at the base scope.
 
 ## Counterexamples
 
-Each scenario restates the trace Alloy returned, with the users renamed alice, bob, and carol and the tenants acme and globex, and the scope values written in the §25.1 grammar. Each was confirmed against the text of 0164.S1 before it was listed. The open decision that answers it is named in brackets.
+Each scenario restates the trace Alloy returned, with the users renamed alice, bob, and carol and the tenants acme and globex, and the scope values written in the §25.1 grammar. Each was confirmed against the text of 0164.S1 before it was listed. The decision that settles it is named in brackets.
 
 ### CX-1 A derived token leaves its ancestor's lineage by rotating
 
-`P3_derived_through_rotation` fails for `RotCut` and holds for `RotInherit` and `RotEdge`. alice in acme holds a root token R. She narrows it for her agent, so the narrowed token N records R as parent, and the agent rotates N into N'. Under decision 7 of 0164 as first written, N' records no parent, so when alice revokes R the cascade revokes N, which is already revoked, and not N'. 0164.S1 as built closes it: N' records N's own parent, R, so the cascade from R reaches it. Option (a) of 0164 O3 closes it as well, because N' records N, which records R. The entry needs no decision of its own.
+`P3_derived_through_rotation` fails for `RotCut` and holds for `RotInherit` and `RotEdge`. alice in acme holds a root token R. She narrows it for her agent, so the narrowed token N records R as parent, and the agent rotates N into N'. Under decision 7 of 0164 as first written, N' records no parent, so when alice revokes R the cascade revokes N, which is already revoked, and not N'. 0164.S1 as built closes it: under 0164 decision 10 (`RotEdge`), N' records N, which records R, so the cascade from R reaches it. 0164.S1 revision 3 (`RotInherit`) closed it as well, because N' recorded N's own parent, R. The entry needs no decision of its own.
 
 ### CX-2 Rotation edge and leaked tokens
 
-0164 open decision O3 asks whether a rotation records the token it replaces. The model checks three lineages for a rotation: decision 7 of 0164 as first written (`RotCut`, no parent), 0164.S1 as built (`RotInherit`, the replaced token's own parent, so none for a root's successor), and option (a) of O3 (`RotEdge`, the replaced token as parent).
+0164 open decision O3 asked whether a rotation records the token it replaces. The model checks three lineages for a rotation: decision 7 of 0164 as first written (`RotCut`, no parent), 0164.S1 revision 3 (`RotInherit`, the replaced token's own parent, so none for a root's successor), and option (a) of O3, which the owner chose as SM-12 and 0164.S1 builds as 0164 decision 10 (`RotEdge`, the replaced token as parent). Every row below ran at the base scope.
 
-| Check | `RotCut` | `RotInherit` (built) | `RotEdge` (O3 (a)) |
+| Check | `RotCut` | `RotInherit` (0164.S1 revision 3) | `RotEdge` (built, 0164 decision 10) |
 | :-- | :-- | :-- | :-- |
 | (i) `O3_revoking_replaced_token_spares_successor` | holds | holds | fails |
 | (i) scenario `O3_leak_holder_revokes_owner_successor` | impossible | impossible | found |
@@ -135,55 +137,55 @@ Each scenario restates the trace Alloy returned, with the users renamed alice, b
 | `P3_derived_through_rotation` (CX-1) | fails | holds | holds |
 | `P4_revocation_authority` | holds | holds | holds |
 
-Question (i), whether the holder of a leaked token that its owner rotated away from can revoke the owner's live tokens: under `RotCut` and `RotInherit`, no. Under `RotEdge`, yes, when the holder also holds a live token that carries the owner's identity. The trace: alice in acme holds tokens T and U, and U leaks to bob. alice rotates T into T', which revokes T and, under `RotEdge`, records T as the parent of T'. T then leaks to bob as well. bob sends a revocation request with U as caller and T as `subject_token`: U carries alice's `sub` and is live, decision 9 of 0164 accepts a revoked root and cascades, and T' is revoked. A holder who has only T cannot do this in any variant, because decision 9 refuses a revoked caller, and `P4_revocation_authority` holds in every variant: every revocation is made by a user holding a live administrator token or a live token of an identity on the revoked token's lineage. The live token can be any token of alice's, including a narrowed child an agent holds (CX-13), or one bob derived from T before the rotation.
+Question (i), whether the holder of a leaked token that its owner rotated away from can revoke the owner's live tokens: under the build (`RotEdge`), yes, when the holder also holds a live token that carries the owner's identity. Under `RotCut` and `RotInherit`, no. The trace: alice in acme holds tokens T and U, and U leaks to bob. alice rotates T into T', which revokes T and records T as the parent of T'. T then leaks to bob as well. bob sends a revocation request with U as caller and T as `subject_token`: U carries alice's `sub` and is live, decision 9 of 0164 accepts a revoked root and cascades, and T' is revoked. A holder who has only T cannot do this in any variant, because decision 9 refuses a revoked caller, and `P4_revocation_authority` holds in every variant: every revocation is made by a user holding a live administrator token or a live token of an identity on the revoked token's lineage. The live token can be any token of alice's, including a narrowed child an agent holds (CX-13), or one bob derived from T before the rotation.
 
-Question (ii), whether a leaked token's holder keeps a live token after the owner revokes the leaked one: under `RotCut` and `RotInherit`, yes. The trace: alice holds T and U, T leaks to bob, bob rotates T into T' before alice acts, which revokes T, and alice then revokes T with U as caller. T' records no link to T (for a root T it has no parent at all), so the cascade does not reach it and bob keeps T' until its `exp`, at most T's `exp` and the dialect cap. Under `RotEdge` the cascade reaches T'.
+Question (ii), whether a leaked token's holder keeps a live token after the owner revokes the leaked one: under the build (`RotEdge`), no. The trace: alice holds T and U, T leaks to bob, bob rotates T into T' before alice acts, which revokes T, and alice then revokes T with U as caller. T' records T as its parent, so the cascade reaches T'. Under `RotCut` and `RotInherit`, T' records no link to T (for a root T it has no parent at all), so the cascade does not reach it and bob keeps T' until its `exp`, at most T's `exp` and the dialect cap.
 
-No lineage passes both questions, because both scenarios are the same sequence seen from the two holders: a token is rotated by one holder and revoked by another, and the Token Service cannot tell which holder is the owner, since each presents a live token of the owner's identity. The choice is between a denial of service by a holder of the owner's identity under `RotEdge` and continued access by such a holder under the other two. [Open decision 1.]
+No lineage passes both questions, because both scenarios are the same sequence seen from the two holders: a token is rotated by one holder and revoked by another, and the Token Service cannot tell which holder is the owner, since each presents a live token of the owner's identity. The choice was between a denial of service by a holder of the owner's identity under `RotEdge` and continued access by such a holder under the other two. The build accepts the denial of service, which needs a second live token of the owner's identity and which a full revoke of the user ends; §13.3 and the operator security guide state the trade-off. [Decision 2.]
 
 ### CX-3 A playground bearer outlives the revocation of its subject
 
-`P3_derived_playground` fails in every variant. alice in acme pastes her token S into the playground in `apiKey` mode and receives a playground bearer P with S's `sub` and the narrowed scope. alice then revokes S with a revocation request. P has no `issued_tokens` row and no parent, so the cascade does not reach it, and P stays valid until its `exp` (at most `auth.capabilityTokenTtlSeconds`, and never later than S's `exp`), or until alice logs out of the playground or is fully revoked. The text names logout, user invalidation, and expiry as the routes that end a playground bearer (§27.3.1) and does not say that revoking the subject leaves it live. [Open decision 2.]
+`P3_derived_playground` fails in every variant. alice in acme pastes her token S into the playground in `apiKey` mode and receives a playground bearer P with S's `sub` and the narrowed scope. alice then revokes S with a revocation request. P has no `issued_tokens` row and no parent, so the cascade does not reach it, and P stays valid until its `exp` (at most `auth.capabilityTokenTtlSeconds`, and never later than S's `exp`), or until alice logs out of the playground or is fully revoked. The text names logout, user invalidation, and expiry as the routes that end a playground bearer (§27.3.1) and does not say that revoking the subject leaves it live. [Decision 3.]
 
 ### CX-4 An impersonation bearer outlives and escapes the caller's token
 
-`P3_derived_impersonation` and `P9_impersonation_bounded_by_caller` fail in every variant. carol, a `platform-admin` in globex, starts an impersonation of alice in acme with her token C. The bearer's `exp` is the start time plus `durationSeconds`, with no bound by C's `exp`, so the bearer can outlive C. When carol's token C is revoked with a revocation request, the bearer stays live, because its row records no parent. §13.3 **Platform-admin impersonation.** rule 4 lists the routes that end a session, and the revocation of the caller's token is not among them; the text is consistent, and the scenario shows a consequence it does not state. [Open decision 3.]
+`P3_derived_impersonation` and `P9_impersonation_bounded_by_caller` fail in every variant. carol, a `platform-admin` in globex, starts an impersonation of alice in acme with her token C. The bearer's `exp` is the start time plus `durationSeconds`, with no bound by C's `exp`, so the bearer can outlive C. When carol's token C is revoked with a revocation request, the bearer stays live, because its row records no parent. §13.3 **Platform-admin impersonation.** rule 4 lists the routes that end a session, and the revocation of the caller's token is not among them; the text is consistent, and the scenario shows a consequence it does not state. [Decision 4.]
 
 ### CX-5 An upstream ID token cannot be named as a revocation root
 
-`P3_every_lineage_root_revocable` fails in every variant. alice in acme signs in, receives an ID token I from the identity provider, and exchanges it for a narrowed token N; N records I's `jti` as its parent. A revocation request with I as `subject_token` is refused with `400 invalid_grant`, because I has no `issued_tokens` row (G3), so the cascade from I cannot run, although §13.3 **Lineage of derived tokens.** says that revoking a token revokes every token derived from it. alice can revoke N itself, but not a token bob derived from I if bob held I. [Open decision 4.]
+`P3_every_lineage_root_revocable` fails in every variant. alice in acme signs in, receives an ID token I from the identity provider, and exchanges it for a narrowed token N; N records I's `jti` as its parent. A revocation request with I as `subject_token` is refused with `400 invalid_grant`, because I has no `issued_tokens` row (G3), so the cascade from I cannot run, although §13.3 **Lineage of derived tokens.** says that revoking a token revokes every token derived from it. alice can revoke N itself, but not a token bob derived from I if bob held I. [Decision 5.]
 
 ### CX-6 A child is broader than its actor
 
-`P1_no_broader_than_lineage_parent` fails. alice holds an unrestricted token S and a narrowed token A with scope `tools:me:read`. She mints a child with S as subject and A as actor and caller; the child's scope comes from S, so with `scope` naming `tools:sessions:scale` the child admits a tool A does not, while its `parent_jti` and `act` name A. No user gains reach, because alice holds S. [Open decision 5.]
+`P1_no_broader_than_lineage_parent` fails. alice holds an unrestricted token S and a narrowed token A with scope `tools:me:read`. She mints a child with S as subject and A as actor and caller; the child's scope comes from S, so with `scope` naming `tools:sessions:scale` the child admits a tool A does not, while its `parent_jti` and `act` name A. No user gains reach, because alice holds S. [Decision 6.]
 
 ### CX-7 Strictly narrower by values admits a copy at equal reach
 
-`P5_other_identity_strictly_narrower` and `P5_child_other_identity_strictly_narrower` fail. alice holds a token S with scope `tools:sessions:* tools:me:write` and caller type `human`, and a second token C of her own with caller type `agent`. C is a different caller under §13.3, because the caller types differ. With C as caller and S as subject she requests `tools:sessions:read tools:sessions:write tools:sessions:scale tools:me:write`. The request does not grant `tools:sessions:*`, so it is strictly narrower by values, and it is accepted; its reach equals S's when `read`, `write`, and `scale` are every action the `sessions` tools declare. The same holds for bob as caller when he holds S. `P5_no_identity_escalation` holds, so no user gains reach the tokens it held did not already give. [Open decision 6.]
+`P5_other_identity_strictly_narrower` and `P5_child_other_identity_strictly_narrower` fail. alice holds a token S with scope `tools:sessions:* tools:me:write` and caller type `human`, and a second token C of her own with caller type `agent`. C is a different caller under §13.3, because the caller types differ. With C as caller and S as subject she requests `tools:sessions:read tools:sessions:write tools:sessions:scale tools:me:write`. The request does not grant `tools:sessions:*`, so it is strictly narrower by values, and it is accepted; its reach equals S's when `read`, `write`, and `scale` are every action the `sessions` tools declare. The same holds for bob as caller when he holds S. `P5_no_identity_escalation` holds, so no user gains reach the tokens it held did not already give. [Decision 7.]
 
 ### CX-8 A child's depth falls below its subject's
 
-`P7_depth_not_below_subject` fails. alice's agent holds a child token D of depth 2, and alice holds her root R of depth 0. With D as subject and R as actor and caller she mints a child of depth 1, carrying D's scope or less. Rule (b) says an exchange rejects any `delegation_depth` decrement, and the parameter table sets a child's depth from the actor. [Open decision 7.]
+`P7_depth_not_below_subject` fails. alice's agent holds a child token D of depth 2, and alice holds her root R of depth 0. With D as subject and R as actor and caller she mints a child of depth 1, carrying D's scope or less. Rule (b) says an exchange rejects any `delegation_depth` decrement, and the parameter table sets a child's depth from the actor. [Decision 8.]
 
 ### CX-9 A delegated token loses its `act` claim
 
-`P7_delegated_token_names_actor` fails. alice mints a child C (depth 1, `act` naming alice, `typ` `a2a_delegation`) and narrows it with C as caller and subject. The narrowed token has depth 1 and `typ` `a2a_delegation`, and no `act` claim, because the claim table sets `act` only when `actor_token` is present. [Open decision 8.]
+`P7_delegated_token_names_actor` fails. alice mints a child C (depth 1, `act` naming alice, `typ` `a2a_delegation`) and narrows it with C as caller and subject. The narrowed token has depth 1 and `typ` `a2a_delegation`, and no `act` claim, because the claim table sets `act` only when `actor_token` is present. [Decision 9.]
 
 ### CX-10 A revoked caller token authenticates a mint
 
-`P8_revoked_caller_cannot_mint` fails. alice rotates her root T into T', which revokes T, and then narrows T' with T as caller. The mint is accepted, because the Token Service does not read the caller's revocation on a mint (G4). The holder of T gains nothing T' does not give, but decision 9 of 0164 refuses the same caller on a revocation request. [Open decision 9.]
+`P8_revoked_caller_cannot_mint` fails. alice rotates her root T into T', which revokes T, and then narrows T' with T as caller. The mint is accepted, because the Token Service does not read the caller's revocation on a mint (G4). The holder of T gains nothing T' does not give, but decision 9 of 0164 refuses the same caller on a revocation request. [Decision 10.]
 
 ### CX-11 A full revoke misses the delegations the user made for another identity
 
-`P10_full_revoke_reaches_delegations` fails. bob in acme holds a token B of his own and a token A of alice's that she shared with him. With A as actor and caller and B as subject, bob mints a child C at a strictly narrower scope: C carries bob's `sub`, its `act` names alice, and its parent is A. A tenant administrator then fully revokes alice. Step 5 of §11.4 revokes A, whose `sub` is alice, and not C, whose `sub` is bob, so a token naming alice as its delegator stays live after her full revoke. [Open decision 10.]
+`P10_full_revoke_reaches_delegations` fails. bob in acme holds a token B of his own and a token A of alice's that she shared with him. With A as actor and caller and B as subject, bob mints a child C at a strictly narrower scope: C carries bob's `sub`, its `act` names alice, and its parent is A. A tenant administrator then fully revokes alice. Step 5 of §11.4 revokes A, whose `sub` is alice, and not C, whose `sub` is bob, so a token naming alice as its delegator stays live after her full revoke. [Decision 11.]
 
 ### CX-12 A child minted from a subject survives the subject's revocation
 
-`P3_derived_child_subject` fails in every variant. alice mints a child with her token S as subject and her token A as actor; the child's parent is A. Revoking S does not reach the child. 0164 decision 8 settled the case of a subject of another `sub` by requiring strict narrowing and rejected a second lineage edge; the model shows that the same holds for a subject of the actor's own `sub`. The child's `exp` is bounded by S's. No decision is proposed; the entry records the residual.
+`P3_derived_child_subject` fails in every variant. alice mints a child with her token S as subject and her token A as actor; the child's parent is A. Revoking S does not reach the child. 0164 decision 8 settled the case of a subject of another `sub` by requiring strict narrowing and rejected a second lineage edge; the model shows that the same holds for a subject of the actor's own `sub`. The child's `exp` is bounded by S's. No decision is proposed; the entry records the residual, which 0164 decision 8 accepted.
 
 ### CX-13 Any token of the user may revoke the user's tokens (0164 O4)
 
-0164 open decision O4 asks whether any token of the subject's user may send the revocation request. `O4_narrow_caller_revokes_only_narrower` fails in every variant: alice's token with a narrow scope (in the trace, one whose scope admits no tool at all) revokes her unrestricted token, because decision 9 compares `sub` and roles and not scope. `O4_revocation_bounded_by_holding` holds in every variant: a revocation request revokes only tokens whose bytes the presenting user holds and their lineage descendants. That confirms the premise of option (a) of O4, that a narrow token's holder can only revoke what it already holds, with one interaction: under `RotEdge` the lineage descendants of a held token include its rotation successors, so the holder of a narrow token of alice's and of a token alice rotated away from can revoke alice's current token, as question (i) of CX-2 shows. Option (b) of O4, which accepts the user's own caller only when it is the subject token or one of its ancestors, would block that, and would also block alice's own cleanup of a leaked root under decision 9: once the root is revoked, no live token is the root or its ancestor, so only an administrator could cascade from it. [Open decision 11.]
+0164 open decision O4 asked whether any token of the subject's user may send the revocation request. `O4_narrow_caller_revokes_only_narrower` fails in every variant: alice's token with a narrow scope (in the trace, one whose scope admits no tool at all) revokes her unrestricted token, because decision 9 compares `sub` and roles and not scope. `O4_revocation_bounded_by_holding` holds in every variant: a revocation request revokes only tokens whose bytes the presenting user holds and their lineage descendants. That confirms the premise of option (a) of O4, that a narrow token's holder can only revoke what it already holds, with one interaction: under `RotEdge` the lineage descendants of a held token include its rotation successors, so the holder of a narrow token of alice's and of a token alice rotated away from can revoke alice's current token, as question (i) of CX-2 shows for the build. Option (b) of O4, which accepts the user's own caller only when it is the subject token or one of its ancestors, would block that, and would also block alice's own cleanup of a leaked root under decision 9: once the root is revoked, no live token is the root or its ancestor, so only an administrator could cascade from it. [Decision 12.]
 
 ### Properties that hold
 
@@ -205,7 +207,7 @@ The model follows the text of 0164.S1. Reading the code it describes, in the bra
 
 - **Bounded scope.** Alloy checks every trace within the scope and proves nothing beyond it. A property that holds at up to four users, two tenants, eight tokens, and eight operations can fail on a longer sequence. The counterexamples are complete scenarios and need no larger scope to be confirmed.
 - **Bearer possession.** A bearer token authenticates whoever presents it, so a user who holds another user's token is that user to the Token Service. The identity rules of §13.3 bind the caller token's identity, not its holder: a holder of alice's token who presents it as both caller and subject is the subject's own caller and obtains a copy at full scope, which the different-caller rule would refuse with the holder's own token as caller. `P5_no_identity_escalation` therefore states the holder property: no operation gives a user more of another identity's reach than a token of that identity the user already held. It holds. Proof of possession (RFC 9449 DPoP or mutual TLS sender-constrained tokens) would make the identity rules bind holders, and is outside this change.
-- **No concurrency.** Each step is atomic. The orderings that matter for these rules (a revocation committing during an issuance, a rotation racing a child mint, write-before-issue across replicas, and the propagation of revocations to replica caches) need a model with interleaved steps. A TLA+ specification of the Token Service transactions over a shared `issued_tokens` table is the candidate for that, held until the owner has seen these results. It is listed here rather than as a step.
+- **No concurrency.** Each step is atomic. The orderings that matter for these rules (a revocation committing during an issuance, a rotation racing a child mint, write-before-issue across replicas, and the propagation of revocations to replica caches) need a model with interleaved steps. A TLA+ specification of the Token Service transactions over a shared `issued_tokens` table is the candidate for that, held until step 0165.S2 is done (decision 14). It is listed here rather than as a step.
 - **No clock.** Expiry is compared only between a token and its sources; tokens do not expire during a trace. A revocation that a token outlives by expiring is not modelled.
 - **Abstraction of scopes.** Two domains and three actions stand for the taxonomy. Every counterexample about scopes uses only the cases the grammar distinguishes (absent, `tools:*`, a domain wildcard, an exact value, a specific tool action, and an unparseable value), so a larger taxonomy adds no case.
 - **Alternatives rejected.** A TLA+ model of the whole design was set aside for this step: the questions here are about which states the rules admit, which Alloy's relational logic states directly and checks without writing an explicit state machine for every relation. Property tests alone (step 0165.S2) would test the code rather than the design, and would not have compared the rotation lineages of O3 on the same scenarios.
@@ -214,11 +216,11 @@ The model follows the text of 0164.S1. Reading the code it describes, in the bra
 
 - `tests/formal/tokens/tokens.als`, `tests/formal/tokens/run.sh`, and `tests/formal/tokens/README.md`: the model, its runner, and the map from each predicate and assertion to its rule and property.
 - `tests/README.md`: the `formal/` subdirectory.
-- `spec/13_security-model.md`, §13.3: the property list, in the specification lane of 0165.S1 after 0164.S1 merges, with the owner's answers to the open decisions.
+- `spec/13_security-model.md`, §13.3: the property list, in the specification lane of 0165.S1 after change 0166 edits §13.3, with the owner's answers in decisions 2 to 12.
 
 ## Documentation
 
-No reader-facing behavior changes: TOKX. The model changes no behavior, and the property list states invariants the rules of §13.3 already keep or that the open decisions settle. The change that carries a rule fix states its documentation.
+No reader-facing behavior changes: TOKX. The model changes no behavior, and the property list states invariants the rules of §13.3 already keep or that the fixes of decisions 2 to 12 establish. The change that carries a rule fix states its documentation.
 
 ## Tests
 
