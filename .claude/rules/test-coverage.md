@@ -62,7 +62,7 @@ The merge, area, and release gates state which tiers run and what must be green.
 
 | Gate | When | Tiers | Must be green to |
 |:--|:--|:--|:--|
-| Merge | Every branch, on its head commit, before it merges | static; unit on the changed packages and their importers; component, contract, and integration as `--changed` selects against `main`; the general documentation gates of docs | Merge into `main` |
+| Merge | Every branch, on its head commit, before it merges (v1 program: on the head of `main` after merges, as `.claude/rules/git-workflow.md` "v1 merge policy" states) | static; unit on the changed packages and their importers; component, contract, and integration as `--changed` selects against `main`; the general documentation gates of docs | Merge into `main` |
 | Area | Each milestone exit from M3 on | e2e_kind, chaos core, security, conformance, and docs for the area, plus the area's journeys | Close the milestone |
 | Release | Before a release, and weekly on `main` | e2e_cloud, load_local, load_kind, load_cloud, chaos in full, and all journeys | Tag a release |
 
@@ -70,8 +70,14 @@ The merge, area, and release gates state which tiers run and what must be green.
 
 The merge policy:
 
+<!-- SUSPENDED for the v1 program (owner's decision of 2026-11-23, while the owner is the only contributor). Restore the text in this comment, and delete the v1 text that follows it, when the v1 program completes or when a collaborator joins, whichever comes first. The v1 program record (changes/programs/v1.md, "Decisions") lists every suspended block.
+
 1. A branch merges only when the merge-gate verdict for its head commit is `PASS`. The verdict's `trigger.git_revision` is the branch head, its `gate.dirty` is false, and its `gate.integration_merge_base` is the merge base of the head with `main`, as `.claude/rules/git-workflow.md` ("Merge only on a green gate verdict") states. A verdict of `FAIL`, `INCONCLUSIVE`, or `UNVERIFIED` blocks the merge. `UNVERIFIED` means a tier the gate selected did not run, which the verdict names under `gate.not_run`, or that the run cannot stand for the commit, which it explains under `gate.unverified`. The step's digest records the verdict's run identifier. A commit after the verdict needs a new verdict, except a commit that touches only the records `.claude/rules/git-workflow.md` names.
 2. `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges.
+-->
+
+1. During the v1 program, a branch merges under the v1 merge policy of `.claude/rules/git-workflow.md`: the records checks and the secret scan for a branch of records and documentation, and `lenny-test run --changed` and the secret scan on the committed head for any other branch. The merge gate runs on the head of `main` after merges.
+2. A finished gate run on `main` that is `FAIL` or `UNVERIFIED` is fixed or reverted before the next merge.
 3. A merge-gate failure is never recorded as pre-existing. Recording a failure that also occurs on `main` as pre-existing applies only to tiers outside the merge gate.
 4. Only a flaky test enters quarantine: a test that fails and passes on the same commit. A deterministic failure on `main` does not enter quarantine; it is fixed or reverted under rule 2. A quarantined test gets an entry in `tests/flake-budget.yaml` that names its owner and its reason, and its skip carries a reason in the `quarantined:` category. The quarantine has a cap, the `cap` field of that file. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
 
@@ -105,7 +111,12 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 ## How to run
 
 - `lenny-test run --changed` runs the static, unit, component, and contract tiers that your diff reaches, which start no compose stack and no cluster; start here. `--tier <name>[,<name>...]` replaces that set with the tiers it names, such as `--tier static,unit,component,contract,integration` after `lenny-test infra up --profile compose`, and `--gate merge` runs every merge-gate tier the diff reaches.
+<!-- SUSPENDED for the v1 program (owner's decision of 2026-11-23, while the owner is the only contributor). Restore the text in this comment, and delete the v1 text that follows it, when the v1 program completes or when a collaborator joins, whichever comes first. The v1 program record (changes/programs/v1.md, "Decisions") lists every suspended block.
+
 - `lenny-test gate merge` (or `lenny-test gate`) runs the merge gate on the committed head in the gate container and writes its verdict. Run it before reporting a step done and before a merge.
+-->
+
+- `lenny-test gate merge` (or `lenny-test gate`) runs the merge gate on the committed head in the gate container and writes its verdict. During the v1 program, run it on the head of `main` after merges rather than on a branch before it merges.
 - `lenny-test --tier <name>` runs one tier whole, and a comma-separated list runs several; `--gate <name>` runs a gate's tiers whole; `--pkg <path>` scopes to a package.
 - Bring infrastructure up with `lenny-test infra up --profile compose|kind|all` before integration and higher tiers; see the AVAILABLE INFRASTRUCTURE the build loops document for standing clusters and stacks.
 - Check the environment before running any tier after the unit tier, and read a failure there as an environment failure until you have ruled that out. The checks are in "Environment preflight" below.
@@ -115,7 +126,12 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 
 1. Identify every tier the change reaches from the table above before writing code.
 2. Write the tests for those tiers alongside the code, covering the non-happy paths.
+<!-- SUSPENDED for the v1 program (owner's decision of 2026-11-23, while the owner is the only contributor). Restore the text in this comment, and delete the v1 text that follows it, when the v1 program completes or when a collaborator joins, whichever comes first. The v1 program record (changes/programs/v1.md, "Decisions") lists every suspended block.
+
 3. Iterate with `lenny-test run --changed`, then with `--tier` naming each reached tier that needs infrastructure, then commit and run `lenny-test gate merge`; fix the code until the verdict for the head commit is `PASS`.
+-->
+
+3. Iterate with `lenny-test run --changed`, then with `--tier` naming each reached tier that needs infrastructure when the change needs it to be confident, then commit and run `lenny-test run --changed` on the committed head with a clean tree; fix the code until it passes. During the v1 program the merge gate runs on `main` after the merge.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
 5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to the tests of the component tier and the tiers after it.
 

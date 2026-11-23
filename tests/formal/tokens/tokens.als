@@ -6,11 +6,15 @@
  * minting with an actor_token), the recursive-revocation request, the
  * platform-admin impersonation mint, the playground mint, the full revoke of
  * a user, and the leak of a bearer token to another user. It states the
- * rules of section 13.3 (Credential Flow) as change 0164 builds them,
+ * rules of section 13.3 (Credential Flow) as change 0164 built them,
  * including the owner's answers SM-9, SM-10, and SM-11 of 2026-11-20, the
  * scope grammar of section 25.1, and the playground mint invariants of
- * section 10.2. README.md in this directory maps each predicate to the rule
- * it encodes and each assertion to the property it checks.
+ * section 10.2. Change 0167 later changed several of those rules; the
+ * predicates keep the 0164 rules, so the checks reproduce the counterexamples
+ * of change 0165, and the comments below name each rule 0167 changed.
+ * Change 0167's digest records a rerun of a copy changed to its rules.
+ * README.md in this directory maps each predicate to the rule it encodes
+ * and each assertion to the property it checks.
  *
  * Time is a sequence of states (Alloy 6 temporal mode). Each step is one
  * operation or a stutter. Token attributes are static fields: a token atom
@@ -231,8 +235,10 @@ pred scopeRule[s, i: Token] {
 
 /* An exchange without an actor_token: self-rotation, narrowing or copying by
  * the subject's own principal, or an exchange by another caller. The caller
- * token is not checked for revocation (pkg/tokenservice authenticateCaller;
- * the text is silent). A rotation is detected as tokenservice.isSelfRotation
+ * token is not checked for revocation, as 0164 built the exchange; change
+ * 0167 added the check to step (1a), and the model leaves it out so that
+ * P8 shows CX-10. The issued token carries no act claim, as 0164 built it;
+ * change 0167 copies the subject's. A rotation is detected as tokenservice.isSelfRotation
  * does: the caller token is the subject token and the issued scope equals
  * the subject's (audience is not modelled and taken as unchanged). */
 pred exchange[u: User, c, s, i: Token] {
@@ -265,10 +271,11 @@ pred exchange[u: User, c, s, i: Token] {
 
 /* The lineage a rotation records, in each variant under analysis:
  * - RotCut, decision 7 of 0164 as first written: no parent and no act_sub.
- * - RotInherit, 0164.S1 as built: the replaced token's own parent_jti and
+ * - RotInherit, 0164.S1 revision 3: the replaced token's own parent_jti and
  *   act_sub, so a root's successor has neither.
  * - RotEdge, option (a) of 0164 open decision O3: the replaced token is the
- *   parent, and act_sub is null. */
+ *   parent, and act_sub is null. 0164 decision 10 chose it, and it is the
+ *   rotation rule as built. */
 abstract sig RotMode {}
 one sig RotCut, RotInherit, RotEdge extends RotMode {}
 one sig Config { rot: one RotMode }
@@ -281,7 +288,8 @@ pred rotationLineage[s, i: Token] {
 
 /* An a2a_delegation child mint: subject_token plus actor_token. SM-10: the
  * actor's sub equals the caller's, and a subject whose sub differs from the
- * actor's is narrowed strictly. */
+ * actor's is narrowed strictly. As 0164 built it, the actor's scope does not
+ * bound the child's; change 0167 adds that bound. */
 pred childMint[u: User, c, s, a, i: Token] {
   c + s + a in u.holds
   c in Issued and c not in PG
@@ -305,7 +313,9 @@ pred childMint[u: User, c, s, a, i: Token] {
 
 /* The recursive-revocation request. SM-11: the caller is the subject's own
  * user or holds an administrator role, its token is not revoked, and a
- * revoked root still cascades. The root needs an issued_tokens row. */
+ * revoked root still cascades. The root needs an issued_tokens row, as 0164
+ * built it; change 0167 records a root without a row and cascades from it,
+ * and also revokes the impersonation bearers the root's lineage started. */
 pred revokeReq[u: User, c, s: Token] {
   c + s in u.holds
   c in Issued and c not in PG and c not in Revoked
@@ -318,7 +328,9 @@ pred revokeReq[u: User, c, s: Token] {
 }
 
 /* Platform-admin impersonation (section 13.3 Platform-admin impersonation.
- * rule 1). The bearer's tenant, sub, roles, and exp are the request's. */
+ * rule 1). The bearer's tenant, sub, roles, and exp are the request's, as
+ * 0164 built it; change 0167 caps the exp at the caller's and records the
+ * caller's bearer on the bearer's row. */
 pred impersonate[u: User, c, i: Token] {
   c in u.holds
   live[c] and c not in IMP + PG
@@ -335,7 +347,8 @@ pred impersonate[u: User, c, i: Token] {
 
 /* The playground mint (section 10.2 Playground mint invariants), apiKey
  * mode; the oidc mode is the same mint with an upstream ID token as subject.
- * The bearer has no issued_tokens row. */
+ * The bearer has no issued_tokens row, as 0164 built it; change 0167 records
+ * one with the subject as its parent. */
 pred pgMint[u: User, s, i: Token] {
   s in u.holds
   live[s] and s not in IMP
@@ -355,7 +368,8 @@ pred pgMint[u: User, s, i: Token] {
 
 /* A full revoke of user x in the caller's tenant (section 11.4 step 5): the
  * user's issued tokens and playground bearers, and, for a platform-admin
- * caller, the impersonation bearers x started. */
+ * caller, the impersonation bearers x started. Change 0167 also revokes the
+ * lineage descendants of the user's tokens. */
 pred fullRevoke[u: User, c: Token, x: User] {
   c in u.holds
   live[c] and c not in PG
@@ -656,9 +670,11 @@ run show_leak { Config.rot = RotInherit and eventually Step.op = OpLeak }
   for 3 User, 2 Tenant, 6 Token, 4 Int, 1..7 steps
 
 /* Checks at the base scope: up to 3 users, 2 tenants, 6 tokens, and 6
- * operations (7 states). Every property runs against 0164.S1 as built
- * (RotInherit); the lineage and revocation properties also run against
- * the two other rotation variants. */
+ * operations (7 states). Every property runs against 0164.S1 revision 3
+ * (RotInherit), in the commands ending in _built, which were named when that
+ * revision was the build; the lineage and revocation properties also run
+ * against the two other rotation variants, and the commands ending in _edge
+ * check the rotation rule as built since 0164 decision 10. */
 check P1_rule_a_built { Config.rot = RotInherit implies P1_rule_a } for 3 User, 2 Tenant, 6 Token, 4 Int, 1..7 steps
 check P1_no_broader_than_subject_built { Config.rot = RotInherit implies P1_no_broader_than_subject } for 3 User, 2 Tenant, 6 Token, 4 Int, 1..7 steps
 check P1_impersonation_no_broader_than_caller_built { Config.rot = RotInherit implies P1_impersonation_no_broader_than_caller } for 3 User, 2 Tenant, 6 Token, 4 Int, 1..7 steps
@@ -733,8 +749,8 @@ run O3_leak_holder_revokes_owner_successor_edge { Config.rot = RotEdge and O3_le
 run O3_leak_holder_keeps_successor_edge { Config.rot = RotEdge and O3_leak_holder_keeps_successor } for 3 User, 2 Tenant, 6 Token, 4 Int, 1..7 steps
 
 /* Larger scope for the properties that hold at the base scope: up to 4
- * users, 2 tenants, 8 tokens, and 8 operations (9 states), against the
- * build. */
+ * users, 2 tenants, 8 tokens, and 8 operations (9 states), against
+ * RotInherit, 0164.S1 revision 3. */
 check L_P1_rule_a_built { Config.rot = RotInherit implies P1_rule_a } for 4 User, 2 Tenant, 8 Token, 4 Int, 1..9 steps
 check L_P1_no_broader_than_subject_built { Config.rot = RotInherit implies P1_no_broader_than_subject } for 4 User, 2 Tenant, 8 Token, 4 Int, 1..9 steps
 check L_P1_impersonation_no_broader_than_caller_built { Config.rot = RotInherit implies P1_impersonation_no_broader_than_caller } for 4 User, 2 Tenant, 8 Token, 4 Int, 1..9 steps
