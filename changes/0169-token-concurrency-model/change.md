@@ -1,6 +1,6 @@
 # A concurrency model of the token rules
 
-Status: `Draft`, revision 1, 2026-11-23.
+Status: `In progress`, revision 2, 2026-11-23.
 
 ## Problem
 
@@ -55,7 +55,7 @@ It leaves out:
 | Wait-for graph | The graph whose nodes are open transactions and whose edges are lock waits and application waits. |
 | Detected deadlock, undetected wait | A cycle of the wait-for graph made only of lock waits, which Postgres's deadlock detector breaks by aborting one transaction with `40P01`; and a cycle that contains an application wait, which the detector does not see, so its transactions wait until a timeout. |
 | Accepted window | An ordering whose outcome the text states and accepts, such as the impersonation started while a request runs that rule 7 says escapes the request. |
-| Variant | The rule set the model checks: `Main` for the rules on `main`, `TF` for 0168's design, and `I13Lock` for the resolution TOKX-I13 suggests (open decision 7). |
+| Variant | The rule set the model checks: `Main` for the rules on `main`, `TF` for 0168's design, and `I13Lock` for the resolution TOKX-I13 suggests (decision 7). |
 | Counterexample | A behavior, found by TLC within the stated bounds, that ends in a state where an invariant is false, or that violates a liveness property. |
 
 ## High-level design
@@ -134,13 +134,13 @@ Each replica holds a cache of revoked `jti` values. A committed revocation puts 
 
 ### CM-4 Variants and configurations
 
-One module holds both rule sets, selected by a constant, as the Alloy model selects the rotation lineage with `Config.rot`. Each configuration file fixes the variant, the bounds, the operations each process may run, and the properties TLC checks. A directed configuration names the operations that race in one ordering of "Scope", such as one cascade process and one rotation process, which keeps the state space small; a free configuration lets every process choose any operation, at a smaller bound. Open decision 5 settles the bounds.
+One module holds both rule sets, selected by a constant, as the Alloy model selects the rotation lineage with `Config.rot`. Each configuration file fixes the variant, the bounds, the operations each process may run, and the properties TLC checks. A directed configuration names the operations that race in one ordering of "Scope", such as one cascade process and one rotation process, which keeps the state space small; a free configuration lets every process choose any operation, at a smaller bound. Decision 5 settles the bounds.
 
 ### CM-5 Running TLC
 
-The model lives in `tests/formal/tokenconcurrency/`: the module, its configuration files, a runner `run.sh`, and a README that maps each process to the code and each property to its rule, as `tests/formal/tokens/README.md` does. The runner mirrors `tests/formal/tokens/run.sh`: it takes the path of `tla2tools.jar` and an output directory, and runs the PlusCal translator, when open decision 3 chooses PlusCal, and TLC in an `eclipse-temurin:21-jdk` container with `--network none`, the model and the jar mounted read-only, and the output directory writable. Unlike 0165's runner, it compares the jar's SHA-256 with the pinned value before it runs, and stops when they differ. It records, per configuration, the TLC version, the jar's SHA-256, the bounds, the number of distinct states, the run time, and the result.
+The model lives in `tests/formal/tokenconcurrency/`: the module, its configuration files, a runner `run.sh`, and a README that maps each process to the code and each property to its rule, as `tests/formal/tokens/README.md` does. The runner mirrors `tests/formal/tokens/run.sh`: it takes the path of `tla2tools.jar` and an output directory, and runs the PlusCal translator, as decision 3 chooses PlusCal, and TLC in an `eclipse-temurin:21-jdk` container with `--network none`, the model and the jar mounted read-only, and the output directory writable. Unlike 0165's runner, it compares the jar's SHA-256 with the pinned value before it runs, and stops when they differ. It records, per configuration, the TLC version, the jar's SHA-256, the bounds, the number of distinct states, the run time, and the result.
 
-The jar is pinned by release and SHA-256 under open decision 4. The candidates, checked on 2026-11-23 against `https://github.com/tlaplus/tlaplus/releases`:
+The jar is pinned by release and SHA-256 under decision 4. The candidates, checked on 2026-11-23 against `https://github.com/tlaplus/tlaplus/releases`:
 
 | Release | Published | Marked | `tla2tools.jar` size | SHA-256 | Published checksum |
 | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -178,7 +178,7 @@ L' stays live after the cascade commits, so `CascadeComplete` fails. When the ca
 
 - `tests/formal/tokenconcurrency/`: the model, its configuration files, the runner `run.sh`, and a README that maps each process to its code and each property to its rule.
 - `tests/README.md`: the `formal/` entry names the new model.
-- No specification text, under open decision 9.
+- No specification text, under decision 9.
 
 ## Documentation
 
@@ -186,4 +186,4 @@ No reader-facing behavior changes: TOKX. The model changes no behavior. The chan
 
 ## Tests
 
-No tier of `lenny-test` runs the model under open decision 6; it is a design check run by hand with `tests/formal/tokenconcurrency/run.sh`, as 0165's model is. Each counterexample is written as a scenario that a `load_local` test can replay, and the change that fixes it writes that test.
+No tier of `lenny-test` runs the model under decision 6; it is a design check run by hand with `tests/formal/tokenconcurrency/run.sh`, as 0165's model is. Each counterexample is written as a scenario that a `load_local` test can replay, and the change that fixes it writes that test.
