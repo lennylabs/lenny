@@ -92,10 +92,11 @@ func expectRevoked(t *testing.T, w *world, i int, want bool) {
 	}
 }
 
-// spec: §13.3 (Credential Flow) "Token rule properties.", "Lineage of
-// derived tokens.", "Rotation lineage and leaked tokens.", §10.2
-// (Authentication) "Playground mint invariants" invariant 6, §11.4 (User
-// Invalidation) step 5
+// spec: §13.3 (Credential Flow) "Token rule properties.",
+// §13.3 (Credential Flow) "Lineage of derived tokens.",
+// §13.3 (Credential Flow) "Rotation lineage and leaked tokens.",
+// §10.2 (Authentication) "Playground mint invariants" invariant 6,
+// §11.4 (User Invalidation) step 5
 // diagnosis: each subtest replays one counterexample change 0165's Alloy
 // model found against the rules before change 0167 (named in its comment),
 // with every property checked after every step. A failure in a subtest
@@ -217,6 +218,31 @@ func TestTokenRuleScenariosOfTheModelKeepTheProperties(t *testing.T) {
 	run("a full revoke reaches the delegations the user made", func(t *testing.T, w *world) {
 		w.step(t, signIn(bob, ""))
 		w.step(t, signIn(alice, ""))
+		w.step(t, leak(alice, 1, bob))
+		expect(t, w, w.step(t, child(bob, 1, 0, 1, "tools:me:read")), http.StatusOK, "")
+		w.step(t, signIn(bob, "", auth.RoleTenantAdmin))
+		expect(t, w, w.step(t, fullRevoke(bob, 3, alice)), http.StatusOK, "")
+		expectRevoked(t, w, 2, true)
+	})
+
+	// Finding F1 of 0165.S2, as the rules state it while 0165 open
+	// decision 15 is pending: a revocation request whose caller is an
+	// impersonation bearer started from the root ends that bearer and is
+	// then refused, so the root stays live.
+	run("an impersonation bearer as the caller of its root's revocation ends itself", func(t *testing.T, w *world) {
+		w.step(t, signIn(bob, "", auth.RolePlatformAdmin))
+		expect(t, w, w.step(t, impersonate(bob, 0, bob, 30)), http.StatusOK, "")
+		expect(t, w, w.step(t, revoke(bob, 1, 0)), http.StatusUnauthorized, "invalid_client")
+		expectRevoked(t, w, 1, true)
+		expectRevoked(t, w, 0, false)
+	})
+
+	// Finding F2 of 0165.S2: a full revoke of alice misses the child bob
+	// minted with a token of alice's that has no row.
+	run("a full revoke reaches the delegations made with a token without a row", func(t *testing.T, w *world) {
+		t.Skip("blocked: TOKX-I19, the full revoke seeds its walk with the user's rows only (0165 open decision 16)")
+		w.step(t, signIn(bob, ""))
+		w.step(t, signIn(alice, "").rowless())
 		w.step(t, leak(alice, 1, bob))
 		expect(t, w, w.step(t, child(bob, 1, 0, 1, "tools:me:read")), http.StatusOK, "")
 		w.step(t, signIn(bob, "", auth.RoleTenantAdmin))

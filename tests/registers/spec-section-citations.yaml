@@ -1068,7 +1068,7 @@ packages:
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
-      count: 16
+      count: 21
     - package: tests/component/tokensigning
       count: 10
     - package: tests/component/translators

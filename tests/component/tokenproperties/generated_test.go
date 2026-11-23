@@ -21,7 +21,7 @@ import (
 // that passes -rapid.checks or sets RAPID_CHECKS keeps its own count, and
 // one that passes -rapid.seed or sets RAPID_SEED keeps its own seed.
 const (
-	defaultChecks = 200
+	defaultChecks = 300
 	defaultSeed   = 20261123
 	minSteps      = 8
 	maxSteps      = 20
@@ -78,9 +78,9 @@ var witnesses = []string{
 	"op leak",
 }
 
-// spec: §13.3 (Credential Flow) "Token rule properties.", §10.2
-// (Authentication) "Playground mint invariants", §11.4 (User
-// Invalidation) step 5
+// spec: §13.3 (Credential Flow) "Token rule properties.",
+// §10.2 (Authentication) "Playground mint invariants",
+// §11.4 (User Invalidation) step 5
 // diagnosis: a failure names the property and prints the minimized
 // sequence of operations that breaks it, with the rapid seed that
 // reproduces it. The sequence ran against the Token Service, the
@@ -219,14 +219,22 @@ func drawOp(rt *rapid.T, w *world, i int) op {
 		o.subject = pickOther("subject", o.actor)
 		drawRequest(rt, w, &o, label)
 	case opRevoke:
-		// The subject is drawn oldest first, so a revocation often names
-		// a token with descendants.
-		o.caller = pick("caller")
-		o.subject = held[len(held)-1-rapid.IntRange(0, len(held)-1).Draw(rt, label("subject"))].n
+		// The caller and the subject are drawn oldest first, and the
+		// subject is often the caller itself, so a revocation often names
+		// a root with descendants and impersonations started from it.
+		oldest := func(name string) int {
+			return held[len(held)-1-rapid.IntRange(0, len(held)-1).Draw(rt, label(name))].n
+		}
+		o.caller = oldest("caller")
+		o.subject = o.caller
+		if !rapid.Bool().Draw(rt, label("selfRevoke")) {
+			o.subject = oldest("subject")
+		}
 	case opImpersonate:
 		o.caller = pick("caller")
 		o.other = rapid.IntRange(0, len(w.users)-1).Draw(rt, label("target"))
 		o.impersonationMinutes = rapid.IntRange(1, 60).Draw(rt, label("duration"))
+		o.roles = rapid.SampledFrom([][]auth.Role{nil, nil, {auth.RoleTenantAdmin}}).Draw(rt, label("targetRoles"))
 	case opPlayground:
 		o.subject = pick("subject")
 	case opFullRevoke:

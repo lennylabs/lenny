@@ -139,8 +139,8 @@ func (w *world) lineageParent(t tb, k *token) *token {
 // checkNarrowing checks that an issued token is no broader than the
 // tokens it was issued from.
 //
-// spec: §13.3 (Credential Flow) "Token rule properties." item 1, §10.2
-// (Authentication) "Playground mint invariants" invariant 2
+// spec: §13.3 (Credential Flow) "Token rule properties." item 1,
+// §10.2 (Authentication) "Playground mint invariants" invariant 2
 func checkNarrowing(t tb, w *world, k *token) {
 	t.Helper()
 	const p = "1 narrowing"
@@ -204,9 +204,6 @@ func checkTenant(t tb, w *world, k *token) {
 			w.fail(t, p, "%s in tenant %s was issued from %s in tenant %s", k.name(), k.c.TenantID, src.name(), src.c.TenantID)
 		}
 	}
-	if k.c.Subject != k.subject.c.Subject {
-		w.fail(t, p, "%s carries sub %s, its subject %s carries %s", k.name(), k.c.Subject, k.subject.name(), k.subject.c.Subject)
-	}
 }
 
 // checkLineageRecorded checks the parent_jti and act_sub an issued token's
@@ -238,12 +235,15 @@ func checkLineageRecorded(t tb, w *world, k *token) {
 // checkIdentity checks that a token issued to another principal is
 // strictly narrower than its subject, that a child's actor is its caller,
 // and that no operation other than an impersonation gives the presenting
-// user more of another identity than a token of it the user held.
+// user more of another identity than a token of it the user presented.
 //
 // spec: §13.3 (Credential Flow) "Token rule properties." item 5
 func checkIdentity(t tb, w *world, o op, k *token) {
 	t.Helper()
 	const p = "5 identity"
+	if k.kind != kindImpersonation && k.c.Subject != k.subject.c.Subject {
+		w.fail(t, p, "%s carries sub %s, its subject %s carries %s", k.name(), k.c.Subject, k.subject.name(), k.subject.c.Subject)
+	}
 	switch {
 	case k.kind == kindExchange && differentCaller(k.call, k.subject):
 		if !strictlyNarrower(k.c.Scope, k.subject.c.Scope) {
@@ -267,13 +267,13 @@ func checkIdentity(t tb, w *world, o op, k *token) {
 	if k.c.Subject == u.sub && k.c.TenantID == w.tenants[u.tenant] {
 		return
 	}
-	for _, held := range w.held(o.user) {
-		if held != k && held.c.Subject == k.c.Subject && held.c.TenantID == k.c.TenantID &&
-			within(reach(k.c.Scope), reach(held.c.Scope)) {
+	for _, presented := range []*token{k.subject, k.actor, k.call} {
+		if presented != nil && presented.c.Subject == k.c.Subject && presented.c.TenantID == k.c.TenantID &&
+			within(reach(k.c.Scope), reach(presented.c.Scope)) {
 			return
 		}
 	}
-	w.fail(t, p, "%s gives %s a token of %s (%q) broader than any token of %s that %s held",
+	w.fail(t, p, "%s gives %s a token of %s (%q) broader than any token of %s that %s presented",
 		k.name(), u.name, k.c.Subject, k.c.Scope, k.c.Subject, u.name)
 }
 
@@ -398,6 +398,14 @@ func (w *world) revocationEligible(c, s *token, before map[string]rowState) bool
 		(c.c.Subject == s.c.Subject || c.hasRole(auth.RoleTenantAdmin, auth.RolePlatformAdmin))
 }
 
+// callerEndedByLink reports whether the caller of a revocation of root is
+// an impersonation bearer whose impersonator link names root or one of its
+// lineage descendants, the case item 3 states as the exception.
+func (w *world) callerEndedByLink(c, root *token) bool {
+	return c.kind == kindImpersonation && c.call.c.JWTID != "" &&
+		w.descendants([]*token{root}, false)[c.call.c.JWTID]
+}
+
 // checkRevocationReach checks what each step revoked: a revocation
 // request its subject's lineage and the impersonations started from it,
 // a rotation the token it replaces, and the other operations nothing.
@@ -421,6 +429,22 @@ func checkRevocationReach(t tb, w *world, o op, out outcome, before map[string]r
 		for jti := range newly {
 			if !reached[jti] {
 				w.fail(t, p, "revoking %s revoked %s outside its lineage", root.name(), w.label(jti))
+			}
+		}
+	case o.kind == opRevoke && w.callerEndedByLink(w.tok(o.caller), w.tok(o.subject)) &&
+		w.revocationEligible(w.tok(o.caller), w.tok(o.subject), before):
+		c, s := w.tok(o.caller), w.tok(o.subject)
+		ended := w.descendants([]*token{s}, true)
+		for jti := range w.descendants([]*token{s}, false) {
+			delete(ended, jti)
+		}
+		if out.status != http.StatusUnauthorized || !w.revoked(w.rows, c) {
+			w.fail(t, p, "revoking %s with caller %s, an impersonation bearer its lineage started: %d %s, caller revoked %t; want 401 with the caller revoked",
+				s.name(), c.name(), out.status, out.reason, w.revoked(w.rows, c))
+		}
+		for jti := range newly {
+			if !ended[jti] {
+				w.fail(t, p, "revoking %s with caller %s revoked %s, which is not an impersonation its lineage started", s.name(), c.name(), w.label(jti))
 			}
 		}
 	case o.kind == opRevoke:
@@ -471,8 +495,8 @@ func checkWhoMayRevoke(t tb, w *world, o op, out outcome, before map[string]rowS
 // full revoke, and that a platform-admin caller also ends the
 // impersonation sessions the user started.
 //
-// spec: §13.3 (Credential Flow) "Token rule properties." item 10, §11.4
-// (User Invalidation) step 5
+// spec: §13.3 (Credential Flow) "Token rule properties." item 10,
+// §11.4 (User Invalidation) step 5
 func checkFullRevoke(t tb, w *world, o op, out outcome, before map[string]rowState) {
 	t.Helper()
 	const p = "10 full revoke"

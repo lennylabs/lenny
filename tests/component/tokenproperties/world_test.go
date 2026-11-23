@@ -144,8 +144,8 @@ func (o op) String() string {
 	case opRevoke:
 		return fmt.Sprintf("revoke user=%d caller=%s subject=%s", o.user, tok(o.caller), tok(o.subject))
 	case opImpersonate:
-		return fmt.Sprintf("impersonate user=%d caller=%s target=%d duration=%dm",
-			o.user, tok(o.caller), o.other, o.impersonationMinutes)
+		return fmt.Sprintf("impersonate user=%d caller=%s target=%d roles=%v duration=%dm",
+			o.user, tok(o.caller), o.other, o.roles, o.impersonationMinutes)
 	case opPlayground:
 		return fmt.Sprintf("playground user=%d subject=%s", o.user, tok(o.subject))
 	case opFullRevoke:
@@ -358,9 +358,12 @@ func (w *world) revoke(t tb, o op) outcome {
 
 // impersonate starts an impersonation session as the admin API handler
 // does once it has authenticated the caller's bearer and found the
-// platform-admin role on it. A caller the handler would refuse before the
-// issuer runs (no platform-admin role, or a playground bearer) yields
-// status 0.
+// platform-admin role on it, stamping the target's roles (o.roles) on the
+// bearer as the handler stamps the target user's. A caller without the
+// role yields status 0. A playground bearer also yields status 0: the
+// handler checks only the role, and the gateway's scope gate refuses a
+// playground bearer on this route because playground_allowed_scope does
+// not grant the route's scope, which this harness does not run (TOKX-I21).
 func (w *world) impersonate(t tb, o op) outcome {
 	t.Helper()
 	c := w.tok(o.caller)
@@ -371,6 +374,7 @@ func (w *world) impersonate(t tb, o op) outcome {
 	_, bearer, err := w.h.imp.Issue(context.Background(), impersonation.IssueRequest{
 		AdminSub: c.c.Subject, TargetTenantID: w.tenants[target.tenant], TargetUserID: target.sub,
 		Reason: "support", TicketRef: "TCK-1", Duration: time.Duration(o.impersonationMinutes) * time.Minute,
+		TargetRoles:    o.roles,
 		CallerTenantID: c.c.TenantID, CallerJTI: c.c.JWTID, CallerExpiry: c.c.ExpiryTime(), CallerScope: c.c.Scope,
 	})
 	if errors.Is(err, impersonation.ErrIssuanceRefused) {
