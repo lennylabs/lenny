@@ -12,7 +12,7 @@ Change 0165 (a formal model of the token rules, `changes/0165-token-rules-model/
 - CX-6: a child is bounded by its subject's scope only, so a child minted from an unrestricted subject with a narrow actor is broader than the token that delegates it.
 - CX-7: a request that lists every current action of a domain counts as strictly narrower than the domain wildcard while it admits the same tools today; the text does not say why.
 - CX-8: a child's depth is its actor's plus one, while rule (b) says an exchange rejects a decrement without saying against which token.
-- CX-9 and [TOKX-I14](../../issues/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md): an exchange without an `actor_token` issues no `act` claim, so narrowing or rotating a delegation child drops the name of its delegator.
+- CX-9 and [TOKX-I14](../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md): an exchange without an `actor_token` issues no `act` claim, so narrowing or rotating a delegation child drops the name of its delegator.
 - CX-10 and G4: the Token Service does not read the caller token's revocation on a mint.
 - CX-11: a full revoke of a user revokes the user's tokens by `sub` and not the tokens others derived from them.
 - G1: a request without `audience` issues a token with no `aud` claim, although the parameter table names `lenny-gateway` as the default, so a self-exchange without `audience` is not detected as a rotation.
@@ -78,7 +78,7 @@ The parameter table, the claim table, and rule (b) state that a child's depth is
 
 ### TF-7 `act` on exchanges without an actor (decision 7)
 
-The claim table's `act` row states that an exchange without an `actor_token` copies the subject's `act`. `tokenexchange.Token` carries `Act`, `toExchangeToken` maps the claim, and `Validate` copies it. The row's `act_sub` stays null, because a row with `act_sub` set names a child or an impersonation, and the lineage already holds through `parent_jti`. This closes [TOKX-I14](../../issues/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md).
+The claim table's `act` row states that an exchange without an `actor_token` copies the subject's `act`. `tokenexchange.Token` carries `Act`, `toExchangeToken` maps the claim, and `Validate` copies it. The row's `act_sub` stays null, because a row with `act_sub` set names a child or an impersonation, and the lineage already holds through `parent_jti`. This closes [TOKX-I14](../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md).
 
 ### TF-8 Caller revocation on a mint (decision 8)
 

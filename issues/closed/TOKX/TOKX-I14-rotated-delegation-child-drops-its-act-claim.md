@@ -1,9 +1,12 @@
 ---
 id: TOKX-I14
-status: open
+status: closed
 kind: spec-defect
 severity: low
 requirements: []
+change: 0167.S1
+closed: fixed
+closed-by: 0167.S1
 ---
 
 # A delegation child that rotates itself loses its `act` claim
