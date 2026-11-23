@@ -16,7 +16,7 @@ It leaves out:
 
 - Concurrent orderings: revocation during issuance, a rotation racing a child mint, and write-before-issue across replicas. A TLA+ model of those orderings is a candidate, described under "Limits, and alternatives rejected", and is not a step; decision 14 holds it until step 0165.S2 is done.
 - Audiences, the per-dialect lifetime caps, `authorized_tools`, `session_id`, rate limits, credential-lease issuance (an internal exchange with the narrowing lineage), and the end of an impersonation session.
-- Fixing the rules. The decisions record the rule change the owner chose for each counterexample. Change 0164 carries the answers to CX-2 and CX-13 (its decisions 10 and 11), and change 0166 carries the others (decision 13).
+- Fixing the rules. The decisions record the rule change the owner chose for each counterexample. Change 0164 carries the answers to CX-2 and CX-13 (its decisions 10 and 11), and change 0167 carries the others (decision 13).
 
 ## Terms
 
@@ -41,7 +41,7 @@ Step 0165.S2 checks the same properties against the Token Service code, with Go 
 
 ## Requirements
 
-None by identifier. §13.3 is content of the placeholder page TOKX and carries no requirement identifiers yet. The specification lane of 0165.S1 adds the property list to §13.3 after change 0166 edits §13.3.
+None by identifier. §13.3 is content of the placeholder page TOKX and carries no requirement identifiers yet. The specification lane of 0165.S1 adds the property list to §13.3 after change 0167 edits §13.3.
 
 ## Properties
 
@@ -69,7 +69,7 @@ Scopes:
 
 Every witness (`show_*`) found its scenario at the base scope under `RotInherit`: a sign-in, a rotation, a narrowing of an unscoped token, an exchange by another caller, a child mint, a child mint with another user's subject, a revocation that cascades, a revocation by an administrator, a cross-tenant impersonation, a playground mint from a scoped subject, a full revoke that revokes, and a leak. No property holds vacuously.
 
-The model checks every property against `RotInherit`, the rotation rule of 0164.S1 revision 3 (commands ending in `_built`), and the lineage and revocation properties of P3 and P4 also against `RotEdge` (`_edge`) and `RotCut` (`_cut`). `RotEdge` is the rotation rule as built since 0164 decision 10, so the `RotEdge` column holds the results for the build. The rows with "not checked" in that column ran under `RotInherit` only; the rerun of the model against change 0166 (decision 13) checks them under `RotEdge`. The large scope ran under `RotInherit` only. No command was rerun for this revision.
+The model checks every property against `RotInherit`, the rotation rule of 0164.S1 revision 3 (commands ending in `_built`), and the lineage and revocation properties of P3 and P4 also against `RotEdge` (`_edge`) and `RotCut` (`_cut`). `RotEdge` is the rotation rule as built since 0164 decision 10, so the `RotEdge` column holds the results for the build. The rows with "not checked" in that column ran under `RotInherit` only; the rerun of the model against change 0167 (decision 13) checks them under `RotEdge`. The large scope ran under `RotInherit` only. No command was rerun for this revision.
 
 | Property | Assertion | Base, `RotEdge` (built) | Base, `RotInherit` | Base, `RotCut` | Large, `RotInherit` |
 | :-- | :-- | :-- | :-- | :-- | :-- |
@@ -216,7 +216,7 @@ The model follows the text of 0164.S1. Reading the code it describes, in the bra
 
 - `tests/formal/tokens/tokens.als`, `tests/formal/tokens/run.sh`, and `tests/formal/tokens/README.md`: the model, its runner, and the map from each predicate and assertion to its rule and property.
 - `tests/README.md`: the `formal/` subdirectory.
-- `spec/13_security-model.md`, §13.3: the property list, in the specification lane of 0165.S1 after change 0166 edits §13.3, with the owner's answers in decisions 2 to 12.
+- `spec/13_security-model.md`, §13.3: the property list, in the specification lane of 0165.S1 after change 0167 edits §13.3, with the owner's answers in decisions 2 to 12.
 
 ## Documentation
 
