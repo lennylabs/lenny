@@ -29,3 +29,7 @@ A delegated agent can drop its delegation provenance from its token by rotating 
 ## Suggested resolution
 
 State in §13.3 that a self-rotation preserves the subject's `act` claim, and have `Validate` copy it, with `derivedLineage` recording the replaced row's `act_sub` alongside its `parent_jti`. This changes the specification and needs the owner.
+
+## Resolution
+
+Change 0167 (decision 7) closes it: every exchange without an `actor_token` copies the subject's `act` claim, as the claim table of §13.3 states. The rotated row keeps `act_sub` null, unlike the suggestion above, because a row with `act_sub` set reads as a delegation child or an impersonation row, and the lineage already holds through `parent_jti`.
