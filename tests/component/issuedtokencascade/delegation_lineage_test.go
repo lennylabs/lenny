@@ -132,9 +132,9 @@ func TestRecursiveRevocationReachesExternalDelegationChildren_spec_13_3(t *testi
 	alice := h.userToken(t, tenant, "alice@acme.com", "alice-root-"+tenant)
 	bob := h.userToken(t, tenant, "bob@acme.com", "bob-root-"+tenant)
 
-	// The parent is a scope narrowing of alice's bearer, so it has a row. A
-	// request at the bearer's own scope would be a self rotation, which
-	// records no parent.
+	// The parent is a scope narrowing of alice's bearer, so it has a row and
+	// leaves alice's bearer live. A request at the bearer's own scope would
+	// be a self rotation, which revokes the bearer it replaces.
 	parent, parentJTI := h.mint(t, alice, tokenservice.Request{
 		SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})

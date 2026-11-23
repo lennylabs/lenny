@@ -292,11 +292,7 @@ func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, so
 		if _, aerr := auditstore.AppendInTx(ctx, tx, tok.TenantID, exchangeEventType, exchangePayload, at); aerr != nil {
 			return aerr
 		}
-		inherited, lerr := inheritLineage(ctx, tx, tok, prevJTI)
-		if lerr != nil {
-			return lerr
-		}
-		if ierr := insertIssued(ctx, tx, inherited); ierr != nil {
+		if ierr := insertIssued(ctx, tx, tok); ierr != nil {
 			return ierr
 		}
 		sub, ok, rerr := revokePrevious(ctx, tx, tok.TenantID, prevJTI, revokedReason, at)
@@ -307,40 +303,6 @@ func (s *Store) RecordWithRotationAudit(ctx context.Context, tok IssuedToken, so
 		return "", false, mapUniqueViolation(err)
 	}
 	return revokedSub, revoked, nil
-}
-
-// inheritLineage returns tok with the lineage of the token it replaces:
-// the replaced row's parent_jti and act_sub, so the successor takes the
-// replaced token's place under its ancestors and the cascade from an
-// ancestor still reaches it, while the cascade from the replaced token
-// does not. A replaced token that is a root, or that has no row, leaves
-// both columns empty. Only a row with parent_jti set passes its lineage
-// on, so the successor never matches the impersonation predicate. A tok
-// that already carries a lineage is returned unchanged.
-//
-// spec: §13.3 (Credential Flow) "Lineage of derived tokens."
-func inheritLineage(ctx context.Context, tx pgx.Tx, tok IssuedToken, prevJTI string) (IssuedToken, error) {
-	if tok.ParentJTI != "" || tok.ActSubject != "" || prevJTI == "" {
-		return tok, nil
-	}
-	var parent, actSub *string
-	err := tx.QueryRow(ctx,
-		`SELECT parent_jti, act_sub FROM issued_tokens WHERE jti = $1 AND tenant_id = $2`,
-		prevJTI, tok.TenantID).Scan(&parent, &actSub)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return tok, nil
-	}
-	if err != nil {
-		return tok, fmt.Errorf("issuedtokenstore: read rotated token lineage: %w", err)
-	}
-	if parent == nil || *parent == "" {
-		return tok, nil
-	}
-	tok.ParentJTI = *parent
-	if actSub != nil {
-		tok.ActSubject = *actSub
-	}
-	return tok, nil
 }
 
 // revokePrevious stamps revoked_at/revoked_reason on the rotated token

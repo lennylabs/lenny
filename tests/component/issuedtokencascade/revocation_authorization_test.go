@@ -52,16 +52,16 @@ func (h *lineageHarness) revokedState(t *testing.T, ctx context.Context, tenant 
 }
 
 // spec: §13.3 (Credential Flow), §12.2 (Storage Roles)
-// diagnosis: the token a self rotation issued records the token it replaced
-// as its parent, or revoking the replaced token revoked the replacement,
-// which means issuedRecord in pkg/tokenservice/tokenservice.go records a
-// rotation's subject as parent_jti. A holder of the replaced token, which
-// the rotation revoked, revoked anything, which means the revocation
-// request does not refuse a revoked caller (RevokeCascadeByCaller). A
-// token narrowed from the replaced token before the rotation that stays
-// live after its owner's request means the cascade from an already-revoked
-// root stopped at the root.
-func TestARotationStartsANewLineage(t *testing.T) {
+// diagnosis: the token a self rotation issued does not record the token it
+// replaced as its parent, which means derivedLineage in
+// pkg/tokenservice/tokenservice.go does not name a rotation's subject as
+// parent_jti. A holder of the replaced token alone, which the rotation
+// revoked, revoked anything, which means the revocation request does not
+// refuse a revoked caller (RevokeCascadeByCaller). A token narrowed from
+// the replaced token before the rotation, or the rotated token, that stays
+// live after the owner's request means the cascade from an already-revoked
+// root stopped at the root or does not follow the rotation's parent_jti.
+func TestARotationRecordsTheTokenItReplaces(t *testing.T) {
 	t.Parallel()
 	h := startLineageHarness(t)
 	ctx := context.Background()
@@ -85,14 +85,14 @@ func TestARotationStartsANewLineage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get %s: %v", currentJTI, err)
 	}
-	if row.ParentJTI != "" || row.ActSubject != "" {
-		t.Errorf("rotated row parent_jti=%q act_sub=%q, want both empty", row.ParentJTI, row.ActSubject)
+	if row.ParentJTI != leakedJTI || row.ActSubject != "" {
+		t.Errorf("rotated row parent_jti=%q act_sub=%q, want %s / empty", row.ParentJTI, row.ActSubject, leakedJTI)
 	}
 	if got := h.revokedState(t, ctx, tenant, leakedJTI); !got[leakedJTI] {
 		t.Fatalf("the rotation did not revoke the replaced token")
 	}
 
-	t.Run("a holder of the replaced token revokes nothing", func(t *testing.T) {
+	t.Run("a holder of the replaced token alone revokes nothing", func(t *testing.T) {
 		for name, subject := range map[string]string{"the replaced token": leaked, "the current token": current} {
 			code, body := h.post(t, leaked, tokenservice.Request{SubjectToken: subject, RequestedTokenType: lineageRevokedType})
 			if code != http.StatusUnauthorized || body["error"] != "invalid_client" {
@@ -104,23 +104,106 @@ func TestARotationStartsANewLineage(t *testing.T) {
 		}
 	})
 
-	t.Run("revoking the replaced token cascades to its derived tokens and spares the rotation", func(t *testing.T) {
-		code, body := h.post(t, current, tokenservice.Request{SubjectToken: leaked, RequestedTokenType: lineageRevokedType})
-		if code != http.StatusOK || body["revoked_count"] != float64(1) {
-			t.Fatalf("revocation of the replaced token: status %d body %v, want 200 with revoked_count 1", code, body)
+	t.Run("revoking the replaced token cascades to its derived tokens and its successor", func(t *testing.T) {
+		code, body := h.post(t, alice, tokenservice.Request{SubjectToken: leaked, RequestedTokenType: lineageRevokedType})
+		if code != http.StatusOK || body["revoked_count"] != float64(2) {
+			t.Fatalf("revocation of the replaced token: status %d body %v, want 200 with revoked_count 2", code, body)
 		}
-		got := h.revokedState(t, ctx, tenant, narrowedJTI, currentJTI)
-		if !got[narrowedJTI] {
-			t.Errorf("the token narrowed from the replaced token is live, want revoked by the cascade")
-		}
-		if got[currentJTI] {
-			t.Errorf("the rotated token was revoked with the token it replaced")
-		}
-		narrowed, err := h.store.Get(ctx, tenant, narrowedJTI)
-		if err != nil || narrowed.RevokedReason != "cascade_from_parent" {
-			t.Errorf("narrowed revoked_reason = %q (err %v), want cascade_from_parent", narrowed.RevokedReason, err)
+		for _, jti := range []string{narrowedJTI, currentJTI} {
+			row, err := h.store.Get(ctx, tenant, jti)
+			if err != nil || !row.Revoked() || row.RevokedReason != "cascade_from_parent" {
+				t.Errorf("%s revoked=%v revoked_reason=%q (err %v), want revoked with cascade_from_parent", jti, row.Revoked(), row.RevokedReason, err)
+			}
 		}
 	})
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: bob holds a token of alice's that leaked and rotates it before
+// alice acts. A successor that stays live after alice revokes the leaked
+// token with another of her tokens means the rotation does not record the
+// token it replaced (derivedLineage in pkg/tokenservice/tokenservice.go),
+// so the leak's holder keeps a token after its owner revoked the leak.
+func TestRevokingALeakedTokenRevokesTheTokenItsHolderRotatedFromIt(t *testing.T) {
+	t.Parallel()
+	h := startLineageHarness(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, h.pg)
+	alice := h.userToken(t, tenant, "alice@acme.com", "alice-idp-"+tenant)
+
+	leaked, leakedJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
+	})
+	own, ownJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
+	})
+	// bob rotates the leaked token first and keeps the successor.
+	_, keptJTI := h.mint(t, leaked, tokenservice.Request{SubjectToken: leaked, Audience: "lenny-gateway"})
+
+	code, body := h.post(t, own, tokenservice.Request{SubjectToken: leaked, RequestedTokenType: lineageRevokedType})
+	if code != http.StatusOK || body["revoked_count"] != float64(1) {
+		t.Fatalf("alice's revocation of the leaked token: status %d body %v, want 200 with revoked_count 1", code, body)
+	}
+	got := h.revokedState(t, ctx, tenant, leakedJTI, keptJTI, ownJTI)
+	if !got[keptJTI] {
+		t.Errorf("the successor bob rotated from the leaked token is live after alice revoked the leaked token")
+	}
+	if got[ownJTI] {
+		t.Errorf("alice's own token was revoked, want live")
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: this test documents the trade-off §13.3 accepts with the
+// rotation link. bob holds two of alice's leaked tokens: leaked, which
+// alice has rotated away from, and live, which is still valid. When bob's
+// request with live as caller and leaked as subject_token is refused, or
+// does not revoke alice's current token, the rotation link or the
+// acceptance of a revoked root (decision 9 of change 0164) has changed and
+// §13.3 "Rotation lineage and leaked tokens." no longer describes the
+// code. When it also revokes live, or the token alice obtains by signing in
+// again, the cascade reaches beyond the subject_token's lineage, which
+// means the recursive walk in RevokeCascadeByCaller does not start from the
+// subject_token.
+func TestAHolderOfTwoLeakedTokensRevokesTheUsersRotatedToken(t *testing.T) {
+	t.Parallel()
+	h := startLineageHarness(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, h.pg)
+	alice := h.userToken(t, tenant, "alice@acme.com", "alice-idp-"+tenant)
+
+	leaked, leakedJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
+	})
+	live, liveJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
+	})
+	// alice rotates away from leaked; bob already holds leaked and live.
+	_, currentJTI := h.mint(t, leaked, tokenservice.Request{SubjectToken: leaked, Audience: "lenny-gateway"})
+	if got := h.revokedState(t, ctx, tenant, leakedJTI); !got[leakedJTI] {
+		t.Fatalf("the rotation did not revoke the replaced token")
+	}
+
+	code, body := h.post(t, live, tokenservice.Request{SubjectToken: leaked, RequestedTokenType: lineageRevokedType})
+	if code != http.StatusOK || body["revoked_count"] != float64(1) {
+		t.Fatalf("bob's revocation of the rotated-away token: status %d body %v, want 200 with revoked_count 1", code, body)
+	}
+	if got := h.revokedState(t, ctx, tenant, currentJTI, liveJTI); !got[currentJTI] || got[liveJTI] {
+		t.Errorf("revoked state %v, want alice's current token revoked and the caller token live", got)
+	}
+
+	// alice signs in again: a token from her sign-in is outside the leaked
+	// tokens' lineage, and bob's tokens do not reach it.
+	_, freshJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	})
+	code, body = h.post(t, live, tokenservice.Request{SubjectToken: leaked, RequestedTokenType: lineageRevokedType})
+	if code != http.StatusOK || body["revoked_count"] != float64(0) {
+		t.Fatalf("bob's repeated revocation: status %d body %v, want 200 with revoked_count 0", code, body)
+	}
+	if got := h.revokedState(t, ctx, tenant, freshJTI); got[freshJTI] {
+		t.Errorf("the token from alice's new sign-in was revoked by a holder of her leaked tokens")
+	}
 }
 
 // spec: §13.3 (Credential Flow)
@@ -186,12 +269,11 @@ func TestARevocationRequestIsAcceptedOnlyFromTheOwnerOrAnAdministrator(t *testin
 }
 
 // spec: §13.3 (Credential Flow), §12.2 (Storage Roles)
-// diagnosis: a token narrowed from alice's token by bob, or a child bob
-// minted of alice's token, rotated itself into a token that alice's
-// revocation of her token did not reach, which means the rotation path of
-// RecordWithRotationAudit in pkg/storage/issuedtokenstore does not copy
-// the replaced row's parent_jti and act_sub onto the successor
-// (inheritLineage).
+// diagnosis: a token alice narrowed from her token, or one bob exchanged
+// from it, rotated itself into a token that alice's revocation of her
+// token did not reach, which means the rotation does not record the token
+// it replaced as its parent (derivedLineage in
+// pkg/tokenservice/tokenservice.go).
 func TestARotatedDerivedTokenStaysInItsAncestorsLineage(t *testing.T) {
 	t.Parallel()
 	h := startLineageHarness(t)
@@ -200,7 +282,7 @@ func TestARotatedDerivedTokenStaysInItsAncestorsLineage(t *testing.T) {
 	alice := h.userToken(t, tenant, "alice@acme.com", "alice-idp-"+tenant)
 	bob := h.userToken(t, tenant, "bob@acme.com", "bob-idp-"+tenant)
 
-	root, rootJTI := h.mint(t, alice, tokenservice.Request{
+	root, _ := h.mint(t, alice, tokenservice.Request{
 		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
 	})
 	narrowed, narrowedJTI := h.mint(t, alice, tokenservice.Request{
@@ -212,14 +294,15 @@ func TestARotatedDerivedTokenStaysInItsAncestorsLineage(t *testing.T) {
 	// Each derived token rotates itself: the caller is the token, and the
 	// request names its own audience and no scope.
 	rotatedJTIs := map[string]string{}
+	replacedJTIs := map[string]string{"narrowing": narrowedJTI, "bob's exchange": bobsJTI}
 	for name, tok := range map[string]string{"narrowing": narrowed, "bob's exchange": bobs} {
 		_, jti := h.mint(t, tok, tokenservice.Request{SubjectToken: tok, Audience: "lenny-gateway"})
 		row, err := h.store.Get(ctx, tenant, jti)
 		if err != nil {
 			t.Fatalf("Get %s: %v", jti, err)
 		}
-		if row.ParentJTI != rootJTI || row.ActSubject != "" {
-			t.Errorf("rotated %s parent_jti=%q act_sub=%q, want %s / empty", name, row.ParentJTI, row.ActSubject, rootJTI)
+		if row.ParentJTI != replacedJTIs[name] || row.ActSubject != "" {
+			t.Errorf("rotated %s parent_jti=%q act_sub=%q, want %s / empty", name, row.ParentJTI, row.ActSubject, replacedJTIs[name])
 		}
 		rotatedJTIs[name] = jti
 	}
@@ -239,10 +322,12 @@ func TestARotatedDerivedTokenStaysInItsAncestorsLineage(t *testing.T) {
 }
 
 // spec: §13.3 (Credential Flow)
-// diagnosis: a token child that bob minted of alice's token with his own
+// diagnosis: a child token that bob minted of alice's token with his own
 // actor rotated itself into a token that the revocation of bob's actor
-// token did not reach, or the successor lost the act_sub of the child,
-// which means inheritLineage does not copy act_sub with parent_jti.
+// token did not reach, which means the rotation does not record the child
+// as its parent (derivedLineage in pkg/tokenservice/tokenservice.go). A
+// successor that carries act_sub means the rotation recorded an actor
+// although the rotated token carries no act claim.
 func TestARotatedChildTokenStaysUnderItsActor(t *testing.T) {
 	t.Parallel()
 	h := startLineageHarness(t)
@@ -251,7 +336,7 @@ func TestARotatedChildTokenStaysUnderItsActor(t *testing.T) {
 	alice := h.userToken(t, tenant, "alice@acme.com", "alice-idp-"+tenant)
 	bob := h.userToken(t, tenant, "bob@acme.com", "bob-idp-"+tenant)
 
-	actor, actorJTI := h.mint(t, bob, tokenservice.Request{
+	actor, _ := h.mint(t, bob, tokenservice.Request{
 		SubjectToken: bob, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	child, childJTI := h.mint(t, actor, tokenservice.Request{
@@ -262,8 +347,8 @@ func TestARotatedChildTokenStaysUnderItsActor(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Get %s: %v", rotatedJTI, err)
 	}
-	if rotated.ParentJTI != actorJTI || rotated.ActSubject != "bob@acme.com" {
-		t.Errorf("rotated child parent_jti=%q act_sub=%q, want %s / bob@acme.com", rotated.ParentJTI, rotated.ActSubject, actorJTI)
+	if rotated.ParentJTI != childJTI || rotated.ActSubject != "" {
+		t.Errorf("rotated child parent_jti=%q act_sub=%q, want %s / empty", rotated.ParentJTI, rotated.ActSubject, childJTI)
 	}
 
 	code, body := h.post(t, bob, tokenservice.Request{SubjectToken: actor, RequestedTokenType: lineageRevokedType})

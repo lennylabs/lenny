@@ -897,7 +897,7 @@ func actorClaim(a *tokenexchange.Actor) *jwt.ActorClaim {
 // spec: §13.3 (Credential Flow: Write-before-issue ordering).
 func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, req Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
 	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
-	rec := issuedRecord(jti, issued, signed, dialectCap, subjectClaims, actorClaims, isRotation, now)
+	rec := issuedRecord(jti, issued, signed, dialectCap, subjectClaims, actorClaims, now)
 	auditPayload := exchangeAuditPayload{
 		ExchangeType:    classifyExchangeType(issued, isRotation, actorClaims),
 		CallerSub:       callerClaims.Subject,
@@ -927,9 +927,9 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, req 
 // issuedRecord builds the issued_tokens row for a signed token. The row
 // carries the SHA-256 digest of the token, never the token itself, and the
 // lineage derivedLineage returns.
-func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, subjectClaims jwt.Claims, actorClaims *jwt.Claims, isRotation bool, now time.Time) issuedtokenstore.IssuedToken {
+func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time) issuedtokenstore.IssuedToken {
 	hash := sha256.Sum256([]byte(signed))
-	actSub, parentJTI := derivedLineage(subjectClaims, actorClaims, isRotation)
+	actSub, parentJTI := derivedLineage(subjectClaims, actorClaims)
 	return issuedtokenstore.IssuedToken{
 		JTI:       jti,
 		TenantID:  issued.TenantID,
@@ -963,16 +963,12 @@ func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialec
 // re-read would treat as an impersonation bearer, so an actor token with
 // no jti records no lineage.
 //
-// A self-rotation does not name the token it replaces, so revoking that
-// token, such as a leaked one, does not reach the replacement. It returns
-// neither column, and the rotation store copies the replaced row's own
-// lineage onto the replacement, which keeps a rotated derived token under
-// its ancestors. A row with both columns null is not an impersonation
-// row.
-//
-// Every other exchange (scope narrowing, lease issuance, or an exchange
-// by another caller) derives the issued token from the subject_token, so
-// the parent is the subject's jti and act_sub stays empty. A row with
+// Every other exchange (a self-rotation, a scope narrowing, a lease
+// issuance, or an exchange by another caller) derives the issued token
+// from the subject_token, so the parent is the subject's jti and act_sub
+// stays empty. A self-rotation's subject is the token it replaces, so
+// revoking that token, such as a leaked one, reaches the replacement, and
+// a rotated derived token stays under its ancestors. A row with
 // parent_jti set is never an impersonation row. A subject without a jti
 // records no parent. Every Lenny mint stamps a jti, so the empty-jti
 // branches are defensive.
@@ -980,10 +976,7 @@ func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialec
 // spec: §13.3 (Credential Flow) "Lineage of derived tokens.",
 // "Platform-admin impersonation." rule 2; §12.2 (TokenIssuanceStore
 // act_sub and parent_jti columns).
-func derivedLineage(subjectClaims jwt.Claims, actorClaims *jwt.Claims, isRotation bool) (actSub, parentJTI string) {
-	if isRotation {
-		return "", ""
-	}
+func derivedLineage(subjectClaims jwt.Claims, actorClaims *jwt.Claims) (actSub, parentJTI string) {
 	if actorClaims != nil {
 		if actorClaims.JWTID == "" {
 			return "", ""

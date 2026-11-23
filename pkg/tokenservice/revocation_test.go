@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
+
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
@@ -324,20 +325,39 @@ func TestHandlerRecursiveRevocationResolvesThePlatformRoleAssignment(t *testing.
 		wantError  string
 		wantLookup int
 	}{
-		{"assignment demotes a claimed tenant-admin", "bob@acme.com", []auth.Role{auth.RoleTenantAdmin},
-			&fakePlatformRoles{roles: []auth.Role{auth.RoleUser}, found: true}, http.StatusForbidden, "unauthorized_client", 1},
-		{"empty assignment demotes a claimed platform-admin", "bob@acme.com", []auth.Role{auth.RolePlatformAdmin},
-			&fakePlatformRoles{found: true}, http.StatusForbidden, "unauthorized_client", 1},
-		{"assignment grants tenant-admin", "carol@acme.com", nil,
-			&fakePlatformRoles{roles: []auth.Role{auth.RoleTenantAdmin}, found: true}, http.StatusOK, "", 1},
-		{"no assignment keeps the claim", "carol@acme.com", []auth.Role{auth.RoleTenantAdmin},
-			&fakePlatformRoles{}, http.StatusOK, "", 1},
-		{"Postgres outage fails closed", "carol@acme.com", []auth.Role{auth.RoleTenantAdmin},
-			&fakePlatformRoles{err: &pgconn.PgError{Code: "08006"}}, http.StatusServiceUnavailable, "token_store_unavailable", 1},
-		{"other lookup failure fails closed", "carol@acme.com", []auth.Role{auth.RoleTenantAdmin},
-			&fakePlatformRoles{err: errors.New("decode failed")}, http.StatusInternalServerError, "token_exchange_failed", 1},
-		{"the token's own user needs no lookup", "alice@acme.com", nil,
-			&fakePlatformRoles{err: errors.New("unreachable")}, http.StatusOK, "", 0},
+		{
+			"assignment demotes a claimed tenant-admin", "bob@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{roles: []auth.Role{auth.RoleUser}, found: true}, http.StatusForbidden, "unauthorized_client", 1,
+		},
+		{
+			"empty assignment demotes a claimed platform-admin", "bob@acme.com",
+			[]auth.Role{auth.RolePlatformAdmin},
+			&fakePlatformRoles{found: true}, http.StatusForbidden, "unauthorized_client", 1,
+		},
+		{
+			"assignment grants tenant-admin", "carol@acme.com", nil,
+			&fakePlatformRoles{roles: []auth.Role{auth.RoleTenantAdmin}, found: true}, http.StatusOK, "", 1,
+		},
+		{
+			"no assignment keeps the claim", "carol@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{}, http.StatusOK, "", 1,
+		},
+		{
+			"Postgres outage fails closed", "carol@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{err: &pgconn.PgError{Code: "08006"}}, http.StatusServiceUnavailable, "token_store_unavailable", 1,
+		},
+		{
+			"other lookup failure fails closed", "carol@acme.com",
+			[]auth.Role{auth.RoleTenantAdmin},
+			&fakePlatformRoles{err: errors.New("decode failed")}, http.StatusInternalServerError, "token_exchange_failed", 1,
+		},
+		{
+			"the token's own user needs no lookup", "alice@acme.com", nil,
+			&fakePlatformRoles{err: errors.New("unreachable")}, http.StatusOK, "", 0,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
