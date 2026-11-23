@@ -564,7 +564,7 @@ packages:
     - package: pkg/gateway/platformtools/treerecovery
       count: 16
     - package: pkg/gateway/playground
-      count: 119
+      count: 122
     - package: pkg/gateway/replica/devmode
       count: 4
     - package: pkg/gateway/replica/gatewayleader
@@ -938,9 +938,9 @@ packages:
     - package: pkg/tierpromotion
       count: 25
     - package: pkg/tokenexchange
-      count: 29
+      count: 32
     - package: pkg/tokenservice
-      count: 203
+      count: 205
     - package: pkg/tokenservice/cache
       count: 16
     - package: pkg/tokenservice/promemit
@@ -1014,7 +1014,7 @@ packages:
     - package: tests/component/healthchecks
       count: 11
     - package: tests/component/issuedtokencascade
-      count: 30
+      count: 31
     - package: tests/component/leasedenial
       count: 8
     - package: tests/component/leases
