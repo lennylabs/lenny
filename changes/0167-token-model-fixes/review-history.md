@@ -12,3 +12,8 @@
 
 - 0167.S1 landed on the merge-gate verdict `PASS` of run `10f7dffd2215c4c38f37d535` on `aafbb83ee`.
 - Open decisions 1 and 2 (questions FM-12 and FM-13 on the M3 readiness decision page) affect follow-up work only; the change stays `In progress` until they are settled and it is archived.
+
+## 2026-11-23, revision 3
+
+- Owner decisions of 2026-11-23 on the M3 readiness decision page, each option (a): FM-12 settles open decision 1 as decision 12 (keep the impersonator-link `__all__` exception as built, and remove it with TOKX-I17 in change 0168); FM-13 settles open decision 2 as decision 13 (only a recursive-revocation request on the admin's token ends the impersonation sessions it started, and no further work follows). `change.md` cites the decisions by their new numbers.
+- No open decision remains and step 0167.S1 has landed, so the status is `Implemented` and the change moves to `archive/`.

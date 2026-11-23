@@ -24,4 +24,4 @@ A caller whose token is revoked by a concurrent request can still end the impers
 
 ## Suggested resolution
 
-Re-read the caller's row under `FOR SHARE` inside the transaction of `RevokeImpersonationsByImpersonator`, refusing a revoked caller there, or run the subtree read and the impersonation update in one transaction under `__all__`. Settle it together with change 0165 open decision 15, whose recommended option changes how the cascade reads the caller.
+Re-read the caller's row under `FOR SHARE` inside the transaction of `RevokeImpersonationsByImpersonator`, refusing a revoked caller there, or run the subtree read and the impersonation update in one transaction under `__all__`. Change 0168 fixes it together with [TOKX-I22](TOKX-I22-revocation-refuses-a-caller-its-own-impersonation-step-revoked.md), whose fix under change 0165 decision 15 changes how the cascade reads the caller.

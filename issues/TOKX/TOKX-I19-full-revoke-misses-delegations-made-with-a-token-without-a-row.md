@@ -25,4 +25,4 @@ A full revoke of a user leaves live a child that another user minted with an unr
 
 ## Suggested resolution
 
-Change 0165 open decision 16 lists the options. Its recommendation is to seed the walk of `RevokeBySubject` also with the child rows whose `act_sub` is the user and whose `parent_jti` is set, which are the delegations the user made with any token.
+The owner settled it on 2026-11-23 as change 0165 decision 16 (answer to FM-15 on the M3 readiness decision page): seed the walk of `RevokeBySubject` also with the child rows whose `act_sub` is the user and whose `parent_jti` is set, which are the delegations the user made with any token. Change 0168 carries the fix.
