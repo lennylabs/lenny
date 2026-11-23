@@ -7,7 +7,7 @@ None. The step records the Alloy results it relies on in `change.md`, under "Mod
 ## Steps
 
 ### 0165.S1 Token rules model and property list
-- status: Building
+- status: Landed
 - lanes: [non-specification, specification]
 - depends-on: [0167.S1 (part)]
 
@@ -16,7 +16,7 @@ The non-specification lane adds the Alloy 6 model under `tests/formal/tokens/` (
 The specification lane states the property list of "Properties" in `change.md` in §13.3 (Credential Flow), under the bold label **Token rule properties.**, as the properties the rules of that section keep after change 0167, with the outcomes the owner accepted (CX-7, CX-12, and the rotation link's denial of service of 0164 decision 10). It waited on 0167, which carries the fixes of decisions 3 to 11 and edited the same paragraphs of §13.3; that part of the dependency is the `(part)` entry above, and 0167.S1 has landed. The lane is on branch `change/0165.S2-token-properties` with 0165.S2, because the property tests cite the list and the two steps land together.
 
 ### 0165.S2 Generated property tests against the Token Service
-- status: Building
+- status: Landed
 - lanes: [code]
 - depends-on: [0165.S1, 0167.S1]
 
