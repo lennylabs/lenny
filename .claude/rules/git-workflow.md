@@ -24,7 +24,7 @@ Integration history is explicit, `main` stays green, and branches are short-live
 
 - **A branch that touches only records and documentation** merges when the records checks and the secret scan pass on its head: `python3 scripts/changes/changes.py check`, `python3 scripts/changes/changes.py board --check`, `python3 scripts/changes/changes.py status-page --check`, and `lenny-test secretscan` with exit code 0 and the verdict `PASS`. A branch that touches `docs/` also runs `lenny-test --tier docs`. Records and documentation are the paths under `changes/`, `issues/`, `docs/`, `.claude/rules/`, and `.claude/skills/`, and the root-level markdown records.
 - **Any other branch** merges when `lenny-test run --changed` passes on its committed head with a clean tree, and the secret scan passes on that head. `lenny-test run --changed` runs the static, unit, component, and contract tiers the diff reaches. The integration tier and the docs tier run in the gate on `main`.
-- **The gate on `main`.** After one or more merges, run `lenny-test gate` on the head of `main`, one run at a time, at a moment when no other tests load the machine. A run covers every merge since the last run on `main`. A merge may land while a run is in progress.
+- **The gate on `main`.** After one or more merges, run `lenny-test gate` on the head of `main`, one run at a time, at a moment when no other tests load the machine. Run it in a clone whose local `main` points at the base: the commit of the latest `PASS` run on `main`, or, before the first such run, the last commit of `main` that merged on a pre-merge `PASS` verdict. A run on `main` against itself diffs nothing and selects only the static and docs tiers, so it covers no merge. Against the base, the gate selects every tier the merges since the base reach, and its verdict names the base as `gate.integration_merge_base`. A merge may land while a run is in progress.
 - **A red gate on `main`.** When the latest finished run on `main` is `FAIL` or `UNVERIFIED`, the failure is fixed or reverted before the next merge. Revert the merge that introduced it with `git revert -m 1 <merge>` when the fix is not immediate. A failure that a rerun on the same commit does not reproduce, such as a container start timeout under load, is a load failure and is rerun rather than fixed.
 - **Records.** Each merge commit message names the checks run on the branch head, and the identifier and commit of the latest finished gate run on `main`. A step's digest records the targeted runs, and the gate run on `main` that first covered the step when one has finished.
 - The review rule under "Review changes to the merge gate" still applies before a merge.
@@ -76,7 +76,7 @@ v1 merge steps, under the v1 merge policy in "Merge only on a green gate verdict
 4. Merge into the target with `git merge --no-ff`, with a message naming what the branch implemented, the checks run, and the latest gate run on `main`.
 5. Delete the local branch with `git branch -d`, and delete the remote branch with `git push origin --delete` when it was pushed.
 6. Push the updated integration branch.
-7. Run `lenny-test gate` on the head of `main` when the machine is otherwise idle, and fix or revert a failure before the next merge.
+7. Run `lenny-test gate` on the head of `main` against the base that "The gate on `main`" names, when the machine is otherwise idle, and fix or revert a failure before the next merge.
 
 ## Escape hatches
 
