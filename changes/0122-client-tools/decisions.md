@@ -73,20 +73,13 @@ The M3 readiness review of 2026-11-19 raised O11 to O20, and its second pass rai
   - Recommendation: follow SL-Q10, whose recommendation is (a). 0122.S1 does not read suspension or tree suspension, so it does not wait on that step.
   - Blocks: the `depends-on` entry of 0122.S1.
   - (raised by the M3 readiness review, 2026-11-19; requested by change 0146; mirrors SL-Q10 of 0146)
-- **O22. Whether the reference runtimes declare client tools in v1 (T3).** T3, which the owner settled on 2026-11-09, states that Lenny's own reference runtimes do not declare `capabilities.clientTools` in v1. Revision 12's "Limits" gave the reason: the turn-ending exchange needed a runtime that stops its model loop at a call and continues it in a later turn, which a harness with a fixed loop cannot do without a wrapper. Change 0166 "DP-7" lists T3 among the parts of this change that its blocking interface retires, and no decision of 0166 names the reference runtimes. Under the blocking call the reference bridge serves the client's tools as the `client` tool server, so a reference harness that refreshes its tool list when the server changes can use them. 0166's "Validation owed" lists that check for each reference harness.
-  - (a) T3's clause on the reference runtimes lapses. Each reference runtime of §26 whose harness passes the check of 0166's "Validation owed" declares `capabilities.clientTools.supported: true`, and the catalog entry of each one states whether it declares it. T3's first sentence, that the capability is the runtime author's declaration and Lenny refuses client tools only on runtimes that do not declare it, stands.
-  - (b) T3 stands: no reference runtime declares the capability in v1, and the conformance fixture runtime alone exercises it.
-  - Recommendation: (a). It follows 0166 "DP-7" and decision 23, whose condition was that the blocking interface keep serving a runtime that runs its own model loop and the provider APIs, and it lets the reference harnesses reach the tools the owner's decision put behind the bridge.
-  - Blocks: the §26 row of "Specification changes", the conformance cases of "CT-10" that name the reference runtimes, and 0139.S3, which ships the reference runtimes.
-  - (raised by revision 13, 2026-11-23, under the conflict rule for an owner's decision that change 0166 retires without a decision of its own)
-
-- **O23. Whether a stdio bridge marks call groups, and when `toolServers` lists `client` (mirrors O24 of 0139).** This change's "CT-1 Protocol members" states that the reference bridge marks the calls a harness makes in one step with one group, and that `toolServers` lists `client` when the session's client offers tools. O24 of [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md) records that a stdio bridge cannot see a model step, because an MCP `tools/call` carries none, so only the in-process bridge can mark a group, and that "RP-4" lists `client` for every session whose runtime declares `clientTools.supported`, with an empty list until the client offers tools, because a harness reads its MCP configuration at launch.
-  - (a) Follow 0139 on both points: this change restates its bridge sentence for the in-process bridge, a stdio bridge sends each `client` call alone, which a provider adapter returns one per response, and `toolServers` lists `client` for every session whose runtime declares `clientTools.supported`.
-  - (b) A stdio bridge holds each `client` call for a window, `--group-window-ms`, and sends the calls that arrived within it as one group; `toolServers` follows (a).
-  - (c) Keep this change's text on both points.
-  - Recommendation: (a), as 0139 O24 recommends. It states only what a bridge can see, adds no timing heuristic, and keeps every client tool reachable from the first message.
+- **O23. Whether a stdio bridge marks call groups (mirrors O24 of 0139).** This change's "CT-1 Protocol members" states that the reference bridge marks the calls a harness makes in one step with one group. O24 of [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md) records that a stdio bridge cannot see a model step, because an MCP `tools/call` carries none, so only the in-process bridge can mark a group. The second half of the earlier O23, when `toolServers` lists `client`, is settled as decision O23 (ii) below.
+  - (a) Follow 0139: this change restates its bridge sentence for the in-process bridge, and a stdio bridge sends each `client` call alone, which a provider adapter returns one per response.
+  - (b) A stdio bridge holds each `client` call for a window, `--group-window-ms`, and sends the calls that arrived within it as one group.
+  - (c) Keep this change's text.
+  - Recommendation: (a), as 0139 O24 recommends. It states only what a bridge can see and adds no timing heuristic.
   - Blocks: the step of this change that builds the blocking interface, and 0139.S2 and 0139.S3.
-  - (raised on 2026-11-23 under the program's rule for members that disagree, mirroring 0139 O24)
+  - (raised on 2026-11-23 under the program's rule for members that disagree, mirroring 0139 O24; narrowed to its first half on 2026-11-23)
 
 ## Decisions
 
@@ -153,6 +146,13 @@ Settled by the owner on 2026-11-13, in the answers to the consolidated list of o
 
 **Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0122.S1, whose entries in `steps.md` name the operations.
 
+Settled by the owner on 2026-11-23, in answer to the open decisions that revision 13 raised:
+
+| ID | Decision | Where |
+| :-- | :-- | :-- |
+| O22 | The reference runtimes and client tools. The owner answered "ok" to option (a): T3's clause on the reference runtimes lapses, each reference runtime of §26 whose harness passes the tool-list check of "Validation owed" in `steps.md` declares `capabilities.clientTools.supported: true`, and its catalog entry states whether it declares it. T3's first sentence stands. | "Scope", "CT-2 Capability", "Specification changes" |
+| O23 (ii) | When the `client` tool server appears. The owner answered: "we should show any declared tools ahead of time. If new tools appear, then they should be made visible to the runtime ... Make sure rules are stated in only one place." The reference bridge serves the `client` server from launch for every session whose runtime declares client-tool support, lists every tool the session's client has declared so far, and announces each later change with MCP's tool-list change notification. [`0139-runtime-protocol`](../0139-runtime-protocol/change.md), "RP-4" and "RP-5", states the rule, and this change cites it. | "CT-1 Protocol members" |
+
 ## Decisions replaced by change 0166
 
 Revision 13, 2026-11-23, applies the owner's decisions 23, 24, 29, 35, 42, and 48 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md), which the owner settled on 2026-11-23. Decision 35 returns the blocking interface for tools a client offers, the turn rule, and the audit of a parent's tool calls to this change, and [`0166-delegation-primitives`, "DP-7 What each change takes on"](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on) lists what this change takes on. The decisions above keep the words they were settled with. The table records which of them a decision of 0166 replaces, in whole or in part, and which stand.
@@ -160,7 +160,7 @@ Revision 13, 2026-11-23, applies the owner's decisions 23, 24, 29, 35, 42, and 4
 | Decision of this change | Replaced by | Effect in revision 13 |
 | :-- | :-- | :-- |
 | T1 | 0166 decision 23 | The blocking call replaces the turn-ending exchange: a runtime calls a client tool with a `tool_call` naming `server: "client"`, and the end-of-turn `message` carries no `clientToolCalls`. The part of T1 under which the tools arrive in `conversation.clientTools` and `conversation.toolChoice` on every message stands ("CT-1"). |
-| T3, its clause on the reference runtimes | Open decision O22 | 0166 "DP-7" lists T3 among the parts its interface retires, and no decision of 0166 names the reference runtimes, so O22 asks the owner. T3's first sentence stands. |
+| T3, its clause on the reference runtimes | Decision O22 | 0166 "DP-7" lists T3 among the parts its interface retires, and the owner settled the reference runtimes as O22 on 2026-11-23. T3's first sentence stands. |
 | T5 | 0166 decisions 23 and 24 | No pending set exists, so the refusal of a client message without the pending results and the hold rule for inbox deliveries lapse. The turn stays open while a call waits, and a message that arrives follows MD-5's paths for an open turn. T5's ordering rule stands: a steer-declaring runtime places a message after an open call's result, and every history the gateway builds does the same ("CT-5" and "CT-7"). |
 | T9, T12, T13, and T14 | 0166 decision 23 | `abandonPendingToolCalls` and its rules lapse with the pending set. A client that will not run a tool answers the call with `isError: true` ("CT-5", "Answers"). |
 | T10, T11, and the copy of pending calls in O8 | 0166 decision 23 and the 0144 row of 0166 "DP-7" | A derive copies no open call and no late result, so the copy and its `422` refusal lapse. O8's rule that a client re-runs a session by re-sending its messages and executing its own tools stands ("CT-7"). |

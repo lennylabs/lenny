@@ -114,3 +114,4 @@ Revision 14 takes on the row for this change in "DP-7" of [`0166-delegation-prim
 - Raised O18: under 0166 a session created while delegation was unavailable holds no grant, which departs from the live reads in both directions of O4 (D). The recommendation follows 0166.
 - Raised O19: whether the parent that set an explicit `maxChildrenTotal: 0` can raise it with `session.set_limits`, which 0166 allows for a resource caveat. The recommendation follows 0166.
 - O12's recommendation notes that 0166.S1's policy cap closes F-8.3.14 and that 0166 drops the lease field `approvalMode`. 0126.S1 in `steps.md` is cut back to these parts, and 0166.S1 depends on it.
+- Later on 2026-11-23 the owner settled O18 (a widening reaches only sessions created afterwards) and O19 (an explicit `maxChildrenTotal: 0` is a resource value its parent may raise, and `maxDepth: 0` for a child is the permanent switch). "DA-2", "DA-5", "DA-6", DAR-3, and "Limits" follow.

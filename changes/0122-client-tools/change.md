@@ -65,7 +65,7 @@ Revisions 1 to 12 added client tools as a turn-ending exchange, in which the run
 - OpenAI hosted tools and Anthropic server tools.
 - Checking a custom tool's input against its grammar. Grammar conformance is the runtime's responsibility, and the client verifies it (O9).
 - Warm continuation for Chat Completions as this design wrote it (T4). The conversation fingerprint of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md#ro-10-the-provider-adapters) provides it in the OpenAI adapter.
-- Whether Lenny's reference runtimes declare the capability in v1, which open decision O22 asks.
+- Which reference runtimes of §26 declare the capability: each one whose harness passes the tool-list check of "Validation owed" in `steps.md` declares it, under decision O22 of `decisions.md`, and its catalog entry states the result.
 
 ## Terms
 
@@ -343,7 +343,7 @@ A runtime calls a client tool with the `tool_call` frame of [`0139-runtime-proto
 - `group` marks the calls the runtime makes at one model step, with an id the runtime chooses and the number of calls in the step. A call without `group` is a group of one. The reference bridge marks the calls a harness makes in one step with one group, and a runtime that runs its own model loop marks the tool uses of one model response.
 - The runtime waits for each call's `tool_result` on the connection that carried the call, as "Delivery semantics" of the `CH-MSGSOCK` card in [§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod) states for any `tool_call`. The answer carries the client's `content` and `isError`. A withdrawn call is answered with `isError: true` and `error.code: "CLIENT_TOOL_CALL_WITHDRAWN"` with the reason, and a refused call with `error.code: "CLIENT_TOOL_CALL_INVALID"` with the reason ("CT-4").
 - A runtime that stops waiting writes RP-3's `tool_cancel` for the call ("CT-5", "Cancellation and close").
-- The adapter forwards a `client` call to the gateway as it forwards a `platform` call, and RP-4's `toolServers` lists `client` when the session's client offers tools. 0139 adds the `client` value, `group`, and the `toolServers` entry to its frames.
+- The adapter forwards a `client` call to the gateway as it forwards a `platform` call, and [`0139-runtime-protocol`, "RP-4"](../0139-runtime-protocol/change.md#rp-4-availability) states when `toolServers` lists `client` and how the bridge announces a change to its list. 0139 adds the `client` value, `group`, and the `toolServers` entry to its frames.
 
 #### `toolResults`
 
@@ -377,7 +377,7 @@ capabilities:
 - A derived runtime may not set it, under the §5.1 rule for `capabilities`.
 - It is available to every runtime (CTR-9). A runtime whose harness reaches tools through the reference bridge declares it when the harness refreshes its tool list on the bridge's `client` server, because the bridge serves the client's tools there and refreshes the list on `availability_changed` (RP-4 and RP-5). A runtime author who builds a raw model loop declares it and writes the frames. `capabilities.interaction` is unconstrained on the surfaces with a cold path. O4 states the REST rule: client tools on a REST session whose revision declares `capabilities.interaction: one_shot` or `capabilities.injection.supported: false` are refused at creation with `422 CLIENT_TOOLS_UNSUPPORTED`, naming the missing capability. Open decision O13 asks whether O4 is withdrawn, because a blocking call needs no second message unless a call is withdrawn.
 - For a parent's tools, the child's revision is the runtime that declares the capability. A child whose revision lacks it receives no parent tools, which is the revision switch of 0166 "DP-8 Parity with a client".
-- Whether Lenny's reference runtimes in §26 declare it in v1 is open decision O22. T3 stated that none does, and revision 12's "Limits" gave the reason that the turn-ending exchange needed a harness that parks a call between turns. The blocking call removes that reason.
+- Each reference runtime of §26 whose harness passes the tool-list check of "Validation owed" in `steps.md` declares it, under decision O22. T3 stated that none does, and revision 12's "Limits" gave the reason that the turn-ending exchange needed a harness that parks a call between turns. The blocking call removes that reason.
 
 A request with client tools for a session whose effective capabilities lack the capability is refused at the post-chain point before any pod is claimed: `422 CLIENT_TOOLS_UNSUPPORTED` on REST, and `400 invalid_request_error` on the Chat Completions, Responses, and Messages surfaces, each naming the runtime and revision. A parent's `session.create` or `session.send` with `tools` for a child whose revision lacks the capability is refused with the same code. A request that declares a custom tool on a revision that does not declare `customTools` is refused the same way, naming `customTools`. A request with an empty `tools` array, or with `tool_choice` `none` and no tools, has no client tools.
 
@@ -674,7 +674,7 @@ Had Alice's program taken longer than 300 seconds in step 4, the gateway would h
 | §12.8 Compliance Interfaces | `ERASE` | Open calls and late results in the session erasure. |
 | §13 Security Model | `SECMODEL`, `CTOOL` | The trust level of results, a parent's authority behind its tools, reserved names, schema loading, the turn rule, and the approvals statement. |
 | §16.1 Metrics | `CATMETRIC` | `lenny_client_tool_call_invalid_total` and `lenny_client_tool_call_withdrawn_total{runtime, reason}`. |
-| §26 Reference Runtime Catalog | The successor of §26 that the runtimes area change names | Which reference runtimes declare `capabilities.clientTools`, under open decision O22. |
+| §26 Reference Runtime Catalog | The successor of §26 that the runtimes area change names | Which reference runtimes declare `capabilities.clientTools`: each one whose harness passes the tool-list check, under decision O22. |
 
 ## Non-specification changes
 

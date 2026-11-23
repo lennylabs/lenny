@@ -261,11 +261,11 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 5 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 9 |
 | [0121](0121-billing-resource-attribution/change.md) | Billing resource attribution | `Draft` | 0 of 7 | 10 |
-| [0122](0122-client-tools/change.md) | Client-defined tools | `Draft` | 0 of 2 | 12 |
+| [0122](0122-client-tools/change.md) | Client-defined tools | `Draft` | 0 of 2 | 11 |
 | [0123](0123-connector-authorization-and-external-memory/change.md) | Connector authorization and external memory | `Draft` | 0 of 2 | 6 |
 | [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 13 |
 | [0125](0125-decision-records/change.md) | Decision records | `Draft` | 0 of 2 | 0 |
-| [0126](0126-delegation-availability/change.md) | Delegation availability | `Draft` | 0 of 1 | 11 |
+| [0126](0126-delegation-availability/change.md) | Delegation availability | `Draft` | 0 of 1 | 9 |
 | [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 15 |
 | [0128](0128-forensics-evidence-preservation/change.md) | Forensics and evidence preservation | `Draft` | 0 of 8 | 26 |
 | [0129](0129-github-credential-addon/change.md) | GitHub credential add-on | `Draft` | 0 of 3 | 6 |
@@ -278,7 +278,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 8 | 22 |
 | [0137](0137-pod-lifecycle-controller/change.md) | Pod lifecycle controllers | `Draft` | 1 of 5 | 7 |
 | [0138](0138-rest-only-client-api/change.md) | REST-only client API | `Draft` | 0 of 6 | 16 |
-| [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 28 |
+| [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 26 |
 | [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 16 |
 | [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 0 |
 | [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 10 |
