@@ -21,3 +21,8 @@
   - Merge-gate review rule: the `tests/registers/spec-section-citations.yaml` diff raises `tests/component/issuedtokencascade` (20 to 22) by the two new tests' `§` annotations and lowers `pkg/storage/issuedtokenstore` (63 to 62) with the removed `inheritLineage`, and removes, weakens, or skips no check.
   - Filed: [TOKX-I13](../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md), a token derived while a revocation runs escapes it, because the cascade takes no per-tenant lock (general 3, security 1, Medium, predates the step; the lock and the bound of TOKX-I10 need the owner); [TOKX-I14](../../issues/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md), a delegation child that rotates itself loses its `act` claim (security 5, Low, predates the step); [AUTHN-I1](../../issues/AUTHN/AUTHN-I1-no-way-to-lift-a-user-invalidation.md), no operation lifts a user invalidation (general 2, security 4, Medium); TOKX-I10's evidence gains the rotation that waits on a cascade while it holds the per-tenant lock (security 3).
   - Left to change 0165: its `change.md` still calls O3 and O4 open and names `RotInherit` as built (general 7); its next revision records decisions 10 and 11.
+
+## 2026-11-23, landing
+
+- 0164.S1 landed on the merge-gate verdict `PASS` of run `40946c6c7079151a60cbd6af` on `96a88fd64` (merge base with `main` `0fff6b4b5`).
+- The change stays `In progress` until it is archived with its link rewrites on the next records branch.

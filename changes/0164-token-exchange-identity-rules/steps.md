@@ -7,7 +7,7 @@ None.
 ## Steps
 
 ### 0164.S1 Token exchange narrowing and identity rules
-- status: Building
+- status: Landed
 - lanes: [specification, code, documentation]
 - depends-on: [0163.S1]
 - closes: [TOKX-I3, TOKX-I4, TOKX-I5, TOKX-I6, TOKX-I7, TOKX-I9]
