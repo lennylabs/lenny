@@ -290,4 +290,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
-| [0167](0167-token-model-fixes/change.md) | Token rule fixes from the formal model | `In progress` | 0 of 1 | 0 |
+| [0167](0167-token-model-fixes/change.md) | Token rule fixes from the formal model | `In progress` | 0 of 1 | 2 |
