@@ -107,3 +107,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
   - Already done: F-14.1.38 is in the `closes` of 0140.S2, which carries "RV-7" since the first pass split the step (0122-F24). The agent card removal and `regenerate-cards` belong to 0138.S6, and the discovery test reads `agentInterface` (removals-C3, 0138-F13). D23, "Capability checks" under "RV-2", the "Terms" row, the `podsession` row, and the `unit` test already state the two checks of 0139's "RP-2" (0139's O20).
   - Dropped 0141's request to record the capability-check location as an open decision (runtime-contract-C1): D23 defers to RP O2 (d), which the owner settled, and this change already states the two checks of "RP-2", so no conflict remains for an open decision to record. 0139's O20 is not recorded here for the same reason, and its restatement is counted above as already done.
   - Dropped 0139's request to record O21 (runtime-contract-C3): its options edit 0135's steps and 0139's catalog, and the interim reads that 0140.S1 converts are stated under the request of 0135.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 25 records the owner's answer to O22: option (a), by question PG-C14 of 2026-11-19, which settles decision 45 of 0147 and O8 of 0137 as well. It is D30. `change.md` does not yet apply D30 in "RV-3" and "RV-2" **Claim.**, and the next revision brings them in line.

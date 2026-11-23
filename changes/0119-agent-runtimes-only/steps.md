@@ -12,7 +12,7 @@
 - status: Planned
 - aliases: [AR-A, AR-1]
 - lanes: [specification, code, documentation]
-- closes: [23.1-INFO-007, T-2.5, T-9.1.4, T-9.1.10, T-10.6.5, T-8.5.4 (part), T-9.1.6 (part)]
+- closes: [23.1-INFO-007, T-2.5, T-9.1.4, T-9.1.10, T-10.6.5, T-8.5.4 (part), T-9.1.6 (part), ADMIN-I1]
 
 Removal of `type: mcp`: the endpoint and its implicit sessions, discovery fields, the adapter's MCP client, `mcpRuntimeFilters` with the refusal of an environment write that names it ("AR-4", **Which step refuses which field.**), `runtimeMcpServers` from adapter manifest version 1 with the compliance fixture that asserts it, the type-specific refusals, the idle exemption, the `safety_factor` row, the reference runtime, phase 12b, and their documentation and tests ("AR-1"). Its tests include one that the idle watchdog exempts no session by runtime type.
 

@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-The M3 readiness review of 2026-11-19 raised O14 to O24, and its second pass raised O25 to O27 at the request of other changes. O2 to O13 are settled and sit under "Decisions", in "Settled open decisions O2 to O13".
+The M3 readiness review of 2026-11-19 raised O14 to O24, and its second pass raised O25 to O27 at the request of other changes. O2 to O13 are settled and sit under "Decisions", in "Settled open decisions O2 to O13". The owner settled O17, O18, O22, and O24 on 2026-11-20 (D40 to D43), and they sit in "Settled open decisions of the M3 readiness review".
 
 **O14. When a pod that holds a dead slot runs the pod-wide scrub and retires. Open.**
 
@@ -33,26 +33,6 @@ The change does not mention `Shutdown`. Today's §5.2 binds the per-slot cleanup
 
 **Recommendation: (a).** The reservation then never admits a bind that the pod cannot serve, and no new refusal code or retry path is needed. It blocks 0145.S3 (the release) and the §4.7.1 and §5.2 rows of "Specification changes". (raised by the M3 readiness review, 2026-11-19; sources: 0145-F3, 0145-F2)
 
-**O17. How 0145.S1 is ordered against 0118.S4, which renders the per-slot volumes. Open.**
-
-0145.S1 lands the slot containers, and [0118.S4](../0118-agent-pod-layout/steps.md#steps) renders the per-slot volumes of PL-5 that they mount. Neither builds alone: slot containers on today's pod-shared volumes would put the per-slot `0444` credential file of "SI-7" where every slot can read it once `lenny-cred-readers` and the pod-level `fsGroup` leave, and per-slot volumes have no container to mount them without slot containers. Both steps carry only `depends-on: [0118.S1]`, and their former "same release" sentences named each other as the renderer.
-
-- (a) One shared branch for 0118.S4's pod rendering and 0145.S1.
-- (b) 0145.S1 depends on 0118.S4, which renders the volumes into today's single runtime container first. This needs a transitional mount layout, which the program's rule against transition modes forbids.
-- (c) 0118.S4 depends on 0145.S1, which leaves 0145.S1 writing per-slot credential files onto shared volumes until 0118.S4 lands.
-
-**Recommendation: (a).** The rendering and the slot containers cannot be separated without an insecure or broken intermediate state. 0145.S2 and 0145.S3 depend on 0118.S4 for the paths of PL-3, so an edge from 0118.S4 to 0145.S2, as 0118's O11 (b) proposes for the disk watch, would close a cycle with them; 0118's O11 (a) puts the disk watch in a separate step that depends on 0145.S2 and 0145.S3 instead. The other change is [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md), whose O11 records the same question with the disk watch's waits as further options. It blocks 0145.S1, and through it 0145.S2 to 0145.S6, and 0118.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F4, pod-structure-C1, program-C8)
-
-**O18. Whether a process that escapes a `prestage` run can reach the next session. Open.**
-
-The release ends with a `prestage` helper run after its last End and Sweep (step 9 of "SI-3"), and a bind sends `launch` with no End before it (steps 2 to 4). [WM-3](../0153-workspace-materialization/change.md#wm-3-the-protocol) states that "A process that left the group with `setsid` survives until the next End", and `launch_not_permitted` covers only `cleanup` runs. The helper parses untrusted git content, so a process that escapes `prestage` runs beside the next session's runtime under the same slot UID, which SIR-13 forbids.
-
-- (a) After every `prestage` run, completed or cancelled, the adapter sends `end` and waits for `ended` before the slot accepts a bind, and the supervisor refuses `launch` with `launch_not_permitted` after a `prestage` run until an attested End.
-- (b) End becomes the first request of every bind.
-- (c) Accept the residual and document it, which contradicts SIR-13.
-
-**Recommendation: (a).** It closes the window where the untrusted input is parsed, and the supervisor enforces it. A `security` test with a `setsid` child of `prestage` follows under (a) or (b). It blocks 0145.S3 (the release order and the launch permission) and 0153.S8. The other changes are [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md) (WM-3 and WM-15) and [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md), whose trust statement relies on the release. (raised by the M3 readiness review, 2026-11-19; sources: pod-structure-C2)
-
 **O19. Which step owns `AgentPod.spec.slotCount`, and where the gateway reads the recorded count. Open.**
 
 "SI-4" has the controller record the slot count in `AgentPod.spec.slotCount` and the reservation compare occupancy against it (SIR-16). [0137.S2](../0137-pod-lifecycle-controller/steps.md#steps) adds `spec.slotCount` and the pod set's `maxConcurrentSessionsPerPod`, and depends on 0145.S1 for "the slot count's reader", so the writer and the reader land before the fields exist. In the tree, `slotcounter.Counter.Reserve` takes the ceiling per call from the pool (`MaxConcurrentSessions` in `pkg/gateway/core/session/podsession/slotbinder.go`), `PodRecyclePolicy` carries the pool value, and `agentpodstate.PodState` has no slot-count field, so the gateway has no defined source for the recorded count at reservation time, for the whole-pod trigger, or in the Postgres fallback.
@@ -80,16 +60,6 @@ D38 removes the `leaked` slot, and a dead slot counts toward the trigger. Today'
 
 **Recommendation: (a).** Every failure that shows a slot cannot serve already makes it dead, and (a) removes the per-replica ledger rather than moving it. It blocks the step that lands the trigger's dead-slot count (0145.S6, or 0145.S1 under O15 (a)) and the §5.2 **Failure isolation:** row. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F17)
 
-**O22. What keeps another container from taking a slot's `CH-SUPERVISE` name in nonce-only mode. Open.**
-
-In nonce-only mode no peer UID is checked. "SI-2" argues that another container cannot take a supervise connection because "every client check refuses them", which does not hold in that mode. A container outside the platform's, started before the adapter binds slot `n`'s names, could hold `@lenny-supervise-<n>` and receive the supervisor's connection. Whether the agent-pod webhook admits a container outside PL-1's blueprint is unverified, and "SI-2" names deployer containers as present.
-
-- (a) The `lenny-pod-security` webhook refuses an agent pod with a container outside PL-1's blueprint, and "SI-2" states it.
-- (b) The adapter fails the pod when it cannot bind any slot's name at start, and "SI-2" states that a container that binds a name first fails the pod before any supervisor connects.
-- (c) Both.
-
-**Recommendation: (b).** It closes the window without removing deployer containers, and the adapter already binds every name at start. It blocks 0145.S1 (the SI-2 text and its `security` test). (raised by the M3 readiness review, 2026-11-19; sources: 0145-F21)
-
 **O23. Whether 0145.S1 is split, and how a slot's runtime launches before 0145.S3. Open.**
 
 0145.S1 carries slot containers, socket names and two-way checks, the drain, dead slots, the slot count, credentials and manifests, the canary check, every webhook rule, and the SDK server-UID check, across the controller, the adapter, the gateway, the webhooks, and the SDKs. It does not say how a slot's runtime launches between 0145.S1 and 0145.S3, which lands the launch at bind.
@@ -98,15 +68,6 @@ In nonce-only mode no peer UID is checked. "SI-2" argues that another container 
 - (b) Keep 0145.S1 whole and state the same interim launch.
 
 **Recommendation: (a).** The parts land under different open decisions, and smaller steps keep each branch reviewable. It blocks 0145.S1. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F22)
-
-**O24. From which run in a slot the adapter treats broker replies as untrusted. Open.**
-
-SIR-22 and **The pinned root (SIR-22).** of "SI-5" start the distrust at "the first run of the supervisor's worker for the first session bound to the slot", and [IC S6](../0131-incremental-checkpoint/change.md#security-properties) trusts the broker's replies during the platform chunk-set contribution because no session code has run. Before READY, and after every release, the slot's `prestage` runs the pinned git as the slot UID over warm-list repositories ([WM-15](../0153-workspace-materialization/change.md#wm-15-warm-up-checkout-and-reflink-rebuild)), which WM-9 classes as untrusted content and which include tenant-controlled repositories on tenant-derived runtimes, and the contribution follows the first `prestage`.
-
-- (a) Move the trust point to the first worker run in the slot, `prestage` included. The adapter records the pin before that run, and the contribution's reads and the restore at bind take the descriptor checks of SIR-21 and IC S6 under distrust, which already exist.
-- (b) Keep SIR-22 as written, and 0131 states the residual and accepts it.
-
-**Recommendation: (a).** The checks exist already, and (a) removes a trust assumption that `prestage` does not meet. It blocks 0145.S2 (SIR-22 and the pinned root) and the contribution rules of 0131. The other change is [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md), whose open D24 decides the same trust point together with the seeding of the file index. (raised by the M3 readiness review, 2026-11-19; sources: checkpoint-workspace-C11)
 
 **O25. The chart keys of the platform containers' requests, and the memory limits of the slot containers. Open.**
 
@@ -180,6 +141,10 @@ F-8.7.17 (High, open in `BUILD-GAPS.md`) records that `addExportFile` in `pkg/ad
 | D37 | "Runtime not live" and the handshake refusal that is not retryable (2026-11-16). | Item 2, "ok": the "Runtime not live" retirement condition of §5.2, its reason `runtime_not_live`, and the runtime-readiness statement in `ReportPodScrub` leave, because no runtime process outlives its session (D4, D15). A handshake refusal that [RP-1](../0139-runtime-protocol/change.md#rp-1-handshake) classes as not retryable and that stops the pod's binds becomes a retirement condition with the reason `runtime_refused`: the pod accepts no further binds, and it retires once its occupancy reaches zero. Dead slots and the whole-pod replacement trigger cover a runtime's liveness otherwise. | SI-3, SI-4, SIR-41 |
 | D38 | Leaked and dead slots (2026-11-16). | Item 4, "ok": the `leaked` slot merges into the dead slot, one state that counts in occupancy for the pod's life and toward the whole-pod replacement trigger. The metric `lenny_adapter_leaked_slots` becomes `lenny_adapter_dead_slots`, and the `leaked` sub-state, its row, and its column of the §5.2 scrub model table leave. The pod state mirror gains the column `dead_slots`, the slot indexes of the pod's dead slots, which the gateway writes when it adds a `dead:<n>` member, and rehydration reads it with the session rows and restores the `dead:<n>` members. Today's rehydration loses every `leaked` member in the same way. | SI-4, SIR-15, SIR-42 |
 | D39 | Scrub profiles after the per-slot release (2026-11-16). | Item 5, "ok": `recycle.scrubProfile` keeps `standard` and `vm-restart`, and `in-place` and `acknowledgeMicrovmResidualState` leave. `in-place` existed because `standard` was refused on pools with `allowCrossTenantReuse`, which [`0136-placement`](../0136-placement/change.md#removals) removes, and with the tenant pin on every pool, `in-place` on a microVM pool is `standard` plus an acknowledgment. The documentation states, under `standard` on a microVM pool, the guest-kernel state that persists across the pinned tenant's sessions. `onScrubFailure` and `maxScrubFailures` apply to the pod-wide scrub alone, and a failed slot release always makes the slot dead and never takes the `warn` path. The owner confirmed on the same day ("ok, keep it as written") that a `cleanup` run answered with `cleanup_failed` or `cleanup_timeout` fails the release and makes the slot dead, and that on a pod with several slots the pod drains only through the whole-pod replacement trigger. | SI-3, SI-4, SIR-43 |
+| D40 | How 0145.S1 is ordered against 0118.S4 (O17, 2026-11-20). | (a): 0118.S4's pod rendering and 0145.S1 share one branch, and both steps state it. | O17, 0145.S1, 0118.S4 |
+| D41 | Whether a process that escapes a `prestage` run can reach the next session (O18, 2026-11-20). | (a): an attested End after every `prestage` run before the slot accepts a bind, and `launch` refused after `prestage` until that End. | O18, SI-3, SIR-13 in a later revision |
+| D42 | What keeps another container from taking a slot's `CH-SUPERVISE` name in nonce-only mode (O22, 2026-11-20). | (b), the page's option (a): the adapter fails the whole pod when it cannot bind any slot's name at start. | O22, SI-2 in a later revision |
+| D43 | From which run in a slot the adapter treats broker replies as untrusted (O24, 2026-11-20). | (a): from the first worker run in the slot, `prestage` included. | O24, SIR-22 in a later revision |
 
 **Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0145.S1 for `GWSEAM-InspectForRecycle`, which serves the pod's recorded slot count (SIR-16), and 0145.S6 for the pod recycle operations, whose entries in `steps.md` name the operations. O15 decides which step carries `GWSEAM-RecordLeak`.
 
@@ -226,3 +191,54 @@ The adapter fails a slot's session at `adapter.diskWatchThresholdPercent` of a d
 **Recommendation: (a).** It reuses the parallel stat walk and its checks, and it keeps every walk in the adapter (D3). A walk of a Chromium-sized tree costs 0.3 s under runc and up to 7 s on Kata `virtio-fs` at the measured rates **[inference]**, which a 30 s interval bounds. (b) adds a tree walk to the supervisor beyond the Sweep. (c) gives the adapter a figure only as fresh as the kubelet's own measurement, which is the figure the watch has to beat. Under every option a writer faster than the interval reaches the kubelet's limit first, as PL's "Limits" states.
 
 The owner settled the question on PL's O8 instead, in a revised form that keeps (a)'s walk where nothing cheaper works: the adapter reads `statfs` on a broker-passed root descriptor where the runtime reports the volume, keeps a running total from the change tracker's events where the tracker runs, with a periodic recalibration walk, and walks every 10 s only elsewhere ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). The `tmp` root of (a) is adopted ("SI-5").
+
+### Settled open decisions of the M3 readiness review
+
+The owner settled these on the M3 readiness decision page. Each entry keeps its label, its options, and its recommendation, and states the answer.
+
+**O17. How 0145.S1 is ordered against 0118.S4, which renders the per-slot volumes. Settled 2026-11-20: (a) (D40).**
+
+0145.S1 lands the slot containers, and [0118.S4](../0118-agent-pod-layout/steps.md#steps) renders the per-slot volumes of PL-5 that they mount. Neither builds alone: slot containers on today's pod-shared volumes would put the per-slot `0444` credential file of "SI-7" where every slot can read it once `lenny-cred-readers` and the pod-level `fsGroup` leave, and per-slot volumes have no container to mount them without slot containers. Both steps carry only `depends-on: [0118.S1]`, and their former "same release" sentences named each other as the renderer.
+
+- (a) One shared branch for 0118.S4's pod rendering and 0145.S1.
+- (b) 0145.S1 depends on 0118.S4, which renders the volumes into today's single runtime container first. This needs a transitional mount layout, which the program's rule against transition modes forbids.
+- (c) 0118.S4 depends on 0145.S1, which leaves 0145.S1 writing per-slot credential files onto shared volumes until 0118.S4 lands.
+
+**Recommendation: (a).** The rendering and the slot containers cannot be separated without an insecure or broken intermediate state. 0145.S2 and 0145.S3 depend on 0118.S4 for the paths of PL-3, so an edge from 0118.S4 to 0145.S2, as 0118's O11 (b) proposes for the disk watch, would close a cycle with them; 0118's O11 (a) puts the disk watch in a separate step that depends on 0145.S2 and 0145.S3 instead. The other change is [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md), whose O11 records the same question with the disk watch's waits as further options. It blocks 0145.S1, and through it 0145.S2 to 0145.S6, and 0118.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0145-F4, pod-structure-C1, program-C8)
+
+**Settled 2026-11-20: (a)** (D40), question PR-A3 of the M3 readiness decision page, whose option (a) is this option (a). 0118.S4's pod rendering and 0145.S1 are built on one shared branch, and both steps state the shared branch. O11 of [`0118-agent-pod-layout`](../0118-agent-pod-layout/decisions.md) records the same answer as the ordering part of its O11, whose disk-watch and `lenny-store-fill` parts stay open there. The options not taken were (b), 0145.S1 depending on 0118.S4, and (c), 0118.S4 depending on 0145.S1.
+
+**O18. Whether a process that escapes a `prestage` run can reach the next session. Settled 2026-11-20: (a) (D41).**
+
+The release ends with a `prestage` helper run after its last End and Sweep (step 9 of "SI-3"), and a bind sends `launch` with no End before it (steps 2 to 4). [WM-3](../0153-workspace-materialization/change.md#wm-3-the-protocol) states that "A process that left the group with `setsid` survives until the next End", and `launch_not_permitted` covers only `cleanup` runs. The helper parses untrusted git content, so a process that escapes `prestage` runs beside the next session's runtime under the same slot UID, which SIR-13 forbids.
+
+- (a) After every `prestage` run, completed or cancelled, the adapter sends `end` and waits for `ended` before the slot accepts a bind, and the supervisor refuses `launch` with `launch_not_permitted` after a `prestage` run until an attested End.
+- (b) End becomes the first request of every bind.
+- (c) Accept the residual and document it, which contradicts SIR-13.
+
+**Recommendation: (a).** It closes the window where the untrusted input is parsed, and the supervisor enforces it. A `security` test with a `setsid` child of `prestage` follows under (a) or (b). It blocks 0145.S3 (the release order and the launch permission) and 0153.S8. The other changes are [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md) (WM-3 and WM-15) and [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md), whose trust statement relies on the release. (raised by the M3 readiness review, 2026-11-19; sources: pod-structure-C2)
+
+**Settled 2026-11-20: (a)** (D41), question PR-A5 of the M3 readiness decision page, whose option (a) is this option (a). After every `prestage` run, completed or cancelled, the adapter sends End and waits for its confirmation before the slot accepts a bind, and the supervisor refuses `launch` with `launch_not_permitted` after a `prestage` run until an attested End, as it does after `cleanup`. O10 of [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md) records the same answer. The options not taken were (b), End as the first request of every bind, and (c), accepting the residual risk.
+
+**O22. What keeps another container from taking a slot's `CH-SUPERVISE` name in nonce-only mode. Settled 2026-11-20: (b) (D42).**
+
+In nonce-only mode no peer UID is checked. "SI-2" argues that another container cannot take a supervise connection because "every client check refuses them", which does not hold in that mode. A container outside the platform's, started before the adapter binds slot `n`'s names, could hold `@lenny-supervise-<n>` and receive the supervisor's connection. Whether the agent-pod webhook admits a container outside PL-1's blueprint is unverified, and "SI-2" names deployer containers as present.
+
+- (a) The `lenny-pod-security` webhook refuses an agent pod with a container outside PL-1's blueprint, and "SI-2" states it.
+- (b) The adapter fails the pod when it cannot bind any slot's name at start, and "SI-2" states that a container that binds a name first fails the pod before any supervisor connects.
+- (c) Both.
+
+**Recommendation: (b).** It closes the window without removing deployer containers, and the adapter already binds every name at start. It blocks 0145.S1 (the SI-2 text and its `security` test). (raised by the M3 readiness review, 2026-11-19; sources: 0145-F21)
+
+**Settled 2026-11-20: (b)** (D42), question PR-A4 of the M3 readiness decision page. The page's option (a) is this record's option (b): the adapter fails the whole pod when it cannot bind any slot's name at start, and "SI-2" states this. The options not taken were (a), the `lenny-pod-security` webhook refusing an agent pod with a container outside PL-1's blueprint, and (c), both.
+
+**O24. From which run in a slot the adapter treats broker replies as untrusted. Settled 2026-11-20: (a) (D43).**
+
+SIR-22 and **The pinned root (SIR-22).** of "SI-5" start the distrust at "the first run of the supervisor's worker for the first session bound to the slot", and [IC S6](../0131-incremental-checkpoint/change.md#security-properties) trusts the broker's replies during the platform chunk-set contribution because no session code has run. Before READY, and after every release, the slot's `prestage` runs the pinned git as the slot UID over warm-list repositories ([WM-15](../0153-workspace-materialization/change.md#wm-15-warm-up-checkout-and-reflink-rebuild)), which WM-9 classes as untrusted content and which include tenant-controlled repositories on tenant-derived runtimes, and the contribution follows the first `prestage`.
+
+- (a) Move the trust point to the first worker run in the slot, `prestage` included. The adapter records the pin before that run, and the contribution's reads and the restore at bind take the descriptor checks of SIR-21 and IC S6 under distrust, which already exist.
+- (b) Keep SIR-22 as written, and 0131 states the residual and accepts it.
+
+**Recommendation: (a).** The checks exist already, and (a) removes a trust assumption that `prestage` does not meet. It blocks 0145.S2 (SIR-22 and the pinned root) and the contribution rules of 0131. The other change is [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md), whose open D24 decides the same trust point together with the seeding of the file index. (raised by the M3 readiness review, 2026-11-19; sources: checkpoint-workspace-C11)
+
+**Settled 2026-11-20: (a)** (D43), question PR-A7 of the M3 readiness decision page, whose option (a) is this option (a). The trust point moves to the first worker run in the slot, `prestage` included. The adapter records the pinned root before that run, and the contribution's reads and the restore at bind use the descriptor checks of SIR-21 and IC S6 under distrust. O11 of [`0153-workspace-materialization`](../0153-workspace-materialization/decisions.md) and the trust-point half of D24 of [`0131-incremental-checkpoint`](../0131-incremental-checkpoint/decisions.md) record the same answer; the seeding half of 0131's D24 stays open there. The option not taken was (b), keeping SIR-22 as written with the residual risk stated in 0131.

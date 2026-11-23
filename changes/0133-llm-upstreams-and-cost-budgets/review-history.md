@@ -82,3 +82,7 @@ The security review of 0116.S5 raised open decision 4: whether 0133.S2 depends o
   - Applied, 0148-F10: the 0148 reviewer instruction records that 0148 revision 33 applied it.
   - Applied, 0151-F4: the removal row of the `provider` path, the `pkg/credential` subpackages row, and the 0133.S2 entry state that the `credentials` table, `credentialpg`, and `pkg/credential/usercreds` leave with that path, and that 0151.S1 depends on 0133.S2.
   - Raised, open decision 10: the peers of `allow-gateway-egress-llm-upstream` and whether a deployment with customer sources must set `identity.issuerCIDRs` (0149-p1-L8); "LU-8" **Network.** points to it.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 11 records the owner's answer to open decision 3, the error detail format for a removed field: option (a), `details.fields[].field`, settled by question PG-C5 of 2026-11-19 and confirmed by question PR-A1 of 2026-11-20. The entry moves to "Decisions" under its number. The owner's note on PG-C5 states that the other open decisions of this change wait for the owner's own answers. `change.md` does not yet apply the answer: "LU-4" and D9 still name `details.field`, and the next revision brings them in line. The unmerged branch `records/0133-generic-proxy` also edits this change (revision 11, decision D10), so whichever branch merges second renumbers its revision and merges the "Decisions" section.

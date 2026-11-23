@@ -9,8 +9,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 2 |
-| Ready | 1 |
-| Waiting on decisions | 35 |
+| Ready | 4 |
+| Waiting on decisions | 32 |
 | Blocked | 149 |
 | Landed | 17 |
 | Cancelled | 1 |
@@ -56,10 +56,12 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | :-- | :-- | :-- |
 | [0165.S1](0165-token-rules-model/steps.md#0165s1-token-rules-model-and-property-list) | Token rules model and property list | Building |  |
 | [0165.S2](0165-token-rules-model/steps.md#0165s2-generated-property-tests-against-the-token-service) | Generated property tests against the Token Service | Building |  |
+| [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
+| [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
+| [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
-| [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Waiting on decisions | 0125 is `Draft` |
 | [0127.S1](0127-egress-and-git/steps.md#0127s1-git-prerequisites) | Git prerequisites | Waiting on decisions | 0127 is `Draft` |
 | [0127.S11](0127-egress-and-git/steps.md#0127s11-egress-pki) | Egress PKI | Waiting on decisions | 0127 is `Draft` |
 | [0127.S9](0127-egress-and-git/steps.md#0127s9-egress-policy-objects) | Egress policy objects | Waiting on decisions | 0127 is `Draft` |
@@ -75,7 +77,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0135.S1](0135-message-delivery/steps.md#0135s1-delivery-core) | Delivery core | Waiting on decisions | 0135 is `Draft` |
 | [0136.S1](0136-placement/steps.md#0136s1-removal-of-allowcrosstenantreuse) | Removal of allowCrossTenantReuse | Waiting on decisions | 0136 is `Draft` |
 | [0136.S2](0136-placement/steps.md#0136s2-components-priority-classes-and-namespaces) | Components, priority classes, and namespaces | Waiting on decisions | 0136 is `Draft` |
-| [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Waiting on decisions | 0137 is `Draft` |
 | [0140.S3](0140-runtime-revisions/steps.md#0140s3-isolation-floor-and-tenant-capability-override) | Isolation floor and tenant capability override | Waiting on decisions | 0140 is `Draft`; a part waits on 0139.S1 |
 | [0141.S1](0141-runtime-routing/steps.md#0141s1-interceptor-contract) | Interceptor contract | Waiting on decisions | 0141 is `Draft` |
 | [0141.S3](0141-runtime-routing/steps.md#0141s3-in-cluster-interceptor-transport) | In-cluster interceptor transport | Waiting on decisions | 0141 is `Draft` |
@@ -90,7 +91,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | 0149 is `Draft` |
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft`; a part waits on 0150.S1 |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
-| [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Waiting on decisions | 0156 is `Draft` |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Blocked | 0119.S1, 0119.S2, 0131.S9 |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
 | [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
@@ -251,43 +251,43 @@ A step is ready when every step it depends on has landed and its change is not `
 | Change | Title | Status | Steps landed | Open decisions |
 | :-- | :-- | :-- | :-- | --: |
 | [0117](0117-gateway-package-layout/change.md) | Gateway package layout | `In progress` | 13 of 14 | 0 |
-| [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 20 |
-| [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 5 |
+| [0118](0118-agent-pod-layout/change.md) | Agent pod layout | `Draft` | 0 of 6 | 16 |
+| [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 2 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 9 |
 | [0121](0121-billing-resource-attribution/change.md) | Billing resource attribution | `Draft` | 0 of 7 | 10 |
 | [0122](0122-client-tools/change.md) | Client-defined tools | `Draft` | 0 of 2 | 11 |
 | [0123](0123-connector-authorization-and-external-memory/change.md) | Connector authorization and external memory | `Draft` | 0 of 2 | 6 |
-| [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 13 |
-| [0125](0125-decision-records/change.md) | Decision records | `Draft` | 0 of 2 | 0 |
+| [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 11 |
+| [0125](0125-decision-records/change.md) | Decision records | `Decided` | 0 of 2 | 0 |
 | [0126](0126-delegation-availability/change.md) | Delegation availability | `Draft` | 0 of 1 | 9 |
 | [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 15 |
 | [0128](0128-forensics-evidence-preservation/change.md) | Forensics and evidence preservation | `Draft` | 0 of 8 | 26 |
 | [0129](0129-github-credential-addon/change.md) | GitHub credential add-on | `Draft` | 0 of 3 | 6 |
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 8 |
-| [0131](0131-incremental-checkpoint/change.md) | Incremental checkpoints | `Draft` | 0 of 9 | 16 |
+| [0131](0131-incremental-checkpoint/change.md) | Incremental checkpoints | `Draft` | 0 of 9 | 15 |
 | [0132](0132-llm-response-cache-removal/change.md) | LLM response cache removal | `Draft` | 0 of 1 | 2 |
-| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 9 |
+| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 8 |
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 5 | 4 |
 | [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 57 |
-| [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 8 | 22 |
-| [0137](0137-pod-lifecycle-controller/change.md) | Pod lifecycle controllers | `Draft` | 1 of 5 | 7 |
+| [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 8 | 18 |
+| [0137](0137-pod-lifecycle-controller/change.md) | Pod lifecycle controllers | `Draft` | 1 of 5 | 5 |
 | [0138](0138-rest-only-client-api/change.md) | REST-only client API | `Draft` | 0 of 6 | 16 |
 | [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 23 |
-| [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 16 |
+| [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 15 |
 | [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 0 |
-| [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 10 |
+| [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 9 |
 | [0143](0143-service-account-credentials/change.md) | Service account credentials | `Draft` | 0 of 4 | 7 |
 | [0144](0144-session-derive/change.md) | Session derive | `Draft` | 0 of 1 | 5 |
-| [0145](0145-session-isolation/change.md) | Session isolation | `Draft` | 0 of 6 | 35 |
+| [0145](0145-session-isolation/change.md) | Session isolation | `Draft` | 0 of 6 | 24 |
 | [0146](0146-session-lifecycle/change.md) | Session lifecycle | `Draft` | 0 of 3 | 30 |
-| [0147](0147-tenant-derived-runtimes/change.md) | Tenant-derived runtimes | `Draft` | 0 of 13 | 12 |
+| [0147](0147-tenant-derived-runtimes/change.md) | Tenant-derived runtimes | `Draft` | 0 of 13 | 10 |
 | [0148](0148-tenant-outbound-connector/change.md) | Tenant outbound connector | `Draft` | 0 of 4 | 8 |
 | [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 11 | 11 |
-| [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 15 |
+| [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 14 |
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 7 |
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
-| [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 38 |
-| [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
+| [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
+| [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
