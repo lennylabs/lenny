@@ -184,3 +184,7 @@ Second pass. The second pass of the same review closed the edits that other chan
 - Already open, D28 (0128): the edge from 0131.S6 to 0128.S4. 0128.S4's edge to 0135.S4 is a `(part)` edge, and 0135.S4 depends on 0131.S6 as a whole edge, so the new edge would make the three steps wait on each other through a partial dependency, which `changes.py check` reports. The step's text already states that it builds the pack copy that 0128.S4's hold worker calls through `EnsureCopied`, and 0131.S6 now states the cycle in those terms.
 - Already open, D30 (0140): D30 now states that `0140-runtime-revisions` holds under either option and records no counterpart, and names SL-Q8 of `0146-session-lifecycle` and O18 of `0153-workspace-materialization` as the changes that record it.
 - Already open, D26 and D36 (0146): see D36 above.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 28 records the owner's answers of 2026-11-20. D36 is settled as (a) by question PR-B1, with the owner's note that the margin below the limit can be smaller than 10% where the volume's use is read directly, and it moves to "Decisions". Its answer removes the disk watch's checkpoint from D26, which stays open for seals, eviction checkpoints, and CheckpointBarrier attempts (page question CW-6). The trust-point half of D24 is settled as (a) by question PR-A7, and its seeding half stays open (page question CW-13). `change.md` does not yet apply the answers in IC-1, IC-8, and S6, and the next revision brings them in line.

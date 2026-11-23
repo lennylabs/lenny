@@ -157,3 +157,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
     - Raised O25 (requested by 0121; mirrors 0121's decision 27): the chart keys of the platform containers' requests and the slot containers' memory limits in "SI-9".
     - Raised O26 (requested by 0135 and 0139; mirrors 0135's O6 and 0139's O21): whether 0135.S1 depends on 0145.S1 and 0145.S3.
     - Raised O27 (requested by 0135; mirrors item 1 of 0135's O19): whether 0145.S2 closes F-8.7.17.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 22 records the owner's answers of 2026-11-20: O17 as (a) by question PR-A3 (D40), O18 as (a) by question PR-A5 (D41), O22 as (b) by question PR-A4, whose option (a) is this record's (b) (D42), and O24 as (a) by question PR-A7 (D43). The four entries move to "Settled open decisions of the M3 readiness review", and 0145.S1's entry in `steps.md` states the shared branch with 0118.S4. `change.md` does not yet apply D41 to D43 in SI-2, SI-3, SIR-13, and SIR-22, and the next revision brings them in line.

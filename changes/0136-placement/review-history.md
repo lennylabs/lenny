@@ -74,3 +74,7 @@ Second pass, 2026-11-19, requests from other changes. Seven requests: already do
 - Applied (0150, 0150-F15 and 0150-F7): 0136.S4 checks every tenant's stored `placement.nodeTenancy` under PM-2 through the preflight check "Dedicated tenants"; O9 records that 0150 dropped its "until then" and "together with" statements and names 0150's O17 as the matching decision; 0136.S1 and "Removals" state the successor pointer to **Tenant pinning** to which 0150.S3 adds §12.10. The part on §17.10 was not applied, because "Specification changes" already places that content on the `PLACE` page under the program's "Order" (0136-F8).
 - Already open (0142, tenancy-security-C4): O13 records what a pending version holds, and now names 0142's decision 40 and 0150's O14 and states that PM-4 cites the rule once SO-2 states it.
 - Raised O18 (0142, its decision 41): which step of 0142 the edges of 0136.S5 and 0136.S6 name if 0142.S2 splits.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 16 records the owner's answers of 2026-11-20: O12 as (a) by question PR-A16 (D25), and O13 as (a) by question PR-A8 (D26), which 0142's decision 40 and 0150's O14 record as well. Both move to "Settled open decisions O12 and O13". `change.md` does not yet apply D25 and D26 in PM-4, and the next revision brings it in line.

@@ -41,3 +41,7 @@ Returned as an edit elsewhere:
 - `changes/programs/v1.md`, "Reading the program": an edit to an item of §19, §20, or §22 applies where the area change placed it, as its successor stub states (program-C12), and the M3+ order places 0125.S1 before the area changes that migrate §4.6.1, §6.3, §16.5, and §19, or those area changes carry its edits (0125-F7).
 
 Dropped: none.
+
+## Status under the owner's answer to PG-C5 (2026-11-23)
+
+The status becomes `Decided`. The owner's answer of 2026-11-19 to question PG-C5 of the M3 readiness decision page (option (a), program-C5) sets every member change with no open decision and no started step to `Decided`, and this change has no open decision and no started step. The revision stays 2, because no content changed.
