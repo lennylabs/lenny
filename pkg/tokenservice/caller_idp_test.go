@@ -10,6 +10,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	kmsstub "github.com/lennylabs/lenny/tests/testinfra/stubs/kms"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
@@ -106,5 +107,49 @@ func TestIdPTokenIsTheBootstrapCallerCredential_spec_13_3(t *testing.T) {
 	keyOnlySubject := signKeySetToken(t, keyOnlySigner, "jti-key-only", "")
 	if status, env := decodeExchange(t, doExchange(t, keyOnly, idp.MintToken(alice), narrowRequest(keyOnlySubject))); status != http.StatusUnauthorized || env["error"] != "invalid_client" {
 		t.Errorf("IdP caller with no CallerVerifier: status %d error %v, want 401 invalid_client", status, env["error"])
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// The subject_token of a recursive-revocation request is verified with the
+// caller verifier, so an upstream IdP ID token, which has no issued_tokens
+// row, can be named as the root (the scenario CX-5 of change 0165's model):
+// the request supplies its row with the tenant the claim mapping derives,
+// and the store records it as revoked. A mint still refuses an ID token as
+// its subject_token.
+func TestARevocationRequestAcceptsAnIdPTokenAsItsRoot(t *testing.T) {
+	idp := oidcstub.New(t)
+	stub := kmsstub.New(t)
+	ks, signer, err := jwt.LoadSigning(context.Background(), stub.AsProvider(), map[string]string{kms.AliasJWTSigning: "key-1"}, nil)
+	if err != nil {
+		t.Fatalf("LoadSigning: %v", err)
+	}
+	oidc, err := jwt.NewOIDCVerifier(jwt.OIDCConfig{IssuerURL: idp.Issuer(), Audience: "lenny-gateway"})
+	if err != nil {
+		t.Fatalf("NewOIDCVerifier: %v", err)
+	}
+	store := &fakeRevocationStore{revoked: []issuedtokenstore.RevokedToken{{JTI: "x", IsRoot: true}}}
+	srv := mustNewServer(t, Options{
+		CapabilityTokenTTL: 15 * time.Minute, Signer: signer, Verifier: ks,
+		CallerVerifier: jwt.NewMultiVerifier(ks, jwt.NewTenantClaimVerifier(oidc, "tenant_id")),
+		Issuer:         "https://lenny.dev.test/token", IssuedTokens: store,
+	})
+	idToken := idp.MintToken(oidcstub.MintOptions{Subject: "alice@acme.com", TenantID: "acme", Audience: "lenny-gateway"})
+	caller := signKeySetToken(t, signer, "jti-caller", "")
+
+	status, env := decodeExchange(t, doExchange(t, srv, caller, Request{
+		GrantType: grantTypeExchange, SubjectToken: idToken, RequestedTokenType: revokedTokenType,
+	}))
+	if status != http.StatusOK {
+		t.Fatalf("revocation of an ID token: status %d body %v, want 200", status, env)
+	}
+	if store.gotRoot == "" || store.gotRootRow.TenantID != "acme" || store.gotRootRow.Subject != "alice@acme.com" || len(store.gotRootRow.TokenHash) == 0 {
+		t.Errorf("root row = %+v, want the ID token's jti, acme, alice, and a token hash", store.gotRootRow)
+	}
+
+	status, env = decodeExchange(t, doExchange(t, srv, caller, narrowRequest(idToken)))
+	if status != http.StatusBadRequest || env["error"] != "invalid_grant" {
+		t.Errorf("mint from an ID token: status %d body %v, want 400 invalid_grant", status, env)
 	}
 }

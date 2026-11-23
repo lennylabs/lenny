@@ -276,3 +276,62 @@ func (s *Store) RevokeImpersonationsByActor(ctx context.Context, actorSub, reaso
 	}
 	return revoked, nil
 }
+
+// RevokedImpersonation is one impersonation row that
+// RevokeImpersonationsByImpersonator revoked: its jti, the tenant it lives
+// in, and its sub.
+type RevokedImpersonation struct {
+	JTI      string
+	TenantID string
+	Subject  string
+}
+
+// RevokeImpersonationsByImpersonator revokes every active impersonation
+// row, in every tenant, whose impersonator_tenant_id is impersonatorTenant
+// and whose impersonator_jti is one of impersonatorJTIs, stamping reason,
+// and returns the rows it revoked. It backs the recursive-revocation
+// request: the Token Service passes the request's tenant and the jtis of
+// the cascade's whole subtree after the cascade commits, so revoking a
+// platform-admin's bearer, or a token it descends from, ends the
+// impersonation sessions that bearer started. The tenant term confines the
+// update to rows started from the request's own tenant, which is why it
+// needs no platform-admin caller. An empty tenant or jti list makes no
+// query. The caller emits the cross_tenant_read event after the revocation
+// commits.
+//
+// spec: §13.3 (Credential Flow: Lineage of derived tokens; Platform-admin
+// impersonation, rules 2, 4, and 7).
+func (s *Store) RevokeImpersonationsByImpersonator(ctx context.Context, impersonatorTenant string, impersonatorJTIs []string, reason string, at time.Time) ([]RevokedImpersonation, error) {
+	if impersonatorTenant == "" || len(impersonatorJTIs) == 0 {
+		return nil, nil
+	}
+	var revoked []RevokedImpersonation
+	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
+		rows, err := tx.Query(ctx,
+			`UPDATE issued_tokens
+			 -- platform-admin-cross-tenant-allowed
+			 -- platform-admin-cross-tenant-justification: §13.3 impersonator link; an impersonation bearer lives in the target tenant, the impersonator terms confine the update to rows started from a bearer of the revocation request's own tenant, and the predicate confines it to impersonation rows.
+			 SET revoked_at = $3, revoked_reason = $4
+			 WHERE impersonator_tenant_id = $1 AND impersonator_jti = ANY($2)
+			   AND `+impersonationPredicate+`
+			   AND revoked_at IS NULL AND exp > $3
+			 RETURNING jti, tenant_id, sub`,
+			impersonatorTenant, impersonatorJTIs, at, pgtenant.NullString(reason))
+		if err != nil {
+			return fmt.Errorf("issuedtokenstore: revoke impersonations by impersonator: %w", err)
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var r RevokedImpersonation
+			if err := rows.Scan(&r.JTI, &r.TenantID, &r.Subject); err != nil {
+				return fmt.Errorf("issuedtokenstore: scan revoked impersonation: %w", err)
+			}
+			revoked = append(revoked, r)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return revoked, nil
+}

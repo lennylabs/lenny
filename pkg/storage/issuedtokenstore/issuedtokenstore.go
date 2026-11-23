@@ -81,6 +81,14 @@ type IssuedToken struct {
 	// impersonation" rule 2).
 	ActSubject string
 	ParentJTI  string
+	// ImpersonatorTenantID and ImpersonatorJTI are set only on a
+	// platform-admin impersonation row: the tenant and jti of the admin's
+	// own bearer that started it. A recursive revocation that reaches that
+	// bearer revokes the impersonation row through them
+	// (RevokeImpersonationsByImpersonator). They do not enter the
+	// impersonation predicate.
+	ImpersonatorTenantID string
+	ImpersonatorJTI      string
 }
 
 // Revoked reports whether the token has been revoked.
@@ -169,7 +177,8 @@ var _ Eraser = (*Store)(nil)
 
 const selectList = `jti, tenant_id, sub, token_hash, scope, audience,
 	audiences, dialect_cap_applied_seconds,
-	issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti`
+	issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti,
+	impersonator_tenant_id, impersonator_jti`
 
 // Record persists issued-token metadata. It returns ErrAlreadyExists
 // when the JTI is already recorded — the JTI primary key is what
@@ -373,13 +382,15 @@ func insertIssued(ctx context.Context, tx pgx.Tx, tok IssuedToken) error {
 	const insertSQL = `INSERT INTO issued_tokens (
 		jti, tenant_id, sub, token_hash, scope, audience,
 		audiences, dialect_cap_applied_seconds,
-		issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)`
+		issued_at, exp, revoked_at, revoked_reason, act_sub, parent_jti,
+		impersonator_tenant_id, impersonator_jti
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`
 	_, err := tx.Exec(ctx, insertSQL,
 		tok.JTI, tok.TenantID, tok.Subject, tok.TokenHash, scopeArg(tok.Scope),
 		tok.Audience, audienceListArg(tok.Audiences, tok.Audience), tok.DialectCapAppliedSeconds,
 		tok.IssuedAt, tok.ExpiresAt, pgtenant.NullTime(tok.RevokedAt),
-		pgtenant.NullString(tok.RevokedReason), pgtenant.NullString(tok.ActSubject), pgtenant.NullString(tok.ParentJTI))
+		pgtenant.NullString(tok.RevokedReason), pgtenant.NullString(tok.ActSubject), pgtenant.NullString(tok.ParentJTI),
+		pgtenant.NullString(tok.ImpersonatorTenantID), pgtenant.NullString(tok.ImpersonatorJTI))
 	return err
 }
 
@@ -495,14 +506,22 @@ func (s *Store) RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReaso
 }
 
 // RevokeBySubject marks every not-yet-revoked token issued for
-// (tenantID, subject) as revoked with the given reason and instant, and
-// returns the JTIs it revoked. It backs the §11.4 full_revoke
-// cached-auth invalidation step: the caller pushes the returned JTIs
-// into the in-memory revocation cache so the user's issued tokens are
-// rejected on the next request without waiting for a rehydration. An
-// already-revoked token is left untouched and its JTI is not returned,
-// so the operation is idempotent across repeated full_revoke calls. A
-// user with no issued tokens yields an empty slice and no error.
+// (tenantID, subject), and every not-yet-revoked lineage descendant of a
+// token of the subject whatever its own sub, as revoked with the given
+// reason and instant, and returns the JTIs it revoked. The walk is seeded
+// with every row of the subject, revoked or not, so the descendants of a
+// token the subject had already revoked, such as one rotated away from,
+// are reached too, and it follows parent_jti inside the tenant. It backs
+// the §11.4 full_revoke cached-auth invalidation step: the caller pushes
+// the returned JTIs into the in-memory revocation cache so the revoked
+// tokens are rejected on the next request without waiting for a
+// rehydration. An already-revoked token is left untouched and its JTI is
+// not returned, so the operation is idempotent across repeated
+// full_revoke calls. A user with no issued tokens yields an empty slice
+// and no error.
+//
+// spec: §11.4 step 5, §13.3 (Credential Flow: Lineage of derived tokens,
+// Rotation lineage and leaked tokens).
 func (s *Store) RevokeBySubject(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error) {
 	if at.IsZero() {
 		at = time.Now().UTC()
@@ -510,9 +529,19 @@ func (s *Store) RevokeBySubject(ctx context.Context, tenantID, subject, reason s
 	var revoked []string
 	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`UPDATE issued_tokens SET revoked_at = $3, revoked_reason = $4
-			 WHERE tenant_id = $1 AND sub = $2 AND revoked_at IS NULL
-			 RETURNING jti`,
+			`WITH RECURSIVE subtree AS (
+				SELECT jti, tenant_id FROM issued_tokens WHERE tenant_id = $1 AND sub = $2
+				UNION
+				-- The walk stays inside the tenant: each child is pinned to
+				-- its parent's tenant (R-02 tenant isolation).
+				SELECT c.jti, c.tenant_id FROM issued_tokens c
+					JOIN subtree p ON c.parent_jti = p.jti AND c.tenant_id = p.tenant_id
+					WHERE c.tenant_id = $1
+			)
+			UPDATE issued_tokens t SET revoked_at = $3, revoked_reason = $4
+			FROM subtree s
+			WHERE t.jti = s.jti AND t.tenant_id = $1 AND t.revoked_at IS NULL
+			RETURNING t.jti`,
 			tenantID, subject, at, pgtenant.NullString(reason))
 		if err != nil {
 			return err
@@ -562,27 +591,74 @@ func (s *Store) RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason
 }
 
 // RevokeCascadeByCaller is RevokeCascade for a revocation request whose
-// caller token is callerJTI. In the same transaction, and before the
-// cascade, it reads the caller's row in the tenant under FOR SHARE and
-// returns ErrCallerRevoked, revoking nothing, when the row is revoked.
-// The share lock makes a concurrent revocation of the caller token either
-// commit first, which refuses the request, or wait until the request
-// commits. An empty callerJTI, or a caller with no row in the tenant
-// (an upstream OIDC ID token), skips the check. The root may be revoked
-// already: the cascade then revokes the descendants not yet revoked.
+// caller token is callerJTI. It is RevokeLineage for a root that must
+// already have a row, and returns only the rows it revoked.
 //
 // spec: §13.3 (Credential Flow) "Recursive-revocation request
 // authorization."
 func (s *Store) RevokeCascadeByCaller(ctx context.Context, tenantID, callerJTI, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
-	if at.IsZero() {
-		at = time.Now().UTC()
+	res, err := s.RevokeLineage(ctx, LineageRevocation{
+		TenantID:    tenantID,
+		CallerJTI:   callerJTI,
+		Root:        IssuedToken{JTI: rootJTI},
+		RootReason:  rootReason,
+		ChildReason: childReason,
+		At:          at,
+	})
+	return res.Revoked, err
+}
+
+// LineageRevocation is one recursive revocation: the tenant, the caller
+// token whose revocation refuses the request, the root, and the reasons
+// and instant stamped on the revoked rows.
+type LineageRevocation struct {
+	TenantID  string
+	CallerJTI string
+	// Root names the root by Root.JTI. When the root has no row in the
+	// tenant and Root.TokenHash is set, the revocation records Root as the
+	// root's row, which the cascade then stamps revoked; with no
+	// TokenHash, a root without a row returns ErrNotFound.
+	Root        IssuedToken
+	RootReason  string
+	ChildReason string
+	At          time.Time
+}
+
+// CascadeResult reports one recursive revocation: the rows it revoked,
+// with IsRoot marking the root, and the jtis of the root's whole lineage
+// subtree, including the rows that were revoked before the request. The
+// impersonator-link revocation reads Subtree.
+type CascadeResult struct {
+	Revoked []RevokedToken
+	Subtree []string
+}
+
+// RevokeLineage revokes the root and every lineage descendant reachable
+// through parent_jti inside the tenant, in one transaction. Before the
+// cascade it reads the caller's row under FOR SHARE and returns
+// ErrCallerRevoked, revoking nothing, when the row is revoked; the share
+// lock makes a concurrent revocation of the caller token either commit
+// first, which refuses the request, or wait until the request commits. An
+// empty CallerJTI, or a caller with no row in the tenant (an upstream OIDC
+// ID token), skips that check. The root may be revoked already: the
+// cascade then revokes the descendants not yet revoked. A root without a
+// row is recorded from Root when Root.TokenHash is set and refused with
+// ErrNotFound otherwise. Postgres deadlock victims are retried, because
+// two requests that revoke each other's caller token can deadlock on the
+// caller-row share locks.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization.", "Lineage of derived tokens."; §8.3.
+func (s *Store) RevokeLineage(ctx context.Context, req LineageRevocation) (CascadeResult, error) {
+	if req.At.IsZero() {
+		req.At = time.Now().UTC()
 	}
 	var (
-		out []RevokedToken
+		out CascadeResult
 		err error
 	)
 	for attempt := 0; attempt < cascadeDeadlockAttempts; attempt++ {
-		out, err = s.revokeCascadeByCallerOnce(ctx, tenantID, callerJTI, rootJTI, rootReason, childReason, at)
+		out, err = s.revokeLineageOnce(ctx, req)
 		if !isDeadlock(err) {
 			break
 		}
@@ -590,11 +666,11 @@ func (s *Store) RevokeCascadeByCaller(ctx context.Context, tenantID, callerJTI, 
 	return out, err
 }
 
-// cascadeDeadlockAttempts bounds the transactions RevokeCascadeByCaller
-// runs when Postgres aborts one as a deadlock victim. Two requests that
-// revoke each other's caller token deadlock on the caller-row share locks
-// at most once: after the survivor commits, the retried request reads its
-// own caller row as revoked.
+// cascadeDeadlockAttempts bounds the transactions RevokeLineage runs when
+// Postgres aborts one as a deadlock victim. Two requests that revoke each
+// other's caller token deadlock on the caller-row share locks at most
+// once: after the survivor commits, the retried request reads its own
+// caller row as revoked.
 const cascadeDeadlockAttempts = 3
 
 // isDeadlock reports whether err is the Postgres deadlock_detected error.
@@ -603,64 +679,183 @@ func isDeadlock(err error) bool {
 	return errors.As(err, &pgErr) && pgErr.Code == "40P01"
 }
 
-// revokeCascadeByCallerOnce is one transaction of RevokeCascadeByCaller.
-func (s *Store) revokeCascadeByCallerOnce(ctx context.Context, tenantID, callerJTI, rootJTI, rootReason, childReason string, at time.Time) ([]RevokedToken, error) {
-	var out []RevokedToken
-	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
-		if callerJTI != "" {
-			var callerRevoked bool
-			err := tx.QueryRow(ctx,
-				`SELECT revoked_at IS NOT NULL FROM issued_tokens WHERE jti = $1 AND tenant_id = $2 FOR SHARE`,
-				callerJTI, tenantID).Scan(&callerRevoked)
-			switch {
-			case errors.Is(err, pgx.ErrNoRows):
-			case err != nil:
-				return err
-			case callerRevoked:
-				return ErrCallerRevoked
-			}
-		}
-		// Confirm the root exists so a typo'd jti is ErrNotFound rather
-		// than a silent no-op; an already-revoked root still cascades to
-		// any not-yet-revoked descendant.
-		var exists bool
-		if err := tx.QueryRow(ctx,
-			`SELECT EXISTS(SELECT 1 FROM issued_tokens WHERE jti = $1 AND tenant_id = $2)`,
-			rootJTI, tenantID).Scan(&exists); err != nil {
+// revokeLineageOnce is one transaction of RevokeLineage.
+func (s *Store) revokeLineageOnce(ctx context.Context, req LineageRevocation) (CascadeResult, error) {
+	var out CascadeResult
+	err := pgtenant.InTx(ctx, s.pool, req.TenantID, func(tx pgx.Tx) error {
+		if err := checkCallerLive(ctx, tx, req.TenantID, req.CallerJTI); err != nil {
 			return err
 		}
-		if !exists {
-			return ErrNotFound
+		if err := ensureRoot(ctx, tx, req); err != nil {
+			return err
 		}
-		rows, err := tx.Query(ctx,
-			`WITH RECURSIVE subtree AS (
-				SELECT jti, tenant_id FROM issued_tokens WHERE jti = $1 AND tenant_id = $2
-				UNION ALL
-				-- The recursion stays inside one tenant: the seed binds
-				-- tenant_id = $2 and the join pins each child to its parent's
-				-- tenant (R-02 tenant-isolation: the descent never crosses a
-				-- tenant boundary).
-				SELECT c.jti, c.tenant_id FROM issued_tokens c
-					JOIN subtree p ON c.parent_jti = p.jti AND c.tenant_id = p.tenant_id
-					WHERE c.tenant_id = $2
-			)
+		res, err := cascadeFromRoot(ctx, tx, req)
+		out = res
+		return err
+	})
+	if err != nil {
+		return CascadeResult{}, mapUniqueViolation(err)
+	}
+	return out, nil
+}
+
+// checkCallerLive reads the caller's row under FOR SHARE and returns
+// ErrCallerRevoked when it is revoked. An empty jti or a missing row
+// passes.
+func checkCallerLive(ctx context.Context, tx pgx.Tx, tenantID, callerJTI string) error {
+	if callerJTI == "" {
+		return nil
+	}
+	var callerRevoked bool
+	err := tx.QueryRow(ctx,
+		`SELECT revoked_at IS NOT NULL FROM issued_tokens WHERE jti = $1 AND tenant_id = $2 FOR SHARE`,
+		callerJTI, tenantID).Scan(&callerRevoked)
+	switch {
+	case errors.Is(err, pgx.ErrNoRows):
+		return nil
+	case err != nil:
+		return err
+	case callerRevoked:
+		return ErrCallerRevoked
+	}
+	return nil
+}
+
+// ensureRoot confirms the root has a row in the tenant, so a typo'd jti is
+// ErrNotFound rather than a silent no-op, and records the root from
+// req.Root when it has none and req.Root.TokenHash is set. The recorded
+// row is live; the cascade that follows stamps it revoked. The insert does
+// nothing on a jti conflict: a concurrent request that records the same
+// root first leaves its row for this one, and a jti that another tenant
+// holds leaves the root without a row here, which is ErrNotFound.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
+func ensureRoot(ctx context.Context, tx pgx.Tx, req LineageRevocation) error {
+	exists, err := rootExists(ctx, tx, req)
+	if err != nil || exists {
+		return err
+	}
+	if len(req.Root.TokenHash) == 0 {
+		return ErrNotFound
+	}
+	root := req.Root
+	root.TenantID = req.TenantID
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO issued_tokens (
+			jti, tenant_id, sub, token_hash, scope, audience, audiences,
+			dialect_cap_applied_seconds, issued_at, exp
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9)
+		ON CONFLICT (jti) DO NOTHING`,
+		root.JTI, root.TenantID, root.Subject, root.TokenHash, scopeArg(root.Scope),
+		root.Audience, audienceListArg(root.Audiences, root.Audience), root.IssuedAt, root.ExpiresAt); err != nil {
+		return err
+	}
+	if exists, err = rootExists(ctx, tx, req); err != nil || exists {
+		return err
+	}
+	return ErrNotFound
+}
+
+// rootExists reports whether the root has a row in the request's tenant.
+func rootExists(ctx context.Context, tx pgx.Tx, req LineageRevocation) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM issued_tokens WHERE jti = $1 AND tenant_id = $2)`,
+		req.Root.JTI, req.TenantID).Scan(&exists)
+	return exists, err
+}
+
+// cascadeFromRoot revokes the not-yet-revoked rows of the root's lineage
+// subtree in one statement, and returns them with the jtis of the whole
+// subtree. The root is stamped with req.RootReason and each descendant
+// with req.ChildReason. Token lineage is acyclic (a child's parent_jti
+// always references a pre-existing token), so the recursive walk
+// terminates.
+func cascadeFromRoot(ctx context.Context, tx pgx.Tx, req LineageRevocation) (CascadeResult, error) {
+	rows, err := tx.Query(ctx,
+		`WITH RECURSIVE subtree AS (
+			SELECT jti, tenant_id FROM issued_tokens WHERE jti = $1 AND tenant_id = $2
+			UNION ALL
+			-- The recursion stays inside one tenant: the seed binds
+			-- tenant_id = $2 and the join pins each child to its parent's
+			-- tenant (R-02 tenant-isolation: the descent never crosses a
+			-- tenant boundary).
+			SELECT c.jti, c.tenant_id FROM issued_tokens c
+				JOIN subtree p ON c.parent_jti = p.jti AND c.tenant_id = p.tenant_id
+				WHERE c.tenant_id = $2
+		), revoked AS (
 			UPDATE issued_tokens t
 			SET revoked_at = $3,
 			    revoked_reason = CASE WHEN t.jti = $1 THEN $4 ELSE $5 END
 			FROM subtree s
 			WHERE t.jti = s.jti AND t.tenant_id = $2 AND t.revoked_at IS NULL
-			RETURNING t.jti, t.sub, (t.jti = $1) AS is_root`,
-			rootJTI, tenantID, at, pgtenant.NullString(rootReason), pgtenant.NullString(childReason))
+			RETURNING t.jti, t.tenant_id, t.sub, (t.jti = $1) AS is_root
+		)
+		SELECT s.jti, r.sub, r.is_root FROM subtree s
+			LEFT JOIN revoked r ON r.jti = s.jti AND r.tenant_id = s.tenant_id`,
+		req.Root.JTI, req.TenantID, req.At, pgtenant.NullString(req.RootReason), pgtenant.NullString(req.ChildReason))
+	if err != nil {
+		return CascadeResult{}, err
+	}
+	defer rows.Close()
+	var out CascadeResult
+	for rows.Next() {
+		var (
+			jti    string
+			sub    *string
+			isRoot *bool
+		)
+		if err := rows.Scan(&jti, &sub, &isRoot); err != nil {
+			return CascadeResult{}, err
+		}
+		out.Subtree = append(out.Subtree, jti)
+		if sub != nil {
+			out.Revoked = append(out.Revoked, RevokedToken{JTI: jti, Subject: *sub, IsRoot: isRoot != nil && *isRoot})
+		}
+	}
+	return out, rows.Err()
+}
+
+// LineageSubtree returns the jtis of the root's lineage subtree inside the
+// tenant: rootJTI itself, whether or not it has a row, and every row whose
+// parent_jti chain reaches it, revoked or not. It revokes nothing. In the
+// same transaction it reads the caller's row first and returns
+// ErrCallerRevoked when the row is revoked; an empty callerJTI or a caller
+// with no row skips that check. The recursive-revocation request reads it
+// before its cascade so the impersonator-link revocation runs while the
+// caller is still live, and a failed or interrupted request can be retried.
+//
+// spec: §13.3 (Credential Flow) "Lineage of derived tokens.",
+// "Platform-admin impersonation." rule 7.
+func (s *Store) LineageSubtree(ctx context.Context, tenantID, callerJTI, rootJTI string) ([]string, error) {
+	var out []string
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if err := checkCallerLive(ctx, tx, tenantID, callerJTI); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx,
+			`WITH RECURSIVE subtree AS (
+				SELECT $1::text AS jti, $2::text AS tenant_id
+				UNION ALL
+				-- The walk stays inside the tenant: each child is pinned to
+				-- its parent's tenant (R-02 tenant isolation).
+				SELECT c.jti, c.tenant_id FROM issued_tokens c
+					JOIN subtree p ON c.parent_jti = p.jti AND c.tenant_id = p.tenant_id
+					WHERE c.tenant_id = $2
+			)
+			SELECT jti FROM subtree`,
+			rootJTI, tenantID)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var rt RevokedToken
-			if err := rows.Scan(&rt.JTI, &rt.Subject, &rt.IsRoot); err != nil {
+			var jti string
+			if err := rows.Scan(&jti); err != nil {
 				return err
 			}
-			out = append(out, rt)
+			out = append(out, jti)
 		}
 		return rows.Err()
 	})
@@ -668,6 +863,26 @@ func (s *Store) revokeCascadeByCallerOnce(ctx context.Context, tenantID, callerJ
 		return nil, err
 	}
 	return out, nil
+}
+
+// RecordWithSources records an issued-token row in one transaction that
+// first takes the §11.7 per-tenant audit advisory lock and re-reads the
+// listed source tokens (§13.3 write-before-issue step 1a), and writes no
+// audit row. A revoked source returns a *SourceRevokedError and an
+// impersonation source a *SourceImpersonationError, and nothing is
+// written; a jti collision returns ErrAlreadyExists. The playground mint
+// records its bearer through it.
+//
+// spec: §10.2 (Playground mint invariants, invariant 6), §13.3
+// (Credential Flow: Write-before-issue ordering).
+func (s *Store) RecordWithSources(ctx context.Context, tok IssuedToken, sources []SourceToken) error {
+	err := pgtenant.InTx(ctx, s.pool, tok.TenantID, func(tx pgx.Tx) error {
+		if err := lockAndRecheck(ctx, tx, tok.TenantID, sources); err != nil {
+			return err
+		}
+		return insertIssued(ctx, tx, tok)
+	})
+	return mapUniqueViolation(err)
 }
 
 // ListRevoked returns every revoked token for the tenant, supporting
@@ -795,11 +1010,13 @@ func scanToken(row pgx.Row) (IssuedToken, error) {
 		t                             IssuedToken
 		revokedAt                     *time.Time
 		revokedReason, actSub, parent *string
+		impTenant, impJTI             *string
 	)
 	if err := row.Scan(
 		&t.JTI, &t.TenantID, &t.Subject, &t.TokenHash, &t.Scope, &t.Audience,
 		&t.Audiences, &t.DialectCapAppliedSeconds,
 		&t.IssuedAt, &t.ExpiresAt, &revokedAt, &revokedReason, &actSub, &parent,
+		&impTenant, &impJTI,
 	); err != nil {
 		return IssuedToken{}, err
 	}
@@ -814,6 +1031,12 @@ func scanToken(row pgx.Row) (IssuedToken, error) {
 	}
 	if parent != nil {
 		t.ParentJTI = *parent
+	}
+	if impTenant != nil {
+		t.ImpersonatorTenantID = *impTenant
+	}
+	if impJTI != nil {
+		t.ImpersonatorJTI = *impJTI
 	}
 	return t, nil
 }

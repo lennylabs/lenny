@@ -92,7 +92,9 @@ func execTenant(ctx context.Context, pg *containers.Postgres, tenant, sql string
 //	A missing idx_issued_tokens_impersonation means migration 0192
 //	did not apply the §12.2 impersonation partial index, and a
 //	missing idx_issued_tokens_parent means migration 0199 did not
-//	apply the lineage index.
+//	apply the lineage index, and a missing
+//	idx_issued_tokens_impersonator means migration 0200 did not apply
+//	the impersonator-link index.
 func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
@@ -116,6 +118,8 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonation")
 	// 0199 adds the lineage index the recursive revocation walks.
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_parent")
+	// 0200 adds the index the impersonator-link revocation reads.
+	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonator")
 
 	// Rollback removes every object, including the database roles.
 	pg.MigrateDown(t, dir)

@@ -26,6 +26,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"math"
 	"net/http"
 	"net/url"
@@ -34,6 +35,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/audit"
+	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	obsaudit "github.com/lennylabs/lenny/pkg/observability/audit"
@@ -90,19 +92,45 @@ type IssuedTokenRotationStore interface {
 // rotation write-before-issue surface ever drops off the store.
 var _ IssuedTokenRotationStore = (*issuedtokenstore.Store)(nil)
 
+// The Postgres-backed stores also carry the recursive revocation, its
+// impersonator-link half, and the cross_tenant_read emitter that half
+// needs; these assertions fail the build if one drops off.
+var (
+	_ RevocationStore             = (*issuedtokenstore.Store)(nil)
+	_ ImpersonatorRevocationStore = (*issuedtokenstore.Store)(nil)
+	_ CrossTenantReads            = (*auditstore.Store)(nil)
+)
+
 // RevocationStore is the optional §13.3 / §8.3 recursive
 // revocation surface. When the configured IssuedTokens dependency
 // satisfies it (the Postgres-backed issuedtokenstore.Store does), the
 // Token Service serves the `requested_token_type=...:access_token:revoked`
 // revocation request: it revokes the subject token and cascades to its
-// delegation descendants. F-16.7.5.
+// lineage descendants. F-16.7.5.
 //
-// RevokeCascadeByCaller reads the caller token's row under a share lock
-// in the transaction that revokes, and returns
-// issuedtokenstore.ErrCallerRevoked, revoking nothing, when that row is
-// revoked.
+// RevokeLineage reads the caller token's row under a share lock in the
+// transaction that revokes, and returns issuedtokenstore.ErrCallerRevoked,
+// revoking nothing, when that row is revoked. It records a root without a
+// row from the row the request supplies.
 type RevocationStore interface {
-	RevokeCascadeByCaller(ctx context.Context, tenantID, callerJTI, rootJTI, rootReason, childReason string, at time.Time) ([]issuedtokenstore.RevokedToken, error)
+	RevokeLineage(ctx context.Context, req issuedtokenstore.LineageRevocation) (issuedtokenstore.CascadeResult, error)
+}
+
+// ImpersonatorRevocationStore is the cross-tenant half of the recursive
+// revocation: it reads the root's lineage subtree, refusing a revoked
+// caller, and revokes the active impersonation rows whose impersonator
+// link names a token of that subtree. The Postgres-backed
+// issuedtokenstore.Store satisfies it.
+type ImpersonatorRevocationStore interface {
+	LineageSubtree(ctx context.Context, tenantID, callerJTI, rootJTI string) ([]string, error)
+	RevokeImpersonationsByImpersonator(ctx context.Context, impersonatorTenant string, impersonatorJTIs []string, reason string, at time.Time) ([]issuedtokenstore.RevokedImpersonation, error)
+}
+
+// CrossTenantReads emits the §12.3 cross_tenant_read audit event for the
+// impersonator-link revocation, which runs under the __all__ sentinel.
+// *auditstore.Store satisfies it.
+type CrossTenantReads interface {
+	EmitCrossTenantRead(ctx context.Context, r auditstore.CrossTenantRead) error
 }
 
 // Auditor writes §16.7 audit rows on the Token Service's behalf. The
@@ -164,6 +192,11 @@ type Server struct {
 	// assignment for the recursive-revocation request. Nil leaves the
 	// caller token's roles claim authoritative.
 	platformRoles PlatformRoleResolver
+
+	// crossTenantReads emits the cross_tenant_read event of the
+	// impersonator-link revocation. It is Options.CrossTenantReads, or
+	// the Auditor when it satisfies CrossTenantReads.
+	crossTenantReads CrossTenantReads
 }
 
 // PlatformRoleResolver returns the platform-managed role assignment of
@@ -261,6 +294,14 @@ type Options struct {
 	// store, so correctness is preserved; peers fall back to the
 	// issued_tokens.revoked_at check). F-16.7.5.
 	RevocationPropagator func(ctx context.Context, tenantID, jti string) error
+
+	// CrossTenantReads, when set, emits the cross_tenant_read event of
+	// the impersonator-link revocation that follows a recursive
+	// revocation. Nil uses the Auditor when it satisfies CrossTenantReads,
+	// which the Postgres-backed audit store does. With neither, a
+	// revocation request against a store that can end impersonation
+	// sessions fails closed after its own cascade commits.
+	CrossTenantReads CrossTenantReads
 }
 
 // ErrNoVerifier is returned by NewServer when Options.Verifier is nil.
@@ -310,6 +351,10 @@ func NewServer(opts Options) (*Server, error) {
 
 		revocationPropagator: opts.RevocationPropagator,
 		platformRoles:        opts.PlatformRoles,
+		crossTenantReads:     opts.CrossTenantReads,
+	}
+	if s.crossTenantReads == nil {
+		s.crossTenantReads, _ = opts.Auditor.(CrossTenantReads)
 	}
 	if s.callerVerifier == nil {
 		s.callerVerifier = s.verifier
@@ -476,7 +521,7 @@ func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	// revoke; the Token Service cascades to its delegation descendants
 	// and emits one token.revoked per revoked node. F-16.7.5.
 	if req.RequestedTokenType == revokedTokenType {
-		s.handleRevocationRequest(w, r, callerClaims, subjectClaims, now, finish)
+		s.handleRevocationRequest(w, r, req.SubjectToken, callerClaims, subjectClaims, now, finish)
 		return
 	}
 
@@ -589,9 +634,20 @@ func parseAndValidateRequest(w http.ResponseWriter, r *http.Request, finish func
 // verifyExchangeTokens verifies the subject token and the optional actor
 // token. It returns the subject claims, the actor claims (nil when no
 // actor_token was supplied), and true on success; on a verification
-// failure it writes 400 invalid_grant and returns false.
+// failure it writes 400 invalid_grant and returns false. The subject of a
+// recursive-revocation request is verified with the caller verifier, which
+// also accepts an upstream IdP ID token, so a token derived from an ID
+// token can be revoked through it; every mint verifies its subject with
+// the Lenny key set only.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
 func (s *Server) verifyExchangeTokens(w http.ResponseWriter, req Request, finish func(string)) (jwt.Claims, *jwt.Claims, bool) {
-	subjectClaims, err := s.verifier.Verify(req.SubjectToken)
+	subjectVerifier := s.verifier
+	if req.RequestedTokenType == revokedTokenType {
+		subjectVerifier = s.callerVerifier
+	}
+	subjectClaims, err := subjectVerifier.Verify(req.SubjectToken)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		finish("invalid_grant")
@@ -677,12 +733,13 @@ func (s *Server) handleExchange(w http.ResponseWriter, r *http.Request, req Requ
 // caller, subject, and optional actor claims, and resolves the §13.3
 // per-dialect lifetime cap.
 func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time) tokenexchange.Request {
+	audience := requestedAudience(req.Audience)
 	exchangeReq := tokenexchange.Request{
 		Subject: toExchangeToken(subjectClaims),
 		Caller:  toExchangeToken(callerClaims),
 		Requested: tokenexchange.Token{
 			Scope:    splitScope(req.Scope),
-			Audience: splitSpace(req.Audience),
+			Audience: audience,
 		},
 		RequestedExp: s.requestedExp(req, actorClaims != nil, now),
 		Now:          now,
@@ -691,10 +748,25 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 		actor := toExchangeToken(*actorClaims)
 		exchangeReq.Actor = &actor
 	}
-	if dialectCap := s.resolveDialectCap(exchangeReq.Requested.Audience, req.Audience); dialectCap > 0 {
+	if dialectCap := s.resolveDialectCap(audience, strings.Join(audience, " ")); dialectCap > 0 {
 		exchangeReq.PerDialectCap = dialectCap
 	}
 	return exchangeReq
+}
+
+// requestedAudience returns the audience an exchange requests: the
+// request's space-separated audience values, or
+// tokenexchange.DefaultAudience when the request names none, so a self-exchange without audience of a
+// lenny-gateway subject is a rotation and the issued token carries an aud
+// claim.
+//
+// spec: §13.3 (Credential Flow) "RFC 8693 parameter mapping to Lenny
+// claims" (the `audience` row), "Scope narrowing enforcement." rule (c).
+func requestedAudience(raw string) []string {
+	if aud := splitSpace(raw); len(aud) > 0 {
+		return aud
+	}
+	return []string{tokenexchange.DefaultAudience}
 }
 
 // requestedExp returns the §10.2 requested_exp of an exchange: now +
@@ -792,7 +864,7 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 			SubjectSub:     subjectClaims.Subject,
 			PolicyResult:   "rejected:" + ee.Reason,
 			ErrorCode:      ee.Code,
-			Audience:       splitSpace(req.Audience),
+			Audience:       exchangeReq.Requested.Audience,
 			RequestedScope: splitScope(req.Scope),
 			Now:            now,
 		}); auditErr != nil {
@@ -910,11 +982,11 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, req 
 		PolicyResult:    "accepted",
 		Now:             now,
 	}
-	sources := exchangeSources(subjectClaims, actorClaims)
+	sources := exchangeSources(subjectClaims, actorClaims, callerClaims)
 
 	err := s.commitIssued(r.Context(), rec, sources, isRotation, subjectClaims.JWTID, auditPayload)
 	if reason, ok := sourceRefusalReason(err); ok {
-		s.rejectRevokedSource(w, r, issued.TenantID, reason, auditPayload, finish)
+		s.rejectRevokedSource(w, r, issued.TenantID, reason, callerRefusal(err), auditPayload, finish)
 		return false
 	}
 	if err != nil {
@@ -987,16 +1059,38 @@ func derivedLineage(subjectClaims jwt.Claims, actorClaims *jwt.Claims) (actSub, 
 }
 
 // exchangeSources lists the source tokens the issuance transaction
-// re-reads under the lock: the subject_token and, on a delegation child
-// mint, the actor_token. The subject is listed first, so a token that
-// plays both roles is reported as the subject.
+// re-reads under the lock: the subject_token, on a delegation child mint
+// the actor_token, and the caller token. The subject is listed first and
+// the caller last, so a token that plays several roles is reported in its
+// first role, and a revoked subject or actor is reported before a revoked
+// caller. A caller token that is also the subject or the actor is listed
+// once, in that role, and a caller without a jti is not listed.
+//
 // spec: §13.3 (Credential Flow: Write-before-issue ordering).
-func exchangeSources(subjectClaims jwt.Claims, actorClaims *jwt.Claims) []issuedtokenstore.SourceToken {
+func exchangeSources(subjectClaims jwt.Claims, actorClaims *jwt.Claims, callerClaims jwt.Claims) []issuedtokenstore.SourceToken {
 	sources := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: subjectClaims.JWTID}}
 	if actorClaims != nil {
 		sources = append(sources, issuedtokenstore.SourceToken{Role: issuedtokenstore.SourceActorToken, JTI: actorClaims.JWTID})
 	}
-	return sources
+	if callerClaims.JWTID == "" {
+		return sources
+	}
+	for _, src := range sources {
+		if src.JTI == callerClaims.JWTID {
+			return sources
+		}
+	}
+	return append(sources, issuedtokenstore.SourceToken{Role: issuedtokenstore.SourceCallerToken, JTI: callerClaims.JWTID})
+}
+
+// callerRefusal reports whether a step (1a) refusal names the caller
+// token, which the Token Service refuses with 401 invalid_client rather
+// than 400 invalid_grant.
+//
+// spec: §13.3 (Credential Flow: Write-before-issue ordering).
+func callerRefusal(err error) bool {
+	var revokedErr *issuedtokenstore.SourceRevokedError
+	return errors.As(err, &revokedErr) && revokedErr.Role == issuedtokenstore.SourceCallerToken
 }
 
 // commitIssued routes the write-before-issue record between the rotation,
@@ -1077,29 +1171,34 @@ func sourceRefusalReason(err error) (string, bool) {
 // rejectRevokedSource renders the §13.3 step (1a) rejection. The signed
 // token is discarded by the caller and never returned. The rejection
 // token.exchanged audit row, with policy_result rejected:<reason> (one of
-// subject_token_revoked, actor_token_revoked, subject_token_impersonation,
-// or actor_token_impersonation), is
+// subject_token_revoked, actor_token_revoked, caller_token_revoked,
+// subject_token_impersonation, or actor_token_impersonation), is
 // written through the Auditor, whose production implementation takes the
 // §11.7 lock and commits before it returns, so the client receives the
-// 400 invalid_grant only after the rejection audit is durable. A failed
+// error only after the rejection audit is durable: 401 invalid_client for
+// a revoked caller token, and 400 invalid_grant otherwise. A failed
 // rejection audit write returns 500 token_exchange_failed with the
 // intended reason in the description, matching the §13.3 rejected-exchange
 // discipline.
 // spec: §13.3 (Credential Flow: Write-before-issue ordering).
-func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, tenantID, reason string, accepted exchangeAuditPayload, finish func(string)) {
+func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, tenantID, reason string, caller bool, accepted exchangeAuditPayload, finish func(string)) {
+	status, code := http.StatusBadRequest, "invalid_grant"
+	if caller {
+		status, code = http.StatusUnauthorized, "invalid_client"
+	}
 	rejection := accepted
 	rejection.JTI = "" // The discarded token was never issued.
 	rejection.GrantedScope = nil
 	rejection.PolicyResult = "rejected:" + reason
-	rejection.ErrorCode = "invalid_grant"
+	rejection.ErrorCode = code
 	if err := s.recordExchangeAudit(r.Context(), tenantID, rejection); err != nil {
 		writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
 			"§13.3 rejection-audit write failed; intended rejection: "+reason)
 		finish("token_exchange_failed")
 		return
 	}
-	writeOAuthError(w, http.StatusBadRequest, "invalid_grant", reason)
-	finish("invalid_grant")
+	writeOAuthError(w, status, code, reason)
+	finish(code)
 }
 
 // isSelfRotation reports whether this exchange is a §13.3
@@ -1110,12 +1209,16 @@ func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, ten
 // revocation_reason=rotation_replaced is emitted. The guard is
 // deliberately narrow: a cross-audience or scope-narrowing self-exchange
 // is a scope_narrow / dialect derivation, not a rotation, so its subject
-// token is left live. F-16.7.5.
+// token is left live. A subject without an aud claim is compared as
+// tokenexchange.DefaultAudience, the audience it grants. F-16.7.5.
+//
+// spec: §13.3 (Credential Flow) "Lineage of derived tokens.", "Scope
+// narrowing enforcement." rule (c).
 func (s *Server) isSelfRotation(issued tokenexchange.Issued, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims) bool {
 	return actorClaims == nil &&
 		callerClaims.JWTID != "" &&
 		callerClaims.JWTID == subjectClaims.JWTID &&
-		sameStringSet(issued.Audience, subjectClaims.Audience) &&
+		sameStringSet(issued.Audience, tokenexchange.SubjectAudience(subjectClaims.Audience)) &&
 		sameStringSet(issued.Scope, splitScope(subjectClaims.Scope))
 }
 
@@ -1222,13 +1325,19 @@ func (s *Server) EmitRevocation(ctx context.Context, tenantID, sub, jti, reason 
 // It accepts the request only from the subject's own principal or a
 // tenant administrator (authorizeRevocation), and refuses a caller whose
 // own token is revoked. It revokes the subject token (the root) and every
-// descendant reachable through parent_jti, then emits one §16.7
-// token.revoked audit row per revoked node — `explicit_revoke` for the
-// root and `cascade_from_parent` for each descendant — and pushes each
-// revoked jti onto the cluster revocation propagation seam. The
-// revocation is durable in Postgres before the success response is
-// returned. F-16.7.5.
-func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request, caller, subject jwt.Claims, now time.Time, finish func(string)) {
+// descendant reachable through parent_jti, recording the root first when
+// it has no issued_tokens row, then emits one §16.7 token.revoked audit
+// row per revoked node — `explicit_revoke` for the root and
+// `cascade_from_parent` for each descendant — and pushes each revoked jti
+// onto the cluster revocation propagation seam. Before the cascade it ends
+// the impersonation sessions whose impersonator link names a token of the
+// root's subtree (revokeImpersonationsFrom), so a failure there leaves the
+// caller live for a retry. The revocation is durable in Postgres before
+// the success response is returned. F-16.7.5.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization.", "Lineage of derived tokens."
+func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request, rawSubject string, caller, subject jwt.Claims, now time.Time, finish func(string)) {
 	if caller.TenantID != subject.TenantID {
 		writeOAuthError(w, http.StatusForbidden, "invalid_grant", "cross-tenant revocation is not permitted")
 		finish("invalid_grant")
@@ -1258,8 +1367,18 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 		finish("token_store_unavailable")
 		return
 	}
-	revoked, err := rs.RevokeCascadeByCaller(r.Context(), subject.TenantID, caller.JWTID, subject.JWTID,
-		revocationReasonExplicit, revocationReasonCascade, now)
+	if _, err := s.revokeImpersonationsFrom(r.Context(), caller, subject.TenantID, subject.JWTID, now); err != nil {
+		writeImpersonationStepError(w, finish, err)
+		return
+	}
+	res, err := rs.RevokeLineage(r.Context(), issuedtokenstore.LineageRevocation{
+		TenantID:    subject.TenantID,
+		CallerJTI:   caller.JWTID,
+		Root:        revocationRoot(rawSubject, subject, now),
+		RootReason:  revocationReasonExplicit,
+		ChildReason: revocationReasonCascade,
+		At:          now,
+	})
 	if errors.Is(err, issuedtokenstore.ErrCallerRevoked) {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "the caller token is revoked")
 		finish("invalid_client")
@@ -1275,14 +1394,124 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 		writeIssueStoreError(w, finish, err)
 		return
 	}
-	for _, rt := range revoked {
+	for _, rt := range res.Revoked {
 		s.emitTokenRevoked(r.Context(), subject.TenantID, rt, subject.JWTID, now)
 	}
+	// revoked_count counts the request's own tenant only; the impersonation
+	// sessions ended in other tenants are reported by their token.revoked
+	// rows in those tenants.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"revoked":       true,
-		"revoked_count": len(revoked),
+		"revoked_count": len(res.Revoked),
 	})
 	finish("")
+}
+
+// writeImpersonationStepError renders a failure of the impersonator-link
+// revocation, which runs before the request's cascade: a revoked caller
+// token is refused with 401 invalid_client, and any other failure with 500
+// token_exchange_failed. The request has revoked nothing in its own tenant
+// either way, so a retry runs both steps again.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization.", "Platform-admin impersonation." rule 7.
+func writeImpersonationStepError(w http.ResponseWriter, finish func(string), err error) {
+	if errors.Is(err, issuedtokenstore.ErrCallerRevoked) {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "the caller token is revoked")
+		finish("invalid_client")
+		return
+	}
+	writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
+		"the impersonation sessions the lineage started were not ended, and nothing was revoked; retry the request: "+err.Error())
+	finish("token_exchange_failed")
+}
+
+// revocationRoot returns the row a recursive revocation records for its
+// root when the root has no issued_tokens row: the subject's jti, tenant,
+// sub, scope, audience, issue and expiry instants, and the SHA-256 of the
+// raw subject token. A subject without an exp yields a row without a
+// token hash, which RevokeLineage refuses as unknown rather than record a
+// row the expired-row GC could not bound.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
+func revocationRoot(rawSubject string, subject jwt.Claims, now time.Time) issuedtokenstore.IssuedToken {
+	root := issuedtokenstore.IssuedToken{JTI: subject.JWTID}
+	exp := subject.ExpiryTime()
+	if exp.IsZero() {
+		return root
+	}
+	issuedAt := now
+	if subject.IssuedAt > 0 {
+		issuedAt = time.Unix(subject.IssuedAt, 0).UTC()
+	}
+	hash := sha256.Sum256([]byte(rawSubject))
+	root.TenantID = subject.TenantID
+	root.Subject = subject.Subject
+	root.TokenHash = hash[:]
+	root.Scope = splitScope(subject.Scope)
+	root.Audience = strings.Join(subject.Audience, " ")
+	root.Audiences = append([]string{}, subject.Audience...)
+	root.IssuedAt = issuedAt
+	root.ExpiresAt = exp
+	return root
+}
+
+// impersonationReadCategory and revocationEndpoint name the
+// cross_tenant_read event of the impersonator-link revocation.
+const (
+	impersonationReadCategory = "impersonation_session"
+	revocationEndpoint        = "POST /v1/oauth/token"
+)
+
+// errNoCrossTenantReads is returned when the store can end impersonation
+// sessions but no cross_tenant_read emitter is configured: every query
+// under the __all__ sentinel emits one event, so the step fails closed and
+// runs no such query.
+var errNoCrossTenantReads = errors.New("no cross_tenant_read emitter is configured")
+
+// revokeImpersonationsFrom ends the impersonation sessions a recursive
+// revocation reaches, before the request's cascade revokes anything: it
+// reads the root's lineage subtree, refusing a revoked caller, then
+// revokes, in every tenant, the active impersonation rows whose
+// impersonator link names the request's tenant and a jti of that subtree,
+// audits and propagates each ended
+// session through emitTokenRevoked under the session's own tenant, and
+// then emits one cross_tenant_read event, whose failure it logs and
+// otherwise ignores, because the rows are already revoked. It returns the number of rows it revoked. A store without the
+// impersonator-link surface (the in-memory dev store) ends nothing.
+//
+// spec: §13.3 (Credential Flow) "Lineage of derived tokens.",
+// "Platform-admin impersonation." rules 4 and 7.
+func (s *Server) revokeImpersonationsFrom(ctx context.Context, caller jwt.Claims, tenantID, rootJTI string, now time.Time) (int, error) {
+	store, ok := s.issuedTokens.(ImpersonatorRevocationStore)
+	if !ok {
+		return 0, nil
+	}
+	if s.crossTenantReads == nil {
+		return 0, errNoCrossTenantReads
+	}
+	subtree, err := store.LineageSubtree(ctx, tenantID, caller.JWTID, rootJTI)
+	if err != nil {
+		return 0, err
+	}
+	revoked, err := store.RevokeImpersonationsByImpersonator(ctx, tenantID, subtree, revocationReasonCascade, now)
+	if err != nil {
+		return 0, err
+	}
+	for _, imp := range revoked {
+		s.emitTokenRevoked(ctx, imp.TenantID, issuedtokenstore.RevokedToken{JTI: imp.JTI, Subject: imp.Subject}, rootJTI, now)
+	}
+	if err := s.crossTenantReads.EmitCrossTenantRead(ctx, auditstore.CrossTenantRead{
+		Category:      impersonationReadCategory,
+		RowCount:      len(revoked),
+		Endpoint:      revocationEndpoint,
+		CallerSubject: caller.Subject,
+	}); err != nil {
+		slog.ErrorContext(ctx, "tokenservice: emit cross_tenant_read for the impersonator-link revocation",
+			"tenant_id", tenantID, "rows", len(revoked), "error", err)
+	}
+	return len(revoked), nil
 }
 
 // authorizeRevocation reports whether the caller may revoke the subject
@@ -1477,6 +1706,21 @@ func toExchangeToken(c jwt.Claims) tokenexchange.Token {
 		Typ:             tokenexchange.TokenType(c.Typ),
 		Exp:             c.ExpiryTime(),
 		Origin:          c.Origin,
+		Act:             exchangeActor(c.Act),
+	}
+}
+
+// exchangeActor maps a token's `act` claim onto the validator's Actor,
+// nil when the token carries none.
+func exchangeActor(a *jwt.ActorClaim) *tokenexchange.Actor {
+	if a == nil {
+		return nil
+	}
+	return &tokenexchange.Actor{
+		Subject:         a.Subject,
+		TenantID:        a.TenantID,
+		SessionID:       a.SessionID,
+		DelegationDepth: a.DelegationDepth,
 	}
 }
 

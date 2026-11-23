@@ -85,7 +85,8 @@ func recheckClaims(jti string) jwt.Claims {
 // (1a) re-read rejects an exchange whose subject or actor token is
 // revoked between the pre-check and the in-lock re-read: the handler
 // returns 400 invalid_grant with the role's reason, discards the signed
-// token, and writes one rejection token.exchanged row.
+// token, and writes one rejection token.exchanged row. The re-read lists
+// the caller token after the subject and the actor.
 func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 	revokedAt := time.Unix(1_700_000_000, 0)
 	cases := []struct {
@@ -101,6 +102,7 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			wantReason: "subject_token_revoked",
 			wantSources: []issuedtokenstore.SourceToken{
 				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
 			},
 		},
 		{
@@ -111,6 +113,7 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			wantSources: []issuedtokenstore.SourceToken{
 				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
 				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
 			},
 		},
 		{
@@ -121,6 +124,7 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			wantSources: []issuedtokenstore.SourceToken{
 				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
 				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
 			},
 		},
 	}
@@ -194,7 +198,10 @@ func TestHandlerLiveSourcesPassReRead_spec_13_3(t *testing.T) {
 	if len(store.records) != 1 {
 		t.Errorf("records = %d, want 1", len(store.records))
 	}
-	want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"}}
+	want := []issuedtokenstore.SourceToken{
+		{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
+		{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
+	}
 	if !reflect.DeepEqual(store.sources, want) {
 		t.Errorf("re-read sources = %+v, want %+v", store.sources, want)
 	}
