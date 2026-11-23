@@ -1,6 +1,6 @@
 # Token rule fixes from the property tests
 
-Status: `Decided`, revision 3, 2026-11-23.
+Status: `In progress`, revision 3, 2026-11-23.
 
 ## Problem
 

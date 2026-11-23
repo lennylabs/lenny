@@ -7,7 +7,7 @@ The property tests of 0165.S2 (`tests/component/tokenproperties`) run on the ste
 ## Steps
 
 ### 0168.S1 Token rule fixes from the property tests
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: [0165.S1, 0165.S2, 0169.S2 (part)]
 - closes: [TOKX-I17, TOKX-I19, TOKX-I20, TOKX-I22]
