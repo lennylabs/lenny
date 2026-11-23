@@ -225,22 +225,22 @@ func TestTokenRuleScenariosOfTheModelKeepTheProperties(t *testing.T) {
 		expectRevoked(t, w, 2, true)
 	})
 
-	// Finding F1 of 0165.S2, as the rules state it while 0165 open
-	// decision 15 is pending: a revocation request whose caller is an
-	// impersonation bearer started from the root ends that bearer and is
-	// then refused, so the root stays live.
-	run("an impersonation bearer as the caller of its root's revocation ends itself", func(t *testing.T, w *world) {
+	// Finding F1 of 0165.S2 (0165 decision 15): a revocation request whose
+	// caller is an impersonation bearer started from the root ends that
+	// bearer and revokes the root and its lineage.
+	run("an impersonation bearer as the caller of its root's revocation revokes the root", func(t *testing.T, w *world) {
+		t.Skip("blocked: TOKX-I22, the cascade refuses a caller that the request's impersonation step revoked; change 0168 fixes it (0165 decision 15)")
 		w.step(t, signIn(bob, "", auth.RolePlatformAdmin))
 		expect(t, w, w.step(t, impersonate(bob, 0, bob, 30)), http.StatusOK, "")
-		expect(t, w, w.step(t, revoke(bob, 1, 0)), http.StatusUnauthorized, "invalid_client")
+		expect(t, w, w.step(t, revoke(bob, 1, 0)), http.StatusOK, "")
 		expectRevoked(t, w, 1, true)
-		expectRevoked(t, w, 0, false)
+		expectRevoked(t, w, 0, true)
 	})
 
 	// Finding F2 of 0165.S2: a full revoke of alice misses the child bob
 	// minted with a token of alice's that has no row.
 	run("a full revoke reaches the delegations made with a token without a row", func(t *testing.T, w *world) {
-		t.Skip("blocked: TOKX-I19, the full revoke seeds its walk with the user's rows only (0165 open decision 16)")
+		t.Skip("blocked: TOKX-I19, the full revoke seeds its walk with the user's rows only; change 0168 fixes it (0165 decision 16)")
 		w.step(t, signIn(bob, ""))
 		w.step(t, signIn(alice, "").rowless())
 		w.step(t, leak(alice, 1, bob))
