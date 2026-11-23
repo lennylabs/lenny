@@ -1,6 +1,6 @@
 # A formal model of the token rules
 
-Status: `In progress`, revision 2, 2026-11-23.
+Status: `In progress`, revision 4, 2026-11-23.
 
 ## Problem
 
@@ -37,11 +37,11 @@ The change states the properties the token rules must keep as a numbered list ("
 
 Each counterexample is confirmed against the text, written as a scenario with alice, bob, and carol in the tenants acme and globex, and listed as an open decision with the smallest rule change that removes it. The model keeps the rules as decided; a check that fails stays failing until the owner chooses a fix and the model's predicate changes with the rule.
 
-Step 0165.S2 checks the same properties against the Token Service code, with Go property tests that generate random sequences of operations against an in-memory issued-token store.
+Step 0165.S2 checks the same properties, as §13.3 states them after change 0167, against the code: Go property tests generate random sequences of operations and run them against the Token Service, the playground mint, the impersonation issuer, and the full revoke over one Postgres issued-token store.
 
 ## Requirements
 
-None by identifier. §13.3 is content of the placeholder page TOKX and carries no requirement identifiers yet. The specification lane of 0165.S1 adds the property list to §13.3 after change 0167 edits §13.3.
+None by identifier. §13.3 is content of the placeholder page TOKX and carries no requirement identifiers yet. The specification lane of 0165.S1 adds the property list to §13.3 as the paragraph **Token rule properties.**, stated for the rules as change 0167 left them, and the property tests cite it.
 
 ## Properties
 
@@ -216,7 +216,8 @@ The model follows the text of 0164.S1. Reading the code it describes, in the bra
 
 - `tests/formal/tokens/tokens.als`, `tests/formal/tokens/run.sh`, and `tests/formal/tokens/README.md`: the model, its runner, and the map from each predicate and assertion to its rule and property.
 - `tests/README.md`: the `formal/` subdirectory.
-- `spec/13_security-model.md`, §13.3: the property list, in the specification lane of 0165.S1 after change 0167 edits §13.3, with the owner's answers in decisions 2 to 12.
+- `spec/13_security-model.md`, §13.3: the property list **Token rule properties.**, in the specification lane of 0165.S1 after change 0167 edits §13.3, with the owner's answers in decisions 2 to 12 and the outcomes they accept.
+- `tests/component/tokenproperties`: the generated property tests and the counterexample scenarios of step 0165.S2, and their count in `tests/registers/spec-section-citations.yaml`.
 
 ## Documentation
 
@@ -224,4 +225,11 @@ No reader-facing behavior changes: TOKX. The model changes no behavior, and the 
 
 ## Tests
 
-No tier of `lenny-test` runs the model; it is a design check run by hand with `tests/formal/tokens/run.sh`. Step 0165.S2 adds unit-tier property tests in `pkg/tokenservice` that cite §13.3 and check the properties against the code.
+No tier of `lenny-test` runs the model; it is a design check run by hand with `tests/formal/tokens/run.sh`.
+
+Step 0165.S2 adds component-tier tests in `tests/component/tokenproperties`, each citing §13.3 **Token rule properties.**:
+
+- `TestTokenRulesKeepTheirPropertiesOverGeneratedSequences` draws sequences of 8 to 20 operations with `pgregory.net/rapid` (seed 20261123 and 300 sequences by default, `-rapid.seed` and `-rapid.checks` to change them), checks every item of the list after every step, and fails when a run does not reach each scenario a property depends on.
+- `TestTokenRuleScenariosOfTheModelKeepTheProperties` replays CX-1 to CX-13 as fixed sequences under the same checks, with the outcome each decision chose, and the two sequences of decisions 15 and 16, both skipped until change 0168 fixes TOKX-I22 and TOKX-I19.
+
+The component tier fits because the properties depend on the Postgres transactions of the issued-token store: the recursive revocation, the impersonator link, the step (1a) re-read, and the full revoke's walk. Decisions 15 and 16 in `decisions.md` record the two sequences the tests found, and decision 17 a question the review of the step raised; change 0168 carries the fixes the owner chose for all three.

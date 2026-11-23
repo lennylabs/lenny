@@ -1,6 +1,6 @@
 # Token rule fixes from the formal model
 
-Status: `In progress`, revision 2, 2026-11-22.
+Status: `Implemented`, revision 3, 2026-11-23.
 
 ## Problem
 
@@ -12,7 +12,7 @@ Change 0165 (a formal model of the token rules, `changes/0165-token-rules-model/
 - CX-6: a child is bounded by its subject's scope only, so a child minted from an unrestricted subject with a narrow actor is broader than the token that delegates it.
 - CX-7: a request that lists every current action of a domain counts as strictly narrower than the domain wildcard while it admits the same tools today; the text does not say why.
 - CX-8: a child's depth is its actor's plus one, while rule (b) says an exchange rejects a decrement without saying against which token.
-- CX-9 and [TOKX-I14](../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md): an exchange without an `actor_token` issues no `act` claim, so narrowing or rotating a delegation child drops the name of its delegator.
+- CX-9 and [TOKX-I14](../../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md): an exchange without an `actor_token` issues no `act` claim, so narrowing or rotating a delegation child drops the name of its delegator.
 - CX-10 and G4: the Token Service does not read the caller token's revocation on a mint.
 - CX-11: a full revoke of a user revokes the user's tokens by `sub` and not the tokens others derived from them.
 - G1: a request without `audience` issues a token with no `aud` claim, although the parameter table names `lenny-gateway` as the default, so a self-exchange without `audience` is not detected as a rotation.
@@ -26,7 +26,7 @@ It leaves out:
 
 - G5, G6, and G7, which the owner asked to be filed as issues.
 - The property tests of 0165.S2 and a TLA+ model of the concurrent orderings, which come later.
-- [TOKX-I10](../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md), [TOKX-I13](../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md), and [AUTHN-I1](../../issues/AUTHN/AUTHN-I1-no-way-to-lift-a-user-invalidation.md), which no fix here closes.
+- [TOKX-I10](../../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md), [TOKX-I13](../../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md), and [AUTHN-I1](../../../issues/AUTHN/AUTHN-I1-no-way-to-lift-a-user-invalidation.md), which no fix here closes.
 
 ## Terms
 
@@ -58,7 +58,7 @@ The statements under "Problem" are the state on `main` at `dce47dd79`, which inc
 
 ### TF-2 Impersonation bearer bound and link (decision 2)
 
-Rule 1 of **Platform-admin impersonation.** caps the bearer's `exp` at the caller bearer's `exp`; `authmw.Principal` carries the caller's `exp` for it, and a bearer that would expire at the issue instant is refused. The row records the caller bearer's `tenant_id` and `jti` in two new columns, `impersonator_tenant_id` and `impersonator_jti` (migration 0200, with a partial index). The row predicate of rule 2 stays `act_sub IS NOT NULL AND parent_jti IS NULL`, so the new columns change no impersonation query. Before a recursive-revocation request's cascade, the Token Service reads the root's subtree with `LineageSubtree`, which refuses a revoked caller, then runs `RevokeImpersonationsByImpersonator` under `__all__`: it revokes the active impersonation rows whose `impersonator_tenant_id` is the request's tenant and whose `impersonator_jti` is in the subtree, revoked nodes included, writes a `token.revoked` row for each in the row's tenant, propagates each, and emits one `cross_tenant_read` event. A failure there revokes nothing in the request's tenant, so the caller stays live for a retry. Rule 7 states that this step needs no `platform-admin` caller because it reaches only rows derived from the request's own tenant, and §4.2 and §12.3 name it as the one exception to their `__all__` rule (open decision 1). Only the recursive-revocation request follows the link; rule 4 lists the other routes that revoke the admin's bearer and leave the session live (open decision 2). `revoked_count` counts the request's own tenant only.
+Rule 1 of **Platform-admin impersonation.** caps the bearer's `exp` at the caller bearer's `exp`; `authmw.Principal` carries the caller's `exp` for it, and a bearer that would expire at the issue instant is refused. The row records the caller bearer's `tenant_id` and `jti` in two new columns, `impersonator_tenant_id` and `impersonator_jti` (migration 0200, with a partial index). The row predicate of rule 2 stays `act_sub IS NOT NULL AND parent_jti IS NULL`, so the new columns change no impersonation query. Before a recursive-revocation request's cascade, the Token Service reads the root's subtree with `LineageSubtree`, which refuses a revoked caller, then runs `RevokeImpersonationsByImpersonator` under `__all__`: it revokes the active impersonation rows whose `impersonator_tenant_id` is the request's tenant and whose `impersonator_jti` is in the subtree, revoked nodes included, writes a `token.revoked` row for each in the row's tenant, propagates each, and emits one `cross_tenant_read` event. A failure there revokes nothing in the request's tenant, so the caller stays live for a retry. Rule 7 states that this step needs no `platform-admin` caller because it reaches only rows derived from the request's own tenant, and §4.2 and §12.3 name it as the one exception to their `__all__` rule (decision 12). Only the recursive-revocation request follows the link; rule 4 lists the other routes that revoke the admin's bearer and leave the session live (decision 13). `revoked_count` counts the request's own tenant only.
 
 ### TF-3 Revocation root without a row (decision 3)
 
@@ -78,7 +78,7 @@ The parameter table, the claim table, and rule (b) state that a child's depth is
 
 ### TF-7 `act` on exchanges without an actor (decision 7)
 
-The claim table's `act` row states that an exchange without an `actor_token` copies the subject's `act`. `tokenexchange.Token` carries `Act`, `toExchangeToken` maps the claim, and `Validate` copies it. The row's `act_sub` stays null, because a row with `act_sub` set names a child or an impersonation, and the lineage already holds through `parent_jti`. This closes [TOKX-I14](../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md).
+The claim table's `act` row states that an exchange without an `actor_token` copies the subject's `act`. `tokenexchange.Token` carries `Act`, `toExchangeToken` maps the claim, and `Validate` copies it. The row's `act_sub` stays null, because a row with `act_sub` set names a child or an impersonation, and the lineage already holds through `parent_jti`. This closes [TOKX-I14](../../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md).
 
 ### TF-8 Caller revocation on a mint (decision 8)
 
@@ -99,8 +99,8 @@ alice in acme holds a root token R with no `scope` claim and audience `lenny-gat
 ## Limits, and alternatives rejected
 
 - **Impersonation link through `parent_jti`.** Recording the admin bearer in `parent_jti` would make the impersonation row match neither the row predicate of rule 2 nor the tenant of its parent: the predicate identifies an impersonation row by a null `parent_jti`, a child row already has `act_sub` and `parent_jti` set, and the in-tenant walk could not reach a row in another tenant. A new predicate would need a third column to tell a child row from an impersonation row, and the walk would still need a cross-tenant step. A separate column pair keeps the predicate and the lineage index unchanged and makes the cross-tenant step explicit.
-- **Impersonation link in the same transaction as the cascade.** The cascade runs under the request's tenant, and the impersonation rows are in other tenants, which the `__all__` context reaches only in its own transaction. The impersonation step runs first, so a failure of it revokes nothing and the caller can retry; running it after the cascade would leave a caller that revoked its own token unable to retry. An impersonation started from a token of the subtree between the two steps escapes the request, which [TOKX-I13](../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md) tracks with the other derivations committed during a cascade.
-- **Cross-tenant read for every revocation request.** The impersonation step runs on every recursive-revocation request served by a durable store, because the Token Service cannot tell from the cascade's tenant which tokens started an impersonation. Each request therefore writes one `cross_tenant_read` row. [TOKX-I17](../../issues/TOKX/TOKX-I17-every-revocation-request-runs-a-cross-tenant-step.md) records the cost and a tenant-scoped marker that would avoid it.
+- **Impersonation link in the same transaction as the cascade.** The cascade runs under the request's tenant, and the impersonation rows are in other tenants, which the `__all__` context reaches only in its own transaction. The impersonation step runs first, so a failure of it revokes nothing and the caller can retry; running it after the cascade would leave a caller that revoked its own token unable to retry. An impersonation started from a token of the subtree between the two steps escapes the request, which [TOKX-I13](../../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md) tracks with the other derivations committed during a cascade.
+- **Cross-tenant read for every revocation request.** The impersonation step runs on every recursive-revocation request served by a durable store, because the Token Service cannot tell from the cascade's tenant which tokens started an impersonation. Each request therefore writes one `cross_tenant_read` row. [TOKX-I17](../../../issues/TOKX/TOKX-I17-every-revocation-request-runs-a-cross-tenant-step.md) records the cost and a tenant-scoped marker that would avoid it.
 - **Full revoke seeded by every row of the user.** Seeding only with the rows the full revoke newly revokes would miss the descendants of a token the user had already revoked, such as one rotated away from. Seeding with every row of the user reaches them.
 - **Bearer possession.** The fixes bind tokens, not holders, as 0165 "Limits" states.
 

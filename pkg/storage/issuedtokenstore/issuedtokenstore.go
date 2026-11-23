@@ -520,7 +520,7 @@ func (s *Store) RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReaso
 // full_revoke calls. A user with no issued tokens yields an empty slice
 // and no error.
 //
-// spec: §11.4 step 5, §13.3 (Credential Flow: Lineage of derived tokens,
+// spec: §11.4 step 5 (partial: TOKX-I19), §13.3 (Credential Flow: Lineage of derived tokens,
 // Rotation lineage and leaked tokens).
 func (s *Store) RevokeBySubject(ctx context.Context, tenantID, subject, reason string, at time.Time) ([]string, error) {
 	if at.IsZero() {
