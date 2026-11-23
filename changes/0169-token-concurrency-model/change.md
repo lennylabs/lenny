@@ -1,6 +1,6 @@
 # A concurrency model of the token rules
 
-Status: `In progress`, revision 2, 2026-11-23.
+Status: `In progress`, revision 3, 2026-11-23.
 
 ## Problem
 
@@ -187,3 +187,59 @@ No reader-facing behavior changes: TOKX. The model changes no behavior. The chan
 ## Tests
 
 No tier of `lenny-test` runs the model under decision 6; it is a design check run by hand with `tests/formal/tokenconcurrency/run.sh`, as 0165's model is. Each counterexample is written as a scenario that a `load_local` test can replay, and the change that fixes it writes that test.
+
+## Model results
+
+Steps 0169.S1 and 0169.S2 ran every configuration of `tests/formal/tokenconcurrency/` on 2026-11-23 with TLC `v1.7.4` (`tla2tools.jar` SHA-256 `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88`), 2 workers per run, in the `eclipse-temurin:21-jdk` container the runner starts. The bounds are those of decision 5: 2 tenants, 2 users per tenant, at most 3 request processes, at most 6 tokens, 1 failure per behavior (a failed statement or a primary failover), and 3 cascade attempts; `nested_step` and `f1_i20` also let a client retry a request once after a `500`, and `cache` has 2 replicas, 1 lost event, and 1 restart. Every run finished. No configuration came near the 12-hour cap, so none was stopped. TLC stops at the first violation, so each run that found one was repeated without the violated property until the rest held over the whole state space.
+
+### Results by property
+
+| Property | `Main` | `TF` | `I13Lock` |
+| :-- | :-- | :-- | :-- |
+| C1 Cascade completeness | Violated (R1) | Violated (R1) | Holds |
+| C2 Fresh sources | Holds | Holds | Not checked |
+| C3 Write-before-issue across replicas | Holds | Holds | Not checked |
+| C4 Replica revocation caches | Holds | Holds | Not checked |
+| C5 Concurrent recursive revocations | Violated: `MutualRevokeOneWins` (R3) | Violated: `RequestsTerminate` (R5) | Violated: `RequestsTerminate` (R5) |
+| C6 Impersonation start and the administrator's bearer | Holds | Violated (R6) | Not checked |
+| C7 Full revoke and a mint | Violated (R2) | Violated (R2) | Holds |
+| C8 Nested per-tenant transactions | Holds | Violated (R5) | Violated (R5) |
+| C9 F1 and TOKX-I20 | Violated (R3, R4) | Holds | Not checked |
+| C10 Tenant contexts | Not checked | Holds | Not checked |
+
+Under `TF`, `MutualRevokeOneWins` and the other C5 invariants hold, and C6 holds when the ordering of R6 is left out (`ImpersonationEndedOrInWindowExceptFailedStart`). `TF` closes TOKX-I20 and TOKX-I22 in every configuration, and adds the wait of R5 and the row of R6.
+
+### Runs
+
+The distinct states are those of the last run of each configuration, which explored the whole state space.
+
+| Configuration | `Main` | `TF` | `I13Lock` |
+| :-- | :-- | :-- | :-- |
+| `cascade_rotation` | 836 states, 1 s; C1 | 1,341 states, 1 s; C1 | 1,203 states, 1 s; none |
+| `cascade_issuance` | 28,410 states, 8 s; C1 | 47,630 states, 12 s; C1 | 39,149 states, 10 s; none |
+| `rotation` | 2,845 states, 1 s; none | 5,641 states, 2 s; none | Not run |
+| `cache` | 110,396 states, 1 min; C1 | 114,816 states, 1 min; C1 | Not run |
+| `mutual` | 318,235 states, 1 min; C1 | 473,163 states, 2 min; C1 | 173,860 states, 46 s; none |
+| `impersonation` | 61,803 states, 16 s; C1 | 96,633 states, 25 s; C1, C6 | 94,928 states, 25 s; none |
+| `fullrevoke` | 127,857 states, 30 s; C7 | 170,039 states, 40 s; C7 | 123,590 states, 28 s; none |
+| `nested_step` | 4,505 states, 1 s; C5, C9 | 10,865 states, 1 s; C5, C8 | 11,101 states, 1 s; C5, C8 |
+| `nested_start` | 39,494 states, 11 s; none | 42,404 states, 12 s; none | 44,080 states, 12 s; none |
+| `f1_i20` | 7,087 states, 2 s; C9 | 13,896 states, 3 s; none | 14,261 states, 3 s; none |
+| `free` | 304,445 states, 49 s; C1, C7, C9 | 380,376 states, 57 s; C1, C7 | 302,560 states, 47 s; none |
+
+### Counterexamples
+
+- **R1. A derivation committed during a cascade (C1, TOKX-I13, `Main` and `TF`).** In `cascade_rotation`, alice holds L and C in acme and bob holds a copy of L. alice's request revokes L with C as caller. Its cascade's statement takes its snapshot, which holds L. bob's rotation of L takes acme's advisory lock, reads L live, inserts L' under L, stamps L revoked, and commits. The cascade's update reaches L, waits for bob's lock, re-reads L as revoked, and skips it; L' is outside its snapshot, and the cascade commits with L' live. This is the worked example step for step. In `cascade_issuance` the same window takes a narrowing of L, which locks no row, and a playground mint from L (`TF`). The issue records the ordering, so it raises no new decision; decision 11 asks how to close it under 0168's design.
+- **R2. A mint committed during a full revoke (C7, TOKX-I13 in `RevokeBySubject`, `Main` and `TF`).** In `fullrevoke`, alice's A is in acme, and bob's K is a child of A that carries bob's `sub`. Under `Main`, an administrator fully revokes alice: the level commits, and `RevokeBySubject` takes its snapshot. A child mint with A as caller and `actor_token` and K as `subject_token` reads its sources live, the walk commits, and the mint commits N2 under A, live after step 5. Under `TF` that mint reads alice's user row and is refused, and a playground mint from A, which reads no user row, commits N3 under A after step 5. A scratch copy of the configuration that leaves the playground mint out shows bob's narrowing of K committing N2 under K after step 5, because TF-4 reads only bob's user row. Decision 11.
+- **R3. A step that ends sessions after its caller was revoked (C9 and C5, TOKX-I20, `Main`).** In `f1_i20`, bob holds B and Bd in acme, and the impersonation bearers I (in acme, bob's own) and Ig (carol in globex) were started from B. bob's request revokes B with I as caller and reads the subtree; bob's second request revokes I with Bd as caller and commits; the first request's step then ends Ig, and its cascade refuses I. In `nested_step`, alice revokes her bearer A in acme with Ia as caller, the bearer of alice that carol started from G, while carol revokes G in globex with Ig as caller, the bearer of carol that alice started from A. Both pass the subtree read, each step revokes the other's caller, and both cascades refuse, so neither root is revoked. The issue records the ordering.
+- **R4. F1 (C9, TOKX-I22, `Main`).** In `f1_i20`, bob's request revokes B with I as caller. Its step revokes I and Ig, and its cascade refuses I as a revoked caller, so B stays live. The issue records the ordering.
+- **R5. An undetected wait in the impersonation step (C8 and C5, `TF` and `I13Lock`).** In `nested_step`, alice in acme holds the `platform-admin` bearer A and carol in globex holds G; Ia (alice in acme) was started from G, and Ig (carol in globex) from A. alice revokes A with Ia as caller while carol revokes G with Ig as caller. alice's outer transaction holds the share lock on Ia, and its nested transaction in globex waits for Ig; carol's outer transaction holds the share lock on Ig, and its nested transaction in acme waits for Ia. Each outer transaction waits for its nested one in the application, so the deadlock detector sees no cycle, and neither request ends. Decision 10.
+- **R6. A bearer row without a start record (C6, `TF`).** In `impersonation`, alice starts an impersonation of carol in globex from A. The nested transaction commits the bearer row N2, and the first transaction, which holds alice's user-row fence and the start record, fails at `COMMIT`. The start answers with an error and returns no bearer. alice then revokes A with D as caller; the step reads no start record naming globex, and N2 stays live after the cascade commits. Decision 12.
+
+### Differences between the code and the text
+
+The README of the model states each in full.
+
+- **G1.** §13.3 states a fallback read of `issued_tokens.revoked_at` on validation; the gateway reads only its revocation cache, the 30-second rehydration, and the 90-second staleness gate. Decision 14.
+- **G2.** No `statement_timeout` or `lock_timeout` bounds a row-lock wait by default, so the wait of R5 lasts until the client gives up.
+- **G3.** Rule 7's window does not say whether an impersonation whose unlocked caller check precedes a cascade's commit and whose record commits after it escapes; the model reads it as inside the window. Decision 13.

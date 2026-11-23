@@ -296,4 +296,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
 | [0165](0165-token-rules-model/change.md) | A formal model of the token rules | `In progress` | 2 of 2 | 0 |
 | [0168](0168-token-fixes/change.md) | Token rule fixes from the property tests | `Decided` | 0 of 1 | 0 |
-| [0169](0169-token-concurrency-model/change.md) | A concurrency model of the token rules | `In progress` | 0 of 2 | 0 |
+| [0169](0169-token-concurrency-model/change.md) | A concurrency model of the token rules | `In progress` | 0 of 2 | 5 |
