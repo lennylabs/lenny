@@ -724,28 +724,46 @@ func checkCallerLive(ctx context.Context, tx pgx.Tx, tenantID, callerJTI string)
 // ensureRoot confirms the root has a row in the tenant, so a typo'd jti is
 // ErrNotFound rather than a silent no-op, and records the root from
 // req.Root when it has none and req.Root.TokenHash is set. The recorded
-// row is live; the cascade that follows stamps it revoked.
+// row is live; the cascade that follows stamps it revoked. The insert does
+// nothing on a jti conflict: a concurrent request that records the same
+// root first leaves its row for this one, and a jti that another tenant
+// holds leaves the root without a row here, which is ErrNotFound.
 //
 // spec: §13.3 (Credential Flow) "Recursive-revocation request
 // authorization."
 func ensureRoot(ctx context.Context, tx pgx.Tx, req LineageRevocation) error {
-	var exists bool
-	if err := tx.QueryRow(ctx,
-		`SELECT EXISTS(SELECT 1 FROM issued_tokens WHERE jti = $1 AND tenant_id = $2)`,
-		req.Root.JTI, req.TenantID).Scan(&exists); err != nil {
+	exists, err := rootExists(ctx, tx, req)
+	if err != nil || exists {
 		return err
-	}
-	if exists {
-		return nil
 	}
 	if len(req.Root.TokenHash) == 0 {
 		return ErrNotFound
 	}
 	root := req.Root
 	root.TenantID = req.TenantID
-	root.RevokedAt = time.Time{}
-	root.RevokedReason = ""
-	return insertIssued(ctx, tx, root)
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO issued_tokens (
+			jti, tenant_id, sub, token_hash, scope, audience, audiences,
+			dialect_cap_applied_seconds, issued_at, exp
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, 0, $8, $9)
+		ON CONFLICT (jti) DO NOTHING`,
+		root.JTI, root.TenantID, root.Subject, root.TokenHash, scopeArg(root.Scope),
+		root.Audience, audienceListArg(root.Audiences, root.Audience), root.IssuedAt, root.ExpiresAt); err != nil {
+		return err
+	}
+	if exists, err = rootExists(ctx, tx, req); err != nil || exists {
+		return err
+	}
+	return ErrNotFound
+}
+
+// rootExists reports whether the root has a row in the request's tenant.
+func rootExists(ctx context.Context, tx pgx.Tx, req LineageRevocation) (bool, error) {
+	var exists bool
+	err := tx.QueryRow(ctx,
+		`SELECT EXISTS(SELECT 1 FROM issued_tokens WHERE jti = $1 AND tenant_id = $2)`,
+		req.Root.JTI, req.TenantID).Scan(&exists)
+	return exists, err
 }
 
 // cascadeFromRoot revokes the not-yet-revoked rows of the root's lineage

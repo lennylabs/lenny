@@ -4,9 +4,10 @@ package playground
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -215,30 +216,17 @@ func (m *MemoryAuditEmitter) MintRejections() []MintRejectedEvent {
 	return append([]MintRejectedEvent(nil), m.mintRejections...)
 }
 
-// jtiCounter backs the monotonic component of newJTI.
-var jtiCounter atomic.Uint64
-
-// newJTI returns a unique JWT id for a minted playground bearer. The
-// id combines the mint timestamp with a process-monotonic counter so
-// two mints in the same nanosecond still receive distinct ids.
-func newJTI(now time.Time) string {
-	n := jtiCounter.Add(1)
-	return "pgjti_" + now.UTC().Format("20060102T150405") + "_" + uint64Hex(n)
-}
-
-// uint64Hex renders n as a lowercase hex string with no leading
-// zeros.
-func uint64Hex(n uint64) string {
-	const hex = "0123456789abcdef"
-	if n == 0 {
-		return "0"
-	}
-	var buf [16]byte
-	i := len(buf)
-	for n > 0 {
-		i--
-		buf[i] = hex[n&0xf]
-		n >>= 4
-	}
-	return string(buf[i:])
+// newJTI returns a unique JWT id for a minted playground bearer: 128 bits
+// from crypto/rand, hex-encoded. The id is the bearer's issued_tokens
+// primary key, which is global across tenants and gateway replicas, so it
+// carries no timestamp or per-process counter that two replicas could
+// repeat. crypto/rand.Read does not return an error; it ends the process
+// when the system source fails.
+//
+// spec: §10.2 (Authentication) "Playground mint invariants" invariant 6;
+// §12.2 (TokenIssuanceStore jti primary key).
+func newJTI() string {
+	var b [16]byte
+	_, _ = rand.Read(b[:])
+	return "pgjti_" + hex.EncodeToString(b[:])
 }

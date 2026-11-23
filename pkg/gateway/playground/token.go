@@ -396,7 +396,7 @@ func (h *Handler) completeMint(w http.ResponseWriter, r *http.Request, subject j
 	}
 	now := h.now().UTC()
 	exp := h.bearerExpiry(now, subject)
-	jti := newJTI(now)
+	jti := newJTI()
 
 	// §27.3 / §27.3.1: the origin: "playground" claim is stamped on the
 	// minted session-capability JWT in all three auth modes. The

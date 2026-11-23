@@ -25,8 +25,9 @@ import (
 // A request that names no audience requests lenny-gateway (gap G1 of change
 // 0165's model): the issued token carries that audience, a self-exchange of
 // a lenny-gateway subject without audience is a rotation that revokes the
-// subject, and a subject without an aud claim grants no audience, so an
-// exchange of it without audience is refused with audience_broadened.
+// subject, and a subject without an aud claim grants lenny-gateway only, so
+// its self-exchange without audience is a rotation and an exchange naming
+// another audience is refused with audience_broadened.
 func TestExchangeWithoutAudienceRequestsTheDefault(t *testing.T) {
 	t.Run("self exchange is a rotation", func(t *testing.T) {
 		store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
@@ -56,12 +57,18 @@ func TestExchangeWithoutAudienceRequestsTheDefault(t *testing.T) {
 		}
 	})
 	t.Run("subject without aud", func(t *testing.T) {
-		srv, signer := rotationServer(t, &fakeRotationStore{}, &recordingAuditor{}, nil)
+		store := &fakeRotationStore{prevRevoked: true, prevSub: "alice@acme.com"}
+		srv, signer := rotationServer(t, store, &recordingAuditor{}, nil)
 		claims := lineageClaims("alice@acme.com", "alice-1", auth.TokenUserBearer)
 		// A non-nil empty list keeps mintToken from adding its default.
 		claims.Audience = []string{}
 		alice := mintToken(t, signer, claims)
 		resp := doExchange(t, srv, alice, Request{GrantType: grantTypeExchange, SubjectToken: alice})
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK || store.gotPrevJTI != "alice-1" {
+			t.Fatalf("status %d, rotation revoked %q; want a rotation of alice-1", resp.StatusCode, store.gotPrevJTI)
+		}
+		resp = doExchange(t, srv, alice, Request{GrantType: grantTypeExchange, SubjectToken: alice, Audience: "lenny-ops"})
 		assertOAuthRejection(t, resp, http.StatusBadRequest, "invalid_request", "audience_broadened")
 	})
 }

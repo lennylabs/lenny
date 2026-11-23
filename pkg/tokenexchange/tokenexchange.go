@@ -102,6 +102,25 @@ type Token struct {
 	Act *Actor
 }
 
+// DefaultAudience is the audience an exchange requests when the request
+// names none, and the audience a subject without an aud claim grants.
+//
+// spec: §13.3 (Credential Flow) "RFC 8693 parameter mapping to Lenny
+// claims" (the `audience` row), "Scope narrowing enforcement." rule (c).
+const DefaultAudience = "lenny-gateway"
+
+// SubjectAudience returns the audiences a subject token grants: its aud
+// claim, or DefaultAudience when it carries none, so a token minted
+// without an aud claim keeps the gateway surface it is accepted on.
+//
+// spec: §13.3 (Credential Flow) "Scope narrowing enforcement." rule (c).
+func SubjectAudience(aud []string) []string {
+	if len(aud) == 0 {
+		return []string{DefaultAudience}
+	}
+	return aud
+}
+
 // OriginPlayground is the `origin` claim value of a playground bearer.
 // Reproduced here so this package stays free of the JWT packages.
 const OriginPlayground = "playground"
@@ -300,8 +319,9 @@ func Validate(r Request) (Issued, error) {
 	}
 
 	// §13.3 audience: cannot broaden — every requested audience MUST
-	// already appear in the subject's audience list.
-	if !isSubset(r.Requested.Audience, r.Subject.Audience) {
+	// already appear in the subject's audience list, a subject without
+	// an aud claim counting as DefaultAudience.
+	if !isSubset(r.Requested.Audience, SubjectAudience(r.Subject.Audience)) {
 		return Issued{}, &ExchangeError{Code: "invalid_request", Reason: "audience_broadened"}
 	}
 

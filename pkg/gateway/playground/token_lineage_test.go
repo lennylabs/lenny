@@ -131,3 +131,23 @@ func TestPlaygroundDevMintRecordsTheBearerWithoutAParent(t *testing.T) {
 		t.Error("row token hash is not the SHA-256 of the returned bearer")
 	}
 }
+
+// spec: §10.2 (Authentication), §12.2 (Storage Roles)
+//
+// A playground bearer's jti is the primary key of its issued_tokens row,
+// which every gateway replica writes to, so it is random rather than
+// derived from the mint time and a per-process counter that two replicas
+// could repeat in the same second.
+func TestPlaygroundBearerJTIsAreRandom(t *testing.T) {
+	seen := make(map[string]bool, 1000)
+	for i := 0; i < 1000; i++ {
+		jti := newJTI()
+		if !strings.HasPrefix(jti, "pgjti_") || len(jti) != len("pgjti_")+32 {
+			t.Fatalf("jti %q, want pgjti_ and 32 hex digits", jti)
+		}
+		if seen[jti] {
+			t.Fatalf("jti %q repeated", jti)
+		}
+		seen[jti] = true
+	}
+}

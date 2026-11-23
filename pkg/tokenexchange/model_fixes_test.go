@@ -5,6 +5,7 @@ package tokenexchange
 import (
 	"reflect"
 	"testing"
+	"time"
 )
 
 // spec: §13.3 (Credential Flow)
@@ -147,5 +148,38 @@ func TestValidateTheListedActionsOfAWildcardAreStrictlyNarrower(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got.Scope, requested) {
 		t.Errorf("issued scope = %v, want %v", got.Scope, requested)
+	}
+}
+
+// spec: §13.3 (Credential Flow)
+//
+// A subject without an aud claim grants the default audience lenny-gateway
+// and no other, so it can be exchanged for a lenny-gateway token and an
+// exchange naming another audience is refused with audience_broadened.
+func TestValidateASubjectWithoutAudGrantsTheDefaultAudience(t *testing.T) {
+	subject := validSubject()
+	subject.Audience = nil
+	for _, c := range []struct {
+		audience []string
+		wantErr  bool
+	}{
+		{[]string{DefaultAudience}, false},
+		{[]string{"lenny-ops"}, true},
+	} {
+		_, err := Validate(Request{
+			Subject: subject, Caller: subject,
+			Requested:    Token{Audience: c.audience},
+			RequestedExp: now.Add(time.Minute), Now: now,
+		})
+		if c.wantErr {
+			wantRefusal(t, err, "invalid_request", "audience_broadened")
+			continue
+		}
+		if err != nil {
+			t.Errorf("audience %v: err = %v, want nil", c.audience, err)
+		}
+	}
+	if got := SubjectAudience([]string{"lenny-ops"}); !reflect.DeepEqual(got, []string{"lenny-ops"}) {
+		t.Errorf("SubjectAudience of a subject with aud = %v, want its own aud", got)
 	}
 }

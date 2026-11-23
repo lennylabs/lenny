@@ -329,3 +329,41 @@ func TestLineageSubtreeReadsTheWholeSubtreeAndRefusesARevokedCaller(t *testing.T
 		t.Errorf("revoked caller: err = %v, want ErrCallerRevoked", err)
 	}
 }
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: recording a revocation root without a row failed on a jti
+// another tenant holds, or a second revocation of the same root after the
+// first recorded it failed, instead of answering ErrNotFound and revoking
+// nothing in the first case and succeeding in the second.
+func TestRevokeLineageRootRecordConflicts(t *testing.T) {
+	t.Parallel()
+	pg, store, record := modelFixture(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	other := freshTenant(t, ctx, pg)
+	record(t, issuedtokenstore.IssuedToken{JTI: "shared-jti", TenantID: other, Subject: "bob@globex.com"})
+	now := time.Now().UTC().Truncate(time.Second)
+	root := func(jti string) issuedtokenstore.LineageRevocation {
+		return issuedtokenstore.LineageRevocation{
+			TenantID: tenant,
+			Root: issuedtokenstore.IssuedToken{
+				JTI: jti, Subject: "alice@acme.com", TokenHash: []byte(jti),
+				IssuedAt: now, ExpiresAt: now.Add(time.Hour),
+			},
+			RootReason: "explicit_revoke", ChildReason: "cascade_from_parent", At: now,
+		}
+	}
+	if _, err := store.RevokeLineage(ctx, root("shared-jti")); !errors.Is(err, issuedtokenstore.ErrNotFound) {
+		t.Errorf("root whose jti another tenant holds: err = %v, want ErrNotFound", err)
+	}
+	if got := revokedState(t, store, other, "shared-jti"); got["shared-jti"] != "live" {
+		t.Errorf("the other tenant's row = %q, want live", got["shared-jti"])
+	}
+	if _, err := store.RevokeLineage(ctx, root("fresh-root")); err != nil {
+		t.Fatalf("first revocation of a root without a row: %v", err)
+	}
+	res, err := store.RevokeLineage(ctx, root("fresh-root"))
+	if err != nil || len(res.Revoked) != 0 {
+		t.Errorf("second revocation = %+v, %v; want nothing new and no error", res.Revoked, err)
+	}
+}

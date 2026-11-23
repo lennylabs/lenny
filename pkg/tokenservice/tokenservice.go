@@ -402,13 +402,6 @@ type Response struct {
 // may carry. spec: §10.2 (Authentication) "JWT claims" expiry.
 const minRequestedExpiresIn = 60
 
-// defaultAudience is the audience an exchange requests when the request
-// names none.
-//
-// spec: §13.3 (Credential Flow) "RFC 8693 parameter mapping to Lenny
-// claims" (the `audience` row), "Scope narrowing enforcement." rule (c).
-const defaultAudience = "lenny-gateway"
-
 const (
 	grantTypeExchange = "urn:ietf:params:oauth:grant-type:token-exchange"
 	tokenTypeJWT      = "urn:ietf:params:oauth:token-type:jwt"
@@ -641,9 +634,20 @@ func parseAndValidateRequest(w http.ResponseWriter, r *http.Request, finish func
 // verifyExchangeTokens verifies the subject token and the optional actor
 // token. It returns the subject claims, the actor claims (nil when no
 // actor_token was supplied), and true on success; on a verification
-// failure it writes 400 invalid_grant and returns false.
+// failure it writes 400 invalid_grant and returns false. The subject of a
+// recursive-revocation request is verified with the caller verifier, which
+// also accepts an upstream IdP ID token, so a token derived from an ID
+// token can be revoked through it; every mint verifies its subject with
+// the Lenny key set only.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
 func (s *Server) verifyExchangeTokens(w http.ResponseWriter, req Request, finish func(string)) (jwt.Claims, *jwt.Claims, bool) {
-	subjectClaims, err := s.verifier.Verify(req.SubjectToken)
+	subjectVerifier := s.verifier
+	if req.RequestedTokenType == revokedTokenType {
+		subjectVerifier = s.callerVerifier
+	}
+	subjectClaims, err := subjectVerifier.Verify(req.SubjectToken)
 	if err != nil {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant", err.Error())
 		finish("invalid_grant")
@@ -751,8 +755,8 @@ func (s *Server) buildExchangeRequest(req Request, callerClaims, subjectClaims j
 }
 
 // requestedAudience returns the audience an exchange requests: the
-// request's space-separated audience values, or defaultAudience when the
-// request names none, so a self-exchange without audience of a
+// request's space-separated audience values, or
+// tokenexchange.DefaultAudience when the request names none, so a self-exchange without audience of a
 // lenny-gateway subject is a rotation and the issued token carries an aud
 // claim.
 //
@@ -762,7 +766,7 @@ func requestedAudience(raw string) []string {
 	if aud := splitSpace(raw); len(aud) > 0 {
 		return aud
 	}
-	return []string{defaultAudience}
+	return []string{tokenexchange.DefaultAudience}
 }
 
 // requestedExp returns the §10.2 requested_exp of an exchange: now +
@@ -860,7 +864,7 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 			SubjectSub:     subjectClaims.Subject,
 			PolicyResult:   "rejected:" + ee.Reason,
 			ErrorCode:      ee.Code,
-			Audience:       splitSpace(req.Audience),
+			Audience:       exchangeReq.Requested.Audience,
 			RequestedScope: splitScope(req.Scope),
 			Now:            now,
 		}); auditErr != nil {
@@ -1205,12 +1209,16 @@ func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, ten
 // revocation_reason=rotation_replaced is emitted. The guard is
 // deliberately narrow: a cross-audience or scope-narrowing self-exchange
 // is a scope_narrow / dialect derivation, not a rotation, so its subject
-// token is left live. F-16.7.5.
+// token is left live. A subject without an aud claim is compared as
+// tokenexchange.DefaultAudience, the audience it grants. F-16.7.5.
+//
+// spec: §13.3 (Credential Flow) "Lineage of derived tokens.", "Scope
+// narrowing enforcement." rule (c).
 func (s *Server) isSelfRotation(issued tokenexchange.Issued, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims) bool {
 	return actorClaims == nil &&
 		callerClaims.JWTID != "" &&
 		callerClaims.JWTID == subjectClaims.JWTID &&
-		sameStringSet(issued.Audience, subjectClaims.Audience) &&
+		sameStringSet(issued.Audience, tokenexchange.SubjectAudience(subjectClaims.Audience)) &&
 		sameStringSet(issued.Scope, splitScope(subjectClaims.Scope))
 }
 
