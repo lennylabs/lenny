@@ -535,7 +535,7 @@ func (s *Store) RevokeBySubject(ctx context.Context, tenantID, subject, reason s
 
 // RevokedToken identifies one token revoked by a cascade: its JTI,
 // subject, and whether it is the cascade root (the explicitly-targeted
-// token) or a delegation descendant reached through parent_jti.
+// token) or a lineage descendant reached through parent_jti.
 type RevokedToken struct {
 	JTI     string
 	Subject string
@@ -545,7 +545,7 @@ type RevokedToken struct {
 // RevokeCascade implements the §13.3 / §8.3 recursive
 // revocation with no caller check: it is the store-level helper for
 // callers that authorize the revocation themselves, and the Token
-// Service's revocation request uses RevokeCascadeByCaller. It revokes rootJTI and every delegation descendant
+// Service's revocation request uses RevokeCascadeByCaller. It revokes rootJTI and every lineage descendant
 // reachable through the parent_jti edge, in one statement via a
 // recursive CTE. The root row is stamped with rootReason; each
 // descendant with childReason. Already-revoked rows in the subtree are

@@ -192,10 +192,12 @@ func TestAHolderOfTwoLeakedTokensRevokesTheUsersRotatedToken(t *testing.T) {
 		t.Errorf("revoked state %v, want alice's current token revoked and the caller token live", got)
 	}
 
-	// alice signs in again: a token from her sign-in is outside the leaked
-	// tokens' lineage, and bob's tokens do not reach it.
-	_, freshJTI := h.mint(t, alice, tokenservice.Request{
-		SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	// alice signs in again: her new sign-in token, and a token derived
+	// from it, are outside the leaked tokens' lineage, and bob's tokens do
+	// not reach them.
+	signIn := h.userToken(t, tenant, "alice@acme.com", "alice-idp-2-"+tenant)
+	_, freshJTI := h.mint(t, signIn, tokenservice.Request{
+		SubjectToken: signIn, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	code, body = h.post(t, live, tokenservice.Request{SubjectToken: leaked, RequestedTokenType: lineageRevokedType})
 	if code != http.StatusOK || body["revoked_count"] != float64(0) {
