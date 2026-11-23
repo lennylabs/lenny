@@ -73,15 +73,15 @@ Results against 0164.S1 as built (`RotInherit`), with the variants where they di
 
 | Property | Assertion | Base scope | Large scope |
 | :-- | :-- | :-- | :-- |
-| P1 | `P1_rule_a` | holds | LARGE-1 |
-| P1 | `P1_no_broader_than_subject` | holds | LARGE-2 |
-| P1 | `P1_impersonation_no_broader_than_caller` | holds | LARGE-3 |
+| P1 | `P1_rule_a` | holds | holds |
+| P1 | `P1_no_broader_than_subject` | holds | holds |
+| P1 | `P1_impersonation_no_broader_than_caller` | holds | holds |
 | P1 | `P1_no_broader_than_lineage_parent` | fails (CX-6) | |
-| P1 | `P1_playground_never_unrestricted` | holds | LARGE-4 |
-| P2 | `P2_tenant_preserved` | holds | LARGE-5 |
-| P2 | `P2_cross_tenant_only_by_impersonation` | holds | LARGE-6 |
-| P3 | `P3_cascade_reaches_lineage` | holds in every variant | LARGE-7 |
-| P3 | `P3_nothing_outside_lineage` | holds in every variant | LARGE-8 |
+| P1 | `P1_playground_never_unrestricted` | holds | holds |
+| P2 | `P2_tenant_preserved` | holds | holds |
+| P2 | `P2_cross_tenant_only_by_impersonation` | holds | holds |
+| P3 | `P3_cascade_reaches_lineage` | holds in every variant | holds |
+| P3 | `P3_nothing_outside_lineage` | holds in every variant | holds |
 | P3 | `P3_rotation_revokes_only_its_subject` | holds in every variant | |
 | P3 | `P3_derived_sm9` | holds in every variant | |
 | P3 | `P3_derived_through_rotation` | holds for `RotInherit` and `RotEdge`; fails for `RotCut` (CX-1) | |
@@ -91,28 +91,28 @@ Results against 0164.S1 as built (`RotInherit`), with the variants where they di
 | P3 | `P3_every_lineage_root_revocable` | fails in every variant (CX-5) | |
 | P3 | `O3_revoking_replaced_token_spares_successor` | holds for `RotInherit` and `RotCut`; fails for `RotEdge` (CX-2) | |
 | P3 | `O3_revocation_reaches_successors` | fails for `RotInherit` and `RotCut` (CX-2); holds for `RotEdge` | |
-| P4 | `P4_revocation_authority` | holds in every variant | LARGE-9 |
-| P4 | `P4_revoked_caller_cannot_revoke` | holds in every variant | LARGE-10 |
+| P4 | `P4_revocation_authority` | holds in every variant | holds |
+| P4 | `P4_revoked_caller_cannot_revoke` | holds in every variant | holds |
 | P4 | `O4_narrow_caller_revokes_only_narrower` | fails in every variant (CX-13) | |
 | P4 | `O4_revocation_bounded_by_holding` | holds in every variant | |
 | P5 | `P5_other_identity_strictly_narrower` | fails (CX-7) | |
 | P5 | `P5_child_other_identity_strictly_narrower` | fails (CX-7) | |
-| P5 | `P5_no_identity_escalation` | holds | LARGE-11 |
-| P5 | `P5_actor_is_caller` | holds | LARGE-12 |
-| P6 | `P6_playground_never_a_source` | holds | LARGE-13 |
-| P7 | `P7_child_depth_and_act` | holds | LARGE-14 |
-| P7 | `P7_depth_monotone_along_lineage` | holds | LARGE-15 |
+| P5 | `P5_no_identity_escalation` | holds | holds |
+| P5 | `P5_actor_is_caller` | holds | holds |
+| P6 | `P6_playground_never_a_source` | holds | holds |
+| P7 | `P7_child_depth_and_act` | holds | holds |
+| P7 | `P7_depth_monotone_along_lineage` | holds | not completed: stopped after about 48 hours |
 | P7 | `P7_depth_not_below_subject` | fails (CX-8) | |
 | P7 | `P7_delegated_token_names_actor` | fails (CX-9) | |
 | P8 | `P8_revoked_caller_cannot_mint` | fails (CX-10) | |
-| P9 | `P9_lifetime_bounded_by_subject_and_actor` | holds | LARGE-16 |
+| P9 | `P9_lifetime_bounded_by_subject_and_actor` | holds | holds |
 | P9 | `P9_impersonation_bounded_by_caller` | fails (CX-4) | |
-| P9 | `P9_lifetime_bounded_by_lineage_parent` | holds | LARGE-17 |
+| P9 | `P9_lifetime_bounded_by_lineage_parent` | holds | not completed: stopped after about 45 minutes |
 | P10 | `P10_full_revoke_reaches_delegations` | fails (CX-11) | |
 
 The O3 scenarios are `run` commands: `O3_leak_holder_revokes_owner_successor` is impossible for `RotCut` and `RotInherit` and found for `RotEdge`, and `O3_leak_holder_keeps_successor` is found for `RotCut` and `RotInherit` and impossible for `RotEdge`.
 
-The base checks took between a few seconds and about 35 minutes each on a shared laptop; the derivation checks that follow rotation chains (`P3_derived_through_rotation`) are the slowest.
+The base checks took between a few seconds and about 35 minutes each on a shared laptop; the derivation checks that follow rotation chains (`P3_derived_through_rotation`) are the slowest. At the large scope, the checks that compare depth or expiry along the lineage (`P7_depth_monotone_along_lineage` and `P9_lifetime_bounded_by_lineage_parent`) did not finish and were stopped; they hold at the base scope, and step 0165.S2 checks them on longer sequences. Every other large-scope check finished within minutes and found no counterexample. `P3_derived_through_rotation` was left out of the large scope because it took about 35 minutes at the base scope.
 
 ## Counterexamples
 

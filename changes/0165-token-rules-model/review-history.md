@@ -1,3 +1,5 @@
 # Review history: 0165 A formal model of the token rules
 
 - 2026-11-20, revision 1. Created with decision 1, the owner's request of 2026-11-20 to build a formal model of the token rules. Status `In progress`: step 0165.S1 started on branch `change/0165.S1-token-rules-model`, with the model, the runner, and the results of its first run. The open decisions list the counterexamples the model found that the owner has to settle.
+- 2026-11-20, 0165.S1, revision 1. The model gained the three rotation lineages of 0164 open decision O3 (decision 7 as first written, 0164.S1 as built, and option (a) of O3) and the checks of 0164 open decision O4, after 0164.S1 built the owner's answers SM-9 to SM-11 with the rotation inheriting the replaced token's parent. CX-2 and CX-13 record the results, and open decisions 1 and 11 carry them.
+- 2026-11-22, 0165.S1. The large-scope run was stopped on `P7_depth_monotone_along_lineage` after about 48 hours without a result, and the lifetime checks ran on their own; `P9_lifetime_bounded_by_lineage_parent` was stopped after about 45 minutes without a result. "Model results" records each.
