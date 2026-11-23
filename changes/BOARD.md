@@ -8,7 +8,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 4 |
+| Ready | 5 |
 | Waiting on decisions | 33 |
 | Blocked | 150 |
 | Landed | 19 |
@@ -56,6 +56,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
+| [0168.S1](0168-token-fixes/steps.md#0168s1-token-rule-fixes-from-the-property-tests) | Token rule fixes from the property tests | Ready | a part waits on 0169.S2 |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -293,4 +294,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
 | [0165](0165-token-rules-model/change.md) | A formal model of the token rules | `In progress` | 2 of 2 | 0 |
+| [0168](0168-token-fixes/change.md) | Token rule fixes from the property tests | `Decided` | 0 of 1 | 0 |
 | [0169](0169-token-concurrency-model/change.md) | A concurrency model of the token rules | `Draft` | 0 of 2 | 7 |
