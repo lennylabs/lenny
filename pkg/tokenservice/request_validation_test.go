@@ -193,7 +193,7 @@ func mintValidationCaller(t *testing.T, signer *jwt.HMACSigner) string {
 	farFuture := time.Date(2099, 1, 1, 0, 0, 0, 0, time.UTC).Unix()
 	tok, err := signer.Sign(jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 		Expiry: farFuture,
 	})
 	if err != nil {

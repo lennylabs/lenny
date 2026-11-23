@@ -9,6 +9,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -589,4 +590,38 @@ func TestNew_PanicsOnMissingCollaborator_spec_13_3(t *testing.T) {
 	}()
 	impersonation.New(nil, &impersonationtest.RevocationCache{}, &impersonationtest.CrossTenantReads{}, &fakeAppender{}, &fakeSigner{},
 		impersonation.Config{NewID: func() string { return "x" }})
+}
+
+// TestIssueBearerCarriesTheCallerScope pins the bearer's scope claim to the
+// caller's: a caller narrowed to tools:impersonation:write mints a bearer
+// whose scope claim and recorded row carry that scope, and a caller
+// without a scope claim mints a bearer without one.
+//
+// spec: §13.3 (Credential Flow)
+func TestIssueBearerCarriesTheCallerScope(t *testing.T) {
+	cases := []struct {
+		name, callerScope, wantClaim string
+		wantRow                      []string
+	}{
+		{"narrowed caller", "tools:impersonation:write tools:me:read", "tools:impersonation:write tools:me:read", []string{"tools:impersonation:write", "tools:me:read"}},
+		{"caller without a scope claim", "", "", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, fixedClock(t0), time.Hour)
+			req := issueReq()
+			req.CallerScope = c.callerScope
+			ticket, _, err := h.svc.Issue(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Issue: %v", err)
+			}
+			if h.signer.claims.Scope != c.wantClaim || ticket.Scope != c.wantClaim {
+				t.Errorf("bearer scope = %q, ticket scope = %q, want %q", h.signer.claims.Scope, ticket.Scope, c.wantClaim)
+			}
+			recs := h.tokens.Records()
+			if len(recs) != 1 || strings.Join(recs[0].Token.Scope, " ") != strings.Join(c.wantRow, " ") {
+				t.Errorf("recorded rows = %+v, want one with scope %v", recs, c.wantRow)
+			}
+		})
+	}
 }

@@ -49,6 +49,9 @@ type Ticket struct {
 	TicketRef string
 	// Duration is the requested impersonation_duration_seconds.
 	Duration time.Duration
+	// Scope is the impersonating caller's raw `scope` claim, which the
+	// bearer carries; empty when the caller's bearer carries none.
+	Scope string
 	// IssuedAt and ExpiresAt bound the minted bearer's validity.
 	IssuedAt  time.Time
 	ExpiresAt time.Time

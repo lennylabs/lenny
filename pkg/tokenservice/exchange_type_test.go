@@ -55,12 +55,12 @@ func TestExchangedRowCarriesExchangeType_Rotation_spec_16_7(t *testing.T) {
 	// token, preserving scope and audience.
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -105,12 +105,12 @@ func TestExchangedRowCarriesExchangeType_DelegationMint_spec_16_7(t *testing.T) 
 	})
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		ActorToken: tok, Scope: "sessions:read", Audience: "lenny-gateway",
+		ActorToken: tok, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -141,12 +141,12 @@ func TestExchangedRowCarriesExchangeType_ScopeNarrow_spec_16_7(t *testing.T) {
 	})
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read tools:sessions:write", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -206,12 +206,12 @@ func TestRejectedExchangeCarriesExchangeType_spec_16_7(t *testing.T) {
 	// Broaden scope beyond the subject's — the validator rejects it.
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		ActorToken: tok, Scope: "sessions:read sessions:admin", Audience: "lenny-gateway",
+		ActorToken: tok, Scope: "tools:sessions:read tools:sessions:admin", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode == http.StatusOK {
 		t.Fatalf("status=%d, want a rejection (scope broadening)", resp.StatusCode)

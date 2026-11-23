@@ -29,7 +29,7 @@ func TestValidatePreservesAuthorizedTools_spec_13_3_580(t *testing.T) {
 	got, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(30 * time.Minute),
 		Now:          now,
 	})
@@ -50,7 +50,7 @@ func TestValidateNarrowsAuthorizedTools_spec_13_3_583(t *testing.T) {
 		Subject: subject,
 		Caller:  subject,
 		Requested: Token{
-			Scope:           []string{"sessions:read"},
+			Scope:           []string{"tools:sessions:read"},
 			Audience:        []string{"lenny-gateway"},
 			AuthorizedTools: []string{"tools:sessions:read"}, // narrower
 		},
@@ -74,7 +74,7 @@ func TestValidateRejectsAuthorizedToolsBroadening_spec_13_3_580(t *testing.T) {
 		Subject: subject,
 		Caller:  subject,
 		Requested: Token{
-			Scope:           []string{"sessions:read"},
+			Scope:           []string{"tools:sessions:read"},
 			Audience:        []string{"lenny-gateway"},
 			AuthorizedTools: []string{"tools:sessions:read", "tools:sessions:delete"}, // broadened
 		},
@@ -126,7 +126,7 @@ func TestValidateEmptyAuthorizedToolsStaysEmpty_spec_13_3_580(t *testing.T) {
 	got, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(30 * time.Minute),
 		Now:          now,
 	})

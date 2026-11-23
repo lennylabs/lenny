@@ -77,7 +77,7 @@ type revStore struct {
 
 func (s *revStore) Record(context.Context, issuedtokenstore.IssuedToken) error { return nil }
 
-func (s *revStore) RevokeCascade(_ context.Context, _, _, _, _ string, _ time.Time) ([]issuedtokenstore.RevokedToken, error) {
+func (s *revStore) RevokeCascadeByCaller(_ context.Context, _, _, _, _, _ string, _ time.Time) ([]issuedtokenstore.RevokedToken, error) {
 	return s.revoked, nil
 }
 

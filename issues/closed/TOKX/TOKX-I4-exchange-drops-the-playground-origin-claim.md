@@ -1,9 +1,12 @@
 ---
 id: TOKX-I4
-status: open
+status: closed
 kind: spec-defect
 severity: low
 requirements: []
+change: 0164.S1
+closed: fixed
+closed-by: 0164.S1
 ---
 
 # A token exchange of a playground bearer issues a token without the `origin` claim

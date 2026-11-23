@@ -1,9 +1,12 @@
 ---
 id: TOKX-I5
-status: open
+status: closed
 kind: build-gap
 severity: low
 requirements: []
+change: 0164.S1
+closed: fixed
+closed-by: 0164.S1
 ---
 
 # The token exchange checks the caller's tenant but not its identity

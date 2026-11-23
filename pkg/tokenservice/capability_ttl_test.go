@@ -48,7 +48,7 @@ func lifetimeToken(t *testing.T, signer *jwt.HMACSigner, jti string, exp time.Ti
 	t.Helper()
 	return mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: jti,
-		Typ: auth.TokenUserBearer, Scope: "sessions:read sessions:write",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read tools:sessions:write",
 		Audience: []string{"lenny-gateway", "lenny-ops"},
 		Expiry:   exp.Unix(), IssuedAt: lifetimeNow.Add(-time.Minute).Unix(),
 	})
@@ -103,9 +103,9 @@ func TestExchangeDefaultLifetimeIsCapabilityTokenTTL_spec_10_2(t *testing.T) {
 		scope      string
 		want       int64
 	}{
-		{"rotation, subject outlives the default", lifetimeNow.Add(48 * time.Hour), "sessions:read sessions:write", 900},
-		{"scope narrowing, subject outlives the default", lifetimeNow.Add(48 * time.Hour), "sessions:read", 900},
-		{"scope narrowing, subject expires first", lifetimeNow.Add(300 * time.Second), "sessions:read", 300},
+		{"rotation, subject outlives the default", lifetimeNow.Add(48 * time.Hour), "tools:sessions:read tools:sessions:write", 900},
+		{"scope narrowing, subject outlives the default", lifetimeNow.Add(48 * time.Hour), "tools:sessions:read", 900},
+		{"scope narrowing, subject expires first", lifetimeNow.Add(300 * time.Second), "tools:sessions:read", 300},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			srv, signer := lifetimeServer(t)
@@ -144,7 +144,7 @@ func TestExchangeRequestedExpiresInAndDialectCap_spec_10_2(t *testing.T) {
 	} {
 		got := decodeLifetime(t, doExchange(t, srv, tok, Request{
 			GrantType: grantTypeExchange, SubjectToken: tok,
-			Scope: "sessions:read", Audience: "lenny-ops", ExpiresIn: int64Ptr(tc.expiresIn),
+			Scope: "tools:sessions:read", Audience: "lenny-ops", ExpiresIn: int64Ptr(tc.expiresIn),
 		}))
 		if got.status != http.StatusOK || got.expiresIn != tc.want {
 			t.Errorf("%s: status %d expires_in %d, want 200 and %d", tc.name, got.status, got.expiresIn, tc.want)
@@ -153,7 +153,7 @@ func TestExchangeRequestedExpiresInAndDialectCap_spec_10_2(t *testing.T) {
 
 	got := decodeLifetime(t, formExchange(t, srv, tok, url.Values{
 		"grant_type": {grantTypeExchange}, "subject_token": {tok},
-		"scope": {"sessions:read"}, "audience": {"lenny-gateway"}, "expires_in": {"60"},
+		"scope": {"tools:sessions:read"}, "audience": {"lenny-gateway"}, "expires_in": {"60"},
 	}))
 	if got.status != http.StatusOK || got.expiresIn != 60 {
 		t.Errorf("form expires_in=60: status %d expires_in %d, want 200 and 60", got.status, got.expiresIn)
@@ -191,7 +191,7 @@ func TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2(t *testing.T) {
 		}
 		got := decodeLifetime(t, doExchange(t, srv, tok, Request{
 			GrantType: grantTypeExchange, SubjectToken: tok,
-			Scope: "sessions:read", Audience: aud, ExpiresIn: int64Ptr(tc.expiresIn),
+			Scope: "tools:sessions:read", Audience: aud, ExpiresIn: int64Ptr(tc.expiresIn),
 		}))
 		if got.status != http.StatusOK || got.expiresIn != tc.want {
 			t.Errorf("json %s: status %d error %q expires_in %d, want 200 and %d",
@@ -199,7 +199,7 @@ func TestExchangeOversizedExpiresInClampsToDialectCap_spec_10_2(t *testing.T) {
 		}
 		got = decodeLifetime(t, formExchange(t, srv, tok, url.Values{
 			"grant_type": {grantTypeExchange}, "subject_token": {tok},
-			"scope": {"sessions:read"}, "audience": {aud},
+			"scope": {"tools:sessions:read"}, "audience": {aud},
 			"expires_in": {strconv.FormatInt(tc.expiresIn, 10)},
 		}))
 		if got.status != http.StatusOK || got.expiresIn != tc.want {
@@ -247,19 +247,19 @@ func TestExchangeRejectsExpiresInBelowMinimum_spec_10_2(t *testing.T) {
 	cases := map[string]*http.Response{
 		"json 0": doExchange(t, srv, tok, Request{
 			GrantType: grantTypeExchange, SubjectToken: tok,
-			Scope: "sessions:read", Audience: "lenny-gateway", ExpiresIn: int64Ptr(0),
+			Scope: "tools:sessions:read", Audience: "lenny-gateway", ExpiresIn: int64Ptr(0),
 		}),
 		"json -5": doExchange(t, srv, tok, Request{
 			GrantType: grantTypeExchange, SubjectToken: tok,
-			Scope: "sessions:read", Audience: "lenny-gateway", ExpiresIn: int64Ptr(-5),
+			Scope: "tools:sessions:read", Audience: "lenny-gateway", ExpiresIn: int64Ptr(-5),
 		}),
 		"form 59": formExchange(t, srv, tok, url.Values{
 			"grant_type": {grantTypeExchange}, "subject_token": {tok},
-			"scope": {"sessions:read"}, "audience": {"lenny-gateway"}, "expires_in": {"59"},
+			"scope": {"tools:sessions:read"}, "audience": {"lenny-gateway"}, "expires_in": {"59"},
 		}),
 		"form not an integer": formExchange(t, srv, tok, url.Values{
 			"grant_type": {grantTypeExchange}, "subject_token": {tok},
-			"scope": {"sessions:read"}, "audience": {"lenny-gateway"}, "expires_in": {"soon"},
+			"scope": {"tools:sessions:read"}, "audience": {"lenny-gateway"}, "expires_in": {"soon"},
 		}),
 	}
 	for name, resp := range cases {
@@ -291,7 +291,7 @@ func TestActorExchangeTakesNoDefaultLifetime_spec_10_2(t *testing.T) {
 			actor := lifetimeToken(t, signer, "tok-actor", tc.actorExp)
 			got := decodeLifetime(t, doExchange(t, srv, subject, Request{
 				GrantType: grantTypeExchange, SubjectToken: subject, ActorToken: actor,
-				Scope: "sessions:read", Audience: "lenny-gateway",
+				Scope: "tools:sessions:read", Audience: "lenny-gateway",
 			}))
 			if got.status != http.StatusOK {
 				t.Fatalf("status = %d (%s), want 200", got.status, got.errCode)

@@ -289,13 +289,13 @@ func TestHandlerEmitsTokenExchangedAudit_InMemoryPath(t *testing.T) {
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 	subjectTok := callerTok // self-rotation
 
 	resp := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: subjectTok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -347,11 +347,11 @@ func TestHandlerUsesTxStorePathWhenAvailable(t *testing.T) {
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 	resp := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -388,11 +388,11 @@ func TestHandlerTxFailureReturns500NoToken(t *testing.T) {
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 	resp := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Errorf("status=%d, want 500", resp.StatusCode)
@@ -423,12 +423,12 @@ func TestHandlerEmitsRejectionAuditOnInvalidScope(t *testing.T) {
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 	resp := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
 		// Broader scope than subject — must reject.
-		Scope: "sessions:write", Audience: "lenny-gateway",
+		Scope: "tools:sessions:write", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusBadRequest {
 		t.Fatalf("status=%d, want 400", resp.StatusCode)
@@ -463,13 +463,13 @@ func TestHandlerRateLimitedReturns429AndAudits(t *testing.T) {
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	// First request lands.
 	first := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if first.StatusCode != http.StatusOK {
 		t.Fatalf("first call status=%d", first.StatusCode)
@@ -477,7 +477,7 @@ func TestHandlerRateLimitedReturns429AndAudits(t *testing.T) {
 	// Second request rate-limited.
 	second := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if second.StatusCode != http.StatusTooManyRequests {
 		t.Fatalf("second call status=%d, want 429", second.StatusCode)

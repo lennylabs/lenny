@@ -96,13 +96,13 @@ func TestSuccessEnvelopeMatchesRFC8693(t *testing.T) {
 		Subject:  "alice@acme.com",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:read sessions:write",
+		Scope:    "tools:sessions:read tools:sessions:write",
 	})
 	resp, raw := exchangeRaw(t, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -122,7 +122,7 @@ func TestErrorEnvelopeMatchesRFC8693(t *testing.T) {
 	_, signer := newTestServer(t)
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	resp, raw := exchangeRaw(t, subject, tokenservice.Request{
 		GrantType:        "client_credentials",

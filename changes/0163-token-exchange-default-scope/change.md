@@ -66,7 +66,7 @@ Consequences on the exchanges the endpoint serves:
 
 ## Limits, and alternatives rejected
 
-The change does not narrow a subject token with an absent claim. Such a token is already unrestricted by scope, and the exchange cannot grant more than its roles allow. An explicit narrowing of such a subject is refused with `invalid_scope` today, because the subset check compares literal values; [TOKX-I3](../../issues/TOKX/TOKX-I3-exchange-cannot-narrow-a-subject-without-scope.md) records that gap for the owner, and the change leaves it as it is.
+The change does not narrow a subject token with an absent claim. Such a token is already unrestricted by scope, and the exchange cannot grant more than its roles allow. An explicit narrowing of such a subject is refused with `invalid_scope` today, because the subset check compares literal values; [TOKX-I3](../../issues/closed/TOKX/TOKX-I3-exchange-cannot-narrow-a-subject-without-scope.md) records that gap for the owner, and the change leaves it as it is.
 
 The alternative not chosen was option (b) of question SM-1, refusing an exchange without `scope` with `invalid_scope` when the subject's scope is present. It breaks the self-rotation grant for narrowed tokens, whose callers would have to repeat the scope, and RFC 8693 leaves the default to the authorization server.
 

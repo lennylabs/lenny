@@ -90,16 +90,16 @@ func delegationRequest(t *testing.T, signer *jwt.HMACSigner) (caller string, req
 	t.Helper()
 	caller = mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme", JWTID: "caller-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	subject := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme", JWTID: "subj-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read",
 	})
 	actor := mint(t, signer, jwt.Claims{
 		Subject: "alice", TenantID: "acme", JWTID: "actor-1",
 		Typ: auth.TokenSessionCapability, DelegationDepth: 1,
-		Scope: "sessions:read", SessionID: "sess_parent",
+		Scope: "tools:sessions:read", SessionID: "sess_parent",
 	})
 	return caller, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
@@ -107,7 +107,7 @@ func delegationRequest(t *testing.T, signer *jwt.HMACSigner) (caller string, req
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
 		ActorToken:       actor,
 		ActorTokenType:   "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	}
 }

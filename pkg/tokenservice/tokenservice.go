@@ -96,8 +96,13 @@ var _ IssuedTokenRotationStore = (*issuedtokenstore.Store)(nil)
 // Token Service serves the `requested_token_type=...:access_token:revoked`
 // revocation request: it revokes the subject token and cascades to its
 // delegation descendants. F-16.7.5.
+//
+// RevokeCascadeByCaller reads the caller token's row under a share lock
+// in the transaction that revokes, and returns
+// issuedtokenstore.ErrCallerRevoked, revoking nothing, when that row is
+// revoked.
 type RevocationStore interface {
-	RevokeCascade(ctx context.Context, tenantID, rootJTI, rootReason, childReason string, at time.Time) ([]issuedtokenstore.RevokedToken, error)
+	RevokeCascadeByCaller(ctx context.Context, tenantID, callerJTI, rootJTI, rootReason, childReason string, at time.Time) ([]issuedtokenstore.RevokedToken, error)
 }
 
 // Auditor writes §16.7 audit rows on the Token Service's behalf. The
@@ -154,6 +159,19 @@ type Server struct {
 	// `postgres_only` on a nil propagator or a publish error — peers
 	// then fall back to the authoritative Postgres check). F-16.7.5.
 	revocationPropagator func(ctx context.Context, tenantID, jti string) error
+
+	// platformRoles resolves the caller's platform-managed role
+	// assignment for the recursive-revocation request. Nil leaves the
+	// caller token's roles claim authoritative.
+	platformRoles PlatformRoleResolver
+}
+
+// PlatformRoleResolver returns the platform-managed role assignment of
+// (tenantID, subject), and whether one exists, so the assignment replaces
+// the token's roles claim. It returns the store error on a failed lookup.
+// userstore.PlatformRoles satisfies it, as it does the gateway's.
+type PlatformRoleResolver interface {
+	ResolveRoles(ctx context.Context, tenantID, subject string) (roles []auth.Role, found bool, err error)
 }
 
 // Options configures the Server.
@@ -175,6 +193,13 @@ type Options struct {
 	// the IdP token as a caller credential only. Nil uses Verifier.
 	CallerVerifier jwt.Verifier
 	Issuer         string
+
+	// PlatformRoles, when set, resolves the caller's platform-managed
+	// role assignment for the recursive-revocation request, and the
+	// assignment replaces the caller token's roles claim. Production
+	// passes userstore.PlatformRoles over the users table. Nil leaves the
+	// roles claim authoritative.
+	PlatformRoles PlatformRoleResolver
 
 	// PerDialectCap is the §13.3 per-dialect lifetime ceiling keyed
 	// by audience. Empty map means no cap (the validator falls
@@ -284,6 +309,7 @@ func NewServer(opts Options) (*Server, error) {
 		driftDegraded:      opts.DriftDegraded,
 
 		revocationPropagator: opts.RevocationPropagator,
+		platformRoles:        opts.PlatformRoles,
 	}
 	if s.callerVerifier == nil {
 		s.callerVerifier = s.verifier
@@ -516,10 +542,9 @@ func (s *Server) authenticateCaller(w http.ResponseWriter, r *http.Request, fini
 		finish("invalid_client")
 		return jwt.Claims{}, false
 	}
-	// spec: §13.3 "Client authentication on /v1/oauth/token" — a token
-	// carrying origin: "playground" is not a caller credential. Only the
-	// caller token is checked; the subject_token and actor_token take no
-	// origin check.
+	// A token carrying origin: "playground" is not a caller credential.
+	// The subject_token and actor_token of a mint take their origin check
+	// in tokenexchange.Validate; the revocation request takes none.
 	if callerClaims.Origin == jwt.OriginPlayground {
 		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "a playground-origin token is not a caller credential")
 		finish("invalid_client")
@@ -634,7 +659,7 @@ func (s *Server) handleExchange(w http.ResponseWriter, r *http.Request, req Requ
 		return
 	}
 
-	if !s.persistIssuedToken(w, r, jti, issued, signed, exchangeReq.PerDialectCap, callerClaims, subjectClaims, actorClaims, now, finish) {
+	if !s.persistIssuedToken(w, r, req, jti, issued, signed, exchangeReq.PerDialectCap, callerClaims, subjectClaims, actorClaims, now, finish) {
 		return
 	}
 
@@ -762,14 +787,14 @@ func (s *Server) validateExchange(w http.ResponseWriter, r *http.Request, req Re
 		// policy_result reason so the SIEM has cross-tenant
 		// probe evidence.
 		if auditErr := s.recordExchangeAudit(r.Context(), subjectClaims.TenantID, exchangeAuditPayload{
-			ExchangeType: classifyRejectedExchangeType(exchangeReq),
-			CallerSub:    callerClaims.Subject,
-			SubjectSub:   subjectClaims.Subject,
-			PolicyResult: "rejected:" + ee.Reason,
-			ErrorCode:    ee.Code,
-			Audience:     splitSpace(req.Audience),
-			Scope:        splitScope(req.Scope),
-			Now:          now,
+			ExchangeType:   classifyRejectedExchangeType(exchangeReq),
+			CallerSub:      callerClaims.Subject,
+			SubjectSub:     subjectClaims.Subject,
+			PolicyResult:   "rejected:" + ee.Reason,
+			ErrorCode:      ee.Code,
+			Audience:       splitSpace(req.Audience),
+			RequestedScope: splitScope(req.Scope),
+			Now:            now,
 		}); auditErr != nil {
 			// §13.3: fail closed when the rejection-audit
 			// write fails. Return 500 token_exchange_failed with the
@@ -870,15 +895,16 @@ func actorClaim(a *tokenexchange.Actor) *jwt.ActorClaim {
 // revoked, or an impersonation bearer, the signed token is discarded and
 // the exchange is rejected with 400 invalid_grant. It returns true once the record is durable.
 // spec: §13.3 (Credential Flow: Write-before-issue ordering).
-func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
-	rec := issuedRecord(jti, issued, signed, dialectCap, actorClaims, now)
+func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, req Request, jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, callerClaims, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time, finish func(string)) bool {
 	isRotation := s.isSelfRotation(issued, callerClaims, subjectClaims, actorClaims)
+	rec := issuedRecord(jti, issued, signed, dialectCap, subjectClaims, actorClaims, now)
 	auditPayload := exchangeAuditPayload{
 		ExchangeType:    classifyExchangeType(issued, isRotation, actorClaims),
 		CallerSub:       callerClaims.Subject,
 		SubjectSub:      issued.Subject,
 		JTI:             jti,
-		Scope:           issued.Scope,
+		RequestedScope:  splitScope(req.Scope),
+		GrantedScope:    issued.Scope,
 		Audience:        issued.Audience,
 		DelegationDepth: issued.DelegationDepth,
 		PolicyResult:    "accepted",
@@ -899,12 +925,11 @@ func (s *Server) persistIssuedToken(w http.ResponseWriter, r *http.Request, jti 
 }
 
 // issuedRecord builds the issued_tokens row for a signed token. The row
-// carries the SHA-256 digest of the token, never the token itself. On an
-// a2a_delegation mint (actorClaims non-nil) it also records the child's
-// lineage, as delegationLineage states.
-func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, actorClaims *jwt.Claims, now time.Time) issuedtokenstore.IssuedToken {
+// carries the SHA-256 digest of the token, never the token itself, and the
+// lineage derivedLineage returns.
+func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialectCap time.Duration, subjectClaims jwt.Claims, actorClaims *jwt.Claims, now time.Time) issuedtokenstore.IssuedToken {
 	hash := sha256.Sum256([]byte(signed))
-	actSub, parentJTI := delegationLineage(actorClaims)
+	actSub, parentJTI := derivedLineage(subjectClaims, actorClaims)
 	return issuedtokenstore.IssuedToken{
 		JTI:       jti,
 		TenantID:  issued.TenantID,
@@ -925,33 +950,40 @@ func issuedRecord(jti string, issued tokenexchange.Issued, signed string, dialec
 	}
 }
 
-// delegationLineage returns the act_sub and parent_jti of the issued_tokens
-// row an exchange writes. An a2a_delegation mint is the exchange that
-// carries an actor_token, which §13.3 defines as the delegating caller's
-// token. The child's act claim names the actor's sub, so act_sub is the
-// actor's sub. The child's parent is the actor token, so parent_jti is the
-// actor's jti. RevokeCascade walks parent_jti, so a §13.3 recursive
-// revocation of the actor token reaches the child and its descendants.
-// Every other exchange carries no actor and records neither column.
+// derivedLineage returns the act_sub and parent_jti of the issued_tokens
+// row an exchange writes. RevokeCascade walks parent_jti, so the parent
+// is the token whose recursive revocation must reach the issued token.
 //
-// The two columns are written together or not at all. A row with act_sub
-// set and parent_jti null matches the §13.3 "Platform-admin impersonation"
-// rule 2 predicate, so the impersonation listing, the platform-admin full
-// revoke, and the step (1a) re-read would treat such a delegation child as
-// an impersonation bearer. An actor token with no jti therefore records no
-// lineage. The §10.2 key set that verifies the actor_token covers tokens
-// Lenny signs, and every Lenny mint stamps a jti, so this branch is
-// defensive.
+// An a2a_delegation mint is the exchange that carries an actor_token, the
+// delegating caller's token. The child's act claim names the actor, so
+// act_sub is the actor's sub and the parent is the actor's jti. The two
+// columns are written together or not at all for a child: a row with
+// act_sub set and parent_jti null is an impersonation row, which the
+// impersonation listing, the platform-admin full revoke, and the step (1a)
+// re-read would treat as an impersonation bearer, so an actor token with
+// no jti records no lineage.
 //
-// spec: §13.3 (Credential Flow: RFC 8693 parameter mapping to Lenny claims,
-// actor_token; Platform-admin impersonation, rule 2), §12.2
-// (TokenIssuanceStore act_sub and parent_jti columns), §8.3 (recursive
-// revocation).
-func delegationLineage(actorClaims *jwt.Claims) (actSub, parentJTI string) {
-	if actorClaims == nil || actorClaims.JWTID == "" {
-		return "", ""
+// Every other exchange (a self-rotation, a scope narrowing, a lease
+// issuance, or an exchange by another caller) derives the issued token
+// from the subject_token, so the parent is the subject's jti and act_sub
+// stays empty. A self-rotation's subject is the token it replaces, so
+// revoking that token, such as a leaked one, reaches the replacement, and
+// a rotated derived token stays under its ancestors. A row with
+// parent_jti set is never an impersonation row. A subject without a jti
+// records no parent. Every Lenny mint stamps a jti, so the empty-jti
+// branches are defensive.
+//
+// spec: §13.3 (Credential Flow) "Lineage of derived tokens.",
+// "Platform-admin impersonation." rule 2; §12.2 (TokenIssuanceStore
+// act_sub and parent_jti columns).
+func derivedLineage(subjectClaims jwt.Claims, actorClaims *jwt.Claims) (actSub, parentJTI string) {
+	if actorClaims != nil {
+		if actorClaims.JWTID == "" {
+			return "", ""
+		}
+		return actorClaims.Subject, actorClaims.JWTID
 	}
-	return actorClaims.Subject, actorClaims.JWTID
+	return "", subjectClaims.JWTID
 }
 
 // exchangeSources lists the source tokens the issuance transaction
@@ -1057,6 +1089,7 @@ func sourceRefusalReason(err error) (string, bool) {
 func (s *Server) rejectRevokedSource(w http.ResponseWriter, r *http.Request, tenantID, reason string, accepted exchangeAuditPayload, finish func(string)) {
 	rejection := accepted
 	rejection.JTI = "" // The discarded token was never issued.
+	rejection.GrantedScope = nil
 	rejection.PolicyResult = "rejected:" + reason
 	rejection.ErrorCode = "invalid_grant"
 	if err := s.recordExchangeAudit(r.Context(), tenantID, rejection); err != nil {
@@ -1098,11 +1131,15 @@ type exchangeAuditPayload struct {
 	// child mint), `lease_issue` (credential-lease issuance), or
 	// `scope_narrow` (an operability-scope narrowing derivation). Every
 	// `token.exchanged` row carries it. spec: §16.7. SEC-TS-1.
-	ExchangeType    string    `json:"exchange_type"`
-	CallerSub       string    `json:"caller_sub,omitempty"`
-	SubjectSub      string    `json:"subject_sub,omitempty"`
-	JTI             string    `json:"jti,omitempty"`
-	Scope           []string  `json:"scope,omitempty"`
+	ExchangeType string `json:"exchange_type"`
+	CallerSub    string `json:"caller_sub,omitempty"`
+	SubjectSub   string `json:"subject_sub,omitempty"`
+	JTI          string `json:"jti,omitempty"`
+	// RequestedScope is the request's `scope` parameter, empty when the
+	// request named none. GrantedScope is the issued token's scope, which
+	// a rejected row does not carry.
+	RequestedScope  []string  `json:"requested_scope,omitempty"`
+	GrantedScope    []string  `json:"granted_scope,omitempty"`
 	Audience        []string  `json:"audience,omitempty"`
 	DelegationDepth int       `json:"delegation_depth,omitempty"`
 	PolicyResult    string    `json:"policy_result"`
@@ -1182,7 +1219,9 @@ func (s *Server) EmitRevocation(ctx context.Context, tenantID, sub, jti, reason 
 
 // handleRevocationRequest serves the §13.3 / §8.3 recursive
 // revocation request (`requested_token_type=...:access_token:revoked`).
-// It revokes the subject token (the root) and every delegation
+// It accepts the request only from the subject's own principal or a
+// tenant administrator (authorizeRevocation), and refuses a caller whose
+// own token is revoked. It revokes the subject token (the root) and every
 // descendant reachable through parent_jti, then emits one §16.7
 // token.revoked audit row per revoked node — `explicit_revoke` for the
 // root and `cascade_from_parent` for each descendant — and pushes each
@@ -1193,6 +1232,17 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 	if caller.TenantID != subject.TenantID {
 		writeOAuthError(w, http.StatusForbidden, "invalid_grant", "cross-tenant revocation is not permitted")
 		finish("invalid_grant")
+		return
+	}
+	allowed, err := s.authorizeRevocation(r.Context(), caller, subject)
+	if err != nil {
+		writeRoleLookupError(w, finish, err)
+		return
+	}
+	if !allowed {
+		writeOAuthError(w, http.StatusForbidden, "unauthorized_client",
+			"a revocation request is accepted only from the token's own user or a tenant administrator")
+		finish("unauthorized_client")
 		return
 	}
 	if subject.JWTID == "" {
@@ -1208,8 +1258,13 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 		finish("token_store_unavailable")
 		return
 	}
-	revoked, err := rs.RevokeCascade(r.Context(), subject.TenantID, subject.JWTID,
+	revoked, err := rs.RevokeCascadeByCaller(r.Context(), subject.TenantID, caller.JWTID, subject.JWTID,
 		revocationReasonExplicit, revocationReasonCascade, now)
+	if errors.Is(err, issuedtokenstore.ErrCallerRevoked) {
+		writeOAuthError(w, http.StatusUnauthorized, "invalid_client", "the caller token is revoked")
+		finish("invalid_client")
+		return
+	}
 	if errors.Is(err, issuedtokenstore.ErrNotFound) {
 		writeOAuthError(w, http.StatusBadRequest, "invalid_grant",
 			"subject_token jti is not a known issued token")
@@ -1228,6 +1283,57 @@ func (s *Server) handleRevocationRequest(w http.ResponseWriter, r *http.Request,
 		"revoked_count": len(revoked),
 	})
 	finish("")
+}
+
+// authorizeRevocation reports whether the caller may revoke the subject
+// token: the caller is the subject's own principal, or it holds the
+// tenant-admin or platform-admin role. The caller's roles are its
+// platform-managed assignment when one exists, and its token's roles
+// claim otherwise; a failed lookup returns the error, and the caller
+// refuses the request. The tenant check runs before it, so an
+// administrator acts only within its own tenant.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
+func (s *Server) authorizeRevocation(ctx context.Context, caller, subject jwt.Claims) (bool, error) {
+	if caller.Subject != "" && caller.Subject == subject.Subject {
+		return true, nil
+	}
+	roles := caller.Roles
+	if s.platformRoles != nil && caller.Subject != "" {
+		assigned, found, err := s.platformRoles.ResolveRoles(ctx, caller.TenantID, caller.Subject)
+		if err != nil {
+			return false, err
+		}
+		if found {
+			roles = assigned
+		}
+	}
+	for _, r := range roles {
+		if r == auth.RoleTenantAdmin || r == auth.RolePlatformAdmin {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
+// writeRoleLookupError refuses a revocation request whose caller role
+// lookup failed: 503 token_store_unavailable during a Postgres outage, and
+// 500 token_exchange_failed otherwise.
+//
+// spec: §13.3 (Credential Flow) "Recursive-revocation request
+// authorization."
+func writeRoleLookupError(w http.ResponseWriter, finish func(string), err error) {
+	if pgtenant.IsUnavailable(err) {
+		w.Header().Set("Retry-After", "5")
+		writeOAuthError(w, http.StatusServiceUnavailable, "token_store_unavailable",
+			"the caller's role assignment cannot be read during a Postgres outage")
+		finish("token_store_unavailable")
+		return
+	}
+	writeOAuthError(w, http.StatusInternalServerError, "token_exchange_failed",
+		"the caller's role assignment lookup failed: "+err.Error())
+	finish("token_exchange_failed")
 }
 
 // emitTokenRevoked writes the §16.7 token.revoked audit row for one
@@ -1370,6 +1476,7 @@ func toExchangeToken(c jwt.Claims) tokenexchange.Token {
 		AuthorizedTools: append([]string{}, c.AuthorizedTools...),
 		Typ:             tokenexchange.TokenType(c.Typ),
 		Exp:             c.ExpiryTime(),
+		Origin:          c.Origin,
 	}
 }
 

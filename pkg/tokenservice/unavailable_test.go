@@ -39,11 +39,11 @@ func TestHandlerPostgresOutageReturns503TokenStoreUnavailable_F1334(t *testing.T
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 	resp := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status=%d, want 503", resp.StatusCode)
@@ -88,11 +88,11 @@ func TestHandlerNonOutageStoreFailureReturns500_F1334(t *testing.T) {
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 	resp := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status=%d, want 500", resp.StatusCode)
@@ -144,13 +144,13 @@ func TestHandlerRejectionAuditWriteFailureReturns500TokenExchangeFailed(t *testi
 	})
 	callerTok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", Typ: auth.TokenUserBearer,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 	// Broader scope than the subject token: tokenexchange.Validate
 	// rejects with invalid_scope, which drives the rejection-audit path.
 	resp := doExchange(t, srv, callerTok, Request{
 		GrantType: grantTypeExchange, SubjectToken: callerTok,
-		Scope: "sessions:write", Audience: "lenny-gateway",
+		Scope: "tools:sessions:write", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusInternalServerError {
 		t.Fatalf("status=%d, want 500 (fail closed on rejection-audit write failure)", resp.StatusCode)

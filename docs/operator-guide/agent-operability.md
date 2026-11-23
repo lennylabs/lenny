@@ -148,16 +148,20 @@ Scopes don't replace tenancy — a `tenant-admin` caller is still constrained to
 
 ### Issuing a scoped token
 
-Operators mint scope-narrowed tokens by calling `POST /v1/oauth/token` with an RFC 8693 token-exchange grant. The Token Service enforces that every value in the requested scope is present in the `subject_token.scope` (narrowing is monotonic; broadening is rejected with `invalid_scope`). An exchange without a `scope` parameter issues the `subject_token`'s scope unchanged, so a narrowed token cannot be exchanged for a broader one by omitting `scope`.
+Operators mint scope-narrowed tokens by calling `POST /v1/oauth/token` with an RFC 8693 token-exchange grant. The Token Service accepts a requested scope when every value is a valid scope value and the `subject_token`'s scope grants it: a token without a `scope` claim and a `tools:*` token grant every value, and `tools:<domain>:*` grants every action of its domain. Narrowing is monotonic, and a value the `subject_token` does not grant is rejected with `invalid_scope`. An exchange without a `scope` parameter issues the `subject_token`'s scope unchanged, so a narrowed token cannot be exchanged for a broader one by omitting `scope`.
+
+The example below narrows an admin token, which carries no `scope` claim, for an automation agent:
 
 ```bash
 curl -X POST https://lenny.example.com/v1/oauth/token \
   -H "Authorization: Bearer ${ADMIN_TOKEN}" \
   -d grant_type=urn:ietf:params:oauth:grant-type:token-exchange \
   -d subject_token="${ADMIN_TOKEN}" \
-  -d subject_token_type=urn:ietf:params:oauth:token-type:access_token \
+  -d subject_token_type=urn:ietf:params:oauth:token-type:jwt \
   -d scope="tools:health:* tools:diagnostics:* tools:escalation:create"
 ```
+
+The caller presents its own token here. A caller that presents another user's token as `subject_token` must request a scope strictly narrower than that token's scope, or the exchange is rejected with `invalid_scope`. Revoking a token through the Token Service also revokes every token narrowed from it. Only the token's own user, or a `tenant-admin` or `platform-admin` of the same tenant, can revoke it.
 
 This replaces any earlier ad-hoc "mint a narrowed token" mechanism.
 

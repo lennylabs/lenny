@@ -54,7 +54,9 @@ func tokenServicePost(t *testing.T, base, caller string, form url.Values) (int, 
 
 // mintDelegationChild runs an a2a_delegation exchange on base: subject is
 // the token whose identity the child carries and actor is the delegating
-// token, which also authenticates the call.
+// token, which also authenticates the call. The request names a scope
+// narrower than an unscoped subject's, because a child of another user's
+// token must narrow it.
 func mintDelegationChild(t *testing.T, base, subject, actor string) string {
 	t.Helper()
 	code, body := tokenServicePost(t, base, actor, url.Values{
@@ -62,6 +64,7 @@ func mintDelegationChild(t *testing.T, base, subject, actor string) string {
 		"subject_token_type": {"urn:ietf:params:oauth:token-type:jwt"},
 		"actor_token":        {actor},
 		"actor_token_type":   {"urn:ietf:params:oauth:token-type:jwt"},
+		"scope":              {"tools:sessions:read"},
 	})
 	tok, _ := body["access_token"].(string)
 	if code != http.StatusOK || tok == "" {
