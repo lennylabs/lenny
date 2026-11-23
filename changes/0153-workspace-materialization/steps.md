@@ -170,7 +170,7 @@ The step needs EG proposal 3 ([0127.S3](../0127-egress-and-git/steps.md#steps)),
 - depends-on: [0153.S2, 0131.S1, 0135.S5 (part)]
 - closes: [F-13.4.24 (part)]
 
-Mid-session `overlay` for uploads and child-file imports, `discard`, and the checkpoint's skip of the reserved names.
+Mid-session `overlay` for uploads, a parent's push, and child-file imports, `discard`, and the checkpoint's skip of the reserved names. 0166.S3 depends on this step for the overlay that a file part with `materialize: true` uses, and adds `materialize` to `session.send` ([`0166-delegation-primitives`](../0166-delegation-primitives/steps.md#steps), decision 18).
 
 The step needs IC-1 ([0131.S1](../0131-incremental-checkpoint/steps.md#steps)), and its child-file import part needs the MD-26 proposal ([0135.S5](../0135-message-delivery/steps.md#steps)); the mid-session upload part does not. How the import is ordered against this step is open decision O23 in `decisions.md`, which matches O18 of `0135-message-delivery`.
 

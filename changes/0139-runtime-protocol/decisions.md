@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-The M3 readiness review of 2026-11-19 raised O14 to O22, and its second pass raised O23 at the request of change 0119. O1 to O13 are settled and sit under "Decisions", in "Settled open decisions O1 to O13".
+The M3 readiness review of 2026-11-19 raised O14 to O22, and its second pass raised O23 at the request of change 0119. Revision 15 raised O24 on 2026-11-23. O1 to O13 are settled and sit under "Decisions", in "Settled open decisions O1 to O13".
 
 **O14. Whether one session's handshake may decide claims for a whole pod set. Open.**
 
@@ -102,6 +102,21 @@ The same review's pass over 0140 restated D23, the "RV-2" paragraph, the Terms r
 - (b) Keep the renames, and amend "Successor stubs" in `spec/conventions.md` to allow a rename through the anchor-redirect map.
 
 **Recommendation: (a).** A rename has no lasting effect once the sections are successor stubs, and it would touch annotations that the area change replaces. The matching decision is open decision 5 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md), which owns the renames. It blocks the §5.2 and §4.7.9 rows of 0139.S1. (raised by the M3 readiness review, 2026-11-19; requested by change 0119; mirrors 0119 open decision 5)
+
+**O24. Whether a stdio bridge marks call groups, and when `toolServers` lists `client`. Open.**
+
+Revision 15 applies decision 23 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md), and "CT-1 Protocol members" of [`0122-client-tools`](../0122-client-tools/change.md#ct-1-protocol-members), which 0122 was rewriting for the same decision on 2026-11-23, differs from this change on two points. Under the program's rule for members that disagree, the conflict is recorded here and reported for 0122.
+
+- **Groups.** 0122 states that "the reference bridge marks the calls a harness makes in one step with one group". "RP-5" **Groups from the bridge.** states that only the in-process bridge, which drives its harness as a library, sees a model step, and that a stdio bridge sends each `client` call alone, because an MCP `tools/call` carries no model step. A call's `group` carries its `size`, which a stdio bridge does not know when the first call of a step arrives.
+- **`toolServers`.** 0122 has `toolServers` list `client` "when the session's client offers tools". "RP-4" lists `client` for every session whose effective capabilities include `clientTools.supported`, with an empty list until the client offers tools, because a harness reads its MCP configuration at launch and a server that first appears mid-session waits for the next `session_start` ("RP-4" **A harness's fixed configuration.**).
+
+Options:
+
+- (a) Keep this change's text on both points. 0122 restates its bridge sentence for the in-process bridge, and states that a stdio bridge sends calls alone, which a provider adapter returns one per response. 0122 lists `client` in `toolServers` for every session whose runtime declares `clientTools.supported`.
+- (b) A stdio bridge holds each `client` call for a window, `--group-window-ms`, and sends the calls that arrived within it as one group with their count as `size`. A call that arrives after the window starts a new group. The `toolServers` point follows (a).
+- (c) Keep 0122's text on both points. The stdio bridge's grouping needs a mechanism this change does not have, and a harness that starts with no `client` server sees client tools only after its next `session_start`.
+
+**Recommendation: (a).** It states only what a bridge can see, adds no timing heuristic, and keeps every client tool reachable from the first message. A stdio bridge's single calls cost a provider adapter one response per call and change no result. "Validation owed" in `steps.md` records whether a stock harness sends a step's calls concurrently enough for (b) to work, which (b) needs before it can be chosen. It blocks 0139.S2 and 0139.S3, and the step of 0122 that builds the blocking interface. (raised in revision 15, 2026-11-23, while applying 0166's "DP-7" row)
 
 ## Decisions
 

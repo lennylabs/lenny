@@ -141,3 +141,7 @@ Raised as open decisions:
 - O24: which step closes F-8.7.17 (requested by 0135; matches 0135's O19).
 
 0153.S5, 0153.S8, and 0153.S9 name the new decisions that block them.
+
+## Revision 16 (2026-11-23)
+
+- Trigger: change 0166. Revision 16 of `change.md` carries out the row for 0153 in "DP-7 What each change takes on" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on), revision 7. Under 0166 decision 18, "WM-12" gains **A parent's push.**: a file part with `materialize: true` on `session.send` places a file from the parent's workspace into the child's through `overlay`, gated on the child runtime's `capabilities.midSessionUpload`, with its bytes from the parent's file exported under MD-18 of 0135, which the child's adapter downloads and verifies as for an import. Under 0166 decision 45, the push passes the parent's content caveat on export and the child's on import. It takes the WM-4 staging checks with `IMPORT_LIMIT_EXCEEDED` and the child's workspace size limit, and follows the mid-session upload's last-writer-wins rule. "Terms", "Scope", the WM-1 table, "WM-4", WMR-1, the §8.2 specification row, the documentation row for the runtime author guide, a new `integration` test row, and 0153.S5 in `steps.md` follow. Child-file imports name the platform operation `files.import` in place of `import_child_session_file`, and the import limit is the importer's content caveat in place of the delegation lease. "Labels from other designs" gains 0166.

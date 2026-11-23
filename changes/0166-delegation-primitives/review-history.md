@@ -48,3 +48,13 @@ A review round on revision 6 ran a general reviewer and a security reviewer, bot
 - Requirements: DPR-7, DPR-13 to DPR-15, DPR-17, and DPR-19 become requirements on 0135, 0146, 0122, and 0138, listed after the requirements table with their tests. DPR-20 (the content caveat) and DPR-21 (`labels` and tags) are added, and DPR-3, DPR-10, DPR-11, DPR-16, and DPR-18 are restated.
 - Restatements removed: `perChildMaxAge` cites SL-10, the parallelism count cites SL-10 "Caps" with its difference, `messagingRateLimit` cites MD-9, the delivery paths cite MD-22, the parity table keeps only the rows that differ from MD-22's, and the caveat lists appear once, in "DP-1".
 - The specification, documentation, and tests sections list only this change's edits, and steps.md depends on 0126.S1 and 0141.S1.
+
+## Revision 8, 2026-11-23
+
+Reconciles 0166 with the other changes after they took on its "DP-7" rows the same day.
+
+- "DP-3" **Parallelism** cites "A parent's parallelism" in SL-10 of 0146 for the list of counted states and names `blocked` as the one difference.
+- "DP-1": `session.create` takes `clientToolTurns` and `clientToolHoldSeconds` for the tools a parent offers, and `session.send` with no parts carries a child's late results, each citing CT-5 of 0122.
+- "DP-7": the rows for 0122, 0138, 0139, 0144, and 0146 name what those changes now state, including 0138's R20 to R25, 0139's RPR-24 and RPR-25, and 0146.S4, which lands the hand-off while 0166.S1 lands `session.transfer` and `session.release`. The question rules are 0135's (MD-22, MDR-64), and SL-12 keeps only their resend on recovery.
+- "Validation owed" lists the open decisions the other changes raised: 0135 O26, 0122 O22, and 0139 O24 with its mirror 0122 O23.
+

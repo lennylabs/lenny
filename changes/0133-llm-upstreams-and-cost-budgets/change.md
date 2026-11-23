@@ -1,6 +1,6 @@
 # LLM upstreams and cost budgets
 
-Status: `Draft`, revision 10, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 11, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -36,7 +36,7 @@ The owner settled the direction: keep a thin proxy that meters usage and enforce
 - Upstream lists on tenants and pools, grants of platform upstreams to tenants, and resolution of each call to one upstream by API format and model ("LU-2").
 - Proxy routes for OpenAI Chat Completions, OpenAI Responses, and Google `generateContent` beside Anthropic Messages, one proxy token per session, and usage normalization into token classes with cache writes by lifetime ("LU-3").
 - Rate cards: per upstream, per model, and per token class, with multipliers, a discount, an optional fallback entry for unpriced models, and versions by `effectiveFrom` ("LU-5").
-- Credit budgets with reservation before a call and settlement after it, across the per-call, session, tree, user, tenant, and global scopes, with the [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) extension requested before the call ("LU-6"). Budgets cover the calls a runtime sends through the proxy, and enforcement is best effort: a scope can overshoot its limit by the input estimate's error on the calls in flight.
+- Credit budgets with reservation before a call and settlement after it, across the per-call, session, tree, user, tenant, and global scopes, with the [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) extension requested before the call ("LU-6"). The tree scope is the carve of a child's budget under [`0166-delegation-primitives`, "DP-3"](../0166-delegation-primitives/change.md#dp-3-carved-budget), over the budget objects of [`0170-budgets`](../0170-budgets/change.md). Budgets cover the calls a runtime sends through the proxy, and enforcement is best effort: a scope can overshoot its limit by the input estimate's error on the calls in flight.
 - One usage record per model call through the proxy, and LLM usage entries with a labelled estimated cost on `token_usage.checkpoint` ("LU-7").
 - Workload identity as a credential source for platform upstreams on Amazon Bedrock, Google Cloud, and Azure ("LU-8").
 - A statement of the calls the proxy does not see: a runtime whose format the proxy does not parse, or that holds its own provider key, reaches the provider over egress like any other traffic, with no budget and no LLM usage record ("LU-10").
@@ -96,7 +96,7 @@ The owner settled the direction: keep a thin proxy that meters usage and enforce
 | Input ratio | The total input tokens of a session's last settled call to one upstream and model, divided by that call's text bytes. Settlement stores it in the session's Redis budget record, so every gateway replica reads it. |
 | Best-effort enforcement | The budget guarantee of "LU-6": a reservation is admitted only within every scope's limit, a scope can still overshoot by the input estimate's error on the calls in flight, and the next call's reservation in that scope is refused once the limit is passed. |
 | Settlement | The replacement of a reservation with the call's estimated cost once the provider reports usage. |
-| Budget scope | A level at which credits are limited: per call, session, delegation tree, user window, tenant window, and global window. |
+| Budget scope | A level at which credits are limited: per call, session, delegation tree, user window, tenant window, and global window. The delegation tree scope is the carved budget of 0166 "DP-3" over the budget objects of `0170-budgets` ("LU-6"). |
 | Requested model and served model | The model the request names, and the model the response names. They differ when an alias or an LLM gateway picks the model. |
 | Usage record | The per-call record of a metered call: identities, upstream, models, token classes, rate-card version, reservation, and estimated cost. "LU-7" defines it. |
 | Forwarded attribution | The identity attributes the proxy sets on each request it forwards to an upstream: tenant, environment, user, session, root session, runtime, runtime revision, pool, and upstream. The upstream's `attribution` settings choose which are sent. "LU-11" defines it. |
@@ -122,7 +122,8 @@ The owner settled the direction: keep a thin proxy that meters usage and enforce
 | LLM host reservation | The egress design's rule that a tenant egress route cannot claim a host that carries an operator's LLM credential, checked at each egress decision ([`0127-egress-and-git`, "Configuration by scope"](../0127-egress-and-git/change.md#configuration-by-scope)). |
 | `llm_request_started` and `llm_request_completed` | The runtime frames by which a runtime reports an LLM call it sends itself, the second optionally with `inputTokens` and `outputTokens` ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). The specification carries them on `CH-RUNTIMEOPS` today. Under decision O7 (a) of [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#decisions), settled on 2026-11-12, that channel merges into `CH-MSGSOCK`, so they travel on the runtime connection. They are runtime-started frames, so they need no declared capability ([RP-2](../0139-runtime-protocol/change.md#rp-2-capabilities-and-their-dependencies)). |
 | Post-chain point | The step at session creation, after the `PreRoute` chain fixes the runtime and pool and a revision is chosen, where every check that depends on them runs ([`0141-runtime-routing`, "RT-2"](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract)). |
-| Delegation lease and `lease_slice` | The limits a delegated child runs under, carved from its parent, including `maxTokenBudget` today ([§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism) and [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease)). |
+| Delegation lease and `lease_slice` | The limits a delegated child runs under, carved from its parent, including `maxTokenBudget` today ([§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism) and [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease)). [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-1-session-grant) replaces them with the session grant, whose resource caveats a parent narrows for a child with `limits` on the platform operation `session.create`. |
+| Carved budget and budget object | The budget a child receives at `session.create`, reserved from the budget objects that apply to its parent and returned at the child's end ([`0166-delegation-primitives`, "DP-3"](../0166-delegation-primitives/change.md#dp-3-carved-budget)). A budget object is a limit in a unit such as credits, which [`0170-budgets`](../0170-budgets/change.md) defines. |
 | Lease extension | The [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) operation that raises a session's budget in `auto` mode or after a user approves an elicitation, with `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, and `REJECTED` outcomes. |
 | `billing_correction` | A billing event that replaces the quantity fields of an earlier event, latest first, with dual control above `billing.dualControlThreshold` ([§11.2.1](../../spec/11_policy-and-controls.md#1121-billing-event-stream)). |
 | Regulated tenant | A tenant whose `complianceProfile` is `soc2`, `fedramp`, or `hipaa`. |
@@ -146,6 +147,8 @@ The owner settled the direction: keep a thin proxy that meters usage and enforce
 | AM-6 and AM-8 | [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md#am-6-responses-and-streaming) | Response usage mapping, and the error table with `CREDENTIAL_POOL_EXHAUSTED`. |
 | CA-7 | [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) | Delegated children and the check at delegation. CR-1 of [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) withdraws CA-7 with connectors. |
 | DA-6 | [`0126-delegation-availability`](../0126-delegation-availability/change.md#da-6-per-hop-narrowing) | Per-hop narrowing through `lease_slice`. |
+| DP-1, DP-3, and decision 12 | [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-3-carved-budget) | DP-1 the session grant and `session.create`, DP-3 the carved budget with `session.set_limits`, and decision 12, under which the carve is a reservation from the budget objects of `0170-budgets`. |
+| Budget objects | [`0170-budgets`](../0170-budgets/change.md) | Budget objects in credits and infrastructure resources, the carve as a reservation from the objects that apply to a parent, and lease extension. 0170 is a draft. |
 | R3 | [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) | [R3](../0138-rest-only-client-api/change.md#ro-2-rest-additions) the turn resource, whose `usage` the provider adapters read for their client-facing usage. |
 | MD-20 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-20-turn-and-usage-events) | Turn and usage session events. A `usage` event carries `source: gateway` for a call the proxy metered and `source: runtime` for the counts a runtime reports on `llm_request_completed`, and budgets read only the gateway source. |
 
@@ -515,18 +518,20 @@ The estimate leaves out volume tiers, committed-use discounts, provider credits,
 
 #### Scopes
 
-Every token limit of §11.2 becomes a credit limit at the same scope, and `maxTokenBudget` becomes `maxCreditBudget` on the delegation lease, on `lease_slice`, and in the delegation presets **[design]**:
+Every token limit of §11.2 becomes a credit limit at the same scope, and `maxTokenBudget` becomes `maxCreditBudget` on the delegation lease, on `lease_slice`, and in the delegation presets **[design]**. Under [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-3-carved-budget), `maxCreditBudget` is the carved budget, a resource caveat of the session grant, and the presets become operator-defined default leases ("DP-6"):
 
 | Scope | Setting | Kept in |
 | :-- | :-- | :-- |
 | Per call | `quotas.llmCredits.perCall` | Checked against the reservation alone. |
 | Session | The session's budget, or its `maxCreditBudget` slice | Redis, per session, in the session's budget record. |
-| Delegation tree | The root's `maxCreditBudget` | Redis, per root session, beside the tree counters `budget_reserve.lua` keeps. |
+| Delegation tree | The root's `maxCreditBudget`, and each child's carve from what applies to its parent (0166 "DP-3") | The budget objects of `0170-budgets` ("The tree scope" below). |
 | User window | `quotas.llmCredits.perUser` with its window | Redis, per tenant and user. |
 | Tenant window | `quotas.llmCredits.perTenant` with its window | Redis, per tenant. |
 | Global window | `quotas.llmCredits.global` with its window | Redis. |
 
 Budgets apply to calls through the proxy alone (OD-15). A call that a runtime sends to a provider outside the proxy, with a key it holds, draws on no scope, and Lenny does not count it ("LU-10").
+
+**The tree scope.** Under decision 12 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md), the tree scope gives way to the carve of 0166 "DP-3": a child's budget is a reservation from the budget objects that apply to its parent, and the child's share is a budget object of the child's session funded by it. [`0170-budgets`](../0170-budgets/change.md) defines the budget objects, their units, and the counters and keys behind them, and replaces the tree counters of `budget_reserve.lua`. The steps below that name the tree scope apply to those objects in credits. This design keeps the reservation, the input estimate, settlement, the bounds, and the extension trigger at every scope.
 
 #### Reservation
 
@@ -590,7 +595,7 @@ The session scope lives in Redis, so every replica that serves a session's calls
 
 #### Delegation
 
-`budget_reserve.lua` carves a child's `maxCreditBudget` from its parent at `delegate_task`, as it carves tokens today. A child's budget return waits for the session's in-flight reservations to settle or expire, which replaces the `ReportUsage` and `FINAL_USAGE_REPORT` quiescence wait. §8.3 item 5, **Over-run semantics.**, becomes the best-effort bound of "Bounds": no call starts in a slice past its limit, and a slice overshoots by the input estimate's error on the calls in flight in it.
+A child's carve, `limits.budget` under [`0170-budgets`, "BG-8"](../0170-budgets/change.md), is reserved at `session.create` from the budget objects that apply to its parent, and `session.set_limits` moves unused credits between a parent and a live child, as 0166 "DP-3" states. The carve's mechanics are those of `0170-budgets` (0166 decision 12), which replace the carve of `budget_reserve.lua` at `delegate_task`. A child's budget return waits for the session's in-flight reservations to settle or expire, which replaces the `ReportUsage` and `FINAL_USAGE_REPORT` quiescence wait. §8.3 item 5, **Over-run semantics.**, becomes the best-effort bound of "Bounds": no call starts in a carve past its limit, and a carve overshoots by the input estimate's error on the calls in flight in it.
 
 #### Worked example
 
@@ -803,7 +808,7 @@ The rows name the numbered sections as they stood on 2026-11-16, and they state 
 | [§5.2](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), **Slot (session mode)** | Remove the slot's credential lease and the slot's credentials file at `/run/lenny/credentials.json` from the scrub. Add the pool's `llmUpstreams`. |
 | [§6.1](../../spec/06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) and [§6.2](../../spec/06_warm-pod-model.md#62-pod-state-machine) | Remove **Per-session credential lease lifecycle.**, the direct-mode idle-clock bullet, and lease assignment from the `resuming` failures. |
 | [§7.1 Normal Flow](../../spec/07_session-lifecycle.md#71-normal-flow) and [§7.3 Retry and Resume](../../spec/07_session-lifecycle.md#73-retry-and-resume) | Replace step 3's pre-claim check with the list check at the post-chain point, and remove the lease map at finalize, rotation on `RATE_LIMITED`, lease release, derive rule 3's credential handling, and **Credential leases on the replacement pod.** |
-| [§8.1](../../spec/08_recursive-delegation.md#81-design-philosophy), [§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism), and [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) | `maxTokenBudget` becomes `maxCreditBudget` on the lease, `lease_slice`, and the presets. Remove **Credential propagation:** with its pre-check and `CREDENTIAL_PROVIDER_MISMATCH`. Quiescence waits for in-flight reservations. Restate item 5, **Over-run semantics.**, as the best-effort bound of the input estimate. |
+| [§8.1](../../spec/08_recursive-delegation.md#81-design-philosophy), [§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism), and [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) | `maxTokenBudget` becomes `maxCreditBudget` on the lease, `lease_slice`, and the presets, which [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#specification-and-non-specification-changes) restates as the carved budget of the session grant when it rewrites §8. Remove **Credential propagation:** with its pre-check and `CREDENTIAL_PROVIDER_MISMATCH`. Quiescence waits for in-flight reservations. Restate item 5, **Over-run semantics.**, as the best-effort bound of the input estimate. |
 | [§8.6 Lease Extension](../../spec/08_recursive-delegation.md#86-lease-extension), opening, **Trigger:**, **Request:**, **Extendable fields:**, and the approval modes | The trigger is a session or tree reservation refused before the call. A terminal extension outcome refuses the call and leaves the session running, and the rejection cool-off bounds repeated requests (decision 5). Remove the delivery of an already-computed response, the committed-stream case, and the direct-mode paragraph. `additionalTokenBudget`, `grantedTokenBudget`, and `maxExtendableBudget` are in credits. |
 | [§8.8](../../spec/08_recursive-delegation.md#taskrecord) and [§8.10](../../spec/08_recursive-delegation.md#810-delegation-tree-recovery) | Remove the credential pre-check and lease from `created`, and state tree charging in credits. |
 | [§10.2 Authentication](../../spec/10_gateway-internals.md#102-authentication) | Remove credential lease bearers in direct mode. Add `manage_llm_upstreams`. |

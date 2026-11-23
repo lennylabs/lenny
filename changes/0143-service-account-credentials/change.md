@@ -1,6 +1,6 @@
 # Service account credentials
 
-Status: `Draft`, revision 3, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 4, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -44,7 +44,7 @@ The security review of revision 1 found that Lenny's subjects did not keep a per
 
 - The `registered` source, including long-lived bearer tokens a backend writes, which the owner confirmed stay supported.
 - The `oauth2Link` source, which stays human-only because a link needs a person's browser consent.
-- UC-3's refusal of pods that can serve someone else, the `retireOnRelease` mark, the impersonation refusal, the delegation lease rule, and one token per principal and type.
+- UC-3's refusal of pods that can serve someone else, the `retireOnRelease` mark, the impersonation refusal, the delegation rule under which a child receives a binding only when its parent's `session.create` names it, and one token per principal and type.
 - `delivery: federation` of the egress design, which keeps its per-binding subject, its JWT in the pod, and its own issuer and key set.
 
 **Out of scope:**
@@ -60,7 +60,7 @@ The security review of revision 1 found that Lenny's subjects did not keep a per
 
 | Term | Meaning |
 | :-- | :-- |
-| Principal | The identity a session runs as, which the session row records: its user identifier and its `caller_type`. A `human` principal is a person, and a `service` principal is a service account. A delegated child carries its root's principal. |
+| Principal | The identity a session runs as, which the session row records: its user identifier and its `caller_type`. A `human` principal is a person, and a `service` principal is a service account. A delegated child carries its root's principal through the parent link of [`0166-delegation-primitives`, "DP-2"](../0166-delegation-primitives/change.md#dp-2-parent-link). |
 | Service account | A principal whose bearer carries `caller_type: service`: a system principal authenticating through the client credentials path of §10.2, or a token a tenant identity source marks as a service through its `service_claim` ([`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md)). No person stands behind it. |
 | Lenny subject | The `subject` half of Lenny's user key `(tenant_id, subject)`. For a person it is the canonical subject of [`0149-tenant-scoping-identity`, "Several IdPs in one tenant, and namespacing"](../0149-tenant-scoping-identity/change.md#several-idps-in-one-tenant-and-namespacing). For a service account it is `~svc~` followed by the canonical subject, and for an `agent` caller `~agt~` followed by it (SA-6). |
 | Subject namespace | The set of Lenny subjects of one caller type: `~svc~` for service accounts, `~agt~` for `agent` callers, and every other subject for persons (SA-6). |
@@ -113,6 +113,7 @@ The security review of revision 1 found that Lenny's subjects did not keep a per
 | SO-2, SO-4a, and SP2 | [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) | The tenant security record with its guardrails and posture, the mirror of a platform admin's write to the tenant's chain, and the property that keeps a tenant admin from acting on a security role holder. |
 | TS-4, TS-6, and TS-8 | [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#user-lifecycle-ts-4) | User lifecycle and invalidation, which reads the subject and so covers a service account; identity sources, the verifier registry, and canonical subjects; and the SCIM server. |
 | SD-P1 | [`0144-session-derive`](../0144-session-derive/change.md) | The rule that a derived session takes its source's owner. |
+| DP-1 and DP-2 | [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-2-parent-link) | The session grant and the platform operation `session.create`, and the parent link, from which a child's principal and `caller_type` follow. |
 | Service identities | [`0152-user-git-identity`, "Service identities"](../0152-user-git-identity/change.md#service-identities) | The `serviceIdentities` list of a VCS pool, under which a listed service session takes the App binding. |
 | C8 and C9 | [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md#security-properties) | A registered host cannot shadow a platform-reserved host (C8), and content from a customer network is hostile (C9). |
 
@@ -171,7 +172,7 @@ Alice and Bob are developers at `acme`, Carol is its tenant admin, and Dave is i
 - SAR-3. A service account's OAuth client secret or private key never reaches a pod, a gateway log, or any destination other than the token endpoint in the type's token trust record.
 - SAR-4. A tenant can reach a provider that trusts Lenny's exchange issuer with no secret stored in Lenny.
 - SAR-5. A provider refusal that needs a new act moves the row to `user_act_required` and tells the tenant, and a transient failure does not.
-- SAR-6. A service account's token takes every protection a person's token takes: the pod refusals, `retireOnRelease`, the impersonation refusal, the delegation lease rule, request rules, the delivery ceiling, the token trust record, and audit.
+- SAR-6. A service account's token takes every protection a person's token takes: the pod refusals, `retireOnRelease`, the impersonation refusal, the delegation rule of UCP-8, request rules, the delivery ceiling, the token trust record, and audit.
 - SAR-7. A session of `deploy-bot` never receives a token of `report-bot`, a human session never receives a service account's token, and a service session never receives a human's token.
 - SAR-8. An `agent` caller receives no principal-owned token.
 - SAR-9. Each provider call is audited in `credential.mint` with the principal type and the source, and carries no secret.
@@ -184,7 +185,7 @@ Alice and Bob are developers at `acme`, Carol is its tenant admin, and Dave is i
 
 ### SA-1 Principal-owned credentials
 
-**The release rule.** UCP-1 becomes: a session receives only the token of the principal on its session row, and only when that row's `caller_type` is `human` or `service` and equals the principal type the token's row records. A delegated child's row copies its root's principal and `caller_type`. An empty value or `agent` receives nothing. No client or pod input names another principal, and the Token Service holds this from its own read through `pkg/binding` **[design]**.
+**The release rule.** UCP-1 becomes: a session receives only the token of the principal on its session row, and only when that row's `caller_type` is `human` or `service` and equals the principal type the token's row records. A delegated child's row copies its root's principal and `caller_type`, which follow from the parent link (0166 "DP-2"). An empty value or `agent` receives nothing. No client or pod input names another principal, and the Token Service holds this from its own read through `pkg/binding` **[design]**.
 
 A person and a service account never share a Lenny subject, because SA-6 places every service account's subject in the `~svc~` namespace and refuses that prefix on every human token. The principal-type check stays as a second control: a row records its principal type, and the type is sealed with the value, so a row moved to the other principal type fails to decrypt.
 
@@ -231,7 +232,7 @@ POST   /v1/admin/service-accounts/{subject}/credentials/{type}/keys/{kid}/activa
 - **Rotation and revocation.** A write increments `generation`, the gateway pushes a binding change to the principal's sessions holding a binding of the type, and `netagent` flushes, under [UC-1, "Rotation and removal"](../0151-user-credential-delivery/change.md#rotation-and-removal). `DELETE` and `revoke` stop use.
 - **Pods.** UC-3's refusal of pods that can serve someone else, with `422 USER_CREDENTIAL_UNSUPPORTED_POD`, its check points, the `retireOnRelease` mark, and the pod credential API's refusal of an unmarked release apply to a session of any principal type ([UC-3, "Limits under both deliveries"](../0151-user-credential-delivery/change.md#limits-under-both-deliveries)).
 - **Impersonation.** A delegation tree in which any session holds a `userCredential` binding refuses an impersonation bearer's session input with `impersonation_user_credential`, whatever the principal type.
-- **Delegation.** A child receives the binding only when its lease names it in `userCredentialBindings`, and it carries its root's principal.
+- **Delegation.** A child receives the binding only when its parent's `session.create` names it, within the parent grant's `userCredentialBindings` (UC-3 of 0151 and 0166 "DP-1"), and it carries its root's principal.
 - **Request rules, the delivery ceiling, the token trust record, leak scanning, and exposure records** apply unchanged.
 - **Lifecycle.** `soft_disable`, `hard_disable`, and `full_revoke` under TS-4 apply to a service account's Lenny subject as to a person's, through `pkg/binding`'s invalidation level, and stop its releases. Erasure under §12.8 deletes its rows. Tenant deletion deletes every row.
 - **Quarantine.** `quarantined` stops a release from each instance's own read.

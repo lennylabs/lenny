@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-The M3 readiness review of 2026-11-19 raised O6 to O23, and its second pass raised O24 and O25 at the request of other changes. O1 to O5 are settled and sit under "Decisions".
+The M3 readiness review of 2026-11-19 raised O6 to O23, and its second pass raised O24 and O25 at the request of other changes. Revision 26 raised O26 while it took on what [`0166-delegation-primitives`](../0166-delegation-primitives/change.md) "DP-7" lists for this change, and added notes to O13, O14, O15, and O24 where the owner's decisions on 0166 settle part of them. O1 to O5 are settled and sit under "Decisions".
 
 **O6. How 0135.S1 is ordered against 0145.S1 and 0145.S3. Open.**
 
@@ -88,6 +88,8 @@ Under B-O6 and MDR-8, the frame consumes every message that is `delivered` when 
 
 **Recommendation: (a), with the protection of client messages from (b).** It keeps each child event's delivery exactly once and moves the backpressure to the sender. The cap needs a default. It blocks 0135.S1 (the overflow rule of "MD-3") and 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F3)
 
+*Note of revision 26.* Under decision 17 of 0166, a child's `update` events are outside the default `wakeOn` and take the `append` intent, so on a parent runtime that declares `steer` and not `append` they stay `pending` until the parent's next turn, which raises the count this decision bounds. The options stand, and the per-child cap of (a) covers it.
+
 **O14. Which watched events pass the parent's content policy. Open.**
 
 "MD-25" delivers a watched child's `output`, `activity`, `turn_start`, `turn_end`, `usage`, `tool_use`, and `message_state` events, and runs the parent's `contentPolicy` and `PreMessageDelivery` interceptors only on `output` parts. An `activity` `detail` can carry a tool's output and `tool_use` carries arguments and results, so text a child produced reaches the parent's runtime unscanned, while MDR-52 says no part of a watched stream does, and B-O5 requires the receiving environment's rules on every message between environments.
@@ -98,6 +100,8 @@ Under B-O6 and MDR-8, the frame consumes every message that is `delivered` when 
 
 **Recommendation: (a).** B13 asked for parity with a root client, and an edge between environments has to meet the receiving environment's rules. It blocks 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F4)
 
+*Note of revision 26.* Decision 34 of 0166 settles this for a child in another environment than its parent: the watch carries only what TS-3 "Model" lists and never `activity`, `tool_use`, or their content, which is option (b) for that case ("MD-25", **Across environments**). The choice remains open for a child in its parent's environment.
+
 **O15. How an imported child file is scanned. Open.**
 
 "MD-26" invokes `contentPolicy.interceptorRef` at `PreExportMaterialization` once per imported file before a grant is signed. That phase's payload carries `content_bytes`, §8.3 caps a scanned file at `contentPolicy.maxExportedFileSize` (10 MiB) with `EXPORT_FILE_SCAN_SIZE_EXCEEDED`, and the gateway holds no bytes of an output file, which may be 5 GiB. The design does not say how the gateway obtains the bytes, what happens to a file over the scan limit, or what a `MODIFY` answer does.
@@ -107,6 +111,8 @@ Under B-O6 and MDR-8, the frame consumes every message that is `delivered` when 
 - (c) No scan for imports, documented as a limit.
 
 **Recommendation: (a).** It is the smallest change that keeps §8.7's control on files that cross from child to parent. It blocks 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F6)
+
+*Note of revision 26.* Decision 45 of 0166 settles whose policy applies: the sender's content caveat when a message carries the part to another session, and the importer's at the import, each resolved for every session ("MD-26", **Content**). How the gateway obtains a stored file's bytes for either scan, a file over the scan limit, and `MODIFY` remain open, and option (a) applies to both scans.
 
 **O16. How a download of an output file is authorized. Open.**
 
@@ -194,6 +200,8 @@ The "MD-11" table and CT-5 of [`0122-client-tools`](../0122-client-tools/change.
 
 **Recommendation: (a).** No large payload crosses `LNK-GWCONTROL`, and the runtime reads a large part through the path that already moves files. It blocks 0135.S5 and 0139.S2. The other change is [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md), whose O17 is the matching decision. (raised by the M3 readiness review, 2026-11-19; requested by change 0139)
 
+*Note of revision 26.* `await_child_sessions` is now `events.wait` of 0166, with `maxEntries`. Without `maxEntries`, a wait's result holds what fits the result bound ("MD-22", **Wait**), so the bound decides the page size, and a single entry over the bound is still the case this decision settles.
+
 **O25. Which 0146 steps 0135.S1 and 0135.S5 bind to if 0146.S1 is split. Open.**
 
 SL-Q10 of [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md) asks whether 0146.S1 is split into the states, the store migration, and the caps ("SL-1", "SL-10"), which shares the branch of 0135.S1; suspension and tree suspension ("SL-3", "SL-4", "SL-5"); idle and dormancy ("SL-6"); and close and cascade ("SL-7", "SL-9"). 0135.S1 shares one branch with 0146.S1, and 0135.S5 depends on 0146.S1 for the states `idle`, `dormant`, `suspended`, and `blocked`, in which "MD-22" holds child events and from which "Waking a parent" resumes a parent.
@@ -202,6 +210,16 @@ SL-Q10 of [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md) ask
 - (b) Under SL-Q10 (b), 0146.S1 stays whole, and both entries stay as written.
 
 **Recommendation: (a)**, following the recommendation of SL-Q10. The edit to `steps.md` follows the owner's answer to SL-Q10 and needs no separate choice once the split steps have identifiers. It blocks 0135.S1 and 0135.S5. The other change is [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md), whose SL-Q10 is the matching decision. (raised by the M3 readiness review, 2026-11-19; requested by change 0146)
+
+**O26. How a child event outside `wakeOn` reaches a parent runtime that declares neither `append` nor `steer`. Open.**
+
+Decision 17 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md) has a child event outside the parent's `wakeOn` open no turn and wake no parent, and DPR-14 of that change, which this change states as MDR-59, requires it. "DP-4" of 0166 says such an event "is steered into an open turn or waits for its end, and otherwise waits in the inbox for the parent's next turn". Revision 26 delivers it with the `append` intent ("MD-1", "MD-22"). On a runtime that declares `append` it is written with no turn, and on one that declares `steer` it is steered into the parent's next turn. A runtime that declares neither has no way to take a message without a turn: every write opens one, and "Delivery of held messages" in "MD-5" writes one entry per turn to such a runtime. Under the default `wakeOn`, which leaves out the `update` class, a child's progress updates to such a parent would stay `pending` until a wait or `events.peek` reads them, and a mid-turn `message` event does not answer a wait.
+
+- (a) Registration refuses `capabilities.childSessions: true` on a revision whose `injection.modes` declares neither `append` nor `steer`. Every parent runtime then takes an event outside `wakeOn` without a turn.
+- (b) On such a runtime, an event outside `wakeOn` reaches the runtime only through `events.wait`, `events.peek`, and `session.get`, and the `update` kind `message` also answers a wait, so a programmatic parent still collects updates.
+- (c) On such a runtime, `wakeOn` takes no effect, and every child event opens a turn as before revision 26.
+
+**Recommendation: (a).** B3 already lets only a runtime that can render child events declare `capabilities.childSessions`, and a runtime that orchestrates children has to take a child's report without starting a turn to honour 0166's decision 17. (b) leaves `update` events in the inbox of a model-driven parent that never waits, and (c) breaks MDR-59. It touches O22, which decides the step that owns `capabilities.childSessions`, and it blocks 0135.S5. The other change is 0166, whose "DP-4" this decision completes. (raised by revision 26, 2026-11-23)
 
 ## Decisions
 

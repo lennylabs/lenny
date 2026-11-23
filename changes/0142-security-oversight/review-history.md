@@ -172,3 +172,14 @@ The owner accepted three resolutions of conflicts between steps that the convers
 - SO-5a adds `approvals.parentTools` under 0166 decision 31, held before a parent tool call reaches the parent.
 - The record example's rule matches `session.create` in place of `start_child_session`. The rest of 0166's "DP-7" row for this change lands in a later revision.
 
+
+## Revision 63, 2026-11-23
+
+Revision 63 takes on the rest of the row for this change in "DP-7" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on) revision 7, under that change's decisions 31, 36, 37, 41, 42, and 45, settled by the owner on 2026-11-23. Revision 62's `when` and `approvals.parentTools` stay as written.
+
+- Decision 37: SO-2's record gains `"parentTools": "forbid"`, `"offerTools": "forbid"`, and `delegationLeave` with `max` (`none`, `transfer`, or `release`) and `maxDepth`. A new **Delegation** paragraph under "The record" states each field, "Tightening and weakening" classifies each change to them, and "Configuration by scope" and the posture's `securityConfig` section list them.
+- The enforcement table names, for each delegation guardrail, the operations it refuses and its effect on calls in flight: `delegation` refuses `session.create`, `session.transfer`, `session.release`, and parent tool calls with `disabledBy: securityGuardrail` and answers an open parent tool call with an error; `parentTools` and `offerTools` withdraw offered tools and answer open calls; and `delegationLeave` refuses a leave beyond the new value. The `crossEnvironmentSharing` row names `session.create` in place of the next `start_child_session`, and refuses the release of a crossed child under decision 41.
+- Decision 45: a **Cooldown after a weakened content scan** paragraph states in full the cooldown that §8.3 keyed to `delegate_task` and `PreDelegation`, now keyed to the levels of the content caveat and covering `session.create` with `files`, `materialize` pushes, and `files.import`. "Configuration by scope" lists `gateway.interceptorWeakeningCooldownSeconds`.
+- Decisions 36 and 42: SO-5a states that rules match the operations of 0166 rather than reference tools, refuses a rule naming `start_session` or a tool name of MD-23 with `400 VALIDATION_ERROR`, and the `delegation` row names the SO-5a hold on `session.create` at the post-chain point. A parent tool's call keeps 0122 CT-8's audit without arguments, which this change does not restate.
+- "Terms from other designs and the platform" rewrites the Delegation row for `session.create` and adds the content caveat, the label row for 0166 names the decisions above, and the tests, the specification sections, the documentation, and `steps.md` follow. 0142.S2 and 0142.S6 state which parts land with 0166.S1 or 0166.S3.
+- No requirement of 0166 conflicts with a decision recorded in `decisions.md`, so no decision is raised.

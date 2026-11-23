@@ -113,3 +113,7 @@ Second pass: this pass closed the edits that other changes requested of this cha
 - Already done: 0123's request to list `llm_usage` in place of `agent_memory` in the Postgres-held data and to name the §12.8 erasure steps by store, which connectors-llm-billing-C10 and C11 above applied.
 - Already done: 0147's request for the `0147.S9 (part)` edge on 0121.S3 for `reserved_pod_minutes`, which 0121-F10 above applied.
 - Raised: decision 32 (Low), whether connector bytes are a billing quantity, mirroring 0148 O7 at 0148's request. The status stays `Draft` while decisions 23 to 32 are open.
+
+## Revision 24 (2026-11-23)
+
+- Trigger: change 0166. Revision 24 of `change.md` carries out the row for 0121 in "DP-7 What each change takes on" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on), revision 7. Under 0166 decision 44, the common envelope gains `root_session_id` on every event that names a session, and its `labels` are the labels the root's client set, which a delegated child carries unchanged and no parent writes; a parent's tags never enter a billing event. "Scope", "Labels from other designs", **Fields.** under "Resource fields on usage events", the §11.2.1 specification item, the `contract` test, and the documentation rows for the billing page and `docs/api/rest.md` follow.

@@ -101,3 +101,16 @@ Second pass, 2026-11-19. The pass closed the edits that the fix agents of other 
 - Applied (0141-F1, requested by 0141): "Notes on the steps" and O12 state that whichever change owns F-8.3.14 evaluates the `DelegationPolicy` target rules at the post-chain point on the final runtime and pool, as 0141's delegation-gates row states.
 - Already open (requested by 0135): O9 records the owner of `capabilities.childSessions`, and now names O22 of 0135 and O23 of 0138 as the matching decisions.
 - Raised O17 (requested by 0142): which step of 0142 the guardrail edge of 0126.S1 names, mirroring decision 41 of 0142. The guardrail bullet of 0126.S1 points to O17.
+
+## Revision 14 (2026-11-23)
+
+Revision 14 takes on the row for this change in "DP-7" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on) revision 7, under that change's decisions 6, 26, and 39, settled by the owner on 2026-11-23. The status stays `Draft`.
+
+- Decision 39 keeps this change, cut down to deciding whether a session holds the session grant of 0166 "DP-1". "Problem", "Scope", "Terms", "High-level design", DA-2, DA-3, DA-5, the requirements, and the tests state that a session receives a grant at creation only when it may delegate, and that each operation that needs the grant reads availability again.
+- Decision 6 makes the availability levels inputs to a root's grant read live at each `session.create`, with `disabledBy` kept. DA-3 applies the refusal to every operation of 0166 "DP-1" that needs the grant, and DAR-6 maps "the tools that manage them" to 0166's list of operations a session with children keeps, without `session.transfer` and `session.release`. `runtimes.list` is refused for a session that may not delegate, as 0166 states, in place of the empty discovery answer of revision 13.
+- The list rules for the child tools retire, because the reference extension of 0166 "DP-5" lists those tools from `availability.delegation`. DA-4 keeps the `ask_question` rule and states that each operation carries the never-listed attribute of 0139 "RP-3". DAR-4 now states that `availability.delegation` is "may delegate". DA-7 replaces the rows of the child tools with one row for the operations.
+- Decision 26: the tenant delegation settings route of O10 carries `policyRef` and `ceilings` beside `allowByDefault`. DA-1, the specification changes, the non-specification changes, the documentation, and the tests follow, and O10 notes that 0166's tenant inputs depend on it.
+- The per-hop switch is an explicit `maxChildrenTotal: 0` in the `limits` of `session.create`, the `approvalMode` removal names today's delegation tool, and tree recovery gives way to per-session recovery under 0166 decision 15.
+- Raised O18: under 0166 a session created while delegation was unavailable holds no grant, which departs from the live reads in both directions of O4 (D). The recommendation follows 0166.
+- Raised O19: whether the parent that set an explicit `maxChildrenTotal: 0` can raise it with `session.set_limits`, which 0166 allows for a resource caveat. The recommendation follows 0166.
+- O12's recommendation notes that 0166.S1's policy cap closes F-8.3.14 and that 0166 drops the lease field `approvalMode`. 0126.S1 in `steps.md` is cut back to these parts, and 0166.S1 depends on it.

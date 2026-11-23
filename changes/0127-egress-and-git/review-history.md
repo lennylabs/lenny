@@ -650,3 +650,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
   - Raised as decision 81, requested by 0118: what a pod with a non-empty warm list does on a pool that runs no `netagent` (mirrors 0118 O14).
   - Raised as decision 82, requested by 0142: whether a later `allowed` verdict clears `userAccess: userRefused` (mirrors 0152 decision 54). The first pass had written that it does, which chose the open question, so the writable set entry row now points to decision 82.
   - Raised as decision 83, requested by 0143: who triggers an emergency rotation of the federation key and the identity key (mirrors 0143 O10).
+
+## Revision 95 (2026-11-23)
+
+- Trigger: change 0166. Revision 95 of `change.md` carries out the row for 0127 in "DP-7 What each change takes on" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on), revision 7. The **Delegated child session** case under "Effective policy" keeps inheritance as the default, and states that the parent's `session.create` may narrow the inherited hosts and bindings with `egressHosts` and `credentialBindings` within one environment and never widens them (0166 "DP-1", decision 35), and that a crossing child follows TS-3 of 0149 (0166 decision 41). The delegation lease and the §8.2 `TaskSpec` give way to the session grant and `session.create` in "Terms", in that case, in the row for EG-9's rule on children, and in the `integration` case for ref resolution. "Labels from other designs" gains 0166.
