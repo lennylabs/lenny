@@ -7,3 +7,8 @@
   - Merge-gate review rule: the `tests/registers/spec-section-citations.yaml` diff raises the counts of `migrations`, `pkg/credential/impersonation`, `pkg/gateway/api/admin`, `pkg/gateway/playground`, `pkg/storage/issuedtokenstore`, `pkg/tokenexchange`, `pkg/tokenservice`, `tests/component/issuedtokencascade`, `tests/contract/oauth_token`, and `tests/security` by the `§` annotations of the code and tests the step adds (TOKX is a placeholder page), and removes, weakens, or skips no check.
   - Raised for the owner: open decision 1, whether the impersonator-link revocation may keep its `__all__` exception (general 3); open decision 2, which revocations of the admin's bearer end its sessions (general 5).
   - Filed: [TOKX-I17](../../issues/TOKX/TOKX-I17-every-revocation-request-runs-a-cross-tenant-step.md), every revocation request runs a cross-tenant update and a `cross_tenant_read` append (security 2, Low); [TOKX-I18](../../issues/TOKX/TOKX-I18-impersonation-started-event-records-the-requested-duration.md), the started event records the requested duration (general 12, Low); [PLAY-I2](../../issues/PLAY/PLAY-I2-playground-logout-leaves-the-issued-token-row-live.md), a playground logout leaves the `issued_tokens` row live (general 12, Low); and [TOKX-I13](../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md) gains the derivation windows the step adds and the renamed transaction (security note).
+
+## 2026-11-23, landing
+
+- 0167.S1 landed on the merge-gate verdict `PASS` of run `10f7dffd2215c4c38f37d535` on `aafbb83ee`.
+- Open decisions 1 and 2 (questions FM-12 and FM-13 on the M3 readiness decision page) affect follow-up work only; the change stays `In progress` until they are settled and it is archived.

@@ -8,11 +8,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 2 |
+| Building | 1 |
 | Ready | 1 |
 | Waiting on decisions | 35 |
 | Blocked | 150 |
-| Landed | 17 |
+| Landed | 18 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -55,7 +55,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
 | [0165.S1](0165-token-rules-model/steps.md#0165s1-token-rules-model-and-property-list) | Token rules model and property list | Building |  |
-| [0167.S1](0167-token-model-fixes/steps.md#0167s1-token-rule-fixes-from-the-formal-model) | Token rule fixes from the formal model | Building |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -245,6 +244,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
 | [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Landed |  |
 | [0164.S1](0164-token-exchange-identity-rules/steps.md#0164s1-token-exchange-narrowing-and-identity-rules) | Token exchange narrowing and identity rules | Landed |  |
+| [0167.S1](0167-token-model-fixes/steps.md#0167s1-token-rule-fixes-from-the-formal-model) | Token rule fixes from the formal model | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -293,4 +293,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
 | [0165](0165-token-rules-model/change.md) | A formal model of the token rules | `In progress` | 0 of 2 | 0 |
-| [0167](0167-token-model-fixes/change.md) | Token rule fixes from the formal model | `In progress` | 0 of 1 | 2 |
+| [0167](0167-token-model-fixes/change.md) | Token rule fixes from the formal model | `In progress` | 1 of 1 | 2 |

@@ -7,7 +7,7 @@ None. Change 0165's Alloy model is rerun against the fixed rules on a copy of th
 ## Steps
 
 ### 0167.S1 Token rule fixes from the formal model
-- status: Building
+- status: Landed
 - lanes: [specification, code, documentation]
 - depends-on: [0164.S1]
 - closes: [TOKX-I14]
