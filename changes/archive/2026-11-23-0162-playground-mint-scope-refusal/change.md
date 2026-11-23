@@ -1,6 +1,6 @@
 # The playground mint refuses a subject scope it cannot narrow
 
-Status: `In progress`, revision 1, 2026-11-19.
+Status: `Implemented`, revision 1, 2026-11-23.
 
 ## Problem
 

@@ -1,6 +1,6 @@
 # A token exchange without scope issues the subject token's scope
 
-Status: `In progress`, revision 1, 2026-11-19.
+Status: `Implemented`, revision 1, 2026-11-23.
 
 ## Problem
 
@@ -12,7 +12,7 @@ Evidence from the tree:
 - `pkg/tokenservice/tokenservice.go`, `buildExchangeRequest`: the requested scope is `splitScope(req.Scope)`, with no default from the subject token. `mintToken` writes `Scope: strings.Join(issued.Scope, " ")`, which is the empty string when the request omitted `scope`.
 - `pkg/common/scopes/scopes.go`, `Set.Present` and `Set.Matches`, and `pkg/gateway/api/admin/scope_enforce.go`, `scopeGate.ServeHTTP`: an empty claim is not present, and a claim that is not present passes every scope gate.
 
-The specification does not settle the case. §13.3 (Credential Flow), **Scope narrowing enforcement.**, states that the Token Service rejects a requested `scope` value the subject token does not carry, and says nothing about a request that names no scope. §25.1 (Design Philosophy and Agent Model), **Matching.**, reads an absent `scope` claim as no scope restriction. The security review of 0162.S1 found the gap on 2026-11-19 and filed it as [TOKX-I2](../../issues/closed/TOKX/TOKX-I2-exchange-without-scope-issues-an-unrestricted-token.md).
+The specification does not settle the case. §13.3 (Credential Flow), **Scope narrowing enforcement.**, states that the Token Service rejects a requested `scope` value the subject token does not carry, and says nothing about a request that names no scope. §25.1 (Design Philosophy and Agent Model), **Matching.**, reads an absent `scope` claim as no scope restriction. The security review of 0162.S1 found the gap on 2026-11-19 and filed it as [TOKX-I2](../../../issues/closed/TOKX/TOKX-I2-exchange-without-scope-issues-an-unrestricted-token.md).
 
 ## Scope
 
@@ -66,7 +66,7 @@ Consequences on the exchanges the endpoint serves:
 
 ## Limits, and alternatives rejected
 
-The change does not narrow a subject token with an absent claim. Such a token is already unrestricted by scope, and the exchange cannot grant more than its roles allow. An explicit narrowing of such a subject is refused with `invalid_scope` today, because the subset check compares literal values; [TOKX-I3](../../issues/closed/TOKX/TOKX-I3-exchange-cannot-narrow-a-subject-without-scope.md) records that gap for the owner, and the change leaves it as it is.
+The change does not narrow a subject token with an absent claim. Such a token is already unrestricted by scope, and the exchange cannot grant more than its roles allow. An explicit narrowing of such a subject is refused with `invalid_scope` today, because the subset check compares literal values; [TOKX-I3](../../../issues/closed/TOKX/TOKX-I3-exchange-cannot-narrow-a-subject-without-scope.md) records that gap for the owner, and the change leaves it as it is.
 
 The alternative not chosen was option (b) of question SM-1, refusing an exchange without `scope` with `invalid_scope` when the subject's scope is present. It breaks the self-rotation grant for narrowed tokens, whose callers would have to repeat the scope, and RFC 8693 leaves the default to the authorization server.
 
