@@ -220,7 +220,7 @@ A session grant is a gateway-side record attached to a session row **[design]**.
 
 **Policy authoring.** Delegation policies keep the RBAC of §10.2: a `tenant-admin` creates, edits, and deletes the policies of its own tenant, and a `platform-admin` those of every tenant. A tenant administrator therefore controls which runtimes the sessions of its tenant may start as children, without a platform administrator, and cannot widen what a platform runtime's policy or the platform ceilings allow, because every level intersects.
 
-**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` gain a condition on the target runtime and one above a credit amount, and the hold applies at `session.create` and at a `session.set_limits` raise that crosses the amount. The call waits under SO-5a's hold and its timeout, as any held platform call does.
+**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` take `when`, with `targets` or `targetLabels` for the target runtime and `creditBudgetAbove` for the carve, as SO-5a of 0142 states them, and the hold applies at `session.create`, on the final runtime at the post-chain point, and at a `session.set_limits` raise that crosses the amount. The call waits under SO-5a's hold and its timeout, as any held platform call does.
 
 **Where the checks run.** The gateway checks the policy cap, the isolation floor, the remaining depth, and the binding and egress subsets on the final runtime and pool, at the post-chain point of 0141 RT-2, so a `PreRoute` interceptor that moves a child cannot move it past them ("DP-7").
 
@@ -765,7 +765,18 @@ If-Match: "…"
 
 The tenant administrator also creates tenant-derived runtimes of approved helpers under 0147 and labels them `acme-approved: "true"`, and `access: read-only` or `access: write` as they are.
 
-**Security administrator.** The tenant's `security-admin` adds an SO-5a rule to the security record that holds every `session.create` whose target carries `access: write`, and every one whose carve exceeds 500,000 credits, for a `security-approver` (decision 36). The record's single writer and its weakening delay govern the rule, so a stolen `tenant-admin` credential cannot remove it.
+**Security administrator.** The tenant's `security-admin` adds two SO-5a rules to the security record with `PUT /v1/admin/tenants/acme/security-config`, one for a target labelled `access: write` and one for any carve above 500,000 credits, each answered by a `security-approver` (decision 36):
+
+```json
+"approvals": {
+  "tools": [
+    { "match": "session.create", "when": { "targetLabels": { "access": "write" } }, "approver": "security", "showArguments": true },
+    { "match": "session.create", "when": { "creditBudgetAbove": 500000 }, "approver": "security", "showArguments": true }
+  ]
+}
+```
+
+The record's single writer and its weakening delay govern the rules, so a stolen `tenant-admin` credential cannot remove them.
 
 **Client.** A contractor in `contractors` creates a session of `claude-code` and asks for `"delegationLease": { "maxChildrenTotal": 10 }`.
 

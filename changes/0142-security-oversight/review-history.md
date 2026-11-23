@@ -165,3 +165,10 @@ The owner accepted three resolutions of conflicts between steps that the convers
   - Raised 45, the order of 0142.S2 against 0143.S1 for the `~svc~` check on `lifecycleSubjects` (requested by 0143; matches 0143 O9).
   - Already open: 39 for 0128 O3, which now names the renamed event `forensics.erasure_deferred_completed`; 38 for 0133 open decision 7; 37 for 0135 O20, which now names the matching options; and 36, which now names 0143 O11 and 0149 decision 33.
   - Already done: the client tool limit in SO-5a (0122-F25), the absence of an MCP version pin in this change's tests (0134), the withdrawal of a pending approval on suspension (0146-F12), the `verbatimClientFiles` scope (0147-p2-F13), and the resolver rule for a subject with an invalidation level or hold (0149-p2-F7).
+
+## Revision 62, 2026-11-23
+
+- SO-5a names the conditions of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md#decisions) decision 36: `when` on a `session.create` rule, with `targets` and `creditBudgetAbove`, evaluated at the post-chain point of RT-2 and on a `session.set_limits` raise, with the tightening and weakening of each change to it.
+- SO-5a adds `approvals.parentTools` under 0166 decision 31, held before a parent tool call reaches the parent.
+- The record example's rule matches `session.create` in place of `start_child_session`. The rest of 0166's "DP-7" row for this change lands in a later revision.
+

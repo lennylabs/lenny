@@ -1,6 +1,6 @@
 # Security oversight for customers and the operator
 
-Status: `Draft`, revision 61, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 62, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -131,6 +131,7 @@ Proposals in other designs carry a label whose prefix names the design. This doc
 | PM-2, PM-3, PM-4, and PM-8 | [`0136-placement`](../0136-placement/change.md) | [PM-2](../0136-placement/change.md#pm-2-node-tenancy) node tenancy, [PM-3](../0136-placement/change.md#pm-3-placement-offerings-and-per-pool-nodeplacement) placement offerings and their grants, [PM-4](../0136-placement/change.md#pm-4-placement-requirements) placement requirements and the fields `sessionIsolationLevel` reports, and [PM-8](../0136-placement/change.md#pm-8-system-components) the namespace, replicas, and priority of each system component. |
 | TSS-1, TSS-3, TSS-7, and TSS-8 | [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) | [TSS-1](../0150-tenant-security-settings/change.md#tss-1-settings-model) the settings model, [TSS-3](../0150-tenant-security-settings/change.md#tss-3-admin-api) its admin API, view, and audit events, [TSS-7](../0150-tenant-security-settings/change.md#tss-7-changing-a-setting-on-a-live-tenant) relaxation on a live tenant, and [TSS-8](../0150-tenant-security-settings/change.md#tss-8-data-classes) the data classes. |
 | RP-3 and RP D5 | [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) | [RP-3](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames) tool calls on `tool_call` frames, and the owner's decision D5 that retires the adapter-local tools. |
+| DP-1, DP-8, and decisions 31 and 36 of 0166 | [`0166-delegation-primitives`](../0166-delegation-primitives/change.md) | The platform operations `session.create` and `session.set_limits`, a child's target runtime and carved credit budget, and the tools a parent offers its child, which reach the parent as `tool_call` child events. Decision 36 moves the approval of a child into SO-5a, and decision 31 adds rules for parent tools. |
 | D5 of 0126 | [`0126-delegation-availability`](../0126-delegation-availability/change.md) | The owner's decision that a tenant forbids delegation through the guardrail `"delegation": "forbid"` in this record. |
 | MD-19 and MDR-22 | [`0135-message-delivery`](../0135-message-delivery/change.md) | MD-19 harness approvals, which a runtime forwards with a `request` frame of `kind: "approval"`, and MDR-22, the requirement that a session's frame reader never blocks on an approval. |
 | L29 and SLR-27 | [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) | The withdrawal of a pending approval when a suspension stops the session's turn. |
@@ -323,7 +324,8 @@ One record per tenant holds every customer-set security constraint, so one write
   },
   "operatorAccess": { "approval": "required", "emergencyAccess": "allowed" },
   "approvals": {
-    "tools": [{ "match": "start_child_session", "approver": "security", "showArguments": true }],
+    "tools": [{ "match": "session.create", "when": { "targets": ["prod-*"], "creditBudgetAbove": 500000 }, "approver": "security", "showArguments": true }],
+    "parentTools": [{ "match": "*", "approver": "owner", "showArguments": true }],
     "repositoryWrites": [{ "match": "github.com/acme/prod-*", "ttlSeconds": 3600 }],
     "timeoutSeconds": 1800
   },
@@ -634,6 +636,16 @@ These routes sit on the admin surface, so the session surface keeps its existenc
 - Timeout uses `approvals.timeoutSeconds` and denies. With no holder of `security-approver`, the write of a matching rule is refused with `422 NO_APPROVER`, and a later removal of the last holder raises `SecurityApproverCoverageLost`.
 - `showArguments: true` shows `arguments` to the approver and emits `approval.viewed`. With `false`, the approver sees the tool name and session only.
 
+**Conditions on a child (`when`).** A rule that matches `session.create` may carry `when`, whose members all hold before the rule applies, so a rule without `when` holds every child **[design]**:
+
+- `targets`: a list of runtime names, each a name or a pattern with a trailing `*`, matched against the child's final runtime.
+- `targetLabels`: a map of runtime labels, matched when the child's final runtime carries every one, as a `DelegationPolicy` selects runtimes by label.
+- `creditBudgetAbove`: a credit amount, matched when the child's carved credit budget exceeds it.
+
+The gateway evaluates a `session.create` rule at the post-chain point of [RT-2](../0141-runtime-routing/change.md#post-chain-point), on the final runtime and the resolved carve, because a `PreRoute` interceptor can change the target after the call names one. The same rule also holds a `session.set_limits` call that raises a child's carve above `creditBudgetAbove`, for a child whose runtime `targets` and `targetLabels` cover, so a parent cannot create a child below the amount and raise it afterwards without approval. `when` is refused with `400 VALIDATION_ERROR` naming the field on a rule that matches any other tool. Narrowing `targets`, adding a key to `targetLabels`, or raising `creditBudgetAbove` is a weakening, and removing `when`, widening `targets`, removing a key from `targetLabels`, or lowering `creditBudgetAbove` is a tightening. With `showArguments: true` the approver sees the target, the limits, and the task.
+
+**Parent tools (`parentTools`).** A tool a parent offers its child under [`0166-delegation-primitives`, "DP-8"](../0166-delegation-primitives/change.md#dp-8-parity-with-a-client) is not on the `platform` server, so `approvals.tools` does not match it, and its call reaches the parent as a `tool_call` child event rather than through tool dispatch. `approvals.parentTools` holds rules of the same form as `approvals.tools`, `match`, `approver`, and `showArguments`, where `match` names a tool the parent offers or is `*` for every one **[design]**. The gateway holds a matching call before it delivers the event to the parent. `approver: owner` asks the root session's user through the owner's `tool-use/{id}/approve` route, and `approver: security` asks a `security-approver` through the approvals API, as for `approvals.tools`. A denial or a timeout under `approvals.timeoutSeconds` answers the child's call with an error result, and the parent never sees the call. The child's call stays open while it is held, and the hold time of [`0122-client-tools`](../0122-client-tools/change.md) counts from the delivery to the parent. Relaxing or removing a `parentTools` rule is a weakening, and the write of a rule with `approver: security` and no holder of `security-approver` is refused with `422 NO_APPROVER`.
+
 **Tools inside the runtime are outside these rules.** The adapter-local tools of earlier revisions are retired (RP D5), so no workspace tool reaches the adapter or the gateway, and the runtime reads and writes its own workspace directly. A tool a runtime runs inside its own process never reaches a gate, and the documentation states this limit. A rule matches only names on the `platform` server. Whether a harness approval that a runtime forwards with a `request` frame of `kind: "approval"` ("MD-19" of [`0135-message-delivery`](../0135-message-delivery/change.md)) falls under these rules is open decision 37.
 
 **Client tools are outside these rules.** A client tool of [`0122-client-tools`](../0122-client-tools/change.md) is not on the `platform` server, so no `approvals.tools` rule matches it. The hold on relayed frames relies on `maybeGateToolCall`, which meets CTF-1 and CTF-2 of that design (F-28.5.3.1, a relayed `tool_call` that is neither adapter-local nor approval-gated is discarded with no `tool_result`, and F-28.5.3.2, an approval re-sends the runtime's own `tool_call` to the runtime, a direction §28.5.3 does not define). 0142.S6 cites both, and builds the hold on the `tool_call` and `tool_result` frames of [RP-3](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames).
@@ -759,7 +771,8 @@ The removal of the annotation has a second reason. cert-manager documents that a
 | `placement.requireNodeSeparation`, `.nodeTenancy`, `.allowSharedPod`, `.allowReusedPod` | The tenant's own placement requirements, which narrow the pools its sessions may use. | Tenant | `security-admin` | Absent | Adding one applies at once, and removing one is a weakening. See [PM-4](../0136-placement/change.md#pm-4-placement-requirements). |
 | `operatorAccess.approval` | Whether impersonation needs the customer's approval. | Tenant | `security-admin` | `off` | Setting `required` with no holder of `security-approver` is refused with `422 NO_APPROVER`. |
 | `operatorAccess.emergencyAccess` | Whether the emergency path exists. | Tenant | `security-admin` | `allowed` | Setting `forbidden` is a tightening. |
-| `approvals.tools` | Tools that need approval and who resolves them. | Tenant | `security-admin` | Empty | Applies to frames the gateway sees. |
+| `approvals.tools` | Platform tools that need approval and who resolves them, with `when` conditions on a child's target runtime and carved credit budget for `session.create`. | Tenant | `security-admin` | Empty | Applies to frames the gateway sees, and to `session.create` at the post-chain point. |
+| `approvals.parentTools` | Tools a parent offers its child that need approval, by name or `*`, and who resolves them. | Tenant | `security-admin` | Empty | Applies before the call reaches the parent. |
 | `approvals.repositoryWrites` | Repository patterns whose push needs approval. | Tenant | `security-admin` | Empty | |
 | `approvals.timeoutSeconds` | Time before an unanswered approval denies. | Tenant | `security-admin` | 1800 | |
 | SIEM destinations | The customer's endpoints, credentials, and streams. | Tenant | `security-admin` | None | Removal is a weakening. |
@@ -937,6 +950,8 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 - Permission tables for each role against the matrix, and the custom-role ceiling refusing each security write permission.
 - Resolver output for each combination of claim, user row, security row, role source, `impersonated_by`, and invalidation level or hold of the subject.
 - Rule matching against names on the `platform` server alone, and SO-5a's own refusal of a rule that names a `connector:<id>` server.
+- `when` on a `session.create` rule: `targets` patterns and `targetLabels` against the final runtime, `creditBudgetAbove` against the resolved carve, both members together, a rule without `when`, refusal of `when` on another tool, and the classification of each change to `when` as a tightening or a weakening.
+- `approvals.parentTools` matching by name and by `*`, routing by `approver`, and the `NO_APPROVER` refusal.
 
 ### `component`
 
@@ -953,6 +968,8 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 
 ### `integration`
 
+- A `session.create` rule with `when` holds a child whose final runtime matches `targets` after a `PreRoute` interceptor changed the target, and releases one whose final runtime does not; a `session.set_limits` raise past `creditBudgetAbove` is held, and one below it is not.
+- An `approvals.parentTools` rule holds a parent tool call before the parent receives the `tool_call` child event, for `approver: owner` and `approver: security`, with a denial and a timeout each answering the child's call with an error result.
 - A role assignment takes effect on the next request and survives `PUT` and `DELETE` of the user's role.
 - `security-auditor` reads audit, evidence, posture, and subscriptions, is refused session content, and is refused retranslate and republish.
 - A tightening suspends objects and a dry run changes nothing; a concurrent opt-in and a tightening do not both succeed.
