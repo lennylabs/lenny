@@ -84,6 +84,23 @@ The M3 readiness review of 2026-11-19 raised O11 to O20, and its second pass rai
   - Blocks: the `depends-on` entry of 0122.S1.
   - (raised by the M3 readiness review, 2026-11-19; requested by change 0146; mirrors SL-Q10 of 0146)
 
+The desk validation of the M3 readiness review raised O22 and O23 on 2026-11-19, and they were framed here on 2026-11-23 from questions DV-2 and DV-3 of the M3 readiness decision page.
+
+- **O22. The stream form of a custom tool call on Chat Completions.** O10 refuses a Chat Completions request with `stream: true` that declares a custom tool until OpenAI documents a stream form. Desk validation VAL-010 found that OpenAI's OpenAPI description (version 2.3.0) and `openai-python` v3.57.0 still type a streamed tool-call delta as `function` alone, and that `openai-node` v7.62.0, since a commit of 2026-08-12, types `delta.tool_calls[]` with `type: "custom"` and a `custom` member holding `name` and `input` **[external]**. This part of the change is adapter work under O8 of [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md).
+  - (a) Keep the refusal until OpenAI's API reference or OpenAPI description documents the form. Record `openai-node`'s type as the signal to watch, and record what the live API emits in the provider SDK probe P6 of the M3 readiness validation plan.
+  - (b) Treat `openai-node`'s type as the documented form, lift the refusal, and emit that form.
+  - Recommendation: (a). The API reference and the Python SDK still type the delta as `function` alone, and O10 waits for OpenAI's documentation rather than for one SDK's type.
+  - Blocks: the Chat Completions rows of "CT-6" in the adapter that O8 of `0138-rest-only-client-api` names.
+  - (raised by the desk validation of the M3 readiness review, 2026-11-19; sources: VAL-010)
+- **O23. OpenAI custom tools on the Open Responses adapter, and the `allowed_tools` modes that T15 does not map.** The Open Responses specification of 2026-04-24 defines no custom tool type, since its tools are function tools only, and its extension rule requires an implementor-slug prefix on a non-standard item or event type. This design emits unprefixed `custom_tool_call` items and `response.custom_tool_call_input.*` events, which OpenAI SDK clients parse and which do not follow that rule. Open Responses also lets `allowed_tools` omit `mode` or set it to `none`, while T15 maps only `auto` and `required`. Desk validation VAL-012 found both, and its checker confirmed them **[external]**.
+  - (a) Accept OpenAI custom tools on the Open Responses adapter in OpenAI's unprefixed form, documented as a non-portable extension, as `0138-rest-only-client-api` keeps `GET /v1/responses/{id}` as an extension.
+  - (b) Refuse custom tools on the Open Responses adapter with `400`, and serve them on Chat Completions and OpenAI Responses only.
+  - (c) Use slug-prefixed names, which follow the extension rule and which no OpenAI SDK client parses.
+  - Under every option, T15 maps an absent `mode` to `auto` and `none` to `toolChoice` `none`. T15 is settled, so the mapping needs the owner's confirmation.
+  - Recommendation: (a), with the T15 mapping of an absent `mode` and of `none` confirmed. OpenAI SDK clients parse the unprefixed form, and a slug-prefixed form reaches no client.
+  - Blocks: the Open Responses rows of "CT-6" in the adapter that O8 of `0138-rest-only-client-api` names.
+  - (raised by the desk validation of the M3 readiness review, 2026-11-19; sources: VAL-012)
+
 ## Decisions
 
 Settled by the owner on 2026-11-09. T1 to T8 came with revision 1, and the owner revised T5 and added T9 with revision 2:

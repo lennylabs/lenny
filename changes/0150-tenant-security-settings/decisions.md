@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-The M3 readiness review of 2026-11-19 raised O14 to O19. O1 to O13 are settled and sit under "Decisions", in "Settled open decisions O1 to O13".
+The M3 readiness review of 2026-11-19 raised O14 to O19, and its desk validation raised O20 and O21, which were framed here on 2026-11-23 from questions DV-5 and DV-6 of the M3 readiness decision page. O1 to O13 are settled and sit under "Decisions", in "Settled open decisions O1 to O13".
 
 **O14. What a pending relaxation holds, and how it composes with later writes. Open.**
 
@@ -58,6 +58,25 @@ D24 and PM-7 of [`0136-placement`](../0136-placement/change.md) state that a dep
 - (b) Per-region storage routing is retired in favour of one deployment per region, as 0136 O10 (b) states. The tenant key uses the deployment's one KMS endpoint, `KMS_REGION_UNRESOLVABLE` leaves the tenant key path, and I34's region match reduces to a check that the tenant's region is the deployment's.
 
 **Recommendation: (a)**, following 0136's recommendation for v1, because (b) is a removal that no member change scopes. It blocks 0150.S1's universal region match (I34) and the region-local key path of 0150.S2. The other changes are [`0136-placement`](../0136-placement/decisions.md) (O10) and [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/decisions.md) (O13). (raised by the M3 readiness review, 2026-11-19; requested by change 0136; mirrors 0136 O10)
+
+**O20. Where the data class is enforced at a store write. Open.**
+
+"TSS-8" says each store method receives the data class at write. Desk validation VAL-038 of the M3 readiness review found that only `pkg/blobstore` checks a class at write in the tree. Each Secret store (`credentialstore`, `credleasestore`, `tokenservice/cache`, and `connectorcredstore`) has one fixed class and refuses construction without a KMS provider, `tenantstore` checks its erasure salt per operation, and the `connectoroauth` Redis state store, which holds pending PKCE context, has no application-layer encryption. §12.9 also places credential leases in Redis, while the tree keeps them in Postgres. The validation's checker confirmed the findings.
+
+- (a) Retire the per-write class for stores whose class is fixed, and name the enforcement points: the artifact store per write, Secret stores at construction, `tenantstore` per operation, Postgres and Redis Confidential data through the preflight volume-encryption check, and the `connectoroauth` state store as unprotected until CA-0 of [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) lands.
+- (b) Add a constant class parameter to every store write.
+
+**Recommendation: (a).** A class parameter that never varies for a store checks nothing, and the construction check already refuses a Secret store that cannot encrypt. It blocks the "Store write check" row of "TSS-8" and the §12.9 text of 0150.S1. (raised by the desk validation of the M3 readiness review, 2026-11-19; sources: VAL-038)
+
+**O21. Credentials in stored idempotency responses. Open.**
+
+The checker of VAL-038 found a store that the validation missed. Under `--postgres-dsn`, the Postgres store of `pkg/idempotency/idempotencymw` keeps `response_body` for 24 hours for the §11.5 critical operations, and the MCP server uses the same store for `lenny/create_session` and `lenny/delegate_task`. A `CreateSession` response carries the §7.1 `uploadToken`, a bearer credential, so the idempotency table holds it in Postgres with no application-layer encryption, and a `Resume` body can carry task results, which are Confidential. §12.9's table lists neither idempotency records nor upload tokens. This is a reading of the code that was not run. It overlaps the proposed change that verifies an upload token against the session row, which the M3 readiness review proposed as 0162 and later numbered 0163; neither number names that change today.
+
+- (a) A response that carries a credential is not stored with it. The critical operations that return one store the response with the token removed and mint a fresh token on replay, or call `idempotencymw.DoNotStore`. §12.9 classifies idempotency records.
+- (b) Encrypt the stored response body under the tenant key, and classify idempotency records in §12.9.
+- (c) Classify idempotency records in §12.9 as Secret and rely on volume encryption.
+
+**Recommendation: (a)**, placed in the proposed upload-token change. A token that is never stored cannot leak from the table, and a replay that mints a fresh token keeps the client's retry working. It blocks the §12.9 data-type table of 0150.S1 and the critical operations of §11.5. (raised by the desk validation of the M3 readiness review, 2026-11-19; sources: VAL-038)
 
 ## Decisions
 
