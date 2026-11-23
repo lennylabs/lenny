@@ -1042,6 +1042,131 @@ func TestLintFindsProductPackagesPerReleaseTarget(t *testing.T) {
 	}
 }
 
+// TestLintListingLeavesOutPackagesTheBuildExcludes checks the listing with
+// the go command over a module whose server binary, which a release would
+// build only for Linux, imports a package every file of which is behind a
+// linux constraint. The darwin build passes and names the packages outside
+// ./... that it compiles, the Linux build names the Linux-only package
+// outside ./... as well, and a main package under cmd/ whose files are all
+// Linux-only is listed in the Linux build alone. A package that the lint's
+// build tags exclude and a build with no tags compiles, under a testdata
+// directory or under ./..., is outside the lint in every build. The test
+// checks contributor tooling and verifies no specification requirement.
+func TestLintListingLeavesOutPackagesTheBuildExcludes(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("blocked: go is not on PATH")
+	}
+	root := writeLintModule(t, map[string]string{
+		"cmd/lenny/main.go":      "package main\n\nimport (\n\t_ \"example.com/m/_hidden/h\"\n\t_ \"example.com/m/x/testdata/neg\"\n\t_ \"example.com/m/negated\"\n)\n\nfunc main() {}\n",
+		"x/testdata/neg/n.go":    "//go:build !integration\n\npackage neg\n",
+		"negated/n.go":           "//go:build !component\n\npackage negated\n",
+		"cmd/server/main.go":     "package main\n\nimport (\n\t_ \"example.com/m/linuxonly\"\n\t_ \"example.com/m/_linuxdep/d\"\n)\n\nfunc main() {}\n",
+		"cmd/_linuxtool/main.go": "//go:build linux\n\npackage main\n\nfunc main() {}\n",
+		"linuxonly/l.go":         "//go:build linux\n\npackage linuxonly\n",
+		"_linuxdep/d/d_linux.go": "package d\n",
+		"_hidden/h/h.go":         "package h\n",
+	})
+	linux, mac := lintBuildTarget, lintTarget{goos: "darwin", goarch: "arm64"}
+	res, err := packagesOutsideLintPerTarget(context.Background(), root, []lintTarget{linux, mac}, execGoListFor)
+	if err != nil {
+		t.Fatalf("a Linux-only import in a server binary failed the listing: %v", err)
+	}
+	want := []string{
+		"example.com/m/_hidden/h (built for linux/amd64, darwin/arm64)",
+		"example.com/m/_linuxdep/d (built for linux/amd64)",
+		"example.com/m/cmd/_linuxtool (built for linux/amd64)",
+		"example.com/m/negated (built for linux/amd64, darwin/arm64)",
+		"example.com/m/x/testdata/neg (built for linux/amd64, darwin/arm64)",
+	}
+	if !slices.Equal(res.outside, want) {
+		t.Errorf("packages outside ./... %v; want %v", res.outside, want)
+	}
+}
+
+// TestLintListingFailsOnAPackageItCannotLoad checks that the -e listing
+// still fails, in a build that compiles the package, on an import that no
+// module provides and on a package under a directory starting with an
+// underscore whose import block does not parse, and that it names the
+// package. The test checks contributor tooling and verifies no
+// specification requirement.
+func TestLintListingFailsOnAPackageItCannotLoad(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("blocked: go is not on PATH")
+	}
+	mac := lintTarget{goos: "darwin", goarch: "arm64"}
+	cases := []struct {
+		name  string
+		files map[string]string
+		want  string
+	}{
+		{
+			name: "missing import",
+			files: map[string]string{
+				"cmd/app/main.go": "package main\n\nimport _ \"example.com/m/missing\"\n\nfunc main() {}\n",
+			},
+			want: "example.com/m/missing",
+		},
+		{
+			name: "unparsable package under an underscore directory",
+			files: map[string]string{
+				"cmd/app/main.go":   "package main\n\nimport _ \"example.com/m/_hidden/bad\"\n\nfunc main() {}\n",
+				"_hidden/bad/b.go":  "package bad\n\nimport (\n",
+				"cmd/other/main.go": "package main\n\nfunc main() {}\n",
+			},
+			want: "example.com/m/_hidden/bad",
+		},
+		{
+			name: "unparsable main package under an underscore directory of cmd",
+			files: map[string]string{
+				"cmd/app/main.go":   "package main\n\nfunc main() {}\n",
+				"cmd/_tool/main.go": "package main\n\nimport (\n",
+			},
+			want: "example.com/m/cmd/_tool",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := writeLintModule(t, c.files)
+			for _, tg := range []lintTarget{lintBuildTarget, mac} {
+				_, err := packagesOutsideLintPerTarget(context.Background(), root, []lintTarget{tg}, execGoListFor)
+				if err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "cannot load") {
+					t.Errorf("build %s: err %v; want an error naming %s", tg, err, c.want)
+				}
+			}
+		})
+	}
+}
+
+// TestLintDepsListReadsEveryErrorField checks the reading of a go list -e
+// JSON stream: a build-constraint exclusion leaves the package out, an
+// error that only an importer's DepsErrors carries fails the listing, an
+// exclusion message that spans lines is not read as an exclusion, and a
+// stream that does not parse or a record with no import path fails it.
+// The test checks contributor tooling and verifies no specification
+// requirement.
+func TestLintDepsListReadsEveryErrorField(t *testing.T) {
+	list := func(out string) ([]lintDepsPackage, error) {
+		return lintDepsList(context.Background(), "", func(context.Context, string, ...string) (string, error) { return out, nil })
+	}
+	pkgs, err := list(`{"ImportPath":"m/a","Name":"main","Module":{"Path":"m"},"DepsErrors":[{"Err":"build constraints exclude all Go files in /r/x"}]}
+{"ImportPath":"m/x","Module":{"Path":"m"},"Error":{"Err":"build constraints exclude all Go files in /r/x"}}`)
+	if err != nil || len(pkgs) != 1 || pkgs[0].ImportPath != "m/a" {
+		t.Errorf("an excluded package: %+v, %v; want only m/a", pkgs, err)
+	}
+	if _, err := list(`{"ImportPath":"m/a","DepsErrors":[{"Err":"import cycle not allowed"}]}`); err == nil || !strings.Contains(err.Error(), "import cycle") {
+		t.Errorf("an error only DepsErrors carries: err %v; want it to fail", err)
+	}
+	if _, err := list(`{"ImportPath":"m/a","Error":{"Err":"build constraints exclude all Go files in /r\nno required module provides package m/z"}}`); err == nil {
+		t.Error("an exclusion message spanning lines read as an exclusion")
+	}
+	if _, err := list(`{"ImportPath":`); err == nil {
+		t.Error("a stream that does not parse read without an error")
+	}
+	if _, err := list(`{"Name":"main"}`); err == nil {
+		t.Error("a record with no import path read without an error")
+	}
+}
+
 // TestReleaseTargetsReadsTheReleaseWorkflow checks the reading of build
 // targets from a release workflow: matrix include entries with goos and
 // goarch, a matrix of goos and goarch lists, and a platforms input with a
