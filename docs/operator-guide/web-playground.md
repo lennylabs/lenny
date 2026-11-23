@@ -67,4 +67,6 @@ Logout, user invalidation, idle timeout, and admin revocation all drive the same
 
 Revocation covers the playground bearer itself, and no other token derives from it. The Token Service refuses a playground bearer as the caller of `POST /v1/oauth/token` with `401 invalid_client`, and as the `subject_token` or `actor_token` of an exchange with `400 invalid_grant`, so a playground bearer cannot be exchanged for a token that outlives logout.
 
+The gateway records every playground bearer in the issued-token index when it mints it, with the token pasted into the `apiKey` form as the token it derives from. Revoking the pasted token through the Token Service's revocation request therefore also revokes every playground bearer minted from it, and a fully revoked user's playground bearers are revoked with the user's other tokens. When the gateway has no Postgres database, it records nothing and these revocations do not reach playground bearers.
+
 Enable `apiKey` mode only when an upstream component authenticates the caller, because the mode trusts the supplied bearer. Restrict `dev` mode to local installs, because it mints tokens without admission material.

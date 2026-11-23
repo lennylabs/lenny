@@ -876,7 +876,7 @@ Rotate the bootstrap admin credential. Only the managed admin user (`lenny-admin
 platform-admin
 {: .label .label-red }
 
-Start a platform-admin impersonation session. The gateway mints a `user_bearer` for the target user in the target tenant and returns it to the calling administrator. The bearer carries the calling administrator's `scope` claim when the administrator's token carries one, so an impersonation never reaches beyond the caller's own scope. The token id of that bearer is the impersonation session id. The gateway records the bearer in the issued-token index of the target tenant, and that record is the only session state the gateway keeps, so any gateway replica can list or end the session. The call writes the `admin.impersonation_started` audit event before it signs the bearer.
+Start a platform-admin impersonation session. The gateway mints a `user_bearer` for the target user in the target tenant and returns it to the calling administrator. The bearer carries the calling administrator's `scope` claim when the administrator's token carries one, so an impersonation never reaches beyond the caller's own scope, and it expires at the requested duration or when the administrator's own bearer expires, whichever comes first. The token id of that bearer is the impersonation session id. The gateway records the bearer in the issued-token index of the target tenant, and that record is the only session state the gateway keeps, so any gateway replica can list or end the session. The call writes the `admin.impersonation_started` audit event before it signs the bearer.
 
 **Request body:**
 
@@ -933,7 +933,7 @@ End an impersonation session by revoking its bearer. Any gateway replica serves 
 
 When the ended audit write fails after the revocation commits, the call returns the audit error, the bearer stays revoked, and the session has no ended event. A retry returns `409` because the bearer is already revoked.
 
-A session that is not ended through this call ends when its `expiresAt` passes, when the target user is fully revoked, when a platform administrator fully revokes the administrator who started it, or when the bearer is revoked by its token id. None of these writes an `admin.impersonation_ended` event.
+A session that is not ended through this call ends when its `expiresAt` passes, when the target user is fully revoked, when a platform administrator fully revokes the administrator who started it, when the administrator's own bearer that started it, or a token that bearer was derived from, is revoked through the Token Service's revocation request, or when the bearer is revoked by its token id. None of these writes an `admin.impersonation_ended` event.
 
 **Error codes:**
 
@@ -950,7 +950,7 @@ platform-admin tenant-admin
 
 Terminate all active sessions for a user and revoke their tokens immediately. Used during incident response. `tenant-admin` is scoped to their own tenant.
 
-In `full_revoke` mode, when a platform administrator invalidates a user, the call also revokes, in every tenant, the impersonation bearers that user started, and counts them in the revoked-token total. When the caller is a `tenant-admin`, the call revokes only the user's own tokens and reports in the response's token revocation error that the revocation of impersonation bearers the user started was skipped.
+In `full_revoke` mode, the call revokes the user's tokens and every token derived from them, including the tokens other users derived from the user's tokens, such as a delegation child the user's token delegated. When a platform administrator invalidates a user, the call also revokes, in every tenant, the impersonation bearers that user started, and counts them in the revoked-token total. When the caller is a `tenant-admin`, the call revokes only the user's own tokens and reports in the response's token revocation error that the revocation of impersonation bearers the user started was skipped.
 
 In `full_revoke` mode, when the user's sessions cannot be listed, the call still revokes the user's tokens and dismisses the user's pending elicitations, and then answers `500 INTERNAL_ERROR` with the per-effect counts in the error details.
 
