@@ -229,7 +229,7 @@ No tier of `lenny-test` runs the model; it is a design check run by hand with `t
 
 Step 0165.S2 adds component-tier tests in `tests/component/tokenproperties`, each citing §13.3 **Token rule properties.**:
 
-- `TestTokenRulesKeepTheirPropertiesOverGeneratedSequences` draws sequences of 8 to 20 operations with `pgregory.net/rapid` (seed 20261123 and 200 sequences by default, `-rapid.seed` and `-rapid.checks` to change them), checks every item of the list after every step, and fails when a run does not reach each scenario a property depends on.
-- `TestTokenRuleScenariosOfTheModelKeepTheProperties` replays CX-1 to CX-13 as fixed sequences under the same checks, with the outcome each decision chose.
+- `TestTokenRulesKeepTheirPropertiesOverGeneratedSequences` draws sequences of 8 to 20 operations with `pgregory.net/rapid` (seed 20261123 and 300 sequences by default, `-rapid.seed` and `-rapid.checks` to change them), checks every item of the list after every step, and fails when a run does not reach each scenario a property depends on.
+- `TestTokenRuleScenariosOfTheModelKeepTheProperties` replays CX-1 to CX-13 as fixed sequences under the same checks, with the outcome each decision chose, and the two sequences of open decisions 15 and 16, the second skipped until TOKX-I19 is fixed.
 
-The component tier fits because the properties depend on the Postgres transactions of the issued-token store: the recursive revocation, the impersonator link, the step (1a) re-read, and the full revoke's walk. Open decisions 1 and 2 in `decisions.md` record the two sequences the tests found that break an item of the list.
+The component tier fits because the properties depend on the Postgres transactions of the issued-token store: the recursive revocation, the impersonator link, the step (1a) re-read, and the full revoke's walk. Open decisions 15 and 16 in `decisions.md` record the two sequences the tests found, and open decision 17 a question the review of the step raised.
