@@ -1,6 +1,6 @@
 # Store conformance suites and router contracts
 
-Status: `Draft`, revision 1, 2026-11-16. Programs: [v1](../programs/v1.md), area milestones.
+Status: `Decided`, revision 1, 2026-11-23. Programs: [v1](../programs/v1.md), area milestones.
 
 ## Problem
 

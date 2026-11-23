@@ -1,6 +1,6 @@
 # Security oversight for customers and the operator
 
-Status: `Draft`, revision 61, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 62, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 ## Problem
 

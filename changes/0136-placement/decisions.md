@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-The M3 readiness review of 2026-11-19 raised O9 to O18. O1 to O8 are settled and sit under "Decisions", in "Settled open decisions O1 to O8".
+The M3 readiness review of 2026-11-19 raised O9 to O18. O1 to O8 are settled and sit under "Decisions", in "Settled open decisions O1 to O8". The owner settled O12 and O13 on 2026-11-20 (D25 and D26), and they sit in "Settled open decisions O12 and O13".
 
 **O9. Where the removal of the T4 placement mechanism lands.**
 
@@ -31,24 +31,6 @@ D24 and PM-7 **Residency across regions (D24).** state that a deployment serves 
 - (c) 0136.S5 lands the overlay field, its validation, and its application to the reserved pods that 0147.S9 marks, with the overlay's tests, and keeps its edge to 0147.S9. Between 0147.S9 and 0136.S5, reserved pods take the pool's class placement alone, on unreleased `main` only.
 
 **Recommendation: (c).** Both changes' steps now state it, no step uses the field before it exists, and the overlay's validation stays in the change that defines the classes it reads. (a) would need 0147.S9 to change again. Either way 0147.S9 depends on 0136.S2 for `placement.priorityClasses.reserved`, which its steps now state. It blocks 0136.S5 and 0147.S9. The other change is [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/decisions.md). (raised by the M3 readiness review, 2026-11-19; sources: 0136-F5)
-
-**O12. Placement checks when a session moves to a new pod.**
-
-PM-4 checks the offering and the effective requirements at the post-chain point at creation, and `sessionIsolationLevel` is "populated from the pool and pod set at creation and unchanged for the session's life". The change does not say what happens when a session resumes on a new pod after pod loss, eviction, suspension, or a node drain. Between creation and the resume, an operator can change the offering's `nodePlacement`, a requirement can be added, which "applies at once", or the tenant's settings can move to `dedicated`.
-
-- (a) Every claim of a new pod for an existing session reruns the offering and requirement checks with the current values, refuses with the same codes, and updates `sessionIsolationLevel` to the new pod's placement.
-- (b) The decision made at creation holds for the session's life. An added requirement applies to new sessions only, and the documentation states it.
-
-**Recommendation: (a).** A requirement is a security constraint, and under (b) a resumed session can run on placement that its current requirements refuse. It blocks 0136.S6. (raised by the M3 readiness review, 2026-11-19; sources: 0136-F11)
-
-**O13. What a pending version of an environment's `placementRequirements` holds.**
-
-Under D18 a relaxation of an environment's `placementRequirements` is held as a pending version that the tenant security record's applier activates at its `effectiveAt`. Neither this change nor [`0142-security-oversight`](../0142-security-oversight/change.md) nor [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) states what a pending version holds, whether a write is refused while one is pending, or what a later tightening does to it. If a pending version is the full stored state, its activation undoes a requirement added during the delay, with no justification, event, or delay.
-
-- (a) A pending version holds only the relaxed requirements and is applied onto the active version at `effectiveAt`. A later write that tightens a pending requirement cancels that requirement's relaxation. An environment has at most one pending version, and `If-Match` compares the active version.
-- (b) Every write to an environment's `placementRequirements` is refused while a relaxation is pending, except a cancel.
-
-**Recommendation: (a)**, stated once in 0142's SO-2 and referenced from this change and from 0150. Once the owner settles it, PM-4 cites the rule as SO-2 states it rather than restating it. It blocks 0136.S6. The other changes are [`0142-security-oversight`](../0142-security-oversight/decisions.md) (its decision 40) and [`0150-tenant-security-settings`](../0150-tenant-security-settings/decisions.md) (its O14), which record the same question for their records. (raised by the M3 readiness review, 2026-11-19; sources: tenancy-security-C4)
 
 **O14. How stored offerings, pools, and tenant settings follow a change to the Helm classes.**
 
@@ -126,6 +108,8 @@ The owner's decisions of 2026-11-12, worded as the decision brief records them.
 | D22 | **Quota agent hardening (2026-11-14).** The owner answered "add the two hardenning steps to lenny-quota-agent": a custom `Localhost` seccomp profile shipped with the chart, and a Landlock self-restriction at start-up. [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-10-project-quotas) owns both as its D28. This design's admission refuses a quota agent pod without the profile; the orchestrator chose that rule, and the owner confirmed it with the profile's installation by the `seccomp-install` init container on 2026-11-14 ("2. ok"). | PM-6, PM-9 |
 | D23 | **Quota agent status (2026-11-15).** The owner answered "3: ok": `lenny-quota-agent` serves no port and writes its figures as the annotation `lenny.dev/quota-agent-status` on its own node, which the admission policy allows beside the `lenny.dev/project-quota` label and nothing else, and `lenny-ops` exports them as metrics and raises `QuotaAgentUnavailable`. [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md#pl-10-project-quotas) owns the agent's side as its D29. This design's `lenny-quota-agent-node-label` admits the annotation, with a value of at most 1 KiB, and its continuous check reads it. | PM-6 |
 | D24 | **Residency across regions (2026-11-15).** The owner asked how region placement works and whether a Kubernetes cluster can span regions, and answered "ok, add to the placement design" to the research summary and the recommendation that residency needs one Lenny deployment per region. PM-7 **Residency across regions.** states the finding, the deployment model, and what a stretched cluster does and does not give. | PM-7 |
+| D25 | **Placement checks on a new pod (2026-11-20).** O12 settled as (a), question PR-A16 of the M3 readiness decision page: every claim of a new pod for an existing session reruns the offering and requirement checks with current values and updates `sessionIsolationLevel`. | PM-4 and 0136.S6 in a later revision |
+| D26 | **A pending version of `placementRequirements` (2026-11-20).** O13 settled as (a), question PR-A8 of the M3 readiness decision page: a pending version holds only the relaxed requirements, a later tightening of a pending requirement cancels that relaxation, an environment holds at most one pending version, and `If-Match` compares the active version. SO-2 of 0142 states the rule and PM-4 cites it. | PM-4 and 0136.S6 in a later revision |
 
 The related decisions of the same day that this design builds on: runc pools require `hostUsers: false` so each pod gets its own host UID range ([`0145-session-isolation`](../0145-session-isolation/change.md), cross-pod kernel UID sharing, option a); runc is described factually and `allowStandardIsolation` stays; the pod layout moved to [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md); Kata block-plain pools may set an `fsGroup` with a dedicated GID; and [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) replaces `workspaceTier` with explicit tenant settings, including the tenant's node tenancy.
 
@@ -202,3 +186,29 @@ The owner settled O1 to O8 on 2026-11-12 (D11 to D14). Each entry keeps its opti
 **O8. T4 placement.** This decision moved to [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md), which decides whether its templates require `nodeTenancy: dedicated` for the tenants that today set `workspaceTier: T4`. This design offers the setting and its enforcement ("PM-2" and "PM-4") and keeps no T4-specific rule.
 
 **Settled (2026-11-12) (D14).** The `regulated` template sets `placement.nodeTenancy: dedicated`, and `standard` and `confidential` set `shared` ("TSS-2").
+
+### Settled open decisions O12 and O13
+
+The owner settled O12 and O13 on 2026-11-20 on the M3 readiness decision page (D25 and D26). Each entry keeps its options and reasoning as a record and states the option taken.
+
+**O12. Placement checks when a session moves to a new pod.**
+
+PM-4 checks the offering and the effective requirements at the post-chain point at creation, and `sessionIsolationLevel` is "populated from the pool and pod set at creation and unchanged for the session's life". The change does not say what happens when a session resumes on a new pod after pod loss, eviction, suspension, or a node drain. Between creation and the resume, an operator can change the offering's `nodePlacement`, a requirement can be added, which "applies at once", or the tenant's settings can move to `dedicated`.
+
+- (a) Every claim of a new pod for an existing session reruns the offering and requirement checks with the current values, refuses with the same codes, and updates `sessionIsolationLevel` to the new pod's placement.
+- (b) The decision made at creation holds for the session's life. An added requirement applies to new sessions only, and the documentation states it.
+
+**Recommendation: (a).** A requirement is a security constraint, and under (b) a resumed session can run on placement that its current requirements refuse. It blocks 0136.S6. (raised by the M3 readiness review, 2026-11-19; sources: 0136-F11)
+
+**Settled (2026-11-20): (a)** (D25), question PR-A16 of the M3 readiness decision page, whose option (a) is this option (a). Every claim of a new pod for an existing session reruns the offering and requirement checks with the current values, refuses with the same error codes, and updates `sessionIsolationLevel` to the new pod's placement. The option not taken was (b), keeping the decision made at creation for the session's life.
+
+**O13. What a pending version of an environment's `placementRequirements` holds.**
+
+Under D18 a relaxation of an environment's `placementRequirements` is held as a pending version that the tenant security record's applier activates at its `effectiveAt`. Neither this change nor [`0142-security-oversight`](../0142-security-oversight/change.md) nor [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md) states what a pending version holds, whether a write is refused while one is pending, or what a later tightening does to it. If a pending version is the full stored state, its activation undoes a requirement added during the delay, with no justification, event, or delay.
+
+- (a) A pending version holds only the relaxed requirements and is applied onto the active version at `effectiveAt`. A later write that tightens a pending requirement cancels that requirement's relaxation. An environment has at most one pending version, and `If-Match` compares the active version.
+- (b) Every write to an environment's `placementRequirements` is refused while a relaxation is pending, except a cancel.
+
+**Recommendation: (a)**, stated once in 0142's SO-2 and referenced from this change and from 0150. Once the owner settles it, PM-4 cites the rule as SO-2 states it rather than restating it. It blocks 0136.S6. The other changes are [`0142-security-oversight`](../0142-security-oversight/decisions.md) (its decision 40) and [`0150-tenant-security-settings`](../0150-tenant-security-settings/decisions.md) (its O14), which record the same question for their records. (raised by the M3 readiness review, 2026-11-19; sources: tenancy-security-C4)
+
+**Settled (2026-11-20): (a)** (D26), question PR-A8 of the M3 readiness decision page, whose option (a) is this option (a). A pending version holds only the relaxed requirements and is applied onto the active version at `effectiveAt`. A later tightening of a pending requirement cancels that relaxation. An environment has at most one pending version, and `If-Match` compares the active version. SO-2 of [`0142-security-oversight`](../0142-security-oversight/decisions.md) states the rule once as its decision 40, and PM-4 cites it. O14 of [`0150-tenant-security-settings`](../0150-tenant-security-settings/decisions.md) records the same answer, and the parts of 0150's broader option (a) that this wording does not state stay open there. The option not taken was (b), refusing every write while a relaxation is pending, except a cancel.

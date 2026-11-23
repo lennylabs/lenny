@@ -165,3 +165,7 @@ The owner accepted three resolutions of conflicts between steps that the convers
   - Raised 45, the order of 0142.S2 against 0143.S1 for the `~svc~` check on `lifecycleSubjects` (requested by 0143; matches 0143 O9).
   - Already open: 39 for 0128 O3, which now names the renamed event `forensics.erasure_deferred_completed`; 38 for 0133 open decision 7; 37 for 0135 O20, which now names the matching options; and 36, which now names 0143 O11 and 0149 decision 33.
   - Already done: the client tool limit in SO-5a (0122-F25), the absence of an MCP version pin in this change's tests (0134), the withdrawal of a pending approval on suspension (0146-F12), the `verbatimClientFiles` scope (0147-p2-F13), and the resolver rule for a subject with an invalidation level or hold (0149-p2-F7).
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 62 records the owner's answer to decision 40, what a pending version holds: option (a), by question PR-A8 of 2026-11-20, which 0136's O13 and 0150's O14 record as well. The entry moves to "Decisions". The page's option repeated 0136's wording, and 0150's broader option (a) adds rules for a loosening write to a pending member, for a second relaxation, and for `dryRun` that the answer does not state; 0150 holds them as its open decision O22. `change.md` does not yet apply decision 40 in SO-2, and the next revision brings it in line.

@@ -1,6 +1,6 @@
 # Runtime routing
 
-Status: `Draft`, revision 20, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 21, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 

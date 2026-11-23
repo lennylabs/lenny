@@ -1,6 +1,6 @@
 # Decision records
 
-Status: `Draft`, revision 2, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Decided`, revision 2, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 

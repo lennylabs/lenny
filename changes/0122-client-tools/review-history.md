@@ -88,3 +88,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
     - Already open: O21 of 0135 (0135, client-api-sessions-C4) is O14 here, which now names 0135's O21 and 0138's O22. The rest of that request, the receipts-only REST row, the reserved platform tool names, and the edges on 0135.S1 and 0146.S1, was applied under 0122-F4, 0122-F9, and 0122-F3.
     - Applied: O18 states that 0144 records the same question as its open decision 10 (0144, client-api-sessions-C7).
     - Raised O21: the edge of 0122.S1 on 0146.S1 if the owner splits 0146.S1, mirroring SL-Q10 of 0146 (0146).
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 13 records two questions of the desk validation that this change did not hold. They were framed first as O22 (question DV-2, the stream form of a custom tool call on Chat Completions) and O23 (question DV-3, OpenAI custom tools on the Open Responses adapter), and the owner's answers of 2026-11-20 settle both as (a). The two entries move to "Decisions". The question for O23 asked the owner to confirm T15's mapping of an absent `mode` and of `none`, which every option carried; the owner answered with option (a), and the record reads that answer as accepting the mapping. "Validation owed" in `steps.md` names the watch signal and the P6 probe for O22. `change.md` does not yet apply O23 or the T15 mapping in CT-3 and CT-6, and the next revision brings them in line.

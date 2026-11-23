@@ -474,3 +474,7 @@ Already recorded as open decisions: O8 of 0137 as decision 45; O19 of 0139 and O
 Already done: removals-C4 for 0138 (the `security` test uses `GET /v1/runtimes/{name}`, and no other test names a removed surface), runtime-contract-C10 for 0141 (0147.S12 and its edge to 0141.S2), and runtime-contract-C8 for 0141 (0147.S4 builds the `registered` check and depends on 0141.S1).
 
 Not applied: the clause of the 0149 request that 0127.S5 adds the environment case for platform-declared entries when it lands after both 0147.S8 and 0149.S1. 0147.S8 depends on 0127.S5, so 0127.S5 never lands after 0147.S8.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 81 records the owner's answers: decision 45 as (a) by question PG-C14 of 2026-11-19, which 0137's O8 records as well, and decision 49 as (a) by question PR-A13 of 2026-11-20, which 0141's D22 records as well. Both move to the end of "Decisions". The rest of program-C14 was already in the tree: "Names" states the whole-name rule and the call to `runtimestore.ValidateName`, and 0147.S4 depends on `0137.S4 (part)`. `change.md` does not yet apply decision 45 in "Changing the list" or decision 49 in DR-8 "Runtime routes", and the next revision brings them in line.

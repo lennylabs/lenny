@@ -1,6 +1,6 @@
 # Tenant-derived runtimes
 
-Status: `Draft`, revision 80, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 81, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 ## Problem
 

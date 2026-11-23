@@ -141,3 +141,7 @@ Raised as open decisions:
 - O24: which step closes F-8.7.17 (requested by 0135; matches 0135's O19).
 
 0153.S5, 0153.S8, and 0153.S9 name the new decisions that block them.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 16 records the owner's answers of 2026-11-20: O10 as (a) by question PR-A5 (D28) and O11 as (a) by question PR-A7 (D29). Both move to "Settled open decisions of the M3 readiness review". O19 notes that its ordering part is settled through 0118's O11 and 0145's O17 (question PR-A3), and its `lenny-store-fill` part stays open. The recommendation of O10 also asks whether adoption at bind rewrites or checks the adopted repository's `.git` directory, which the page question did not decide. `change.md` does not yet apply D28 and D29 in WM-3, WM-15, and the "Broker root" term, and the next revision brings them in line.
