@@ -30,6 +30,7 @@ Each tier has its own directory and build tag (see TESTING.md §4 for the canoni
 - `security/` — security controls and adversarial scenarios
 - `conformance/` — runtime adapter conformance
 - `docs/` — documentation tests
+- `formal/` — formal models of design rules, run by hand rather than by a tier; `formal/tokens/README.md` describes the model of the token rules and how to run it
 
 Unit tests are co-located with the code they cover under `pkg/`. This directory is the index, not the location.
 
