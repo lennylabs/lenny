@@ -185,3 +185,27 @@ entry that names no such file. Neither list is a baseline: an entry
 stays while its file does, and a change to this directory is reviewed
 before it merges (`.claude/rules/git-workflow.md`, "Review changes to
 the merge gate").
+
+## golangci-lint finding counts
+
+The golangci-lint check of the static tier (`cmd/lenny-test`,
+`lint_register.go`) reads one baseline:
+
+| File | Schema | What it holds |
+|:--|:--|:--|
+| `golangci-lint-findings.yaml` | `kind: golangci-lint-finding-count-baseline`, `version: 1`, and a `packages` list of `package` (a Go package directory) and `linters` (a map from a linter's name to its count of findings there, each at least 1). | The findings the whole-tree run reports, counted per package and linter, which issue GATE-I1 tracks. |
+
+The check fails a count that rises above the register and a finding in a
+package and linter the register carries no count for. Because the
+register holds counts, a branch that removes one finding and adds another
+of the same linter in the same package keeps the count. The register is
+read and written only as a regular file. A count that falls
+is written back by the run that measures it, and that run fails so that
+the branch commits the lowered register. No run raises a count, and a
+finding a branch adds is fixed. A count rises only through a hand edit of
+the register, for a reason such as a package move, a golangci-lint
+upgrade, or a newly enabled linter. The register is under this directory,
+so the merge-gate review of `.claude/rules/git-workflow.md` ("Review
+changes to the merge gate") covers the edit and records the reason. The
+check compares the register with its copy at the merge base and lists
+each raised count in the verdict without failing the tier.
