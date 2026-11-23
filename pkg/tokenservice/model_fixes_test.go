@@ -181,11 +181,29 @@ func TestRevocationRequestSuppliesTheRowOfARootWithoutOne(t *testing.T) {
 // impersonation sessions through the impersonator link.
 type impersonationRevocationStore struct {
 	fakeRevocationStore
-	ended     []issuedtokenstore.RevokedImpersonation
-	endErr    error
-	gotTenant string
-	gotJTIs   []string
-	gotReason string
+	ended      []issuedtokenstore.RevokedImpersonation
+	endErr     error
+	subtreeErr error
+	gotTenant  string
+	gotJTIs    []string
+	gotReason  string
+	// gotSubtreeCaller is the caller jti LineageSubtree was asked about,
+	// and cascaded reports whether RevokeLineage ran.
+	gotSubtreeCaller string
+	cascaded         bool
+}
+
+func (f *impersonationRevocationStore) LineageSubtree(_ context.Context, _, callerJTI, _ string) ([]string, error) {
+	f.gotSubtreeCaller = callerJTI
+	if f.subtreeErr != nil {
+		return nil, f.subtreeErr
+	}
+	return f.subtree, nil
+}
+
+func (f *impersonationRevocationStore) RevokeLineage(ctx context.Context, req issuedtokenstore.LineageRevocation) (issuedtokenstore.CascadeResult, error) {
+	f.cascaded = true
+	return f.fakeRevocationStore.RevokeLineage(ctx, req)
 }
 
 func (f *impersonationRevocationStore) RevokeImpersonationsByImpersonator(_ context.Context, tenant string, jtis []string, reason string, _ time.Time) ([]issuedtokenstore.RevokedImpersonation, error) {
@@ -212,17 +230,19 @@ func (f *fakeCrossTenantReads) EmitCrossTenantRead(_ context.Context, r auditsto
 
 // spec: §13.3 (Credential Flow)
 //
-// After a recursive revocation commits, the Token Service ends the
+// Before a recursive revocation's cascade, the Token Service ends the
 // impersonation sessions whose impersonator link names a token of the
-// cascade's subtree (the scenario CX-4 of change 0165's model: carol's
-// bearer C started an impersonation of alice in another tenant, and
-// revoking C ends it). It passes the request's tenant and the whole subtree,
-// writes a token.revoked row for each ended session in that session's
-// tenant with the request's root as cascade root, propagates it, emits one
-// cross_tenant_read event, and counts the ended sessions in revoked_count.
-// A failed revocation of the sessions returns 500 token_exchange_failed, a
-// missing cross_tenant_read emitter fails closed the same way without
-// running the query, and a failed emit is logged and keeps the 200.
+// root's subtree (the scenario CX-4 of change 0165's model: carol's bearer C
+// started an impersonation of alice in another tenant, and revoking C ends
+// it). It passes the request's tenant and the whole subtree, writes a
+// token.revoked row for each ended session in that session's tenant with
+// the request's root as cascade root, propagates it, emits one
+// cross_tenant_read event, and keeps revoked_count to its own tenant. A
+// failed revocation of the sessions returns 500 token_exchange_failed
+// before the cascade, so a retry by the same caller runs both steps; a
+// revoked caller is refused with 401 invalid_client before either step; a
+// missing cross_tenant_read emitter fails closed without running the
+// query; and a failed emit is logged and keeps the 200.
 func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
 	newServer := func(t *testing.T, store IssuedTokenStore, auditor *recordingAuditor, reads CrossTenantReads, propagated *[]string) (*Server, *jwt.HMACSigner) {
 		t.Helper()
@@ -271,8 +291,11 @@ func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
 		if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
 			t.Fatalf("decode: %v", err)
 		}
-		if body["revoked_count"] != float64(2) {
-			t.Errorf("revoked_count = %v, want 2", body["revoked_count"])
+		if body["revoked_count"] != float64(1) {
+			t.Errorf("revoked_count = %v, want 1, the request's own tenant only", body["revoked_count"])
+		}
+		if store.gotSubtreeCaller != "carol-1" || !store.cascaded {
+			t.Errorf("subtree read for caller %q, cascaded %v", store.gotSubtreeCaller, store.cascaded)
 		}
 		if store.gotTenant != "acme" || !reflect.DeepEqual(store.gotJTIs, []string{"carol-1", "carol-rotated"}) ||
 			store.gotReason != revocationReasonCascade {
@@ -288,7 +311,7 @@ func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
 			ended[0].RevocationReason != revocationReasonCascade {
 			t.Errorf("token.revoked rows in the session's tenant = %+v", ended)
 		}
-		if !reflect.DeepEqual(propagated, []string{"acme/carol-1", "initech/imp-1"}) {
+		if !reflect.DeepEqual(propagated, []string{"initech/imp-1", "acme/carol-1"}) {
 			t.Errorf("propagated = %v", propagated)
 		}
 		if len(reads.events) != 1 || reads.events[0].Category != "impersonation_session" || reads.events[0].RowCount != 1 ||
@@ -302,6 +325,19 @@ func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
 		var propagated []string
 		srv, signer := newServer(t, store, &recordingAuditor{}, &fakeCrossTenantReads{}, &propagated)
 		assertOAuthRejection(t, revoke(t, srv, signer), http.StatusInternalServerError, "token_exchange_failed", "retry")
+		if store.cascaded || len(propagated) != 0 {
+			t.Error("the cascade ran after the impersonation step failed, so a retry by the revoked caller would be refused")
+		}
+	})
+	t.Run("revoked caller", func(t *testing.T) {
+		store := base()
+		store.subtreeErr = issuedtokenstore.ErrCallerRevoked
+		var propagated []string
+		srv, signer := newServer(t, store, &recordingAuditor{}, &fakeCrossTenantReads{}, &propagated)
+		assertOAuthRejection(t, revoke(t, srv, signer), http.StatusUnauthorized, "invalid_client", "revoked")
+		if store.cascaded || store.gotTenant != "" {
+			t.Error("a revoked caller reached the impersonator lookup or the cascade")
+		}
 	})
 	t.Run("no cross_tenant_read emitter", func(t *testing.T) {
 		store := base()

@@ -294,3 +294,38 @@ func TestRecordWithAuditRefusesARevokedCaller(t *testing.T) {
 		t.Errorf("mint with an impersonation caller: err = %v, want nil", err)
 	}
 }
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: the subtree read that the impersonator-link revocation runs
+// before the cascade omits the root when it has no row, omits a revoked
+// descendant, crosses into another tenant, or does not refuse a revoked
+// caller, so a retry of a failed revocation request could not finish it.
+func TestLineageSubtreeReadsTheWholeSubtreeAndRefusesARevokedCaller(t *testing.T) {
+	t.Parallel()
+	pg, store, record := modelFixture(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	other := freshTenant(t, ctx, pg)
+	record(t, issuedtokenstore.IssuedToken{JTI: "child", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "rowless"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "grandchild", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "child",
+		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced",
+	})
+	record(t, issuedtokenstore.IssuedToken{JTI: "foreign", TenantID: other, Subject: "bob@globex.com", ParentJTI: "rowless"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "revoked-caller", TenantID: tenant, Subject: "alice@acme.com",
+		RevokedAt: time.Now().UTC(), RevokedReason: "explicit_revoke",
+	})
+
+	got, err := store.LineageSubtree(ctx, tenant, "", "rowless")
+	if err != nil {
+		t.Fatalf("LineageSubtree: %v", err)
+	}
+	sort.Strings(got)
+	if len(got) != 3 || got[0] != "child" || got[1] != "grandchild" || got[2] != "rowless" {
+		t.Errorf("subtree = %v, want [child grandchild rowless]", got)
+	}
+	if _, err := store.LineageSubtree(ctx, tenant, "revoked-caller", "rowless"); !errors.Is(err, issuedtokenstore.ErrCallerRevoked) {
+		t.Errorf("revoked caller: err = %v, want ErrCallerRevoked", err)
+	}
+}

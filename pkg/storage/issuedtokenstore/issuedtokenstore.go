@@ -799,6 +799,54 @@ func cascadeFromRoot(ctx context.Context, tx pgx.Tx, req LineageRevocation) (Cas
 	return out, rows.Err()
 }
 
+// LineageSubtree returns the jtis of the root's lineage subtree inside the
+// tenant: rootJTI itself, whether or not it has a row, and every row whose
+// parent_jti chain reaches it, revoked or not. It revokes nothing. In the
+// same transaction it reads the caller's row first and returns
+// ErrCallerRevoked when the row is revoked; an empty callerJTI or a caller
+// with no row skips that check. The recursive-revocation request reads it
+// before its cascade so the impersonator-link revocation runs while the
+// caller is still live, and a failed or interrupted request can be retried.
+//
+// spec: §13.3 (Credential Flow) "Lineage of derived tokens.",
+// "Platform-admin impersonation." rule 7.
+func (s *Store) LineageSubtree(ctx context.Context, tenantID, callerJTI, rootJTI string) ([]string, error) {
+	var out []string
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		if err := checkCallerLive(ctx, tx, tenantID, callerJTI); err != nil {
+			return err
+		}
+		rows, err := tx.Query(ctx,
+			`WITH RECURSIVE subtree AS (
+				SELECT $1::text AS jti, $2::text AS tenant_id
+				UNION ALL
+				-- The walk stays inside the tenant: each child is pinned to
+				-- its parent's tenant (R-02 tenant isolation).
+				SELECT c.jti, c.tenant_id FROM issued_tokens c
+					JOIN subtree p ON c.parent_jti = p.jti AND c.tenant_id = p.tenant_id
+					WHERE c.tenant_id = $2
+			)
+			SELECT jti FROM subtree`,
+			rootJTI, tenantID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var jti string
+			if err := rows.Scan(&jti); err != nil {
+				return err
+			}
+			out = append(out, jti)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RecordWithSources records an issued-token row in one transaction that
 // first takes the §11.7 per-tenant audit advisory lock and re-reads the
 // listed source tokens (§13.3 write-before-issue step 1a), and writes no

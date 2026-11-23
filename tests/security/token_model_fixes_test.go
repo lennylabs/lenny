@@ -131,8 +131,8 @@ func TestTokenServiceRevocationEndsTheImpersonationsItReaches(t *testing.T) {
 		GrantType: exchangeGrant, SubjectToken: admin,
 		RequestedTokenType: "urn:ietf:params:oauth:token-type:access_token:revoked",
 	})
-	if code != http.StatusOK || body["revoked_count"] != float64(2) {
-		t.Fatalf("status %d body %v, want 200 revoking the admin bearer and the impersonation", code, body)
+	if code != http.StatusOK || body["revoked_count"] != float64(1) {
+		t.Fatalf("status %d body %v, want 200 revoking the admin bearer", code, body)
 	}
 	row, err := h.store.Get(ctx, "globex", "imp-1")
 	if err != nil || !row.Revoked() || row.RevokedReason != "cascade_from_parent" {
