@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MIT
 # Run the token-rules model with the Alloy command-line runner inside a
 # container that has no network and sees only the model and the Alloy jar.
 #
