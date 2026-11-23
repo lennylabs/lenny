@@ -1,6 +1,6 @@
 # Token rules model
 
-`tokens.als` is an Alloy 6 model of the rules that issue, narrow, delegate, impersonate, and revoke bearer tokens. Change 0165 (`changes/0165-token-rules-model/`) builds it, and its `change.md` lists the properties in plain words and the counterexamples the model found.
+`tokens.als` is an Alloy 6 model of the rules that issue, narrow, delegate, impersonate, and revoke bearer tokens. Change 0165 (`changes/archive/2026-11-23-0165-token-rules-model/`) builds it, and its `change.md` lists the properties in plain words and the counterexamples the model found.
 
 The model is a design check. No tier of `lenny-test` runs it, and no Go test reads it. The generated property tests in `tests/component/tokenproperties` (step 0165.S2) check the properties that §13.3 **Token rule properties.** states against the Token Service and its Postgres issued-token store, under the rules as `main` builds them after change 0167.
 
