@@ -15,3 +15,7 @@
 - The owner settled O1 (option (a), question SM-2), O2 (option (a), question SM-3), and confirmed the absent-scope default (question SM-4) on the M3 readiness decision page. They are decisions 2 to 4.
 - 0162.S1 landed on the merge-gate verdict `PASS` of run `03c07cd8a1fbae415f4fdab5` on `74495debf`. An earlier run, `2a71ae1cbc48c653146dc189`, failed in the component and contract tiers on container start-up timeouts while the host's load average was about 26; no failure reached the code under test.
 - The change stays `In progress` until it is archived with its link rewrites, which the next records branch carries.
+
+## 2026-11-23, issues for decisions 2 and 3
+
+- Filed [PLAY-I3](../../issues/PLAY/PLAY-I3-oidc-callback-reads-a-non-string-scope-claim-as-absent.md) for decision 2 (SM-2) and [PLAY-I4](../../issues/PLAY/PLAY-I4-refused-mint-event-names-no-user.md) for decision 3 (SM-3), and named them in each decision.
