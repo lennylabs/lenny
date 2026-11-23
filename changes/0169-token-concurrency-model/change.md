@@ -4,7 +4,7 @@ Status: `Draft`, revision 1, 2026-11-23.
 
 ## Problem
 
-Change 0165 (a formal model of the token rules, [`changes/0165-token-rules-model/`](../0165-token-rules-model/change.md)) checks the token rules of §13.3 (Credential Flow) with an Alloy model in which every operation is one atomic step, and with generated property tests (step 0165.S2, `tests/component/tokenproperties`) that run one operation at a time. The paragraph **Token rule properties.** that 0165 adds to §13.3 states the properties for "every sequence of operations that complete one at a time". Neither check covers two requests whose transactions interleave, and the Token Service runs on several gateway replicas against one shared `issued_tokens` table.
+Change 0165 (a formal model of the token rules, [`changes/0165-token-rules-model/`](../archive/2026-11-23-0165-token-rules-model/change.md)) checks the token rules of §13.3 (Credential Flow) with an Alloy model in which every operation is one atomic step, and with generated property tests (step 0165.S2, `tests/component/tokenproperties`) that run one operation at a time. The paragraph **Token rule properties.** that 0165 adds to §13.3 states the properties for "every sequence of operations that complete one at a time". Neither check covers two requests whose transactions interleave, and the Token Service runs on several gateway replicas against one shared `issued_tokens` table.
 
 The orderings matter in practice. Each request of the Token Service runs one or more Postgres transactions of several statements, and the reviews of the token changes found ordering defects by reading the code:
 

@@ -1,6 +1,6 @@
 # A formal model of the token rules
 
-Status: `In progress`, revision 4, 2026-11-23.
+Status: `Implemented`, revision 4, 2026-11-23.
 
 ## Problem
 
