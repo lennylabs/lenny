@@ -15,7 +15,7 @@ requirements: []
 ## Evidence
 
 - `pkg/storage/issuedtokenstore/issuedtokenstore.go`, `RevokeCascade`: a recursive CTE walks the whole subtree in one transaction with no `statement_timeout`, and it walks already-revoked nodes, because the `revoked_at IS NULL` filter applies only in the `UPDATE`.
-- A caller may exchange one of its tokens, presented as the subject, while it authenticates with another of its tokens, at an equal scope, so each exchange adds one level to a chain. A self-rotation records no parent (decision 7 of 0164) and adds none. At a per-caller limit of 300 requests a minute, a chain grows by about 18,000 levels an hour, for as long as the tokens in it stay valid.
+- A caller may exchange one of its tokens, presented as the subject, while it authenticates with another of its tokens, at an equal scope, so each exchange adds one level to a chain. A self-rotation records the token it replaces as its parent (decision 10 of 0164) and adds one level as well. At a per-caller limit of 300 requests a minute, a chain grows by about 18,000 levels an hour, for as long as the tokens in it stay valid.
 - The security review of 0164.S1 on 2026-11-20 found the cost (finding 3). 0164 records a parent for every exchange, which makes such chains possible, and adds the index, which removes the per-level scan of the tenant's rows.
 
 ## Gap
