@@ -32,9 +32,9 @@ GS-3, with the layout and bound open decision 5 settles. The lanes in `gateRunne
 GS-4. The gate's unit run without `-coverprofile` and `-covermode=atomic`, with `-race` kept, and `run --changed` and `--tier unit` still writing `tests/results/cover.out`, with the unit tests of both. Then "Merge gate" in `TESTING.md` and `results/cover.out` in `tests/README.md`. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S4 The gate's tier and coverage options, and the check before a merge
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
-- depends-on: [0172.S3]
+- depends-on: [0172.S2]
 - closes: []
 
 Decisions 8 and 9. `--tier` and `--cover` on `lenny-test gate`, their record in the verdict and the printed summary, and their unit tests: a restricted run keeps the diff selection within the named tiers, an unknown or non-gate tier is refused, and `--cover` writes the profile that `lenny-test coverage --diff` reads. Then the check before a merge of decision 8 in "v1 merge policy" of `.claude/rules/git-workflow.md`, rule 1 and item 3 of "How to apply when editing" in `.claude/rules/test-coverage.md`, decision 13 of `changes/programs/v1.md`, the v1 paragraph of "Building" in `.claude/skills/build/SKILL.md`, and "Merge gate" in `TESTING.md` and `cmd/lenny-test/README.md`. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.

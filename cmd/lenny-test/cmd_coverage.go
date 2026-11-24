@@ -116,7 +116,13 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 	totalCovered := 0
 	for file, ranges := range changedLines {
 		fc := fileCov{File: file}
-		fc.Total, fc.Covered = countChanged(prof[file], ranges)
+		if fp := prof[file]; fp != nil {
+			fc.Total, fc.Covered = countChanged(fp, ranges)
+		} else {
+			// The profile does not hold the file, so no unit test ran
+			// it: its changed code lines count as uncovered.
+			fc.Total = unmeasuredStatementLines(root, file, ranges)
+		}
 		totalChanged += fc.Total
 		totalCovered += fc.Covered
 		files = append(files, fc)
@@ -157,12 +163,27 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 			fmt.Printf("%-50s  %7.1f%%  %d/%d\n", fc.File, pct, fc.Covered, fc.Total)
 		}
 	}
-	if threshold > 0 && rate < threshold {
+	if diffCoverageBelow(threshold, totalCovered, totalChanged) {
 		fmt.Fprintf(os.Stderr, "\ncoverage --diff: rate %.1f%% below threshold %.1f%%\n",
 			rate*100, threshold*100)
 		return 1
 	}
 	return 0
+}
+
+// diffCoverageBelow reports whether the covered share of the changed
+// coverable lines falls below the threshold. The changed coverable lines
+// are those of the files the profile holds, and the changed code lines in
+// function bodies of the production files it does not hold
+// (unmeasuredStatementLines). A diff with none, such as one that changes
+// only tests, comments, or declarations, has nothing to cover and passes,
+// which the check before a merge of change 0172, decision 8, relies on for
+// a branch that changes only tests. A threshold of 0 checks nothing.
+func diffCoverageBelow(threshold float64, covered, changed int) bool {
+	if threshold <= 0 || changed == 0 {
+		return false
+	}
+	return float64(covered)/float64(changed) < threshold
 }
 
 type lineRange struct{ start, end int }

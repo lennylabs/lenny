@@ -491,6 +491,20 @@ func appendHistory(path string, v *verdict) error {
 		"trigger_mode": v.Trigger.Mode,
 		"tiers":        tierStatus,
 	}
+	// A gate run's line names its commit and what it ran, so a reader of
+	// the history tells a full run (all), a restricted run (restricted_to),
+	// and a run that wrote a coverage profile (cover) from a selected run
+	// of every tier.
+	if v.Gate != nil {
+		rec["git_revision"] = v.Trigger.GitRevision
+		rec["all"] = v.Gate.All
+		if v.Gate.RestrictedTo != nil {
+			rec["restricted_to"] = v.Gate.RestrictedTo
+		}
+		if v.Gate.Cover {
+			rec["cover"] = true
+		}
+	}
 	line, err := json.Marshal(rec)
 	if err != nil {
 		return err

@@ -356,21 +356,21 @@ func TestParseGoTestPAndLayoutRefuseBadValues(t *testing.T) {
 	if _, err := parseGateLayout("parallel"); err == nil || !strings.Contains(err.Error(), "serial, unit-alone") {
 		t.Errorf("an unknown layout = %v; want an error naming the layouts", err)
 	}
-	if _, err := gateRunOptions("main", -1, false, "parallel", ""); err == nil {
+	if _, err := gateRunOptions(gateFlagValues{base: "main", rdeps: -1, layout: "parallel"}); err == nil {
 		t.Error("gateRunOptions accepted an unknown layout")
 	}
-	if _, err := gateRunOptions("main", -1, false, gateLayoutSerial, "static=1"); err == nil {
+	if _, err := gateRunOptions(gateFlagValues{base: "main", rdeps: -1, layout: gateLayoutSerial, goTestP: "static=1"}); err == nil {
 		t.Error("gateRunOptions accepted a go test -p for the static tier")
 	}
 	for _, bad := range []struct{ layout, p string }{
 		{gateLayoutSerial, "component=2"},
 		{gateLayoutUnitAlone, "unit=2"},
 	} {
-		if _, err := gateRunOptions("main", -1, false, bad.layout, bad.p); err == nil || !strings.Contains(err.Error(), "runs alone") {
+		if _, err := gateRunOptions(gateFlagValues{base: "main", rdeps: -1, layout: bad.layout, goTestP: bad.p}); err == nil || !strings.Contains(err.Error(), "runs alone") {
 			t.Errorf("--layout %s --go-test-p %s = %v; want a refusal for a tier that runs alone", bad.layout, bad.p, err)
 		}
 	}
-	o, err := gateRunOptions("main", -1, true, gateLayoutUnitAlone, "integration=2,component=1")
+	o, err := gateRunOptions(gateFlagValues{base: "main", rdeps: -1, all: true, layout: gateLayoutUnitAlone, goTestP: "integration=2,component=1"})
 	if err != nil {
 		t.Fatal(err)
 	}
