@@ -104,11 +104,11 @@ func TestUnitTierWithAnEmptyScopeRunsNothing(t *testing.T) {
 // the unit tier hands `go test`: a scoped plan names its packages, and only
 // an unscoped plan names ./... .
 func TestUnitTierArgsRunsTheScopeAndNeverTheModuleWhenScoped(t *testing.T) {
-	scoped := unitTierArgs([]string{"./pkg/a", "./pkg/b/..."}, "")
+	scoped := unitTierArgs([]string{"./pkg/a", "./pkg/b/..."}, "", 0)
 	if !contains(scoped, "-race") || contains(scoped, "./...") {
 		t.Errorf("scoped argv = %v", scoped)
 	}
-	if full := unitTierArgs(nil, ""); full[len(full)-1] != "./..." {
+	if full := unitTierArgs(nil, "", 0); full[len(full)-1] != "./..." {
 		t.Errorf("unscoped argv = %v", full)
 	}
 }

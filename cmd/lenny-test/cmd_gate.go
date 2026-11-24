@@ -37,6 +37,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -157,7 +158,14 @@ type gateOptions struct {
 	rdepsDepth int
 	// all selects every package of the unit tier and every test of the
 	// component, contract, and integration tiers, whatever the diff.
-	all         bool
+	all bool
+	// layout names the arrangement of the tiers in phases and lanes
+	// (gateLayouts); empty means defaultGateLayout.
+	layout string
+	// goTestP is the `go test -p` of each tier while it shares its phase
+	// with another lane (parseGoTestP); a tier it does not name keeps the
+	// go command's default.
+	goTestP     map[string]int
 	environment string
 	// environmentErr says why the environment is not the gate image, or
 	// is nil when it is.
@@ -187,6 +195,15 @@ type gateRecord struct {
 	// RdepsDepth is the dependent depth the selection walked; -1 is the
 	// full closure the merge gate runs.
 	RdepsDepth int `json:"rdeps_depth"`
+	// Layout names how the tiers ran (gateLayouts), and GoTestP the
+	// `go test -p` each named tier got while it shared its phase with
+	// another lane (change 0172, GS-3).
+	Layout  string         `json:"layout"`
+	GoTestP map[string]int `json:"go_test_p,omitempty"`
+	// WallTimeMS is the time from the start of the first tier to the end
+	// of the last. Tiers in lanes overlap, so the tiers' own durations no
+	// longer add up to it.
+	WallTimeMS int64 `json:"wall_time_ms"`
 	// Selection records, for each test tier the plan selected, what the
 	// gate ran of it (change 0172, GS-1), so a reader tells a selected run
 	// from a full one (All) and sees how much a selected run covered. A
@@ -243,6 +260,8 @@ func runGate(args []string) int {
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
 	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
+	layout := fs.String("layout", defaultGateLayout, "how the tiers run: "+gateLayoutUnitAlone+" runs the static and contract tiers beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutSerial+" runs every tier one after another")
+	goTestP := fs.String("go-test-p", "", "the go test -p of a tier while it runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name, and every tier of the serial layout, keeps the go command's default")
 	capGB := fs.Int("gocache-cap-gb", defaultGateGoCacheCapGB, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (1 GB is 10^9 bytes) and no running container uses it; 0 turns the check off; without the flag, "+gateEnvGoCacheCap+" sets the cap when it is set; a --here run does not use the volume and skips the check")
 	flagArgs, err := gateCommandArgs(args)
 	if err != nil {
@@ -261,16 +280,18 @@ func runGate(args []string) int {
 		fmt.Fprintln(os.Stderr, "lenny-test gate: --base is empty; the merge gate compares with the merge base of a ref, main by default")
 		return 2
 	}
+	opts, err := gateRunOptions(*base, *rdeps, *all, *layout, *goTestP)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		return 2
+	}
 	root := repoRoot()
 	if *here {
-		env, envErr := gateEnvironment(root, gateImageMarker, os.Getenv)
-		v := defaultGateRunner(root).run(gateOptions{root: root, base: *base, rdepsDepth: *rdeps, all: *all, environment: env, environmentErr: envErr})
-		return finishGate(root, v)
+		opts.root = root
+		opts.environment, opts.environmentErr = gateEnvironment(root, gateImageMarker, os.Getenv)
+		return finishGate(root, defaultGateRunner(root).run(opts))
 	}
-	passArgs := []string{"--base", *base, "--rdeps-depth", strconv.Itoa(*rdeps)}
-	if *all {
-		passArgs = append(passArgs, "--all")
-	}
+	passArgs := gatePassArgs(opts)
 	capFlagSet := false
 	fs.Visit(func(f *flag.Flag) { capFlagSet = capFlagSet || f.Name == "gocache-cap-gb" })
 	cacheCap, err := resolveGateGoCacheCap(capFlagSet, *capGB, os.Getenv)
@@ -279,6 +300,35 @@ func runGate(args []string) int {
 		return 2
 	}
 	return runGateInContainer(root, passArgs, *rebuild, !*noSocket, cacheCap)
+}
+
+// gateRunOptions checks the gate's selection and layout flags and
+// returns the options they set. An unknown layout and a malformed
+// `--go-test-p` are usage errors, so the host half refuses them before it
+// builds or starts the gate container.
+func gateRunOptions(base string, rdeps int, all bool, layout, goTestP string) (gateOptions, error) {
+	if _, err := parseGateLayout(layout); err != nil {
+		return gateOptions{}, err
+	}
+	p, err := parseGoTestP(goTestP)
+	if err != nil {
+		return gateOptions{}, err
+	}
+	return gateOptions{base: base, rdepsDepth: rdeps, all: all, layout: layout, goTestP: p}, nil
+}
+
+// gatePassArgs returns the flags the host half passes to `lenny-test gate
+// --here` in the gate container, so the run there uses the options the
+// host half checked.
+func gatePassArgs(o gateOptions) []string {
+	args := []string{"--base", o.base, "--rdeps-depth", strconv.Itoa(o.rdepsDepth), "--layout", o.layout}
+	if p := formatGoTestP(o.goTestP); p != "" {
+		args = append(args, "--go-test-p", p)
+	}
+	if o.all {
+		args = append(args, "--all")
+	}
+	return args
 }
 
 // gateCommandArgs splits the arguments of `lenny-test gate [merge]
@@ -869,6 +919,10 @@ type gateRunner struct {
 	// bases resolves the merge base the static tier compares with for
 	// the gate's --base and the merge base with the integration branch.
 	bases func(base string) gateBases
+	// mu guards the verdict while lanes record tiers at the same time.
+	// run sets it on its own copy of the runner; a runner used outside
+	// run records from one goroutine and leaves it nil.
+	mu *sync.Mutex
 }
 
 // gateBases are the two merge bases the gate compares (GT-18).
@@ -1021,22 +1075,29 @@ func gateUnitWithoutCoverage(plans []tierPlan) {
 	}
 }
 
-// run executes the gate and returns its verdict. Every tier runs whatever
-// an earlier tier reported, so the verdict carries every failure.
+// run executes the gate and returns its verdict. The plan is resolved
+// first, then the tiers run in the phases and lanes of the layout
+// (gateLayouts). Every tier runs whatever another tier reported, so the
+// verdict carries every failure.
 func (g gateRunner) run(o gateOptions) *verdict {
+	g.mu = &sync.Mutex{}
 	sel := selector{changed: true, since: o.base, rdepsDepth: o.rdepsDepth}
 	v := newVerdict(sel)
-	v.Command = fmt.Sprintf("lenny-test gate --base %s --rdeps-depth %d", o.base, o.rdepsDepth)
-	if o.all {
-		v.Command += " --all"
+	layout := o.layout
+	if layout == "" {
+		layout = defaultGateLayout
 	}
+	v.Command = gateCommandLine(o, layout)
 	v.Trigger.Mode = "gate"
 	head, dirty := g.state()
 	if head != "" {
 		v.Trigger.GitRevision = head
 	}
 	bases := g.bases(o.base)
-	v.Gate = &gateRecord{Base: o.base, MergeBase: bases.used, IntegrationMergeBase: bases.integration, Dirty: dirty, Environment: o.environment, All: o.all}
+	v.Gate = &gateRecord{Base: o.base, MergeBase: bases.used, IntegrationMergeBase: bases.integration, Dirty: dirty, Environment: o.environment, All: o.all, Layout: layout}
+	if len(o.goTestP) > 0 {
+		v.Gate.GoTestP = o.goTestP
+	}
 	// The static tier and the plan compare with the commit resolved here
 	// rather than with the ref, so the commit the verdict records and
 	// checks is the one they read even when the ref moves during the run.
@@ -1045,11 +1106,62 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		compare = bases.used
 	}
 
-	g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(compare) })
+	phases, layoutErr := parseGateLayout(layout)
+	if layoutErr != nil {
+		// runGate refuses an unknown layout before it gets here; a runner
+		// called with one anyway runs the tiers serially and fails.
+		phases = gateLayouts[gateLayoutSerial]
+		v.recordTier(tierStatic, verdictstatus.Fail, 0, layoutErr.Error())
+	}
+	plans := g.resolvePlans(v, o, compare)
 
+	start := time.Now()
+	g.runPhases(v, phases, plans, o.goTestP, func(name string) {
+		switch name {
+		case tierStatic:
+			if layoutErr == nil {
+				g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(compare) })
+			}
+		case tierDocs:
+			g.record(v, tierDocs, g.docs)
+		}
+	})
+	v.Gate.WallTimeMS = time.Since(start).Milliseconds()
+
+	v.Gate.RdepsDepth = o.rdepsDepth
+	if o.rdepsDepth >= 0 && !o.all {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
+	}
+	if why := gateStateChange(head, dirty, bases, g); why != "" {
+		v.Gate.Unverified = append(v.Gate.Unverified, why)
+	}
+	withholdGatePass(v, dirty, o.environmentErr, gateBaseError(o.base, bases))
+	return v
+}
+
+// gateCommandLine renders the verdict's command for a run.
+func gateCommandLine(o gateOptions, layout string) string {
+	line := fmt.Sprintf("lenny-test gate --base %s --rdeps-depth %d --layout %s", o.base, o.rdepsDepth, layout)
+	if p := formatGoTestP(o.goTestP); p != "" {
+		line += " --go-test-p " + p
+	}
+	if o.all {
+		line += " --all"
+	}
+	return line
+}
+
+// resolvePlans resolves the plan of the tiers the gate takes from the
+// selection, records each one's selection in the verdict, and returns the
+// plans by tier name. A plan that cannot be resolved fails the unit tier
+// and leaves the map empty, so only the static tier and the documentation
+// gates run.
+func (g gateRunner) resolvePlans(v *verdict, o gateOptions, compare string) map[string]tierPlan {
+	plans := map[string]tierPlan{}
 	plan, err := g.plan(compare, o.rdepsDepth, o.all)
 	if err != nil {
 		v.recordTier(tierUnit, verdictstatus.Fail, 0, fmt.Sprintf("resolve the changed tiers against %s: %v", o.base, err))
+		return plans
 	}
 	for _, n := range plan.notes {
 		fmt.Fprintf(os.Stderr, "lenny-test gate: note: %s\n", n)
@@ -1062,19 +1174,9 @@ func (g gateRunner) run(o gateOptions) *verdict {
 			v.Gate.Selection = map[string]gateTierSelection{}
 		}
 		v.Gate.Selection[p.name] = tierSelectionOf(p)
-		g.runPlannedTier(v, p)
+		plans[p.name] = p
 	}
-
-	g.record(v, tierDocs, g.docs)
-	v.Gate.RdepsDepth = o.rdepsDepth
-	if o.rdepsDepth >= 0 && !o.all {
-		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
-	}
-	if why := gateStateChange(head, dirty, bases, g); why != "" {
-		v.Gate.Unverified = append(v.Gate.Unverified, why)
-	}
-	withholdGatePass(v, dirty, o.environmentErr, gateBaseError(o.base, bases))
-	return v
+	return plans
 }
 
 // gateStateChange reads HEAD, the tree's state, and both merge bases again
@@ -1152,17 +1254,31 @@ func (g gateRunner) record(v *verdict, name string, fn func() (string, string, *
 	start := time.Now()
 	fmt.Fprintf(os.Stderr, "lenny-test gate: running the %s tier\n", name)
 	st, msg, result := fn()
+	dur := time.Since(start)
+	logTierEnd(name, st, dur)
 	if st == verdictstatus.Skipped {
 		g.notRun(v, name, errors.New(msg))
 		return
 	}
-	v.recordTierWithResult(name, st, time.Since(start), msg, result)
+	defer g.lock()()
+	v.recordTierWithResult(name, st, dur, msg, result)
+}
+
+// lock takes the runner's verdict lock when it has one and returns the
+// function that releases it.
+func (g gateRunner) lock() func() {
+	if g.mu == nil {
+		return func() {}
+	}
+	g.mu.Lock()
+	return g.mu.Unlock
 }
 
 // notRun records a selected tier the gate could not run. The tier is
 // unverified, which keeps the verdict from passing.
 func (g gateRunner) notRun(v *verdict, name string, why error) {
 	reason := gateNotRunPrefix + why.Error()
+	defer g.lock()()
 	v.recordTier(name, verdictstatus.Unverified, 0, reason)
 	v.Gate.NotRun = append(v.Gate.NotRun, name+": "+why.Error())
 }
@@ -1348,6 +1464,13 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 			kind += "; no test tier selected"
 		}
 		fmt.Fprintf(w, "  selection:   %s\n", kind)
+		if v.Gate.Layout != "" {
+			layout := v.Gate.Layout
+			if p := formatGoTestP(v.Gate.GoTestP); p != "" {
+				layout += ", go test -p " + p
+			}
+			fmt.Fprintf(w, "  layout:      %s; the tiers took %s\n", layout, (time.Duration(v.Gate.WallTimeMS) * time.Millisecond).Round(time.Second))
+		}
 		if v.Gate.Dirty {
 			fmt.Fprintln(w, "  tree:        dirty; this verdict is not a verdict for the commit")
 		}

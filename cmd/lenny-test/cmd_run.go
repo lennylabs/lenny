@@ -170,6 +170,11 @@ type tierPlan struct {
 	// `run --changed` and `--tier unit` leave it false and keep writing
 	// tests/results/cover.out, which `lenny-test coverage --diff` reads.
 	noCoverage bool
+	// goTestP is the `go test -p` of the tier's runs, or 0 for the go
+	// command's default. The merge gate sets it on a tier that shares its
+	// phase with another lane when `--go-test-p` names the tier (change
+	// 0172, GS-3); every other run leaves it 0.
+	goTestP int
 }
 
 // resolve expands the selector into a concrete plan.
@@ -1193,7 +1198,7 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 	}
 	profile := unitCoverProfile(p)
 	if p.pkgs == nil {
-		result, runErr := runGoTestJSONFn(unitTierArgs(nil, profile)...)
+		result, runErr := runGoTestJSONFn(unitTierArgs(nil, profile, p.goTestP)...)
 		return tierOutcome("unit", result, runErr)
 	}
 	tails := scopedRuns(p.pkgs, p.funcs)
@@ -1206,9 +1211,9 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 		// Only the invocation that runs whole packages writes the
 		// coverage profile; a second invocation would overwrite it.
 		if i == 0 && tail[0] != "-run" {
-			return unitTierFlags(profile)
+			return withGoTestP(unitTierFlags(profile), p)
 		}
-		return unitTierFlags("")
+		return withGoTestP(unitTierFlags(""), p)
 	})
 	return tierOutcome("unit", result, runErr)
 }
@@ -1224,11 +1229,12 @@ func unitCoverProfile(p tierPlan) string {
 }
 
 // unitTierArgs returns the `go test` arguments for the unit tier: race
-// on, coverage to profile when profile is non-empty, and pkgs as the
-// package patterns, or `./...` when pkgs is nil. Coverage applies to
-// whatever packages run, so a scoped run writes a scoped profile.
-func unitTierArgs(pkgs []string, profile string) []string {
-	args := unitTierFlags(profile)
+// on, coverage to profile when profile is non-empty, `-p` when goTestP is
+// above 0, and pkgs as the package patterns, or `./...` when pkgs is nil.
+// Coverage applies to whatever packages run, so a scoped run writes a
+// scoped profile.
+func unitTierArgs(pkgs []string, profile string, goTestP int) []string {
+	args := withGoTestP(unitTierFlags(profile), tierPlan{goTestP: goTestP})
 	if pkgs == nil {
 		return append(args, "./...")
 	}
@@ -1325,7 +1331,7 @@ func runComponentTier(p tierPlan) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	flags := []string{"-count=1", fmt.Sprintf("-timeout=%s", tierComponentTimeout), "-tags=component"}
+	flags := withGoTestP([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierComponentTimeout), "-tags=component"}, p)
 	scoped := len(p.subsets) == 0 && p.pkgs != nil
 	targets, needsDocker, err := componentTargets(p.subsets)
 	if err != nil {
@@ -1705,7 +1711,7 @@ func runIntegrationTier(p tierPlan) (string, string, *tierResult) {
 		return "skipped", "go not on PATH", nil
 	}
 	subsets := p.subsets
-	flags := []string{"-count=1", fmt.Sprintf("-timeout=%s", tierIntegrationTimeout), "-tags=integration"}
+	flags := withGoTestP([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierIntegrationTimeout), "-tags=integration"}, p)
 	if len(subsets) == 0 && p.pkgs != nil {
 		return runScopedTier("integration", flags, p)
 	}
@@ -1743,7 +1749,7 @@ func runContractTier(p tierPlan) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	flags := []string{"-count=1", "-tags=contract"}
+	flags := withGoTestP([]string{"-count=1", "-tags=contract"}, p)
 	if len(p.subsets) == 0 && p.pkgs != nil {
 		return runScopedTier("contract", flags, p)
 	}
