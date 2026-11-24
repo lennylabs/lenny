@@ -16,7 +16,7 @@
 GS-1 and GS-2. The row target form for a package whose own tests read an input, its check in `lenny-test validate`, the move of the `spec/**` row's `pkg/observability/tracing` and `pkg/api/openapi` and of any other row whose package reads its input only in tests, and `gate.selection` in the verdict and the printed summary, with their unit tests. Then the full-run cadence in "The gate on `main`" of `.claude/rules/git-workflow.md`, rule 1 of the merge policy in `.claude/rules/test-coverage.md`, and decision 13 of `changes/programs/v1.md`, as open decision 2 settles; and "Selection algorithm" and "Merge gate" in `TESTING.md`. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S2 Concurrent tiers
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0172.S3]
 - closes: []
