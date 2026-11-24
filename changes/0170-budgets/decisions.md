@@ -2,15 +2,7 @@
 
 ## Open decisions
 
-Raised on 2026-11-23 with revision 1. Each names the part of `change.md` it settles and the steps of `steps.md` it blocks.
-
-- **O17. Whether a runtime can read its session budget.** Options: (a) a platform operation `budget.status` returns the remaining amount of each limit of the caller's own session budget, and nothing about shared budgets; (b) (a), plus the session budget's limits in `session_start`; (c) a runtime learns of budgets only through refusals. Recommendation: (a). An orchestrator that carves children needs to know what it has left to choose `limits.budget`, and shared budgets stay hidden from the pod. Blocks: 0170.S1 (part: the operation), and the reference extension of 0166.S3.
-- **O18. Partitions.** Options: (a) `per` on a budget keeps one counter per value of the named attribute, each with the full limit ("BG-1"); (b) no partitions, so a per-user limit is one budget per user. Recommendation: (a). It replaces 0133's per-user window and the tree scope with one field, and an administrator keeps no budget in step with the directory. Blocks: 0170.S1.
-- **O19. Egress bytes.** Options: (a) no egress meter in this change; (b) an egress meter from `egress.tunnel` records, after the fact and lossy; (c) an egress meter from counters in `netagent` and the egress proxy that the egress design does not have today. Recommendation: (a). The records that exist lose bytes by design, and a budget on them would undercount without a stated bound. A later change adds (c) if the owner wants egress budgets. Blocks: no step.
-- **O20. Currency.** Options: (a) one currency for the deployment, `budgets.currency`; (b) one currency per tenant, with a price list per currency. Recommendation: (a). Lenny converts no currencies, and a deployment that serves tenants in several currencies prices in one and converts in its billing system. Blocks: 0170.S2.
-
-
-
+None. The owner settled every open decision on 2026-11-23.
 
 ## Decisions
 
@@ -57,3 +49,7 @@ Settled in [`0166-delegation-primitives`](../0166-delegation-primitives/decision
 28. **Every checkpoint that makes a session `dormant` passes an exhausted storage limit (O25).** The owner chose option (a) on 2026-11-23: "O25: (a) yes". The exception of decision 25 covers the checkpoint that SL-6 of 0146 takes when a session's idle timer fires, with the same overshoot of one checkpoint per transition.
 29. **Costs of a tenant with no session feed no budget (O13).** The owner asked on 2026-11-23 how a budget that counts them would stop them, "Budgets are only used to reject new sessions or stop existing ones. They don't scale down any resources", and chose option (b): "never count them. The operator/deployer/tenant can monitor spend with real pricing (discounts, etc.) outside of lenny using the billing events". The idle pods of a tenant's owned or pinned pools, its dedicated nodes, and legal-hold escrow stay billing events of 0121, and the meters `poolIdle`, `dedicatedNodes`, and `escrow` leave the design. 0170.S5 is cancelled.
 30. **Today's quota fields become budgets (O16).** The owner chose option (a) on 2026-11-23: "ok", after decision 29 settled that only usage a refusal can stop feeds a budget. The tenant's `storageQuotaBytes`, `TokenQuotaPerWindow`, and `QuotaResetPeriod`, and 0133's `quotas.llmCredits.perUser`, `perTenant`, and `global`, leave. Budgets that `budgets.tenantDefaults` instantiates and platform budgets take their place, and `STORAGE_QUOTA_EXCEEDED` retires into `BUDGET_EXHAUSTED`. `quotas.llmCredits.perCall` stays, and concurrency and rate limits stay quotas under §11.1.
+31. **A runtime cannot read its budgets (O17).** The owner chose option (c) on 2026-11-23: "(c) nothing. There's no guarantee session budgets will exist (they should be optional) so the runtime may not always get the budget info, making this mechanism inconsistent and unreliable. We could fake a large enough session budget, I guess, but I'm not sure it's worth it?" A runtime learns of budgets through refusals alone, and Lenny presents no stand-in session budget to a session without one. A carve that names no amount takes `defaultDelegationFraction` of the parent's session budget, or none when the parent has none ("BG-8").
+32. **Partitions (O18).** The owner chose option (a) on 2026-11-23: "O18: ok". `per` keeps one set of counters per value of the named attribute, each limit at its full amount.
+33. **No egress meter (O19).** The owner chose option (a) on 2026-11-23: "O19: (a)". A deployer that pays for egress through its own proxy attributes it with the identity of decision 14, and a later change adds egress counters to 0127 if egress budgets are wanted.
+34. **One currency per deployment, which may be invented (O20).** The owner chose option (a) on 2026-11-23: "O20: (a) but currency could be an invented currency too". `budgets.currency` takes an ISO 4217 code or a code the operator invents, and Lenny converts between no currencies.

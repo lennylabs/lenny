@@ -58,7 +58,7 @@ Today's budgets do not meet that request **[source]**:
 - Costs that reach no tenant: unpinned idle pods on shared pools, node capacity that no pod requests, and data held in Postgres, as 0121 states.
 - Costs that reach a tenant and no session: the idle pods of a tenant's owned or pinned pools, its dedicated nodes, and legal-hold escrow. They stay billing events of 0121 (decision 29).
 - Meters that a deployer defines. Lenny meters model calls through its proxy, pod time, and stored data, and nothing else (decision 14). A deployer that pays for other services attributes their costs to sessions with the identity Lenny sends ahead of each call ("BG-3", **External costs**), and enforces its own limits on them.
-- Egress bytes. `egress.tunnel` records of `0127-egress-and-git` carry bytes per tunnel and are lossy ("Current state"), so this change meters no egress (O19).
+- Egress bytes. `egress.tunnel` records of `0127-egress-and-git` carry bytes per tunnel and are lossy ("Current state"), so this change meters no egress (decision 33).
 
 ## Terms
 
@@ -232,7 +232,7 @@ A budget is a record with these fields **[design]**:
 | `appliesTo` | The selector of "BG-3". A principal budget has none. |
 | `attach` | `selector`, `reference`, or `both`. A principal budget is always `reference`. |
 | `usableBy` | For a tenant or platform budget with `attach` including `reference`, the principals and directory groups that may name it in `budgetRefs`, and `interceptors: true` when a `PreRoute` interceptor may attach it ("BG-3"). |
-| `per` | Optional partition key: `user`, `session`, `rootSession`, `environment`, `runtime`, or `label:<key>`. The budget keeps one set of counters for each value, each limit at its full amount (O18). |
+| `per` | Optional partition key: `user`, `session`, `rootSession`, `environment`, `runtime`, or `label:<key>`. The budget keeps one set of counters for each value, each limit at its full amount (decision 32). |
 | `period` | The schedule of "BG-7", with its time zone, shared by every limit. A limit in `bytes` ignores it, because it limits what is held at each moment. |
 | `thresholds` | Fractions of each limit's amount, default `[0.8, 1.0]`, at most `budgets.maxThresholds` (default 8). A limit may set its own. |
 | `onExhausted` | The actions of "BG-6" for new work and for running sessions. A limit may set its own. |
@@ -400,7 +400,7 @@ llm:
     bedrock-eu: 1.95                  # a platform upstream, at acme's negotiated rate
 ```
 
-- **Currency.** `budgets.currency`, an ISO 4217 code, is one Helm value for the deployment. Money amounts are stored as integer micro-units of it. With no currency set, the gateway refuses a limit in money and a price list with `400 VALIDATION_ERROR` (O20).
+- **Currency.** `budgets.currency` is one Helm value for the deployment: an ISO 4217 code such as `EUR`, or a code the operator invents, such as `PTS` for an internal points scheme, of 3 to 12 uppercase letters (decision 34). Lenny converts between no currencies and attaches no meaning to the code beyond labelling money figures. Money amounts are stored as integer micro-units of it. With no currency set, the gateway refuses a limit in money and a price list with `400 VALIDATION_ERROR`.
 - **Validation.** The admin API refuses a version that leaves a meter unpriced while a limit in money in its scope counts that meter, a version whose `effectiveFrom` lies in the past, and a version whose currency differs from `budgets.currency`. `lenny-ctl price-list validate` checks a version against the deployment.
 - **Conversion.** Each charge is converted at the version in force at its time: a model call at its start, a compute tick at its start, and a storage accrual interval at its end. Each conversion multiplies in integers and rounds up once per charge, so no drift accumulates, and the version used is recorded with the charge.
 - **Several meters.** A limit in money keeps one counter in money for every meter it counts. A model call and a compute tick each reserve their money equivalent in every limit in money of the session budgets that hold them, and every limit in money of a shared budget that counts their meter receives the settled charge converted at the same version. Stored data reaches a limit in money through the accrual of byte-hours, which reserves nothing. A refusal names the budget, the limit, and its unit, so a caller sees that a limit in money refused a compute tick.
@@ -546,7 +546,7 @@ A service account holds the `user` row's rights over its own principal budgets. 
 
 **Usage reports [design].** The usage route of a budget answers from its counters for the open period and from `budget_periods` for closed ones, with each limit's consumption by meter, so a team sees its model, compute, and storage spend apart. `GET /v1/usage?budget=` aggregates the usage records of the budget's subjects in a window, which reproduces a budget's consumption from records for a budget with a selector, and returns `400 VALIDATION_ERROR` for a principal budget, whose subjects are listed by session.
 
-**What a runtime sees [design].** A runtime meets budgets as refusals: `BUDGET_EXHAUSTED` from the proxy, from `session.create`, and from a file export, and the cut turn of a session that becomes `dormant` or expires under `onExhausted.running`. O17 asks whether a runtime can read its session budget.
+**What a runtime sees [design].** A runtime meets budgets as refusals: `BUDGET_EXHAUSTED` from the proxy, from `session.create`, and from a file export, and the cut turn of a session that becomes `dormant` or expires under `onExhausted.running`. A runtime has no operation that reads a budget (decision 31). A session budget is optional, so such a read would answer for some sessions and not others, and an orchestrator that carves a child relies on `defaultDelegationFraction` or on the amount its client names.
 
 ### BG-11 What this change supersedes
 
@@ -807,7 +807,6 @@ Each page below is **[design]** and lands with the step that changes what it des
 | `docs/client-guide/delegation-and-tasks.md` | Client | Carves, and the extension of a child's carve that reaches the root's client. |
 | `docs/runtime-author-guide/delegation.md` | Runtime author | `limits.budget` on `session.create` by limit key, `defaultDelegationFraction`, `session.set_limits` for budget, what `session.transfer` and `session.release` do to a carve, and the refusals of a carve. |
 | `docs/runtime-author-guide/lifecycle.md` | Runtime author | A refused compute tick under `release` cuts the turn and makes the session `dormant`, and under `end` expires it; a refused model call and a refused export return `BUDGET_EXHAUSTED`. |
-| `docs/runtime-author-guide/platform-tools.md` | Runtime author | The budget read of O17, when settled. |
 | `docs/api/admin.md` and `docs/api/rest.md` | Operator, client | The routes of "BG-10". |
 | `docs/reference/metrics.md` | Operator | The metrics and alerts of "BG-10". |
 | `docs/runbooks/storage-quota-high.md` | Operator | Becomes a runbook for a storage budget's threshold notice. |
