@@ -64,6 +64,9 @@ func main() {
 	if err := validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL); err != nil {
 		log.Fatalf("lenny-token-service: %v", err)
 	}
+	if err := validateLineageFlags(*f.lineageMaxDepth, *f.revocationTimeoutMs); err != nil {
+		log.Fatalf("lenny-token-service: %v", err)
+	}
 	runTokenService(f)
 }
 

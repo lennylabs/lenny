@@ -50,7 +50,6 @@ func (l *CallLog) Entries() []string {
 
 // Call-log entries the fakes write.
 const (
-	CallGet    = "issued_tokens.get"
 	CallRecord = "issued_tokens.record_impersonation"
 	CallEnd    = "issued_tokens.end_impersonation"
 	CallList   = "issued_tokens.list_active_impersonations"
@@ -70,7 +69,6 @@ type RecordCall struct {
 type IssuedTokens struct {
 	Log *CallLog
 
-	GetErr    error
 	RecordErr error
 	EndErr    error
 	ListErr   error
@@ -78,7 +76,6 @@ type IssuedTokens struct {
 	mu      sync.Mutex
 	rows    map[string]issuedtokenstore.IssuedToken
 	records []RecordCall
-	gets    [][2]string
 }
 
 // Put stores a row directly, as another writer would.
@@ -106,30 +103,11 @@ func (f *IssuedTokens) Records() []RecordCall {
 	return append([]RecordCall(nil), f.records...)
 }
 
-// Gets returns the (tenantID, jti) pair of every Get call.
-func (f *IssuedTokens) Gets() [][2]string {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return append([][2]string(nil), f.gets...)
-}
-
-// Get returns the row whose jti and tenant match, or ErrNotFound.
-func (f *IssuedTokens) Get(_ context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error) {
-	f.Log.Add(CallGet)
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.gets = append(f.gets, [2]string{tenantID, jti})
-	if f.GetErr != nil {
-		return issuedtokenstore.IssuedToken{}, f.GetErr
-	}
-	r, ok := f.rows[jti]
-	if !ok || r.TenantID != tenantID {
-		return issuedtokenstore.IssuedToken{}, issuedtokenstore.ErrNotFound
-	}
-	return r, nil
-}
-
-// RecordImpersonation stores tok unless RecordErr is set or the jti exists.
+// RecordImpersonation stores tok unless RecordErr is set, the caller
+// bearer's stored row is one step (1a) rejects as a subject_token, or the
+// jti exists. The caller bearer is the row whose jti is
+// tok.ImpersonatorJTI in callerTenantID, as the store's first transaction
+// reads it.
 func (f *IssuedTokens) RecordImpersonation(_ context.Context, tok issuedtokenstore.IssuedToken, callerTenantID string) error {
 	f.Log.Add(CallRecord)
 	f.mu.Lock()
@@ -137,6 +115,11 @@ func (f *IssuedTokens) RecordImpersonation(_ context.Context, tok issuedtokensto
 	f.mu.Unlock()
 	if f.RecordErr != nil {
 		return f.RecordErr
+	}
+	if caller, ok := f.Row(tok.ImpersonatorJTI); ok && tok.ImpersonatorJTI != "" && caller.TenantID == callerTenantID {
+		if refusal := caller.SourceRefusal(issuedtokenstore.SourceSubjectToken); refusal != nil {
+			return &issuedtokenstore.CallerBearerRefusedError{Refusal: refusal}
+		}
 	}
 	if _, exists := f.Row(tok.JTI); exists {
 		return issuedtokenstore.ErrAlreadyExists

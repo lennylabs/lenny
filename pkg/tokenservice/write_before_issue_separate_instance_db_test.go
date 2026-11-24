@@ -117,6 +117,7 @@ var ledgerMigrationsTS = []string{
 	"0058_issued_tokens_dialect_cap.up.sql",
 	"0173_billing_audit_ddl_role_and_sequences.up.sql",
 	"0200_issued_tokens_impersonator.up.sql",
+	"0203_issued_tokens_depth.up.sql",
 }
 
 // applyLedgerMigrationsTS applies the curated ledgerMigrationsTS set in order so

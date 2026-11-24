@@ -40,7 +40,6 @@ type Signer interface {
 //
 // spec: §13.3 (Platform-admin impersonation, rules 1, 2, and 3); §12.2.
 type IssuedTokens interface {
-	Get(ctx context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error)
 	RecordImpersonation(ctx context.Context, tok issuedtokenstore.IssuedToken, callerTenantID string) error
 	EndImpersonation(ctx context.Context, jti string, at time.Time) (issuedtokenstore.IssuedToken, error)
 	ListActiveImpersonations(ctx context.Context, now time.Time) ([]issuedtokenstore.IssuedToken, error)
@@ -147,9 +146,9 @@ type IssueRequest struct {
 	// minted bearer so the impersonation reflects the user's authority.
 	TargetRoles []auth.Role
 	// CallerTenantID and CallerJTI identify the caller's own bearer. The
-	// caller check reads its issued_tokens row, the record fence reads
-	// the caller's user row under CallerTenantID, and the bearer's row
-	// records both as its impersonator link.
+	// record's first transaction reads its issued_tokens row and the
+	// caller's user row under CallerTenantID, and the bearer's row records
+	// both as its impersonator link.
 	CallerTenantID string
 	CallerJTI      string
 	// CallerExpiry is the exp of the caller's own bearer, zero when it
@@ -162,20 +161,19 @@ type IssueRequest struct {
 }
 
 // Issue establishes an impersonation session in the §13.3 rule 1 order.
-// It first refuses a caller whose own bearer step (1a) of "Write-before-issue
-// ordering" would reject as a subject_token, writing nothing. It then
-// writes admin.impersonation_started, signs the bearer, and records it in
-// issued_tokens under the user-row fence, and returns the bearer only once
-// the record commits. A CMP-058 fail-closed on the started event returns
-// the audit error with no bearer signed. The mint writes no
+// It writes admin.impersonation_started, signs the bearer, and records it
+// in issued_tokens under the user-row fence, and returns the bearer only
+// once the record commits. The record's first transaction reads the
+// caller's own bearer under a share lock and refuses a bearer that step
+// (1a) of "Write-before-issue ordering" would reject as a subject_token,
+// so the refusal follows the started event, as a refusal for an
+// invalidated user does. A CMP-058 fail-closed on the started event
+// returns the audit error with no bearer signed. The mint writes no
 // token.exchanged row.
 //
 // spec: §13.3 (Platform-admin impersonation, rule 1); §16.7; §11.7.
 func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, error) {
 	if err := s.validate(req); err != nil {
-		return Ticket{}, "", err
-	}
-	if err := s.checkCaller(ctx, req.CallerTenantID, req.CallerJTI); err != nil {
 		return Ticket{}, "", err
 	}
 	// The JWT iat and exp are whole Unix seconds, so the issue instant is
@@ -238,29 +236,6 @@ func (s *Service) validate(req IssueRequest) error {
 	return nil
 }
 
-// checkCaller reads the caller's bearer row in the caller's tenant and
-// refuses the call when step (1a) would reject it as a subject_token. A
-// bearer with no row, or a caller without a jti, passes.
-//
-// spec: §13.3 (Platform-admin impersonation, rule 1; Write-before-issue
-// ordering, step (1a)).
-func (s *Service) checkCaller(ctx context.Context, tenantID, jti string) error {
-	if jti == "" {
-		return nil
-	}
-	row, err := s.tokens.Get(ctx, tenantID, jti)
-	if errors.Is(err, issuedtokenstore.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("impersonation: read caller bearer: %w", err)
-	}
-	if refusal := row.SourceRefusal(issuedtokenstore.SourceSubjectToken); refusal != nil {
-		return fmt.Errorf("%w: %w", ErrIssuanceRefused, refusal)
-	}
-	return nil
-}
-
 // appendStarted writes admin.impersonation_started under the platform
 // tenant.
 func (s *Service) appendStarted(ctx context.Context, t Ticket) error {
@@ -300,14 +275,20 @@ func (s *Service) sign(ctx context.Context, t Ticket, roles []auth.Role) (string
 }
 
 // record writes the bearer's impersonation row under the §13.3 rule 1 (c)
-// user-row fence. An invalidated caller or target refuses the issuance.
+// fence. A caller bearer that step (1a) rejects, or an invalidated caller
+// or target user, refuses the issuance.
+//
+// spec: §13.3 (Platform-admin impersonation, rule 1 (c))
 func (s *Service) record(ctx context.Context, t Ticket, signed, callerTenantID string) error {
 	err := s.tokens.RecordImpersonation(ctx, impersonationRow(t, signed, s.cfg.Audience), callerTenantID)
 	if err == nil {
 		return nil
 	}
-	var invalidated *issuedtokenstore.UserInvalidatedError
-	if errors.As(err, &invalidated) {
+	var (
+		invalidated *issuedtokenstore.UserInvalidatedError
+		bearer      *issuedtokenstore.CallerBearerRefusedError
+	)
+	if errors.As(err, &invalidated) || errors.As(err, &bearer) {
 		return fmt.Errorf("%w: %w", ErrIssuanceRefused, err)
 	}
 	return fmt.Errorf("impersonation: record session: %w", err)

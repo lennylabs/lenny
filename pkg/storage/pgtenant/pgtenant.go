@@ -74,29 +74,58 @@ func quoteTenantID(tenantID string) string {
 // valid concrete tenant id.
 // spec: §4.2.
 func InTx(ctx context.Context, pool *pgxpool.Pool, tenantID string, fn func(pgx.Tx) error) error {
-	if tenantID == AllTenantsSentinel || tenantID == "__unset__" {
-		return ErrInvalidTenantID
-	}
-	if !tenantIDPattern.MatchString(tenantID) {
-		return ErrInvalidTenantID
+	if err := validateConcrete(tenantID); err != nil {
+		return err
 	}
 	tx, err := pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("pgtenant: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	// spec: §4.2 — SET LOCAL form. The value is interpolated
-	// after the regex check above; SET LOCAL has no parameter binding,
-	// so the regex is the load-bearing guard.
-	stmt := "SET LOCAL app.current_tenant = " + quoteTenantID(tenantID)
-	if _, err := tx.Exec(ctx, stmt); err != nil {
-		return fmt.Errorf("pgtenant: set tenant context: %w", err)
+	if err := SetLocal(ctx, tx, tenantID); err != nil {
+		return err
 	}
 	if err := fn(tx); err != nil {
 		return err
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return fmt.Errorf("pgtenant: commit: %w", err)
+	}
+	return nil
+}
+
+// validateConcrete returns ErrInvalidTenantID unless tenantID is a
+// concrete tenant id: it matches the §12.3 format check and is neither
+// the __all__ nor the __unset__ sentinel.
+func validateConcrete(tenantID string) error {
+	if tenantID == AllTenantsSentinel || tenantID == "__unset__" {
+		return ErrInvalidTenantID
+	}
+	if !tenantIDPattern.MatchString(tenantID) {
+		return ErrInvalidTenantID
+	}
+	return nil
+}
+
+// SetLocal sets app.current_tenant to the concrete tenant id tenantID on
+// tx with SET LOCAL, so the value holds until tx ends or another SetLocal
+// replaces it. InTx calls it once when it opens a transaction. The
+// impersonation step of a recursive revocation calls it inside the
+// request's own transaction to run one update under a target tenant's
+// context, then calls it again with the request's tenant. An id that is
+// not concrete returns ErrInvalidTenantID and runs no statement.
+//
+// spec: §4.2 (platform-admin cross-tenant database access), §13.3
+// (Credential Flow: Platform-admin impersonation, rule 7)
+func SetLocal(ctx context.Context, tx pgx.Tx, tenantID string) error {
+	if err := validateConcrete(tenantID); err != nil {
+		return err
+	}
+	// The value is interpolated after the regex check; SET LOCAL has no
+	// parameter binding, so the regex is the load-bearing guard.
+	stmt := "SET LOCAL app.current_tenant = " + quoteTenantID(tenantID)
+	if _, err := tx.Exec(ctx, stmt); err != nil {
+		return fmt.Errorf("pgtenant: set tenant context: %w", err)
 	}
 	return nil
 }

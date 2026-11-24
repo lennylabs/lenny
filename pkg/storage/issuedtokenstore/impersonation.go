@@ -80,24 +80,54 @@ func (e *UserInvalidatedError) Error() string {
 const readUserInvalidatedSQL = `SELECT deleted_at IS NOT NULL FROM users
 	WHERE tenant_id = $1 AND subject = $2 FOR SHARE`
 
+// CallerBearerRefusedError reports that the first transaction of an
+// impersonation record read the caller bearer's issued_tokens row under a
+// share lock and found a row that step (1a) rejects as a subject_token:
+// a revoked row or an impersonation row. Refusal wraps the
+// *SourceRevokedError or *SourceImpersonationError. The record wrote
+// nothing.
+//
+// spec: §13.3 (Credential Flow: Platform-admin impersonation, rule 1 (c))
+type CallerBearerRefusedError struct {
+	Refusal error
+}
+
+// Error implements error.
+func (e *CallerBearerRefusedError) Error() string {
+	return "issuedtokenstore: impersonation caller bearer refused: " + e.Refusal.Error()
+}
+
+// Unwrap returns the step (1a) refusal.
+func (e *CallerBearerRefusedError) Unwrap() error { return e.Refusal }
+
 // RecordImpersonation records a platform-admin impersonation bearer under
 // the user-row fence. In a first transaction under the caller's tenant it
-// reads the impersonating admin's user row FOR SHARE. Inside that
-// transaction, a second transaction under the target tenant reads the
-// target's user row FOR SHARE and inserts the bearer's row, and commits
-// before the first one does. Each user row is read under its own tenant's
-// RLS context, because under another tenant's context it reads as absent.
+// reads the caller bearer's issued_tokens row (tok.ImpersonatorJTI) under
+// FOR SHARE and returns *CallerBearerRefusedError when step (1a) rejects
+// it as a subject_token, then reads the impersonating admin's user row FOR
+// SHARE, then writes the start record naming the caller bearer, the target
+// tenant, the bearer, and its exp. Inside that transaction, a second
+// transaction under the target tenant reads the target's user row FOR
+// SHARE and inserts the bearer's row, and commits before the first one
+// does. Each user row is read under its own tenant's RLS context, because
+// under another tenant's context it reads as absent.
 //
-// A user row that records an invalidation returns *UserInvalidatedError and
-// writes nothing. A missing user row passes. A jti collision returns
-// ErrAlreadyExists. The method returns nil only once the first transaction
-// commits, so a full revoke that commits its invalidation level before
-// step 1 of §11.4 is either observed here or finds the row at its step 5.
-// It never uses the __all__ sentinel.
+// The share lock on the caller bearer's row conflicts with the update with
+// which a recursive revocation's cascade revokes it, so the record either
+// commits before the cascade revokes the bearer, or reads it revoked after
+// the cascade commits and is refused. A caller bearer without a jti, or
+// without a row, takes no lock, and one without a jti writes no start
+// record. A user row that records an invalidation returns
+// *UserInvalidatedError and writes nothing. A missing user row passes. A
+// jti collision returns ErrAlreadyExists. The method returns nil only once
+// the first transaction commits; a failure of that commit after the second
+// transaction committed leaves the bearer's row without a start record. It
+// never uses the __all__ sentinel.
 //
 // tok carries the target's tenant and subject, ActSubject set to the
-// admin's subject, and no ParentJTI. callerTenantID is the admin's tenant
-// and must not be empty.
+// admin's subject, no ParentJTI, and the impersonator link naming the
+// caller bearer. callerTenantID is the admin's tenant and must not be
+// empty.
 //
 // spec: §13.3 (Credential Flow: Platform-admin impersonation, rule 1 (c)),
 // §12.8 (Lifecycle fence and drain), §12.6.
@@ -110,8 +140,15 @@ func (s *Store) RecordImpersonation(ctx context.Context, tok IssuedToken, caller
 	if tok.ActSubject == "" || tok.ParentJTI != "" {
 		return errors.New("issuedtokenstore: RecordImpersonation requires act_sub and no parent_jti")
 	}
+	tok.Depth = 0
 	err := pgtenant.InTx(ctx, s.pool, callerTenantID, func(callerTx pgx.Tx) error {
+		if err := checkCallerBearer(ctx, callerTx, callerTenantID, tok.ImpersonatorJTI); err != nil {
+			return err
+		}
 		if err := checkUserNotInvalidated(ctx, callerTx, callerTenantID, tok.ActSubject); err != nil {
+			return err
+		}
+		if err := insertStartRecord(ctx, callerTx, callerTenantID, tok); err != nil {
 			return err
 		}
 		return pgtenant.InTx(ctx, s.pool, tok.TenantID, func(targetTx pgx.Tx) error {
@@ -124,6 +161,50 @@ func (s *Store) RecordImpersonation(ctx context.Context, tok IssuedToken, caller
 	return mapUniqueViolation(err)
 }
 
+// checkCallerBearer reads the caller bearer's row in the caller's tenant
+// under FOR SHARE and returns a *CallerBearerRefusedError when step (1a)
+// rejects it as a subject_token. An empty jti or a missing row passes.
+//
+// spec: §13.3 (Credential Flow: Platform-admin impersonation, rule 1 (c);
+// Write-before-issue ordering, step (1a))
+func checkCallerBearer(ctx context.Context, tx pgx.Tx, tenantID, jti string) error {
+	if jti == "" {
+		return nil
+	}
+	row, err := scanToken(tx.QueryRow(ctx,
+		`SELECT `+selectList+` FROM issued_tokens WHERE jti = $1 AND tenant_id = $2 FOR SHARE`,
+		jti, tenantID))
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("issuedtokenstore: read impersonation caller bearer: %w", err)
+	}
+	if refusal := row.SourceRefusal(SourceSubjectToken); refusal != nil {
+		return &CallerBearerRefusedError{Refusal: refusal}
+	}
+	return nil
+}
+
+// insertStartRecord writes the impersonation start record in the caller's
+// tenant when the caller bearer carries a jti.
+//
+// spec: §13.3 (Credential Flow: Platform-admin impersonation, rule 1 (c)),
+// §12.2 (impersonation start records)
+func insertStartRecord(ctx context.Context, tx pgx.Tx, callerTenantID string, tok IssuedToken) error {
+	if tok.ImpersonatorJTI == "" {
+		return nil
+	}
+	_, err := tx.Exec(ctx,
+		`INSERT INTO impersonation_starts (tenant_id, impersonator_jti, target_tenant_id, bearer_jti, exp)
+		 VALUES ($1, $2, $3, $4, $5)`,
+		callerTenantID, tok.ImpersonatorJTI, tok.TenantID, tok.JTI, tok.ExpiresAt)
+	if err != nil {
+		return fmt.Errorf("issuedtokenstore: write impersonation start record: %w", err)
+	}
+	return nil
+}
+
 // checkUserNotInvalidated reads the user row of (tenantID, subject) FOR
 // SHARE on tx and returns *UserInvalidatedError when it records an
 // invalidation. A missing row passes.
@@ -134,7 +215,7 @@ func checkUserNotInvalidated(ctx context.Context, tx pgx.Tx, tenantID, subject s
 		return nil
 	}
 	if err != nil {
-		return fmt.Errorf("issuedtokenstore: read user row %q for impersonation fence: %w", subject, err)
+		return fmt.Errorf("issuedtokenstore: read user row %q: %w", subject, err)
 	}
 	if invalidated {
 		return &UserInvalidatedError{TenantID: tenantID, Subject: subject}
@@ -268,65 +349,6 @@ func (s *Store) RevokeImpersonationsByActor(ctx context.Context, actorSub, reaso
 				return fmt.Errorf("issuedtokenstore: scan revoked impersonation: %w", err)
 			}
 			revoked = append(revoked, jti)
-		}
-		return rows.Err()
-	})
-	if err != nil {
-		return nil, err
-	}
-	return revoked, nil
-}
-
-// RevokedImpersonation is one impersonation row that
-// RevokeImpersonationsByImpersonator revoked: its jti, the tenant it lives
-// in, and its sub.
-type RevokedImpersonation struct {
-	JTI      string
-	TenantID string
-	Subject  string
-}
-
-// RevokeImpersonationsByImpersonator revokes every active impersonation
-// row, in every tenant, whose impersonator_tenant_id is impersonatorTenant
-// and whose impersonator_jti is one of impersonatorJTIs, stamping reason,
-// and returns the rows it revoked. It backs the recursive-revocation
-// request: the Token Service passes the request's tenant and the jtis of
-// the cascade's whole subtree after the cascade commits, so revoking a
-// platform-admin's bearer, or a token it descends from, ends the
-// impersonation sessions that bearer started. The tenant term confines the
-// update to rows started from the request's own tenant, which is why it
-// needs no platform-admin caller. An empty tenant or jti list makes no
-// query. The caller emits the cross_tenant_read event after the revocation
-// commits.
-//
-// spec: §13.3 (Credential Flow: Lineage of derived tokens; Platform-admin
-// impersonation, rules 2, 4, and 7).
-func (s *Store) RevokeImpersonationsByImpersonator(ctx context.Context, impersonatorTenant string, impersonatorJTIs []string, reason string, at time.Time) ([]RevokedImpersonation, error) {
-	if impersonatorTenant == "" || len(impersonatorJTIs) == 0 {
-		return nil, nil
-	}
-	var revoked []RevokedImpersonation
-	err := pgtenant.InAllTenants(ctx, s.pool, func(tx pgx.Tx) error {
-		rows, err := tx.Query(ctx,
-			`UPDATE issued_tokens
-			 -- platform-admin-cross-tenant-allowed
-			 -- platform-admin-cross-tenant-justification: §13.3 impersonator link; an impersonation bearer lives in the target tenant, the impersonator terms confine the update to rows started from a bearer of the revocation request's own tenant, and the predicate confines it to impersonation rows.
-			 SET revoked_at = $3, revoked_reason = $4
-			 WHERE impersonator_tenant_id = $1 AND impersonator_jti = ANY($2)
-			   AND `+impersonationPredicate+`
-			   AND revoked_at IS NULL AND exp > $3
-			 RETURNING jti, tenant_id, sub`,
-			impersonatorTenant, impersonatorJTIs, at, pgtenant.NullString(reason))
-		if err != nil {
-			return fmt.Errorf("issuedtokenstore: revoke impersonations by impersonator: %w", err)
-		}
-		defer rows.Close()
-		for rows.Next() {
-			var r RevokedImpersonation
-			if err := rows.Scan(&r.JTI, &r.TenantID, &r.Subject); err != nil {
-				return fmt.Errorf("issuedtokenstore: scan revoked impersonation: %w", err)
-			}
-			revoked = append(revoked, r)
 		}
 		return rows.Err()
 	})

@@ -32,11 +32,15 @@ const (
 )
 
 // SourceToken is one token the issuance transaction re-reads under the
-// §11.7 lock before it writes anything: the jti of an exchange input and
-// the role it played in the request.
+// §11.7 lock before it writes anything: the jti of an exchange input, the
+// role it played in the request, and its sub. A source without a jti has
+// no issued_tokens row to re-read. On an exchange, a source with a sub also
+// has its user row read (recheckSourceUsers); the playground mint lists no
+// sub, because the user-row refusal applies to the token endpoint only.
 type SourceToken struct {
-	Role SourceRole
-	JTI  string
+	Role    SourceRole
+	JTI     string
+	Subject string
 }
 
 // SourceRevokedError reports that the §13.3 write-before-issue re-read
