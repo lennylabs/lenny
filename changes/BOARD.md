@@ -265,10 +265,10 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0121](0121-billing-resource-attribution/change.md) | Billing resource attribution | `Draft` | 0 of 7 | 10 |
 | [0122](0122-client-tools/change.md) | Client-defined tools | `Draft` | 0 of 2 | 10 |
 | [0123](0123-connector-authorization-and-external-memory/change.md) | Connector authorization and external memory | `Draft` | 0 of 2 | 6 |
-| [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 15 |
+| [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 13 |
 | [0125](0125-decision-records/change.md) | Decision records | `Draft` | 0 of 2 | 0 |
 | [0126](0126-delegation-availability/change.md) | Delegation availability | `Draft` | 0 of 1 | 9 |
-| [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 17 |
+| [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 16 |
 | [0128](0128-forensics-evidence-preservation/change.md) | Forensics and evidence preservation | `Draft` | 0 of 8 | 26 |
 | [0129](0129-github-credential-addon/change.md) | GitHub credential add-on | `Draft` | 0 of 3 | 6 |
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 8 |

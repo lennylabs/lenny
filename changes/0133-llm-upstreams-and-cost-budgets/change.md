@@ -1,6 +1,6 @@
 # LLM access through egress and external charges
 
-Status: `Draft`, revision 20, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 21, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 The folder keeps its name, `0133-llm-upstreams-and-cost-budgets`, so that links into it keep resolving. Open decision 23 in `decisions.md` settles the title. Revision 20 replaces the metering proxy design of revisions 1 to 19 under decision 22, which the owner settled on 2026-11-24. `review-history.md` records the earlier revisions, and the decisions they rest on stay in `decisions.md`, marked where decision 22 supersedes them.
 
@@ -29,8 +29,9 @@ What only Lenny can do is tell an operator's LLM gateway which tenant, user, ses
 
 - The operator's LLM gateway as an ordinary egress destination. A runtime reaches it through `netagent` and `lenny-egress` like any other host, at a base URL that the pool's injected configuration gives it ("LU-1").
 - Attribution on the gateway's host: an attribution binding under which `netagent` attaches a Lenny-signed attribution assertion, the `lenny-attribution+jwt` of [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion), to every request for the gateway's host. The agent process never sees it ("LU-2").
-- Charges: the gateway prices each call and reports a charge to Lenny with the call's assertion as proof, through the charge ingestion API of [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges), and budgets count charges on the `external` meter ("LU-3").
-- Enforcement: an exhausted limit that counts `external` suspends the session's attribution binding, so the gateway refuses the session's next call, and `onExhausted` acts on the running session as for any meter ("LU-5").
+- Charges: the gateway prices each call and reports a charge to Lenny citing the `jti` of the call's assertion as proof, through the charge ingestion API of [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges), and budgets count charges on the `external` meter ("LU-3").
+- Enforcement: an exhausted limit that counts `external` suspends the session's attribution binding, so `netagent` answers the session's next call to the gateway itself, and `onExhausted` acts on the running session as for any meter ("LU-5").
+- Reference integrations outside Lenny's core: a LiteLLM module, a charge relay, and the reference verifier ("LU-9").
 
 **Changed:**
 
@@ -67,7 +68,7 @@ What only Lenny can do is tell an operator's LLM gateway which tenant, user, ses
 | Charge | A priced amount that a reporter sends to Lenny for one call, naming the call's session through its attribution assertion ([`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges)). |
 | Reporter | A registered client of the charge ingestion API, scoped to one tenant or to the platform, and bound to the gateway hosts whose assertions it may present. |
 | `external` meter | The meter of `0170-budgets` that counts charges, in `money` under `budgets.currency`. It replaces the `llm` meter. |
-| Binding suspension | The state in which `netagent` stops attaching a session's attribution binding, and the Token Service mints no assertion for it ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.**). |
+| Binding suspension | The state in which `netagent` stops attaching a session's attribution binding and answers the session's requests to the binding's hosts itself, and the Token Service mints no assertion for it ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.**). |
 | Calls outside the gateway | A model call that a runtime sends to a provider or a gateway that no attribution binding names, or with a key the runtime holds. Lenny applies no budget to it ("LU-7"). |
 | LU-n, LUR-n, and LU-A to LU-C | The parts of this design under "Detailed design" carry LU-n, and its requirements carry LUR-n. LU-A, LU-B, and LU-C name the steps 0133.S1, 0133.S2, and 0133.S3 of `steps.md`. The LU-n and LUR-n labels of revisions 1 to 19 are retired with their sections, and revision 20 assigns them anew. |
 
@@ -97,8 +98,10 @@ Lenny stops brokering LLM credentials and stops proxying model calls. An operato
  Runtime (slot)          netagent (pod)                 Operator's LLM gateway           Lenny
  ──────────────          ──────────────                 ──────────────────────           ─────
  POST http://llm-gw/...  1. attribute the connection
-   (no key, no              to the slot's session
-    identity header)     2. binding suspended? -> refuse
+   (placeholder key,        to the slot's session
+    no identity)         2. binding suspended? -> answer
+                            429 (extension pending)
+                            or 403 (final) itself
                          3. strip any inbound copy of
                             the assertion header, attach
                             the session's assertion  ──>  4. verify assertion
@@ -106,8 +109,9 @@ Lenny stops brokering LLM credentials and stops proxying model calls. An operato
                                                           5. own key, routing,
                                                              model policy -> provider
                                                           6. price the call
-                                                          7. batch charges  ──────────>  8. verify each proof once,
-                                                                                            count on `external`
+                                                          7. batch charges, ─────────>  8. look up each jti in
+                                                             each citing its               the mint index, count
+                                                             assertion's jti               on `external`
                                                                                          9. limit exhausted ->
                                                                                             suspend the binding,
                                                                                             onExhausted, §8.6
@@ -115,13 +119,13 @@ Lenny stops brokering LLM credentials and stops proxying model calls. An operato
 
 **The gateway as a destination (LU-1).** The gateway is a host in the tenant's egress allow set, or a private egress upstream that the platform registers. The runtime calls it with its own SDK at the base URL the pool's injected configuration names, with no key of its own.
 
-**Attribution (LU-2).** An attribution binding on the gateway's host makes `netagent` attach the session's attribution assertion to each request. The gateway verifies the assertion against Lenny's published keys and reads the session, tenant, and pseudonymous user from it.
+**Attribution (LU-2).** An attribution binding on the gateway's host makes `netagent` attach the session's attribution assertion to each request. The gateway verifies the assertion against Lenny's published keys and reads the session, tenant, and pseudonymous user from it. By default the assertion is the gateway's caller credential in `Authorization: Bearer`.
 
-**Charges (LU-3).** The gateway prices each call and posts charges in batches to `POST /v1/charges`, each charge citing its call's assertion. Lenny counts accepted charges on the `external` meter of every budget of the session's set, as 0170 states.
+**Charges (LU-3).** The gateway prices each call and posts charges in batches to `POST /v1/charges`, each charge citing the `jti` of its call's assertion. Lenny counts accepted charges on the `external` meter of every budget of the session's set, as 0170 states.
 
 **Removal (LU-4).** The proxy, the LLM credential pools, the leases, direct mode, and the machinery around them leave the specification and the tree. VCS pools stay.
 
-**Enforcement (LU-5).** Budgets on `external` are best effort. When a limit is exhausted, Lenny suspends the session's attribution bindings, the next call reaches the gateway with no assertion, and the gateway refuses it. `onExhausted.running` suspends or ends a running session as for any meter, and a session budget or a carve starts the §8.6 extension.
+**Enforcement (LU-5).** Budgets on `external` are best effort. When a limit is exhausted, Lenny suspends the session's attribution bindings, and `netagent` answers the session's next call to the gateway itself: `429` with `Retry-After` while an extension is pending, and `403` naming the budget once the exhaustion is final. `onExhausted.running` suspends or ends a running session as for any meter, and a session budget or a carve starts the §8.6 extension.
 
 **Usage (LU-6).** A charge may carry the call's token counts in a neutral schema, which usage events show. A runtime's own reports stay displayed and read by no budget.
 
@@ -135,7 +139,7 @@ Lenny stops brokering LLM credentials and stops proxying model calls. An operato
 | :-- | :-- |
 | LUR-1 | Lenny holds no LLM provider credential and parses no model call's request or response. |
 | LUR-2 | A request that `netagent` forwards to a host of an attribution binding of the session carries the session's attribution assertion in the binding's header, and no value of that header that the runtime sent. |
-| LUR-3 | No assertion is attached to a request for a host that no attribution binding of the session names, and none while the binding is suspended. |
+| LUR-3 | No assertion is attached to a request for a host that no attribution binding of the session names, and none while the binding is suspended, during which `netagent` answers the session's requests to the binding's hosts itself. |
 | LUR-4 | A charge counts in a budget only as BGR-13 of `0170-budgets` states: its proof verifies, it arrives in time, and each charge identifier counts once per reporter. |
 | LUR-5 | When a limit that counts `external` is exhausted for a session, Lenny suspends the session's attribution bindings within the binding propagation delay, and lifts the suspension when an extension or an adjustment restores room. |
 | LUR-6 | Budget enforcement on `external` is best effort. A limit exceeds its amount by no more than the charges of the calls the gateway admitted before the suspension took hold, plus the report delay of the charges in flight. |
@@ -223,23 +227,25 @@ credentialBindings:
     secret:
       kind: attributionAssertion
       lifetimeSeconds: 300
-    attach: "Lenny-Attribution: {{secret}}"
+    attach: "Authorization: Bearer {{secret}}"
     delivery: inject
     scope: always
 ```
 
+The default header carries the assertion as the gateway's caller credential, and `netagent` removes an SDK's placeholder `lenny-injected` from other headers on the binding's hosts, as D15 of [`0124-connector-removal`](../0124-connector-removal/decisions.md) and **Placeholders under `delivery: inject`.** of 0127 state. A gateway that keeps its own caller keys, such as LiteLLM with a virtual key per team, takes the assertion in another header, such as `Lenny-Attribution`, beside an `inject` binding of the tenant's key in `Authorization`. The two configurations differ in which header the gateway authenticates callers with, and Lenny treats them alike.
+
 - **What `netagent` does.** For each request to a bound host, `netagent` removes any header of the `attach` name that the runtime sent, and attaches the session's assertion, minted and cached as CR-2 states. On a pod with several slots it attaches each slot's own assertion to the connections it attributes to that slot ("Slot attribution and fetch grants" of the egress design).
 - **The assertion.** [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion) **Attribution assertion.** defines its claims, its pseudonymous user, its signing keys, its verification, and the pods it is minted on. It attributes spend and authenticates no user, so a gateway grants no per-user privilege from it.
-- **The gateway's check.** The gateway verifies the signature, `typ`, audience, and expiry as CR-2's verifier states, and refuses a request without a valid assertion. A gateway that cannot verify the assertion itself runs the reference verifier as an external-authorization service in front of it, which open decision O30 of 0124 settles.
+- **The gateway's check.** The gateway verifies the signature, `typ`, audience, and expiry as CR-2's verifier states, and refuses a request without a valid assertion. A gateway that cannot verify the assertion itself runs the reference verifier of "LU-9" as an external-authorization service in front of it. Under the `deployment` key set of 0124's D14, a stock JWT filter verifies it with one issuer and one key set. A gateway run by a tenant also checks that the `tenant` claim names its tenant.
 - **Fallback pools.** A pool whose status records the union scope cannot attribute a connection to one session, so a session that holds an attribution binding is refused there, as CR-2 refuses identity-assertion sessions.
 
 ### LU-3 Charges and budgets
 
-The gateway prices each call with its own price table and reports a charge per call to [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges), which owns the ingestion API, the reporter registry, the proof checks, batching, idempotency, delay, voids, and the `external_charges` record **[design]**. The charge's proof is the assertion of the request it prices, so a reporter charges only sessions that called its host.
+The gateway prices each call with its own price table and reports a charge per call to [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges), which owns the ingestion API, the reporter registry, the proof checks, batching, idempotency, delay, voids, and the `external_charges` record **[design]**. The charge's proof is the `jti` of the assertion of the request it prices, which Lenny looks up in the Token Service's mint index (0124's D18), so a reporter charges only sessions that called its host and no assertion enters the gateway's logs.
 
 Budgets count charges on the `external` meter in `money`, under `budgets.currency` (0170's decision 57). A session budget, a carve, a shared budget, a partition, and a period treat `external` as 0170 states for any meter counted afterwards. A deployment that wants credits names an invented currency, such as `CRD`, under 0170's decision 34.
 
-The same API serves any other paid service a deployer wants in Lenny's budgets, citing the identity assertion of CR-2 as proof, or the session identifier under the separate permission that 0170's open decision 61 settles.
+The same API serves any other paid service a deployer wants in Lenny's budgets, citing the `jti` of an identity assertion of CR-2 as proof, or the session identifier under the separate permission that 0170's open decision 61 settles.
 
 ### LU-4 Removal
 
@@ -279,9 +285,9 @@ The following leave the specification and the tree **[design]**. "Specification 
 
 Enforcement on the `external` meter is best effort **[design]**:
 
-- **Suspension of the binding.** When charges exhaust a limit that counts `external` for a session, in its session budget, a carve that funds it, or a shared budget of its set in `enforce` mode, Lenny suspends the session's attribution bindings through the pod binding API ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.**). `netagent` drops its cached assertion and stops attaching it, and the Token Service mints none, so the session's next call reaches the gateway with no assertion and is refused. Open decision 85 of 0127 settles this mechanism against a status lookup by the gateway.
+- **Suspension of the binding.** When charges exhaust a limit that counts `external` for a session, in its session budget, a carve that funds it, or a shared budget of its set in `enforce` mode, Lenny suspends the session's attribution bindings through the pod binding API ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.**). `netagent` drops its cached assertion, stops attaching it, and answers the session's next request to the gateway's host itself, under decision 85 of 0127: `429` with `Retry-After` while a §8.6 extension is pending, which provider SDKs retry, and `403` naming the budget and the limit once the exhaustion is final. The Token Service mints none. Because `netagent` answers, budgets hold whether the gateway authenticates callers with the assertion or with its own keys.
 - **Running sessions.** `onExhausted.running` acts as `0170-budgets` "BG-6" states: `suspend` or `end` stops the session, and the egress halt of CR-4 stops its traffic when its suspension cannot take hold. Calls already in flight at the gateway are not cancelled.
-- **Extension.** For a session budget or a carve, the exhaustion starts the §8.6 extension. The extension holds no call: the call is refused, and the runtime retries once the extension is granted, which lifts the suspension.
+- **Extension.** For a session budget or a carve, the exhaustion starts the §8.6 extension. The extension holds no call: `netagent` answers `429` with `Retry-After` while it is pending, the runtime's SDK retries, and a grant lifts the suspension, so a retry after the grant goes through.
 - **Admission.** Session creation, child creation, and resume are refused while a limit is exhausted, as "BG-6" **Admission** states.
 - **Bound.** A limit exceeds its amount by the charges of the calls the gateway admitted before the suspension reached `netagent`, plus the calls in flight. The gateway's report interval and the binding propagation delay set it (LUR-6).
 
@@ -298,14 +304,24 @@ A runtime can reach a provider, or a gateway that no attribution binding names, 
 - **No keys in Lenny.** Lenny holds no LLM provider credential. The gateway holds them, outside every pod.
 - **The assertion.** The runtime never holds the assertion, because `netagent` attaches it under `delivery: inject`. A runtime that bypasses `netagent`, including over raw sockets on an `egressProfile: internet` pool, cannot forge one, because the gateway verifies Lenny's signature.
 - **Reused pods.** On a pod that serves several sessions over its life, a session whose agent compromises the adapter, the sandbox kernel, or `netagent` reaches the assertions of later sessions on the pod, within the pod's tenant, and can have its calls charged to them. CR-2 **Attribution assertion.** states this residual and why the assertion is exempt from D11. It is the residual that open decision 21 of revision 19 found for the proxy token.
-- **Charges.** A reporter charges only sessions whose assertion reached its host, within the window and the scope that "BG-12" checks. A reporter that over-reports is a registered, trusted component, and its charges can be voided.
+- **Charges.** A reporter charges only sessions whose assertion reached its host, within the window and the scope that "BG-12" checks. It cites the `jti`, a random identifier that reaches only the bound host, as the assertion does, so no credential is stored in the gateway's logs. A host that a tenant's binding or reporter lists belongs to that tenant (0124's D20). A reporter that over-reports is a registered, trusted component, and its charges can be voided.
 - **Guardrails.** Lenny runs no interceptor and no leak scan on model calls. A deployer that needs them runs them in its gateway.
+
+### LU-9 Reference integrations
+
+Lenny ships three integrations outside its core, each in its own first-party repository with its own releases, as the client adapters of [`0138-rest-only-client-api`, "RO-5"](../0138-rest-only-client-api/change.md#ro-5-packaging-versioning-and-deployment) ship **[design]**. None is required: a gateway that verifies the assertion and reports charges by itself needs none of them.
+
+- **`lenny-litellm`.** A Python module that LiteLLM loads from its configuration: a `custom_auth` function that verifies the attribution assertion and maps `tenant` to a LiteLLM team and `user` to an end user, and a batching callback that reports charges citing each call's `jti`, flushing every second or 500 charges and converting LiteLLM's USD prices to `budgets.currency` when configured. LiteLLM's built-in JWT authentication requires its Enterprise licence, and its open-source `custom_auth` replaces virtual-key authentication for every client of that proxy, so the guide recommends a LiteLLM instance dedicated to Lenny's sessions **[external]**.
+- **`lenny-charge-relay`.** A Go service that accepts OpenTelemetry log records or a gateway's JSON log batches, maps their fields to charges through a configuration file, applies an optional price table to token counts, and posts "BG-12" batches. It serves gateways that report token counts or cost through logs, such as Envoy AI Gateway's access logs and Kong's `http-log` **[external]**.
+- **The reference verifier.** An external-authorization service that verifies the assertion under either key set of 0124's D14, including the tenant match that the `perTenant` key set needs, and passes its claims to the gateway as headers (0124's D19).
+
+`docs/operator-guide/external-llm-proxy.md`, replaced by the LLM gateway guide, links each integration and gives an end-to-end configuration for LiteLLM, Envoy AI Gateway, and a gateway run by a tenant.
 
 ## Limits
 
 - Budget enforcement on model spend is best effort. A limit can be exceeded by the charges of the calls the gateway admitted before the suspension took hold, which grow with the gateway's report interval and the binding propagation delay, plus every call in flight.
 - Calls in flight are not cancelled at an exhaustion or a suspension that takes hold. The egress halt stops them only when a suspension cannot take hold.
-- An extension holds no call. The refused call is retried by the runtime.
+- An extension holds no call. `netagent` answers `429` while it is pending, and the runtime's SDK retries.
 - Lenny runs no `PreLLMRequest` or `PostLLMResponse` interceptor and no leak scan of user secrets on model calls ([`0151-user-credential-delivery`, "UC-6"](../0151-user-credential-delivery/change.md)).
 - Model calls are no session activity. A runtime that waits on a model reports `busy: true` on its heartbeats, as for any operator service.
 - A deployment without an LLM gateway that reports charges has no budget on model spend. Compute and storage budgets work without one.
@@ -321,6 +337,8 @@ A runtime can reach a provider, or a gateway that no attribution binding names, 
 - **Plain identity headers attached by `netagent`.** Their trust rests on every request reaching the gateway through `netagent`, which raw sockets on `internet` pools defeat, and on an extra gateway key per tenant. A signed assertion needs neither.
 - **The identity assertion of CR-2 as it stands.** D11 confines it to pods no other session used, which would confine LLM budgets to those pods. The attribution assertion authenticates no user, so its residual on reused pods is bounded spend within the tenant.
 - **A generic gateway-side proxy for every service.** It duplicates `netagent` and `lenny-egress`, and it identifies a session from a reused pod no better than `netagent` does.
+- **The assertion itself as a charge's proof.** Gateways keep credentials out of their logging paths: LiteLLM removes `Authorization` from the headers its callbacks see **[external]**. Every deployer would write code to carry a credential into its cost reports, where it would rest in log storage while it still counted as proof. The `jti` reaches the logs through the claim mapping each gateway already has.
+- **The gateway refusing a suspended session's call.** A call with no assertion fails as an authentication error, which the Anthropic SDK does not retry **[external]**, and a gateway that keeps its own keys beside the assertion would serve it. `netagent` answers with a status the runtime retries, whatever the gateway's configuration.
 - **Credential injection of the gateway's key by `netagent` with budget-aware minting alone (option C).** The Token Service would refuse to mint once a budget is exhausted, so the lag would be the assertion's lifetime. Suspending the binding takes effect at the next request.
 - **Keeping credential pools and adding attribution and budgets (the analysis's option A of 2026-11-09).** It keeps LLM-gateway functions, their open High findings, and direct mode's key in the pod.
 
@@ -346,7 +364,7 @@ The following edits locate their targets by heading. Subsections of §4.9 named 
 | [§11.2](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) and [§11.2.1](../../spec/11_policy-and-controls.md#1121-billing-event-stream) | The "Token limits" row gives way to budgets on the `external` meter of `0170-budgets`. `token_usage.checkpoint` loses its LLM token counts, and charges reach billing as `0121-billing-resource-attribution` states. |
 | [§11.3](../../spec/11_policy-and-controls.md#113-timeouts-and-cancellation) and [§11.4](../../spec/11_policy-and-controls.md#114-user-invalidation) | Remove the credential lease TTL and expiry warnings. |
 | [§12.2](../../spec/12_storage-architecture.md#122-storage-roles) and [§12.4](../../spec/12_storage-architecture.md#124-redis-ha-and-failure-modes) | Remove the LLM lease and token-budget keys. |
-| [§13.1](../../spec/13_security-model.md#131-pod-security), [§13.2.2](../../spec/13_security-model.md#1322-agent-pod-allow-list-policies), [§13.2.4](../../spec/13_security-model.md#1324-lenny-system-namespace-networkpolicies), [§13.2.5](../../spec/13_security-model.md#1325-gateway-egress-to-upstream-llm-providers), and [§13.2.6](../../spec/13_security-model.md#1326-per-pool-egress-relaxation-and-egressprofile) | Remove the pod's proxy listener allowance, the gateway's upstream egress rule `allow-gateway-egress-llm-upstream` (its issuer purpose moves to 0149), `provider-direct`, NET-006, and NET-044. |
+| [§13.1](../../spec/13_security-model.md#131-pod-security), [§13.2.2](../../spec/13_security-model.md#1322-agent-pod-allow-list-policies), [§13.2.4](../../spec/13_security-model.md#1324-lenny-system-namespace-networkpolicies), [§13.2.5](../../spec/13_security-model.md#1325-gateway-egress-to-upstream-llm-providers), and [§13.2.6](../../spec/13_security-model.md#1326-per-pool-egress-relaxation-and-egressprofile) | Remove the pod's proxy listener allowance, the gateway's upstream egress rule `allow-gateway-egress-llm-upstream`, whose remaining purposes move to `allow-gateway-egress-external` of [`0138-rest-only-client-api`, "RO-2"](../0138-rest-only-client-api/change.md#ro-2-rest-additions) **Gateway egress.**, `provider-direct`, NET-006, and NET-044. |
 | [§13.3 Credential Flow](../../spec/13_security-model.md#133-credential-flow) | Replace the direct-mode and proxy-mode flows with the gateway path of "LLM gateways and external charges". |
 | [§14](../../spec/14_workspace-plan-schema.md#14-workspace-plan-schema) | Remove `credentialPolicy` from the plan. |
 | [§15.1 REST API](../../spec/15_external-api-surface.md#151-rest-api) | Remove `CREDENTIAL_POOL_EXHAUSTED`, `CREDENTIAL_PROVIDER_MISMATCH`, `CREDENTIAL_RENEWAL_FAILED`, `LEASE_SPIFFE_MISMATCH`, and the `provider` field of `/v1/credentials`. The charge routes and codes are `0170-budgets`'s. A write that names `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, `credentialPropagation`, `rotationTrigger`, or `maxRotationsPerSession` is refused with `400 VALIDATION_ERROR` naming the field (D9). |
@@ -374,7 +392,7 @@ The following edits locate their targets by heading. Subsections of §4.9 named 
 | `pkg/apis/lenny/v1alpha1`, `pkg/controller/runtime`, and `pkg/gateway/runtime` | Remove `supportedProviders` and `credentialCapabilities`. Regenerate the CRD manifests. |
 | `schemas/lenny-adapter.proto` and `schemas/lenny-tokenservice.proto` | Remove `AssignCredentials`, `RotateCredentials`, `ExtendCredentialLease`, and `ReportUsage` with `reserved` numbers. |
 | `migrations` | Drop the LLM lease tables and the tenant `credential_policy` column. |
-| `charts/lenny` | Remove the direct-mode webhook, `egressCIDRs.providers`, the `deliveryMode` gates, the proxy listener and its Service port, and `allow-gateway-egress-llm-upstream`, whose issuer purpose 0149 restates. |
+| `charts/lenny` | Remove the direct-mode webhook, `egressCIDRs.providers`, the `deliveryMode` gates, the proxy listener and its Service port, and `allow-gateway-egress-llm-upstream`, whose remaining purposes `allow-gateway-egress-external` of 0138 takes. |
 | `tests/registers/gateway-layout.yaml` | The step that deletes a package listed with `removed-by: '0133'` deletes its row in the same commit, and its diff is reviewed under "Review changes to the merge gate". |
 | SDKs and reference runtimes | Read the gateway base URL from the injected configuration. Remove the rotation handling and the lease rebind loop. |
 | `BUILD-GAPS.md` | Resolve the lease and proxy findings of "Records" as obsolete. |
@@ -383,7 +401,7 @@ The following edits locate their targets by heading. Subsections of §4.9 named 
 
 | Page | Reader | What changes for the reader | Step |
 | :-- | :-- | :-- | :-- |
-| `docs/operator-guide/external-llm-proxy.md` | Operator | Replaced by a guide to LLM gateways: the gateway as an egress destination, the attribution binding, verifying the assertion (with the reference verifier when 0124's O30 ships it), reporting batched charges, the recommended flush interval, and the gateway configurations to check ("Validation owed"). | 0133.S1 |
+| `docs/operator-guide/external-llm-proxy.md` | Operator | Replaced by a guide to LLM gateways: the gateway as an egress destination, the attribution binding with its default `Authorization: Bearer` header and the `Lenny-Attribution` configuration for a gateway that keeps its own keys, the removal of the placeholder from other headers, verifying the assertion under either key set, the rule that a gateway grants no per-user privilege from it, the check of the `tenant` claim by a gateway run by a tenant, reporting batched charges by `jti` with the reporting rules of "BG-12" (the call's start as `occurredAt`, the flush every second or 500 charges, `budgets.currency`, and an alert on unpriced models), `netagent`'s `429` and `403` once attribution is suspended, the runtime configuration per client (Claude Code with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, Codex CLI with a `model_providers` entry, and gemini-cli with `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY`), the reference integrations of "LU-9", end-to-end configurations for LiteLLM, Envoy AI Gateway, and a gateway run by a tenant, and the checks of "Validation owed". | 0133.S1 |
 | `docs/runtime-author-guide/runtime-configuration.md`, `docs/reference/adapter-contract.md`, and `docs/runtime-author-guide/lifecycle.md` | Runtime author | The gateway base URL from the injected configuration in place of the `llm` member, `busy: true` heartbeats while waiting on a model, and `llm_request_completed` as the runtime's own report. | 0133.S1 |
 | `docs/operator-guide/security.md`, `docs/operator-guide/security-principles.md`, and `docs/operator-guide/multi-tenancy.md` | Operator | No LLM key in Lenny, the attribution assertion and its residual on reused pods, guardrails in the gateway, and calls outside the gateway. | 0133.S1 |
 | `docs/operator-guide/configuration.md`, `docs/reference/configuration.md`, `docs/operator-guide/installation.md`, and `docs/operator-guide/lenny-ctl.md` | Operator | `supportedProviders`, `credentialCapabilities`, `proxyDialect`, `deliveryMode`, `credentialPolicy`, and the LLM pool commands leave. | 0133.S2 |
@@ -397,7 +415,7 @@ The following edits locate their targets by heading. Subsections of §4.9 named 
 | Tier | Coverage |
 | :-- | :-- |
 | `contract` | A runtime, pool, tenant, bootstrap, derived-runtime, session-creation, or delegation-lease write that names a removed field is refused with `400 VALIDATION_ERROR` naming it (D9). |
-| `integration` | On the compose stack with a gateway fake that verifies the assertion and reports charges: a call through `netagent` reaches the fake with the session's assertion and no runtime-sent value of its header (LUR-2); a call to an unbound host carries none (LUR-3); charges exhaust a session budget, the binding is suspended, and the next call reaches the fake with no assertion (LUR-5); a granted extension lifts the suspension; a call outside the gateway carries no assertion and charges nothing (LUR-7). |
+| `integration` | On the compose stack with a gateway fake that verifies the assertion and reports charges: a call through `netagent` reaches the fake with the session's assertion and no runtime-sent value of its header (LUR-2); a call to an unbound host carries none (LUR-3); charges citing each call's `jti` count against the session's budgets; charges exhaust a session budget, the binding is suspended, and `netagent` answers the next call with `429` and `Retry-After` while the extension is pending and `403` naming the budget once it is final, with no request reaching the fake (LUR-3, LUR-5); a granted extension lifts the suspension and the retried call reaches the fake; a request from an SDK that sends `x-api-key: lenny-injected` reaches the fake with the assertion in `Authorization` and no `x-api-key`; a call outside the gateway carries no assertion and charges nothing (LUR-7). |
 | `e2e_kind` | On Kind: a runtime reaches an in-cluster gateway registered as a private egress upstream, through `netagent` and `lenny-egress`. |
 | `security` | No LLM provider key appears in a pod's environment, files, frames, or logs (LUR-1). A runtime that sends its own `Lenny-Attribution` header reaches the gateway with the session's assertion alone. A raw-socket request from an `internet` pool carries no valid assertion. |
 | `docs` | No document describes direct mode, LLM credential pools, the proxy, or rate cards. |
@@ -410,18 +428,18 @@ Every test carries the `// spec:` annotation, and tests of the `component` tier 
 Decision 22 retires the metering proxy, upstream records, rate cards, credits, reservations per call, `llm_usage`, the proxy token, `PreLLMRequest`, `PostLLMResponse`, and `llmFormats`. Each change below records what it takes on in its own `decisions.md` or review history and edits the sections named. A reviewer of a change not listed searches it for those terms and the LU-n and LUR-n labels of revisions 1 to 19, and restates each mention as this revision does, or removes it.
 
 - [`0170-budgets`](../0170-budgets/change.md): the `external` meter replaces the `llm` meter and `llmCredits` (its decision 57), "BG-12" owns the charge ingestion API, and the price list loses its `llm` section and the tenant upstream prices of decision 54.
-- [`0124-connector-removal`](../0124-connector-removal/change.md): CR-2 gains the attribution assertion with its D11 exemption and its residual, and the reference verifier (its open decisions O29 and O30).
-- [`0127-egress-and-git`](../0127-egress-and-git/change.md): bindings at platform or pool scope and binding suspension (its open decisions 84 and 85); the LLM host reservation and the restatement of P3 around upstream records leave, because Lenny holds no LLM credential.
+- [`0124-connector-removal`](../0124-connector-removal/change.md): CR-2 gains the attribution assertion with its D11 exemption, its residual, its key set, its header, its mint index, and hosts bound to one tenant (its decisions D13 to D20).
+- [`0127-egress-and-git`](../0127-egress-and-git/change.md): bindings at platform or pool scope (its open decision 84), binding suspension with `netagent`'s answers to a suspended session (its decision 85), and the removal of the placeholder on an attribution binding's hosts; the LLM host reservation and the restatement of P3 around upstream records leave, because Lenny holds no LLM credential.
 - [`0166-delegation-primitives`](../0166-delegation-primitives/change.md): decision 53's required limits are `external` and `compute`, and the extension of DP-3 starts on exhaustion by charges (its decision 55).
 - [`0142-security-oversight`](../0142-security-oversight/change.md): SO-5a's `llmCreditsAbove` becomes `spendAbove` in money on `external`, and the posture `llm` section leaves (its decision 48).
 - [`0146-session-lifecycle`](../0146-session-lifecycle/change.md): SLR-23's refusal in the proxy gives way to the egress halt, and SL-6 drops usage reports as activity (its decision L38).
 - [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md): UC-6 scans no model call.
 - [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md): a quarantine stops LLM access by suspending the session's attribution bindings.
 - [`0141-runtime-routing`](../0141-runtime-routing/change.md) and §4.8: `PreLLMRequest` and `PostLLMResponse` leave, and the post-chain point runs no upstream-list check.
-- [`0135-message-delivery`](../0135-message-delivery/change.md), [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md), [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), and [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md): usage comes from charges' optional `usage` (`source: external`) and from runtime reports, and `llm_usage` and the credit estimate on billing events leave.
+- [`0135-message-delivery`](../0135-message-delivery/change.md), [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md), [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), and [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md): usage comes from charges' optional `usage` (`source: external`) and from runtime reports, and `llm_usage` and the credit estimate on billing events leave. 0138 also states `allow-gateway-egress-external`, the gateway's one outbound HTTPS rule, which takes the remaining purposes of `allow-gateway-egress-llm-upstream`.
 - [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) and [`0140-runtime-revisions`](../0140-runtime-revisions/change.md): `llmFormats` and the creation-time format check leave, and the proxy token residual becomes the attribution residual of CR-2.
 - [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md): RC-B and O2, which moved here, are moot with the proxy, and RC-5's passthrough statement has nothing left to describe.
-- [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md): the gateway egress rule that reaches customer issuers is restated without its LLM purpose, and a crossing child carries no upstream list.
+- [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md): the gateway reaches customer issuers over `allow-gateway-egress-external` of 0138, and a crossing child carries no upstream list.
 - [`0117-gateway-package-layout`](../0117-gateway-package-layout/change.md), [`0144-session-derive`](../0144-session-derive/change.md), [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md), [`0139-runtime-protocol`](../0139-runtime-protocol/change.md), [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md), and [`0126-delegation-availability`](../0126-delegation-availability/change.md): the `meteringproxy` packages, examples in `llmCredits`, the LLM host reservation, the `llm` member of `session_start`, the credentials file, and credit budgets in §8.3 leave or are restated.
 
 ## Sources

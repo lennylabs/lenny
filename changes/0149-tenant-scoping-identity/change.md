@@ -1,6 +1,6 @@
 # Tenant scoping and identity
 
-Status: `Draft`, revision 47, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 48, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -728,7 +728,7 @@ Every customer issuer, `jwks_uri`, `authorization_endpoint`, and `token_endpoint
 
 The consequences in the chart are these:
 
-- **Gateway.** Today `allow-gateway-egress-llm-upstream`, the NetworkPolicy that lets the gateway reach external LLM providers, is the gateway's only external HTTPS path, and it excludes private ranges (§13.2.4). Under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions) the gateway reaches no LLM provider, so that rule leaves, and the chart renders `allow-gateway-egress-issuers` in its place whenever `identity.customerSources.enabled` is true: HTTPS to the `0.0.0.0/0` peer with the private-range excepts, or to `identity.issuerCIDRs` alone when a strict deployer sets it. NetworkPolicy cannot match names, so a strict deployer maintains addresses per customer.
+- **Gateway.** Today `allow-gateway-egress-llm-upstream`, the NetworkPolicy that lets the gateway reach external LLM providers, is the gateway's only external HTTPS path, and it excludes private ranges (§13.2.4). Under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions) that rule leaves, and the gateway fetches customer issuers' discovery documents and key sets over `allow-gateway-egress-external` of [`0138-rest-only-client-api`, "RO-2"](../0138-rest-only-client-api/change.md#ro-2-rest-additions) **Gateway egress.**, which the chart renders whenever `identity.customerSources.enabled` is true: HTTPS to the `0.0.0.0/0` peer with the private-range excepts, or to the strict list `egressCIDRs.gatewayExternal`, into which `identity.issuerCIDRs` merges. NetworkPolicy cannot match names, so a strict deployer maintains addresses per customer.
 - **Token Service.** `allow-token-service`, the Token Service's NetworkPolicy, renders `kms.endpointCIDR` on TCP 443 unconditionally, which is open with no excepts under the local provider's default and closed to issuers once a cloud KMS narrows it. An except is an entry in a NetworkPolicy rule's `except` list, here the private ranges and the instance metadata address that an external HTTPS rule excludes. "Defects found while verifying" records this, and the Token Service should use `lenny.kmsEgressRule`, as the gateway does. That chart helper renders the KMS rule only for a cloud KMS, and it refuses an unrestricted CIDR. Without that change, the excepts of the rule below are void under the local provider, because NetworkPolicy allows are additive: the unrestricted port 443 rule already admits the addresses another rule excepts. Only the dialer's check would then hold. [`0127-egress-and-git`, "Credentials"](../0127-egress-and-git/change.md#credentials) adds a direct rule for provider APIs with the gateway's exclusions, and this design uses the same rule, which also widens the egress of the component that holds every provider credential. TS-6 renders the rule when [EG-1](../0127-egress-and-git/steps.md#steps), the egress design's git prerequisites, has not.
 - **Private-address IdPs.** An issuer on a private address is refused in the first version. The issuer, `jwks_uri`, `authorization_endpoint`, and `token_endpoint` must all pass the checker, so publishing metadata alone is not enough, and that customer stays behind a broker that can reach its IdP or exposes those endpoints (decision 21).
 
@@ -1272,7 +1272,7 @@ Each proposal turns this list into tests with `// spec:` annotations at the tier
 
 - The schemas of the new fields validate, and an empty `environments` list fails validation.
 - The chart renders `auth.rolesClaim`, `auth.groupsClaim`, `auth.serviceClaim`, `auth.platformAdminTenant`, and the `identity.*` values to both binaries, and the binaries define the flags. It renders `gateway.delegation.defaultMaxDepth` to `--delegation-default-max-depth` and refuses a value below 1, and the deployment audit's configuration map carries the same value, with no `deploymentAudit.defaultMaxDepth`.
-- The chart renders `allow-gateway-egress-issuers` when `identity.customerSources.enabled` is true, with the `0.0.0.0/0` peer and its excepts or `identity.issuerCIDRs`, and renders the Token Service's rule.
+- The chart renders `allow-gateway-egress-external` of 0138 when `identity.customerSources.enabled` is true, with the `0.0.0.0/0` peer and its excepts or `egressCIDRs.gatewayExternal` with `identity.issuerCIDRs` merged, and renders the Token Service's rule.
 - The chart refuses `auth.platformAdminTenant: platform` at render time with a message naming the reservation of the tenant ID `platform` in §10.2, and renders any other valid tenant ID.
 - SCIM `Schemas` and `ResourceTypes` documents validate.
 

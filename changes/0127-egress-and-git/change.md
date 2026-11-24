@@ -1,6 +1,6 @@
 # Egress and git access for agent pods
 
-Status: `Draft`, revision 96, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 97, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -861,7 +861,13 @@ A session names its `onRequest` bindings and, for a minted token, can narrow the
 
 **Platform and pool bindings [design].** A credential binding is a tenant object. Under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions), a `platform-admin` may also write a binding at platform scope, which applies to every tenant's sessions, or at pool scope, which applies to the sessions of one pool, so that one operator LLM gateway serves every tenant with one binding. Such a binding takes the `attributionAssertion` secret of [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion) **Attribution assertion.** alone, `delivery: inject`, and `scope: always`, and its hosts must be platform hosts or private egress upstreams that the platform registered. A tenant binding and a platform or pool binding on one host with the same `attach` header are refused at the later write. Open decision 84 settles whether platform scope, pool scope, or both are offered.
 
-**Binding suspension [design].** The gateway may suspend one session's attribution bindings, and lift the suspension, through the pod binding API, under 0133 "LU-5" and [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges). On a suspension `netagent` drops the session's cached assertions for those bindings and attaches none to the slot's later requests, and the Token Service refuses to mint one for the session and binding, so an assertion already handed out is not renewed. A request to the host then reaches it with no assertion, and the host refuses it. A suspension and its lifting are each an audit event naming the session, the binding, and the cause. A `netagent` restart keeps the suspension, because the pod binding API's first answer after the restart carries it. Open decision 85 settles this mechanism against a status lookup by the gateway.
+**Binding suspension [design].** The gateway may suspend one session's attribution bindings, and lift the suspension, through the pod binding API, under 0133 "LU-5" and [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges). The pod binding API carries the suspension with its cause: a budget whose §8.6 extension is pending, a budget whose exhaustion is final, or another cause such as a quarantine of [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md), with the budget and the limit for the first two. On a suspension `netagent` drops the session's cached assertions for those bindings, attaches none, and answers the session's requests to the bindings' hosts itself, without forwarding them (decision 85):
+
+- While an extension is pending, `429` with `Retry-After: 5`, which provider SDKs retry **[external]**.
+- Once the exhaustion is final, `403` with a JSON body naming the budget and the limit, in the details of `BUDGET_EXHAUSTED` of [`0170-budgets`, "BG-6"](../0170-budgets/change.md#bg-6-enforcement).
+- For another cause, `403` with no detail, so a quarantine gives the tenant no signal, as 0128's decision 6 requires.
+
+The Token Service refuses to mint an assertion for the session and binding, so an assertion already handed out is not renewed. Because `netagent` answers, a gateway that keeps its own caller keys beside the assertion, under O5 of 0124, needs no check of its own for budgets to hold, and a runtime receives a status it retries instead of the gateway's authentication failure, which the Anthropic SDK does not retry **[external]**. A suspension and its lifting are each an audit event naming the session, the binding, and the cause. A `netagent` restart keeps the suspension, because the pod binding API's first answer after the restart carries it.
 
 #### Delivery modes
 
@@ -967,7 +973,7 @@ The `file` contract follows the first practice:
 - A command the agent runs in a shell never passes through runtime code, so a translation in the runtime would not reach it.
 - A rendering step in the runtime would have to watch for rotation.
 
-**Placeholders under `delivery: inject`.** `inject` needs no file. The tested tools send no credential, or a placeholder, and `netagent` overwrites the header. A tool that refuses to run without a token (round 3: `gh`) gets a placeholder through an environment variable in the profile, such as `GH_TOKEN` or `GH_ENTERPRISE_TOKEN`. `netagent` ignores the placeholder's value, so the placeholder is the constant `lenny-injected` rather than a per-binding value, and it can be fixed at pod creation.
+**Placeholders under `delivery: inject`.** `inject` needs no file. The tested tools send no credential, or a placeholder, and `netagent` overwrites the header. A tool that refuses to run without a token (round 3: `gh`) gets a placeholder through an environment variable in the profile, such as `GH_TOKEN` or `GH_ENTERPRISE_TOKEN`. `netagent` ignores the placeholder's value, so the placeholder is the constant `lenny-injected` rather than a per-binding value, and it can be fixed at pod creation. On the hosts of an attribution binding ([`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion) **Attribution assertion.**), `netagent` also removes every request header whose whole value, or whose value after an authentication scheme such as `Bearer `, is `lenny-injected`, and on no other host. An SDK that sends its key in `x-api-key` or `x-goog-api-key` then reaches the gateway with the assertion in the binding's header and no placeholder beside it (0124's D15). A header that carries any other value is untouched.
 
 **Environment variables** are never used for secrets, and §5.1 already forbids them. Compared with a file, an environment variable has these additional exposures:
 

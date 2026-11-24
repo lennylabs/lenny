@@ -106,6 +106,9 @@ Settled by the owner on 2026-11-24, over an exploration of the metering proxy th
    - Decisions 5, 6, and 11 to 20. Decision 5's rule that a refused extension does not end the session stands for the extension that charges start ("LU-5").
    - D9 stands.
 
+24. **The default header, the reference integrations, and the gateway validations.** The owner asked on 2026-11-24 for end-to-end examples ("It would be good to see every example end-to-end (including what a runtime must do, how it's configured, and real LLM gateways as examples). I'm not sure if we're building a Frankenstein"), read the walkthroughs of LiteLLM, Envoy AI Gateway, and Kong that day, and answered "go for it". "LU-2" uses the default header of 0124's D15. "LU-9" adds `lenny-litellm`, `lenny-charge-relay`, and the reference verifier, outside Lenny's core. "LU-3" cites the `jti` as proof under 0170's decision 62, and "LU-5" has `netagent` answer a suspended session under 0127's decision 85. "Validation owed" gains the client and gateway checks that the walkthrough could not confirm.
+25. **The order of 0133.S2 before 0133.S1.** The owner answered "Ok on choices 1 and 3" on 2026-11-24, accepting that 0133.S2 lands before 0133.S1 to break the cycle through 0124.S2 and 0151.S1, and that model calls reach no budget between 0133.S2 and 0170.S6.
+
 ## Withdrawn open decisions
 
 Decision 22 of 2026-11-24 removes the metering proxy, the upstream records, the proxy token, and the interceptor phases that these questions are about, so each is withdrawn with the reason below. Their text is kept as it was raised.
