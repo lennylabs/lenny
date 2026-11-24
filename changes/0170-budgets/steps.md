@@ -49,7 +49,7 @@ The compute meter: compute units from a pod's resources, with the rates, the iso
 - lanes: [specification, code, documentation]
 - depends-on: [0170.S1, 0131.S4, 0121.S4]
 
-The `storage` meter: limits in `bytes` reserved at each upload, export, and checkpoint chunk grant in every budget of the owning session's set, in place of `storage_quota_reserve.lua` and the tenant's `storageQuotaBytes`; limits in `byteHours` with each budget's bytes held and the leader's accrual; the treatment of storage after a session ends under O12; the retirement of `STORAGE_QUOTA_EXCEEDED` and `StorageQuotaHigh`; and the rebuild of bytes held from the ledger. It depends on 0131.S4 for the pack catalog and its owner sessions, and on 0121.S4 for the storage records it rebuilds from.
+The `storage` meter: limits in `bytes` reserved at each upload, export, and checkpoint chunk grant in every budget of the owning session's set, in place of `storage_quota_reserve.lua` and the tenant's `storageQuotaBytes`; limits in `byteHours` with each budget's bytes held and the leader's accrual; the treatment of storage after a session ends under decision 21; the retirement of `STORAGE_QUOTA_EXCEEDED` and `StorageQuotaHigh`; and the rebuild of bytes held from the ledger. It depends on 0131.S4 for the pack catalog and its owner sessions, and on 0121.S4 for the storage records it rebuilds from.
 
 ### 0170.S5 Tenant-level meters
 - status: Planned
