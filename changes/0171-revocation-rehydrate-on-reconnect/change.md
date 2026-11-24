@@ -1,6 +1,6 @@
 # Revocation cache rehydration on event-bus reconnect
 
-Status: `Decided`, revision 1, 2026-11-23.
+Status: `In progress`, revision 1, 2026-11-24.
 
 ## Problem
 
