@@ -92,8 +92,9 @@ func runLaneGate(g gateRunner, layout string, goTestP map[string]int) *verdict {
 }
 
 // TestGateLayoutsHoldEveryTierOnce checks that each layout runs every
-// tier the gate can run exactly once, and that the default layout is the
-// one decision 5 of change 0172 chose.
+// tier the gate can run exactly once, that the unit-alone layout is the
+// one decision 5 of change 0172 chose, and that the default stays serial
+// while its validation is with the owner (decision 7, GS-11).
 func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
 	want := append(append([]string{tierStatic}, gateChangedTiers...), tierDocs)
 	for name, phases := range gateLayouts {
@@ -119,8 +120,11 @@ func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
 		{{tierUnit}},
 		{{tierDocs}},
 	}
-	if defaultGateLayout != gateLayoutUnitAlone || !reflect.DeepEqual(gateLayouts[gateLayoutUnitAlone], unitAlone) {
-		t.Errorf("default layout %s = %v; want unit-alone %v", defaultGateLayout, gateLayouts[defaultGateLayout], unitAlone)
+	if !reflect.DeepEqual(gateLayouts[gateLayoutUnitAlone], unitAlone) {
+		t.Errorf("unit-alone = %v; want %v", gateLayouts[gateLayoutUnitAlone], unitAlone)
+	}
+	if defaultGateLayout != gateLayoutSerial {
+		t.Errorf("default layout %s; want serial until the owner settles GS-11", defaultGateLayout)
 	}
 }
 

@@ -25,11 +25,16 @@ import (
 // static and contract tiers run beside the component and integration
 // tiers, then the unit tier runs alone, then the documentation gates.
 // gateLayoutSerial runs every tier one after another, as the gate did
-// before the change, and stays as the option decision 7 keeps.
+// before the change. Decision 7 makes the concurrent layout the default
+// when its validation run is clean. The validation run of 2026-11-24
+// (gate run d47d33b8ed80054999c769e1) recorded two container-start
+// timeouts, so the bound went back to the owner (open decision GS-11) and
+// the default stays serial until the owner settles it; `--layout
+// unit-alone` runs the concurrent layout.
 const (
 	gateLayoutUnitAlone = "unit-alone"
 	gateLayoutSerial    = "serial"
-	defaultGateLayout   = gateLayoutUnitAlone
+	defaultGateLayout   = gateLayoutSerial
 )
 
 // gatePhase is one phase of a layout: its lanes run at the same time, and
