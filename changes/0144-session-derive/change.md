@@ -1,6 +1,6 @@
 # Session derive
 
-Status: `Draft`, revision 26, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 27, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -171,7 +171,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 ## Security properties
 
-- SD-P1. The new session takes the source's owner, as [§10.2](../../spec/10_gateway-internals.md#102-authentication) **Session ownership.** states, and its credentials, meaning the credential bindings it receives and its effective LLM upstream list, which the post-chain point fixes for every session under [`0133-llm-upstreams-and-cost-budgets`, "LU-2 Assignment and resolution"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-2-assignment-and-resolution), are evaluated afresh rather than inherited. It takes the source's plan and `env`, its `runtimeOptions` unless the request replaces them, and what [`0149-tenant-scoping-identity`, "TS-3: Session environment context and cross-environment sharing"](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) states a derive takes: its environment, `egressLockHosts`, `crossed_from_environment`, and its delegation limit.
+- SD-P1. The new session takes the source's owner, as [§10.2](../../spec/10_gateway-internals.md#102-authentication) **Session ownership.** states, and its credentials, meaning the credential bindings it receives and its effective LLM upstream list, which the post-chain point fixes for every session under [`0133-llm-upstreams-and-cost-budgets`, "LU-2 Assignment and resolution"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-1-the-llm-gateway-as-an-egress-destination), are evaluated afresh rather than inherited. It takes the source's plan and `env`, its `runtimeOptions` unless the request replaces them, and what [`0149-tenant-scoping-identity`, "TS-3: Session environment context and cross-environment sharing"](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) states a derive takes: its environment, `egressLockHosts`, `crossed_from_environment`, and its delegation limit.
 - SD-P2. Every check runs against the plan on the new session's user and environment, and on the final runtime, its chosen revision, and the final pool that the post-chain point sees.
 - SD-P3. A plan carrying content from a tenant-derived runtime is refused after any later content stop on that runtime's grant entry or its tenant's security record, through any chain of derives, whether or not the content is still on the runtime.
 - SD-P4 is withdrawn. It refused a derive onto a target with no runtime supervisor, because on such a pod a file the source's agent kept, such as a `requirements.txt`, would reach an operator's setup command, such as `pip install -r requirements.txt`, at the adapter's UID with the pod's service account token. Every runtime's pods now run the supervisor in every slot container, and setup commands and the materialization helper run as the slot UID through it ([SI D6](../0145-session-isolation/decisions.md#decisions), [WM-1](../0153-workspace-materialization/change.md#wm-1-what-moves-and-what-stays)), so a kept file reaches only the identity the session's own agent already holds. The case SD-P4 still covered, a runtime row left stale when [DR-4](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records)'s mirror refuses a `Runtime` resource, is the post-chain check of DR-4 that the final runtime row is `registered`, which applies to every create, derive, and delegated child (decision O8 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions), settled by the owner on 2026-11-13, and decision 8 below).
@@ -209,7 +209,7 @@ This section records what the tree does today. Function and file names are the c
   "runtimeOptions": { "model": "<model (optional)>" },
   "delegationLease": { "maxDepth": "<integer, at most the carried value (optional)>" },
   "labels": { "project": "checkout" },
-  "budget": { "limits": { "models": { "meters": ["llm"], "amount": 400000, "unit": "llmCredits" } } },
+  "budget": { "limits": { "models": { "meters": ["external"], "amount": 40.00, "unit": "money" } } },
   "budgetRefs": ["principal/ci-weekly"],
   "allowIsolationDowngrade": false,
   "ticketId": "<ticket (with allowIsolationDowngrade)>"

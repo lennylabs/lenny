@@ -24,7 +24,7 @@ The session grant with its security and resource caveats and the content caveat 
 - status: Planned
 - aliases: [DP-3]
 - lanes: [specification, code, documentation]
-- depends-on: [0166.S1, 0133.S3, 0170.S1]
+- depends-on: [0166.S1, 0170.S1]
 - closes: [F-8.3.9]
 
 The carve as 0170's reservation for a child (decision 12), with `session.set_limits` and its raise of a child's age (decision 13), every limit carved (0170 decision 55), the move of a carve under `session.transfer` and `session.release`, the refusals of a transfer whose root cannot reserve it and of a `session.set_limits` raise with no carve (0170 decision 47), the root client's `PATCH` of a transferred session's budget (0170 decision 52), `gateway.delegation.sessionBudget` with its levels, its strictest value in effect, the limits it requires, and `SESSION_BUDGET_REQUIRED` (decisions 52 and 53), lease extension for the resource caveats, and the parallelism count with its difference from SL-10. It removes the tree budget of §8.3 and `maxTokenBudget`, and with them the TTL of the tree's keys: `delegation.budgetKeyTTLSeconds`, `BUDGET_KEYS_EXPIRED`, `GWSEAM-RearmBudget`, and `GWSEAM-HandleBudgetKeysExpired` (0170 decision 43, 0146 L36), which no other step removes. It closes F-8.3.9 by returning a carve once its child's reservations settle or expire. 0166.S1 lands `session.transfer` and `session.release` with no carve to move, and this step adds the move.

@@ -1,6 +1,6 @@
 # Delegation as session primitives
 
-Status: `Decided`, revision 13, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Decided`, revision 14, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -19,7 +19,7 @@ Delegation today is a second session-creation path with its own semantics **[sou
 
 - [§8](../../spec/08_recursive-delegation.md#8-recursive-delegation) runs to about 1,100 lines, and 655 lines of the numbered specification files mention delegation.
 - The Go packages that exist for delegation alone hold about 15,000 lines of non-test source: `pkg/delegation/` and, under `pkg/gateway/platformtools/`, `delegation`, `delegationbudget`, `leasecontrol`, `treebudget`, `treerecovery`, `treearchive`, `orphancleanup`, `resultrollup`, `deadlock`, `tree.go`, `tree_rest.go`, `waits.go`, and `delegation_admin.go`. The platform tool handlers in `mcptools` and the session server carry more.
-- Most member changes of the v1 program state a separate rule for a delegated child. [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) gives it an environment and sharing paths. [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) gives it its root's principal and `caller_type`. [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) gives it `userCredentialBindings` on the lease. [`0141-runtime-routing`](../0141-runtime-routing/change.md#post-chain-point) gives it a creation kind and routing labels. [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md#lu-6-credit-budgets) gives it a tree budget scope. [`0146-session-lifecycle`](../0146-session-lifecycle/change.md#sl-9-when-a-parent-ends) gives it states and a cascade, [`0135-message-delivery`](../0135-message-delivery/change.md#md-22-parents-and-children) gives it child events, and [`0126-delegation-availability`](../0126-delegation-availability/change.md) gives it a resolution chain of availability levels. Each feature added later has to state its own rule for a delegated child as well.
+- Most member changes of the v1 program state a separate rule for a delegated child. [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) gives it an environment and sharing paths. [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) gives it its root's principal and `caller_type`. [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) gives it `userCredentialBindings` on the lease. [`0141-runtime-routing`](../0141-runtime-routing/change.md#post-chain-point) gives it a creation kind and routing labels. [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md#lu-3-charges-and-budgets) gives it a tree budget scope. [`0146-session-lifecycle`](../0146-session-lifecycle/change.md#sl-9-when-a-parent-ends) gives it states and a cascade, [`0135-message-delivery`](../0135-message-delivery/change.md#md-22-parents-and-children) gives it child events, and [`0126-delegation-availability`](../0126-delegation-availability/change.md) gives it a resolution chain of availability levels. Each feature added later has to state its own rule for a delegated child as well.
 
 Much of §8 encodes orchestration policy, which an orchestrator outside Lenny would normally own **[source]**:
 
@@ -49,7 +49,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 **Out of scope:**
 
 - Agent-to-agent protocols and external agents. 0124 removed them, and this change does not reintroduce them.
-- §8.4's `approval` mode, which is reserved and unimplemented. Approval of a child by a person is SO-5a's of 0142, which gains conditions on the target runtime and on an amount in `llmCredits` (decision 36).
+- §8.4's `approval` mode, which is reserved and unimplemented. Approval of a child by a person is SO-5a's of 0142, which gains conditions on the target runtime and on an amount of spend in money (decisions 36 and 55).
 - The availability of the platform tools that are unrelated to children, such as `ask_question`. 0126 "DA-7" reviews them.
 - Root-session creation by a client through the public API. It is unchanged.
 
@@ -83,7 +83,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 | Platform tool server | The tool server `platform`, through which a runtime calls Lenny's platform tools with `tool_call` and `list_tools` frames on `CH-MSGSOCK`, forwarded by the adapter to the gateway ([`0139-runtime-protocol`, "RP-3"](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames)). |
 | Reference MCP bridge | The MCP server the runtime SDKs ship, which serves one MCP server per tool server to a harness and turns each MCP request into tool frames ([`0139-runtime-protocol`, "RP-5"](../0139-runtime-protocol/change.md#rp-5-reference-mcp-bridge)). |
 | Token exchange | `POST /v1/oauth/token` under RFC 8693, which narrows scope and can mint an `a2a_delegation` child token whose `act` claim names the parent session and its `delegation_depth` ([§13.3](../../spec/13_security-model.md#133-credential-flow)). |
-| Credit budgets | 0133's budgets with reservation before a call and settlement after it ([LU-6](../0133-llm-upstreams-and-cost-budgets/change.md#lu-6-credit-budgets)), which the budget objects of [`0170-budgets`](../0170-budgets/change.md) generalize. |
+| External charges | The charges that an operator's LLM gateway, or another registered reporter, sends for a session, which budgets count on the `external` meter of [`0170-budgets`](../0170-budgets/change.md#bg-12-external-charges) under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions). |
 | `onParentEnd` | The policy for a parent's non-terminal children when the parent ends, `close_all` or `let_finish` ([`0146-session-lifecycle`, "SL-9"](../0146-session-lifecycle/change.md#sl-9-when-a-parent-ends)). |
 | Child event | A message in a parent's inbox that reports a child's mid-turn message, end of turn, end, or other change ([`0135-message-delivery`, "MD-22"](../0135-message-delivery/change.md#md-22-parents-and-children)). MD-22 takes on the event classes, `from`, and the new kinds ("DP-7"). |
 | Question | An elicitation that a child raises with `ask_question` or with a `request` of `kind: "question"`, which travels one hop at a time under the [§9.2](../../spec/09_mcp-integration.md#92-elicitation-chain) chain and reaches a parent as a child event under MD-22. |
@@ -105,7 +105,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 | RP-1 to RP-5 | [`0139-runtime-protocol`](../0139-runtime-protocol/change.md) | The handshake with `session_start`, the capabilities, tool calls on frames with their `server` member, availability, and the reference MCP bridge. |
 | RT-2 and RT-3 | [`0141-runtime-routing`](../0141-runtime-routing/change.md) | The `PreRoute` chain and its post-chain point, and routing labels, which a child takes from its parent. |
 | SO-2 and SO-5a | [`0142-security-oversight`](../0142-security-oversight/change.md#so-5a-tool-use-approvals) | The tenant security record with its single writer, guardrails, and weakening rule, and approval rules that hold a call until an approver answers. |
-| LU-4 and LU-6 | [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md#lu-6-credit-budgets) | The removal of LLM credential brokering, and credit pricing with the reservation of a model call in session budgets, whose former scopes, the tree scope among them, the budget set of 0170 replaced. |
+| LU-4, LU-5, and decision 22 | [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md) | The removal of LLM credential brokering and of the LLM proxy, and the suspension of a session's attribution bindings when charges exhaust a limit of its session budget or a carve (decision 22). |
 | CR-1 | [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) | The removal of connectors and of every external-agent concept. |
 | Effective policy | [`0127-egress-and-git`](../0127-egress-and-git/change.md#effective-policy) | A child in its parent's environment inherits the parent's `egress.allowedHosts`, `egressLockHosts`, and named bindings, except a `userCredential` binding. |
 | Placement | [`0136-placement`](../0136-placement/change.md) | For `kind: delegate`, the parent's effective placement requirements apply to the child. |
@@ -231,13 +231,13 @@ The numeric caveats are fixed when the grant is created. Lowering a ceiling appl
 | `requiredToCreate` | A session creation that would give the session a grant and no session budget is refused with `422 SESSION_BUDGET_REQUIRED`. A child always has a session budget, its carve, so the value bears on roots and on a released session. |
 | `optional` | A parent without a session budget creates children that no carve funds, each with the session budget its own defaults and ceilings give it. |
 
-Under either required value, the session budget must hold at least one limit that counts `llm` and one that counts `compute`, which may be one limit that counts both, so a session budget with only a storage limit does not satisfy the requirement and is refused at the same point with `422 SESSION_BUDGET_REQUIRED` (decision 53).
+Under either required value, the session budget must hold at least one limit that counts `external` and one that counts `compute`, which may be one limit that counts both (decision 55), so a session budget with only a storage limit does not satisfy the requirement and is refused at the same point with `422 SESSION_BUDGET_REQUIRED` (decision 53).
 
 The Helm value sets the platform's level, the tenant delegation settings the tenant's, and the environment's delegation settings the environment's. A lower level may only make the value stricter, in the order `optional`, `requiredToDelegate`, `requiredToCreate`, and a write that loosens it is refused with `400 VALIDATION_ERROR` naming the level that binds. The value in effect is the strictest of the values the levels set, computed at each read, so a level tightened later binds a lower level's stored looser value (decision 53). It is read live at each `session.create` and session creation, as the policy references are. Under either required value DPR-4 holds for every child.
 
 **Policy authoring.** Delegation policies keep the RBAC of §10.2: a `tenant-admin` creates, edits, and deletes the policies of its own tenant, and a `platform-admin` those of every tenant. A tenant administrator therefore controls which runtimes the sessions of its tenant may start as children, without a platform administrator, and cannot widen what a platform runtime's policy or the platform ceilings allow, because every level intersects.
 
-**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` take `when`, with `targets` or `targetLabels` for the target runtime and `llmCreditsAbove` for the carve's amount in `llmCredits`, as SO-5a of 0142 states them, and the hold applies at `session.create`, on the final runtime at the post-chain point, at a `session.set_limits` raise, and at a lease extension of a carve that crosses the amount, on the amounts SO-5a states it reads (0170 decision 46). The call waits under SO-5a's hold and its timeout, as any held platform call does.
+**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` take `when`, with `targets` or `targetLabels` for the target runtime and `spendAbove` for the carve's amount in money (decision 55), as SO-5a of 0142 states them, and the hold applies at `session.create`, on the final runtime at the post-chain point, at a `session.set_limits` raise, and at a lease extension of a carve that crosses the amount, on the amounts SO-5a states it reads (0170 decision 46). The call waits under SO-5a's hold and its timeout, as any held platform call does.
 
 **Where the checks run.** The gateway checks the policy cap, the isolation floor, the remaining depth, and the binding and egress subsets on the final runtime and pool, at the post-chain point of 0141 RT-2, so a `PreRoute` interceptor that moves a child cannot move it past them ("DP-7").
 
@@ -368,8 +368,8 @@ The MCP adapter's client-facing tools of 0138 include `send_message` and `close_
 | `maxDepth` | §8.2, §8.3 | Primitive, as a security caveat. |
 | `maxChildrenTotal`, `maxParallelChildren`, `maxTreeSize`, `perChildMaxAge` | §8.2, §8.3 | Primitive, as resource caveats, with tenant, environment, and runtime ceilings (DP-1). `maxLeaves` joins them (decision 54). |
 | `fileExportLimits`, and the import limits of MD-26 | §8.3, §8.7 | Primitive, in the content caveat that every session carries (DP-1, decision 45). |
-| `maxTokenBudget` and the reservation model | §8.3, 0133 LU-6 | Primitive, as the carved budget over the budget objects of 0170 (DP-3, decision 12). |
-| Lease extension and its approval modes and layering | §8.6, 0133 LU-6 | Primitive, for the resource caveats only (DP-3). |
+| `maxTokenBudget` and the reservation model | §8.3 | Primitive, as the carved budget over the budget objects of 0170 (DP-3, decision 12). |
+| Lease extension and its approval modes and layering | §8.6 | Primitive, for the resource caveats only (DP-3). |
 | `onParentEnd` (formerly `cascadeOnFailure`) | §8.10, 0146 SL-9 | Primitive, as a security caveat that a child may only make stricter (DP-2). The cascade stays SL-9's. |
 | `runtimeOptions` on the delegation `TaskSpec` | 0140 | Primitive, as an argument of `session.create`. |
 | Elicitation forwarding through the virtual child interface | §8.2, §9.2 | Replaced by the `question` child event of MD-22 with `questions.answer` and `questions.forward` (DP-4). |
@@ -379,7 +379,7 @@ The MCP adapter's client-facing tools of 0138 include `send_message` and `close_
 | Environment and sharing paths | 0149 TS-3 | Primitive, as a security caveat (DP-2). TS-3 owns crossing (decision 41). |
 | The cascade when a parent ends, and orphan cleanup | §8.10, 0146 SL-9 | SL-9's, with `onParentEnd` as a caveat and a tree terminate for a `tenant-admin` (DP-2). |
 | Child event delivery and the wait, with its modes | 0135 MD-22, 0146 SL-12 | MD-22's and SL-12's, with `wakeOn` and `events.peek` added (DP-4). |
-| Approval of a child by a person | 0142 SO-5a | SO-5a's, with conditions on the target runtime and an amount in `llmCredits` (decision 36). |
+| Approval of a child by a person | 0142 SO-5a | SO-5a's, with conditions on the target runtime and an amount of spend in money (decisions 36 and 55). |
 | `contentPolicy.maxInputSize` and `interceptorRef` at `PreDelegation` | §8.3 | Primitive, in the content caveat (decision 45). `PreDelegation` folds into the `PreRoute` chain of RT-2 for `kind: delegate`, so one chain sees every creation (decision 4). |
 | `scanExportedFiles`, `maxExportedFileSize`, and the weakening cooldown on export scanning | §8.3, §8.7 | Primitive, in the content caveat, applied on every transfer path, with 0142's cooldown covering each path (decisions 4 and 45). |
 | `messagingRateLimit` | §8.3 | Primitive, as a resource caveat that counts what MD-9 counts. |
@@ -421,7 +421,7 @@ Each row states what the change takes on, and what this change keeps and cites (
 | [0151](../0151-user-credential-delivery/change.md) | `userCredentialBindings` move from the lease to the grant, and the built-in interceptor scans at the `PreRoute` phase for `kind: delegate` in place of `PreDelegation`. | The binding subset within one environment ("DP-1"). |
 | [0153](../0153-workspace-materialization/change.md#wm-12-mid-session-uploads-and-child-file-imports) | WM-12's mid-session overlay takes a parent's `materialize: true` file part, whose bytes come from the parent's workspace export under §8.7, gated on the child runtime's `midSessionUpload`, under both content caveats (decisions 18 and 45). | Nothing further. |
 | [`0170-budgets`](../0170-budgets/change.md) | Budget objects, the carve as a reservation from the parent's session budget, with every limit carved and the child's share as an object of the child's session funded by it (0170 decisions 24 and 55), the root client's change of a transferred session's budget (0170 decision 52), and lease extension under LU-6 and §8.6 (decision 12). 0170 joins the v1 program with its own edit to the program (decision 43). | DPR-4 and `session.set_limits` ("DP-3"). |
-| [0133](../0133-llm-upstreams-and-cost-budgets/change.md#lu-6-credit-budgets) | LU-6's tree scope gives way to 0170's budget objects. | Nothing further. |
+| [0133](../0133-llm-upstreams-and-cost-budgets/change.md) | Its credit scopes, which decision 22 of 0133 removes with the proxy, give way to 0170's budget objects. | Nothing further. |
 | [0121](../0121-billing-resource-attribution/change.md) | The billing envelope carries `root_session_id`, and its `labels` are the root's labels (decision 44). | Nothing further. |
 | [0127](../0127-egress-and-git/change.md#effective-policy) | None. Within one environment what a child inherits stays the default, and `session.create` may narrow it. | The subsets ("DP-1"). |
 | [0136](../0136-placement/change.md) | None. A child is created with `kind: delegate`, so its parent's placement requirements apply. | Nothing further. |
@@ -518,7 +518,7 @@ POST /v1/sessions
   "runtime": "claude-code",
   "labels": { "project": "checkout" },
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 4, "maxParallelChildren": 2 },
-  "budget": { "limits": { "models": { "meters": ["llm"], "amount": 400000, "unit": "llmCredits" } } }
+  "budget": { "limits": { "models": { "meters": ["external"], "amount": 40.00, "unit": "money" } } }
 }
 ```
 
@@ -610,14 +610,14 @@ POST /v1/sessions
 {
   "runtime": "repo-audit",
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 60, "maxParallelChildren": 8 },
-  "budget": { "limits": { "models": { "meters": ["llm"], "amount": 3000000, "unit": "llmCredits" } } }
+  "budget": { "limits": { "models": { "meters": ["external"], "amount": 300.00, "unit": "money" } } }
 }
 ```
 
 **What happens.**
 
 1. Each `sessions.create` is a `session.create` on the platform tool server. The gateway applies the grant to each call: the 61st child is refused because the child count is spent, a ninth child that is `running` or `idle` is refused because the parallelism is spent, and a child whose request asks for more than the credits left is refused. `limits.maxChildrenTotal: 0` gives each auditor no room to delegate. The program waits with `events.wait`, so the default `wakeOn` suits it: an auditor's progress updates open no turn in the parent.
-2. A `dir-auditor` is a `multi_turn` runtime, so it ends its turn with its answer and stays `idle`. The program imports the report and closes the child, which frees its parallelism and returns its unused credits.
+2. A `dir-auditor` is a `multi_turn` runtime, so it ends its turn with its answer and stays `idle`. The program imports the report and closes the child, which frees its parallelism and returns its unused budget.
 3. The node that runs the parent fails. The parent restores on a new pod, receives SL-3's resume message, and runs `on_message` again. `sessions.list()` returns every child with its `dir` tag, so the program counts attempts, finds the children still running, and skips the directories whose reports exist. A `sessions.create` that the old process sent and the gateway committed before the failure is repeated with the same idempotency key and returns the same child.
 4. The retry, the in-flight limit of 8, and the merge are the author's code. Under built-in delegation today, the same program would call `lenny/delegate_task` and `lenny/await_children`, would have no idempotency key, and would get the gateway's cycle detection and `perChildRetryBudget`, which this runtime does not need.
 
@@ -696,7 +696,7 @@ The wrapper turns off the reference tool set and adds the team's server:
 }
 ```
 
-**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "models": { "meters": ["llm"], "amount": 1500000, "unit": "llmCredits" } } }`.
+**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "models": { "meters": ["external"], "amount": 150.00, "unit": "money" } } }`.
 
 **What happens.**
 
@@ -749,7 +749,7 @@ labels: { role: untrusted-runner }
 
 ### Example 5: A tenant administrator sets the rules for the tenant and for one environment
 
-A tenant runs the shared platform runtime `claude-code`. Its administrator wants every session in the tenant to delegate only to runtimes the tenant approved, with at most 20 children and 2,000,000 credits per tree. Contractors work in the environment `contractors`, whose sessions may delegate only to read-only reviewers, with at most 4 children per tree.
+A tenant runs the shared platform runtime `claude-code`. Its administrator wants every session in the tenant to delegate only to runtimes the tenant approved, with at most 20 children and 200 EUR of model spend per tree. Contractors work in the environment `contractors`, whose sessions may delegate only to read-only reviewers, with at most 4 children per tree.
 
 **Tenant administrator.** The `tenant-admin` of `acme` writes two policies, the tenant settings, and the environment, with no platform administrator involved:
 
@@ -778,7 +778,7 @@ PUT /v1/admin/tenants/acme/delegation
 ```http
 PUT /v1/admin/tenants/acme/session-budget
 {
-  "ceilings": { "models": { "meters": ["llm"], "amount": 2000000, "unit": "llmCredits" } }
+  "ceilings": { "models": { "meters": ["external"], "amount": 200.00, "unit": "money" } }
 }
 ```
 
@@ -794,13 +794,13 @@ If-Match: "…"
 
 The tenant administrator also creates tenant-derived runtimes of approved helpers under 0147 and labels them `acme-approved: "true"`, and `access: read-only` or `access: write` as they are.
 
-**Security administrator.** The tenant's `security-admin` adds two SO-5a rules to the security record with `PUT /v1/admin/tenants/acme/security-config`, one for a target labelled `access: write` and one for any carve above 500,000 credits, each answered by a `security-approver` (decision 36):
+**Security administrator.** The tenant's `security-admin` adds two SO-5a rules to the security record with `PUT /v1/admin/tenants/acme/security-config`, one for a target labelled `access: write` and one for any carve above 50 EUR, each answered by a `security-approver` (decision 36):
 
 ```json
 "approvals": {
   "tools": [
     { "match": "session.create", "when": { "targetLabels": { "access": "write" } }, "approver": "security", "showArguments": true },
-    { "match": "session.create", "when": { "llmCreditsAbove": 500000 }, "approver": "security", "showArguments": true }
+    { "match": "session.create", "when": { "spendAbove": 50.00 }, "approver": "security", "showArguments": true }
   ]
 }
 ```
@@ -813,7 +813,7 @@ The record's single writer and its weakening delay govern the rules, so a stolen
 
 1. The gateway resolves the root grant. The policy cap is the intersection of the runtime's `coding-helpers` (Example 1), the tenant's `acme-approved`, and the environment's `acme-readers`, so a child must carry all three policies' labels. The child count is the client's 10 lowered to the environment's ceiling of 4. The depth, parallelism, and budget take the runtime's defaults, lowered to the tenant's ceilings. `delegation.grant_created` records each value and the level it came from.
 2. The contractor's agent starts a read-only reviewer, which the cap admits. An attempt to start a helper that writes to repositories is refused at `session.create`, because `acme-readers` does not admit it. A fifth child is refused because the child count is spent.
-3. A session of the same runtime in another environment of the tenant may start any approved helper, up to 20 children. Its `session.create` of a helper labelled `access: write` waits under SO-5a until a `security-approver` answers, or SO-5a's timeout denies it, and a `session.set_limits` that raises a child's carve past 500,000 credits waits the same way.
+3. A session of the same runtime in another environment of the tenant may start any approved helper, up to 20 children. Its `session.create` of a helper labelled `access: write` waits under SO-5a until a `security-approver` answers, or SO-5a's timeout denies it, and a `session.set_limits` that raises a child's carve past 50 EUR waits the same way.
 4. The tenant administrator narrows `acme-approved` during a review. The next `session.create` of every session in the tenant reads the new policy, and running children are not affected.
 
 ### Example 6: A workflow engine outside the pods

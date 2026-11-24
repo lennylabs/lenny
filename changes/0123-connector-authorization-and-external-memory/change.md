@@ -492,7 +492,7 @@ The link check runs in `buildChildSession` at the post-chain point of [RT-2](../
 - A parent that does nothing special gets a visible failure rather than a child quietly missing a tool.
 - The parent can retry with a deferral in a single call.
 
-An LLM parent reads the typed error, and a programmatic orchestrator handles it as it does any other typed refusal of a child's creation, such as `422 LLM_UPSTREAM_NOT_CONFIGURED`, which replaces `CREDENTIAL_POOL_EXHAUSTED` under [`0133-llm-upstreams-and-cost-budgets`, "LU-2 Assignment and resolution"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-2-assignment-and-resolution).
+An LLM parent reads the typed error, and a programmatic orchestrator handles it as it does any other typed refusal of a child's creation, such as `422 LLM_UPSTREAM_NOT_CONFIGURED`, which replaces `CREDENTIAL_POOL_EXHAUSTED` under [`0133-llm-upstreams-and-cost-budgets`, "LU-2 Assignment and resolution"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-1-the-llm-gateway-as-an-egress-destination).
 
 **Where the prompt goes.** The child does not exist yet, so the prompt's origin is the parent. It skips interceptors and goes to the root's human-facing edge. A parent agent never sees the URL, which is why the tool error omits it.
 

@@ -1,6 +1,6 @@
 # REST-only client API
 
-Status: `Draft`, revision 9, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 10, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -62,7 +62,7 @@ This design states what REST gains, how an adapter works in front of REST, how o
 | The management MCP server of `lenny-ops` at `/mcp/management` ([§25.12 MCP Management Server](../../spec/25_agent-operability.md#2512-mcp-management-server)). | The REST/MCP consistency contract and `RegisterAdapterUnderTest` ([§15.2.1](../../spec/15_external-api-surface.md#1521-restmcp-consistency-contract)). |
 | Platform tools that a runtime calls with tool frames ([RP-3](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames)). | |
 
-The LLM proxy's `/llm-proxy/v1/chat/completions`, `/llm-proxy/v1/responses`, and `/llm-proxy/v1/messages` routes face the pod and call a model provider ([LU-3](../0133-llm-upstreams-and-cost-budgets/change.md#lu-3-the-metering-proxy)). They are unrelated to the client surface and stay.
+The LLM proxy's `/llm-proxy/v1/chat/completions`, `/llm-proxy/v1/responses`, and `/llm-proxy/v1/messages` routes face the pod and are unrelated to the client surface. Decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions) removes them.
 
 **Out of scope:**
 
@@ -898,7 +898,7 @@ The tests that leave Lenny are listed under "Root records and tests"; each moves
 - [`0141-runtime-routing`](../0141-runtime-routing/change.md): RT-4 "Discovery" lists aliases through R8, from which the provider adapters build their models lists; RT-7's MCP and OpenAI pages move.
 - [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md) and [`0142-security-oversight`](../0142-security-oversight/change.md): the impersonation rule and its tests cover the REST session input routes alone, and the impersonation mint refuses `adapter-only` tokens and narrowed requests; UC-2's MCP sentence moves to the MCP adapter; `session_capability` is described as a client API bearer; a plan's `onRequest` `userCredential` binding entries carry the `credential-use` capability of "RO-4", and a `poolAttach` binding attaches through any adapter with no post-chain check.
 - [`0144-session-derive`](../0144-session-derive/change.md): "Reading client messages" and F-15.1.77 name the REST send path alone; the playground caps follow "RO-7".
-- [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): the client-facing usage of the translators moves to the provider adapters, which read R3; LU-A drops that part. The proxy's formats are unaffected.
+- [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md): the client-facing usage of the translators moves to the provider adapters, which read R3. Under its decision 22 the turn's usage comes from charges with `usage` (`source: external`) and from runtime reports.
 - [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md): the "Implicit session" term no longer keeps the built-in adapters' implicit sessions, and the term for a session a provider surface keeps on its pod leaves under O3.
 - [`0127-egress-and-git`](../0127-egress-and-git/change.md) and [`0150-tenant-security-settings`](../0150-tenant-security-settings/change.md): documentation rows that name `docs/api/mcp.md` point to the MCP adapter's documentation; `/mcp/management` is unaffected.
 - Every design that names `ExternalAdapterRegistry`, `AdapterCapabilities`, `OutboundChannel`, or "REST and MCP" for a client surface states the REST rule. Revision notes and review records keep their wording.

@@ -1,6 +1,6 @@
 # Tenant-derived runtimes
 
-Status: `Draft`, revision 84, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 85, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -116,7 +116,7 @@ This design builds on mechanisms other designs and the specification define. The
 | Gates | Per-tenant grants a platform admin gives, one per risk class, before a tenant can opt in to a capability. [EG-9](../0127-egress-and-git/steps.md#steps) defines them, and this design adds the class `tenantDerivedRuntimes`. |
 | Egress ceiling | The largest set of hosts any pod of a pool can reach through the egress proxy, whichever tenant or session it serves ([`0127-egress-and-git`, "Configuration by scope"](../0127-egress-and-git/change.md#configuration-by-scope)). |
 | Credential delivery (`inject` and `file`) | A credential binding's `delivery`. Under `inject`, `netagent` attaches the token to requests and the runtime holds only a placeholder. Under `file`, `netagent` writes the token to a file the runtime reads. |
-| LLM host reservation and proxy token | The egress design reserves the endpoint hosts of the LLM upstream records of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), so no tenant route or host set can claim one. The check runs at each egress decision, so raw sockets on a pool with `egressProfile: internet` escape it. That design removes LLM credential leases and direct delivery mode, so a session's runtime holds only the session's proxy token, which the gateway's LLM proxy alone accepts, and the proxy attaches the upstream's credential. |
+| LLM gateway and attribution assertion | Under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions), Lenny has no LLM proxy and holds no LLM credential, so the reservation of LLM upstream hosts and the proxy token leave. A runtime reaches an operator's LLM gateway through egress, and `netagent` attaches the session's attribution assertion on the gateway's host. |
 | Tenant pool overlay | A tenant's record over a pool's egress and git settings, which applies to that tenant's pods alone. The pool's `tenantOverride` flags decide, per setting, whether an overlay may narrow, extend, or neither ([`0127-egress-and-git`, "Tenant pool overlays"](../0127-egress-and-git/change.md#tenant-pool-overlays)). |
 | `egressProfile` | A pool setting: `restricted`, `proxied`, or `internet`. Under `internet`, the pod also has raw sockets that bypass `netagent` and `lenny-egress`. |
 | Guardrail, posture, and `suspendedBy` | A guardrail is a setting a `security-admin` writes in the tenant security record ([SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)) that limits what a tenant admin can configure. A change that weakens one takes effect after a delay. Posture is that record's read-only report of a tenant's security-relevant settings. `suspendedBy` marks an object a guardrail suspended, and every component then treats the object as absent. |
@@ -436,7 +436,7 @@ A base outside the list cannot be derived from, and "Base changes" states what e
 | `image`, `isolationProfile`, `allowedResourceClasses`, `capabilities.*`, `requireSoPeercred`, `command`, `env` | Prohibited or inherited | Refused | They describe the image and its security posture. `type` and `executionMode` no longer exist, and a body naming either answers `400 VALIDATION_ERROR` naming the field, as [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/change.md#ar-4-admission-of-removed-fields) states for every runtime write. |
 | `archivePolicy`, `minPlatformVersion` | Not in §5.1 | Refused | `archivePolicy` opts in to symbolic links. `minPlatformVersion` has no use for a tenant. |
 | `description` | Not in §5.1 | Yes | It reaches only the owner. |
-| `llmFormats` | Override, restrict | Narrow | A subset of the base's, because the list describes the binary. |
+| `llmFormats` | Removed | n/a | Decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions) removes the field with the proxy. |
 | `limits` | Override | Narrow per field | A larger `maxSessionAge` or `maxUploadSize` holds platform capacity past the value the platform set. |
 | `setupCommandPolicy` | Override, restrict | Narrow | An allowlist is a subset. `blocklist` to `allowlist` is accepted and the reverse is refused. `shell: true` over `false` is refused. `maxCommands` is at most the base's. Effective policy applies both, closing DF-7. |
 | `setupPolicy.timeoutSeconds` | Maximum | Yes, positive | It is bounded by `gateway.maxFinalizingTimeoutSeconds`, as `validateSetupPolicy` does. A longer setup holds only the tenant's pod. Zero means no cap and is refused. |
@@ -522,7 +522,7 @@ A platform-written template pool supplies everything that needs a platform decis
 | Setting | Source | Tenant |
 | :-- | :-- | :-- |
 | `isolationProfile`, `allowStandardIsolation`, `acknowledgeNonceOnlyAuth`, `spiffeBinding`, and `allowProxyModeSpiffeBindingDisabled` | Template | None |
-| `llmUpstreams` | Tenant | The owning tenant writes the list and may name its own upstreams and the platform upstreams granted to it. The setting is gateway-read and adds nothing to the pod-set key ([`0133-llm-upstreams-and-cost-budgets`, "LU-2"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-2-assignment-and-resolution)). |
+| `llmUpstreams` | Removed | Upstream lists leave with the proxy under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions). An owned pool's model calls reach the gateway that the pool's injected configuration and attribution bindings name. |
 | `egressProfile`, `dnsPolicy`, egress ceiling, warm-up policy, `gitAccess`, client proxy profile, tunnel lifetime, fetch settings, `tenantOverride`, and `tenantEgressProfiles` | Template | A tenant pool overlay under [EG-9](../0127-egress-and-git/steps.md#steps)'s rules for a shared pool. The rows [EG-9](../0127-egress-and-git/steps.md#steps) gives only an owned pool read as `none` unless the grant entry's `ownedOverlays` lists them. |
 | Elicitation policy and scaling policy | Template | None |
 | `resourceClass` | Grant entry | One of `resourceClasses` |
@@ -598,7 +598,7 @@ Once [`0140-runtime-revisions`](../0140-runtime-revisions/change.md) lands, a ba
 
 | Platform change | Effect on a tenant-derived runtime |
 | :-- | :-- |
-| Narrows `llmFormats`, `limits`, or a delegation ceiling | Applies at the next resolve. An emptied intersection, such as an emptied `llmFormats` where the tenant's list was not empty, is `incompatible`. |
+| Narrows `limits` or a delegation ceiling | Applies at the next resolve. An emptied intersection is `incompatible`. |
 | Creates a base revision whose `runtimeOptionsSchema` drops or forbids a property the tenant's schema names | `runtimeOptionsSchema` is versioned, so the change applies to the sessions the rollout gives that revision, whose options both schemas validate. A property the tenant's schema only names becomes unusable on those sessions, and the runtime stays compatible. A property the tenant's schema lists in `required` makes the runtime `incompatible` while that revision is in the traffic, because every session on it would be refused, and the notice names the property and the revision. A revision forbids a property when its schema gives the property the schema `false`, or omits it from `properties` under `additionalProperties: false` ([RV-5](../0140-runtime-revisions/change.md#rv-5-derived-runtimes)). |
 | Raises the base's `periodicCheckpointIntervalSeconds`, or the owned pool's value, above the tenant's value | Applies at the next resolve: the tenant's sessions take the base's longer interval, and the notice reports the change. The runtime does not read as `incompatible`, because the longer of the two values is always a valid interval, as a narrowed `limits` always leaves a value. |
 | Narrows `setupCommandPolicy` so a default command falls outside, or sets `shell: true` or a mode other than `allowlist` while a default command exists | `incompatible`, until the tenant edits the command. |

@@ -85,3 +85,4 @@ Second pass. The pass closed the requests that the fix agents of 0122, 0135, and
 - Already done (0135, client-api-sessions-C2): "Envelope member" states that an entry carries no `from` member.
 - Already recorded (0135): O14 records the question that O17 of 0135 asks, and now names O17 of 0135 as its counterpart.
 - 2026-11-24, revision 14. From the second review of the 0166 branch: `BUDGET_EXHAUSTED` names its budget with `details.budget`, `details.limit`, `details.unit`, and `details.meter` of `0170-budgets` "BG-6", which retires `details.limitType`. Decision O11 keeps its answer, and the detail it names follows 0170.
+- 2026-11-24, revision 15. Under decision 22 of `0133-llm-upstreams-and-cost-budgets`, the proxy's `anthropic-messages` route leaves, AM-6's `usage` reads the turn's `usage` events of MD-20 from charges and runtime reports, and `LLM_UPSTREAM_NOT_CONFIGURED` leaves AM-8. The instruction from 0133 that revision 7 applied is superseded in those parts.
