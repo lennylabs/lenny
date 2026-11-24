@@ -115,3 +115,9 @@ Revision 14 takes on the row for this change in "DP-7" of [`0166-delegation-prim
 - Raised O19: whether the parent that set an explicit `maxChildrenTotal: 0` can raise it with `session.set_limits`, which 0166 allows for a resource caveat. The recommendation follows 0166.
 - O12's recommendation notes that 0166.S1's policy cap closes F-8.3.14 and that 0166 drops the lease field `approvalMode`. 0126.S1 in `steps.md` is cut back to these parts, and 0166.S1 depends on it.
 - Later on 2026-11-23 the owner settled O18 (a widening reaches only sessions created afterwards) and O19 (an explicit `maxChildrenTotal: 0` is a resource value its parent may raise, and `maxDepth: 0` for a child is the permanent switch). "DA-2", "DA-5", "DA-6", DAR-3, and "Limits" follow.
+
+## Revision 15, 2026-11-23
+
+- 0166 decisions 50 and 51: "DA-1" gains the environment level, `allowDelegation: false` on an environment, written by `tenant-admin`, applied at once in both directions, and refusing `true`. "DA-2" orders it third, after the guardrail, with `disabledBy: environment`, and "DA-3" adds the value. "DA-1" states that a ceiling of 0 is not a switch, and "DA-2" that a session with no depth left holds no grant. The scope item and the alternative that excluded an environment level are replaced. Terms, DAR-3, DAR-5, DAR-9, the incident switches, the specification rows, the documentation, and the tests follow.
+- The room rule and the session level no longer say that TS-3 stores a `maxChildrenTotal` of 0 as `maxDepth: 0`, under 0149 decision 44.
+

@@ -59,3 +59,8 @@ Reconciles 0166 with the other changes after they took on its "DP-7" rows the sa
 - "Validation owed" lists the open decisions the other changes raised: 0135 O26, 0122 O22, and 0139 O24 with its mirror 0122 O23.
 - Later on 2026-11-23, following the owner's answers in other changes: `session.create` takes `maxDepth` for a child, the permanent per-hop switch of 0126 O19; a transfer of a crossed child meets the target's admission check (0149 decision 43); an operation that names a session other than the caller's child answers `404 RESOURCE_NOT_FOUND` (0149 TS-3); a push to a child without `midSessionUpload` answers `422 MID_SESSION_UPLOAD_UNSUPPORTED` (0153 WM-12); a crossed child's usage totals reach its parent (0135 MD-25); and "Validation owed" lists the open decisions that remain in other changes.
 - Later on 2026-11-23 the owner settled the resolution review as decision 49: "DP-1" ("Resolution") states the order of defaults, presets as the client's request, and the effect of a lowered ceiling, and 0149 TS-3 and 0170 BG-2 cite it. O33, who may set `maxDepth: 0`, is open. The open decisions raised in other changes are settled (0135 O26, 0139 D14 with 0122 O23 (i), and 0149 decision 44).
+
+## Revision 9, 2026-11-23
+
+- Decisions 50 and 51: "DP-1" ("Resolution", **Zero**) refuses a ceiling of 0 for `maxDepth`, `maxChildrenTotal`, or `maxParallelChildren` and points to 0126's availability levels, keeps `maxDepth: 0` for a client and a parent, and states that a session with no depth left holds no grant. The environment row of the root grant inputs names 0126's environment level as the off switch. DPR-10 and the tests follow.
+
