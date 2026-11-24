@@ -990,7 +990,8 @@ func defaultGateRunner(root string) gateRunner {
 // gate takes from the plan (gateChangedTiers): the gate runs the static
 // tier and its general documentation gates itself. With all, it resolves
 // those tiers in full instead: the whole unit tier (./...) and every test
-// of the component, contract, and integration tiers.
+// of the component, contract, and integration tiers. The unit tier runs
+// without a coverage profile (gateUnitWithoutCoverage).
 func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, error) {
 	sel := selector{changed: true, since: base, gate: gateMerge, rdepsDepth: rdepsDepth}
 	if all {
@@ -1001,7 +1002,23 @@ func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, e
 		return r, err
 	}
 	r.tiers, _ = keepTiers(r.tiers, append([]string{tierStatic}, gateChangedTiers...))
+	gateUnitWithoutCoverage(r.tiers)
 	return r, nil
+}
+
+// gateUnitWithoutCoverage sets noCoverage on the unit tier's plan, so the
+// gate's unit run keeps -race and -count=1 and writes no coverage profile
+// (change 0172, GS-4). No check of the gate reads the profile, so the
+// coverage build only lengthens the run. A gate run leaves an existing
+// tests/results/cover.out as it is. A coverage report comes from
+// `lenny-test --tier unit` or `run --changed`, followed by `lenny-test
+// coverage --go` or `--diff`.
+func gateUnitWithoutCoverage(plans []tierPlan) {
+	for i := range plans {
+		if plans[i].name == tierUnit {
+			plans[i].noCoverage = true
+		}
+	}
 }
 
 // run executes the gate and returns its verdict. Every tier runs whatever
