@@ -119,3 +119,4 @@ Second pass. This pass closed the 10 edits that the agents of other changes requ
 - Already open (0135; tenancy-security-C5): O2 records 0135's O23 on the `activity` frame and `reportActivity`, and now names it.
 - Already open (0142; tenancy-security-C3): O3 records 0142's open decision 39, and now names it.
 - Already open (0145; 0145-F23): O8 records the `cleanup` freeze case, and now names 0145's O20 and maps its options to O8's.
+- 2026-11-23, revision 39, from the review of 0166 and 0170 recorded in [`0170-budgets` review history](../0170-budgets/review-history.md). Held evidence is excluded from the storage limits of 0170, which replace `storageQuotaBytes` (0170 decision 30).

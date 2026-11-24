@@ -73,12 +73,6 @@ The M3 readiness review of 2026-11-19 raised O11 to O20, and its second pass rai
   - Recommendation: follow SL-Q10, whose recommendation is (a). 0122.S1 does not read suspension or tree suspension, so it does not wait on that step.
   - Blocks: the `depends-on` entry of 0122.S1.
   - (raised by the M3 readiness review, 2026-11-19; requested by change 0146; mirrors SL-Q10 of 0146)
-  - (a) Follow 0139: this change restates its bridge sentence for the in-process bridge, and a stdio bridge sends each `client` call alone, which a provider adapter returns one per response.
-  - (b) A stdio bridge holds each `client` call for a window, `--group-window-ms`, and sends the calls that arrived within it as one group.
-  - (c) Keep this change's text.
-  - Recommendation: (a), as 0139 O24 recommends. It states only what a bridge can see and adds no timing heuristic.
-  - Blocks: the step of this change that builds the blocking interface, and 0139.S2 and 0139.S3.
-  - (raised on 2026-11-23 under the program's rule for members that disagree, mirroring 0139 O24; narrowed to its first half on 2026-11-23)
 
 ## Decisions
 

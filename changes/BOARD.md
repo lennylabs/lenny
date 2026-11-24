@@ -10,7 +10,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | --: |
 | Ready | 1 |
 | Waiting on decisions | 35 |
-| Blocked | 158 |
+| Blocked | 159 |
 | Landed | 16 |
 | Cancelled | 2 |
 
@@ -209,6 +209,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S1](0149-tenant-scoping-identity/steps.md#0149s1-environment-scoping) | Environment scoping | Blocked | 0127.S1, 0127.S2, 0127.S3, 0127.S4, 0127.S9, 0149.S3; a part waits on 0127.S5, 0127.S6, 0127.S8, 0127.S10 |
 | [0149.S10](0149-tenant-scoping-identity/steps.md#0149s10-client-delegation-limits) | Client delegation limits | Blocked | 0149.S3 |
 | [0149.S11](0149-tenant-scoping-identity/steps.md#0149s11-cross-environment-sharing) | Cross-environment sharing | Blocked | 0149.S3, 0149.S10; a part waits on 0127.S10 |
+| [0149.S12](0149-tenant-scoping-identity/steps.md#0149s12-label-rules) | Label rules | Blocked | 0149.S1, 0149.S9 |
 | [0149.S5](0149-tenant-scoping-identity/steps.md#0149s5-delegated-environment-administration) | Delegated environment administration | Blocked | 0149.S1 |
 | [0149.S6](0149-tenant-scoping-identity/steps.md#0149s6-identity-sources-and-the-verifier-registry) | Identity sources and the verifier registry | Blocked | 0149.S2, 0149.S4; a part waits on 0150.S1 |
 | [0149.S7](0149-tenant-scoping-identity/steps.md#0149s7-login-routing) | Login routing | Blocked | 0149.S2, 0149.S6 |
@@ -242,7 +243,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0166.S2](0166-delegation-primitives/steps.md#0166s2-carved-budget) | Carved budget | Blocked | 0166.S1, 0133.S3, 0170.S1 |
 | [0166.S3](0166-delegation-primitives/steps.md#0166s3-reference-extension-and-parent-controls) | Reference extension and parent controls | Blocked | 0166.S1, 0166.S2, 0139.S2; a part waits on 0135.S5, 0146.S2, 0122.S1, 0153.S5 |
 | [0166.S4](0166-delegation-primitives/steps.md#0166s4-removal-of-built-in-delegation) | Removal of built-in delegation | Blocked | 0166.S3 |
-| [0170.S1](0170-budgets/steps.md#0170s1-budget-objects-and-the-llm-meter) | Budget objects and the `llm` meter | Blocked | 0133.S3, 0149.S3; a part waits on 0143.S1, 0149.S9 |
+| [0170.S1](0170-budgets/steps.md#0170s1-budget-objects-and-the-llm-meter) | Budget objects and the `llm` meter | Blocked | 0133.S3, 0149.S3; a part waits on 0143.S1, 0149.S9, 0141.S1, 0149.S12 |
 | [0170.S2](0170-budgets/steps.md#0170s2-price-lists-and-limits-in-money) | Price lists and limits in money | Blocked | 0170.S1 |
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4 |
@@ -286,9 +287,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0144](0144-session-derive/change.md) | Session derive | `Draft` | 0 of 1 | 5 |
 | [0145](0145-session-isolation/change.md) | Session isolation | `Draft` | 0 of 6 | 35 |
 | [0146](0146-session-lifecycle/change.md) | Session lifecycle | `Draft` | 0 of 4 | 30 |
-| [0147](0147-tenant-derived-runtimes/change.md) | Tenant-derived runtimes | `Draft` | 0 of 13 | 12 |
+| [0147](0147-tenant-derived-runtimes/change.md) | Tenant-derived runtimes | `Draft` | 0 of 13 | 13 |
 | [0148](0148-tenant-outbound-connector/change.md) | Tenant outbound connector | `Draft` | 0 of 4 | 8 |
-| [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 11 | 11 |
+| [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 12 | 11 |
 | [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 15 |
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 7 |
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |

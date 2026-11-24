@@ -1,6 +1,6 @@
 # Message delivery
 
-Status: `Draft`, revision 26, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 27, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 > **Delegation primitives banner.** Under [`0166-delegation-primitives`](../0166-delegation-primitives/change.md), the gateway hosts no tool through which a session starts or manages another session. A parent acts through the platform operations of its "DP-1", such as `session.create`, `session.send`, `events.wait`, and `files.import`, and a reference extension offers a model the tools of its "DP-5" under generic names (0166 decisions 1, 3, and 16). Revision 26 takes on what 0166 "DP-7" lists for this change: the child event kinds, classes, `from` member, delivery by `wakeOn`, the wait, and questions as child events in "MD-22"; the `append` intent in "MD-1" and "MD-14"; the custody of a wait's result in "MD-3"; the crossing rule of the watch in "MD-25"; and imports of a file part from any session in "MD-26". The design sections use the operation names, and "MD-23" keeps the earlier names as history.
 
@@ -1235,7 +1235,7 @@ On a provider surface, a mid-turn message is part of the turn's output, in the o
 | `ended` | `result` | The child completed, by a completing `message` (M9, MDR-45). | `state: "completed"` and the child's `TaskResult`, with what the completing `message` delivers as `TaskResult.output`. |
 | `ended` | `status` | The child reached `failed`, `cancelled`, or `expired`, by a cause other than its parent's `session.close`. | `state` and the failure code. The `TaskResult` output and any failure text the child wrote travel in `childContent`. It replaces §8.10's `child_failed`. |
 | `awaiting_client_action` | `status` | The child's retries are exhausted (lifecycle design, "SL-8"). | `recoverable: true` and the failure code, with any failure text the child wrote in `childContent`. The parent closes the child, or resumes it with `session.send`. |
-| `suspended` and `resumed` | `status` | The root's client suspended the child directly, or resumed it (lifecycle design, "SL-4"). | The time of the change. |
+| `suspended` and `resumed` | `status` | The root's client suspended the child directly, or resumed it, with `reason: client`; or a budget of [`0170-budgets`](../0170-budgets/change.md#bg-6-enforcement) suspended the child with its subtree, or resumed it when its limit gained room, with `reason: budget` (lifecycle design, "SL-4"). | The time of the change. |
 | `question` | `question` | The child raised a question that is not human-required, with `ask_question` or a `request` of `kind: "question"`, or one of its descendants' questions reached it and it passed the question up ("Questions and approvals"). | `questionId`, the question's message and requested schema, and `originSessionId` when the asking session is not the child. |
 | `question_withdrawn` | `status` | A question the parent held expired or was withdrawn ("Questions and approvals"). | `questionId` and the reason. |
 | `tool_call` | `tool_call` | The child called a tool the parent offers. | The call as 0122 states a `tool_call` event for every client, with its `callId`, its arguments, its `group`, and what started the turn and which sessions' content entered it (0122, 0166 decision 48). |

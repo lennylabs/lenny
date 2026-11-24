@@ -1,6 +1,6 @@
 # Tenant scoping and identity
 
-Status: `Draft`, revision 44, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 45, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -947,6 +947,49 @@ Lenny supplies admin APIs and no customer-facing identity UI, which §10.2 lists
 | Place and clear holds | Yes | Yes | Yes, and no self-reinstatement | No | A sync worker, own tenant and own class, through `invalidate` and `reinstate`. A SCIM credential, its own source's class, through SCIM `active` and `DELETE` writes alone. |
 | Assign groups | Through broker | No | No | Directory | SCIM writes them |
 
+### Label rules (TS-10)
+
+The owner settled this as decision 45 on 2026-11-23, from the review of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md) and [`0170-budgets`](../0170-budgets/change.md) **[design]**. A session's `labels` are set by the root's client at the root's creation and inherited unchanged by every descendant ([`0166-delegation-primitives`, "DP-2"](../0166-delegation-primitives/change.md#dp-2-parent-link), decision 44). Label rules decide who may set a label key and value, so a label can stand for a team, a project, or a cost center that a budget of 0170, a usage report, or a deployer's cost matching reads.
+
+**Free and governed keys.** A key that no rule names is free: any client may set it to any value or omit it, as today. A key that a rule names is governed: a session may carry it only when a rule allows the key and the value for the session's owner. A session creation that sets a governed key with a value no rule allows for its owner, or omits a key that a rule requires, is refused with `403 LABEL_NOT_PERMITTED`, whose details name the key and no rule.
+
+**Where rules live.**
+
+- A tenant's rules apply to every session of the tenant. A `tenant-admin` reads and writes them with `GET` and `PUT /v1/admin/label-rules`, under `If-Match`.
+- An environment may add rules, written on the environment resource as `labelRules` by whoever administers the environment (TS-1, and TS-5 when it lands). A session in the environment must satisfy the tenant's rules and the environment's. An environment's rules may govern a free key of the tenant or narrow a governed one, and they never widen what the tenant's rules allow.
+- A `platform-admin` reserves key prefixes in `labels.reservedPrefixes` (default `[lenny.dev/]`). No client may set a key under a reserved prefix, and no tenant rule may govern one.
+
+**What a rule says.** A rule names `key`, an exact key or a pattern with `*`, and any of these:
+
+| Field | Meaning |
+| :-- | :-- |
+| `values` | The values the key may take, each exact or with `*`. Without `allow` or `valueFrom`, any owner may set any of them, so the rule validates the value alone. |
+| `allow` | Who may set the key: `principals`, `groups` (the owner's directory groups at creation, TS-9), `principalKinds` (`user` or `serviceAccount`), and `environments`. An entry may carry its own `values`, so one rule gives each team its own values. |
+| `valueFrom` | The value must come from the owner's identity: `group`, with `match`, a regular expression over the owner's group names, and `value`, the replacement that forms the label's value; `principal`, the owner's subject; or `environment`, the session's environment. A rule with `valueFrom` admits any owner whose identity yields the value. |
+| `required` | The key must be set, optionally only in the listed `environments`. |
+
+```yaml
+labelRules:
+  - key: team
+    valueFrom: { group: { match: "team-(.+)", value: "$1" } }   # group team-payments sets team: payments
+  - key: costCenter
+    values: ["CC-100", "CC-2*"]
+    required: true
+    environments: [prod]
+  - key: pipeline
+    allow: { principalKinds: [serviceAccount] }
+  - key: project
+    allow:
+      - { values: ["checkout"], groups: [checkout-eng] }
+      - { values: ["search"], groups: [search-eng, search-contractors] }
+```
+
+**When rules apply.** The gateway checks the rules once, at a root's creation, against the owner, the owner's groups, and the environment the session gets, before the `PreRoute` chain. A child inherits its root's labels and is not checked again. A derive under [`0144-session-derive`](../0144-session-derive/change.md) checks the labels it copies against the rules in force at the derive, and a replay does the same. A change to a rule applies to sessions created afterwards, and a running session keeps its labels.
+
+**Limits and audit.** A tenant holds at most `labels.maxRulesPerTenant` (default 200) rules, an environment at most the same, and a rule at most `labels.maxValuesPerRule` (default 100) values. A write past a limit is refused with `429 QUOTA_EXCEEDED` naming it. Each refusal of a session writes `label.refused` with the key, the owner, and the environment, and each write of a tenant's or an environment's rules writes `label_rules.updated` with the actor and the rules changed.
+
+**Readers.** A budget of 0170 that selects on a governed key binds the sessions the rules admit to the label, and the budget admin API answers a budget that selects on a free key with a `Warning` ([`0170-budgets`, "BG-3"](../0170-budgets/change.md#bg-3-matching)). The usage reports of §15.1 filter on labels as today.
+
 ### Configuration by scope
 
 | Setting | Description | Scope | Managed by |
@@ -957,6 +1000,9 @@ Lenny supplies admin APIs and no customer-facing identity UI, which §10.2 lists
 | `identity.issuerCIDRs`, `identity.sourcesPerTenant`, `identity.maxKeyStalenessSeconds`, `identity.maxRSAKeyBits`, and `identity.scim.credentialsPerSource`, `identity.scim.usersPerSource`, `identity.scim.groupsPerSource`, and `identity.scim.membershipsPerUser` | Issuer addresses for a strict egress list, the number of sources a tenant holds, how long cached keys stay trusted (86400, 24 hours, under decision 22), the largest key accepted (4096 bits), and per-source SCIM counts. | Deployment | Platform admin (Helm) |
 | `identity.registry.pollSeconds` and `identity.registry.maxSnapshotAgeSeconds` | How often each replica rebuilds the verifier registry's snapshot with no version announcement, and the snapshot age past which `IdentityRegistrySnapshotStale` fires, which bounds how long a retired source still verifies on a replica that missed the announcement. | Deployment | Platform admin (Helm) |
 | `identity.userUpsertLimitPerClass` | The number of rows the `sync` class and each `scim:<source_id>` class may create through an upsert on invalidate, per tenant. The `admin` class has no cap. | Deployment | Platform admin (Helm) |
+| `labels.reservedPrefixes` | Label key prefixes no client may set and no tenant rule may govern, `[lenny.dev/]` by default ("Label rules (TS-10)"). | Deployment | Platform admin (Helm) |
+| `labels.maxRulesPerTenant` and `labels.maxValuesPerRule` | The number of label rules a tenant or an environment holds, 200 by default, and the values one rule lists, 100 by default. | Deployment | Platform admin (Helm) |
+| Label rules | Who may set each governed label key and value, and which keys are required ("Label rules (TS-10)"). | Tenant, and environment | Tenant admin, and the environment's administrator |
 | `gateway.delegation.defaultMaxDepth` | The platform default of `maxDepth` under the resolution of 0166 "DP-1", 10 by default and at least 1, rendered to the gateway. | Deployment | Platform admin (Helm) |
 | `auth.tenantIdClaim` | The claim holding the tenant identifier on a deployment issuer's token. A customer source has none. | Deployment | Platform admin (Helm) |
 | `auth.rolesClaim` and `auth.groupsClaim` (decision 10) | The claims holding roles and groups on a deployment issuer's token, defaulting to `roles` and `groups`. | Deployment | Platform admin (Helm) |
@@ -1150,6 +1196,7 @@ The `environments` fields, `environmentPolicies`, the effective-policy parameter
 
 ## Specification sections affected
 
+- §14 and §15.1: label rules, `GET` and `PUT /v1/admin/label-rules`, `labelRules` on an environment, and `403 LABEL_NOT_PERMITTED` ("Label rules (TS-10)"), with the settings in the catalog CATSET and the events `label.refused` and `label_rules.updated` in CATEVENT.
 - §2 Goals and Non-Goals: the identity model, and what stays with an operator.
 - §4.3: the environment that a child and a derived session use for credential scope.
 - §4.9: `environments` on VCS credential pools and credential bindings, and the overlap rule.
@@ -1195,6 +1242,7 @@ Each proposal carries the documentation for its own surface. Pages describe beha
 | Page | Change |
 | :-- | :-- |
 | `operator-guide/identity.md` (new) | Owns the identity model, choosing a broker or a customer issuer, the broker contract, broker selection criteria, activating a source and its proofs, claim mapping, the role boundary, setting tenant-scoped roles, including granting `tenant-admin` through `PUT /v1/admin/tenants/{id}/users/{userId}/role` and the bootstrap seed's `roles` list, which closes ADMIAM-I1, and the lifecycle path. It states that a tenant's issuer is a choice to make at onboarding, and that Lenny provides no migration. It includes one worked integration under decision 12. |
+| `operator-guide/label-rules.md` (new) | Label rules: free and governed keys, tenant and environment rules, reserved prefixes, `values`, `allow`, `valueFrom`, and `required` with examples, when rules apply, the limits, the refusal, and how budgets and reports read governed labels. |
 | `operator-guide/scim.md` (new) | Owns the SCIM surface, credentials, subject matching per directory, deactivation, directory groups, what Lenny does when SCIM and tokens disagree, and the conformance status per directory. |
 | `operator-guide/multi-tenancy.md` | **Environments** gains the choice between a tenant and an environment, a section on cross-environment sharing that states the two accepted risks and what user authorization does not cover, and a link to the scoping page. **Multi-Tenant Mode** links to the identity page. |
 | "Tenant configuration" in the [`0127-egress-and-git`](../0127-egress-and-git/change.md#new-chapter-in-the-operator-guide) chapter | Gains environment scoping: the fields, how they combine with tenant settings, the per-slot application of an environment on a pool that answers slot attribution, the refusal rule on a pod with no per-session policy with every refusal code (`ENVIRONMENT_REQUIRED`, `ENVIRONMENT_POLICY_NOT_ENFORCEABLE`, `ENVIRONMENT_NOT_FOUND`, `ENVIRONMENTS_NOT_AVAILABLE`, and `RESOURCE_HAS_DEPENDENTS`), the case `ENVIRONMENT_POLICY_NOT_ENFORCEABLE` also covers on a concurrent pod with slot attribution, an environment that denies a warm-list entry's host, how to read a pool's slot attribution status, that user credential bindings, `lockEgressToHosts`, and a user git identity need a pool whose status records slot attribution and a pod that served no earlier session, and that an environment's `placementRequirements` add to the tenant's and that removing one needs a `justification` and waits the weakening delay. |
@@ -1246,7 +1294,7 @@ Each proposal turns this list into tests with `// spec:` annotations at the tier
 - The address checker covers each excluded range, IPv4-mapped forms, redirects, size caps, and a name that re-resolves at dial.
 - SCIM parsing covers each `PATCH` form, each filter, a refused filter, and boolean spellings in the corpus. The disagreement table is covered row by row.
 - `observedAt` ordering covers older, equal, and newer calls, with an invalidation winning a tie.
-- Lease resolution covers explicit 0 against absent on the request, in `MaxDepthInputs`, and through JSON storage, including `IsZero` with only `MaxDepth` set. A nil stored value refuses delegation. The resolution of 0166 "DP-1" takes the client's value when present and the runtime's default otherwise, with the Helm default used only when neither is, lowers it to each ceiling of the platform, the tenant, the environment, and the runtime present or absent, and a client value above a ceiling does not raise it. A default or ceiling of 0 at a level other than the client is refused at write. A client's `maxChildrenTotal: 0` is stored as given and is not turned into `maxDepth: 0`, the integer keeps 0 as no limit until 0126.S1 lands, and a positive value caps one parent's children. Depth reads `parent.DelegationDepth`, unchanged when the Helm value moves.
+- Lease resolution covers explicit 0 against absent on the request, in `MaxDepthInputs`, and through JSON storage, including `IsZero` with only `MaxDepth` set. A nil stored value refuses delegation. The resolution of 0166 "DP-1" takes the client's value when present and otherwise the first default that is set among the runtime's default lease, the environment's, the tenant's, and the platform's (0166 decision 49), lowers it to each ceiling of the platform, the tenant, the environment, and the runtime present or absent, and a client value above a ceiling does not raise it. A default or ceiling of 0 at a level other than the client is refused at write. A client's `maxChildrenTotal: 0` is stored as given and is not turned into `maxDepth: 0`, the integer keeps 0 as no limit until 0126.S1 lands, and a positive value caps one parent's children. Depth reads `parent.DelegationDepth`, unchanged when the Helm value moves.
 - A delegated child takes the parent's E when the selector admits the runtime. The check covers each of its conditions alone: a session's own lock, a child holding no binding under a lock inherited from its parent, and a derive from such a child, the setting off or suspended, E = ∅, a set `crossed_from_environment`, an absent outbound or inbound entry, T's selector, and list order selecting T. A session with a crossing mark is refused inside T once the setting or either name goes.
 - The crossing formula covers `always(T)`, `denied(T)` with the tenant's entries, no input from the parent, and the `restricted` row. A write with a `*` or wildcard source or target, or an empty selector, is refused. Adding an entry is refused with the setting off or forbidden, and removing one succeeds. Deleting an environment a path names is refused.
 - `ENVIRONMENT_REQUIRED` covers denied and route entries, and `ENVIRONMENT_POLICY_NOT_ENFORCEABLE` covers those, entries that only add access, objects that list E, and objects visible to E alone, and, on a concurrent pool with slot attribution, an environment that denies a warm-list entry's host, with `details` naming the entry (decision 30). `ENVIRONMENT_REQUIRED` gives the same answer for a token with groups and one without, under both `noEnvironmentPolicy` values, and it does not refuse a resume.
@@ -1354,6 +1402,7 @@ No behaviour needs cloud resources for automation. A manual per-release check ru
 
 ### `security`
 
+- A client outside a rule's `allow` or `valueFrom` cannot create a session that carries a governed key or value, a session missing a required key is refused, no client sets a key under a reserved prefix, an environment's rules never admit what the tenant's rules refuse, and a derive cannot carry a label the current rules refuse.
 - The Token Service and the decision service refuse as a cause any Lenny-issued JWT that is not of type `lenny-cause+jwt` with the audience `lenny-cause`, and every other Lenny verifier refuses a gateway cause assertion.
 - A token from the configured issuer with `roles: [platform-admin]` cannot reach any platform-only endpoint on the gateway, and cannot exchange into that authority at `/v1/oauth/token`. A tenant IdP token carrying `platform-forensics` reaches no forensic route, a `role_map` naming it is refused, and a `platform-forensics` row outside the operator tenant is refused at write and ignored by the resolver.
 - A member of an environment with denied entries cannot reach a denied host through the transparent path, derive, delegation, or a runtime route or `PreRoute` interceptor that moves the session to another runtime or pool.

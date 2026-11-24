@@ -1,6 +1,6 @@
 # Client-defined tools
 
-Status: `Draft`, revision 13, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 14, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 > **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the protocol mappings of client tools move to the repositories of the MCP, OpenAI Chat Completions, Open Responses, and Anthropic Messages adapters. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved. The runtime contract, the gateway core, and the REST surface still govern Lenny: "CT-1", "CT-2", "CT-4", "CT-5", "CT-8" to "CT-10", and proposal CT-A apart from its Chat Completions and Responses mappings. The adapter-facing sections carry a banner of their own, which names the parts that move: "CT-3", "CT-6", "CT-7", "Worked example", "Specification changes", "Non-specification changes", "Tests", and "Validation owed" and "Steps" in `steps.md`. Decisions T4, T15, O5, O9, and O10 move with those parts, and every other decision still governs Lenny.
 

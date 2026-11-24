@@ -6,11 +6,11 @@
 - A count of the §8 settings that the reference runtimes of §26 use today, which confirms that the settings "DP-6" moves to the extension have no user in the core. 0166.S3 waits on it.
 - A check, for each reference harness of §26, that it shows its model a child's question with the tools to answer or forward it. 0166.S3 waits on it.
 - A check, for each reference harness of §26, that it refreshes its MCP tool list when the bridge's `client` server changes its tools mid-session. 0122's step that builds the blocking interface waits on it, and 0166.S3's parent tools with it.
-- The open decisions that applying "DP-7" raised in other changes on 2026-11-23 are all settled: O22, O23 (i), and O23 (ii) of 0122, O18 and O19 of 0126, O26 of 0135, D13 and D14 of 0139, and decisions 43 and 44 of 0149. O33 of this change, who may set `maxDepth: 0`, is open, and 0166.S1 waits on it.
+- The open decisions that applying "DP-7" raised in other changes on 2026-11-23 are all settled: O22, O23 (i), and O23 (ii) of 0122, O18 and O19 of 0126, O26 of 0135, D13 and D14 of 0139, and decisions 43 and 44 of 0149. O33 of this change, who may set `maxDepth: 0`, is settled as decisions 50 and 51.
 
 ## Steps
 
-The owner settled every decision of `decisions.md` on 2026-11-22 and 2026-11-23, decisions 1 to 48. Under decision 35 the rules that "DP-7" lists belong to other changes, and they become steps of those changes when the owner turns to them. Each step below depends on those steps where it needs them. 0126 is not cancelled: 0126.S1 is cut back to deciding whether a session holds a grant (decision 39), and 0166.S1 depends on it. 0166.S2 also depends on 0170.S1 of [`0170-budgets`](../0170-budgets/change.md), which adds budget objects.
+The owner settled every decision of `decisions.md` on 2026-11-22 and 2026-11-23, decisions 1 to 52. Under decision 35 the rules that "DP-7" lists belong to other changes, and they become steps of those changes when the owner turns to them. Each step below depends on those steps where it needs them. 0126 is not cancelled: 0126.S1 is cut back to deciding whether a session holds a grant (decision 39), and 0166.S1 depends on it. 0166.S2 also depends on 0170.S1 of [`0170-budgets`](../0170-budgets/change.md), which adds budget objects.
 
 ### 0166.S1 Session grant and parent link
 - status: Planned
@@ -26,7 +26,7 @@ The session grant with its security and resource caveats and the content caveat 
 - lanes: [specification, code, documentation]
 - depends-on: [0166.S1, 0133.S3, 0170.S1]
 
-The carve as 0170's reservation for a child (decision 12), with `session.set_limits` and its raise of a child's age (decision 13), lease extension for the resource caveats, and the parallelism count with its difference from SL-10.
+The carve as 0170's reservation for a child (decision 12), with `session.set_limits` and its raise of a child's age (decision 13), the move of a carve under `session.transfer` and `session.release`, and the refusal of a transfer whose root cannot reserve it (0170 "BG-8"), `gateway.delegation.sessionBudget` with its levels and `SESSION_BUDGET_REQUIRED` (decision 52), lease extension for the resource caveats, and the parallelism count with its difference from SL-10. 0166.S1 lands `session.transfer` and `session.release` with no carve to move, and this step adds the move.
 
 ### 0166.S3 Reference extension and parent controls
 - status: Planned

@@ -150,6 +150,14 @@ It needs 0149.S3 for the session-based gate and child propagation, and 0149.S10 
 
 Its guardrail case depends on [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (0142.S2), whichever lands second adding the case, for `crossEnvironmentSharing: forbid` and the delay. Its lock case depends on [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) (0151.S5), whichever lands second adding the case, because check 2 reads the lock UC-5 adds. Its post-chain evaluation, which selects T, runs at the post-chain point once 0141.S1 lands, as 0149.S1 states.
 
+### 0149.S12 Label rules
+- status: Planned
+- aliases: [TS-10]
+- lanes: [specification, code, documentation]
+- depends-on: [0149.S1, 0149.S9]
+
+The label rules of "Label rules (TS-10)" (decision 45): the tenant's rules and their route, an environment's `labelRules`, `labels.reservedPrefixes`, `values`, `allow`, `valueFrom`, and `required`, the check at a root's creation and at a derive, `403 LABEL_NOT_PERMITTED`, the limits, and the audit events. It needs 0149.S1 for the environment resource and 0149.S9 for the directory groups that `allow` and `valueFrom` read. 0170.S1 depends on its part that tells a governed key from a free one.
+
 ### Notes on the steps
 
 Dependencies are stated in each step's fields and in the other design documents. Steps from different designs can interleave as long as these hold.

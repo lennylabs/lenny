@@ -1,6 +1,6 @@
 # Forensics and evidence preservation
 
-Status: `Draft`, revision 38, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 39, 2026-11-19. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -429,7 +429,7 @@ A security hold is a separate object from the §12.8 `legal_hold` flag. The tena
 
 #### Copy on hold
 
-The tenant's data is copied or marked so that nothing in the tenant's own stores changes. The alternative is an in-place flag like `legal_hold`, which alters checkpoint rotation, counts against `storageQuotaBytes`, and raises `CheckpointStorageHigh`, each of which a tenant can observe (decision 18).
+The tenant's data is copied or marked so that nothing in the tenant's own stores changes. The alternative is an in-place flag like `legal_hold`, which alters checkpoint rotation, counts against the tenant's storage budgets of [`0170-budgets`](../0170-budgets/change.md), and raises `CheckpointStorageHigh`, each of which a tenant can observe (decision 18).
 
 | Class | Mechanism | Retention |
 | :-- | :-- | :-- |
@@ -449,7 +449,7 @@ The tenant's data is copied or marked so that nothing in the tenant's own stores
 
 **The §12.8 ledger.** Security holds stay outside the legal-hold ledger. Step 0(c) and Phase 3.5(c) block on `audit_range` and `workspace_snapshot` entries and return 409s that list holds, so placing security holds there would both block erasure and reveal them. Nothing sets those two types today, so §12.8 and §15.1 remove them, the `ERASURE_BLOCKED_BY_LEGAL_HOLD` and `TENANT_DELETE_BLOCKED_BY_LEGAL_HOLD` text narrows to sessions and artifacts, and the tripwire test on the setter stays as it is. The tenant deletion controller reads `security_holds` directly, in the separate step under "Interaction with erasure and teardown". This resolves the gap the outline named by removing the unused ledger types.
 
-**Tenant visibility.** `GET /v1/admin/legal-holds` excludes these holds for every caller, and `lenny_tenant_legal_hold_active_count` does not count them. Tenant reads of a stream apply the stream's normal retention window, so a held row past that window reads as expired. Held bytes are charged to the platform and excluded from `storageQuotaBytes`. Tenant reads of a quarantined pod's later records are covered under "Records after a quarantine".
+**Tenant visibility.** `GET /v1/admin/legal-holds` excludes these holds for every caller, and `lenny_tenant_legal_hold_active_count` does not count them. Tenant reads of a stream apply the stream's normal retention window, so a held row past that window reads as expired. Held bytes are charged to the platform and excluded from every limit that counts `storage` under 0170, which replaces `storageQuotaBytes` (0170 decision 30). Tenant reads of a quarantined pod's later records are covered under "Records after a quarantine".
 
 #### Interaction with erasure and teardown
 
