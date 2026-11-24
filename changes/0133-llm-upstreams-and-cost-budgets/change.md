@@ -186,21 +186,22 @@ The rest of this section states each part in the design's terms, which "Terms" a
  Runtime (pod)                       Gateway: LLM proxy                                Upstream
  ─────────────                       ──────────────────                                ────────
  POST /llm-proxy/v1/messages  ──>  1. proxy token -> session (SPIFFE check)
-   model: claude-sonnet-5-5         2. format + model -> one upstream of the session's
-   max_tokens: 8000                    list (pool list, else tenant list)
-                                    3. rate card version in force; unpriced ->
+   model: claude-sonnet-5-5         2. PreLLMRequest (may change model, limits)
+   max_tokens: 8000                 3. format + model -> one upstream of the session's
+                                       list (pool list, else tenant list)
+                                    4. rate card version in force; unpriced ->
                                        fallback entry, else refuse
-                                    4. reserve output limit + input estimate in
-                                       session, tree, user, tenant, and global
-                                       scopes (one Redis script)
+                                    5. reserve output limit + input estimate in
+                                       every budget of the session's budget set
+                                       (0170-budgets)
                                          refused in session budget or carve -> §8.6 extension
                                          terminal -> BUDGET_EXHAUSTED, no provider call
-                                    5. PreLLMRequest, inject upstream credential,
+                                    6. inject upstream credential,
                                        strip and set Lenny-* attribution        ──>  Anthropic API,
                                                                                        Bedrock, Vertex,
-                                    6. read usage: input, cacheRead,             <──   OpenAI, Azure,
+                                    7. read usage: input, cacheRead,             <──   OpenAI, Azure,
                                        cacheWrite by lifetime, output                  Gemini API,
-                                    7. PostLLMResponse, settle reservation to          or an LLM gateway
+                                    8. PostLLMResponse, settle reservation to          or an LLM gateway
                                        estimated cost, store input ratio,
                                        write usage record
                  <──  response
@@ -532,6 +533,8 @@ Budgets apply to calls through the proxy alone (OD-15). A call that a runtime se
 **What this design keeps.** The reservation, the input estimate, settlement, the recovery sweep, the bounds, and the extension trigger below apply to every budget of the set. Where they name the session or tree scope, they mean a session budget or a carve.
 
 #### Reservation
+
+**Order.** The `PreLLMRequest` chain runs first, and the proxy resolves the upstream, the rate card, and the reservation from the request the chain returns (decision 7). An interceptor's `MODIFY` that changes the model, the output limit, or the cache directives is therefore priced and reserved as modified, and a model outside the session's list is refused with `LLM_MODEL_NOT_ALLOWED` as if the runtime had asked for it. A call that a budget then refuses has already passed the chain, so its interceptors run, and an external one is called, on calls that a budget refuses.
 
 Before forwarding a call, the proxy computes its reservation **[design]**:
 

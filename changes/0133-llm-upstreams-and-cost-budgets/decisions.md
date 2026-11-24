@@ -67,3 +67,7 @@ Settled by the owner on 2026-11-18 in the words "all ok", after an elaboration; 
 Settled by the owner on 2026-11-23 in [`0170-budgets`](../0170-budgets/decisions.md#decisions):
 
 6. **The credit scopes give way to budget objects (O6 of 0170).** The owner chose option (a) of 0170's O6 on 2026-11-23: "O6: (a)". 0133.S3 builds rate cards, the per-call ceiling, the input estimate, settlement, the recovery sweep, and usage records, and no session, tree, user, tenant, or global counter. 0170.S1 lands the budget set as the only set of budgets the proxy reserves against ("Scopes" under "LU-6"). Open decision 6 stays open, because O11 of 0170 restates it for budget sets and one answer settles both.
+
+Settled by the owner on 2026-11-23, on a finding of the assessment of extensible budgets that 0170 ran:
+
+7. **The reservation follows the `PreLLMRequest` chain.** The finding: the proxy reserved a call's cost before `PreLLMRequest` ran, so an interceptor's `MODIFY` that switched to a more expensive model, or raised the output limit, sent a call that its reservation did not cover. The owner answered on 2026-11-23: "it should run after the interceptor runs". The chain runs first, and the upstream, the rate card, and the reservation are resolved from the request it returns ("Order" under "Reservation" in "LU-6").
