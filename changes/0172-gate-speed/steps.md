@@ -32,7 +32,7 @@ GS-3, with the layout and bound open decision 5 settles. The lanes in `gateRunne
 GS-4. The gate's unit run without `-coverprofile` and `-covermode=atomic`, with `-race` kept, and `run --changed` and `--tier unit` still writing `tests/results/cover.out`, with the unit tests of both. Then "Merge gate" in `TESTING.md` and `results/cover.out` in `tests/README.md`. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S4 The gate's tier and coverage options, and the check before a merge
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0172.S3]
 - closes: []
