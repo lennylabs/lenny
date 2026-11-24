@@ -3,7 +3,7 @@
 ## Validation owed
 
 - **The cost of coverage in the unit tier.** Run the gate's unit tier twice on one commit with every package selected, once with the coverage flags and once without, in the gate image with no other Docker job or test run on the host. Record both durations in the digest of 0172.S3. 0172.S3 waits on it.
-- **The concurrent layout under load.** Run `lenny-test gate --all` three times on one commit with the layout open decision 5 chooses, with no other Docker job on the host, and record each run's wall time, each tier's duration, the peak memory of the Docker Desktop VM (`docker stats` sampled during the run), and any container-start timeout. A container-start timeout that recurs, or a VM memory peak within 10% of its limit, sends the bound back to the owner. 0172.S2 makes the layout the default only after these runs.
+- **The concurrent layout under load.** Run `lenny-test gate --all` once on one commit with the layout decision 5 chooses, with no other Docker job on the host, and record the run's wall time, each tier's duration and test counts, the peak memory of the Docker Desktop VM (`docker stats` sampled during the run), and any container-start timeout. Each tier's test counts match those of a serial run on the same commit. A container-start timeout, or a VM memory peak within 10% of its limit, sends the bound back to the owner. 0172.S2 makes the layout the default after this run, keeps an option that runs the tiers serially, and the gate runs on `main` that follow continue the validation as decision 7 states.
 
 ## Steps
 
