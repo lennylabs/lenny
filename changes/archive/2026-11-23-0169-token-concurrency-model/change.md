@@ -1,14 +1,14 @@
 # A concurrency model of the token rules
 
-Status: `In progress`, revision 3, 2026-11-23.
+Status: `Implemented`, revision 4, 2026-11-23.
 
 ## Problem
 
-Change 0165 (a formal model of the token rules, [`changes/0165-token-rules-model/`](../archive/2026-11-23-0165-token-rules-model/change.md)) checks the token rules of §13.3 (Credential Flow) with an Alloy model in which every operation is one atomic step, and with generated property tests (step 0165.S2, `tests/component/tokenproperties`) that run one operation at a time. The paragraph **Token rule properties.** that 0165 adds to §13.3 states the properties for "every sequence of operations that complete one at a time". Neither check covers two requests whose transactions interleave, and the Token Service runs on several gateway replicas against one shared `issued_tokens` table.
+Change 0165 (a formal model of the token rules, [`changes/0165-token-rules-model/`](../2026-11-23-0165-token-rules-model/change.md)) checks the token rules of §13.3 (Credential Flow) with an Alloy model in which every operation is one atomic step, and with generated property tests (step 0165.S2, `tests/component/tokenproperties`) that run one operation at a time. The paragraph **Token rule properties.** that 0165 adds to §13.3 states the properties for "every sequence of operations that complete one at a time". Neither check covers two requests whose transactions interleave, and the Token Service runs on several gateway replicas against one shared `issued_tokens` table.
 
 The orderings matter in practice. Each request of the Token Service runs one or more Postgres transactions of several statements, and the reviews of the token changes found ordering defects by reading the code:
 
-- [TOKX-I13](../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md): a rotation, a narrowing, or a child mint from a token of a revocation's subtree that commits while the cascade statement runs is outside the statement's snapshot, so the derived token stays live.
+- [TOKX-I13](../../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md): a rotation, a narrowing, or a child mint from a token of a revocation's subtree that commits while the cascade statement runs is outside the statement's snapshot, so the derived token stays live.
 - TOKX-I20 (filed on the branch of 0165.S2): a revocation of the caller that commits between the subtree read and the impersonation step does not stop the step from ending sessions.
 - TOKX-I22 (filed on the branch of 0165.S2, finding F1 of the property tests): a recursive-revocation request whose caller is an impersonation bearer that its own impersonation step revokes then refuses itself in the cascade.
 

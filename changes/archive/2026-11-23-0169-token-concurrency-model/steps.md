@@ -7,14 +7,14 @@ Each configuration of the model runs with the pinned `tla2tools.jar` at the boun
 ## Steps
 
 ### 0169.S1 Concurrency model of the token rules on main
-- status: Building
+- status: Landed
 - lanes: [non-specification]
 - depends-on: [0165.S2]
 
 Adds the TLA+ model under `tests/formal/tokenconcurrency/` (the module, the configuration files, the runner `run.sh`, and a README that maps each process to its code and each property to its rule) and the `formal/` entry of `tests/README.md`, with the variant `Main`: the rules on `main` after change 0167 and step 0165.S2, as "Current state" in `change.md` lists them. It reads the code of each process before writing it, including the revocation cache in `pkg/credential/revocation` and `pkg/auth/authmw`, and records each difference between the code and the text, as 0165 recorded its gaps G1 to G7. It runs the properties C1 to C9 under `Main`, C8 over the nested transactions of rule 1 (c) of **Platform-admin impersonation.**, which `Main` already has, and records the results, and writes each counterexample as a scenario with alice, bob, and carol in acme and globex. A counterexample that an open issue already records (TOKX-I13, TOKX-I20, and TOKX-I22) is recorded against that issue, and any other becomes an open decision of this change; no rule is fixed here. The step depends on 0165.S2, whose **Token rule properties.** the properties refine and whose decision 14 this change amends; 0165.S2 depends on 0167.S1.
 
 ### 0169.S2 The locking design of 0168 as a variant
-- status: Building
+- status: Landed
 - lanes: [non-specification]
 - depends-on: [0169.S1]
 

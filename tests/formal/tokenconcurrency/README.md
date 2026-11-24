@@ -1,6 +1,6 @@
 # Token concurrency model
 
-`TokenConcurrency.tla` is a TLA+ model of the token rules of the Token Service under concurrent requests. Change 0169 (`changes/0169-token-concurrency-model/`) builds it, and its `change.md` states the properties in plain words and records the results.
+`TokenConcurrency.tla` is a TLA+ model of the token rules of the Token Service under concurrent requests. Change 0169 (`changes/archive/2026-11-23-0169-token-concurrency-model/`) builds it, and its `change.md` states the properties in plain words and records the results.
 
 The model is a design check. No tier of `lenny-test` runs it, and no Go test reads it (change 0169, decision 6). The change that edits a rule the model describes reruns it. `tests/formal/tokens/` holds the Alloy model of change 0165, in which every operation is one atomic step; this model checks the orderings in which the statements of several requests interleave.
 
