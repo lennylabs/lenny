@@ -24,7 +24,7 @@ GS-1 and GS-2. The row target form for a package whose own tests read an input, 
 GS-3, with the layout and bound open decision 5 settles. The lanes in `gateRunner.run`, the gate options for the layout and the `-p` of each tier, and the run's wall time in the verdict, with their unit tests on fake tier executors. Then "Merge gate" in `TESTING.md` and the options in `cmd/lenny-test/README.md`. It lands after 0172.S3 so the validation runs measure the unit tier as the gate will run it. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S3 No coverage profile in the gate's unit run
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: []
 - closes: []
