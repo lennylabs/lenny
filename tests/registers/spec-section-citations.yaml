@@ -58,7 +58,7 @@ packages:
     - package: cmd/lenny-tier-promote
       count: 1
     - package: cmd/lenny-token-service
-      count: 86
+      count: 87
     - package: cmd/lenny-webhook
       count: 2
     - package: cmd/openapi-to-mcp
