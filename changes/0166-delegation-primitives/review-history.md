@@ -64,3 +64,6 @@ Reconciles 0166 with the other changes after they took on its "DP-7" rows the sa
 
 - Decisions 50 and 51: "DP-1" ("Resolution", **Zero**) refuses a ceiling of 0 for `maxDepth`, `maxChildrenTotal`, or `maxParallelChildren` and points to 0126's availability levels, keeps `maxDepth: 0` for a client and a parent, and states that a session with no depth left holds no grant. The environment row of the root grant inputs names 0126's environment level as the off switch. DPR-10 and the tests follow.
 
+## Revision 10, 2026-11-23
+
+- Decisions 16 to 18 of [`0170-budgets`](../0170-budgets/decisions.md#decisions): the unit `llmCredits` in place of `credits`, meters separate from units, and budgets that hold named limits. "DP-3" states that `limits.budget` and the budget part of `session.set_limits` name amounts by the limit keys of the parent's session budget, as 0170 "BG-8" states. "Approval" in "DP-1", the scope list, and the 0142 row name SO-5a's `llmCreditsAbove`, which 0142 revision 64 renames from `creditBudgetAbove`. The worked examples write `budget`, `sessionBudgetCeilings`, and a child's `limits.budget` with a `models` limit that counts `llm` in `llmCredits`.

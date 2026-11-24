@@ -1,6 +1,6 @@
 # LLM upstreams and cost budgets
 
-Status: `Draft`, revision 12, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 13, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -89,14 +89,14 @@ The owner settled the direction: keep a thin proxy that meters usage and enforce
 | Rate card | An operator-written price list for one upstream: per model, credits per million tokens of each token class, with multipliers, a discount, an optional fallback entry, and versions. It weights token classes for budget enforcement and computes no real cost. "LU-5" defines it. |
 | Fallback entry | The model entry of a rate-card version that prices a call whose model no other entry matches. Such a call is flagged `priced_as: fallback` in its usage record. "LU-5" defines it. |
 | Rate-card version | One entry of a rate card with an `effectiveFrom` time. Versions are append-only, and a call is priced at the version in force when it started. |
-| Credits | The unitless budget unit. A rate card prices tokens in credits, and every budget is a credit amount. Lenny stores credits as integer micro-credits, one millionth of a credit. |
+| Credits | The unitless measure of a model call's cost. A rate card prices tokens in credits, and a budget limit that counts the `llm` meter counts them in the unit `llmCredits` or converts them to money under `0170-budgets` (its decisions 16 and 17). Lenny stores credits as integer micro-credits, one millionth of a credit. |
 | Estimated cost | The credits a call costs under its rate-card version. It is Lenny's enforcement figure, labelled as an estimate wherever it is reported, and the operator computes real cost from the quantities in the usage record. |
 | Reservation | The credits the proxy holds against every budget scope of a call before forwarding it, computed from the call's output limit and its input estimate. |
 | Input estimate | The proxy's estimate of a call's input tokens before the call runs: the body's text bytes divided by the bytes-per-token constant `k` on a session's first call to an upstream and model, and the text bytes times the session's input ratio on later calls, plus a fixed estimate per image or document block. "LU-6" defines it. |
 | Input ratio | The total input tokens of a session's last settled call to one upstream and model, divided by that call's text bytes. Settlement stores it in the session's Redis budget record, so every gateway replica reads it. |
 | Best-effort enforcement | The budget guarantee of "LU-6": a reservation is admitted only within every scope's limit, a scope can still overshoot by the input estimate's error on the calls in flight, and the next call's reservation in that scope is refused once the limit is passed. |
 | Settlement | The replacement of a reservation with the call's estimated cost once the provider reports usage. |
-| Budget scope | A limit a credit reservation must fit: the per-call ceiling, and each budget object of the call's budget set under `0170-budgets`, a session budget, a carve of 0166 "DP-3", or a shared budget ("LU-6", decision 6). |
+| Budget scope | A limit a credit reservation must fit: the per-call ceiling, and each limit that counts the `llm` meter in a budget object of the call's budget set under `0170-budgets`, a session budget, a carve of 0166 "DP-3", or a shared budget ("LU-6", decision 6). |
 | Requested model and served model | The model the request names, and the model the response names. They differ when an alias or an LLM gateway picks the model. |
 | Usage record | The per-call record of a metered call: identities, upstream, models, token classes, rate-card version, reservation, and estimated cost. "LU-7" defines it. |
 | Forwarded attribution | The identity attributes the proxy sets on each request it forwards to an upstream: tenant, environment, user, session, root session, runtime, runtime revision, pool, and upstream. The upstream's `attribution` settings choose which are sent. "LU-11" defines it. |
@@ -148,7 +148,7 @@ The owner settled the direction: keep a thin proxy that meters usage and enforce
 | CA-7 | [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) | Delegated children and the check at delegation. CR-1 of [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) withdraws CA-7 with connectors. |
 | DA-6 | [`0126-delegation-availability`](../0126-delegation-availability/change.md#da-6-per-hop-narrowing) | Per-hop narrowing through `lease_slice`. |
 | DP-1, DP-3, and decision 12 | [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-3-carved-budget) | DP-1 the session grant and `session.create`, DP-3 the carved budget with `session.set_limits`, and decision 12, under which the carve is a reservation from the budget objects of `0170-budgets`. |
-| Budget objects | [`0170-budgets`](../0170-budgets/change.md) | Budget objects in credits and infrastructure resources, the carve as a reservation from the objects that apply to a parent, and lease extension. 0170 is a draft. |
+| Budget objects | [`0170-budgets`](../0170-budgets/change.md) | Budget objects with named limits over meters such as `llm` in units such as `llmCredits` and money, the carve as a reservation from the objects that apply to a parent, and lease extension. 0170 is a draft. |
 | R3 | [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) | [R3](../0138-rest-only-client-api/change.md#ro-2-rest-additions) the turn resource, whose `usage` the provider adapters read for their client-facing usage. |
 | MD-20 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-20-turn-and-usage-events) | Turn and usage session events. A `usage` event carries `source: gateway` for a call the proxy metered and `source: runtime` for the counts a runtime reports on `llm_request_completed`, and budgets read only the gateway source. |
 
@@ -192,7 +192,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
                                     4. rate card version in force; unpriced ->
                                        fallback entry, else refuse
                                     5. reserve output limit + input estimate in
-                                       every budget of the session's budget set
+                                       every llm limit of the session's budget set
                                        (0170-budgets)
                                          refused in session budget or carve -> §8.6 extension
                                          terminal -> BUDGET_EXHAUSTED, no provider call
@@ -524,7 +524,7 @@ Under decision 6, which settles O6 of [`0170-budgets`](../0170-budgets/decisions
 | Scope | Setting | Kept in |
 | :-- | :-- | :-- |
 | Per call | `quotas.llmCredits.perCall` | Checked against the reservation alone. |
-| Budget set | The budget objects of `0170-budgets` that count credits or money and apply to the calling session: its session budget ("BG-2"), the carves that fund it ("BG-8"), and the shared budgets that match it or that it references ("BG-3") | Redis, under the keys of `0170-budgets` "BG-9". |
+| Budget set | The limits that count the `llm` meter, in `llmCredits` or in money, of the budget objects of `0170-budgets` that apply to the calling session: its session budget ("BG-2"), the carves that fund it ("BG-8"), and the shared budgets that match it or that it references ("BG-3") | Redis, under the keys of `0170-budgets` "BG-9". |
 
 The session, tree, user-window, tenant-window, and global-window scopes of §11.2 do not become credit counters of their own. A session's limit is its session budget, a child's is its carve, a limit per user is a shared budget with `per: user`, a tenant's is a tenant budget, and a platform-wide limit is a platform budget. `maxTokenBudget` and the `maxCreditBudget` that revision 11 put in its place give way to the session budget's `budget` and a carve's `limits.budget` ("BG-2", "BG-8"). Whether `quotas.llmCredits.perUser`, `perTenant`, and `global` remain as inputs that instantiate budgets is O16 of `0170-budgets`.
 
@@ -541,7 +541,7 @@ Before forwarding a call, the proxy computes its reservation **[design]**:
 1. **Output.** The call's output limit (`max_tokens`, `max_completion_tokens`, `max_output_tokens`, or `generationConfig.maxOutputTokens`), else the model entry's `maxOutputTokens`, which every entry carries ("LU-5" **Validation.**). The proxy does not add a limit to the body.
 2. **Input estimate (OD-7).** The estimate of "Input estimate" below.
 3. **Price the reservation.** The input estimate at the highest input-class rate the call can incur: the 1-hour write rate when a `cache_control` asks for `ttl: 1h`, the 5-minute write rate when one asks for the default, the highest write rate of the entry on an OpenAI format, and the input rate otherwise. The output limit at the output rate, the long-context rates when the estimate exceeds the threshold, server tools at `max_uses` or `reserveRequestsPerCall`, and the largest multiplier the card defines for each modifier the request does not fix. The entry is the requested model's, or the version's `fallback` entry when the requested model has none. When the version has neither, the proxy refuses the call with `LLM_MODEL_UNPRICED` before this step reserves anything (OD-5, "LU-5").
-4. **Reserve.** The proxy checks the per-call ceiling and reserves the amount in every budget of the call's budget set that counts credits or money, under the protocol of `0170-budgets` "BG-9". Each budget has its own hash tag, so one script cannot span them under the Redis Cluster topology §12.4 requires at Tier 3. Open decision 6 in `decisions.md`, which O11 of `0170-budgets` restates for budget sets, settles the protocol, and one answer settles both. A reservation is recorded with its expiry, the call's deadline plus a margin, so that the recovery of "Settlement" finds a reservation whose replica died.
+4. **Reserve.** The proxy checks the per-call ceiling and reserves the amount in every limit of the call's budget set that counts the `llm` meter, in `llmCredits` or converted to money, under the protocol of `0170-budgets` "BG-9". Each budget has its own hash tag, so one script cannot span them under the Redis Cluster topology §12.4 requires at Tier 3. Open decision 6 in `decisions.md`, which O11 of `0170-budgets` restates for budget sets, settles the protocol, and one answer settles both. A reservation is recorded with its expiry, the call's deadline plus a margin, so that the recovery of "Settlement" finds a reservation whose replica died.
 5. **Extension.** When the refusing budget is the session budget or a carve, the proxy requests the §8.6 extension for the session, waits up to `proxyExtensionWaitTimeout`, and on `GRANTED` or `PARTIALLY_GRANTED` reserves again. On `CEILING_REACHED`, `REJECTED`, an extension still pending at the deadline, or a refusal by a shared budget, the proxy returns `BUDGET_EXHAUSTED` with the details of `0170-budgets` "BG-6" naming the budget and does not call the upstream. A reservation above `quotas.llmCredits.perCall` is refused with `BUDGET_EXHAUSTED` naming the per-call ceiling, with no extension. A refusal ends the call and leaves the session running (decision 5): each later call is refused in the same way until the budget is raised, and the §8.6 rejection cool-off bounds how often a refused session asks for an extension again.
 
 #### Input estimate

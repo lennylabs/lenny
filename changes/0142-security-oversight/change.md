@@ -1,6 +1,6 @@
 # Security oversight for customers and the operator
 
-Status: `Draft`, revision 63, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 64, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -328,7 +328,7 @@ One record per tenant holds every customer-set security constraint, so one write
   },
   "operatorAccess": { "approval": "required", "emergencyAccess": "allowed" },
   "approvals": {
-    "tools": [{ "match": "session.create", "when": { "targets": ["prod-*"], "creditBudgetAbove": 500000 }, "approver": "security", "showArguments": true }],
+    "tools": [{ "match": "session.create", "when": { "targets": ["prod-*"], "llmCreditsAbove": 500000 }, "approver": "security", "showArguments": true }],
     "parentTools": [{ "match": "*", "approver": "owner", "showArguments": true }],
     "repositoryWrites": [{ "match": "github.com/acme/prod-*", "ttlSeconds": 3600 }],
     "timeoutSeconds": 1800
@@ -665,9 +665,9 @@ These routes sit on the admin surface, so the session surface keeps its existenc
 
 - `targets`: a list of runtime names, each a name or a pattern with a trailing `*`, matched against the child's final runtime.
 - `targetLabels`: a map of runtime labels, matched when the child's final runtime carries every one, as a `DelegationPolicy` selects runtimes by label.
-- `creditBudgetAbove`: a credit amount, matched when the child's carved credit budget exceeds it.
+- `llmCreditsAbove`: an amount in `llmCredits`, matched when a limit of the child's carved budget in `llmCredits` exceeds it ([`0170-budgets`, "BG-8"](../0170-budgets/change.md#bg-8-carves-for-delegated-children)).
 
-The gateway evaluates a `session.create` rule at the post-chain point of [RT-2](../0141-runtime-routing/change.md#post-chain-point), on the final runtime and the resolved carve, because a `PreRoute` interceptor can change the target after the call names one. The same rule also holds a `session.set_limits` call that raises a child's carve above `creditBudgetAbove`, for a child whose runtime `targets` and `targetLabels` cover, so a parent cannot create a child below the amount and raise it afterwards without approval. `when` is refused with `400 VALIDATION_ERROR` naming the field on a rule that matches any other tool. Narrowing `targets`, adding a key to `targetLabels`, or raising `creditBudgetAbove` is a weakening, and removing `when`, widening `targets`, removing a key from `targetLabels`, or lowering `creditBudgetAbove` is a tightening. With `showArguments: true` the approver sees the target, the limits, and the task.
+The gateway evaluates a `session.create` rule at the post-chain point of [RT-2](../0141-runtime-routing/change.md#post-chain-point), on the final runtime and the resolved carve, because a `PreRoute` interceptor can change the target after the call names one. The same rule also holds a `session.set_limits` call that raises a child's carve above `llmCreditsAbove`, for a child whose runtime `targets` and `targetLabels` cover, so a parent cannot create a child below the amount and raise it afterwards without approval. `when` is refused with `400 VALIDATION_ERROR` naming the field on a rule that matches any other tool. Narrowing `targets`, adding a key to `targetLabels`, or raising `llmCreditsAbove` is a weakening, and removing `when`, widening `targets`, removing a key from `targetLabels`, or lowering `llmCreditsAbove` is a tightening. With `showArguments: true` the approver sees the target, the limits, and the task.
 
 **Parent tools (`parentTools`).** A tool a parent offers its child under [`0166-delegation-primitives`, "DP-8"](../0166-delegation-primitives/change.md#dp-8-parity-with-a-client) is not on the `platform` server, so `approvals.tools` does not match it, and its call reaches the parent as a `tool_call` child event rather than through tool dispatch. `approvals.parentTools` holds rules of the same form as `approvals.tools`, `match`, `approver`, and `showArguments`, where `match` names a tool the parent offers or is `*` for every one **[design]**. The gateway holds a matching call before it delivers the event to the parent. `approver: owner` asks the root session's user through the owner's `tool-use/{id}/approve` route, and `approver: security` asks a `security-approver` through the approvals API, as for `approvals.tools`. A denial or a timeout under `approvals.timeoutSeconds` answers the child's call with an error result, and the parent never sees the call. The child's call stays open while it is held, and the hold time of [`0122-client-tools`](../0122-client-tools/change.md) counts from the delivery to the parent. Relaxing or removing a `parentTools` rule is a weakening, and the write of a rule with `approver: security` and no holder of `security-approver` is refused with `422 NO_APPROVER`.
 
@@ -800,7 +800,7 @@ The removal of the annotation has a second reason. cert-manager documents that a
 | `placement.requireNodeSeparation`, `.nodeTenancy`, `.allowSharedPod`, `.allowReusedPod` | The tenant's own placement requirements, which narrow the pools its sessions may use. | Tenant | `security-admin` | Absent | Adding one applies at once, and removing one is a weakening. See [PM-4](../0136-placement/change.md#pm-4-placement-requirements). |
 | `operatorAccess.approval` | Whether impersonation needs the customer's approval. | Tenant | `security-admin` | `off` | Setting `required` with no holder of `security-approver` is refused with `422 NO_APPROVER`. |
 | `operatorAccess.emergencyAccess` | Whether the emergency path exists. | Tenant | `security-admin` | `allowed` | Setting `forbidden` is a tightening. |
-| `approvals.tools` | Platform tools that need approval and who resolves them, with `when` conditions on a child's target runtime and carved credit budget for `session.create`. | Tenant | `security-admin` | Empty | Applies to frames the gateway sees, and to `session.create` at the post-chain point. |
+| `approvals.tools` | Platform tools that need approval and who resolves them, with `when` conditions on a child's target runtime and carved amount in `llmCredits` for `session.create`. | Tenant | `security-admin` | Empty | Applies to frames the gateway sees, and to `session.create` at the post-chain point. |
 | `approvals.parentTools` | Tools a parent offers its child that need approval, by name or `*`, and who resolves them. | Tenant | `security-admin` | Empty | Applies before the call reaches the parent. |
 | `approvals.repositoryWrites` | Repository patterns whose push needs approval. | Tenant | `security-admin` | Empty | |
 | `approvals.timeoutSeconds` | Time before an unanswered approval denies. | Tenant | `security-admin` | 1800 | |
@@ -981,7 +981,7 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 - Permission tables for each role against the matrix, and the custom-role ceiling refusing each security write permission.
 - Resolver output for each combination of claim, user row, security row, role source, `impersonated_by`, and invalidation level or hold of the subject.
 - Rule matching against names on the `platform` server alone, and SO-5a's own refusal of a rule that names a `connector:<id>` server.
-- `when` on a `session.create` rule: `targets` patterns and `targetLabels` against the final runtime, `creditBudgetAbove` against the resolved carve, both members together, a rule without `when`, refusal of `when` on another tool, and the classification of each change to `when` as a tightening or a weakening.
+- `when` on a `session.create` rule: `targets` patterns and `targetLabels` against the final runtime, `llmCreditsAbove` against the resolved carve, both members together, a rule without `when`, refusal of `when` on another tool, and the classification of each change to `when` as a tightening or a weakening.
 - `approvals.parentTools` matching by name and by `*`, routing by `approver`, and the `NO_APPROVER` refusal.
 - The refusal with `400 VALIDATION_ERROR` of a rule that names a reference tool of 0166, such as `start_session`, or a tool name of MD-23, such as `start_child_session`.
 - `delegationLeave` caps a grant's `leave` and `leaveMaxDepth` and never raises a value the other inputs of 0166 give.
@@ -1002,7 +1002,7 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 
 ### `integration`
 
-- A `session.create` rule with `when` holds a child whose final runtime matches `targets` after a `PreRoute` interceptor changed the target, and releases one whose final runtime does not; a `session.set_limits` raise past `creditBudgetAbove` is held, and one below it is not.
+- A `session.create` rule with `when` holds a child whose final runtime matches `targets` after a `PreRoute` interceptor changed the target, and releases one whose final runtime does not; a `session.set_limits` raise past `llmCreditsAbove` is held, and one below it is not.
 - An `approvals.parentTools` rule holds a parent tool call before the parent receives the `tool_call` child event, for `approver: owner` and `approver: security`, with a denial and a timeout each answering the child's call with an error result.
 - A role assignment takes effect on the next request and survives `PUT` and `DELETE` of the user's role.
 - `security-auditor` reads audit, evidence, posture, and subscriptions, is refused session content, and is refused retranslate and republish.

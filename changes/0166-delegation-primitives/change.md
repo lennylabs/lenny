@@ -1,6 +1,6 @@
 # Delegation as session primitives
 
-Status: `Draft`, revision 9, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 10, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -49,7 +49,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 **Out of scope:**
 
 - Agent-to-agent protocols and external agents. 0124 removed them, and this change does not reintroduce them.
-- §8.4's `approval` mode, which is reserved and unimplemented. Approval of a child by a person is SO-5a's of 0142, which gains conditions on the target runtime and on a credit amount (decision 36).
+- §8.4's `approval` mode, which is reserved and unimplemented. Approval of a child by a person is SO-5a's of 0142, which gains conditions on the target runtime and on an amount in `llmCredits` (decision 36).
 - The availability of the platform tools that are unrelated to children, such as `ask_question`. 0126 "DA-7" reviews them.
 - Root-session creation by a client through the public API. It is unchanged.
 
@@ -225,7 +225,7 @@ The numeric caveats are fixed when the grant is created. Lowering a ceiling appl
 
 **Policy authoring.** Delegation policies keep the RBAC of §10.2: a `tenant-admin` creates, edits, and deletes the policies of its own tenant, and a `platform-admin` those of every tenant. A tenant administrator therefore controls which runtimes the sessions of its tenant may start as children, without a platform administrator, and cannot widen what a platform runtime's policy or the platform ceilings allow, because every level intersects.
 
-**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` take `when`, with `targets` or `targetLabels` for the target runtime and `creditBudgetAbove` for the carve, as SO-5a of 0142 states them, and the hold applies at `session.create`, on the final runtime at the post-chain point, and at a `session.set_limits` raise that crosses the amount. The call waits under SO-5a's hold and its timeout, as any held platform call does.
+**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` take `when`, with `targets` or `targetLabels` for the target runtime and `llmCreditsAbove` for the carve's amount in `llmCredits`, as SO-5a of 0142 states them, and the hold applies at `session.create`, on the final runtime at the post-chain point, and at a `session.set_limits` raise that crosses the amount. The call waits under SO-5a's hold and its timeout, as any held platform call does.
 
 **Where the checks run.** The gateway checks the policy cap, the isolation floor, the remaining depth, and the binding and egress subsets on the final runtime and pool, at the post-chain point of 0141 RT-2, so a `PreRoute` interceptor that moves a child cannot move it past them ("DP-7").
 
@@ -291,7 +291,7 @@ A leave carries these rules (decision 33):
 
 ### DP-3 Carved budget
 
-A child's creation reserves its budget from what applies to its parent and returns the unused part when the child ends **[design]**. The budget objects and the mechanics of the reservation are 0170's, and the carve is 0170's reservation for a child (decision 12, "DP-7"). This change keeps DPR-4 and the operations that move a carve.
+A child's creation reserves its budget from what applies to its parent and returns the unused part when the child ends **[design]**. The budget objects and the mechanics of the reservation are 0170's, and the carve is 0170's reservation for a child (decision 12, "DP-7"). `limits.budget` on `session.create` and the budget part of `session.set_limits` name amounts by the limit keys of the parent's session budget, as 0170 "BG-8" states (0170 decisions 16 to 18). This change keeps DPR-4 and the operations that move a carve.
 
 **Moving budget within a tree.** `session.set_limits` moves an amount of any resource caveat between a parent and a live child: a raise draws on the parent's unused amount, and a cut returns the child's unused amount to the parent. A parent that keeps idle helpers open for follow-up work takes their unused budget back this way, and a parent gives a child that needs more than its estimate the difference without restarting it.
 
@@ -365,7 +365,7 @@ The MCP adapter's client-facing tools of 0138 include `send_message` and `close_
 | Environment and sharing paths | 0149 TS-3 | Primitive, as a security caveat (DP-2). TS-3 owns crossing (decision 41). |
 | The cascade when a parent ends, and orphan cleanup | §8.10, 0146 SL-9 | SL-9's, with `onParentEnd` as a caveat and a tree terminate for a `tenant-admin` (DP-2). |
 | Child event delivery and the wait, with its modes | 0135 MD-22, 0146 SL-12 | MD-22's and SL-12's, with `wakeOn` and `events.peek` added (DP-4). |
-| Approval of a child by a person | 0142 SO-5a | SO-5a's, with conditions on the target runtime and a credit amount (decision 36). |
+| Approval of a child by a person | 0142 SO-5a | SO-5a's, with conditions on the target runtime and an amount in `llmCredits` (decision 36). |
 | `contentPolicy.maxInputSize` and `interceptorRef` at `PreDelegation` | §8.3 | Primitive, in the content caveat (decision 45). `PreDelegation` folds into the `PreRoute` chain of RT-2 for `kind: delegate`, so one chain sees every creation (decision 4). |
 | `scanExportedFiles`, `maxExportedFileSize`, and the weakening cooldown on export scanning | §8.3, §8.7 | Primitive, in the content caveat, applied on every transfer path, with 0142's cooldown covering each path (decisions 4 and 45). |
 | `messagingRateLimit` | §8.3 | Primitive, as a resource caveat that counts what MD-9 counts. |
@@ -503,13 +503,13 @@ POST /v1/sessions
   "runtime": "claude-code",
   "labels": { "project": "checkout" },
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 4, "maxParallelChildren": 2 },
-  "budget": { "limits": { "credits": 400000 } }
+  "budget": { "limits": { "models": { "meters": ["llm"], "amount": 400000, "unit": "llmCredits" } } }
 }
 ```
 
 **What happens.**
 
-1. The gateway resolves the root grant inputs of DP-1: availability (`allowDelegation: true` on the runtime), the policy cap (`coding-helpers`, intersected with any tenant or environment policy), and the client's values lowered to any ceiling. It creates the grant with depth 1, 4 children, 2 in parallel, 400,000 credits, the isolation floor `sandboxed`, and the session's environment, and writes `delegation.grant_created`.
+1. The gateway resolves the root grant inputs of DP-1: availability (`allowDelegation: true` on the runtime), the policy cap (`coding-helpers`, intersected with any tenant or environment policy), and the client's values lowered to any ceiling. It creates the grant with depth 1, 4 children, 2 in parallel, a session budget of 400,000 LLM credits, the isolation floor `sandboxed`, and the session's environment, and writes `delegation.grant_created`.
 2. `session_start` carries `availability.delegation: true`. The bridge lists `start_session`, `discover_agents`, and, once a child exists, the tools that manage children and answer their questions.
 3. The model calls `start_session` with `target: "code-reviewer"`, a task, and `runtimeOptions: { "model": "haiku" }`. The bridge exports `review/**` and calls `session.create`. The gateway checks the grant, admits `code-reviewer` because its label matches `coding-helpers`, validates the options against the revision's schema, checks that its pool is at least `sandboxed`, carves the child's budget from the root's, and creates the child with `parentSessionId` set to the root and the root's label `project: checkout`, which no parent changes. The child's remaining depth is 0, so its grant allows no child.
 4. The reviewer is unsure which base branch to compare against and calls `ask_question`. The root's bridge receives a `question` child event and shows it to the model, which answers with `answer_question`. The bridge calls `questions.answer`, and the reviewer continues.
@@ -567,7 +567,7 @@ class Audit:
                     target="dir-auditor",
                     task=[{"type": "text", "inline": f"Audit {d}/ and write report.md."}],
                     files=[{"glob": f"{d}/**", "destPrefix": "/"}],
-                    limits={"maxChildrenTotal": 0, "budget": {"credits": 50000}},
+                    limits={"maxChildrenTotal": 0, "budget": {"models": 50000}},
                     questions="forward",               # this program answers no questions
                     tags={"dir": d},
                     idempotency_key=f"{d}#{attempts[d]}",
@@ -595,7 +595,7 @@ POST /v1/sessions
 {
   "runtime": "repo-audit",
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 60, "maxParallelChildren": 8 },
-  "budget": { "limits": { "credits": 3000000 } }
+  "budget": { "limits": { "models": { "meters": ["llm"], "amount": 3000000, "unit": "llmCredits" } } }
 }
 ```
 
@@ -681,7 +681,7 @@ The wrapper turns off the reference tool set and adds the team's server:
 }
 ```
 
-**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "credits": 1500000 } }`.
+**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "models": { "meters": ["llm"], "amount": 1500000, "unit": "llmCredits" } } }`.
 
 **What happens.**
 
@@ -757,7 +757,7 @@ PUT /v1/admin/tenants/acme/delegation
   "allowByDefault": true,
   "policyRef": "acme-approved",
   "ceilings": { "maxDepth": 3, "maxChildrenTotal": 20, "maxParallelChildren": 5 },
-  "sessionBudgetCeilings": { "credits": 2000000 }
+  "sessionBudgetCeilings": { "models": { "meters": ["llm"], "amount": 2000000, "unit": "llmCredits" } }
 }
 ```
 
@@ -779,7 +779,7 @@ The tenant administrator also creates tenant-derived runtimes of approved helper
 "approvals": {
   "tools": [
     { "match": "session.create", "when": { "targetLabels": { "access": "write" } }, "approver": "security", "showArguments": true },
-    { "match": "session.create", "when": { "creditBudgetAbove": 500000 }, "approver": "security", "showArguments": true }
+    { "match": "session.create", "when": { "llmCreditsAbove": 500000 }, "approver": "security", "showArguments": true }
   ]
 }
 ```

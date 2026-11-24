@@ -183,3 +183,7 @@ Revision 63 takes on the rest of the row for this change in "DP-7" of [`0166-del
 - Decisions 36 and 42: SO-5a states that rules match the operations of 0166 rather than reference tools, refuses a rule naming `start_session` or a tool name of MD-23 with `400 VALIDATION_ERROR`, and the `delegation` row names the SO-5a hold on `session.create` at the post-chain point. A parent tool's call keeps 0122 CT-8's audit without arguments, which this change does not restate.
 - "Terms from other designs and the platform" rewrites the Delegation row for `session.create` and adds the content caveat, the label row for 0166 names the decisions above, and the tests, the specification sections, the documentation, and `steps.md` follow. 0142.S2 and 0142.S6 state which parts land with 0166.S1 or 0166.S3.
 - No requirement of 0166 conflicts with a decision recorded in `decisions.md`, so no decision is raised.
+
+## Revision 64, 2026-11-23
+
+- Decisions 16 to 18 of [`0170-budgets`](../0170-budgets/decisions.md#decisions), which name the unit of model calls `llmCredits` and give budgets named limits. SO-5a's condition `creditBudgetAbove` becomes `llmCreditsAbove`, matched when a limit of the child's carved budget in `llmCredits` exceeds the amount, in the record example, the condition list, the `approvals.tools` row, and the tests. The entry of revision 62 keeps the name it was written with.
