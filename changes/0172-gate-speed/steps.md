@@ -8,7 +8,7 @@
 ## Steps
 
 ### 0172.S1 Selection width and the verdict's selection record
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: []
 - closes: []
