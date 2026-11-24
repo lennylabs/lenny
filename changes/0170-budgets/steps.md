@@ -34,7 +34,7 @@ It depends on 0133.S3 for the credit reservation, settlement, and recovery sweep
 - lanes: [specification, code, documentation]
 - depends-on: [0170.S1]
 
-`budgets.currency`; the platform price list with its versions and validation, and a tenant's credit conversions with their order of application (decision 7); the `money` unit, with conversion at the version in force, rounding per charge, and the reservation of money equivalents for `llm` charges; the estimate label on every reported money figure; and the billing-event outcome of O15. The money equivalents of compute and storage charges land with 0170.S3 and 0170.S4, whichever of each pair merges second.
+`budgets.currency`; the platform price list with its versions and validation, and a tenant's credit conversions with their order of application (decision 7); the `money` unit, with conversion at the version in force, rounding per charge, and the reservation of money equivalents for `llm` charges; the estimate label on every reported money figure; and no money on billing events (decision 27). The money equivalents of compute and storage charges land with 0170.S3 and 0170.S4, whichever of each pair merges second.
 
 ### 0170.S3 Compute budgets
 - status: Planned

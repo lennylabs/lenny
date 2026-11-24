@@ -236,7 +236,6 @@ A budget is a record with these fields **[design]**:
 | `thresholds` | Fractions of each limit's amount, default `[0.8, 1.0]`, at most `budgets.maxThresholds` (default 8). A limit may set its own. |
 | `onExhausted` | The actions of "BG-6" for new work and for running sessions. A limit may set its own. |
 | `mode` | `enforce`, the default, or `observe`. |
-| `notify` | Optional webhook targets for the notices of "BG-6" (O14). |
 | `startsAt`, `endsAt` | Optional. A budget is active between them and in `enforce` or `observe` mode, and `disabled: true` makes it inactive without deleting it. |
 | `resourceVersion` | The version a `PUT` names in `If-Match`. |
 
@@ -416,7 +415,7 @@ llm:
 - **Conversion.** Each charge is converted at the version in force at its time: a model call at its start, a compute tick at its start, and a storage accrual interval at its end. Each conversion multiplies in integers and rounds up once per charge, so no drift accumulates, and the version used is recorded with the charge.
 - **Several meters.** A limit in money keeps one counter in money for every meter it counts. A model call and a compute tick each reserve their money equivalent in every limit in money of the session budgets that hold them, and every limit in money of a shared budget that counts their meter receives the settled charge converted at the same version. Stored data reaches a limit in money through the accrual of byte-hours, which reserves nothing. A refusal names the budget, the limit, and its unit, so a caller sees that a limit in money refused a compute tick.
 - **Which conversion applies.** A limit in money of a platform budget converts every charge at the platform price list. A limit in money of a tenant, principal, or session budget converts an `llm` charge at the first of these that prices the call's upstream: the tenant's `byUpstream` entry, the tenant's `perMillionCredits`, the platform's `byUpstream` entry, and the platform's `perMillionCredits`. It converts every other charge at the platform price list. One charge can therefore count a different amount of money in a tenant budget than in a platform budget, and each budget records the version it used.
-- **Estimates.** Every money figure Lenny reports carries `estimated: true` and the price-list versions used. Lenny records quantities on billing events, as 0121 states, and whether money appears on them is O15.
+- **Estimates.** Every money figure Lenny reports carries `estimated: true` and the price-list versions used. Lenny records quantities on billing events, as 0121 states, and no billing event carries money (decision 27).
 
 ### BG-6 Enforcement
 
@@ -439,7 +438,7 @@ The table states when a session budget reserves and settles. A shared budget rec
 
 **Admission [design].** A session creation, a resume, and a child's creation are refused with `429 BUDGET_EXHAUSTED` when the replica's cached state shows a limit of an `enforce` shared budget of the new session's set as exhausted and the limit counts a meter the session would charge, or when the first compute tick does not fit the session budget or the carve. Concurrency stays under §11.1.
 
-**Thresholds [design].** When a charge carries a limit past a threshold in a partition for the first time in a period, the gateway writes `budget.threshold_crossed` with the budget, the limit's key, the partition, the threshold, the unit, the consumption, and the amount. A session budget's crossing is detected by the settlement script, and a shared budget's by the flush script that carries the counter past it, so each crossing is reported once per threshold per period. Where the notice goes beyond the audit log, such as a billing event, the budget's webhook targets, and the sessions it binds, is O14.
+**Thresholds [design].** When a charge carries a limit past a threshold in a partition for the first time in a period, the gateway writes `budget.threshold_crossed` with the budget, the limit's key, the partition, the threshold, the unit, the consumption, and the amount. A session budget's crossing is detected by the settlement script, and a shared budget's by the flush script that carries the counter past it, so each crossing is reported once per threshold per period. **Notices [design].** Each budget notice is an audit event and an event on the operational event stream of [§25.5](../../spec/25_agent-operability.md#255-operational-event-stream): `dev.lenny.budget_threshold_crossed`, `dev.lenny.budget_exhausted`, and `dev.lenny.budget_period_closed`, each carrying the budget's scope and name, the limit's key, the partition, the period's bounds, the consumption, and the amount. A subscriber receives them over the stream's server-sent events, polling, or webhook delivery, with its tenant filter, so a `tenant-admin` receives only its own tenant's budget events (decision 26). A budget carries no webhook targets of its own. When a session's own charge carries a limit of its session budget past a threshold, the session also receives a `budget_notice` event, so its client or its runtime can act on it. A shared budget sends no event to the sessions it binds.
 
 **Exhaustion [design].** A limit of a session budget is exhausted when its consumption plus its reservations reach its amount. A limit of a shared budget is exhausted in a period when its flushed consumption reaches its amount, and each replica learns of it at its next flush. Exhaustion stops the work of the limit's meters alone. `onExhausted`, on the budget or on the limit, states the action for new work and the action for running sessions:
 
@@ -448,7 +447,7 @@ The table states when a session budget reserves and settles. A shared budget rec
 | `onExhausted.new` | `refuse`: refuse each new reservation of the limit's meters, which refuses new sessions, resumes, children, model calls, and writes in the budget's subjects, as each counts the meter. | `refuse` |
 | `onExhausted.running` | `continue`: a running session keeps its pod and is refused at its next model call or write. `release`: at its next refused compute tick, the session's open turn is cut and it becomes `dormant` under SL-6 of 0146, which checkpoints its workspace and releases its pod; a session whose `checkpointPolicy` is `sealOnly` or `none` cannot become `dormant` and expires. `end`: the session expires with the reason `budget_exhausted`. | `release` for a limit that counts `compute`, `continue` otherwise (decision 19) |
 
-A limit that counts `storage` never deletes data (BGR-8). A checkpoint whose chunk grant such a limit refuses aborts with `BUDGET_EXHAUSTED`, as a refusal by the tenant's storage quota aborts it today, and the session keeps its previous checkpoint (decision 19). The checkpoint that `release` takes is the exception: it is admitted past an exhausted limit that counts `storage`, so the session's work since its last checkpoint survives the release of its pod (decision 25). The overshoot is one checkpoint of the session's workspace, which the size limits of the pod's volumes bound. O25 asks whether every checkpoint that makes a session `dormant` takes the same exception.
+A limit that counts `storage` never deletes data (BGR-8). A checkpoint whose chunk grant such a limit refuses aborts with `BUDGET_EXHAUSTED`, as a refusal by the tenant's storage quota aborts it today, and the session keeps its previous checkpoint (decision 19). The checkpoint that `release` takes is the exception: it is admitted past an exhausted limit that counts `storage`, so the session's work since its last checkpoint survives the release of its pod (decision 25). The overshoot is one checkpoint of the session's workspace, which the size limits of the pod's volumes bound. The same exception applies to every checkpoint that makes a session `dormant`, including the one that SL-6 of 0146 takes when a session's idle timer fires (decision 28).
 
 **Lease extension [design].** §8.6 stays for session budgets and carves, with `additional` naming amounts by limit key in place of `additionalTokenBudget`. When a limit of a session budget or a carve refuses a model call's reservation or a compute tick, the gateway requests an extension under §8.6's approval modes, ceilings, and layering before it applies the refusal. A granted extension of a carve reserves the added amount in the parent's session budget as `session.set_limits` does ("BG-8"). A shared budget has no extension: a refusal by a shared budget is final until an administrator raises or adjusts the limit, resets the budget, or its period ends (decision 20).
 
@@ -619,8 +618,7 @@ POST /v1/admin/budgets
   "period": { "schedule": "calendar", "calendar": { "every": "month", "dayOfMonth": 1, "at": "00:00" },
               "timeZone": "Europe/Madrid" },
   "thresholds": [0.8, 1.0],
-  "onExhausted": { "new": "refuse", "running": "release" },
-  "notify": [{ "url": "https://alerts.acme.com/lenny-budgets" }]
+  "onExhausted": { "new": "refuse", "running": "release" }
 }
 ```
 
@@ -630,7 +628,7 @@ POST /v1/admin/budgets
 
 1. Each of `bob`'s sessions has `tenant/payments-monthly` in its budget set, because his groups at creation include `payments-eng`.
 2. `payments-monthly` is a shared budget, so it is counted afterwards ("BG-6"). Each model call's settled cost reaches `models`, and the same amount converted at 2.00 EUR per million credits reaches `total`, through each replica's flush every 5 seconds. A session's pod time and stored data reach `total` alone. A session on a `medium` pod with one slot in a `sandboxed` pool spends 60 seconds times 1.5 times 1.2, which is 108 compute units, or 0.0036 EUR, in each tick. A checkpoint pack adds its bytes to the budget's bytes held, and the accrual adds byte-seconds every 5 minutes, converted at 0.025 EUR per GiB-month.
-3. At 4,000 EUR, `budget.threshold_crossed` records the 0.8 threshold of `total` and the notice reaches `alerts.acme.com`.
+3. At 4,000 EUR, `budget.threshold_crossed` records the 0.8 threshold of `total`, and `dev.lenny.budget_threshold_crossed` reaches `alerts.acme.com` through the webhook subscription that `alice` holds on the operational event stream with her tenant's filter.
 4. Had `models` run out first, model calls would be refused while pods kept running. At 5,000 EUR in `total`, the flush that carries the counter past the amount marks `total` exhausted, and each replica learns it at its next flush, so the team's spend can pass 5,000 EUR by about 5 seconds of its spending plus the calls in flight. New sessions of the group are refused with `429 BUDGET_EXHAUSTED` and `details.resetsAt` of `2026-12-01T00:00:00+01:00`. Each running session's next compute tick is refused, its turn is cut, and it becomes `dormant` with its workspace checkpointed. Stored data stays.
 5. At 00:00 on 1 December in Madrid, 23:00 UTC on 30 November, the period closes. `budget_periods` records the November consumption of each limit by meter, and `dormant` sessions resume when their users send a message.
 
@@ -783,7 +781,7 @@ Each page is named by its section heading and its page code, and an edit lands o
 
 - [§11.2 Budgets and Quotas](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) and the page BUDGET: budget objects, session budgets, matching, meters, enforcement, resets, counters, failure, and precision. The budget rows of the table, **Budget inheritance:**, **Hierarchical Quota Model:** for budgets, **Storage quota enforcement mechanism.**, **Quota Update Timing:**, **Crash Recovery for Quota Counters:**, and **Maximum Overshoot Formula:** are rewritten, and the quota rows stay on the page QUOTA.
 - The page RATE gains the price list beside 0133's rate cards.
-- [§11.2.1 Billing Event Stream](../../spec/11_policy-and-controls.md#1121-billing-event-stream) and the page BILLEV: the estimate label of money figures, and what O15 settles.
+- [§11.2.1 Billing Event Stream](../../spec/11_policy-and-controls.md#1121-billing-event-stream) and the page BILLEV: the estimate label of money figures, and the statement that no billing event carries money (decision 27).
 - [§11.7 Audit Logging](../../spec/11_policy-and-controls.md#117-audit-logging) and the catalog CATEVENT: the events of "BG-10".
 - [§8.3 Delegation Policy and Lease](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease), **Budget Reservation Model:**, and the page LEASE: the carve over budget objects, with 0166.
 - [§8.6 Lease Extension](../../spec/08_recursive-delegation.md#86-lease-extension) and the page LEASEXT: extension of session budgets and carves by limit key.
