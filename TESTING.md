@@ -545,6 +545,8 @@ A `FAIL` or `INCONCLUSIVE` verdict stays as it is in each case.
 
 The first run builds the image and fills the caches, which takes several minutes. Later runs reuse both.
 
+**`lenny-test run` in the gate container.** `lenny-test run --container` runs a `run` selection inside the gate image, with the setup the gate gives its container: the worktree and the main checkout's git directory mounted at their host paths, the fixture directories, the module and build cache volumes, the host Docker socket and network namespace, and the worktree owner's user. Inside the container, the owner's user builds `lenny-test` from the working tree and runs `lenny-test run` with the same arguments, without `--container`. `lenny-test run --since main --container` therefore runs the static, unit, component, and contract tiers that the branch reaches in the environment the gate uses, which is the developer loop on a macOS host: there the `-race` builds of the unit tier can fail to link against the SDK, a mismatch between the Go toolchain and the SDK outside the repository. The run reads uncommitted changes as a `run` on the host does, writes its usual verdict to `tests/results/latest.json`, and yields no merge verdict. It does not export the commit to build the harness, fill golangci-lint's cache, or mount that cache read-only, as the gate does. A `--verdict-file` path outside the worktree is not mounted in the container. `go vet ./...` passes on a macOS host.
+
 ---
 
 ## 7. Verdict format and machine-readable output
