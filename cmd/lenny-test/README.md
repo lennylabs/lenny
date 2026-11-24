@@ -43,6 +43,7 @@ lenny-test --changed --dry-run
 lenny-test --since main --dry-run                   # branch diff from its merge base; static, unit, component, and contract
 lenny-test --since main --tier unit --dry-run       # the same diff, unit tier only
 lenny-test --since main --gate merge --dry-run      # the same diff within the merge gate's tiers
+lenny-test run --since main --container             # the same selection inside the gate image, with the gate's container setup (TESTING.md "lenny-test run in the gate container")
 lenny-test --since A...B --dry-run                   # any explicit range
 lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotations cite them
 
@@ -100,6 +101,7 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `main.go` | Entry point; dispatches subcommands |
 | `cmd_run.go` | Default run command: parses selectors, resolves into tier plan, executes |
 | `cmd_gate.go` | `gate` subcommand: builds the gate image from `tests/gate/Dockerfile`, runs the merge gate in it, and writes `tests/results/gate-<run>.json` |
+| `run_container.go` | `run --container`: the `run` selection inside the gate image, with the gate's container setup and the worktree owner's user |
 | `gate_lanes.go` | The gate's layouts (`--layout unit-alone` or `serial`): the phases and lanes its tiers run in, and the `go test -p` of a tier that runs beside another lane (`--go-test-p`) |
 | `gate_gocache.go` | The size cap of the gate's build cache volume `lenny-gate-gocache`: measured with `du -sk` before the gate container starts and emptied with `go clean -cache` when it holds more than `--gocache-cap-gb` (default 30 GB, `LENNY_GATE_GOCACHE_CAP_GB`, 0 turns the check off) and no running container has it mounted |
 | `cmd_validate.go` | `validate` and `validate-diagnosis` subcommands |

@@ -52,6 +52,7 @@ func runRun(args []string) int {
 	noInfraFlag := fs.Bool("no-infra", false, "skip infrastructure provisioning")
 	updateGoldenFlag := fs.Bool("update-golden", false, "rewrite golden files from test output (sets GOLDEN_UPDATE=1)")
 	updateBaselineFlag := fs.Bool("update-baseline", false, "rewrite load baselines from test output (sets LENNY_UPDATE_BASELINE=1)")
+	containerFlag := fs.Bool("container", false, "run the selection inside the gate image with the gate's container setup (the Docker socket, the worktree owner's user, and the gate's cache volumes); the run writes its usual verdict, which is not a merge verdict")
 
 	if err := fs.Parse(args); err != nil {
 		if errors.Is(err, flag.ErrHelp) {
@@ -98,6 +99,11 @@ func runRun(args []string) int {
 		fmt.Fprintln(os.Stderr, "lenny-test: no selector provided. Use --group, --tier, --gate, --changed, --spec, or --pkg.")
 		fmt.Fprintln(os.Stderr, "Run `lenny-test --help` for usage.")
 		return 2
+	}
+	if *containerFlag {
+		// The flags are checked on the host before the image is built or
+		// started; the run in the container resolves the selection.
+		return runInContainerFn(repoRoot(), args)
 	}
 
 	resolved, err := sel.resolve()

@@ -111,6 +111,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 ## How to run
 
 - `lenny-test run --changed` runs the static, unit, component, and contract tiers that your diff reaches, which start no compose stack and no cluster; start here. `--tier <name>[,<name>...]` replaces that set with the tiers it names, such as `--tier static,unit,component,contract,integration` after `lenny-test infra up --profile compose`, and `--gate merge` runs every merge-gate tier the diff reaches.
+- `lenny-test run --container` runs the same selection inside the gate image, with the gate's container setup: the Docker socket, the worktree owner's user, and the gate's cache volumes. Use `lenny-test run --since main --container` on a macOS host, where `-race` builds can fail to link against the SDK. The run writes its usual verdict, which is not a merge verdict.
 <!-- SUSPENDED for the v1 program (owner's decision of 2026-11-23, while the owner is the only contributor). Restore the text in this comment, and delete the v1 text that follows it, when the v1 program completes or when a collaborator joins, whichever comes first. The v1 program record (changes/programs/v1.md, "Decisions") lists every suspended block.
 
 - `lenny-test gate merge` (or `lenny-test gate`) runs the merge gate on the committed head in the gate container and writes its verdict. Run it before reporting a step done and before a merge.

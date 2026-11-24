@@ -458,32 +458,65 @@ func gateEnvironment(root, marker string, getenv func(string) string) (string, e
 // cache volume under capGB gigabytes (capGateGoCache), and runs the gate
 // inside a container of the image, returning the container's exit code.
 func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool, capGB int) int {
+	return runInGateContainer(root, gateContainerRun{
+		label:    "lenny-test gate",
+		passArgs: passArgs,
+		hint:     "run `lenny-test gate --here` on a Linux host with the gate's toolchain",
+	}, rebuild, withSocket, capGB)
+}
+
+// gateContainerRun is what one gate-image container runs: the script and
+// its $0 (gateContainerScript when script is empty), the arguments the
+// script receives, and the label its host-side messages carry.
+type gateContainerRun struct {
+	label    string
+	script   string
+	name     string
+	passArgs []string
+	// hint is what the "docker not on PATH" message suggests instead.
+	hint string
+	// tmpPrefix names the shared fixture directory (hostTmpDir); empty
+	// means the gate's, gateTmpPrefix.
+	tmpPrefix string
+	// volumes are extra `-v` mounts for the container.
+	volumes []string
+}
+
+// runInGateContainer builds or reuses the gate image, caps the build cache
+// volume, and runs c in a container with the gate's setup
+// (gateDockerRunArgs), returning the container's exit code. The gate and
+// `lenny-test run --container` share it.
+func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket bool, capGB int) int {
 	if _, err := exec.LookPath("docker"); err != nil {
-		fmt.Fprintln(os.Stderr, "lenny-test gate: docker not on PATH; install Docker, or run `lenny-test gate --here` on a Linux host with the gate's toolchain")
+		fmt.Fprintln(os.Stderr, c.label+": docker not on PATH; install Docker, or "+c.hint)
 		return 2
 	}
 	dockerfile, err := os.ReadFile(filepath.Join(root, gateDockerfile))
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: read %s: %v\n", gateDockerfile, err)
+		fmt.Fprintf(os.Stderr, "%s: read %s: %v\n", c.label, gateDockerfile, err)
 		return 2
 	}
 	image := gateImageTag(dockerfile)
 	store, err := defaultGateImageStore()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
 	id, err := ensureGateImage(root, image, rebuild, store)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
-	tmp, err := gateHostTmpDir(root)
+	prefix := c.tmpPrefix
+	if prefix == "" {
+		prefix = gateTmpPrefix
+	}
+	tmp, err := hostTmpDir(prefix, root)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
-	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: passArgs}
+	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: c.passArgs, script: c.script, scriptName: c.name, volumes: c.volumes}
 	ctx, cancel := context.WithTimeout(context.Background(), gateGoCacheTimeout)
 	capGateGoCache(ctx, execGateCommand, h.imageRef(), capGB, os.Stderr)
 	cancel()
@@ -491,7 +524,7 @@ func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool
 	if common, err := gitCommonDir(root); err == nil {
 		h.gitCommonDir = common
 	} else {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: warning: locate the git directory: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: warning: locate the git directory: %v\n", c.label, err)
 	}
 	if withSocket {
 		h.dockerSocket = hostDockerSocket()
@@ -502,7 +535,7 @@ func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool
 		return exitErr.ExitCode()
 	}
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "lenny-test gate: run the gate container: %v\n", err)
+		fmt.Fprintf(os.Stderr, "%s: run the gate container: %v\n", c.label, err)
 		return 2
 	}
 	return 0
@@ -596,10 +629,18 @@ func (s gateImageStore) save(tag, id string) error {
 // other checks create and remove fixtures, and would read them
 // half-written.
 func gateHostTmpDir(root string) (string, error) {
+	return hostTmpDir(gateTmpPrefix, root)
+}
+
+// hostTmpDir returns the shared fixture directory of a worktree for one
+// kind of container: prefix and a digest of root under gateTmpParent. The
+// gate and `run --container` use different prefixes, so each empties
+// only its own directory when it starts.
+func hostTmpDir(prefix, root string) (string, error) {
 	sum := sha256.Sum256([]byte(root))
-	tmp := filepath.Join(gateTmpParent, gateTmpPrefix+hex.EncodeToString(sum[:])[:8])
+	tmp := filepath.Join(gateTmpParent, prefix+hex.EncodeToString(sum[:])[:8])
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return "", fmt.Errorf("create the gate's shared fixture directory: %w", err)
+		return "", fmt.Errorf("create the shared fixture directory: %w", err)
 	}
 	return tmp, nil
 }
@@ -644,6 +685,11 @@ type gateHost struct {
 	// user, and as root when uid is 0.
 	uid, gid int
 	passArgs []string
+	// script and scriptName are the container's command and its $0;
+	// an empty script runs gateContainerScript as lenny-test-gate.
+	script, scriptName string
+	// volumes are extra `-v` mounts, in docker's source:target form.
+	volumes []string
 }
 
 // gateDockerRunArgs is the argv of `docker run` for one gate run.
@@ -745,7 +791,14 @@ func gateDockerRunArgs(h gateHost) []string {
 			"-e", "TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1",
 		)
 	}
-	args = append(args, h.imageRef(), "sh", "-c", gateContainerScript, "lenny-test-gate")
+	for _, vol := range h.volumes {
+		args = append(args, "-v", vol)
+	}
+	script, name := gateContainerScript, "lenny-test-gate"
+	if h.script != "" {
+		script, name = h.script, h.scriptName
+	}
+	args = append(args, h.imageRef(), "sh", "-c", script, name)
 	return append(args, h.passArgs...)
 }
 
@@ -861,7 +914,20 @@ if [ "$uid" = 0 ]; then
 	lock_lint_cache
 	exec sh -c "$run" lenny-test-gate "$@"
 fi
-getent group "$gid" >/dev/null || groupadd --gid "$gid" gate
+` + gateUserSetup + `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$build"
+install_harness
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$fill" || fill_failed
+lock_lint_cache
+exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
+
+// gateUserSetup is the part of a gate-image container's script that
+// creates the worktree owner's user, with the group that owns the Docker
+// socket as a supplementary group, gives it the fixture root and the
+// cache directories, and exports its HOME and USER. It reads uid and gid,
+// which the script sets from LENNY_GATE_UID and LENNY_GATE_GID, and leaves
+// groups set for setpriv. gateContainerScript and runContainerScript run
+// it before they drop to the user.
+const gateUserSetup = `getent group "$gid" >/dev/null || groupadd --gid "$gid" gate
 getent passwd "$uid" >/dev/null || useradd --uid "$uid" --gid "$gid" --no-create-home --home-dir /home/gate --shell /bin/sh gate
 mkdir -p /home/gate
 chown "$uid:$gid" /home/gate
@@ -871,11 +937,7 @@ for d in "$LENNY_TEST_TMPDIR" /go/pkg/mod "$GOCACHE" "$GOLANGCI_LINT_CACHE" "$GO
 	if [ "$(stat -c %u "$d")" != "$uid" ]; then chown -R "$uid:$gid" "$d"; fi
 done
 export HOME=/home/gate USER="$(getent passwd "$uid" | cut -d: -f1)"
-setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$build"
-install_harness
-setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$fill" || fill_failed
-lock_lint_cache
-exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
+`
 
 // gateSummaryNotes returns the lines of a tier's detail that the summary
 // prints whatever the tier's status: each golangci-lint register raise

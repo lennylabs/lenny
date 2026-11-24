@@ -40,9 +40,17 @@ GS-4. The gate's unit run without `-coverprofile` and `-covermode=atomic`, with 
 Decisions 8 and 9. `--tier` and `--cover` on `lenny-test gate`, their record in the verdict and the printed summary, and their unit tests: a restricted run keeps the diff selection within the named tiers, an unknown or non-gate tier is refused, and `--cover` writes the profile that `lenny-test coverage --diff` reads. Then the check before a merge of decision 8 in "v1 merge policy" of `.claude/rules/git-workflow.md`, rule 1 and item 3 of "How to apply when editing" in `.claude/rules/test-coverage.md`, decision 13 of `changes/programs/v1.md`, the v1 paragraph of "Building" in `.claude/skills/build/SKILL.md`, and "Merge gate" in `TESTING.md` and `cmd/lenny-test/README.md`. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S5 `lenny-test run` in the gate container
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0172.S4]
 - closes: []
 
 Decision 10. `--container` on `lenny-test run`, reusing the gate's container setup, with unit tests on the arguments it builds, and the repository fix for the `go vet` failure on macOS hosts. Then the developer loop in `.claude/rules/test-coverage.md` ("How to run"), `TESTING.md`, and `cmd/lenny-test/README.md`. It depends on 0172.S4 because both edit the gate's container setup and the same pages. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
+
+### 0172.S6 The static tier reads a snapshot
+- status: Planned
+- lanes: [code, documentation]
+- depends-on: [0172.S2]
+- closes: []
+
+Decision 14. The gate resolves `HEAD` once and passes the commit to the secret scan and the static tier's git reads, and the static tier's checks that read the working tree run on an export of that commit that the gate user cannot write, so a test in a concurrent lane cannot change what the static tier reads. Then "Merge gate" in `TESTING.md`. It is built after 0172.S1 to 0172.S5 merge. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
