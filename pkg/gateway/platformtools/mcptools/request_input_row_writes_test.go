@@ -171,6 +171,22 @@ func (r *inputRig) statusChanges() []string {
 	return out
 }
 
+// waitEvents polls the session's event history until it holds at least n
+// events or two seconds pass. waitPending returns once the wait is
+// registered, and the entry write and its status_change and
+// elicitation_request publishes follow the registration on the handler's
+// goroutine, so a test that asserts on those events waits for them first.
+func (r *inputRig) waitEvents(t *testing.T, n int) {
+	t.Helper()
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(r.eventTypes()) >= n {
+			return
+		}
+		time.Sleep(time.Millisecond)
+	}
+}
+
 // assertTenantFrozen pins that the status_change was published under the
 // row's tenant: the bus refuses a subscription for another tenant.
 func (r *inputRig) assertTenantFrozen(t *testing.T) {
@@ -204,6 +220,7 @@ func TestRequestInputEntryWriteOnRunningRow_spec_7_2(t *testing.T) {
 	defer cancel()
 	done := r.start(ctx)
 	req := waitPending(t, r.reg, rowSessionID)
+	r.waitEvents(t, 2)
 	row := r.row(t)
 	pend := r.reg.PendingDetailsForSession(rowSessionID)
 	if row.State != session.StateInputRequired || len(pend) != 1 || row.InputWaitID != pend[0].WaitID || row.InputWaitID == "" {
