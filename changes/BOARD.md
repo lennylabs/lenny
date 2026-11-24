@@ -10,7 +10,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | --: |
 | Ready | 7 |
 | Waiting on decisions | 32 |
-| Blocked | 150 |
+| Blocked | 152 |
 | Landed | 14 |
 | Cancelled | 1 |
 
@@ -241,6 +241,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
 | [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Blocked | 0172.S3 |
+| [0172.S4](0172-gate-speed/steps.md#0172s4-the-gates-tier-and-coverage-options-and-the-check-before-a-merge) | The gate's tier and coverage options, and the check before a merge | Blocked | 0172.S3 |
+| [0172.S5](0172-gate-speed/steps.md#0172s5-lenny-test-run-in-the-gate-container) | `lenny-test run` in the gate container | Blocked | 0172.S4 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
@@ -287,4 +289,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `Decided` | 0 of 1 | 0 |
-| [0172](0172-gate-speed/change.md) | Merge gate wall time | `Decided` | 0 of 3 | 0 |
+| [0172](0172-gate-speed/change.md) | Merge gate wall time | `Decided` | 0 of 5 | 0 |
