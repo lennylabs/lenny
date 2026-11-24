@@ -10,9 +10,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | --: |
 | Ready | 1 |
 | Waiting on decisions | 35 |
-| Blocked | 159 |
+| Blocked | 158 |
 | Landed | 16 |
-| Cancelled | 1 |
+| Cancelled | 2 |
 
 ## Program v1
 
@@ -246,11 +246,11 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S2](0170-budgets/steps.md#0170s2-price-lists-and-limits-in-money) | Price lists and limits in money | Blocked | 0170.S1 |
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4 |
-| [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Blocked | 0170.S2, 0121.S3, 0121.S6, 0121.S7 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
 | [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
+| [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Cancelled |  |
 
 ## Changes
 
@@ -297,4 +297,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Draft` | 0 of 4 | 0 |
-| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 5 | 6 |
+| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 5 | 5 |

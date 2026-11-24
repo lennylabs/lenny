@@ -53,9 +53,9 @@ The compute meter: compute units from a pod's resources, with the rates, the iso
 The `storage` meter: limits in `bytes` reserved at each upload, export, and checkpoint chunk grant in the owning session's budget and counted in its shared budgets through the flush, in place of `storage_quota_reserve.lua` and the tenant's `storageQuotaBytes`; the checkpoint of `release` admitted past an exhausted storage limit (decision 25); limits in `byteHours` with each budget's bytes held and the leader's accrual; the treatment of storage after a session ends under decision 21; the retirement of `STORAGE_QUOTA_EXCEEDED` and `StorageQuotaHigh`; and the rebuild of bytes held from the ledger. It depends on 0131.S4 for the pack catalog and its owner sessions, and on 0121.S4 for the storage records it rebuilds from.
 
 ### 0170.S5 Tenant-level meters
-- status: Planned
+- status: Cancelled
 - aliases: [BG-4 (part), BG-6 (part)]
 - lanes: [specification, code, documentation]
 - depends-on: [0170.S2, 0121.S3, 0121.S6, 0121.S7]
 
-Under O13, the `poolIdle`, `dedicatedNodes`, and `escrow` meters, charged to the limits of tenant budgets that count them when 0121's emitter commits each periodic event, with the refusal of new sessions in an exhausted tenant. The step is cancelled if the owner chooses option (b) of O13.
+Cancelled by decision 29: the costs that 0121 attributes to a tenant and to no session feed no budget.

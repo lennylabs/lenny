@@ -39,7 +39,7 @@ Today's budgets do not meet that request **[source]**:
 - Budget objects: named records that hold one or more limits, each counting one or more meters in one unit, under one set of sessions, one reset schedule, thresholds, and actions at exhaustion, created by a platform administrator, a tenant administrator, or a client for its own sessions ("BG-1").
 - The session budget as a budget object, and the carve of 0166's "DP-3" over budget objects ("BG-2", "BG-8").
 - Matching: how a session and each charge find every active budget that applies ("BG-3").
-- Meters and units: what a charge measures, model calls, pod time, and stored data, with the tenant-level meters of 0121, and the units a limit counts each in: LLM credits, compute units, bytes, byte-hours, and money ("BG-4").
+- Meters and units: what a charge measures, model calls, pod time, and stored data, and the units a limit counts each in: LLM credits, compute units, bytes, byte-hours, and money ("BG-4").
 - Price lists: the operator's translation of each meter's charges into an amount of money, versioned, and how a limit in money counts the charges of several meters ("BG-5").
 - Enforcement: budgets as best effort, with session budgets and carves reserved ahead and shared budgets counted afterwards, where each meter charges, the soft thresholds, the actions at exhaustion, and lease extension for session budgets ("BG-6").
 - Resets: on demand and on a schedule, with time zones, and the period in which a charge counts ("BG-7").
@@ -56,6 +56,7 @@ Today's budgets do not meet that request **[source]**:
 - Calls a runtime sends to a provider outside the LLM proxy, which 0133 leaves unmetered (OD-15 of 0133).
 - Concurrency and rate limits, which stay quotas under [§11.1](../../spec/11_policy-and-controls.md#111-admission-and-fairness).
 - Costs that reach no tenant: unpinned idle pods on shared pools, node capacity that no pod requests, and data held in Postgres, as 0121 states.
+- Costs that reach a tenant and no session: the idle pods of a tenant's owned or pinned pools, its dedicated nodes, and legal-hold escrow. They stay billing events of 0121 (decision 29).
 - Meters that a deployer defines. Lenny meters model calls through its proxy, pod time, and stored data, and nothing else (decision 14). A deployer that pays for other services attributes their costs to sessions with the identity Lenny sends ahead of each call ("BG-3", **External costs**), and enforces its own limits on them.
 - Egress bytes. `egress.tunnel` records of `0127-egress-and-git` carry bytes per tunnel and are lossy ("Current state"), so this change meters no egress (O19).
 
@@ -68,10 +69,10 @@ Today's budgets do not meet that request **[source]**:
 | Session budget | The budget object of one session, created with the session and ending with it. It holds limits as every budget does and has no period. It applies to the session and, through carves, funds its descendants ("BG-2"). |
 | Shared budget | Every budget object other than a session budget: a platform, tenant, or principal budget. |
 | Platform budget, tenant budget, principal budget | A shared budget written by a `platform-admin` and able to span tenants, by a `tenant-admin` for its own tenant, or by a user or a service account for its own sessions. |
-| Meter | What a charge measures: `llm`, model calls at the LLM proxy; `compute`, the time a session holds a pod; `storage`, the data a session owns; and the tenant-level meters `poolIdle`, `dedicatedNodes`, and `escrow` ("BG-4"). |
+| Meter | What a charge measures: `llm`, model calls at the LLM proxy; `compute`, the time a session holds a pod; and `storage`, the data a session owns ("BG-4"). |
 | Unit | What a limit counts its meters in: `llmCredits`, `computeUnits`, `bytes`, `byteHours`, or `money`. "BG-4" states which units each meter allows. |
 | Charge | A quantity from one meter, attributed to one subject. Each limit that counts the meter converts it to the limit's unit. |
-| Subject | What a charge is attributed to: a session, with its tenant, environment, principal, groups, runtime, pool, labels, and root session, or a tenant alone for a tenant-level meter. |
+| Subject | What a charge is attributed to: a session, with its tenant, environment, principal, groups, runtime, pool, labels, and root session. |
 | Compute unit | The unit of pod time. A pod's rate in compute units per second follows its resources: its vCPUs, its GiB of memory, and its GPUs, each at a rate a `platform-admin` sets, times the multiplier of its isolation profile. A session's charge is its pod's rate divided by the pod's slot count, for each second it holds a slot ("BG-4"). With the default rates, one compute unit is one vCPU held for one second. |
 | Compute rates | The figures that turn a pod's resources into compute units per second: a rate per vCPU, a rate per GiB of memory, a rate per GPU type, and a multiplier per isolation profile, with an optional fixed figure for one resource class or pool. A `platform-admin` sets them ("BG-4"). |
 | Price list | The operator's record that translates LLM credits, compute units, and stored bytes over time into an amount of money in the deployment's currency, with versions by `effectiveFrom` ("BG-5"). A tenant's credit conversions override its price per LLM credit for the tenant's own limits in money. It differs from 0133's rate card, which prices tokens in credits. |
@@ -142,7 +143,7 @@ Budgets keep their counters in Redis and their definitions and closed periods in
  LLM proxy: model call  ──llm──────┐
  pod binding: each tick ──compute──┼──>  subject (session attributes)
  storage write / accrual ─storage──┤       │
- tenant-level (0121) ─────────────-┘       ▼
+ (no other meter) ────────────────┘       ▼
                                          budget set = session budget
                                                     + shared budgets whose selector matches
                                                     + budgets referenced by the session or an ancestor
@@ -304,7 +305,6 @@ A session creation may carry `budget`, which creates the session's budget object
 | `pools` | The session's pool. | The routing interceptors. |
 | `labels` | Each key and value of `matchLabels` among the session's `labels`. | The client. |
 
-A charge of a tenant-level meter has a tenant as its subject and matches only a budget whose selector names no field other than `tenants`.
 
 **References [design].** `budgetRefs` on `POST /v1/sessions` names shared budgets by name, a tenant budget as `tenant/<name>` and a principal budget as `principal/<name>`. The gateway refuses a name the caller may not use with `403 BUDGET_NOT_ATTACHABLE`, and one that does not exist with `404 RESOURCE_NOT_FOUND`, so that a caller learns no more about another principal's budgets than about a missing one. A child of any depth inherits its ancestors' references, which serves a named session tree: a client creates a principal budget and names it on the root, and the whole tree draws on it.
 
@@ -338,13 +338,10 @@ A meter is what a charge measures, and a unit is what a limit counts it in (deci
 | `llm` | `llmCredits`, `money` | The estimated cost of a proxied model call under its rate-card version, in micro-credits. | The calling session. | `llm_usage` rows (0133 "LU-7"). |
 | `compute` | `computeUnits`, `money` | Slot time at the pod's rate in compute units per second. | The session bound to the slot. | `session_pod_windows` rows (0121 "BR-2"). |
 | `storage` | `bytes`, `byteHours`, `money` | Bytes held, and their integral over time. | The session that owns each artifact or pack, or the tenant for a tenant-owned platform chunk set. | `artifact_store` rows (0121 "BR-4", 0131 "IC-4"). |
-| `poolIdle` | `computeUnits`, `money` | Idle pod time of the tenant's owned pools and pinned idle pods. | The tenant. | `pool_usage_accrual` rows (0121 "BR-3"). |
-| `dedicatedNodes` | `money` | Node minutes of the tenant's dedicated nodes, priced per node class. | The tenant. | `dedicated_node_accrual` rows (0121 "BR-7"). |
-| `escrow` | `byteHours`, `money` | Legal-hold escrow bytes over time. | The tenant. | `legal_hold_escrow_records` (0121 "BR-6"). |
 
-A limit that counts several meters uses a unit that each of them allows: `money` for any set, `computeUnits` for `compute` and `poolIdle`, and `byteHours` for `storage` and `escrow`. The gateway refuses any other limit at write with `400 VALIDATION_ERROR` naming the meter and the unit.
+A limit that counts several meters uses a unit that each of them allows: `money` for any set. The gateway refuses any other limit at write with `400 VALIDATION_ERROR` naming the meter and the unit.
 
-The tenant-level meters `poolIdle`, `dedicatedNodes`, and `escrow` feed budgets only under O13.
+The costs that 0121 attributes to a tenant and to no session, the idle pods of its owned or pinned pools (`pool.idle_usage`), its dedicated nodes (`node.dedicated_usage`), and legal-hold escrow, feed no budget (decision 29). A refusal of sessions cannot stop them, so a budget that counted them would refuse a tenant's sessions while the costs went on. They stay billing events, from which the operator, the deployer, and the tenant follow that spend at their own prices outside Lenny.
 
 **Compute units [design].** One minute on a small pod counts less than one minute on a large one, because a pod's rate follows its resources (decision 4). A pod's rate in compute units per second is:
 
@@ -361,7 +358,7 @@ The vCPUs, memory, and GPUs are the pod's effective requests, which 0121 "BR-2" 
 
 Every resource class, including one a tenant defines, is priced by the formula from its resources, so a new class needs no compute setting. A class under 0121 holds CPU, memory, and ephemeral storage, and 0121 leaves GPUs out of its scope, so the GPU term counts nothing until a later change adds GPUs to a class. That change makes the chart and the admin API refuse a pool whose pods request a GPU type that has no rate. Ephemeral storage carries no compute rate, because the storage meters count stored data. A pin serves a class whose cost the formula misstates, such as one on reserved hardware. A `tenant-admin` sets no rate, multiplier, or pin, including on a tenant's owned pool, because a lower rate would loosen every platform budget in compute units. The operator prices a compute unit in money in the price list ("BG-5").
 
-A session holds a pod in the states that SL-1 of 0146 marks as holding one: setup with a pod, `running`, `idle`, `suspended` and `blocked` while the pod is held, and `resuming`. `dormant` and every state without a pod charge nothing. The idle pods that `poolIdle` counts are counted at the same rates.
+A session holds a pod in the states that SL-1 of 0146 marks as holding one: setup with a pod, `running`, `idle`, `suspended` and `blocked` while the pod is held, and `resuming`. `dormant` and every state without a pod charge nothing.
 
 **Billing [design].** Every meter reads the records that 0121's billing events report, so budgets and billing count from the same sources. The billing stream gains nothing from this change: it already carries each pod's resources, isolation profile, slot count, and time, from which a billing system can apply the formula above or its own (decision 3).
 
@@ -386,18 +383,11 @@ storage:
   perGiBMonth: 0.025                # a GiB-month is 2^30 bytes held for 730 hours
   byArtifactType:
     checkpoint: 0.020
-poolIdle:
-  perComputeUnitHour: 0.08
-dedicatedNodes:
-  perNodeHour:
-    c6i-4xlarge: 0.68
-escrow:
-  perGiBMonth: 0.004
 ```
 
 The figures are illustrative, and no figure in this document is a price Lenny ships. Rate cards stay in credits, and no rate card carries money.
 
-**A tenant's credit conversions [design].** A `tenant-admin` may append versions of its tenant's credit conversions with `POST /v1/admin/price-lists/tenant/versions`, with the same `effectiveFrom` rules. A tenant version carries the `llm` section alone, a `perMillionCredits` and a `byUpstream` map, and the admin API refuses any other section. It may name any upstream the tenant can use, a platform upstream included. The `compute`, `storage`, and tenant-level meters count at the platform's prices in every budget, because the operator knows what the infrastructure costs.
+**A tenant's credit conversions [design].** A `tenant-admin` may append versions of its tenant's credit conversions with `POST /v1/admin/price-lists/tenant/versions`, with the same `effectiveFrom` rules. A tenant version carries the `llm` section alone, a `perMillionCredits` and a `byUpstream` map, and the admin API refuses any other section. It may name any upstream the tenant can use, a platform upstream included. The `compute` and `storage` meters count at the platform's prices in every budget, because the operator knows what the infrastructure costs.
 
 ```yaml
 # POST /v1/admin/price-lists/tenant/versions, by a tenant-admin of acme
@@ -434,7 +424,6 @@ The table states when a session budget reserves and settles. A shared budget rec
 | `compute` | At each bind, and at the start of each compute tick, `budgets.compute.tickSeconds` (default 60) of the slot's compute units. | At the end of each tick and at the release, for the time the session held the slot. | At a bind, the session's creation, its resume, or a child's creation. At a tick, the running session, under `onExhausted.running`. |
 | `storage`, limits in `bytes` | Before an upload, an export, or a checkpoint chunk grant, the incoming bytes. A shared budget's limit in `bytes`, such as a tenant's storage cap, checks its cached state, as "Best effort" states. | At confirmation, to the confirmed size, and at deletion, by the deleted size. | The write, with `BUDGET_EXHAUSTED`. |
 | `storage`, limits in `byteHours` or `money` | No reservation. Each budget keeps the bytes its subjects hold, and a leader sweep adds bytes held times elapsed time every `budgets.storage.accrualIntervalSeconds` (default 300). | At each accrual. | New writes in the subjects of an exhausted limit. |
-| `poolIdle`, `dedicatedNodes`, `escrow` | No reservation. | When 0121's emitter commits each periodic event, hourly by default. | New session creations in the tenant, after the fact (O13). |
 
 **Admission [design].** A session creation, a resume, and a child's creation are refused with `429 BUDGET_EXHAUSTED` when the replica's cached state shows a limit of an `enforce` shared budget of the new session's set as exhausted and the limit counts a meter the session would charge, or when the first compute tick does not fit the session budget or the carve. Concurrency stays under §11.1.
 
@@ -521,7 +510,6 @@ The owner settled this in decision 12 of 0166 on 2026-11-23: a child's carved bu
 | `compute` | One milli-compute-unit, per tick. | One tick of compute units, plus the time until a refused tick's action takes hold. | The ticks that every replica settles in one flush interval, plus one tick per session holding a pod in the budget. |
 | `storage`, in `bytes` | One byte, per write. | The outstanding checkpoint grant window of §11.2, plus one checkpoint per `release` (decision 25). | The writes that every replica confirms in one flush interval, plus the writes in progress, plus one checkpoint per `release`. |
 | `storage`, in `byteHours` | One byte-second, per accrual interval. | A session budget stops counting at the session's end (decision 21). | Byte-hours accrue while data is held, so a limit's consumption keeps rising after exhaustion until data is deleted. |
-| `poolIdle`, `dedicatedNodes`, `escrow` | One emitter window, hourly by default. | None: no session budget counts them. | The charges of one window. |
 | Any meter, in `money` | One micro-unit of the currency, rounded up per charge. | The sum of the overshoots of the meters it counts. | The sum of the overshoots of the meters it counts. |
 
 ### BG-10 API, RBAC, audit, metrics, and usage
@@ -756,7 +744,7 @@ POST /v1/sessions
 - A carve holds capacity in the parent's session budget while the child lives ("BG-8").
 - Budgets cover model calls through the proxy alone, as OD-15 of 0133 states, and costs that reach no tenant under 0121.
 - A refused compute tick under `release` costs a checkpoint and a later restore, and a session under `sealOnly` or `none` expires.
-- The tenant-level meters report hourly, so their budgets refuse after the fact (O13).
+- Costs attributed to a tenant and to no session, such as idle pods, dedicated nodes, and legal-hold escrow, reach no budget (decision 29).
 
 **Alternatives considered:**
 
@@ -833,7 +821,7 @@ The tiers are those of `.claude/rules/test-coverage.md`.
 
 | Tier | Tests | Requirements |
 | :-- | :-- | :-- |
-| `unit` | The meter and unit pairs of "BG-4", with the refusal of a limit whose unit one of its meters does not allow; the join of requested, default, and ceiling limits by key, with the refusal of a key whose meters or unit differ between levels; selector matching for each field and for tenant-level subjects; the budget set's invalidation; schedule boundaries for each schedule kind across daylight-saving changes in several time zones, cron spacing, and on-demand resets; money conversion with rounding per charge and version selection by time, and the order of a tenant's and the platform's credit conversions for a tenant budget and for a platform budget; the compute rate from resources and isolation multipliers, the pins of a pool and a class, and the per-slot share; partition keys; the caps with a tenant's override, its ceiling, and a lower principal cap, and `budgets.maxLimitsPerBudget`; an adjustment by key, its refusal of an unknown key, and a limit in `bytes` under an adjustment window. | BGR-1, BGR-4, BGR-5, BGR-6 |
+| `unit` | The meter and unit pairs of "BG-4", with the refusal of a limit whose unit one of its meters does not allow; the join of requested, default, and ceiling limits by key, with the refusal of a key whose meters or unit differ between levels; selector matching for each field; the budget set's invalidation; schedule boundaries for each schedule kind across daylight-saving changes in several time zones, cron spacing, and on-demand resets; money conversion with rounding per charge and version selection by time, and the order of a tenant's and the platform's credit conversions for a tenant budget and for a platform budget; the compute rate from resources and isolation multipliers, the pins of a pool and a class, and the per-slot share; partition keys; the caps with a tenant's override, its ceiling, and a lower principal cap, and `budgets.maxLimitsPerBudget`; an adjustment by key, its refusal of an unknown key, and a limit in `bytes` under an adjustment window. | BGR-1, BGR-4, BGR-5, BGR-6 |
 | `component` | The reservation, settlement, and reservation-index scripts of a session budget on a Redis Cluster, with every limit of one budget reserved in one script; a carve's settlement moved from reserved to consumed in each funding session budget; the flush script of a shared budget with its watermark, a threshold crossed by a flush, and a cached state refreshed to exhausted; the exhaustion of one limit, which refuses its meters' charges while the budget's other limits keep charging; a flush after a period boundary, which adds each sum to its own period; the recovery sweep for each meter and the recovery of a lapsed replica's unflushed charges counted once; the rebuild from checkpoints and durable records. | BGR-2, BGR-6, BGR-7, BGR-10 |
 | `contract` | The routes' schemas, `If-Match`, `dryRun`, the error details, and the redaction of `details.budget` for a caller that may not read it. | BGR-11, BGR-12 |
 | `integration` | Example 1 to Example 4 on the compose stack: a team budget with a limit in money across sessions, with a threshold notice and exhaustion; a storage budget with a limit in `bytes` and a limit in money; a CI engine under one principal budget with two limits and a reset on demand; a carve with a transfer and a return. | BGR-1 to BGR-8, BGR-12 |
