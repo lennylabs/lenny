@@ -322,14 +322,20 @@ func checkDepthAndAct(t tb, w *world, k *token) {
 }
 
 // checkRevokedSources checks that no mint accepted a token that was
-// revoked before the step as its caller, subject, or actor.
+// revoked before the step as its caller, subject, or actor, and that no
+// exchange accepted one whose user a full revoke had invalidated, whether
+// or not the token has a row.
 //
 // spec: §13.3 (Credential Flow) "Token rule properties." item 8
 func checkRevokedSources(t tb, w *world, k *token, before map[string]rowState) {
 	t.Helper()
+	exchange := k.kind == kindExchange || k.kind == kindChild
 	for _, src := range []*token{k.subject, k.actor, k.call} {
 		if src != nil && w.revoked(before, src) {
 			w.fail(t, "8 revoked tokens", "%s was issued from %s, which was revoked", k.name(), src.name())
+		}
+		if src != nil && exchange && w.userInvalidated(src) {
+			w.fail(t, "8 revoked tokens", "%s was issued from %s, whose user %s is invalidated", k.name(), src.name(), src.c.Subject)
 		}
 	}
 }
@@ -394,19 +400,8 @@ func (w *world) descendants(roots []*token, impersonations bool) map[string]bool
 // not a playground bearer, in the subject's tenant, carrying the
 // subject's sub or an administrator role.
 func (w *world) revocationEligible(c, s *token, before map[string]rowState) bool {
-	return !c.isPlayground() && !w.revoked(before, c) && c.c.TenantID == s.c.TenantID &&
+	return !c.isPlayground() && !w.revoked(before, c) && !w.userInvalidated(c) && c.c.TenantID == s.c.TenantID &&
 		(c.c.Subject == s.c.Subject || c.hasRole(auth.RoleTenantAdmin, auth.RolePlatformAdmin))
-}
-
-// callerEndedByLink reports whether the caller of a revocation of root is
-// an impersonation bearer whose impersonator link names root or one of its
-// lineage descendants, so the request's impersonation step revokes its own
-// caller. The Token Service then refuses the request (TOKX-I22, finding F1
-// of 0165.S2), against items 3 and 4 of the properties, until change 0168
-// fixes it, and the generator does not draw the request until then.
-func (w *world) callerEndedByLink(c, root *token) bool {
-	return c.kind == kindImpersonation && c.call.c.JWTID != "" &&
-		w.descendants([]*token{root}, false)[c.call.c.JWTID]
 }
 
 // checkRevocationReach checks what each step revoked: a revocation
