@@ -181,9 +181,9 @@ func inputPatternRegexp(pattern string) (*regexp.Regexp, error) {
 // parses, every row has a pattern, a target, and a reason, every pattern
 // matches at least one tracked file, every package target is a directory
 // that holds Go files, every other `runs` target is a tier name, and every
-// `tests` target is a clean repo-relative package directory listed once in
-// its row. A dead row fails, so the list holds only rows that select
-// something.
+// `tests` target is a clean repo-relative package directory that holds a
+// test file and is listed once in its row. A dead row fails, so the list
+// holds only rows that select something.
 func validateNonGoInputsFile(root string) checkResult {
 	const name = "non-go inputs"
 	n, err := readNonGoInputs(root)
@@ -194,17 +194,28 @@ func validateNonGoInputsFile(root string) checkResult {
 	if err != nil {
 		return newResult(name, false, err.Error())
 	}
-	problems := nonGoInputProblems(n, tracked, func(dir string) bool { return holdsGoFiles(filepath.Join(root, dir)) })
+	dirs := pkgDirs{
+		isPackage: func(dir string) bool { return holdsFile(filepath.Join(root, dir), ".go") },
+		hasTests:  func(dir string) bool { return holdsFile(filepath.Join(root, dir), "_test.go") },
+	}
+	problems := nonGoInputProblems(n, tracked, dirs)
 	if len(problems) > 0 {
 		return newResult(name, false, strings.Join(problems, "; "))
 	}
 	return newResult(name, true, fmt.Sprintf("%d row(s), every pattern matches a tracked file and every target exists", len(n.Inputs)))
 }
 
+// pkgDirs answers what validate asks of a target directory.
+type pkgDirs struct {
+	// isPackage reports whether the directory holds a Go file.
+	isPackage func(dir string) bool
+	// hasTests reports whether the directory holds a Go test file.
+	hasTests func(dir string) bool
+}
+
 // nonGoInputProblems returns what is wrong with each row of the list
-// against the tracked files and a test of whether a directory holds a Go
-// package.
-func nonGoInputProblems(n *nonGoInputs, tracked []string, isPackage func(dir string) bool) []string {
+// against the tracked files and the target directories.
+func nonGoInputProblems(n *nonGoInputs, tracked []string, dirs pkgDirs) []string {
 	var problems []string
 	for i, in := range n.Inputs {
 		row := fmt.Sprintf("row %d", i+1)
@@ -229,33 +240,45 @@ func nonGoInputProblems(n *nonGoInputs, tracked []string, isPackage func(dir str
 				problems = append(problems, fmt.Sprintf("%s: target %q is not a tier name", row, target))
 				continue
 			}
-			if !isPackage(target) {
+			if !dirs.isPackage(target) {
 				problems = append(problems, fmt.Sprintf("%s: target %q is not a Go package directory", row, target))
 			}
 		}
-		problems = append(problems, testsTargetProblems(row, in, isPackage)...)
+		problems = append(problems, testsTargetProblems(row, in, dirs)...)
 	}
 	return problems
 }
 
 // testsTargetProblems returns what is wrong with the `tests` targets of
-// one row. A `tests` target names one package directory, so a tier name, a
-// pattern, a path that is not clean and repo-relative, a directory that
-// holds no Go package, and a directory the row also lists under `runs` are
-// each refused. The last would leave the row's meaning to whichever form
-// the selection reads first.
-func testsTargetProblems(row string, in nonGoInput, isPackage func(dir string) bool) []string {
+// one row. A `tests` target names one package whose own tests run, so a
+// tier name, a pattern, a path that is not clean and repo-relative, a
+// directory that holds no Go package, a package with no test file, which
+// would select nothing, a target listed twice, and a directory the row also
+// lists under `runs` in any spelling are each refused. The last would leave
+// the row's meaning to whichever form the selection reads first.
+func testsTargetProblems(row string, in nonGoInput, dirs pkgDirs) []string {
+	runs := map[string]bool{}
+	for _, t := range in.Runs {
+		runs[targetDir(t)] = true
+	}
+	seen := map[string]bool{}
 	var problems []string
 	for _, target := range in.Tests {
+		dup := seen[target]
+		seen[target] = true
 		switch {
 		case contains(allTiers(), target):
 			problems = append(problems, fmt.Sprintf("%s: tests target %q is a tier name; list a tier under runs", row, target))
 		case target == "" || strings.ContainsAny(target, "*?") || strings.HasSuffix(target, "/...") || path.Clean(target) != target ||
 			path.IsAbs(target) || target == "." || strings.HasPrefix(target, "../"):
 			problems = append(problems, fmt.Sprintf("%s: tests target %q is not a clean repo-relative package directory", row, target))
-		case !isPackage(target):
+		case !dirs.isPackage(target):
 			problems = append(problems, fmt.Sprintf("%s: tests target %q is not a Go package directory", row, target))
-		case contains(in.Runs, target):
+		case !dirs.hasTests(target):
+			problems = append(problems, fmt.Sprintf("%s: tests target %q holds no test file, so it selects no test", row, target))
+		case dup:
+			problems = append(problems, fmt.Sprintf("%s: tests target %q is listed twice", row, target))
+		case runs[target]:
 			problems = append(problems, fmt.Sprintf("%s: target %q is under both runs and tests", row, target))
 		}
 	}
@@ -272,14 +295,15 @@ func anyMatch(re *regexp.Regexp, paths []string) bool {
 	return false
 }
 
-// holdsGoFiles reports whether a directory holds a .go file.
-func holdsGoFiles(dir string) bool {
+// holdsFile reports whether a directory holds a file whose name ends with
+// suffix, such as ".go" or "_test.go".
+func holdsFile(dir, suffix string) bool {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		return false
 	}
 	for _, e := range entries {
-		if !e.IsDir() && strings.HasSuffix(e.Name(), ".go") {
+		if !e.IsDir() && strings.HasSuffix(e.Name(), suffix) {
 			return true
 		}
 	}

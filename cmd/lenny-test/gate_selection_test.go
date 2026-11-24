@@ -84,15 +84,21 @@ func TestGateRecordsAFullRunAsWholeForEveryTier(t *testing.T) {
 }
 
 // TestGateRecordsNoSelectionWhenThePlanFails checks that a plan that
-// cannot be resolved leaves the selection empty rather than recording a
-// tier the gate never planned.
+// cannot be resolved leaves the selection empty, and that the summary says
+// no test tier was selected.
 func TestGateRecordsNoSelectionWhenThePlanFails(t *testing.T) {
 	g := stubGateRunner()
 	g.plan = func(string, int, bool) (resolvedSelector, error) {
 		return resolvedSelector{}, errors.New("no merge base")
 	}
-	if v := runStubGate(g); v.Gate.Selection != nil {
+	v := runStubGate(g)
+	if v.Gate.Selection != nil {
 		t.Errorf("selection %+v after a failed plan", v.Gate.Selection)
+	}
+	var b strings.Builder
+	printGateSummary(&b, v, "x")
+	if !strings.Contains(b.String(), "no test tier selected") {
+		t.Errorf("summary of a run that planned no test tier:\n%s", b.String())
 	}
 }
 

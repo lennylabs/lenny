@@ -99,7 +99,7 @@ func TestNonGoInputProblemsNameEachDeadRow(t *testing.T) {
 		{Paths: []string{"docs/**"}, Runs: []string{"docs"}},
 		{Paths: []string{"./docs/**"}, Runs: []string{"docs"}, Reason: "bad pattern"},
 	}}
-	problems := nonGoInputProblems(n, tracked, isPackage)
+	problems := nonGoInputProblems(n, tracked, pkgDirs{isPackage: isPackage, hasTests: isPackage})
 	joined := strings.Join(problems, "\n")
 	for _, want := range []string{
 		`row 2: pattern "compose/**" matches no tracked file`,
@@ -158,12 +158,14 @@ func TestTestsForUnionsMatchingRowsApartFromRuns(t *testing.T) {
 
 // TestNonGoInputProblemsRefuseMalformedTestsTargets pins the validate check
 // of the `tests` form: a tier name, a pattern, a path that is not a clean
-// repo-relative directory, a directory that holds no Go package, and a
-// directory the row also lists under `runs` each fail, and a row whose only
-// targets are under `tests` passes.
+// repo-relative directory, a directory that holds no Go package, a
+// package with no test file, a target listed twice, and a directory the
+// row also lists under `runs` in any spelling each fail, and a row whose
+// only targets are under `tests` passes.
 func TestNonGoInputProblemsRefuseMalformedTestsTargets(t *testing.T) {
 	tracked := []string{"spec/a.md"}
-	isPackage := func(dir string) bool { return dir == "pkg/x" || dir == "pkg/y" }
+	isPackage := func(dir string) bool { return dir == "pkg/x" || dir == "pkg/y" || dir == "pkg/helper" }
+	hasTests := func(dir string) bool { return dir == "pkg/x" || dir == "pkg/y" }
 	row := func(runs, tests []string) nonGoInput {
 		return nonGoInput{Paths: []string{"spec/**"}, Runs: runs, Tests: tests, Reason: "reads it"}
 	}
@@ -179,8 +181,11 @@ func TestNonGoInputProblemsRefuseMalformedTestsTargets(t *testing.T) {
 		row(nil, []string{"pkg/gone"}),
 		row([]string{"pkg/y"}, []string{"pkg/y"}),
 		row(nil, []string{""}),
+		row(nil, []string{"pkg/helper"}),
+		row(nil, []string{"pkg/x", "pkg/x"}),
+		row([]string{"./pkg/y/..."}, []string{"pkg/y"}),
 	}}
-	joined := strings.Join(nonGoInputProblems(n, tracked, isPackage), "\n")
+	joined := strings.Join(nonGoInputProblems(n, tracked, pkgDirs{isPackage: isPackage, hasTests: hasTests}), "\n")
 	for _, want := range []string{
 		`row 2: tests target "docs" is a tier name; list a tier under runs`,
 		`row 3: tests target "pkg/x/..." is not a clean repo-relative package directory`,
@@ -192,6 +197,9 @@ func TestNonGoInputProblemsRefuseMalformedTestsTargets(t *testing.T) {
 		`row 9: tests target "pkg/gone" is not a Go package directory`,
 		`row 10: target "pkg/y" is under both runs and tests`,
 		`row 11: tests target "" is not a clean repo-relative package directory`,
+		`row 12: tests target "pkg/helper" holds no test file, so it selects no test`,
+		`row 13: tests target "pkg/x" is listed twice`,
+		`row 14: target "pkg/y" is under both runs and tests`,
 	} {
 		if !strings.Contains(joined, want) {
 			t.Errorf("problems lack %q:\n%s", want, joined)

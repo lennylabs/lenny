@@ -1323,11 +1323,14 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 	if v.Gate != nil {
 		fmt.Fprintf(w, "  base:        %s (merge base %s; with the integration branch %s)\n", v.Gate.Base, v.Gate.MergeBase, v.Gate.IntegrationMergeBase)
 		fmt.Fprintf(w, "  environment: %s\n", v.Gate.Environment)
+		kind := "selected run (the --changed selection against the base)"
 		if v.Gate.All {
-			fmt.Fprintln(w, "  selection:   full run (--all)")
-		} else {
-			fmt.Fprintln(w, "  selection:   selected run (the --changed selection against the base)")
+			kind = "full run (--all)"
 		}
+		if len(v.Gate.Selection) == 0 {
+			kind += "; no test tier selected"
+		}
+		fmt.Fprintf(w, "  selection:   %s\n", kind)
 		if v.Gate.Dirty {
 			fmt.Fprintln(w, "  tree:        dirty; this verdict is not a verdict for the commit")
 		}
