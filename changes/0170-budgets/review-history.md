@@ -15,3 +15,17 @@
 - 2026-11-23, later. Records O13 as decision 29: the costs 0121 attributes to a tenant and to no session feed no budget. "Scope", "Terms", the diagram, "BG-3", "BG-4", "BG-5", "BG-6", "BG-9", "Limits", and the tests lose `poolIdle`, `dedicatedNodes`, and `escrow`, and 0170.S5 is cancelled.
 - 2026-11-23, later. Records O16 as decision 30: today's quota fields and 0133's credit windows leave for budgets. "BG-1", 0170.S1, and 0133's "Scopes" under "LU-6" follow.
 - 2026-11-23, later. Records O17 to O20 as decisions 31 to 34, which leaves no open decision: a runtime reads no budget, partitions stay, no egress meter, and one deployment currency that may be an invented code. "BG-5", "BG-10", and "Documentation" follow.
+- 2026-11-23, review. Target: 0166 and 0170 with the edits of branch `change/0166-delegation-primitives` to the other v1 changes (diff from merge base `0fff6b4b5` to `7ffb9eccb`), one round with a general and a security reviewer. 39 findings were reported and merged into 35: 13 need the owner's decision, 22 need none, and none was dropped. No fix was applied. The findings that need a decision:
+  - R1: shared budgets have no bound during a Redis outage or a failing flush, because the §12.4 fail-open ceiling loses its input and the cumulative fail-open timer is not carried over.
+  - R2: a tenant's storage cap in `bytes` stops being exact under cached-state admission, with no reservation and no stream cap.
+  - R3: the checkpoint exception of decisions 25 and 28 lets storage grow by sessions times workspace size once a storage limit is exhausted.
+  - R4: a tenant's credit conversions apply to session budget limits in money that the platform set as ceilings.
+  - R5: session budgets are optional, so a delegation tree with no session budget has no exact bound and DPR-4 holds only when one exists.
+  - R6: the directory groups of the session read need an administrator's credential.
+  - R7: a client that sets a label joins, and can drain, a budget selected on that label.
+  - R8: budget `release` against SLR-9 of 0146 for a parent with running descendants.
+  - R9: the TTL of budget keys, `BUDGET_KEYS_EXPIRED`, and `delegation.budgetKeyTTLSeconds` once carves replace tree budgets.
+  - R10: the error of 0147's per-upload size cap once `STORAGE_QUOTA_EXCEEDED` retires.
+  - R11: whether `budget_notice` reaches the runtime, against decision 31.
+  - R12: SO-5a's `llmCreditsAbove` is bypassed by a carve's lease extension, a carve in money, and a child of a parent with no session budget.
+  - R13: a transfer whose root cannot reserve the carve, a `PATCH` of a carved session budget, and a `set_limits` raise with no carve create budget that was never reserved.
