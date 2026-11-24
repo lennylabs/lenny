@@ -96,4 +96,4 @@ The full list is in `lenny-test --help`.
 
 - `results/latest.json` — most recent verdict (overwritten every run)
 - `results/verdict-<run_id>.json` — rotated history (20 most recent retained)
-- `results/cover.out` — Go coverage profile from `runUnitTier`
+- `results/cover.out` — Go coverage profile that the unit tier of `lenny-test --tier unit` and `lenny-test run --changed` writes. The merge gate's unit run writes none.
