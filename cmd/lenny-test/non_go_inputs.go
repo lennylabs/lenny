@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -45,9 +46,17 @@ type nonGoInput struct {
 	// segment, `**` matches across segments, and `?` matches one
 	// character of a segment.
 	Paths []string `yaml:"paths"`
-	// Runs are tier names, which select the whole tier, and test package
-	// directories, which select that package in the tier that runs it.
+	// Runs are tier names, which select the whole tier, and package
+	// directories, which the selection treats as changed: the package
+	// runs, and so does every package that depends on it. A helper package
+	// that reads the input on behalf of its importers is listed here.
 	Runs []string `yaml:"runs"`
+	// Tests are package directories whose own tests read the input (change
+	// 0172, GS-1). The selection runs each package's tests in the tier that
+	// runs them and walks none of its dependents, because a dependent
+	// reaches the input only through the package's tests, which nothing
+	// imports.
+	Tests []string `yaml:"tests"`
 	// Reason says how the targets read the paths.
 	Reason string `yaml:"reason"`
 }
@@ -91,10 +100,23 @@ func (n *nonGoInputs) union(other *nonGoInputs) *nonGoInputs {
 	return &out
 }
 
-// targetsFor returns the targets of every row with a pattern that matches
-// a changed path, in row order and without duplicates. A nil list matches
-// nothing.
+// targetsFor returns the `runs` targets of every row with a pattern that
+// matches a changed path, in row order and without duplicates. A nil list
+// matches nothing.
 func (n *nonGoInputs) targetsFor(p string) []string {
+	return n.collect(p, func(in nonGoInput) []string { return in.Runs })
+}
+
+// testsFor returns the `tests` package directories of every row with a
+// pattern that matches a changed path, in row order and without
+// duplicates. A nil list matches nothing.
+func (n *nonGoInputs) testsFor(p string) []string {
+	return n.collect(p, func(in nonGoInput) []string { return in.Tests })
+}
+
+// collect returns the values field gives for every row with a pattern that
+// matches the path, in row order and without duplicates.
+func (n *nonGoInputs) collect(p string, field func(nonGoInput) []string) []string {
 	if n == nil {
 		return nil
 	}
@@ -103,7 +125,7 @@ func (n *nonGoInputs) targetsFor(p string) []string {
 		if !in.matches(p) {
 			continue
 		}
-		for _, t := range in.Runs {
+		for _, t := range field(in) {
 			if !contains(out, t) {
 				out = append(out, t)
 			}
@@ -158,8 +180,10 @@ func inputPatternRegexp(pattern string) (*regexp.Regexp, error) {
 // validateNonGoInputsFile is the `validate` check of the list: it
 // parses, every row has a pattern, a target, and a reason, every pattern
 // matches at least one tracked file, every package target is a directory
-// that holds Go files, and every other target is a tier name. A dead row
-// fails, so the list holds only rows that select something.
+// that holds Go files, every other `runs` target is a tier name, and every
+// `tests` target is a clean repo-relative package directory listed once in
+// its row. A dead row fails, so the list holds only rows that select
+// something.
 func validateNonGoInputsFile(root string) checkResult {
 	const name = "non-go inputs"
 	n, err := readNonGoInputs(root)
@@ -184,8 +208,8 @@ func nonGoInputProblems(n *nonGoInputs, tracked []string, isPackage func(dir str
 	var problems []string
 	for i, in := range n.Inputs {
 		row := fmt.Sprintf("row %d", i+1)
-		if len(in.Paths) == 0 || len(in.Runs) == 0 || strings.TrimSpace(in.Reason) == "" {
-			problems = append(problems, row+" needs paths, runs, and a reason")
+		if len(in.Paths) == 0 || len(in.Runs)+len(in.Tests) == 0 || strings.TrimSpace(in.Reason) == "" {
+			problems = append(problems, row+" needs paths, a target under runs or tests, and a reason")
 		}
 		for _, pattern := range in.Paths {
 			re, err := inputPatternRegexp(pattern)
@@ -208,6 +232,31 @@ func nonGoInputProblems(n *nonGoInputs, tracked []string, isPackage func(dir str
 			if !isPackage(target) {
 				problems = append(problems, fmt.Sprintf("%s: target %q is not a Go package directory", row, target))
 			}
+		}
+		problems = append(problems, testsTargetProblems(row, in, isPackage)...)
+	}
+	return problems
+}
+
+// testsTargetProblems returns what is wrong with the `tests` targets of
+// one row. A `tests` target names one package directory, so a tier name, a
+// pattern, a path that is not clean and repo-relative, a directory that
+// holds no Go package, and a directory the row also lists under `runs` are
+// each refused. The last would leave the row's meaning to whichever form
+// the selection reads first.
+func testsTargetProblems(row string, in nonGoInput, isPackage func(dir string) bool) []string {
+	var problems []string
+	for _, target := range in.Tests {
+		switch {
+		case contains(allTiers(), target):
+			problems = append(problems, fmt.Sprintf("%s: tests target %q is a tier name; list a tier under runs", row, target))
+		case target == "" || strings.ContainsAny(target, "*?") || strings.HasSuffix(target, "/...") || path.Clean(target) != target ||
+			path.IsAbs(target) || target == "." || strings.HasPrefix(target, "../"):
+			problems = append(problems, fmt.Sprintf("%s: tests target %q is not a clean repo-relative package directory", row, target))
+		case !isPackage(target):
+			problems = append(problems, fmt.Sprintf("%s: tests target %q is not a Go package directory", row, target))
+		case contains(in.Runs, target):
+			problems = append(problems, fmt.Sprintf("%s: target %q is under both runs and tests", row, target))
 		}
 	}
 	return problems
