@@ -14,6 +14,12 @@
   - (c) (b), and a batch whose merges change `go.mod`, `go.sum`, `go.work`, `vendor/`, or `tests/gate/Dockerfile` is checked by a full run.
   - Recommendation: (c). It amends decision 2 only by adding full runs.
 
+- **GS-10. The static tier beside the test lanes.** Decision 5 runs the static tier in the same phase as the component and integration tiers. The static tier reads the worktree and resolves the symbolic `HEAD` (the secret scan's `git ls-tree HEAD`, `go vet`, the formatters, golangci-lint, and `tests/static`), and the worktree, and in a main checkout its `.git` directory, are mounted read-write. A component or integration test, which is branch code, can edit a tracked file or move `HEAD` while the static tier reads it and restore it before its own run ends. The second read of `HEAD` and the tree's state after the last lane (`gateStateChange`) sees only the state at the end, so the verdict can pass with a lint or secret finding hidden. Before 0172.S2 the static tier ran first, before any branch test ran. The restricted check before a merge of decision 8 runs the same layout. Raised by the merge-gate review of 0172.S2 (security reviewer, Medium).
+  - (a) Give the static tier a phase of its own ahead of the lanes, amending decision 5. It adds the static tier's 4 to 5 minutes to the wall time.
+  - (b) Keep the overlap, and have the static tier read a snapshot the tests cannot write: resolve `HEAD` once and pass the commit to the secret scan and the git reads, and run the checks that read the working tree on an export of that commit that the gate user cannot write.
+  - (c) Keep the overlap and accept the window, as the gate already accepts writers of its caches (owner's answers to GT-11 and GT-16).
+  - Recommendation: (b). It keeps the layout's wall time and removes the dependence on test code. Until it is built, (a) is the conservative setting, and `--layout serial` gives it today.
+
 ## Decisions
 
 1. **Narrowing the selection and recording it in the verdict (GS-1).** The `spec/**` row of `tests/non-go-inputs.yaml` moves `pkg/observability/tracing` and `pkg/api/openapi` to a new row target form that runs a package's own tests without walking its dependents, together with any other row whose package reads its input only in tests, and the verdict records each tier's selection as `gate.selection`. The options not chosen were (b), recording `gate.selection` only, and (c), neither. Owner's answer to GS-1 on the M3 readiness decision page, 2026-11-23, option (a).
