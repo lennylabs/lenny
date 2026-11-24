@@ -1,6 +1,6 @@
 # Merge gate wall time
 
-Status: `In progress`, revision 3, 2026-11-24.
+Status: `In progress`, revision 4, 2026-11-24.
 
 ## Problem
 
@@ -35,6 +35,7 @@ The change covers:
 - The full-run cadence on `main` in the v1 merge policy (GS-2).
 - Concurrent execution of the gate's tiers, bounded for the 8 GB VM (GS-3).
 - The coverage flags of the gate's unit run (GS-4).
+- The check before a code branch merges, a tier option and a coverage option on the gate, and `lenny-test run` in the gate container (decisions 8 to 10).
 - `TESTING.md` "Merge gate" and "Selection algorithm", `cmd/lenny-test/README.md`, and the v1 merge policy text in `.claude/rules/git-workflow.md` and `.claude/rules/test-coverage.md`.
 
 It leaves out:

@@ -76,7 +76,7 @@ The merge policy:
 2. `main` stays green. A merge-gate failure on `main` is fixed or reverted before any other branch merges.
 -->
 
-1. During the v1 program, a branch merges under the v1 merge policy of `.claude/rules/git-workflow.md`: the records checks and the secret scan for a branch of records and documentation, and `lenny-test run --changed` and the secret scan on the committed head for any other branch. The merge gate runs on the head of `main` after merges. The run before a milestone is reported complete is a full run (`lenny-test gate --all`). In each week in which a merge landed, at least one run on a day on which a merge landed is also a full run. Every other run is the `--changed` selection against the base, as "The gate on `main`" in `.claude/rules/git-workflow.md` states.
+1. During the v1 program, a branch merges under the v1 merge policy of `.claude/rules/git-workflow.md`: the records checks and the secret scan for a branch of records and documentation, and `lenny-test gate` on the committed head with `main` merged in, and the secret scan, for any other branch. The merge gate runs on the head of `main` after merges. The run before a milestone is reported complete is a full run (`lenny-test gate --all`). In each week in which a merge landed, at least one run on a day on which a merge landed is also a full run. Every other run is the `--changed` selection against the base, as "The gate on `main`" in `.claude/rules/git-workflow.md` states.
 2. A finished gate run on `main` that is `FAIL` or `UNVERIFIED` is fixed or reverted before the next merge.
 3. A merge-gate failure is never recorded as pre-existing. Recording a failure that also occurs on `main` as pre-existing applies only to tiers outside the merge gate.
 4. Only a flaky test enters quarantine: a test that fails and passes on the same commit. A deterministic failure on `main` does not enter quarantine; it is fixed or reverted under rule 2. A quarantined test gets an entry in `tests/flake-budget.yaml` that names its owner and its reason, and its skip carries a reason in the `quarantined:` category. The quarantine has a cap, the `cap` field of that file. When the quarantine is at the cap, a quarantined test is fixed or deleted before another test enters it.
@@ -131,7 +131,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 3. Iterate with `lenny-test run --changed`, then with `--tier` naming each reached tier that needs infrastructure, then commit and run `lenny-test gate merge`; fix the code until the verdict for the head commit is `PASS`.
 -->
 
-3. Iterate with `lenny-test run --changed`, then with `--tier` naming each reached tier that needs infrastructure when the change needs it to be confident, then commit and run `lenny-test run --changed` on the committed head with a clean tree; fix the code until it passes. During the v1 program the merge gate runs on `main` after the merge.
+3. Iterate with `lenny-test run --changed`, then with `--tier` naming each reached tier that needs infrastructure when the change needs it to be confident, then commit, merge `main` into the branch, and run `lenny-test gate` on the committed head; fix the code until it passes. During the v1 program the merge gate also runs on `main` after the merge.
 4. Run `lenny-test coverage --diff <base-ref>` and raise coverage of changed lines to the target.
 5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to the tests of the component tier and the tiers after it.
 
