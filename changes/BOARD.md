@@ -8,9 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
+| Building | 2 |
 | Ready | 5 |
-| Waiting on decisions | 33 |
-| Blocked | 150 |
+| Waiting on decisions | 32 |
+| Blocked | 149 |
 | Landed | 14 |
 | Cancelled | 1 |
 
@@ -53,6 +54,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0169.S1](0169-token-concurrency-model/steps.md#0169s1-concurrency-model-of-the-token-rules-on-main) | Concurrency model of the token rules on main | Building |  |
+| [0169.S2](0169-token-concurrency-model/steps.md#0169s2-the-locking-design-of-0168-as-a-variant) | The locking design of 0168 as a variant | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
@@ -89,7 +92,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | 0149 is `Draft` |
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft`; a part waits on 0150.S1 |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
-| [0169.S1](0169-token-concurrency-model/steps.md#0169s1-concurrency-model-of-the-token-rules-on-main) | Concurrency model of the token rules on main | Waiting on decisions | 0169 is `Draft` |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Blocked | 0119.S1, 0119.S2, 0131.S9 |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
 | [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
@@ -239,7 +241,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
-| [0169.S2](0169-token-concurrency-model/steps.md#0169s2-the-locking-design-of-0168-as-a-variant) | The locking design of 0168 as a variant | Blocked | 0169.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
@@ -286,4 +287,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0168](0168-token-fixes/change.md) | Token rule fixes from the property tests | `Decided` | 0 of 1 | 0 |
-| [0169](0169-token-concurrency-model/change.md) | A concurrency model of the token rules | `Draft` | 0 of 2 | 7 |
+| [0169](0169-token-concurrency-model/change.md) | A concurrency model of the token rules | `In progress` | 0 of 2 | 5 |
