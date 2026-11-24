@@ -8,10 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 2 |
+| Building | 3 |
 | Ready | 5 |
 | Waiting on decisions | 32 |
-| Blocked | 152 |
+| Blocked | 151 |
 | Landed | 14 |
 | Cancelled | 1 |
 
@@ -55,6 +55,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
 | [0172.S1](0172-gate-speed/steps.md#0172s1-selection-width-and-the-verdicts-selection-record) | Selection width and the verdict's selection record | Building |  |
+| [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Building |  |
 | [0172.S3](0172-gate-speed/steps.md#0172s3-no-coverage-profile-in-the-gates-unit-run) | No coverage profile in the gate's unit run | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
@@ -241,7 +242,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
-| [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Blocked | 0172.S3 |
 | [0172.S4](0172-gate-speed/steps.md#0172s4-the-gates-tier-and-coverage-options-and-the-check-before-a-merge) | The gate's tier and coverage options, and the check before a merge | Blocked | 0172.S3 |
 | [0172.S5](0172-gate-speed/steps.md#0172s5-lenny-test-run-in-the-gate-container) | `lenny-test run` in the gate container | Blocked | 0172.S4 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
