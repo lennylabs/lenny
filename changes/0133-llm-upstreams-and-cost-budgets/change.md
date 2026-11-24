@@ -1,6 +1,6 @@
 # LLM access through egress and external charges
 
-Status: `Draft`, revision 21, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 22, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 The folder keeps its name, `0133-llm-upstreams-and-cost-budgets`, so that links into it keep resolving. Open decision 23 in `decisions.md` settles the title. Revision 20 replaces the metering proxy design of revisions 1 to 19 under decision 22, which the owner settled on 2026-11-24. `review-history.md` records the earlier revisions, and the decisions they rest on stay in `decisions.md`, marked where decision 22 supersedes them.
 
@@ -214,7 +214,7 @@ The operator runs an LLM gateway and makes it reachable from agent pods as any e
 - **Reachability.** A gateway on a public host is a host in the tenant's effective allow set of [`0127-egress-and-git`](../0127-egress-and-git/change.md#effective-policy). A gateway in the cluster or on a private address is registered as an egress upstream on a private address and granted to the tenants it serves ("Configuration by scope" of the egress design), because the central proxy refuses cluster and private addresses otherwise.
 - **Base URL.** The pool's injected configuration ([`0127-egress-and-git`, "Injected configuration"](../0127-egress-and-git/change.md#injected-configuration)) names the gateway's base URL per API the runtime's SDK reads, such as `ANTHROPIC_BASE_URL` or `OPENAI_BASE_URL`, and a placeholder key where an SDK refuses to start without one. A plain `http://` base URL lets `netagent` upgrade the request to TLS itself ("Delivery modes", **Plain HTTP to a bound host.**), so an SDK that does not trust the per-pod CA still works.
 - **Keys.** The gateway holds the provider keys. Lenny holds none, and no provider key reaches a pod through this path (LUR-1).
-- **Tenants.** One gateway serves every tenant when a `platform-admin` writes its attribution binding at platform or pool scope, or one tenant when a `tenant-admin` writes it. The gateway reads the tenant from the verified assertion and applies its own per-tenant keys, routing, and model policy. Open decision 84 of 0127 settles the scope.
+- **Tenants.** One gateway serves every tenant when a `platform-admin` writes its attribution binding at platform or pool scope, or one tenant when a `tenant-admin` writes it. The gateway reads the tenant from the verified assertion and applies its own per-tenant keys, routing, and model policy. Decision 84 of 0127 offers both scopes, and a pool binding replaces a platform binding on the same host for that pool's sessions.
 
 ### LU-2 Attribution on the gateway's host
 
@@ -429,7 +429,7 @@ Decision 22 retires the metering proxy, upstream records, rate cards, credits, r
 
 - [`0170-budgets`](../0170-budgets/change.md): the `external` meter replaces the `llm` meter and `llmCredits` (its decision 57), "BG-12" owns the charge ingestion API, and the price list loses its `llm` section and the tenant upstream prices of decision 54.
 - [`0124-connector-removal`](../0124-connector-removal/change.md): CR-2 gains the attribution assertion with its D11 exemption, its residual, its key set, its header, its mint index, and hosts bound to one tenant (its decisions D13 to D20).
-- [`0127-egress-and-git`](../0127-egress-and-git/change.md): bindings at platform or pool scope (its open decision 84), binding suspension with `netagent`'s answers to a suspended session (its decision 85), and the removal of the placeholder on an attribution binding's hosts; the LLM host reservation and the restatement of P3 around upstream records leave, because Lenny holds no LLM credential.
+- [`0127-egress-and-git`](../0127-egress-and-git/change.md): bindings at platform or pool scope (its decision 84), binding suspension with `netagent`'s answers to a suspended session (its decision 85), and the removal of the placeholder on an attribution binding's hosts; the LLM host reservation and the restatement of P3 around upstream records leave, because Lenny holds no LLM credential.
 - [`0166-delegation-primitives`](../0166-delegation-primitives/change.md): decision 53's required limits are `external` and `compute`, and the extension of DP-3 starts on exhaustion by charges (its decision 55).
 - [`0142-security-oversight`](../0142-security-oversight/change.md): SO-5a's `llmCreditsAbove` becomes `spendAbove` in money on `external`, and the posture `llm` section leaves (its decision 48).
 - [`0146-session-lifecycle`](../0146-session-lifecycle/change.md): SLR-23's refusal in the proxy gives way to the egress halt, and SL-6 drops usage reports as activity (its decision L38).

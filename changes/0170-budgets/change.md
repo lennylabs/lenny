@@ -1,6 +1,6 @@
 # Budgets
 
-Status: `Draft`, revision 9, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 10, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -609,7 +609,7 @@ A service account holds the `user` row's rights over its own principal budgets. 
 
 **The meter [design].** The `external` meter counts the charges that registered reporters send for sessions, in `money` under `budgets.currency` (decision 57). A charge names one session, so decision 29 holds. Lenny attaches no meaning to what a charge measures: a model call that an operator's LLM gateway prices, or any other paid service that a deployer wants in its budgets. A limit that counts `external` reserves nothing ahead: a charge counts in the session budget and the carves that fund it when it is accepted, and in shared budgets through the flush ("BG-6"). A carve on `external` reserves its amount in the parent's limit at the child's creation, as for any meter ("BG-8").
 
-**Reporters [design].** A reporter is a registered client of `POST /v1/charges` (open decision 59):
+**Reporters [design].** A reporter is a registered client of `POST /v1/charges` (decision 59):
 
 - A tenant reporter, which a `tenant-admin` or a `platform-admin` registers, charges sessions of its tenant alone. A charge that names a session of another tenant is refused as not found.
 - A platform reporter, which a `platform-admin` registers, charges sessions of any tenant, or of the tenants it lists. It serves an LLM gateway that the operator runs for every tenant.
@@ -633,7 +633,7 @@ A service account holds the `user` row's rights over its own principal budgets. 
 
 - **Batches.** A request holds at most `budgets.external.maxChargesPerRequest` (default 1000) charges and 1 MiB. A larger request is refused with `413 CHARGE_BATCH_TOO_LARGE`. The documentation recommends a flush every second or every 500 charges, whichever comes first, and states that a longer interval adds to the overshoot of BGR-9. A charge prices one call or one use. A reporter does not add charges together per session or per window, because a resent sum could count twice and the usage of each call would be lost.
 - **Proofs.** A proof names the `jti` of an attribution assertion, or of an identity assertion for another service. Lenny looks it up in the Token Service's mint index ([`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion) **Mint index (D18).**), which holds each mint's tenant, session, root session, binding, audience, `kid`, and validity for `budgets.external.maxReportDelaySeconds` after its `exp`, and takes the session from the entry. A batch carries no assertion, so no credential travels into a gateway's logs. A `jti` minted under a key that an emergency rotation retired is refused with `CHARGE_PROOF_KEY_REVOKED` and the audit event `charge.proof_key_revoked`, because a leaked key could have signed forged assertions that reused the `jti`.
-- **Checks on each charge.** The `jti` is in the mint index; its audience is one of the reporter's `hosts`; its tenant is within the reporter's scope; `occurredAt`, the start of the call the charge prices, lies within the assertion's validity window, plus 60 seconds of leeway; the charge arrives within `budgets.external.maxReportDelaySeconds` (default 86400, open decision 60) of `occurredAt`; `currency` equals `budgets.currency`; and the amount is positive and at most `budgets.external.maxChargeAmount` when it is set. A reporter that holds the separate permission of open decision 61 may name `session` in place of `proof`.
+- **Checks on each charge.** The `jti` is in the mint index; its audience is one of the reporter's `hosts`; its tenant is within the reporter's scope; `occurredAt`, the start of the call the charge prices, lies within the assertion's validity window, plus 60 seconds of leeway; the charge arrives within `budgets.external.maxReportDelaySeconds` (default 86400, decision 60) of `occurredAt`; `currency` equals `budgets.currency`; and the amount is positive and at most `budgets.external.maxChargeAmount` when it is set. A reporter that holds the separate permission of open decision 61 may name `session` in place of `proof`.
 - **Results.** Each charge answers `accepted`, `duplicate`, or `refused` with a code. A batch with one bad proof refuses only the charges that cite it.
 - **Idempotency.** `(reporter, id)` is unique. A repeated identifier returns the first result and counts nothing, and Lenny keeps the key for `budgets.external.maxReportDelaySeconds` plus one hour, so a partly failed batch is resent whole.
 - **Rate.** Each reporter is limited to `budgets.external.maxChargesPerSecondPerReporter` (default 2000) charges per second. A batch beyond it is refused with `429 QUOTA_EXCEEDED`, so batching neither escapes nor trips the limit.

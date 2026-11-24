@@ -14,7 +14,7 @@
 
 ## Steps
 
-The owner settled decisions 1 to 57 of `decisions.md` on 2026-11-23 and 2026-11-24, and the steps below follow them. Open decisions 58 to 61 block 0170.S6.
+The owner settled decisions 1 to 60, 62, and 63 of `decisions.md` on 2026-11-23 and 2026-11-24, and the steps below follow them. Open decision 61 blocks 0170.S6.
 
 ### 0170.S1 Budget objects
 - status: Planned
@@ -67,4 +67,4 @@ Cancelled by decision 29: the costs that 0121 attributes to a tenant and to no s
 - lanes: [specification, code, documentation]
 - depends-on: [0170.S1, 0170.S2, 0124.S2, 0127.S4 (part)]
 
-The `external` meter of decision 57 and "BG-12": the reporter registry, `POST /v1/charges` with its batch limits, proofs by `jti` checked against the Token Service's mint index, the refusal of a `jti` minted under a key retired in an emergency rotation, the refusal of a tenant reporter on another tenant's host, the checks on each charge, results per charge, idempotency, the per-reporter rate, voids, the `external_charges` record and its place in the recovery sweep, the suspension of attribution bindings at exhaustion, the neutral `usage` member, and the metrics and audit events. It depends on 0124.S2 for the attribution assertion and its mint index, and the part that waits on 0127.S4 is the suspension of attribution bindings, which 0127.S4 attaches and suspends. Open decisions 58 to 61 block it.
+The `external` meter of decision 57 and "BG-12": the reporter registry, `POST /v1/charges` with its batch limits, proofs by `jti` checked against the Token Service's mint index, the refusal of a `jti` minted under a key retired in an emergency rotation, the refusal of a tenant reporter on another tenant's host, the checks on each charge, results per charge, idempotency, the per-reporter rate, voids, the `external_charges` record and its place in the recovery sweep, the suspension of attribution bindings at exhaustion, the neutral `usage` member, and the metrics and audit events. It depends on 0124.S2 for the attribution assertion and its mint index, and the part that waits on 0127.S4 is the suspension of attribution bindings, which 0127.S4 attaches and suspends. Open decision 61 blocks it.

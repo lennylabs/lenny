@@ -268,7 +268,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 13 |
 | [0125](0125-decision-records/change.md) | Decision records | `Draft` | 0 of 2 | 0 |
 | [0126](0126-delegation-availability/change.md) | Delegation availability | `Draft` | 0 of 1 | 9 |
-| [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 16 |
+| [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 15 |
 | [0128](0128-forensics-evidence-preservation/change.md) | Forensics and evidence preservation | `Draft` | 0 of 8 | 26 |
 | [0129](0129-github-credential-addon/change.md) | GitHub credential add-on | `Draft` | 0 of 3 | 6 |
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 8 |
@@ -299,4 +299,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
-| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 4 |
+| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 1 |
