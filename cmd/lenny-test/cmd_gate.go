@@ -277,7 +277,7 @@ func runGate(args []string) int {
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
 	layout := fs.String("layout", defaultGateLayout, "how the tiers run: "+gateLayoutUnitAlone+" runs the static and contract tiers beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutSerial+" runs every tier one after another")
 	tiers := fs.String("tier", "", "restrict the run to these tiers of the merge gate, as a comma-separated list such as static,unit,component,contract; the diff selection applies within them, and the verdict records the restriction")
-	cover := fs.Bool("cover", false, "write the unit run's coverage profile to tests/results/cover.out (LENNY_COVER_PROFILE names another path), which `lenny-test coverage --diff` reads; without it the gate's unit run writes no profile")
+	cover := fs.Bool("cover", false, "write the unit run's coverage profile to tests/results/cover.out, which `lenny-test coverage --diff` reads (with --here, LENNY_COVER_PROFILE can name another path); without it the gate's unit run writes no profile")
 	goTestP := fs.String("go-test-p", "", "the go test -p of a tier that runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name keeps the go command's default, and a tier that runs alone in the layout is refused")
 	capGB := fs.Int("gocache-cap-gb", defaultGateGoCacheCapGB, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (1 GB is 10^9 bytes) and no running container uses it; 0 turns the check off; without the flag, "+gateEnvGoCacheCap+" sets the cap when it is set; a --here run does not use the volume and skips the check")
 	flagArgs, err := gateCommandArgs(args)
@@ -304,6 +304,10 @@ func runGate(args []string) int {
 	}
 	root := repoRoot()
 	if opts.cover {
+		if err := gateCoverProfileError(*here, root, os.LookupEnv); err != nil {
+			fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
+			return 2
+		}
 		opts.coverProfile = coverProfilePath()
 	}
 	if *here {
@@ -1188,6 +1192,9 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	})
 	v.Gate.WallTimeMS = time.Since(start).Milliseconds()
 	if o.cover {
+		if err := finishCoverProfile(o.coverProfile); err != nil {
+			v.recordTier(tierUnit, verdictstatus.Fail, 0, err.Error())
+		}
 		v.Gate.CoverProfile = coverProfileRecord(o.root, o.coverProfile)
 	}
 
@@ -1534,7 +1541,7 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 		}
 		fmt.Fprintf(w, "  selection:   %s\n", kind)
 		if v.Gate.RestrictedTo != nil {
-			fmt.Fprintf(w, "  tiers:       restricted to %s\n", strings.Join(v.Gate.RestrictedTo, ", "))
+			fmt.Fprintf(w, "  tiers:       restricted to %s; this verdict does not stand for every tier of the merge gate\n", strings.Join(v.Gate.RestrictedTo, ", "))
 		}
 		if v.Gate.Cover {
 			profile := v.Gate.CoverProfile

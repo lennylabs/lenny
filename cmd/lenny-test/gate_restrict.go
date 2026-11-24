@@ -48,13 +48,9 @@ func gateRuns(tiers []string, name string) bool {
 
 // prepareCoverProfile readies the coverage profile of a run with
 // `--cover`. It removes a profile an earlier run left at path, so `lenny-test
-// coverage --diff` after this run reads only what this run wrote. When the
-// plan runs the unit tier, it turns the plan's coverage back on, and the
-// unit tier writes the profile. When it does not, it writes a profile that
-// covers nothing, so the coverage check reads the run's result rather than
-// failing on a missing file: a changed line that the run did not cover
-// counts as uncovered. It returns why the profile could not be readied, or
-// nil.
+// coverage --diff` after this run reads only what this run wrote, and it
+// turns the unit plan's coverage back on, so the unit tier writes the
+// profile. It returns why the earlier profile could not be removed, or nil.
 func prepareCoverProfile(path string, plans map[string]tierPlan) error {
 	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("remove the earlier coverage profile %s: %w", path, err)
@@ -62,6 +58,18 @@ func prepareCoverProfile(path string, plans map[string]tierPlan) error {
 	if p, ok := plans[tierUnit]; ok {
 		p.noCoverage = false
 		plans[tierUnit] = p
+	}
+	return nil
+}
+
+// finishCoverProfile writes a profile that covers nothing when the run
+// wrote none: its selection held no unit tier, or the unit tier ran only
+// test functions by name, which writes no profile. `lenny-test coverage
+// --diff` then reads this run's result rather than failing on a missing
+// file, and counts every changed code line of a production file the
+// profile does not hold as uncovered (unmeasuredStatementLines).
+func finishCoverProfile(path string) error {
+	if _, err := os.Stat(path); err == nil {
 		return nil
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -69,6 +77,26 @@ func prepareCoverProfile(path string, plans map[string]tierPlan) error {
 	}
 	if err := os.WriteFile(path, []byte("mode: atomic\n"), 0o644); err != nil {
 		return fmt.Errorf("write an empty coverage profile %s: %w", path, err)
+	}
+	return nil
+}
+
+// gateCoverProfileError returns why `--cover` cannot write the profile
+// that `lenny-test coverage --diff` reads, or nil. LENNY_COVER_PROFILE set
+// to the empty value turns the profile off, and the gate container does
+// not receive the host's environment, so on the host half a
+// LENNY_COVER_PROFILE other than the default path would leave coverage
+// --diff reading a file the gate never wrote.
+func gateCoverProfileError(here bool, root string, lookup func(string) (string, bool)) error {
+	v, ok := lookup("LENNY_COVER_PROFILE")
+	if !ok {
+		return nil
+	}
+	if v == "" {
+		return fmt.Errorf("--cover with LENNY_COVER_PROFILE set empty writes no profile; unset LENNY_COVER_PROFILE")
+	}
+	if !here && filepath.Clean(v) != filepath.Join(root, coverProfileFile) {
+		return fmt.Errorf("--cover in the gate container writes %s, and LENNY_COVER_PROFILE names %s, which coverage --diff would read instead; unset LENNY_COVER_PROFILE", coverProfileFile, v)
 	}
 	return nil
 }
