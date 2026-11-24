@@ -1009,9 +1009,10 @@ func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, e
 // gateUnitWithoutCoverage sets noCoverage on the unit tier's plan, so the
 // gate's unit run keeps -race and -count=1 and writes no coverage profile
 // (change 0172, GS-4). No check of the gate reads the profile, so the
-// coverage build only lengthens the run. A coverage report comes from
+// coverage build only lengthens the run. A gate run leaves an existing
+// tests/results/cover.out as it is. A coverage report comes from
 // `lenny-test --tier unit` or `run --changed`, followed by `lenny-test
-// coverage`.
+// coverage --go` or `--diff`.
 func gateUnitWithoutCoverage(plans []tierPlan) {
 	for i := range plans {
 		if plans[i].name == tierUnit {

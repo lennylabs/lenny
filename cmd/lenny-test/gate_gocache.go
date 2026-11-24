@@ -3,10 +3,9 @@
 package main
 
 // The size cap of the gate's Go build cache. Each gate run builds several
-// build-tag sets, a -race build, and a coverage build into the
-// lenny-gate-gocache volume, and Go trims only the entries unused for five
-// days, so the volume grows by tens of gigabytes a day under repeated gate
-// runs. Before the host half of `lenny-test gate` starts the gate
+// build-tag sets and a -race build into the lenny-gate-gocache volume, and
+// Go trims only the entries unused for five days, so the volume grows by
+// tens of gigabytes a day under repeated gate runs. Before the host half of `lenny-test gate` starts the gate
 // container, it measures the volume and empties it when it holds more
 // than the cap, unless another container has the volume mounted. The cap
 // only bounds disk use: the run that follows a cleanup compiles from cold,

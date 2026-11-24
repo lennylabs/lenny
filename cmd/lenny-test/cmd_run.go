@@ -1181,9 +1181,10 @@ func tierStatusRank(status string) int {
 // they resolved, also when --tier unit restricts them; --tier unit alone,
 // --gate alone, and --all leave it nil.
 func runUnitTier(p tierPlan) (string, string, *tierResult) {
-	// Race detection is on by default per §17.4. When
-	// LENNY_COVER_PROFILE is set, coverage is emitted to that path so
-	// `lenny-test coverage --go` can later roll it up.
+	// Race detection is on by default per §17.4. The coverage profile
+	// goes to unitCoverProfile(p): none for a plan with noCoverage set,
+	// which the merge gate's is, and otherwise coverProfilePath(), where
+	// `lenny-test coverage --go` and `--diff` read it.
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
