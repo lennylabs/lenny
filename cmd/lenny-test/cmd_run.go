@@ -60,9 +60,6 @@ func runRun(args []string) int {
 		}
 		return 2
 	}
-	if *containerFlag {
-		return runInContainerFn(repoRoot(), args)
-	}
 
 	// Propagate update flags via environment so test binaries pick
 	// them up. Side-effecting `os.Setenv` here is fine because the
@@ -102,6 +99,11 @@ func runRun(args []string) int {
 		fmt.Fprintln(os.Stderr, "lenny-test: no selector provided. Use --group, --tier, --gate, --changed, --spec, or --pkg.")
 		fmt.Fprintln(os.Stderr, "Run `lenny-test --help` for usage.")
 		return 2
+	}
+	if *containerFlag {
+		// The flags are checked on the host before the image is built or
+		// started; the run in the container resolves the selection.
+		return runInContainerFn(repoRoot(), args)
 	}
 
 	resolved, err := sel.resolve()

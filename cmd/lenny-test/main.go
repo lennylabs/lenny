@@ -216,6 +216,9 @@ Run flags:
                            tests/results/latest.json).
   --cached                 Use the cached container daemon if available.
   --no-infra               Skip infrastructure provisioning.
+  --container              Run the selection inside the gate image, with the gate's
+                           container setup (TESTING.md, "lenny-test run in the gate
+                           container"); not a merge verdict.
 
 `)
 }

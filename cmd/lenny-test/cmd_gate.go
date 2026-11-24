@@ -458,7 +458,11 @@ func gateEnvironment(root, marker string, getenv func(string) string) (string, e
 // cache volume under capGB gigabytes (capGateGoCache), and runs the gate
 // inside a container of the image, returning the container's exit code.
 func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool, capGB int) int {
-	return runInGateContainer(root, gateContainerRun{label: "lenny-test gate", passArgs: passArgs}, rebuild, withSocket, capGB)
+	return runInGateContainer(root, gateContainerRun{
+		label:    "lenny-test gate",
+		passArgs: passArgs,
+		hint:     "run `lenny-test gate --here` on a Linux host with the gate's toolchain",
+	}, rebuild, withSocket, capGB)
 }
 
 // gateContainerRun is what one gate-image container runs: the script and
@@ -469,6 +473,13 @@ type gateContainerRun struct {
 	script   string
 	name     string
 	passArgs []string
+	// hint is what the "docker not on PATH" message suggests instead.
+	hint string
+	// tmpPrefix names the shared fixture directory (hostTmpDir); empty
+	// means the gate's, gateTmpPrefix.
+	tmpPrefix string
+	// volumes are extra `-v` mounts for the container.
+	volumes []string
 }
 
 // runInGateContainer builds or reuses the gate image, caps the build cache
@@ -477,7 +488,7 @@ type gateContainerRun struct {
 // `lenny-test run --container` share it.
 func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket bool, capGB int) int {
 	if _, err := exec.LookPath("docker"); err != nil {
-		fmt.Fprintln(os.Stderr, c.label+": docker not on PATH; install Docker, or run on a Linux host with the gate's toolchain (`lenny-test gate --here`, or `lenny-test run` without --container)")
+		fmt.Fprintln(os.Stderr, c.label+": docker not on PATH; install Docker, or "+c.hint)
 		return 2
 	}
 	dockerfile, err := os.ReadFile(filepath.Join(root, gateDockerfile))
@@ -496,12 +507,16 @@ func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket boo
 		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
-	tmp, err := gateHostTmpDir(root)
+	prefix := c.tmpPrefix
+	if prefix == "" {
+		prefix = gateTmpPrefix
+	}
+	tmp, err := hostTmpDir(prefix, root)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
-	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: c.passArgs, script: c.script, scriptName: c.name}
+	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: c.passArgs, script: c.script, scriptName: c.name, volumes: c.volumes}
 	ctx, cancel := context.WithTimeout(context.Background(), gateGoCacheTimeout)
 	capGateGoCache(ctx, execGateCommand, h.imageRef(), capGB, os.Stderr)
 	cancel()
@@ -614,10 +629,18 @@ func (s gateImageStore) save(tag, id string) error {
 // other checks create and remove fixtures, and would read them
 // half-written.
 func gateHostTmpDir(root string) (string, error) {
+	return hostTmpDir(gateTmpPrefix, root)
+}
+
+// hostTmpDir returns the shared fixture directory of a worktree for one
+// kind of container: prefix and a digest of root under gateTmpParent. The
+// gate and `run --container` use different prefixes, so each empties
+// only its own directory when it starts.
+func hostTmpDir(prefix, root string) (string, error) {
 	sum := sha256.Sum256([]byte(root))
-	tmp := filepath.Join(gateTmpParent, gateTmpPrefix+hex.EncodeToString(sum[:])[:8])
+	tmp := filepath.Join(gateTmpParent, prefix+hex.EncodeToString(sum[:])[:8])
 	if err := os.MkdirAll(tmp, 0o755); err != nil {
-		return "", fmt.Errorf("create the gate's shared fixture directory: %w", err)
+		return "", fmt.Errorf("create the shared fixture directory: %w", err)
 	}
 	return tmp, nil
 }
@@ -665,6 +688,8 @@ type gateHost struct {
 	// script and scriptName are the container's command and its $0;
 	// an empty script runs gateContainerScript as lenny-test-gate.
 	script, scriptName string
+	// volumes are extra `-v` mounts, in docker's source:target form.
+	volumes []string
 }
 
 // gateDockerRunArgs is the argv of `docker run` for one gate run.
@@ -765,6 +790,9 @@ func gateDockerRunArgs(h gateHost) []string {
 			"-v", h.dockerSocket+":"+gateContainerSocket,
 			"-e", "TESTCONTAINERS_HOST_OVERRIDE=127.0.0.1",
 		)
+	}
+	for _, vol := range h.volumes {
+		args = append(args, "-v", vol)
 	}
 	script, name := gateContainerScript, "lenny-test-gate"
 	if h.script != "" {
