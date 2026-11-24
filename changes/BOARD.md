@@ -9,10 +9,10 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 1 |
-| Ready | 4 |
-| Waiting on decisions | 33 |
-| Blocked | 150 |
-| Landed | 19 |
+| Ready | 5 |
+| Waiting on decisions | 32 |
+| Blocked | 149 |
+| Landed | 14 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -54,10 +54,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0168.S1](0168-token-fixes/steps.md#0168s1-token-rule-fixes-from-the-property-tests) | Token rule fixes from the property tests | Building | a part waits on 0169.S2 |
+| [0168.S1](0168-token-fixes/steps.md#0168s1-token-rule-fixes-from-the-property-tests) | Token rule fixes from the property tests | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
+| [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -90,7 +91,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | 0149 is `Draft` |
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft`; a part waits on 0150.S1 |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
-| [0169.S1](0169-token-concurrency-model/steps.md#0169s1-concurrency-model-of-the-token-rules-on-main) | Concurrency model of the token rules on main | Waiting on decisions | 0169 is `Draft` |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Blocked | 0119.S1, 0119.S2, 0131.S9 |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
 | [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
@@ -240,13 +240,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
-| [0169.S2](0169-token-concurrency-model/steps.md#0169s2-the-locking-design-of-0168-as-a-variant) | The locking design of 0168 as a variant | Blocked | 0169.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
-| [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
-| [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Landed |  |
-| [0164.S1](0164-token-exchange-identity-rules/steps.md#0164s1-token-exchange-narrowing-and-identity-rules) | Token exchange narrowing and identity rules | Landed |  |
-| [0165.S1](0165-token-rules-model/steps.md#0165s1-token-rules-model-and-property-list) | Token rules model and property list | Landed |  |
-| [0165.S2](0165-token-rules-model/steps.md#0165s2-generated-property-tests-against-the-token-service) | Generated property tests against the Token Service | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -291,9 +285,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
-| [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
-| [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
-| [0164](0164-token-exchange-identity-rules/change.md) | Token exchange narrowing and identity rules | `In progress` | 1 of 1 | 0 |
-| [0165](0165-token-rules-model/change.md) | A formal model of the token rules | `In progress` | 2 of 2 | 0 |
 | [0168](0168-token-fixes/change.md) | Token rule fixes from the property tests | `In progress` | 0 of 1 | 0 |
-| [0169](0169-token-concurrency-model/change.md) | A concurrency model of the token rules | `Draft` | 0 of 2 | 7 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `Decided` | 0 of 1 | 0 |

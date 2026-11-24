@@ -1,0 +1,25 @@
+# Review history: 0162 The playground mint refuses a subject scope it cannot narrow
+
+- 2026-11-19, revision 1. Created with decision 1, which the owner settled on 2026-11-19 (question S-2 of the M3 readiness review). Status `Decided`.
+- 2026-11-19, 0162.S1. Status `In progress`: step 0162.S1 started on branch `change/0162.S1-playground-mint-scope-refusal`.
+- 2026-11-19, 0162.S1, review. One round (general and security) over `db6c42d36...HEAD` at `d3c084c1b`. Findings: 10 fixed, 2 that need the owner, 1 filed as an issue, 1 left for another change, and 2 accepted as built; none dropped.
+  - Fixed: §27.3.1 step 6 says that only a successful mint emits `playground.bearer_minted` (general 1). §10.2 invariant 2 and the Terms of `change.md` attribute the empty-claim reading to the mint and the auth chain rather than §25.1 (general 2). The §15.1 mint row reads as one sentence (general 6). A count is dropped from §10.2 and from the web playground page (general 7). The `SCOPE_FORBIDDEN` row of the error catalog page says that any one listed scope admits the playground mint (general 8). The `narrowSubjectScope` comment no longer restates the refusals (general 9). A test pins that the scope refusal precedes the signer check (general 10). The digest is written with the step (general 11). The section-citation register counts the tests the branch adds.
+  - Merge-gate review rule: the `tests/registers/spec-section-citations.yaml` diff raises the counts of `pkg/gateway/playground` from 95 to 111 and `tests/contract/playground` from 16 to 18, by the `§` annotations the branch adds (AUTHN and PLAY are placeholder pages), and removes, weakens, or skips no check.
+  - Needs the owner: O1, an ID token whose `scope` claim is an array is read as absent (general 4); O2, a refused `oidc`-mode mint emits an audit event that names no user (security 3).
+  - Filed: [TOKX-I2](../../../issues/closed/TOKX/TOKX-I2-exchange-without-scope-issues-an-unrestricted-token.md), a token exchange that omits `scope` issues a token with no scope restriction (security 1, High, predates the branch).
+  - Left for another change: [0149](../../0149-tenant-scoping-identity/change.md) (TS-2) filters `scope` to `tools:` values at the verifier, after which an `apiKey` subject with `openid profile` mints `playground_allowed_scope` instead of the 401 this step adds, so 0149 updates the contract test case, the §10.2 failure-mode example, and the web playground page when it lands, and applies the same filter to the playground OIDC callback (security 2). Recorded here rather than edited into 0149, which belongs to program v1. The standard auth chain refuses an unparseable `scope` with `401 TOKEN_INVALID`, which the §15.1 catalog does not list, while the mint returns `401 UNAUTHORIZED`; 0149 TS-2 changes that chain's handling of the claim (general 3).
+  - Accepted as built: the §10.2 failure-modes table repeats the two scope rows that §27.3.1 also lists, with the client action only in §27.3.1 (general 5). The `INTERNAL_ERROR` branch of `narrowSubjectScope` is unreachable while the allowed set is a constant of canonical values, and stays uncovered (general 10).
+
+## 2026-11-19, owner answers and landing
+
+- The owner settled O1 (option (a), question SM-2), O2 (option (a), question SM-3), and confirmed the absent-scope default (question SM-4) on the M3 readiness decision page. They are decisions 2 to 4.
+- 0162.S1 landed on the merge-gate verdict `PASS` of run `03c07cd8a1fbae415f4fdab5` on `74495debf`. An earlier run, `2a71ae1cbc48c653146dc189`, failed in the component and contract tiers on container start-up timeouts while the host's load average was about 26; no failure reached the code under test.
+- The change stays `In progress` until it is archived with its link rewrites, which the next records branch carries.
+
+## 2026-11-23, issues for decisions 2 and 3
+
+- Filed [PLAY-I3](../../../issues/PLAY/PLAY-I3-oidc-callback-reads-a-non-string-scope-claim-as-absent.md) for decision 2 (SM-2) and [PLAY-I4](../../../issues/PLAY/PLAY-I4-refused-mint-event-names-no-user.md) for decision 3 (SM-3), and named them in each decision.
+
+## 2026-11-23, archive
+
+- No open decision remains and every step has landed, so the status is `Implemented` and the change moves to `archive/`.
