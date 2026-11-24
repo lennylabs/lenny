@@ -56,6 +56,7 @@ Today's budgets do not meet that request **[source]**:
 - Calls a runtime sends to a provider outside the LLM proxy, which 0133 leaves unmetered (OD-15 of 0133).
 - Concurrency and rate limits, which stay quotas under [§11.1](../../spec/11_policy-and-controls.md#111-admission-and-fairness).
 - Costs that reach no tenant: unpinned idle pods on shared pools, node capacity that no pod requests, and data held in Postgres, as 0121 states.
+- Meters that a deployer defines. Lenny meters model calls through its proxy, pod time, and stored data, and nothing else (decision 14). A deployer that pays for other services attributes their costs to sessions with the identity Lenny sends ahead of each call ("BG-3", **External costs**), and enforces its own limits on them.
 - Egress bytes. `egress.tunnel` records of `0127-egress-and-git` carry bytes per tunnel and are lossy ("Current state"), so this change meters no egress (O19).
 
 ## Terms
@@ -80,6 +81,7 @@ Today's budgets do not meet that request **[source]**:
 | Partition | One counter of a budget whose `per` field names an attribute, such as one counter per user ("BG-1"). |
 | Period | The interval over which a budget's counter accumulates, from one reset to the next. A budget with no schedule has one period for its life. |
 | Reset | The close of a period and the start of the next, at a schedule boundary or on demand ("BG-7"). |
+| Adjustment | An amount, in a budget's unit, that an administrator adds to or takes from the budget's limit for the periods that start within a window, for one partition or every partition ("BG-7"). |
 | Reservation | An amount held against every budget of a charge's budget set before the work that incurs it runs, settled to the actual charge afterwards. |
 | Carve | A reservation that funds a child session's budget from the budgets that apply to its parent ("BG-8"). |
 | Threshold | A fraction of a budget's limit at which the gateway records a notice ("BG-6"). |
@@ -222,7 +224,7 @@ A budget is a record with these fields **[design]**:
 | `meters` | For a `money` budget, the meters whose charges it counts: any of `credits`, `compute`, `storage`, `poolIdle`, `dedicatedNodes`, and `escrow` (O13). It defaults to every meter the price list prices. A budget in another unit counts the meter of its unit alone. |
 | `appliesTo` | The selector of "BG-3". A principal budget has none. |
 | `attach` | `selector`, `reference`, or `both`. A principal budget is always `reference`. |
-| `usableBy` | For a tenant budget with `attach` including `reference`, the principals and directory groups that may name it in `budgetRefs`. |
+| `usableBy` | For a tenant or platform budget with `attach` including `reference`, the principals and directory groups that may name it in `budgetRefs`, and `interceptors: true` when a `PreRoute` interceptor may attach it ("BG-3"). |
 | `per` | Optional partition key: `user`, `session`, `rootSession`, `environment`, `runtime`, or `label:<key>`. The budget keeps one counter for each value, each with the full limit (O18). |
 | `period` | The schedule of "BG-7", with its time zone. `storageBytes` budgets have no period, because they limit what is held at each moment. |
 | `thresholds` | Fractions of the limit, default `[0.8, 1.0]`, at most `budgets.maxThresholds` (default 8). |
@@ -293,6 +295,23 @@ A session creation may carry `budget`, which creates the session's budget object
 A charge of a tenant-level meter has a tenant as its subject and matches only a budget whose selector names no field other than `tenants`.
 
 **References [design].** `budgetRefs` on `POST /v1/sessions` names shared budgets by name, a tenant budget as `tenant/<name>` and a principal budget as `principal/<name>`. The gateway refuses a name the caller may not use with `403 BUDGET_NOT_ATTACHABLE`, and one that does not exist with `404 RESOURCE_NOT_FOUND`, so that a caller learns no more about another principal's budgets than about a missing one. A child of any depth inherits its ancestors' references, which serves a named session tree: a client creates a principal budget and names it on the root, and the whole tree draws on it.
+
+**Budgets attached by an interceptor [design].** A `PreRoute` interceptor of [§4.8](../../spec/04_system-components.md#48-gateway-policy-engine) may return, with `MODIFY`, `budgetRefs` to add and a session budget to lower, so a deployer's own logic, such as a lookup in a project registry or a cost-center database, decides which budgets a session draws on (decision 13):
+
+- **Add only.** The interceptor adds references and lowers the session budget's amounts. It cannot remove a reference the client named or a budget that matches by selector, and it cannot raise the session budget, so a faulty interceptor cannot loosen a limit.
+- **Which budgets.** It may name a tenant budget of the session's tenant, or a platform budget, whose `attach` includes `reference` and whose `usableBy` includes the session's owner or `interceptors: true`. A budget that permits neither cannot be charged by an interceptor's choice, so one team's interceptor cannot spend another team's budget. A name outside these rules fails the creation with `403 BUDGET_NOT_ATTACHABLE`, and the audit event names the interceptor.
+- **When.** The additions apply at the post-chain point of [`0141-runtime-routing`, RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract), count toward `budgets.maxRefsPerSession`, and are fixed for the session's life and inherited by its descendants as the client's references are. The interceptor runs once per session, and no model call or compute tick waits for it.
+- **Failure.** The registration's `failPolicy` applies. Under `fail-closed` a session whose interceptor does not answer is refused. Under `fail-open` it is created without the additions, and the gateway records `budget.attachment_skipped` naming the interceptor and the session.
+
+**External costs [design].** A deployer that pays for a service outside Lenny, such as a search API that a tool server calls, matches each cost to a session with what Lenny already sends ahead of the call, and enforces its own limit there (decision 14):
+
+| Call | What identifies the session | Source |
+| :-- | :-- | :-- |
+| A request from a pod to a deployer's service through egress | The identity assertion that `netagent` attaches: tenant, environment, user or principal type, session, root session, and depth, signed by Lenny | [`0124-connector-removal`, "CR-2"](../0124-connector-removal/change.md#cr-2-identity-assertion) |
+| A model call that the proxy forwards to a deployer's LLM gateway | The `Lenny-*` headers: tenant, environment, user, session, root session, runtime, pool, and upstream | [`0133-llm-upstreams-and-cost-budgets`, "LU-11"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-11-forwarded-attribution) |
+| A call that the client makes | The session identifier, which the client holds | The client's own record |
+
+From a session identifier, `GET /v1/sessions/{id}` returns the session's attributes and `GET /v1/sessions/{id}/budgets` its budget set. O22 asks what the read adds for an external cost to reach a directory group. A deployer that finds its own limit spent refuses new sessions with a `PostAuth` or `PreRoute` interceptor that returns `REJECT`, refuses model calls with a `PreLLMRequest` interceptor, and refuses its own service's calls itself.
 
 **The budget set [design].** At creation, the gateway computes the session's budget set and stores the identifiers on the session row. Every attribute a selector reads is fixed at creation, so the set changes only when a budget changes. On a budget's creation, change, enablement, disablement, or deletion, the gateway writes an invalidation, each replica refreshes the tenant's budgets from Postgres, and the next charge of each session reads the new set. A charge in flight keeps the set it reserved against. A new tenant budget with a selector therefore applies to running sessions from their next charge.
 
@@ -431,10 +450,11 @@ period:
 A new period starts at the budget's limit, whatever the last period left unused (decision 11).
 
 - **Boundaries.** The gateway computes each boundary from the schedule and the time zone. A local time that a daylight-saving change skips moves to the next instant that exists, and a local time that occurs twice takes its first occurrence. A cron schedule whose boundaries fall closer than `budgets.minPeriodSeconds` (default 3600) is refused at write.
+- **Adjustments.** An administrator raises or lowers a budget's limit for chosen periods with an adjustment, without changing the limit of the other periods (decision 12). An adjustment names a signed `amount` in the budget's unit, a window `from` and `until`, an optional `partition`, and a `reason`, and it applies to every period whose start falls in the window, and to the current period when `from` is at or before its start. A period's limit is the budget's limit plus every adjustment that applies to it, and never less than zero. A budget with no schedule, such as a `storageBytes` cap, takes the adjustment for as long as the window lasts. Each adjustment is in its budget's unit, so a user with a daily credit budget and a daily compute budget receives one adjustment on each, and an adjustment of a money budget raises the combined amount of every meter it counts. `POST /v1/admin/budget-adjustments` applies a list of adjustments to several budgets, all or none. Whoever may change a budget may adjust it. An adjustment whose first period has not started may be deleted, and one in progress may be ended at the next boundary. Thresholds and exhaustion read the adjusted limit. A session budget has no period, and its owner changes it with `PATCH` ("BG-2").
 - **Period keys.** A period is named by its start instant, which every replica computes from the schedule, so a charge after a boundary lands in the new period without coordination.
 - **On demand.** `POST /v1/admin/budgets/{name}/reset`, or `POST /v1/budgets/{name}/reset` for a principal budget, closes the current period at once and starts a new one, for every partition or for the one the request names. The request carries a `reason`. The schedule continues at its next boundary, so the period after an on-demand reset is shorter. Whoever may change the budget may reset it. A session budget has no reset.
 - **Reservations across a reset.** Each reservation outstanding at a boundary, including the unconsumed part of every carve, moves into the new period: the new period's counter starts at the sum of the outstanding reservations plus nothing consumed, and each later settlement settles in the new period. A charge that straddles the boundary is therefore counted in the period in which it settles (decision 10).
-- **Records.** Closing a period writes a `budget_periods` row with the period's bounds, its consumption by meter, the money estimate of a money budget, the reservations carried, and the trigger (`schedule` or `api`, with the actor), and `budget.reset` names the closed period.
+- **Records.** Closing a period writes a `budget_periods` row with the period's bounds, the adjustments that applied, its consumption by meter, the money estimate of a money budget, the reservations carried, and the trigger (`schedule` or `api`, with the actor), and `budget.reset` names the closed period.
 
 ### BG-8 Carves for delegated children
 
@@ -453,7 +473,7 @@ The owner settled this in decision 12 of 0166 on 2026-11-23: a child's carved bu
 
 **Redis [design].** Each budget partition and period has a counter with `consumed` and `reserved` fields under its own hash tag, `{bdg:<budgetId>:<partition>}`, and a reservation index ordered by expiry beside it. A reservation across a budget set touches several hash slots, which the rule of [§12.4](../../spec/12_storage-architecture.md#124-redis-ha-and-failure-modes) that "Every Redis store keeps each script, transaction, and multi-key command inside one hash slot" forbids in one script. The gateway therefore reserves budget by budget in a fixed order of budget identifiers, records each step in the reservation with its expiry, and releases the earlier steps when a later one refuses, as option (a) of 0133's open decision 6 proposes for its scopes (O11). A budget that every charge of a tenant or the platform reaches, such as a tenant's monthly money budget, is a hot key, and O11 asks whether such budgets hand each replica an allotment, as §12.4's in-memory quota mode does for tenant token budgets.
 
-**Postgres [design].** The `budgets` table holds definitions, the `budget_periods` table holds closed periods, the `budget_checkpoints` table holds each open period's counters every `quotaSyncIntervalSeconds`, and the `price_list_versions` table holds the price lists. The session row carries its budget set and its references.
+**Postgres [design].** The `budgets` table holds definitions, the `budget_periods` table holds closed periods, the `budget_adjustments` table holds adjustments, which a counter rebuild reads, the `budget_checkpoints` table holds each open period's counters every `quotaSyncIntervalSeconds`, and the `price_list_versions` table holds the price lists. The session row carries its budget set and its references.
 
 **Failure [design].**
 
@@ -481,6 +501,7 @@ The owner settled this in decision 12 of 0166 on 2026-11-23: a child's carved bu
 | `POST`, `GET /v1/admin/budgets` | Create and list platform and tenant budgets. A `platform-admin` passes `?tenant=` or `scope: platform`. Every admin write accepts `?dryRun=true` under §15.1. |
 | `GET`, `PUT`, `DELETE /v1/admin/budgets/{name}` | Read, replace under `If-Match`, and delete. Deletion releases every reservation the budget holds. |
 | `POST /v1/admin/budgets/{name}/reset` | Reset on demand ("BG-7"). |
+| `POST`, `GET /v1/admin/budgets/{name}/adjustments`, `DELETE /v1/admin/budgets/{name}/adjustments/{id}`, and `POST /v1/admin/budget-adjustments` | Adjustments, to one budget or to several at once ("BG-7"). |
 | `GET /v1/admin/budgets/{name}/usage` | The current period's consumption by meter, reservations, limit, and money estimate, per partition with paging. |
 | `GET /v1/admin/budgets/{name}/periods` | Closed periods. |
 | `/v1/budgets`, with the same sub-routes | Principal budgets of the caller. |
@@ -499,7 +520,7 @@ The owner settled this in decision 12 of 0166 on 2026-11-23: a child's carved bu
 
 A service account holds the `user` row's rights over its own principal budgets. "Manage quotas" keeps concurrency and rate limits.
 
-**Audit events [design].** [§11.7](../../spec/11_policy-and-controls.md#117-audit-logging) gains `budget.created`, `budget.updated` with the fields changed, `budget.deleted`, `budget.reset` with the trigger, the actor, and the closed period's summary, `budget.threshold_crossed`, `budget.exhausted` once per budget, partition, and period, `session_budget.changed` for a `PATCH`, an extension, a carve, a transfer, or a release, and `price_list.version_added`.
+**Audit events [design].** [§11.7](../../spec/11_policy-and-controls.md#117-audit-logging) gains `budget.created`, `budget.updated` with the fields changed, `budget.deleted`, `budget.reset` with the trigger, the actor, and the closed period's summary, `budget.adjusted` with the actor, the reason, the amount, the window, and the partition, `budget.attachment_skipped`, `budget.threshold_crossed`, `budget.exhausted` once per budget, partition, and period, `session_budget.changed` for a `PATCH`, an extension, a carve, a transfer, or a release, and `price_list.version_added`.
 
 **Metrics [design].** A budget name is not a metric label, because tenants create budgets without bound, and per-budget figures come from the usage route. The metrics are `lenny_budget_reservations_total` by `meter` and `outcome`, `lenny_budget_refusals_total` by `tenant_id`, `unit`, `scope`, and `action`, `lenny_budget_reservation_duration_seconds` by `meter`, `lenny_budget_threshold_crossings_total` by `tenant_id` and `unit`, `lenny_budget_resets_total` by `trigger`, `lenny_budget_rebuilds_total` by `outcome`, `lenny_budget_compute_tick_lag_seconds`, and `lenny_budget_storage_accrual_lag_seconds`. The alerts are `BudgetRebuildFailing`, `BudgetAccrualLagging` when the accrual lag passes twice its interval, and `BudgetPriceListGap` when a money budget counts a meter with no price in force.
 
