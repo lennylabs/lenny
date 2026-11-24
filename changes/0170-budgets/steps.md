@@ -33,7 +33,7 @@ It depends on 0133.S3 for the credit reservation, settlement, and recovery sweep
 - lanes: [specification, code, documentation]
 - depends-on: [0170.S1]
 
-`budgets.currency`; price lists with their versions and validation, and the tenant price lists O3 settles; the `money` unit, with conversion at the version in force, rounding per charge, and the reservation of money equivalents for credit charges; the estimate label on every reported money figure; and the billing-event outcome of O15. The money equivalents of compute and storage charges land with 0170.S3 and 0170.S4, whichever of each pair merges second.
+`budgets.currency`; the platform price list with its versions and validation, and a tenant's credit conversions with their order of application (decision 7); the `money` unit, with conversion at the version in force, rounding per charge, and the reservation of money equivalents for credit charges; the estimate label on every reported money figure; and the billing-event outcome of O15. The money equivalents of compute and storage charges land with 0170.S3 and 0170.S4, whichever of each pair merges second.
 
 ### 0170.S3 Compute budgets
 - status: Planned
@@ -41,7 +41,7 @@ It depends on 0133.S3 for the credit reservation, settlement, and recovery sweep
 - lanes: [specification, code, documentation]
 - depends-on: [0170.S1, 0121.S1, 0121.S2, 0146.S1]
 
-The compute meter: compute weights on resource classes, isolation profiles, and pools, written by a `platform-admin` alone; the compute tick at bind, at each tick, and at release; admission of creations and resumes by the first tick; `onExhausted.running` with `continue`, `release`, and `end`; lease extension of session budgets in compute units; and the recovery of a compute tick from `session_pod_windows`. It depends on 0121.S1 for resource classes in configuration, on 0121.S2 for `session_pod_windows`, and on 0146.S1 for `dormant`, into which `release` moves a session.
+The compute meter: compute units from a pod's resources, with the rates, the isolation multipliers, and the pins on resource classes and pools, written by a `platform-admin` alone (decision 4); the compute tick at bind, at each tick, and at release; admission of creations and resumes by the first tick; `onExhausted.running` with `continue`, `release`, and `end`; lease extension of session budgets in compute units; and the recovery of a compute tick from `session_pod_windows`. It depends on 0121.S1 for resource classes in configuration, on 0121.S2 for `session_pod_windows`, and on 0146.S1 for `dormant`, into which `release` moves a session.
 
 ### 0170.S4 Storage budgets
 - status: Planned
