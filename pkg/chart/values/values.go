@@ -184,6 +184,13 @@ type Auth struct {
 	// the schema refuses the same range at install time.
 	// spec: §10.2, §27.
 	CapabilityTokenTTLSeconds int `json:"capabilityTokenTtlSeconds,omitempty" min:"120" max:"3600" desc:"§10.2 default lifetime of the Lenny-issued JWTs whose holder refreshes them: playground bearers and POST /v1/oauth/token JWTs requested without expires_in. Bounded 120..3600."`
+	// TokenLineageMaxDepth is the §13.3 lineage depth cap of step (1a).
+	// lenny-token-service refuses to start below 1, and the schema refuses
+	// the same values at install time.
+	TokenLineageMaxDepth int `json:"tokenLineageMaxDepth,omitempty" min:"1" desc:"§13.3 lineage depth cap: an exchange whose parent token is this many parent_jti links deep or more is refused. At least 1."`
+	// TokenRevocationTimeoutMs is the §13.3 and §11.4 statement timeout
+	// of a recursive revocation's cascade and a full revoke's token walk.
+	TokenRevocationTimeoutMs int `json:"tokenRevocationTimeoutMs,omitempty" min:"1" desc:"§13.3 and §11.4 statement timeout, in milliseconds, of a recursive revocation's cascade and a full revoke's token walk. At least 1."`
 }
 
 // KMS models the §10.2 / §17.8.2 KMS values the schema constrains. The
