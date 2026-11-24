@@ -1,21 +1,21 @@
 # Token exchange narrowing and identity rules
 
-Status: `In progress`, revision 4, 2026-11-22.
+Status: `Implemented`, revision 4, 2026-11-23.
 
 ## Problem
 
 The reviews of 0163.S1 on 2026-11-19 filed five defects in the token exchange of `POST /v1/oauth/token` and in the tokens that relate to it. Each predates 0163.S1.
 
-- [TOKX-I3](../../issues/closed/TOKX/TOKX-I3-exchange-cannot-narrow-a-subject-without-scope.md) (Medium): the subset check of §13.3 rule (a) compares literal strings, so an exchange cannot narrow a `subject_token` that carries no `scope` claim, nor narrow `tools:*` or `tools:<domain>:*`. No token an operator obtains carries a `scope` claim, so the §25.1 narrowing flow produces no scope-restricted token. Rule (e) also drops a child's `authorized_tools` when the issued scope is absent.
-- [TOKX-I4](../../issues/closed/TOKX/TOKX-I4-exchange-drops-the-playground-origin-claim.md) (Low): a playground bearer presented as `subject_token` or `actor_token` is exchanged for a token without the `origin` claim, which escapes the playground logout revocation and the playground session caps.
-- [TOKX-I5](../../issues/closed/TOKX/TOKX-I5-exchange-does-not-check-the-caller-identity.md) (Low): the exchange compares the caller with the subject on `tenant_id` only, although §13.3 **Client authentication on `/v1/oauth/token`.** requires a caller of another identity to narrow scope. A token derived without an `actor_token` records no parent, so the recursive revocation of its subject does not reach it.
-- [TOKX-I6](../../issues/closed/TOKX/TOKX-I6-impersonation-bearer-ignores-the-caller-scope.md) (Low): a platform-admin impersonation bearer carries no `scope` claim whatever the caller's scope.
-- [TOKX-I7](../../issues/closed/TOKX/TOKX-I7-token-exchanged-audit-payload-scope-fields.md) (Low): the `token.exchanged` row carries one `scope` field where §16.7 names `requested_scope` and `granted_scope`.
-- [TOKX-I9](../../issues/closed/TOKX/TOKX-I9-revocation-request-accepts-any-caller-and-a-revoked-root.md) (Medium), filed by the review of this step: the recursive-revocation request accepts any caller in the tenant and a revoked caller, so a holder of a leaked token that its owner rotated away from could revoke the owner's current token through the rotation edge. The same review found that a child mint lets a caller holding another user's token mint a child at that user's full scope (decisions 7 and 8).
+- [TOKX-I3](../../../issues/closed/TOKX/TOKX-I3-exchange-cannot-narrow-a-subject-without-scope.md) (Medium): the subset check of §13.3 rule (a) compares literal strings, so an exchange cannot narrow a `subject_token` that carries no `scope` claim, nor narrow `tools:*` or `tools:<domain>:*`. No token an operator obtains carries a `scope` claim, so the §25.1 narrowing flow produces no scope-restricted token. Rule (e) also drops a child's `authorized_tools` when the issued scope is absent.
+- [TOKX-I4](../../../issues/closed/TOKX/TOKX-I4-exchange-drops-the-playground-origin-claim.md) (Low): a playground bearer presented as `subject_token` or `actor_token` is exchanged for a token without the `origin` claim, which escapes the playground logout revocation and the playground session caps.
+- [TOKX-I5](../../../issues/closed/TOKX/TOKX-I5-exchange-does-not-check-the-caller-identity.md) (Low): the exchange compares the caller with the subject on `tenant_id` only, although §13.3 **Client authentication on `/v1/oauth/token`.** requires a caller of another identity to narrow scope. A token derived without an `actor_token` records no parent, so the recursive revocation of its subject does not reach it.
+- [TOKX-I6](../../../issues/closed/TOKX/TOKX-I6-impersonation-bearer-ignores-the-caller-scope.md) (Low): a platform-admin impersonation bearer carries no `scope` claim whatever the caller's scope.
+- [TOKX-I7](../../../issues/closed/TOKX/TOKX-I7-token-exchanged-audit-payload-scope-fields.md) (Low): the `token.exchanged` row carries one `scope` field where §16.7 names `requested_scope` and `granted_scope`.
+- [TOKX-I9](../../../issues/closed/TOKX/TOKX-I9-revocation-request-accepts-any-caller-and-a-revoked-root.md) (Medium), filed by the review of this step: the recursive-revocation request accepts any caller in the tenant and a revoked caller, so a holder of a leaked token that its owner rotated away from could revoke the owner's current token through the rotation edge. The same review found that a child mint lets a caller holding another user's token mint a child at that user's full scope (decisions 7 and 8).
 
 ## Scope
 
-The change covers the scope check, the origin check, and the caller-identity check of every exchange `POST /v1/oauth/token` serves, the lineage the Token Service records for the token an exchange issues, who may send the recursive-revocation request ([TOKX-I9](../../issues/closed/TOKX/TOKX-I9-revocation-request-accepts-any-caller-and-a-revoked-root.md)), the scope claim of the impersonation bearer, and the scope fields of the `token.exchanged` row.
+The change covers the scope check, the origin check, and the caller-identity check of every exchange `POST /v1/oauth/token` serves, the lineage the Token Service records for the token an exchange issues, who may send the recursive-revocation request ([TOKX-I9](../../../issues/closed/TOKX/TOKX-I9-revocation-request-accepts-any-caller-and-a-revoked-root.md)), the scope claim of the impersonation bearer, and the scope fields of the `token.exchanged` row.
 
 It leaves out:
 
@@ -100,14 +100,14 @@ alice holds a platform-admin token with no `scope` claim. She exchanges it for `
 ## Limits, and alternatives rejected
 
 - The options not chosen are listed with each decision in `decisions.md`.
-- A rotation records its predecessor (decision 10), so a holder of a token the user rotated away from and of a live token of the user's can revoke the user's current token and the tokens derived from it. The user signs in again, and an administrator fully revokes the user when more than one token may have leaked or a leaked token may have been exchanged before the rotation. The platform has no call that lifts a full revoke ([AUTHN-I1](../../issues/AUTHN/AUTHN-I1-no-way-to-lift-a-user-invalidation.md)). No rotation lineage avoids both this and a leak holder keeping a rotated token (change 0165, scenario CX-2).
+- A rotation records its predecessor (decision 10), so a holder of a token the user rotated away from and of a live token of the user's can revoke the user's current token and the tokens derived from it. The user signs in again, and an administrator fully revokes the user when more than one token may have leaked or a leaked token may have been exchanged before the rotation. The platform has no call that lifts a full revoke ([AUTHN-I1](../../../issues/AUTHN/AUTHN-I1-no-way-to-lift-a-user-invalidation.md)). No rotation lineage avoids both this and a leak holder keeping a rotated token (change 0165, scenario CX-2).
 - Any token of the user's may send the revocation request (decision 11), including a narrowly scoped one an agent holds; the request reaches only the token it presents and that token's descendants.
-- A self-rotation adds one level to a chain, as other exchanges do ([TOKX-I10](../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
-- A token derived while a revocation runs escapes it, because the cascade takes no per-tenant lock ([TOKX-I13](../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md)).
-- A delegation child that rotates itself loses its `act` claim ([TOKX-I14](../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md)).
+- A self-rotation adds one level to a chain, as other exchanges do ([TOKX-I10](../../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
+- A token derived while a revocation runs escapes it, because the cascade takes no per-tenant lock ([TOKX-I13](../../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md)).
+- A delegation child that rotates itself loses its `act` claim ([TOKX-I14](../../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md)).
 - A `platform-admin` revokes through the revocation request only within its own tenant, because the tenant check runs first.
-- A refused revocation request writes no audit row ([TOKX-I12](../../issues/TOKX/TOKX-I12-refused-revocation-request-writes-no-audit-row.md)).
-- Recording a parent for every exchange lets a caller build a long chain of derived tokens. The index of TX-4 keys each step of the cascade, and the change sets no bound on the depth of a chain or on the duration of a cascade ([TOKX-I10](../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
+- A refused revocation request writes no audit row ([TOKX-I12](../../../issues/TOKX/TOKX-I12-refused-revocation-request-writes-no-audit-row.md)).
+- Recording a parent for every exchange lets a caller build a long chain of derived tokens. The index of TX-4 keys each step of the cascade, and the change sets no bound on the depth of a chain or on the duration of a cascade ([TOKX-I10](../../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
 
 ## Specification and non-specification changes
 
