@@ -21,6 +21,8 @@ type laneLog struct {
 	mu     sync.Mutex
 	events []string
 	plans  map[string]tierPlan
+	// hooks run in a tier's executor right after its start is logged.
+	hooks map[string]func()
 }
 
 func (l *laneLog) add(event string) {
@@ -50,6 +52,9 @@ func laneRunner(l *laneLog, sleeps map[string]time.Duration, status map[string]s
 	tier := func(name string) func() (string, string, *tierResult) {
 		return func() (string, string, *tierResult) {
 			l.add("start " + name)
+			if hook := l.hooks[name]; hook != nil {
+				hook()
+			}
 			time.Sleep(sleeps[name])
 			l.add("end " + name)
 			st := verdictstatus.Pass
@@ -90,7 +95,7 @@ func runLaneGate(g gateRunner, layout string, goTestP map[string]int) *verdict {
 // tier the gate can run exactly once, and that the default layout is the
 // one decision 5 of change 0172 chose.
 func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
-	want := []string{tierStatic, tierUnit, tierComponent, tierContract, tierIntegration, tierDocs}
+	want := append(append([]string{tierStatic}, gateChangedTiers...), tierDocs)
 	for name, phases := range gateLayouts {
 		seen := map[string]int{}
 		for _, phase := range phases {
@@ -119,14 +124,41 @@ func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
 	}
 }
 
+// barrier makes the static and component executors each wait until the
+// other has started, so they finish only when the two lanes run at the
+// same time. A layout that ran them one after another would make the
+// first wait out the timeout, which the caller reports.
+func barrier(l *laneLog, timeout time.Duration) *bool {
+	staticUp, componentUp := make(chan struct{}), make(chan struct{})
+	timedOut := false
+	var mu sync.Mutex
+	wait := func(own, other chan struct{}) func() {
+		return func() {
+			close(own)
+			select {
+			case <-other:
+			case <-time.After(timeout):
+				mu.Lock()
+				timedOut = true
+				mu.Unlock()
+			}
+		}
+	}
+	l.hooks = map[string]func(){tierStatic: wait(staticUp, componentUp), tierComponent: wait(componentUp, staticUp)}
+	return &timedOut
+}
+
 // TestGateLanesRunAtTheSameTimeAndEachInOrder checks the default layout:
-// the static tier and the component tier start before either ends, each
-// lane runs its tiers in order, the unit tier starts after the first
-// phase's lanes have both ended, and the documentation gates run last.
+// the static tier and the component tier run at the same time, each lane
+// runs its tiers in order, the unit tier starts after the first phase's
+// lanes have both ended, and the documentation gates run last.
 func TestGateLanesRunAtTheSameTimeAndEachInOrder(t *testing.T) {
 	l := &laneLog{}
-	sleeps := map[string]time.Duration{tierStatic: 80 * time.Millisecond, tierComponent: 80 * time.Millisecond}
-	v := runLaneGate(laneRunner(l, sleeps, nil), gateLayoutUnitAlone, nil)
+	timedOut := barrier(l, 10*time.Second)
+	v := runLaneGate(laneRunner(l, nil, nil), gateLayoutUnitAlone, nil)
+	if *timedOut {
+		t.Fatalf("the static and component tiers did not run at the same time: %v", l.events)
+	}
 	if v.Verdict != verdictstatus.VerdictPass {
 		t.Fatalf("verdict %s; tiers %+v", v.Verdict, v.Tiers)
 	}
@@ -136,8 +168,6 @@ func TestGateLanesRunAtTheSameTimeAndEachInOrder(t *testing.T) {
 			t.Errorf("%q at %d, %q at %d; want the first before the second in %v", a, ia, b, ib, l.events)
 		}
 	}
-	before("start static", "end component")
-	before("start component", "end static")
 	before("end static", "start contract")
 	before("end component", "start integration")
 	before("end contract", "start unit")
@@ -186,15 +216,20 @@ func TestGateFailingTierStopsNoLane(t *testing.T) {
 // TestGateRecordsEachTierDurationAndTheWallTime checks that each tier
 // keeps its own duration, and that the wall time covers the longest path
 // through the phases and is shorter than the tiers' sum when lanes
-// overlap.
+// overlap. The barrier makes the overlap certain, and the sleeps after it
+// leave a margin of 250 ms between the wall time and the sum.
 func TestGateRecordsEachTierDurationAndTheWallTime(t *testing.T) {
 	l := &laneLog{}
+	timedOut := barrier(l, 10*time.Second)
 	sleeps := map[string]time.Duration{
-		tierStatic:      120 * time.Millisecond,
-		tierComponent:   120 * time.Millisecond,
-		tierIntegration: 60 * time.Millisecond,
+		tierStatic:      250 * time.Millisecond,
+		tierComponent:   250 * time.Millisecond,
+		tierIntegration: 50 * time.Millisecond,
 	}
 	v := runLaneGate(laneRunner(l, sleeps, nil), gateLayoutUnitAlone, map[string]int{tierComponent: 2})
+	if *timedOut {
+		t.Fatalf("the lanes did not overlap: %v", l.events)
+	}
 	var sum int64
 	for tier, d := range sleeps {
 		got := v.Tiers[tier].DurationMS
@@ -203,8 +238,8 @@ func TestGateRecordsEachTierDurationAndTheWallTime(t *testing.T) {
 		}
 		sum += got
 	}
-	if v.Gate.WallTimeMS < 180 || v.Gate.WallTimeMS >= sum {
-		t.Errorf("wall time %d ms; want at least the 180 ms of the longest lane and less than the tiers' sum %d ms", v.Gate.WallTimeMS, sum)
+	if v.Gate.WallTimeMS < 300 || v.Gate.WallTimeMS >= sum {
+		t.Errorf("wall time %d ms; want at least the 300 ms of the longest lane and less than the tiers' sum %d ms", v.Gate.WallTimeMS, sum)
 	}
 	if v.Gate.Layout != gateLayoutUnitAlone || !reflect.DeepEqual(v.Gate.GoTestP, map[string]int{tierComponent: 2}) {
 		t.Errorf("gate layout %q go test -p %v", v.Gate.Layout, v.Gate.GoTestP)
@@ -323,11 +358,19 @@ func TestParseGoTestPAndLayoutRefuseBadValues(t *testing.T) {
 	if _, err := gateRunOptions("main", -1, false, gateLayoutSerial, "static=1"); err == nil {
 		t.Error("gateRunOptions accepted a go test -p for the static tier")
 	}
-	o, err := gateRunOptions("main", -1, true, gateLayoutSerial, "integration=2,component=1")
+	for _, bad := range []struct{ layout, p string }{
+		{gateLayoutSerial, "component=2"},
+		{gateLayoutUnitAlone, "unit=2"},
+	} {
+		if _, err := gateRunOptions("main", -1, false, bad.layout, bad.p); err == nil || !strings.Contains(err.Error(), "runs alone") {
+			t.Errorf("--layout %s --go-test-p %s = %v; want a refusal for a tier that runs alone", bad.layout, bad.p, err)
+		}
+	}
+	o, err := gateRunOptions("main", -1, true, gateLayoutUnitAlone, "integration=2,component=1")
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := []string{"--base", "main", "--rdeps-depth", "-1", "--layout", "serial", "--go-test-p", "component=1,integration=2", "--all"}
+	want := []string{"--base", "main", "--rdeps-depth", "-1", "--layout", "unit-alone", "--go-test-p", "component=1,integration=2", "--all"}
 	if got := gatePassArgs(o); !reflect.DeepEqual(got, want) {
 		t.Errorf("pass args = %v; want %v", got, want)
 	}
@@ -341,5 +384,41 @@ func TestGateRunnerWithAnUnknownLayoutFails(t *testing.T) {
 	v := runLaneGate(laneRunner(l, nil, nil), "parallel", nil)
 	if v.Verdict != verdictstatus.VerdictFail || !strings.Contains(v.Tiers[tierStatic].Detail, "not a gate layout") {
 		t.Errorf("verdict %s, static %+v", v.Verdict, v.Tiers[tierStatic])
+	}
+}
+
+// TestGateRecordsAPlannedTierNoLaneRunsAsNotRun checks that a tier the
+// plan holds and the layout has no lane for is recorded as not run, which
+// keeps the verdict from passing, rather than being dropped.
+func TestGateRecordsAPlannedTierNoLaneRunsAsNotRun(t *testing.T) {
+	l := &laneLog{}
+	g := laneRunner(l, nil, nil)
+	g.plan = func(string, int, bool) (resolvedSelector, error) {
+		return resolvedSelector{tiers: []tierPlan{{name: tierUnit}, {name: tierSecurity}}}, nil
+	}
+	v := runLaneGate(g, gateLayoutUnitAlone, nil)
+	if v.Verdict == verdictstatus.VerdictPass {
+		t.Fatalf("a planned tier without a lane left the verdict at PASS: %+v", v.Tiers)
+	}
+	if got := v.Tiers[tierSecurity].Status; got != verdictstatus.Unverified {
+		t.Errorf("security tier %q; want unverified", got)
+	}
+	if len(v.Gate.NotRun) != 1 || !strings.Contains(v.Gate.NotRun[0], "has no lane for the security tier") {
+		t.Errorf("not-run list %q", v.Gate.NotRun)
+	}
+	if l.index("end unit") < 0 {
+		t.Errorf("the unit tier did not run: %v", l.events)
+	}
+}
+
+// TestComponentTierFlagsPassTheGoTestP checks the component tier's flags:
+// its tag and timeout always, and -p only when the plan sets one.
+func TestComponentTierFlagsPassTheGoTestP(t *testing.T) {
+	with := strings.Join(componentTierFlags(tierPlan{name: tierComponent, goTestP: 2}), " ")
+	if !strings.Contains(with, "-tags=component") || !strings.HasSuffix(with, "-p=2") {
+		t.Errorf("component flags with a go test -p = %s", with)
+	}
+	if without := strings.Join(componentTierFlags(tierPlan{name: tierComponent}), " "); strings.Contains(without, "-p=") {
+		t.Errorf("component flags without one = %s", without)
 	}
 }

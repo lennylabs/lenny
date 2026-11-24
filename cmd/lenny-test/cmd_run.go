@@ -1331,7 +1331,7 @@ func runComponentTier(p tierPlan) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return "skipped", "go not on PATH", nil
 	}
-	flags := withGoTestP([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierComponentTimeout), "-tags=component"}, p)
+	flags := componentTierFlags(p)
 	scoped := len(p.subsets) == 0 && p.pkgs != nil
 	targets, needsDocker, err := componentTargets(p.subsets)
 	if err != nil {
@@ -1356,6 +1356,12 @@ func runComponentTier(p tierPlan) (string, string, *tierResult) {
 	}
 	result, runErr := runGoTestJSONFn(append(flags, targets...)...)
 	return tierOutcome("component", result, runErr)
+}
+
+// componentTierFlags returns the component tier's `go test` flags for a
+// plan, with its go test -p when the plan sets one.
+func componentTierFlags(p tierPlan) []string {
+	return withGoTestP([]string{"-count=1", fmt.Sprintf("-timeout=%s", tierComponentTimeout), "-tags=component"}, p)
 }
 
 // componentTargets maps component subset names to (test package globs,

@@ -125,8 +125,16 @@ func formatGoTestP(p map[string]int) string {
 // documentation tiers run through runFixed; every other tier runs from
 // its plan, and a tier the plan did not select is skipped. A tier that
 // shares its phase with another lane gets the `go test -p` that goTestP
-// names for it, if any.
+// names for it, if any. A planned tier that no lane of the layout names
+// is recorded as not run, so a tier added to the gate's plan without a
+// place in every layout keeps the verdict from passing rather than being
+// dropped.
 func (g gateRunner) runPhases(v *verdict, phases []gatePhase, plans map[string]tierPlan, goTestP map[string]int, runFixed func(name string)) {
+	for name := range plans {
+		if !layoutHolds(phases, name) {
+			g.notRun(v, name, fmt.Errorf("the gate's layout has no lane for the %s tier", name))
+		}
+	}
 	for _, phase := range phases {
 		var wg sync.WaitGroup
 		for _, lane := range phase {
@@ -152,6 +160,46 @@ func (g gateRunner) runPhases(v *verdict, phases []gatePhase, plans map[string]t
 		}
 		wg.Wait()
 	}
+}
+
+// layoutHolds reports whether a lane of the phases names the tier.
+func layoutHolds(phases []gatePhase, tier string) bool {
+	for _, phase := range phases {
+		for _, lane := range phase {
+			if contains(lane, tier) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// layoutOverlaps reports whether the tier shares a phase with another
+// lane in the phases, which is when `--go-test-p` applies to it.
+func layoutOverlaps(phases []gatePhase, tier string) bool {
+	for _, phase := range phases {
+		if len(phase) < 2 {
+			continue
+		}
+		for _, lane := range phase {
+			if contains(lane, tier) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// checkGoTestP refuses a `--go-test-p` count for a tier that never shares
+// a phase with another lane in the layout, because the count would never
+// apply and the verdict would record a value the run did not use.
+func checkGoTestP(layout string, phases []gatePhase, p map[string]int) error {
+	for _, tier := range allTiers() {
+		if _, ok := p[tier]; ok && !layoutOverlaps(phases, tier) {
+			return fmt.Errorf("--go-test-p: the %s tier runs alone in the %s layout, so a go test -p for it would never apply", tier, layout)
+		}
+	}
+	return nil
 }
 
 // withGoTestP appends `-p=N` to a tier's go test flags when the plan

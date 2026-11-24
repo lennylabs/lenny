@@ -175,7 +175,7 @@ func TestGateRecordsATierItCannotRunAsNotRunAndWithholdsAPass(t *testing.T) {
 	g := stubGateRunner()
 	g.precheck[tierIntegration] = func() error { return errors.New("docker daemon not reachable") }
 	g.exec[tierIntegration] = func(tierPlan) (string, string, *tierResult) {
-		t.Fatal("the gate ran a tier whose precondition failed")
+		t.Error("the gate ran a tier whose precondition failed")
 		return "", "", nil
 	}
 	v := runStubGate(g)
@@ -208,7 +208,7 @@ func TestGateTreatsASkippedSelectedTierAsNotRun(t *testing.T) {
 func TestGateLeavesUnselectedTiersOutOfTheRun(t *testing.T) {
 	g := stubGateRunner()
 	g.exec[tierContract] = func(tierPlan) (string, string, *tierResult) {
-		t.Fatal("the gate ran the contract tier the plan did not select")
+		t.Error("the gate ran the contract tier the plan did not select")
 		return "", "", nil
 	}
 	v := runStubGate(g)

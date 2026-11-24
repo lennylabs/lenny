@@ -197,7 +197,8 @@ type gateRecord struct {
 	RdepsDepth int `json:"rdeps_depth"`
 	// Layout names how the tiers ran (gateLayouts), and GoTestP the
 	// `go test -p` each named tier got while it shared its phase with
-	// another lane (change 0172, GS-3).
+	// another lane (change 0172, GS-3); gateRunOptions refuses a count
+	// for a tier that runs alone in the layout.
 	Layout  string         `json:"layout"`
 	GoTestP map[string]int `json:"go_test_p,omitempty"`
 	// WallTimeMS is the time from the start of the first tier to the end
@@ -261,7 +262,7 @@ func runGate(args []string) int {
 	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
 	layout := fs.String("layout", defaultGateLayout, "how the tiers run: "+gateLayoutUnitAlone+" runs the static and contract tiers beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutSerial+" runs every tier one after another")
-	goTestP := fs.String("go-test-p", "", "the go test -p of a tier while it runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name, and every tier of the serial layout, keeps the go command's default")
+	goTestP := fs.String("go-test-p", "", "the go test -p of a tier that runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name keeps the go command's default, and a tier that runs alone in the layout is refused")
 	capGB := fs.Int("gocache-cap-gb", defaultGateGoCacheCapGB, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (1 GB is 10^9 bytes) and no running container uses it; 0 turns the check off; without the flag, "+gateEnvGoCacheCap+" sets the cap when it is set; a --here run does not use the volume and skips the check")
 	flagArgs, err := gateCommandArgs(args)
 	if err != nil {
@@ -307,11 +308,15 @@ func runGate(args []string) int {
 // `--go-test-p` are usage errors, so the host half refuses them before it
 // builds or starts the gate container.
 func gateRunOptions(base string, rdeps int, all bool, layout, goTestP string) (gateOptions, error) {
-	if _, err := parseGateLayout(layout); err != nil {
+	phases, err := parseGateLayout(layout)
+	if err != nil {
 		return gateOptions{}, err
 	}
 	p, err := parseGoTestP(goTestP)
 	if err != nil {
+		return gateOptions{}, err
+	}
+	if err := checkGoTestP(layout, phases, p); err != nil {
 		return gateOptions{}, err
 	}
 	return gateOptions{base: base, rdepsDepth: rdeps, all: all, layout: layout, goTestP: p}, nil
