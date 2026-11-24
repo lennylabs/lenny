@@ -1,6 +1,6 @@
 # Token rule fixes from the property tests
 
-Status: `In progress`, revision 4, 2026-11-23.
+Status: `In progress`, revision 5, 2026-11-24.
 
 ## Problem
 
