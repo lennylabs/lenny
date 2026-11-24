@@ -625,3 +625,91 @@ func planNames(plan []tierPlan) []string {
 	}
 	return out
 }
+
+// TestATestsTargetRunsThePackageWithoutItsDependents pins the `tests` form
+// of a non-Go input row (change 0172, GS-1): the package's own tests run
+// in the tier that runs them, and none of its dependents is selected,
+// while the same package under `runs` still selects its dependents. A
+// `tests` target the graph does not hold selects nothing and still counts
+// as a match, and without a graph the package is selected alone.
+func TestATestsTargetRunsThePackageWithoutItsDependents(t *testing.T) {
+	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	row := func(runs, tests []string) *nonGoInputs {
+		return &nonGoInputs{Kind: nonGoInputsKind, Version: nonGoInputsVersion, Inputs: []nonGoInput{
+			{Paths: []string{"compose/**"}, Runs: runs, Tests: tests, Reason: "reads it"},
+		}}
+	}
+
+	own := planOf(selectChanged([]string{"compose/a.yml"}, fixtureGraph(), row(nil, []string{"pkg/leaf", "tests/component/leafc"}), specEdits{}, opts))
+	if got, want := tierNamesOf(own), []string{tierStatic, tierUnit, tierComponent}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("tiers = %v, want %v", got, want)
+	}
+	if got := own[tierUnit].pkgs; !reflect.DeepEqual(got, []string{"./pkg/leaf"}) {
+		t.Errorf("unit scope = %v; want pkg/leaf alone", got)
+	}
+	if got := own[tierComponent].pkgs; !reflect.DeepEqual(got, []string{"./tests/component/leafc"}) {
+		t.Errorf("component scope = %v", got)
+	}
+
+	walked := planOf(selectChanged([]string{"compose/a.yml"}, fixtureGraph(), row([]string{"pkg/leaf"}, nil), specEdits{}, opts))
+	if got, want := walked[tierUnit].pkgs, []string{"./cmd/app", "./pkg/leaf", "./pkg/mid", "./pkg/side", "./pkg/top"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("a runs target's unit scope = %v, want its dependents %v", got, want)
+	}
+	if _, ok := walked[tierIntegration]; !ok {
+		t.Errorf("a runs target no longer walks its dependents into the integration tier: %v", tierNamesOf(walked))
+	}
+
+	gone := selectChanged([]string{"compose/a.yml"}, fixtureGraph(), row(nil, []string{"pkg/gone"}), specEdits{}, opts)
+	if got := tierNamesOf(planOf(gone)); !reflect.DeepEqual(got, []string{tierStatic}) {
+		t.Errorf("a tests target outside the graph selected %v", got)
+	}
+	if len(gone.unowned) != 0 {
+		t.Errorf("a path a row matches is reported as unowned: %v", gone.unowned)
+	}
+
+	noGraph := planOf(selectChanged([]string{"compose/a.yml"}, nil, row(nil, []string{"pkg/leaf"}), specEdits{}, opts))
+	if got := noGraph[tierUnit].pkgs; !reflect.DeepEqual(got, []string{"./pkg/leaf"}) {
+		t.Errorf("without a graph, unit scope = %v; want pkg/leaf", got)
+	}
+}
+
+// TestCommittedSpecRowSelectsNoDependentOfItsPackages pins the committed
+// spec/** row: a specification edit runs the tests of the packages whose
+// tests read the specification and none of their dependents, so the
+// tracing package's importers across the module are not selected.
+func TestCommittedSpecRowSelectsNoDependentOfItsPackages(t *testing.T) {
+	inputs, err := readNonGoInputs(repoRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, in := range inputs.Inputs {
+		if contains(in.Paths, "spec/**") {
+			for _, target := range in.Runs {
+				if strings.Contains(target, "/") {
+					t.Errorf("the spec/** row walks the dependents of %s; list it under tests", target)
+				}
+			}
+		}
+	}
+	m := moduleImportPath + "/"
+	g := newPkgGraph()
+	g.addPackage(m+"pkg/observability/tracing", "pkg/observability/tracing", nil, nil, nil)
+	g.addPackage(m+"pkg/api/openapi", "pkg/api/openapi", nil, nil, nil)
+	g.addPackage(m+"pkg/gateway/core", "pkg/gateway/core", []string{m + "pkg/observability/tracing", m + "pkg/api/openapi"}, nil, nil)
+	g.addPackage(m+"tests/contract/rest_sessions", "tests/contract/rest_sessions", nil, []string{m + "pkg/gateway/core"}, nil)
+	g.addPackage(m+"tests/integration", "tests/integration", nil, []string{m + "pkg/observability/tracing"}, nil)
+	g.addPackage(m+"tests/conformance", "tests/conformance", nil, nil, nil)
+
+	plan := planOf(selectChanged([]string{"spec/05_pools.md"}, g, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	if got, want := plan[tierUnit].pkgs, []string{"./pkg/api/openapi", "./pkg/observability/tracing"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("unit scope = %v, want %v", got, want)
+	}
+	for _, tier := range []string{tierContract, tierIntegration} {
+		if _, ok := plan[tier]; ok {
+			t.Errorf("a specification edit selected the %s tier through a dependent of the spec/** row's packages", tier)
+		}
+	}
+	if _, ok := plan[tierConformance]; !ok {
+		t.Errorf("the conformance tests that read the specification are not selected: %v", tierNamesOf(plan))
+	}
+}

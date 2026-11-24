@@ -2,7 +2,17 @@
 
 ## Open decisions
 
-None.
+- **GS-8. Review of `tests/non-go-inputs.yaml` before a merge.** The `tests` target form of 0172.S1 narrows what the gate selects for a row, and `lenny-test validate` checks only its form: it cannot tell whether a package's code outside its tests reads the input. A branch that edits only `tests/non-go-inputs.yaml` and moves a helper, such as `tests/testinfra/envtest`, from `runs` to `tests` passes validate, triggers no merge-gate review, and takes the helper's dependents out of every later selection, so a later change to the input runs fewer tests until the next full run. The branch's own run still reads the base commit's rows. "Review changes to the merge gate" in `.claude/rules/git-workflow.md` names `cmd/lenny-test/`, `tests/gate/`, `tests/static/`, `tests/registers/`, and `tests/flake-budget.yaml`, and does not name `tests/non-go-inputs.yaml`, `tests/groups.yaml`, or `tests/groups.subsets.yaml`. Raised by the merge-gate review of 0172.S1 (security reviewer, Medium; general reviewer, Low).
+  - (a) Add `tests/non-go-inputs.yaml`, `tests/groups.yaml`, and `tests/groups.subsets.yaml` to the list in "Review changes to the merge gate", amending change 0158 decision 6.
+  - (b) Add a check to `lenny-test validate` that fails a `tests` target whose files outside its tests name a path the row matches, and leave the review list as it is.
+  - (c) Both.
+  - (d) Neither.
+  - Recommendation: (a). The review reads the reason a row gives, which a string check cannot, and the list is one line.
+- **GS-9. Full runs outside the cadence.** "The gate on `main`" in `.claude/rules/git-workflow.md` and rule 1 of the merge policy in `.claude/rules/test-coverage.md` state decision 2 as written: the milestone run and one run a week are full runs, and every other run is a selected run. That wording leaves no room for an extra full run when the selection is known to miss something: a change to `go.mod`, `go.sum`, or `go.work` is reported and does not widen the selection, so the packages a dependency bump reaches can go untested on `main` until the weekly full run. Raised by the merge-gate review of 0172.S1 (security reviewer, Low).
+  - (a) Keep the cadence as written.
+  - (b) State the cadence as a minimum: the milestone run and one run a week are full runs, and any other run may be one.
+  - (c) (b), and a batch whose merges change `go.mod`, `go.sum`, `go.work`, `vendor/`, or `tests/gate/Dockerfile` is checked by a full run.
+  - Recommendation: (c). It amends decision 2 only by adding full runs.
 
 ## Decisions
 
