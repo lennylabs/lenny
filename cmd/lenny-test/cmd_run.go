@@ -163,6 +163,13 @@ type tierPlan struct {
 	// specification edit selects there, which a scoped plan runs by name
 	// (`go test -run`). It is read only when pkgs is non-nil.
 	funcs map[string][]string
+	// noCoverage runs the unit tier without a coverage profile, so its
+	// `go test` carries no -coverprofile or -covermode. The merge gate sets
+	// it on its unit plan (change 0172, GS-4): nothing in the gate reads
+	// the profile, and the coverage build lengthens the gate's unit run.
+	// `run --changed` and `--tier unit` leave it false and keep writing
+	// tests/results/cover.out, which `lenny-test coverage --diff` reads.
+	noCoverage bool
 }
 
 // resolve expands the selector into a concrete plan.
@@ -1183,7 +1190,7 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 	if !hasGoCode() {
 		return "pass", "no Go packages under pkg/ yet", &tierResult{}
 	}
-	profile := coverProfilePath()
+	profile := unitCoverProfile(p)
 	if p.pkgs == nil {
 		result, runErr := runGoTestJSONFn(unitTierArgs(nil, profile)...)
 		return tierOutcome("unit", result, runErr)
@@ -1203,6 +1210,16 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 		return unitTierFlags("")
 	})
 	return tierOutcome("unit", result, runErr)
+}
+
+// unitCoverProfile returns the path the unit tier writes its coverage
+// profile to for the plan, or "" for no profile: a plan with noCoverage set
+// writes none, and any other plan writes to coverProfilePath.
+func unitCoverProfile(p tierPlan) string {
+	if p.noCoverage {
+		return ""
+	}
+	return coverProfilePath()
 }
 
 // unitTierArgs returns the `go test` arguments for the unit tier: race
