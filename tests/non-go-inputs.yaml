@@ -14,15 +14,21 @@
 #   `**` across segments, and `?` one character of a segment.
 # - `runs`: tier names and Go package directories. A tier name runs the
 #   whole tier, and names a tier every package of which reads the input. A
-#   package directory is treated as changed, so a test package runs, and a
-#   helper package that reads the input for its importers selects every
-#   test that imports it.
+#   package directory is treated as changed, so a helper package that
+#   reads the input for its importers, in code outside its tests, selects
+#   every test that imports it.
+# - `tests`: Go package directories whose own tests read the input. Each
+#   package's tests run, and none of its dependents is selected, because
+#   nothing imports a package's tests. A package whose code outside its
+#   tests reads the input belongs under `runs`.
 # - `reason`: how the targets read the paths.
 #
-# A changed path that no package owns and no row matches selects the static
-# tier only, and the selection notes name it. `lenny-test validate`
-# fails a row whose pattern matches no tracked file or whose target is
-# neither a tier name nor a Go package directory. TESTING.md, "Selection
+# A row needs a pattern, a target under `runs` or `tests`, and a reason. A
+# changed path that no package owns and no row matches selects the static
+# tier only, and the selection notes name it. `lenny-test validate` fails a
+# row whose pattern matches no tracked file, whose `runs` target is neither
+# a tier name nor a Go package directory, or whose `tests` target is not a
+# Go package directory or is also under `runs`. TESTING.md, "Selection
 # algorithm", describes the sources of a selection.
 kind: non-go-inputs
 version: 1
@@ -39,10 +45,11 @@ inputs:
       - docs
       - tests/testinfra/helm
       - tests/testinfra/kind
+      - pkg/ctlcli
+    tests:
       - tests/component/pgbouncerchart
       - tests/component/observability
       - pkg/chart/values
-      - pkg/ctlcli
       - pkg/admission/podclaim_guard
       - cmd/lenny-gateway
     reason: >-
@@ -54,6 +61,7 @@ inputs:
   - paths: ["charts/lenny/crds/**"]
     runs:
       - tests/testinfra/envtest
+    tests:
       - tests/contract/crd_schema
       - pkg/embedded/crds
     reason: >-
@@ -82,6 +90,7 @@ inputs:
       - security
       - tests/testinfra/supervisorbuild
       - tests/testinfra/kind/imagetag
+    tests:
       - tests/contract/adapter_supervise
       - pkg/adapter
     reason: >-
@@ -89,7 +98,7 @@ inputs:
       the supervise contract compile them with make; the adapter's bounds test
       reads supervisor.h.
   - paths: ["docker-compose.yml", "Makefile"]
-    runs:
+    tests:
       - tests/contract/compose_mode
       - tests/testinfra/kind
     reason: >-
@@ -97,8 +106,9 @@ inputs:
       and the Kind helper's image pins test reads the compose file.
   - paths: ["compose/**"]
     runs:
-      - tests/contract/compose_mode
       - tests/testinfra/compose
+    tests:
+      - tests/contract/compose_mode
       - tests/testinfra/kind
     reason: >-
       The compose helper runs the stack these files define for the tests that
@@ -126,17 +136,21 @@ inputs:
   - paths: ["docs/runbooks/**"]
     runs:
       - e2e_kind
+      - integration
+      - tests/testinfra/kind/imagetag
+    tests:
       - tests/component/runbooks
       - tests/testinfra/chaos
-      - tests/testinfra/kind/imagetag
       - pkg/alerting/rules
       - pkg/gateway/opsendpoints/health
     reason: >-
       The platform image copies the runbooks for the e2e_kind runbook index
-      test; the runbook component test, the chaos helper's runbook map, the alert
-      rules, and the operability health bundle read them.
+      test; the integration tests run lenny-ops, which indexes docs/runbooks
+      from the repository root; the image-tag helper hashes them; the runbook
+      component test, the chaos helper's runbook map test, the alert rules'
+      tests, and the operability health bundle's test read them.
   - paths: ["spec/**"]
-    runs:
+    tests:
       - tests/conformance
       - pkg/observability/tracing
       - pkg/api/openapi
@@ -159,7 +173,7 @@ inputs:
     reason: >-
       Documentation-tier tests read these root documents and proposals.
   - paths: ["sdks/client/python/**", "sdks/client/typescript/**", "sdks/runtime/python/**", "sdks/runtime/typescript/**"]
-    runs:
+    tests:
       - tests/contract/sdks
     reason: The SDK contract tests run the Python and TypeScript SDK helpers as subprocesses.
   - paths:
@@ -188,7 +202,6 @@ inputs:
   - paths: ["tests/registers/**"]
     runs:
       - cmd/lenny-test
-      - scripts/specshift
       - scripts/specshift/anchor
       - scripts/specshift/annotation
       - scripts/specshift/gate
@@ -198,11 +211,14 @@ inputs:
       - scripts/specshift/register
       - scripts/specshift/scope
       - docs
+    tests:
+      - scripts/specshift
     reason: The harness, the specification tooling, and documentation-tier tests read the registers.
   - paths: ["cmd/lenny-test/**"]
     runs:
-      - scripts/specshift
       - docs
+    tests:
+      - scripts/specshift
     reason: >-
       The tooling's package reachability test reads the harness's non-test
       sources, and a documentation-tier test reads the static tier's check list.
@@ -216,6 +232,7 @@ inputs:
       - tests/testinfra/containers
       - tests/testinfra/kind
       - tests/testinfra/lifecycleharness
+    tests:
       - tests/component/auditintegrity
       - tests/component/auditstore
       - tests/component/evalaggregates
@@ -248,6 +265,10 @@ inputs:
     runs:
       - conformance
       - docs
+      - tests/testinfra/fixtures/generators
+      - cmd/lenny-compliance
+      - pkg/gateway/mcpfabric/mcpschemagen
+    tests:
       - tests/contract/adapter_artifact_scope
       - tests/contract/adapter_bind_attempt
       - tests/contract/adapter_checkpointbarrier
@@ -271,12 +292,9 @@ inputs:
       - tests/contract/runtimeops_emitted
       - tests/contract/sdks
       - tests/contract/workspaceplan
-      - tests/testinfra/fixtures/generators
-      - cmd/lenny-compliance
       - pkg/adapter
       - pkg/audit/ocsf
       - pkg/api/openapi
-      - pkg/gateway/mcpfabric/mcpschemagen
       - pkg/workspaceplan
     reason: >-
       These packages read the schema, proto, and mapping files by path rather
@@ -292,17 +310,20 @@ inputs:
   - paths: ["tests/testdata/mcp/**"]
     runs:
       - e2e_kind
-      - tests/contract/rest_mcp_consistency
       - tests/testinfra/mcpschema
+    tests:
+      - tests/contract/rest_mcp_consistency
     reason: The MCP contract tests, the MCP schema helper, and an e2e_kind test read the MCP fixtures.
   - paths: ["tests/testdata/migrations/**"]
     runs:
-      - tests/component/migrations
       - tests/testinfra/fixtures/seed
+    tests:
+      - tests/component/migrations
     reason: The migration component test and the seed fixture helper read the migration fixtures.
   - paths: ["tests/testdata/openai_chat/**", "tests/testdata/openai_responses/**"]
     runs:
       - e2e_kind
+    tests:
       - tests/component/translators
       - tests/contract/rest_openai_chat
       - tests/contract/rest_openai_responses
