@@ -264,7 +264,7 @@ A principal budget cannot reach another principal's session, because only its cr
 
 The gateway refuses a write beyond a tenant or principal cap with `429 QUOTA_EXCEEDED` naming the cap, and a session creation that names more references than the cap with `400 VALIDATION_ERROR`. A lower cap set later deletes no budget and refuses new ones until the count falls below it. A partition (`per`) keeps one counter per value inside one budget, so a limit per user or per environment counts as one budget.
 
-**Defaults for a new tenant [design].** `budgets.tenantDefaults`, a Helm list of budget templates, is instantiated as tenant budgets when a tenant is created, such as a storage cap with a limit in `bytes`. A `tenant-admin` may change or delete a budget instantiated this way. A `platform-admin` who wants a limit a tenant cannot remove writes a platform budget instead. This replaces the tenant's `storageQuotaBytes` and `TokenQuotaPerWindow` fields (O16).
+**Defaults for a new tenant [design].** `budgets.tenantDefaults`, a Helm list of budget templates, is instantiated as tenant budgets when a tenant is created, such as a storage cap with a limit in `bytes`. A `tenant-admin` may change or delete a budget instantiated this way. A `platform-admin` who wants a limit a tenant cannot remove writes a platform budget instead. This replaces the tenant's `storageQuotaBytes`, `TokenQuotaPerWindow`, and `QuotaResetPeriod` fields and 0133's `quotas.llmCredits.perUser`, `perTenant`, and `global`, which leave, and `STORAGE_QUOTA_EXCEEDED` retires into `BUDGET_EXHAUSTED` (decision 30). `quotas.llmCredits.perCall` stays, because it caps one call.
 
 ### BG-2 Session budgets
 

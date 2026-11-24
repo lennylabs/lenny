@@ -297,4 +297,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Draft` | 0 of 4 | 0 |
-| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 5 | 5 |
+| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 5 | 4 |
