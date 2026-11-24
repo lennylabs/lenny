@@ -42,6 +42,8 @@ The emergency rotation waits on open decision O20, the reading of a used pod on 
 
 Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It adds the refusal of a delegation whose child fails the pod test of D11 to the failures that `GWSEAM-MaterializeChild` and `GWSEAM-CheckChildCredentials` list, and it extends the impersonation check that 0151.S3 places behind `GWSEAM-AuthorizeSession` to `identityAssertion` bindings.
 
+Under decision 22 of 0133, the step also mints the attribution assertion of CR-2 **Attribution assertion.**, with its pseudonym key per binding, the refusal of a host that no charge reporter lists, and the pod rule that refuses only a fallback pool. O29 and O30 settle its form and the reference verifier before the step starts.
+
 ### 0124.S3 Egress halt at suspension
 - status: Planned
 - aliases: [CR-C, CR-4]

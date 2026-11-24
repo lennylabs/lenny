@@ -2,7 +2,31 @@
 
 ## Open decisions
 
-None. The owner settled every open decision on 2026-11-23.
+Raised on 2026-11-24 by decision 57.
+
+58. **The unit of the `external` meter.** Decision 57 counts charges in `money` under `budgets.currency`, which may be an invented code under decision 34, so a deployment that wants credits names a currency such as `CRD`. **Recommendation: (a)**, because one unit keeps every limit that counts `external` comparable and needs no price list. Options:
+    - (a) `money` alone.
+    - (b) A unit the operator names per deployment, `budgets.external.unit`, with a price list entry that converts it to money for limits in money.
+
+   Blocks: "BG-4", "BG-12", and 0170.S6.
+59. **The reporter registry.** "BG-12" registers reporters as their own record with a tenant or platform scope, `hosts`, and a credential. **Recommendation: (a)**, because no platform-scoped non-human principal exists in the target state for an operator's gateway that serves every tenant. Options:
+    - (a) A reporter record of its own, `/v1/admin/charge-reporters`, with tenant and platform scope.
+    - (b) Service accounts of [`0143-service-account-credentials`](../0143-service-account-credentials/change.md) with a `report_charges` permission, which serve tenant reporters alone, and a platform reporter as a Helm-configured client.
+    - (c) Platform reporters alone, registered by a `platform-admin`.
+
+   Blocks: "BG-12" **Reporters**, "BG-10", and 0170.S6.
+60. **The default of `budgets.external.maxReportDelaySeconds`.** It bounds how late a charge may arrive, how long a proof's verification and a retired key are kept, and how long a charge identifier is remembered. **Recommendation: (a)**, because it lets a reporter retry through a day's outage while keeping the identifiers and the retired keys small. Options:
+    - (a) 86400 seconds (one day).
+    - (b) 3600 seconds (one hour).
+    - (c) 604800 seconds (seven days).
+
+   Blocks: "BG-12" and 0170.S6.
+61. **Charging by session identifier.** A service that cannot present an assertion, such as one the client calls with the session identifier it holds ("BG-3" **External costs**), could report charges by `session` alone. **Recommendation: (a)**, because a reporter holding it can charge any session in its scope, so it needs its own grant. Options:
+    - (a) A separate permission granted per reporter, under which a charge may name `session` in place of `proof`, with the same scope, delay, and idempotency checks.
+    - (b) Not offered: every charge carries a proof.
+    - (c) Allowed for every reporter.
+
+   Blocks: "BG-12" **Checks on each charge** and 0170.S6.
 
 ## Decisions
 
@@ -81,3 +105,4 @@ Settled on 2026-11-24 from the second review of the branch, recorded in `review-
 54. **One price per charge, with tenant prices that the operator writes (S7).** The owner answered "S7: is this a problem, though? Maybe a tenant can only price its own upstreams and it should not be able to reprice the platform's upstreams", then, after what decision 7 would lose, "this makes sense and it is acceptable. I think the per-tenant price should still be supported but set by the platform-admin, as you suggested, and we should make that change now". A `platform-admin` writes the platform price list and, for any tenant, a tenant price list that overrides its entries for that tenant's charges, compute and storage included. A `tenant-admin` prices the tenant's own upstreams alone. A model call converts at the first price set among the tenant's price for its own upstream, the tenant list's upstream entry, the platform list's upstream entry, the tenant list's standard price, and the platform's, and a compute or storage charge at the tenant list's price or the platform's. Every budget uses the same price, and a tenant reads its effective prices alone ("BG-5"). This replaces decisions 7 and 38.
 55. **Every limit is carved (S8).** The owner answered "S8: ok". A child's creation carves every limit of its parent's session budget, at the amount `limits.budget` names or at `defaultDelegationFraction`, so a child never draws on its parent's uncarved budget, and each carve reserves in the parent's limit of its own key. SO-5a's `llmCreditsAbove` converts a carved amount in money at the lowest price per credit among the upstreams the child can reach, and holds a release and an extension of a released session, which 0142 records as its decision 47 ("BG-8"). This replaces decision 23.
 56. **A budget caps its own partitions (S9).** The owner asked "what if a key is governed today but not tomorrow? Wouldn't it be easier for the budget to declare the max cardinality (bounded by the platform) and refuse anything beyond that number?", and answered "S9: ok" to the proposal and its resets. `per` takes `maxPartitions`, required for `label:<key>` and bounded by `budgets.maxPartitionsPerBudget`, counted per tenant on a platform budget, and a session that would open a partition past it is refused with `429 BUDGET_PARTITIONS_FULL`. The open partitions empty at each period boundary, except one that holds stored bytes, a reset frees the places of the partitions it closes, and a partition of `per: session` or `per: rootSession` closes at its session's end ("BG-1", **Partitions**).
+57. **The `external` meter replaces the `llm` meter, and charges arrive through an ingestion API (0133 decision 22).** The owner asked on 2026-11-24, of the LLM proxy: "I would be open to "best-effort" budget enforcing, and maybe turning the llm budget to a generic, externally measured, budget that would cover llm costs and anything else the operator wants to control", and settled the design that 0133's decision 22 records, with the questions "can and should gateways preferably batch charge reports?" and "will the token verification work with a batch report?" answered in "BG-12". The `llm` meter and the unit `llmCredits` leave. The `external` meter counts the charges that registered reporters send for sessions, in `money` (open decision 58), through `POST /v1/charges` with batches, a `proofs` list verified once per token, idempotent charge identifiers, a report delay (open decision 60), voids, per-reporter rates, and the `external_charges` record ("BG-12"). A limit that counts `external` reserves nothing ahead and counts a charge when it is accepted. A carve on `external` reserves at the child's creation. An exhausted limit suspends the session's attribution bindings under 0133 "LU-5" and applies `onExhausted`. The price list loses its `llm` section and the prices of a tenant's own upstreams. Decision 57 supersedes decision 16, the `llm` rows of decisions 17 and 18, decision 24 for model calls, the upstream prices of decision 54, the conversion of a carve in money of decision 55, and the part of decision 14 that left the enforcement of external costs to the deployer: external costs now count in budgets when a reporter sends them, and Lenny still keeps no catalog of deployer meters.

@@ -9,10 +9,10 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Ready | 1 |
-| Waiting on decisions | 35 |
-| Blocked | 159 |
+| Waiting on decisions | 34 |
+| Blocked | 160 |
 | Landed | 16 |
-| Cancelled | 2 |
+| Cancelled | 3 |
 
 ## Program v1
 
@@ -66,7 +66,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0131.S7](0131-incremental-checkpoint/steps.md#0131s7-size-limits-and-drain-budgets) | Size limits and drain budgets | Waiting on decisions | 0131 is `Draft` |
 | [0131.S9](0131-incremental-checkpoint/steps.md#0131s9-removal-of-the-embedded-sigstop-checkpoint-path) | Removal of the embedded SIGSTOP checkpoint path | Waiting on decisions | 0131 is `Draft` |
 | [0132.S1](0132-llm-response-cache-removal/steps.md#0132s1-removal-of-the-llm-response-cache) | Removal of the LLM response cache | Waiting on decisions | 0132 is `Draft` |
-| [0133.S1](0133-llm-upstreams-and-cost-budgets/steps.md#0133s1-metering-corrections) | Metering corrections | Waiting on decisions | 0133 is `Draft` |
 | [0134.S1](0134-mcp-protocol-upgrade/steps.md#0134s1-versions-and-conformance) | Versions and conformance | Waiting on decisions | 0134 is `Draft` |
 | [0134.S5](0134-mcp-protocol-upgrade/steps.md#0134s5-vendored-schemas-and-the-version-rule) | Vendored schemas and the version rule | Waiting on decisions | 0134 is `Draft` |
 | [0135.S1](0135-message-delivery/steps.md#0135s1-delivery-core) | Delivery core | Waiting on decisions | 0135 is `Draft` |
@@ -142,8 +141,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0131.S5](0131-incremental-checkpoint/steps.md#0131s5-restore-derive-download-and-seal) | Restore, derive, download, and seal | Blocked | 0131.S2, 0131.S4, 0145.S2, 0145.S3 |
 | [0131.S6](0131-incremental-checkpoint/steps.md#0131s6-retention-garbage-collection-erasure-and-legal-hold) | Retention, garbage collection, erasure, and legal hold | Blocked | 0131.S4 |
 | [0131.S8](0131-incremental-checkpoint/steps.md#0131s8-checkpoint-policy-interval-and-change-tracker) | Checkpoint policy, interval, and change tracker | Blocked | 0131.S1 |
-| [0133.S2](0133-llm-upstreams-and-cost-budgets/steps.md#0133s2-upstreams-and-removal) | Upstreams and removal | Blocked | 0133.S1, 0127.S2; a part waits on 0141.S1 |
-| [0133.S3](0133-llm-upstreams-and-cost-budgets/steps.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Blocked | 0133.S2 |
+| [0133.S1](0133-llm-upstreams-and-cost-budgets/steps.md#0133s1-llm-gateway-access) | LLM gateway access | Blocked | 0133.S2, 0124.S2, 0127.S4 |
+| [0133.S2](0133-llm-upstreams-and-cost-budgets/steps.md#0133s2-removal) | Removal | Blocked | 0127.S2 |
 | [0134.S2](0134-mcp-protocol-upgrade/steps.md#0134s2-elicitation-tasks-and-playground) | Elicitation, Tasks, and playground | Blocked | 0134.S1 |
 | [0134.S3](0134-mcp-protocol-upgrade/steps.md#0134s3-bridge) | Bridge | Blocked | 0134.S5, 0139.S2, 0139.S3 |
 | [0134.S4](0134-mcp-protocol-upgrade/steps.md#0134s4-management-server) | Management server | Blocked | 0134.S5 |
@@ -240,16 +239,18 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
 | [0166.S1](0166-delegation-primitives/steps.md#0166s1-session-grant-and-parent-link) | Session grant and parent link | Blocked | 0126.S1, 0141.S1, 0146.S1, 0149.S3, 0149.S10; a part waits on 0142.S2, 0142.S6, 0139.S2, 0138.S1 |
-| [0166.S2](0166-delegation-primitives/steps.md#0166s2-carved-budget) | Carved budget | Blocked | 0166.S1, 0133.S3, 0170.S1 |
+| [0166.S2](0166-delegation-primitives/steps.md#0166s2-carved-budget) | Carved budget | Blocked | 0166.S1, 0170.S1 |
 | [0166.S3](0166-delegation-primitives/steps.md#0166s3-reference-extension-and-parent-controls) | Reference extension and parent controls | Blocked | 0166.S1, 0166.S2, 0139.S2; a part waits on 0135.S5, 0146.S2, 0122.S1, 0153.S5 |
 | [0166.S4](0166-delegation-primitives/steps.md#0166s4-removal-of-built-in-delegation) | Removal of built-in delegation | Blocked | 0166.S3 |
-| [0170.S1](0170-budgets/steps.md#0170s1-budget-objects-and-the-llm-meter) | Budget objects and the `llm` meter | Blocked | 0133.S3, 0149.S3; a part waits on 0143.S1, 0149.S9, 0141.S1, 0149.S12 |
+| [0170.S1](0170-budgets/steps.md#0170s1-budget-objects) | Budget objects | Blocked | 0149.S3; a part waits on 0143.S1, 0149.S9, 0141.S1, 0149.S12 |
 | [0170.S2](0170-budgets/steps.md#0170s2-price-lists-and-limits-in-money) | Price lists and limits in money | Blocked | 0170.S1 |
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
+| [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
 | [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Landed |  |
+| [0133.S3](0133-llm-upstreams-and-cost-budgets/steps.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Cancelled |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 | [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Cancelled |  |
 
@@ -264,16 +265,16 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0121](0121-billing-resource-attribution/change.md) | Billing resource attribution | `Draft` | 0 of 7 | 10 |
 | [0122](0122-client-tools/change.md) | Client-defined tools | `Draft` | 0 of 2 | 10 |
 | [0123](0123-connector-authorization-and-external-memory/change.md) | Connector authorization and external memory | `Draft` | 0 of 2 | 6 |
-| [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 13 |
+| [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 15 |
 | [0125](0125-decision-records/change.md) | Decision records | `Draft` | 0 of 2 | 0 |
 | [0126](0126-delegation-availability/change.md) | Delegation availability | `Draft` | 0 of 1 | 9 |
-| [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 15 |
+| [0127](0127-egress-and-git/change.md) | Egress and git access for agent pods | `Draft` | 0 of 12 | 17 |
 | [0128](0128-forensics-evidence-preservation/change.md) | Forensics and evidence preservation | `Draft` | 0 of 8 | 26 |
 | [0129](0129-github-credential-addon/change.md) | GitHub credential add-on | `Draft` | 0 of 3 | 6 |
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 8 |
 | [0131](0131-incremental-checkpoint/change.md) | Incremental checkpoints | `Draft` | 0 of 9 | 16 |
 | [0132](0132-llm-response-cache-removal/change.md) | LLM response cache removal | `Draft` | 0 of 1 | 2 |
-| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 9 |
+| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM access through egress and external charges | `Draft` | 0 of 3 | 2 |
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 5 | 4 |
 | [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 57 |
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 8 | 22 |
@@ -282,7 +283,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 23 |
 | [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 16 |
 | [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 0 |
-| [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 10 |
+| [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 9 |
 | [0143](0143-service-account-credentials/change.md) | Service account credentials | `Draft` | 0 of 4 | 7 |
 | [0144](0144-session-derive/change.md) | Session derive | `Draft` | 0 of 1 | 5 |
 | [0145](0145-session-isolation/change.md) | Session isolation | `Draft` | 0 of 6 | 35 |
@@ -298,4 +299,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
-| [0170](0170-budgets/change.md) | Budgets | `Decided` | 0 of 5 | 0 |
+| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 4 |

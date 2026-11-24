@@ -1,6 +1,6 @@
 # Connector removal
 
-Status: `Draft`, revision 9, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 10, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -377,6 +377,16 @@ The `/identity/` path is reserved on the gateway's ingress, as `/oidc/` is for f
 **Delegation.** A child session receives an `identityAssertion` binding under the binding's `scope`, as it receives any tenant binding, and its assertions name the child, the same root, and its own depth. The child's pod passes the pod test of **Pods (D11).** A service that wants to refuse deep children reads `depth`. UC-3 gives a child a `userCredential` binding only when the delegation lease names it, and whether an `identityAssertion` binding follows that rule is open decision O23.
 
 **Impersonation (O6).** A delegation tree that holds an `identityAssertion` binding refuses impersonated input as UC-3 **Impersonation** refuses it for a `userCredential` binding, with `403 FORBIDDEN` and reason `impersonation_identity_assertion`. A binding with `scope: always` attaches to every session of the tenant in its environments, so it refuses impersonated input to every such session.
+
+**Attribution assertion [design].** Under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions), a binding may take a second assertion kind, `secret: {kind: attributionAssertion}`, which `netagent` attaches to requests for an operator's LLM gateway and which the gateway cites as proof when it reports charges ([`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges)). Open decision O29 settles it. It differs from the identity assertion as follows, and every rule above that this paragraph does not change applies to it:
+
+- **Purpose.** It attributes spend and authenticates no user. A service that receives it grants no per-user privilege from it, such as a per-user provider key, a per-user model, or access to a user's data, and the documentation and the reference verifier state this.
+- **Token.** `typ` is `lenny-attribution+jwt`, so no verifier of identity assertions accepts it. Its claims are `iss`, `sub` as `lenny:<tenant>:session:<session-id>`, `aud`, `iat`, `nbf`, `exp`, `jti`, `tenant`, `environment`, `session`, `root_session`, `depth`, `binding`, and `user` as a pseudonym: an HMAC-SHA256 of the user identifier under a key held per binding, stable for one user under one binding, unless the binding sets `rawUser: true`. It carries no `principal_type`. It is signed with the tenant's assertion key set.
+- **Hosts.** A binding of this kind may name only hosts that a registered charge reporter of the tenant, or a platform reporter that serves the tenant, lists in its `hosts`. A write that names another host is refused with `400 VALIDATION_ERROR`, so the assertion reaches only a service that Lenny accepts charges from.
+- **Pods.** **Pods (D11).** does not apply to it, except on a fallback pool, where `netagent` cannot attribute a connection to one session and the session is refused with `422 IDENTITY_ASSERTION_UNSUPPORTED_POD`. A session that holds an attribution binding runs on a recycled pod, on a pod with several slots that attribute, and on a pod that has served a session.
+- **Residual on reused pods.** On a pod that serves several sessions over its life, a session whose agent compromises the adapter, the sandbox kernel, or `netagent` keeps a foothold that reaches the attribution assertions of the pod's later sessions, within the pod's tenant, because every pool pins its pods to one tenant. Through them it can have its own calls charged to those sessions, their carves, and their partitions of shared budgets, up to their budgets and until they end. The foothold already controls those sessions, so the assertion adds only calls the attacker chooses. The default pool configuration, `placement.allowReusedPod: false` of `0136-placement`, and `recycle.scrubProfile: vm-restart` of `0145-session-isolation` avoid it. This is the residual that 0133's withdrawn open decision 21 found for the proxy token.
+- **Suspension.** The binding is suspended for a session whose budget is exhausted, under [`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.**: `netagent` drops the cached assertion and attaches none, and the Token Service mints none.
+- **Verification.** The verifier checks of **What a verifier checks.** apply with the `typ` above. Lenny itself verifies the assertions that charges cite as "BG-12" of 0170 states. Open decision O30 settles whether Lenny ships the reference verifier as an external-authorization service that a gateway calls before it serves a request.
 
 ### CR-3 External services
 

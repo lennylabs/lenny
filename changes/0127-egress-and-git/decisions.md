@@ -101,6 +101,21 @@ The M3 readiness review of 2026-11-19 raised these questions. Each continues the
 
     Recommendation: (a), the answer 0143 recommends for its O10, so that the three issuers of the Token Service share one rule. It blocks the emergency rotation of the federation key in 0127.S4 and of the identity key. (raised by the M3 readiness review, 2026-11-19; requested by change 0143; mirrors 0143 O10)
 
+Raised on 2026-11-24 by decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions).
+
+84. **The scope of a binding that a `platform-admin` writes.** "Credential bindings" **Platform and pool bindings.** lets one operator LLM gateway serve every tenant through an attribution binding that a `platform-admin` writes. **Recommendation: (c)**, because platform scope serves a gateway for every tenant with one record, and pool scope keeps a pool's traffic on its own gateway, such as one in a region. Options:
+    - (a) Platform scope alone.
+    - (b) Pool scope alone.
+    - (c) Both, with a pool binding taking the place of a platform binding on the same host for that pool's sessions.
+
+   Blocks: "Credential bindings", 0127.S4, and 0133.S1.
+85. **How an exhausted budget stops a session's model calls.** **Binding suspension.** stops attaching the attribution assertion, so the gateway refuses the next call. **Recommendation: (a)**, because it needs no change in the gateway beyond verifying the assertion, and it takes effect at the next request. Options:
+    - (a) Suspend the session's attribution bindings through the pod binding API, with the Token Service refusing to mint.
+    - (b) The gateway looks up the session's state at Lenny by session identifier and caches the answer.
+    - (c) The Token Service refuses to mint alone, so a suspension takes effect when the cached assertion expires.
+
+   Blocks: **Binding suspension.**, 0127.S4, and 0170.S6.
+
 ## Decisions
 
 Recorded owner decisions:
