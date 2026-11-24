@@ -1162,7 +1162,7 @@ groups:
           labels:
             severity: warning
           annotations:
-            description: Revoked tokens are taking longer than the 50ms P99 SLO to propagate to peer replicas via EventBus. Peer replicas are falling back to the Postgres check, still correct but at higher validation latency.
+            description: Revoked tokens are taking longer than the 50ms P99 SLO to propagate to peer replicas via EventBus. A peer replica that misses an event applies the revocation at its next revocation-cache rehydration, at most 30 seconds later, and at once when its EventBus subscription reconnects.
             summary: Token revocation propagation lag exceeds SLO
         - alert: GatewayClockDrift
           expr: abs(lenny_time_drift_seconds) > 0.5
