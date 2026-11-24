@@ -69,10 +69,10 @@ func (r ImpersonationStepResult) JTIsIn(tenantID string) []string {
 // that tenant's matching rows, and sets the request's tenant again. Every
 // update runs in the outer transaction, which commits once.
 //
-// The outer transaction holds the share lock on the caller's row until it
-// commits, so two requests whose callers are impersonation bearers started
-// from tokens of each other's subtrees wait on each other only through row
-// locks, which the deadlock detector sees. A transaction that Postgres
+// The caller's row stays share-locked until the outer transaction
+// commits. Two such steps whose callers were each started from the other's
+// subtree therefore block each other only on row locks, a cycle Postgres
+// detects. A transaction that Postgres
 // aborts as a deadlock victim is retried, up to cascadeDeadlockAttempts
 // transactions, and the retry reads its caller again. Any failure rolls
 // back every update in every tenant. No statement sets the __all__

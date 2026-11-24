@@ -58,7 +58,7 @@ packages:
     - package: cmd/lenny-tier-promote
       count: 1
     - package: cmd/lenny-token-service
-      count: 85
+      count: 86
     - package: cmd/lenny-webhook
       count: 2
     - package: cmd/openapi-to-mcp
@@ -76,7 +76,7 @@ packages:
     - package: cmd/runtimes/supervise-probe
       count: 2
     - package: migrations
-      count: 99
+      count: 102
     - package: pkg/adapter
       count: 1430
     - package: pkg/adapter/embeddedcheckpoint
@@ -890,7 +890,7 @@ packages:
     - package: pkg/storage/failopen
       count: 41
     - package: pkg/storage/issuedtokenstore
-      count: 71
+      count: 101
     - package: pkg/storage/legalholdreconciler
       count: 23
     - package: pkg/storage/partitionmaint
@@ -898,7 +898,7 @@ packages:
     - package: pkg/storage/pgnotify
       count: 4
     - package: pkg/storage/pgtenant
-      count: 21
+      count: 24
     - package: pkg/storage/rediskeys
       count: 3
     - package: pkg/storage/redistopology
@@ -940,7 +940,7 @@ packages:
     - package: pkg/tokenexchange
       count: 32
     - package: pkg/tokenservice
-      count: 205
+      count: 208
     - package: pkg/tokenservice/cache
       count: 16
     - package: pkg/tokenservice/promemit
@@ -1014,7 +1014,7 @@ packages:
     - package: tests/component/healthchecks
       count: 11
     - package: tests/component/issuedtokencascade
-      count: 31
+      count: 47
     - package: tests/component/leasedenial
       count: 8
     - package: tests/component/leases
@@ -1162,7 +1162,7 @@ packages:
     - package: tests/contract/multiprotocol_journey
       count: 4
     - package: tests/contract/oauth_token
-      count: 45
+      count: 49
     - package: tests/contract/ocsf_audit
       count: 29
     - package: tests/contract/ops_endpoints
@@ -1212,7 +1212,7 @@ packages:
     - package: tests/load_kind
       count: 24
     - package: tests/load_local
-      count: 488
+      count: 496
     - package: tests/load_local/directusage_teardown
       count: 2
     - package: tests/load_local/scenarios/extension_episode_fanout
@@ -1230,7 +1230,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 562
+      count: 564
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

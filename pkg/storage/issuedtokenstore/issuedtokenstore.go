@@ -90,8 +90,8 @@ type IssuedToken struct {
 	// impersonation predicate.
 	ImpersonatorTenantID string
 	ImpersonatorJTI      string
-	// Depth is the number of parent_jti links between the row and the
-	// root of its lineage. The issuance transaction computes it from the
+	// Depth counts the parent_jti hops from the row up to its lineage
+	// root. The issuance transaction computes it from the
 	// parent row; a value set by the caller is ignored on those paths.
 	Depth int
 }
@@ -531,9 +531,9 @@ func (s *Store) RevokeWithAudit(ctx context.Context, tenantID, jti, revokedReaso
 // full revoke reaches it through RevokeImpersonationsByActor.
 //
 // The transaction first takes the tenant's §11.7 audit advisory lock,
-// which every issuance takes before its step (1a) re-read, so a mint from
-// a token the walk reaches either commits before the walk reads and is
-// revoked by it, or takes the lock after the walk commits and is refused.
+// which every issuance also takes before its step (1a) re-read. An
+// issuance from a reached token therefore lands in the walk's snapshot
+// when it committed first, and otherwise finds its source revoked.
 // The walk then runs under the statement timeout of Limits. A lock
 // acquisition timeout or a statement timeout returns ErrRevocationTimeout
 // and revokes nothing.
@@ -660,8 +660,8 @@ type LineageRevocation struct {
 	// ErrCallerUserInvalidated when it records a hard disable or a full
 	// revoke.
 	CallerSubject string
-	// StepRevokedCallers lists the jtis that the same request's
-	// impersonation step revoked in the request's tenant. The cascade
+	// StepRevokedCallers holds the jtis revoked in this tenant by the
+	// impersonation step of this same request. The cascade
 	// accepts a revoked caller row whose jti is among them, because the
 	// caller can be an impersonation bearer that the root's lineage
 	// started, and refuses every other revoked caller.

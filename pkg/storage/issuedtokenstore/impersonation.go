@@ -112,10 +112,9 @@ func (e *CallerBearerRefusedError) Unwrap() error { return e.Refusal }
 // does. Each user row is read under its own tenant's RLS context, because
 // under another tenant's context it reads as absent.
 //
-// The share lock on the caller bearer's row conflicts with the update with
-// which a recursive revocation's cascade revokes it, so the record either
-// commits before the cascade revokes the bearer, or reads it revoked after
-// the cascade commits and is refused. A caller bearer without a jti, or
+// A cascade that revokes the caller bearer has to update that row, which
+// the share lock blocks until this record commits; a record that starts
+// after such a cascade commits reads the bearer revoked and is refused. A caller bearer without a jti, or
 // without a row, takes no lock, and one without a jti writes no start
 // record. A user row that records an invalidation returns
 // *UserInvalidatedError and writes nothing. A missing user row passes. A
