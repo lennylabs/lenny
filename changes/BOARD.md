@@ -239,14 +239,14 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
-| [0166.S1](0166-delegation-primitives/steps.md#0166s1-session-grant-and-parent-link) | Session grant and parent link | Blocked | 0126.S1, 0141.S1, 0146.S1, 0149.S3, 0149.S10; a part waits on 0142.S2, 0139.S2, 0138.S1 |
+| [0166.S1](0166-delegation-primitives/steps.md#0166s1-session-grant-and-parent-link) | Session grant and parent link | Blocked | 0126.S1, 0141.S1, 0146.S1, 0149.S3, 0149.S10; a part waits on 0142.S2, 0142.S6, 0139.S2, 0138.S1 |
 | [0166.S2](0166-delegation-primitives/steps.md#0166s2-carved-budget) | Carved budget | Blocked | 0166.S1, 0133.S3, 0170.S1 |
 | [0166.S3](0166-delegation-primitives/steps.md#0166s3-reference-extension-and-parent-controls) | Reference extension and parent controls | Blocked | 0166.S1, 0166.S2, 0139.S2; a part waits on 0135.S5, 0146.S2, 0122.S1, 0153.S5 |
 | [0166.S4](0166-delegation-primitives/steps.md#0166s4-removal-of-built-in-delegation) | Removal of built-in delegation | Blocked | 0166.S3 |
 | [0170.S1](0170-budgets/steps.md#0170s1-budget-objects-and-the-llm-meter) | Budget objects and the `llm` meter | Blocked | 0133.S3, 0149.S3; a part waits on 0143.S1, 0149.S9, 0141.S1, 0149.S12 |
 | [0170.S2](0170-budgets/steps.md#0170s2-price-lists-and-limits-in-money) | Price lists and limits in money | Blocked | 0170.S1 |
-| [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1 |
-| [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4 |
+| [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
+| [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0162.S1](0162-playground-mint-scope-refusal/steps.md#0162s1-playground-mint-scope-refusal) | Playground mint scope refusal | Landed |  |
 | [0163.S1](0163-token-exchange-default-scope/steps.md#0163s1-token-exchange-default-scope) | Token exchange default scope | Landed |  |
@@ -287,7 +287,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0144](0144-session-derive/change.md) | Session derive | `Draft` | 0 of 1 | 5 |
 | [0145](0145-session-isolation/change.md) | Session isolation | `Draft` | 0 of 6 | 35 |
 | [0146](0146-session-lifecycle/change.md) | Session lifecycle | `Draft` | 0 of 4 | 30 |
-| [0147](0147-tenant-derived-runtimes/change.md) | Tenant-derived runtimes | `Draft` | 0 of 13 | 13 |
+| [0147](0147-tenant-derived-runtimes/change.md) | Tenant-derived runtimes | `Draft` | 0 of 13 | 12 |
 | [0148](0148-tenant-outbound-connector/change.md) | Tenant outbound connector | `Draft` | 0 of 4 | 8 |
 | [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 12 | 11 |
 | [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 15 |
@@ -297,5 +297,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
-| [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Draft` | 0 of 4 | 0 |
-| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 5 | 0 |
+| [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
+| [0170](0170-budgets/change.md) | Budgets | `Decided` | 0 of 5 | 0 |

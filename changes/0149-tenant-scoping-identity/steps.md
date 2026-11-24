@@ -156,7 +156,7 @@ Its guardrail case depends on [SO-2](../0142-security-oversight/change.md#so-2-t
 - lanes: [specification, code, documentation]
 - depends-on: [0149.S1, 0149.S9]
 
-The label rules of "Label rules (TS-10)" (decision 45): the tenant's rules and their route, an environment's `labelRules`, `labels.reservedPrefixes`, `values`, `allow`, `valueFrom`, and `required`, the check at a root's creation and at a derive, `403 LABEL_NOT_PERMITTED`, the limits, and the audit events. It needs 0149.S1 for the environment resource and 0149.S9 for the directory groups that `allow` and `valueFrom` read. 0170.S1 depends on its part that tells a governed key from a free one.
+The label rules of "Label rules (TS-10)" (decision 45): the tenant's rules and their route, an environment's `labelRules`, `labels.reservedPrefixes`, `values`, `allow`, `valueFrom` with its anchored RE2 `match`, `source`, and `${1}` replacement, and `required`, the check at a root's creation, a derive's own labels, and a crossing child's labels against the target environment's rules, `403 LABEL_NOT_PERMITTED`, the `Warning` on a rule write that frees a key a budget selects on (decision 46), the limits, and the audit events. It needs 0149.S1 for the environment resource and 0149.S9 for the directory groups that `allow` and `valueFrom` read. 0170.S1 depends on its part that tells a governed key from a free one.
 
 ### Notes on the steps
 

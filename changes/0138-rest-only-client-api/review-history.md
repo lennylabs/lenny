@@ -112,3 +112,4 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
     - O21 and O22 in `decisions.md` record how decision 23 bears on them. No owner decision of this change conflicts with 0166, so no open decision is added.
     - `steps.md`: 0138.S1 lands R25 and names the steps that land R20 to R24, and 0138.S5 depends on the part of 0166.S1 that builds the hand-off.
 - Later on 2026-11-23, after 0122's O23 (i): R22's `tool_call` event carries one call with an optional `group`, `group_incomplete` leaves the withdrawal reasons, and RO-10 returns a labelled group in one response and an unlabelled call alone.
+- 2026-11-24, revision 9. From the second review of the 0166 branch (L4): RO-2 lists the `budget_notice` session event of `0170-budgets` decision 45 as a kind of the registry that an R6 subscription can name, because this change owns session events and webhook kinds under 0166 decision 35.

@@ -55,7 +55,9 @@ Decided by the owner on 2026-11-23:
 
 - **Decision 45, label rules.** On 2026-11-23 the owner answered a finding of the review of 0166 and 0170 that any client could join or drain a budget selected on a label it sets: "I would restrict who can use it. How would that work?", then "label rule. Labels without a rule can be used freely. Make rules flexible enough (run a proposal by me before making any edits)", and "R7: ok" to the proposal. A tenant and an environment write label rules that govern who may set a label key and value, with `values`, `allow`, `valueFrom`, and `required`, a platform admin reserves key prefixes, a key no rule names stays free, and a session that breaks a rule is refused with `403 LABEL_NOT_PERMITTED` ("Label rules (TS-10)", 0149.S12). [`0170-budgets`](../0170-budgets/decisions.md#decisions) records it as its decision 41.
 
-Decisions 1 to 31, 43, 44, and 45 above are settled.
+- **Decision 46, label rules at a crossing and at a rule write.** On 2026-11-24 the owner answered the second review of the 0166 branch, whose S2 found that a key governed in one environment alone leaves a budget open in the others, and that a child crossing into an environment inherits labels that environment's rules would refuse: "S2: ok, warnings only and the behavior is accepted". A child that crosses into an environment under TS-3 has its inherited labels checked against that environment's rules and required keys at the crossing check, and a violation refuses the crossing with `403 LABEL_NOT_PERMITTED`. A write of a tenant's or an environment's rules that frees a key some budget selects on is accepted with a `Warning` naming those budgets, and the budget admin API warns on a budget whose label is free in an environment it can match, which 0170 records as its decision 49 ("Label rules (TS-10)"). The same review's finding on `valueFrom` needed no decision: `match` is an anchored RE2 expression over the stored group name with its source prefix, with `source`, the `${1}` replacement, and the validation of the produced value.
+
+Decisions 1 to 31 and 43 to 46 above are settled.
 
 ## Open decisions
 

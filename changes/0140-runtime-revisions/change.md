@@ -1,6 +1,6 @@
 # Runtime revisions
 
-Status: `Draft`, revision 25, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 26, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -273,7 +273,7 @@ Versioned fields split by when their values reach the pod (D9 and D10). A pod-af
 | :-- | :-- | :-- |
 | Versioned, pod-affecting | `image`, `command`, `env`, `sharedAssets`, `prestageTimeoutSeconds`, and `requireSoPeercred` | A new revision with a new pod hash, whose pod sets warm before traffic moves. |
 | Versioned, gateway-read | `runtimeOptionsSchema`, every `capabilities` entry, `capabilities.output.maxFileBytes` among them, `llmFormats`, `workspaceDefaults`, `minPlatformVersion`, `checkpointExcludes`, `agentInterface`, `maxWorkspaceSealDurationSeconds`, and the `harnessApprovals` default | A new revision that shares the pod set of the revision with the same pod hash. |
-| Live | `isolationProfile`, `setupCommandPolicy`, `setupPolicy`, `limits`, `sessionPolicy`, `archivePolicy`, `delegationPolicyRef`, `allowSelfRecursion`, `allowDelegation`, `allowedResourceClasses`, `defaultPoolConfig`, `checkpointPolicy`, `periodicCheckpointIntervalSeconds`, `publishedMetadata`, `labels`, and `rollout` | Applied to the next session on every revision. |
+| Live | `isolationProfile`, `setupCommandPolicy`, `setupPolicy`, `limits`, `sessionPolicy`, `archivePolicy`, `delegationPolicyRef`, `allowSelfRecursion`, `allowDelegation`, the session budget settings `sessionBudgetDefaults`, `sessionBudgetCeilings`, and `defaultDelegationFraction` of [`0170-budgets`, "BG-2"](../0170-budgets/change.md#bg-2-session-budgets), `allowedResourceClasses`, `defaultPoolConfig`, `checkpointPolicy`, `periodicCheckpointIntervalSeconds`, `publishedMetadata`, `labels`, and `rollout` | Applied to the next session on every revision. |
 | Fixed | `name` and `baseRuntime` | Refused. A different value needs a new runtime. |
 
 `allowSelfRecursion` leaves the `Runtime` resource with the self-recursion gate under decision 5 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md), and the step that removes it drops it from the live class.

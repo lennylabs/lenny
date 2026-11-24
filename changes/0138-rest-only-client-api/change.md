@@ -1,6 +1,6 @@
 # REST-only client API
 
-Status: `Draft`, revision 8, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 9, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -463,6 +463,8 @@ A parent answers its child's calls with `tools.result` of 0166, which binds the 
 - The session's event stream ends with a `handoff` event that carries `successorSessionId` and `successorSeq`, the successor's `last_seq` when the hand-off committed, and the stream then closes. A reader continues on the successor's stream with `Last-Event-ID: <successorSeq>` and sees every event of the successor from the hand-off on.
 - An R6 subscription names `handoff` in `eventKinds`. A subscription stays on the session that ended, and a subscriber that follows the conversation creates one on the successor.
 - The successor keeps its root's `labels` (decision 44 of 0166), so a lookup by label finds both sessions, and the one without `successorSessionId` is the live one.
+
+**`budget_notice` (decision 45 of 0170) [design].** The gateway writes `budget_notice` to a session's event stream when the session's own charge carries a limit of its session budget past a threshold, with the limit's key, the threshold, the unit, the consumption, and the amount, as [`0170-budgets`, "BG-6"](../0170-budgets/change.md#bg-6-enforcement) **Notices** states. It is a kind of the registry, so an R6 subscription names it in `eventKinds`, and the runtime receives none.
 
 **R25. History read (decision 34 of 0166) [design].** `GET /v1/sessions/{id}/transcript` takes `after`, a `SeqNum`, and `limit`, and returns in order the stored history of the events a client attached to the session receives, which are the events a watch under [MD-25](../0135-message-delivery/change.md#md-25-watching-a-childs-stream) carries, each with its `SeqNum`, and with each streamed part as its completed part. The page carries the cursor of the next page. Session ownership applies, so the owner and the root's client for a descendant read it. `GET /v1/sessions/{id}/messages` stays the list of the messages sent to and from the session with their delivery states. `session.messages` of 0166 is the parent's binding of this read: a parent receives the same history under MD-25's checks, and, for a child in another environment, only what TS-3 "Model" lists (DPR-19 of 0166).
 

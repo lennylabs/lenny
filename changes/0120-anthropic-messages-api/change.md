@@ -1,6 +1,6 @@
 # Anthropic Messages API compatibility
 
-Status: `Draft`, revision 13, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 14, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 > **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the Anthropic Messages protocol mapping moves to the Anthropic adapter's repository, `lenny-adapter-anthropic-messages`. Only the sections marked as Lenny's still govern Lenny. The sections marked as moving belong to the Anthropic adapter project: they stay in this file unchanged until that repository takes them, govern the adapter rather than Lenny, and stage no edit to Lenny's specification. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved.
 >
@@ -119,7 +119,7 @@ Under the banner, the items of this section that still govern Lenny are the conv
 | Link check and `LINKS_REQUIRED` | The post-chain check that refuses a session whose user has not linked every account the session would use, with `403 LINKS_REQUIRED` and `details.userLinks` ([`0151-user-credential-delivery`, UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding)). Each entry names the link provider and its `linkUrl` (UC-2, "Flow"). |
 | Impersonation bearer and F-13.3.26 | A token a `platform-admin` obtains to act as a user ([§13.3](../../spec/13_security-model.md#133-credential-flow), **Platform-admin impersonation**). F-13.3.26 is the `BUILD-GAPS.md` finding, recorded in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md), that session input routes and the OpenAI translators admit one. |
 | Tool-use approval | A platform tool call held at the gateway until an approver resolves it ([`0142-security-oversight`, SO-5a](../0142-security-oversight/change.md#so-5a-tool-use-approvals)), and the §7.2 approval gate the executor runs today. Approvals for the tools of an operator service are the service's. |
-| `LLM_UPSTREAM_NOT_CONFIGURED` and `BUDGET_EXHAUSTED` | Two codes of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), which removes LLM credential pools and `CREDENTIAL_POOL_EXHAUSTED`. `422 LLM_UPSTREAM_NOT_CONFIGURED` refuses a session creation whose LLM upstream list serves none of its runtime's formats, a check on configuration alone at the post-chain point. `BUDGET_EXHAUSTED` answers a runtime's model call through the LLM proxy when a credit budget refuses its reservation and no extension is granted, with `details.limitType` naming the scope. |
+| `LLM_UPSTREAM_NOT_CONFIGURED` and `BUDGET_EXHAUSTED` | Two codes of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), which removes LLM credential pools and `CREDENTIAL_POOL_EXHAUSTED`. `422 LLM_UPSTREAM_NOT_CONFIGURED` refuses a session creation whose LLM upstream list serves none of its runtime's formats, a check on configuration alone at the post-chain point. `BUDGET_EXHAUSTED` answers a runtime's model call through the LLM proxy when a budget refuses its reservation and no extension is granted, with `details.budget`, `details.limit`, `details.unit`, and `details.meter` naming the budget and limit, as [`0170-budgets`, "BG-6"](../0170-budgets/change.md#bg-6-enforcement) states. |
 | Test tiers | The tiers of the test suite that `.claude/rules/test-coverage.md` names: `static`, `unit`, `contract`, `integration`, `e2e_kind` (end to end on Kind), `load_local` (local concurrency), `chaos`, `security`, `conformance` (runtime adapter conformance), and `docs`. Change 0155 replaced the former numbers 0, 1, 3, 4, 5, 7a, 8, 9, 10, and 11 with these names. |
 
 ### Labels from other designs
@@ -643,7 +643,7 @@ Every refusal on the adapter's routes uses the Anthropic error envelope **[desig
 | 429 and the admission rate limits, with `Retry-After` | 429 | `rate_limit_error` |
 | 503 `SESSION_CREATION_FAILED` and `POOL_DRAINING`, with `Retry-After` | 503 | `overloaded_error` |
 | 422 `LLM_UPSTREAM_NOT_CONFIGURED` under [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), as a validation error | 400 | `invalid_request_error` |
-| An end-of-turn `message` whose `error` carries `BUDGET_EXHAUSTED`, with `details.limitType` naming the scope, under decision O11 | 429 | `rate_limit_error` |
+| An end-of-turn `message` whose `error` carries `BUDGET_EXHAUSTED`, with `details.budget` and `details.limit` naming the budget and limit (0170 "BG-6"), under decision O11 | 429 | `rate_limit_error` |
 | 504 | 504 | `timeout_error` |
 | Any other 5xx | 500 | `api_error` |
 
