@@ -157,12 +157,25 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 			fmt.Printf("%-50s  %7.1f%%  %d/%d\n", fc.File, pct, fc.Covered, fc.Total)
 		}
 	}
-	if threshold > 0 && rate < threshold {
+	if diffCoverageBelow(threshold, totalCovered, totalChanged) {
 		fmt.Fprintf(os.Stderr, "\ncoverage --diff: rate %.1f%% below threshold %.1f%%\n",
 			rate*100, threshold*100)
 		return 1
 	}
 	return 0
+}
+
+// diffCoverageBelow reports whether the covered share of the changed
+// coverable lines falls below the threshold. A diff with no coverable
+// changed lines, such as one that changes only tests, comments, or
+// declarations, has nothing to cover and passes, which the check before a
+// merge of change 0172, decision 8, relies on for a branch that changes
+// only tests. A threshold of 0 checks nothing.
+func diffCoverageBelow(threshold float64, covered, changed int) bool {
+	if threshold <= 0 || changed == 0 {
+		return false
+	}
+	return float64(covered)/float64(changed) < threshold
 }
 
 type lineRange struct{ start, end int }

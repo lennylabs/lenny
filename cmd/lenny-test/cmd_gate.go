@@ -165,8 +165,15 @@ type gateOptions struct {
 	// goTestP is the `go test -p` of each tier while it shares its phase
 	// with another lane (parseGoTestP); a tier it does not name keeps the
 	// go command's default.
-	goTestP     map[string]int
-	environment string
+	goTestP map[string]int
+	// tiers restricts the run to these tiers of the merge gate
+	// (parseGateTiers); nil runs every tier.
+	tiers []string
+	// cover writes the unit run's coverage profile to coverProfile
+	// (prepareCoverProfile).
+	cover        bool
+	coverProfile string
+	environment  string
 	// environmentErr says why the environment is not the gate image, or
 	// is nil when it is.
 	environmentErr error
@@ -205,6 +212,13 @@ type gateRecord struct {
 	// of the last. Tiers in lanes overlap, so the tiers' own durations no
 	// longer add up to it.
 	WallTimeMS int64 `json:"wall_time_ms"`
+	// RestrictedTo lists the tiers a run with --tier was restricted to;
+	// it is absent for a run of every tier. Cover reports a run with
+	// --cover, and CoverProfile the profile it wrote, relative to the
+	// tree (change 0172, decision 9).
+	RestrictedTo []string `json:"restricted_to,omitempty"`
+	Cover        bool     `json:"cover,omitempty"`
+	CoverProfile string   `json:"cover_profile,omitempty"`
 	// Selection records, for each test tier the plan selected, what the
 	// gate ran of it (change 0172, GS-1), so a reader tells a selected run
 	// from a full one (All) and sees how much a selected run covered. A
@@ -262,6 +276,8 @@ func runGate(args []string) int {
 	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
 	layout := fs.String("layout", defaultGateLayout, "how the tiers run: "+gateLayoutUnitAlone+" runs the static and contract tiers beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutSerial+" runs every tier one after another")
+	tiers := fs.String("tier", "", "restrict the run to these tiers of the merge gate, as a comma-separated list such as static,unit,component,contract; the diff selection applies within them, and the verdict records the restriction")
+	cover := fs.Bool("cover", false, "write the unit run's coverage profile to tests/results/cover.out (LENNY_COVER_PROFILE names another path), which `lenny-test coverage --diff` reads; without it the gate's unit run writes no profile")
 	goTestP := fs.String("go-test-p", "", "the go test -p of a tier that runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name keeps the go command's default, and a tier that runs alone in the layout is refused")
 	capGB := fs.Int("gocache-cap-gb", defaultGateGoCacheCapGB, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (1 GB is 10^9 bytes) and no running container uses it; 0 turns the check off; without the flag, "+gateEnvGoCacheCap+" sets the cap when it is set; a --here run does not use the volume and skips the check")
 	flagArgs, err := gateCommandArgs(args)
@@ -281,12 +297,15 @@ func runGate(args []string) int {
 		fmt.Fprintln(os.Stderr, "lenny-test gate: --base is empty; the merge gate compares with the merge base of a ref, main by default")
 		return 2
 	}
-	opts, err := gateRunOptions(*base, *rdeps, *all, *layout, *goTestP)
+	opts, err := gateRunOptions(gateFlagValues{base: *base, rdeps: *rdeps, all: *all, layout: *layout, goTestP: *goTestP, tiers: *tiers, cover: *cover})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
 		return 2
 	}
 	root := repoRoot()
+	if opts.cover {
+		opts.coverProfile = coverProfilePath()
+	}
 	if *here {
 		opts.root = root
 		opts.environment, opts.environmentErr = gateEnvironment(root, gateImageMarker, os.Getenv)
@@ -303,23 +322,40 @@ func runGate(args []string) int {
 	return runGateInContainer(root, passArgs, *rebuild, !*noSocket, cacheCap)
 }
 
-// gateRunOptions checks the gate's selection and layout flags and
-// returns the options they set. An unknown layout and a malformed
-// `--go-test-p` are usage errors, so the host half refuses them before it
-// builds or starts the gate container.
-func gateRunOptions(base string, rdeps int, all bool, layout, goTestP string) (gateOptions, error) {
-	phases, err := parseGateLayout(layout)
+// gateFlagValues are the values of the gate's selection, layout, tier,
+// and coverage flags as the command line gives them.
+type gateFlagValues struct {
+	base    string
+	rdeps   int
+	all     bool
+	layout  string
+	goTestP string
+	tiers   string
+	cover   bool
+}
+
+// gateRunOptions checks the gate's selection, layout, tier, and coverage
+// flags and returns the options they set. An unknown layout, a malformed
+// `--go-test-p`, and a `--tier` that names a tier outside the merge gate
+// are usage errors, so the host half refuses them before it builds or
+// starts the gate container.
+func gateRunOptions(f gateFlagValues) (gateOptions, error) {
+	phases, err := parseGateLayout(f.layout)
 	if err != nil {
 		return gateOptions{}, err
 	}
-	p, err := parseGoTestP(goTestP)
+	p, err := parseGoTestP(f.goTestP)
 	if err != nil {
 		return gateOptions{}, err
 	}
-	if err := checkGoTestP(layout, phases, p); err != nil {
+	if err := checkGoTestP(f.layout, phases, p); err != nil {
 		return gateOptions{}, err
 	}
-	return gateOptions{base: base, rdepsDepth: rdeps, all: all, layout: layout, goTestP: p}, nil
+	tiers, err := parseGateTiers(f.tiers)
+	if err != nil {
+		return gateOptions{}, err
+	}
+	return gateOptions{base: f.base, rdepsDepth: f.rdeps, all: f.all, layout: f.layout, goTestP: p, tiers: tiers, cover: f.cover}, nil
 }
 
 // gatePassArgs returns the flags the host half passes to `lenny-test gate
@@ -329,6 +365,12 @@ func gatePassArgs(o gateOptions) []string {
 	args := []string{"--base", o.base, "--rdeps-depth", strconv.Itoa(o.rdepsDepth), "--layout", o.layout}
 	if p := formatGoTestP(o.goTestP); p != "" {
 		args = append(args, "--go-test-p", p)
+	}
+	if o.tiers != nil {
+		args = append(args, "--tier", strings.Join(o.tiers, ","))
+	}
+	if o.cover {
+		args = append(args, "--cover")
 	}
 	if o.all {
 		args = append(args, "--all")
@@ -1103,6 +1145,8 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	if len(o.goTestP) > 0 {
 		v.Gate.GoTestP = o.goTestP
 	}
+	v.Gate.RestrictedTo = o.tiers
+	v.Gate.Cover = o.cover
 	// The static tier and the plan compare with the commit resolved here
 	// rather than with the ref, so the commit the verdict records and
 	// checks is the one they read even when the ref moves during the run.
@@ -1119,9 +1163,20 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		v.recordTier(tierStatic, verdictstatus.Fail, 0, layoutErr.Error())
 	}
 	plans := g.resolvePlans(v, o, compare)
+	if o.cover {
+		if err := prepareCoverProfile(o.coverProfile, plans); err != nil {
+			// The unit tier does not run, so its result cannot overwrite
+			// the failure, and coverage --diff finds no fresh profile.
+			delete(plans, tierUnit)
+			v.recordTier(tierUnit, verdictstatus.Fail, 0, err.Error())
+		}
+	}
 
 	start := time.Now()
 	g.runPhases(v, phases, plans, o.goTestP, func(name string) {
+		if !gateRuns(o.tiers, name) {
+			return
+		}
 		switch name {
 		case tierStatic:
 			if layoutErr == nil {
@@ -1132,6 +1187,9 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		}
 	})
 	v.Gate.WallTimeMS = time.Since(start).Milliseconds()
+	if o.cover {
+		v.Gate.CoverProfile = coverProfileRecord(o.root, o.coverProfile)
+	}
 
 	v.Gate.RdepsDepth = o.rdepsDepth
 	if o.rdepsDepth >= 0 && !o.all {
@@ -1149,6 +1207,12 @@ func gateCommandLine(o gateOptions, layout string) string {
 	line := fmt.Sprintf("lenny-test gate --base %s --rdeps-depth %d --layout %s", o.base, o.rdepsDepth, layout)
 	if p := formatGoTestP(o.goTestP); p != "" {
 		line += " --go-test-p " + p
+	}
+	if o.tiers != nil {
+		line += " --tier " + strings.Join(o.tiers, ",")
+	}
+	if o.cover {
+		line += " --cover"
 	}
 	if o.all {
 		line += " --all"
@@ -1172,7 +1236,7 @@ func (g gateRunner) resolvePlans(v *verdict, o gateOptions, compare string) map[
 		fmt.Fprintf(os.Stderr, "lenny-test gate: note: %s\n", n)
 	}
 	for _, p := range plan.tiers {
-		if p.name == tierStatic {
+		if p.name == tierStatic || !gateRuns(o.tiers, p.name) {
 			continue
 		}
 		if v.Gate.Selection == nil {
@@ -1469,6 +1533,16 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 			kind += "; no test tier selected"
 		}
 		fmt.Fprintf(w, "  selection:   %s\n", kind)
+		if v.Gate.RestrictedTo != nil {
+			fmt.Fprintf(w, "  tiers:       restricted to %s\n", strings.Join(v.Gate.RestrictedTo, ", "))
+		}
+		if v.Gate.Cover {
+			profile := v.Gate.CoverProfile
+			if profile == "" {
+				profile = "none written"
+			}
+			fmt.Fprintf(w, "  coverage:    %s\n", profile)
+		}
 		if v.Gate.Layout != "" {
 			layout := v.Gate.Layout
 			if p := formatGoTestP(v.Gate.GoTestP); p != "" {
