@@ -8,7 +8,7 @@ Change 0165 (a formal model of the token rules, [`changes/0165-token-rules-model
 
 The orderings matter in practice. Each request of the Token Service runs one or more Postgres transactions of several statements, and the reviews of the token changes found ordering defects by reading the code:
 
-- [TOKX-I13](../../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md): a rotation, a narrowing, or a child mint from a token of a revocation's subtree that commits while the cascade statement runs is outside the statement's snapshot, so the derived token stays live.
+- [TOKX-I13](../../../issues/closed/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md): a rotation, a narrowing, or a child mint from a token of a revocation's subtree that commits while the cascade statement runs is outside the statement's snapshot, so the derived token stays live.
 - TOKX-I20 (filed on the branch of 0165.S2): a revocation of the caller that commits between the subtree read and the impersonation step does not stop the step from ending sessions.
 - TOKX-I22 (filed on the branch of 0165.S2, finding F1 of the property tests): a recursive-revocation request whose caller is an impersonation bearer that its own impersonation step revokes then refuses itself in the cascade.
 

@@ -136,6 +136,11 @@ spec:
             # reads the same value as the gateway's playground bearer
             # lifetime, so both binaries take one operator-set default.
             - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
+            # §13.3 auth.tokenLineageMaxDepth and auth.tokenRevocationTimeoutMs:
+            # the lineage depth cap of step (1a) and the statement timeout of
+            # the recursive revocation's cascade.
+            - --token-lineage-max-depth={{ .Values.auth.tokenLineageMaxDepth }}
+            - --token-revocation-timeout-ms={{ .Values.auth.tokenRevocationTimeoutMs }}
             # §13.3 "Client authentication on /v1/oauth/token": the upstream
             # IdP's ID token is the bootstrap caller credential. The Token
             # Service verifies it against the issuer's JWK Set with the

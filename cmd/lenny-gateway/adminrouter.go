@@ -901,7 +901,9 @@ func (w *gatewayWiring) buildAdminRouter(
 		// store and the credential assigner.
 		userLeases = admin.SeamUserLeaseRevoker{Revocations: adminops.UserLeases{Revoker: leaseRevoker}}
 		if w.pgPool != nil {
-			revoker := &userTokenRevoker{store: issuedtokenstore.New(w.pgPool)}
+			revoker := &userTokenRevoker{store: issuedtokenstore.New(w.pgPool).WithLimits(issuedtokenstore.Limits{
+				RevocationTimeout: time.Duration(*w.f.tokenRevocationTimeoutMs) * time.Millisecond,
+			})}
 			// A nil *auditstore.Store must not reach the interface field:
 			// a typed nil would pass the revoker's nil-emitter guard.
 			if auditOpsStore != nil {

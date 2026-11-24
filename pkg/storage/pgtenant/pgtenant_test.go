@@ -76,6 +76,22 @@ func TestInTxRejectsSentinelTenantIDs(t *testing.T) {
 	}
 }
 
+// spec: §4.2, §13.3 (Credential Flow: Platform-admin impersonation, rule 7)
+//
+// SetLocal, which the impersonation step uses to switch to a target
+// tenant's context inside the request's transaction, refuses the __all__
+// and __unset__ sentinels and any id outside the format check before it
+// touches the transaction, so the step can never set the cross-tenant
+// sentinel.
+func TestSetLocalRejectsSentinelAndMalformedTenantIDs(t *testing.T) {
+	t.Parallel()
+	for _, id := range []string{AllTenantsSentinel, "__unset__", "", "acme'; DROP TABLE users; --", "zz invalid"} {
+		if err := SetLocal(t.Context(), nil, id); !errors.Is(err, ErrInvalidTenantID) {
+			t.Errorf("SetLocal(%q) = %v, want ErrInvalidTenantID", id, err)
+		}
+	}
+}
+
 // spec: §4.2 — quoteTenantID renders the validated tenant
 // ID as a SQL string literal. The regex already rejects single
 // quotes; this verifies the double-escape is in place as

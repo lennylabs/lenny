@@ -157,8 +157,8 @@ func TestPlaygroundBearerRowFollowsItsSubject(t *testing.T) {
 }
 
 // spec: §13.3 (Credential Flow)
-// diagnosis: a failure means the impersonator-link revocation does not end
-// an impersonation session in another tenant whose platform-admin bearer a
+// diagnosis: a failure means the impersonation step does not end an
+// impersonation session in another tenant whose platform-admin bearer a
 // recursive revocation reached (the scenario CX-4 of change 0165's model),
 // or that it reaches a row started from another tenant's bearer, a row
 // that is not an impersonation row, or a session that already ended.
@@ -170,6 +170,10 @@ func TestImpersonatorLinkEndsTheSessionAcrossTenants(t *testing.T) {
 	targetTenant := freshTenant(t, ctx, pg)
 	otherTenant := freshTenant(t, ctx, pg)
 	now := time.Now().UTC()
+	record(t, issuedtokenstore.IssuedToken{JTI: "carol-root", TenantID: adminTenant, Subject: "carol@globex.com"})
+	record(t, issuedtokenstore.IssuedToken{JTI: "carol-bearer", TenantID: adminTenant, Subject: "carol@globex.com", ParentJTI: "carol-root"})
+	record(t, issuedtokenstore.IssuedToken{JTI: "dave-bearer", TenantID: adminTenant, Subject: "dave@globex.com"})
+	record(t, issuedtokenstore.IssuedToken{JTI: "carol-bearer-other", TenantID: otherTenant, Subject: "carol@globex.com"})
 	imp := func(jti, impTenant, impJTI string) issuedtokenstore.IssuedToken {
 		return issuedtokenstore.IssuedToken{
 			JTI: jti, TenantID: targetTenant, Subject: "alice@initech.com", TokenHash: []byte(jti),
@@ -177,13 +181,16 @@ func TestImpersonatorLinkEndsTheSessionAcrossTenants(t *testing.T) {
 			ImpersonatorTenantID: impTenant, ImpersonatorJTI: impJTI,
 		}
 	}
-	for _, tok := range []issuedtokenstore.IssuedToken{
-		imp("imp-reached", adminTenant, "carol-bearer"),
-		imp("imp-other-tenant", otherTenant, "carol-bearer"),
-		imp("imp-other-bearer", adminTenant, "dave-bearer"),
+	for _, c := range []struct {
+		tok    issuedtokenstore.IssuedToken
+		caller string
+	}{
+		{imp("imp-reached", adminTenant, "carol-bearer"), adminTenant},
+		{imp("imp-other-tenant", otherTenant, "carol-bearer-other"), otherTenant},
+		{imp("imp-other-bearer", adminTenant, "dave-bearer"), adminTenant},
 	} {
-		if err := store.RecordImpersonation(ctx, tok, adminTenant); err != nil {
-			t.Fatalf("RecordImpersonation %s: %v", tok.JTI, err)
+		if err := store.RecordImpersonation(ctx, c.tok, c.caller); err != nil {
+			t.Fatalf("RecordImpersonation %s: %v", c.tok.JTI, err)
 		}
 	}
 	row, err := store.Get(ctx, targetTenant, "imp-reached")
@@ -197,24 +204,87 @@ func TestImpersonatorLinkEndsTheSessionAcrossTenants(t *testing.T) {
 		ActSubject: "carol@globex.com", ParentJTI: "p", ImpersonatorTenantID: adminTenant, ImpersonatorJTI: "carol-bearer",
 	})
 
-	ended, err := store.RevokeImpersonationsByImpersonator(ctx, adminTenant, []string{"carol-root", "carol-bearer"}, "cascade_from_parent", now)
+	step := issuedtokenstore.ImpersonationStep{TenantID: adminTenant, RootJTI: "carol-root", Reason: "cascade_from_parent", At: now}
+	res, err := store.RevokeImpersonationStep(ctx, step)
 	if err != nil {
-		t.Fatalf("RevokeImpersonationsByImpersonator: %v", err)
+		t.Fatalf("RevokeImpersonationStep: %v", err)
 	}
-	if len(ended) != 1 || ended[0].JTI != "imp-reached" || ended[0].TenantID != targetTenant || ended[0].Subject != "alice@initech.com" {
-		t.Errorf("ended = %+v, want imp-reached in the target tenant", ended)
+	if len(res.Revoked) != 1 || res.Revoked[0].JTI != "imp-reached" || res.Revoked[0].TenantID != targetTenant ||
+		res.Revoked[0].Subject != "alice@initech.com" || len(res.JTIsIn(adminTenant)) != 0 {
+		t.Errorf("revoked = %+v, want imp-reached in the target tenant", res.Revoked)
 	}
 	got := revokedState(t, store, targetTenant, "imp-reached", "imp-other-tenant", "imp-other-bearer", "child")
 	if got["imp-reached"] != "cascade_from_parent" || got["imp-other-tenant"] != "live" ||
 		got["imp-other-bearer"] != "live" || got["child"] != "live" {
 		t.Errorf("states = %v", got)
 	}
-	again, err := store.RevokeImpersonationsByImpersonator(ctx, adminTenant, []string{"carol-bearer"}, "cascade_from_parent", now)
-	if err != nil || len(again) != 0 {
-		t.Errorf("second call ended %+v, %v; want nothing", again, err)
+	again, err := store.RevokeImpersonationStep(ctx, step)
+	if err != nil || len(again.Revoked) != 0 {
+		t.Errorf("second step ended %+v, %v; want nothing", again.Revoked, err)
 	}
-	if none, err := store.RevokeImpersonationsByImpersonator(ctx, adminTenant, nil, "cascade_from_parent", now); err != nil || none != nil {
-		t.Errorf("empty jti list = %+v, %v; want no query", none, err)
+}
+
+// spec: §13.3 (Credential Flow)
+// diagnosis: the impersonation step's read of the subtree omits the root
+// when it has no row, omits a revoked descendant, or crosses into another
+// tenant, or the step does not refuse a revoked caller before it ends any
+// session, so a retry of a failed revocation request could not finish it.
+func TestImpersonationStepReadsTheWholeSubtreeAndRefusesARevokedCaller(t *testing.T) {
+	t.Parallel()
+	pg, store, record := modelFixture(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	other := freshTenant(t, ctx, pg)
+	now := time.Now().UTC()
+	record(t, issuedtokenstore.IssuedToken{JTI: "child", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "rowless"})
+	record(t, issuedtokenstore.IssuedToken{JTI: "grandchild", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "child"})
+	record(t, issuedtokenstore.IssuedToken{JTI: "foreign", TenantID: other, Subject: "bob@globex.com", ParentJTI: "rowless"})
+	record(t, issuedtokenstore.IssuedToken{
+		JTI: "revoked-caller", TenantID: tenant, Subject: "alice@acme.com",
+		RevokedAt: now, RevokedReason: "explicit_revoke",
+	})
+	// One impersonation per subtree token, each started in the request's
+	// own tenant, and one started from the other tenant's token.
+	for _, c := range []struct{ jti, tenant, from string }{
+		{"imp-rowless", tenant, "rowless"},
+		{"imp-grandchild", tenant, "grandchild"},
+		{"imp-foreign", other, "foreign"},
+	} {
+		if err := store.RecordImpersonation(ctx, issuedtokenstore.IssuedToken{
+			JTI: c.jti, TenantID: c.tenant, Subject: "erin@acme.com", TokenHash: []byte(c.jti),
+			IssuedAt: now, ExpiresAt: now.Add(time.Hour), ActSubject: "alice@acme.com",
+			ImpersonatorTenantID: c.tenant, ImpersonatorJTI: c.from,
+		}, c.tenant); err != nil {
+			t.Fatalf("RecordImpersonation %s: %v", c.jti, err)
+		}
+	}
+	// The grandchild was rotated away after it started its impersonation;
+	// the step still walks through it.
+	if err := store.Revoke(ctx, tenant, "grandchild", "rotation_replaced", now); err != nil {
+		t.Fatalf("Revoke grandchild: %v", err)
+	}
+
+	step := issuedtokenstore.ImpersonationStep{TenantID: tenant, RootJTI: "rowless", Reason: "cascade_from_parent", At: now}
+	refused := step
+	refused.CallerJTI = "revoked-caller"
+	if _, err := store.RevokeImpersonationStep(ctx, refused); !errors.Is(err, issuedtokenstore.ErrCallerRevoked) {
+		t.Fatalf("revoked caller: err = %v, want ErrCallerRevoked", err)
+	}
+	if got := revokedState(t, store, tenant, "imp-rowless", "imp-grandchild"); got["imp-rowless"] != "live" || got["imp-grandchild"] != "live" {
+		t.Fatalf("a refused step ended sessions: %v", got)
+	}
+
+	res, err := store.RevokeImpersonationStep(ctx, step)
+	if err != nil {
+		t.Fatalf("RevokeImpersonationStep: %v", err)
+	}
+	own := res.JTIsIn(tenant)
+	sort.Strings(own)
+	if len(own) != 2 || own[0] != "imp-grandchild" || own[1] != "imp-rowless" {
+		t.Errorf("revoked in the request's tenant = %v, want imp-grandchild and imp-rowless", own)
+	}
+	if got := revokedState(t, store, other, "imp-foreign"); got["imp-foreign"] != "live" {
+		t.Errorf("the other tenant's session = %q, want live", got["imp-foreign"])
 	}
 }
 
@@ -292,41 +362,6 @@ func TestRecordWithAuditRefusesARevokedCaller(t *testing.T) {
 	}
 	if err := mint("minted-2", "imp-caller"); err != nil {
 		t.Errorf("mint with an impersonation caller: err = %v, want nil", err)
-	}
-}
-
-// spec: §13.3 (Credential Flow)
-// diagnosis: the subtree read that the impersonator-link revocation runs
-// before the cascade omits the root when it has no row, omits a revoked
-// descendant, crosses into another tenant, or does not refuse a revoked
-// caller, so a retry of a failed revocation request could not finish it.
-func TestLineageSubtreeReadsTheWholeSubtreeAndRefusesARevokedCaller(t *testing.T) {
-	t.Parallel()
-	pg, store, record := modelFixture(t)
-	ctx := context.Background()
-	tenant := freshTenant(t, ctx, pg)
-	other := freshTenant(t, ctx, pg)
-	record(t, issuedtokenstore.IssuedToken{JTI: "child", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "rowless"})
-	record(t, issuedtokenstore.IssuedToken{
-		JTI: "grandchild", TenantID: tenant, Subject: "alice@acme.com", ParentJTI: "child",
-		RevokedAt: time.Now().UTC(), RevokedReason: "rotation_replaced",
-	})
-	record(t, issuedtokenstore.IssuedToken{JTI: "foreign", TenantID: other, Subject: "bob@globex.com", ParentJTI: "rowless"})
-	record(t, issuedtokenstore.IssuedToken{
-		JTI: "revoked-caller", TenantID: tenant, Subject: "alice@acme.com",
-		RevokedAt: time.Now().UTC(), RevokedReason: "explicit_revoke",
-	})
-
-	got, err := store.LineageSubtree(ctx, tenant, "", "rowless")
-	if err != nil {
-		t.Fatalf("LineageSubtree: %v", err)
-	}
-	sort.Strings(got)
-	if len(got) != 3 || got[0] != "child" || got[1] != "grandchild" || got[2] != "rowless" {
-		t.Errorf("subtree = %v, want [child grandchild rowless]", got)
-	}
-	if _, err := store.LineageSubtree(ctx, tenant, "revoked-caller", "rowless"); !errors.Is(err, issuedtokenstore.ErrCallerRevoked) {
-		t.Errorf("revoked caller: err = %v, want ErrCallerRevoked", err)
 	}
 }
 

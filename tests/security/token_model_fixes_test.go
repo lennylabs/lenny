@@ -102,9 +102,11 @@ func TestTokenServiceRevokesFromARootWithoutARow(t *testing.T) {
 // spec: §13.3 (Credential Flow)
 // diagnosis: revoking the platform-admin bearer that started an
 // impersonation in another tenant left the impersonation bearer live (the
-// scenario CX-4 of change 0165's model). Check revokeImpersonationsFrom in
-// pkg/tokenservice and RevokeImpersonationsByImpersonator in
-// pkg/storage/issuedtokenstore.
+// scenario CX-4 of change 0165's model), or the revocation, whose caller
+// holds no platform-admin role, wrote a cross_tenant_read event, which
+// only the __all__ sentinel's platform-admin paths write (TOKX-I17). Check
+// revokeImpersonationsFrom in pkg/tokenservice and RevokeImpersonationStep
+// in pkg/storage/issuedtokenstore.
 func TestTokenServiceRevocationEndsTheImpersonationsItReaches(t *testing.T) {
 	h := newSourceRevokedHarness(t)
 	ctx := context.Background()
@@ -137,6 +139,13 @@ func TestTokenServiceRevocationEndsTheImpersonationsItReaches(t *testing.T) {
 	row, err := h.store.Get(ctx, "globex", "imp-1")
 	if err != nil || !row.Revoked() || row.RevokedReason != "cascade_from_parent" {
 		t.Errorf("impersonation row %+v err %v, want revoked with cascade_from_parent", row, err)
+	}
+	var events int
+	if err := h.pool.QueryRow(ctx, `SELECT count(*) FROM audit_log WHERE event_type = 'cross_tenant_read'`).Scan(&events); err != nil {
+		t.Fatalf("count cross_tenant_read events: %v", err)
+	}
+	if events != 0 {
+		t.Errorf("cross_tenant_read events = %d, want 0", events)
 	}
 }
 

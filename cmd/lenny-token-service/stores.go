@@ -61,7 +61,7 @@ func (w *tokenServiceWiring) buildStores() {
 	// IssuedTokenAuditStore, so the handler uses the combined
 	// write-before-issue tx. The in-memory auditor is wired
 	// alongside to cover the rate-limit and revocation paths.
-	w.issuedTokens = issuedtokenstore.New(pool)
+	w.issuedTokens = issuedtokenstore.New(pool).WithLimits(w.f.lineageLimits())
 	// §12.3 R-03: the audit chain routes its writes through the
 	// StoreRouter rather than holding a raw pool. The Token Service
 	// audit path is Postgres-only (it never touches Redis), so the

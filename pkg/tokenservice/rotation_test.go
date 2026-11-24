@@ -278,7 +278,7 @@ func TestHandlerRotationPreviousAbsentEmitsNoRevoked_spec_16_7_5(t *testing.T) {
 	if store.gotPrevJTI != "tok-1" {
 		t.Errorf("rotation path should still run; gotPrevJTI=%q", store.gotPrevJTI)
 	}
-	want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "tok-1"}}
+	want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "tok-1", Subject: "alice@acme.com"}}
 	if !reflect.DeepEqual(store.sources, want) {
 		t.Errorf("rotation re-read sources = %+v, want %+v", store.sources, want)
 	}

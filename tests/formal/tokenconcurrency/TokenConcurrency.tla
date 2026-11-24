@@ -10,9 +10,9 @@
 (* private writes of each open transaction, share and update row locks,    *)
 (* the per-tenant audit advisory lock, commit, abort, and the deadlock     *)
 (* detector.  Variant selects the rule set: "Main" is the code on main,    *)
-(* "TF" is the locking design of change 0168, and "I13Lock" is "TF" with   *)
-(* the per-tenant advisory lock that TOKX-I13 suggests taken by the        *)
-(* cascade and by the full revoke's walk.                                  *)
+(* and "TF" is the locking design of revision 4 of change 0168, in which   *)
+(* the cascade and the full revoke's walk take the per-tenant advisory     *)
+(* lock.  "I13Lock" names the same rules as "TF" at revision 4.            *)
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets, Sequences, TLC
 
@@ -441,7 +441,7 @@ end process;
 (***************************************************************************)
 fair process req \in Procs
 variables
-  ten = "", phase = "", attempts = 0, retries = 0,
+  ten = "", phase = "", attempts = 0, retries = 0, sAtt = 0,
   snap = {}, cur = "", tgts = {}, curT = "", uq = <<>>;
 begin
 Start:
@@ -602,9 +602,13 @@ MImpCommit:
     goto Casc;
   end if;
 
-\* TF: the outer transaction of TF-2 and the nested ones of TF-5.
+\* TF: the outer transaction of TF-2 in the request's tenant.  Its updates
+\* in each other target tenant run in the same transaction under that
+\* tenant's context (SET LOCAL app.current_tenant, TF-5), so every wait of the
+\* step is a lock wait.  A 40P01 abort retries the step up to CascadeAttempts.
 TOuter:
   phase := "step"; stepRev[self] := {}; stepRead[self] := FALSE;
+  sAtt := sAtt + 1;
   Begin(1, ten);
   want[<<self, 1>>] := <<op[self].caller, "s">>;
 TOuterCaller:
@@ -639,9 +643,7 @@ TOuterSnap:
   end if;
 TOuterRow:
   if Ab(self) then goto Fail;
-  elsif snap = {} then
-    stepRev[self] := DOMAIN wtok[T(self)];
-    goto TNext;
+  elsif snap = {} then goto TNext;
   else with j \in snap do cur := j; want[T(self)] := <<j, "x">>; end with;
   end if;
 TOuterLock:
@@ -658,45 +660,39 @@ TNext:
   elsif tgts = {} then goto TOuterCommit;
   else with g \in tgts do curT := g; tgts := tgts \ {g}; end with;
   end if;
-TNested:
-  \* A nested transaction under the target tenant's context, and its UPDATE's snapshot.
+TTarget:
+  \* SET LOCAL app.current_tenant to the target tenant, and the snapshot of
+  \* the UPDATE that runs under it in the outer transaction.
   if Ab(self) then goto Fail;
   else
-    Begin(2, curT);
-    snap := {j \in Jtis : IsImp(tok[j]) /\ ~tok[j].rev /\ tok[j].ten = curT
-                          /\ tok[j].iten = ten /\ tok[j].ijti \in stepTree[self]};
+    snap := {j \in Jtis : IsImp(V(T(self), j)) /\ ~V(T(self), j).rev /\ V(T(self), j).ten = curT
+                          /\ V(T(self), j).iten = ten /\ V(T(self), j).ijti \in stepTree[self]};
   end if;
-TNestedRow:
+TTargetRow:
   if Ab(self) then goto Fail;
-  elsif snap = {} then goto TNestedCommit;
+  elsif snap = {} then goto TNext;
   else with j \in snap do cur := j; want[T(self)] := <<j, "x">>; end with;
   end if;
-TNestedLock:
+TTargetLock:
   await CanLock(T(self), cur, "x") \/ Ab(self);
   if Ab(self) then goto Fail;
   else
     Grant(T(self), cur, "x"); want[T(self)] := NoWant;
     if ~V(T(self), cur).rev then wtok[T(self)] := (cur :> RevRow(V(T(self), cur), self)) @@ wtok[T(self)]; end if;
     snap := snap \ {cur};
-    goto TNestedRow;
-  end if;
-TNestedCommit:
-  if Ab(self) then goto Fail;
-  else
-    if \E j \in DOMAIN wtok[T(self)] :
-         ~(IsImp(tok[j]) /\ tok[j].ten = curT /\ tok[j].iten = ten /\ tok[j].ijti \in stepTree[self]) then
-      badNested := TRUE;
-    end if;
-    if DOMAIN wtok[T(self)] /= {} /\ tok[op[self].caller].ex /\ tok[op[self].caller].rev /\ tok[op[self].caller].by /= self then
-      badStep := TRUE;
-    end if;
-    Commit(T(self));
-    lvl[self] := 1;
-    goto TNext;
+    goto TTargetRow;
   end if;
 TOuterCommit:
   if Ab(self) then goto Fail;
   else
+    stepRev[self] := {j \in DOMAIN wtok[T(self)] : wtok[T(self)][j].ten = ten};
+    if \E j \in DOMAIN wtok[T(self)] :
+         /\ wtok[T(self)][j].ten /= ten
+         /\ ~(/\ IsImp(wtok[T(self)][j]) /\ wtok[T(self)][j].iten = ten
+              /\ wtok[T(self)][j].ijti \in stepTree[self]
+              /\ \E r \in StartsIn(T(self)) : r.ten = ten /\ r.target = wtok[T(self)][j].ten /\ r.ijti \in stepTree[self]) then
+      badNested := TRUE;
+    end if;
     if DOMAIN wtok[T(self)] /= {} /\ tok[op[self].caller].ex /\ tok[op[self].caller].rev /\ tok[op[self].caller].by /= self then
       badStep := TRUE;
     end if;
@@ -708,7 +704,7 @@ Casc:
   phase := "casc";
   attempts := attempts + 1;
   Begin(1, ten);
-  if Variant = "I13Lock" then want[<<self, 1>>] := <<ten, "x">>; goto CascAdv;
+  if IsTF then want[<<self, 1>>] := <<ten, "x">>; goto CascAdv;
   else want[<<self, 1>>] := <<op[self].caller, "s">>; goto CascCaller;
   end if;
 CascAdv:
@@ -770,18 +766,37 @@ CascCommit:
 
 \* ---- A platform-admin impersonation start (rule 1).
 IChk:
-  \* checkCaller: an unlocked read of the caller bearer's row.
-  impChk[self] := {r \in Procs : ~cascCommitted[r]};
-  if tok[op[self].cb].rev \/ IsImp(tok[op[self].cb]) then
-    res[self] := "refused_caller"; finished[self] := TRUE; goto Done;
+  \* Main: checkCaller, an unlocked read of the caller bearer's row.  TF reads
+  \* the row under a share lock in the first transaction instead (TF-7).
+  ten := tok[op[self].cb].ten;
+  if IsTF then goto IOuter;
   else
-    srcRevAtRead[self] := {s \in {op[self].cb} : tok[s].rev};
-    ten := tok[op[self].cb].ten;
+    impChk[self] := {r \in Procs : ~cascCommitted[r]};
+    if tok[op[self].cb].rev \/ IsImp(tok[op[self].cb]) then
+      res[self] := "refused_caller"; finished[self] := TRUE; goto Done;
+    else
+      srcRevAtRead[self] := {s \in {op[self].cb} : tok[s].rev};
+    end if;
   end if;
 IOuter:
   phase := "imp";
   Begin(1, ten);
-  want[<<self, 1>>] := <<tok[op[self].cb].sub, "s">>;
+  if IsTF then want[<<self, 1>>] := <<op[self].cb, "s">>; goto IOuterCb;
+  else want[<<self, 1>>] := <<tok[op[self].cb].sub, "s">>; goto IOuterUser;
+  end if;
+IOuterCb:
+  \* TF-7: the caller bearer's row under a share lock, refused as step (1a)
+  \* refuses a subject_token.
+  await CanLock(T(self), op[self].cb, "s") \/ Ab(self);
+  if Ab(self) then goto Fail;
+  elsif V(T(self), op[self].cb).rev \/ IsImp(V(T(self), op[self].cb)) then
+    want[T(self)] := NoWant; Rollback(T(self)); res[self] := "refused_caller"; finished[self] := TRUE; goto Done;
+  else
+    Grant(T(self), op[self].cb, "s");
+    impChk[self] := {r \in Procs : ~cascCommitted[r]};
+    srcRevAtRead[self] := {s \in {op[self].cb} : tok[s].rev};
+    want[T(self)] := <<tok[op[self].cb].sub, "s">>;
+  end if;
 IOuterUser:
   await CanLock(T(self), tok[op[self].cb].sub, "s") \/ Ab(self);
   if Ab(self) then goto Fail;
@@ -813,13 +828,15 @@ INestedCommit:
   else
     Commit(T(self));
     lvl[self] := 1;
-    impAfter[self] := {r \in Procs : stepRead[r]};
+    if ~IsTF then impAfter[self] := {r \in Procs : stepRead[r]}; end if;
   end if;
 IOuterCommit:
   if Ab(self) then goto Fail;
   else
     Commit(T(self));
-    if IsTF then impAfter[self] := impAfter[self] \cup {r \in Procs : stepRead[r]}; end if;
+    \* TF: the start record commits.  The requests whose step has read the
+    \* start records and whose cascade has not committed miss it.
+    if IsTF then impAfter[self] := {r \in Procs : stepRead[r] /\ ~cascCommitted[r]}; end if;
     issued := issued \cup {NewJ(self)};
     res[self] := "issued";
     finished[self] := TRUE; goto Done;
@@ -840,7 +857,7 @@ FLevelCommit:
 FSub:
   \* RevokeBySubject.
   Begin(1, ten);
-  if Variant = "I13Lock" then want[<<self, 1>>] := <<ten, "x">>; goto FSubAdv;
+  if IsTF then want[<<self, 1>>] := <<ten, "x">>; goto FSubAdv;
   else goto FSubSnap;
   end if;
 FSubAdv:
@@ -925,8 +942,11 @@ Fail:
 Fail2:
   if op[self].kind = "rev" /\ phase = "casc" /\ aborted[<<self, 1>>] = "deadlock" /\ attempts < CascadeAttempts then
     goto Casc;
+  elsif IsTF /\ op[self].kind = "rev" /\ phase = "step" /\ aborted[<<self, 1>>] = "deadlock" /\ sAtt < CascadeAttempts then
+    goto TOuter;
   elsif op[self].kind = "rev" /\ phase = "step" /\ retries < MaxClientRetries then
     retries := retries + 1;
+    sAtt := 0;
     if IsTF then goto TOuter; else goto MSub; end if;
   else
     res[self] := "error";
@@ -997,7 +1017,7 @@ CycleMembers ==
   LET E == LockEdges
   IN  IF Cardinality(E) < 2 THEN {} ELSE {t \in TxIds : <<t, t>> \in TC(E)}
 
-VARIABLES ten, phase, attempts, retries, snap, cur, tgts, curT, uq
+VARIABLES ten, phase, attempts, retries, sAtt, snap, cur, tgts, curT, uq
 
 vars == << op, tok, aud, starts, inval, open, aborted, wtok, waud, wst, winv, 
            lvl, sh, ex, want, nAborts, issued, finished, res, callerOf, 
@@ -1005,8 +1025,8 @@ vars == << op, tok, aud, starts, inval, open, aborted, wtok, waud, wst, winv,
            stepRead, cascCommitted, cascDone, callerAtAccept, impChk, 
            impAfter, fullDone, badStep, badStepFail, badNested, revAll, 
            inflight, lost, cache, up, reading, readSet, sinceRead, seen, 
-           nLoss, nRestart, pc, ten, phase, attempts, retries, snap, cur, 
-           tgts, curT, uq >>
+           nLoss, nRestart, pc, ten, phase, attempts, retries, sAtt, snap, 
+           cur, tgts, curT, uq >>
 
 ProcSet == {100} \cup ((IF Reps = {} THEN {} ELSE {101})) \cup (Procs)
 
@@ -1064,6 +1084,7 @@ Init == (* Global variables *)
         /\ phase = [self \in Procs |-> ""]
         /\ attempts = [self \in Procs |-> 0]
         /\ retries = [self \in Procs |-> 0]
+        /\ sAtt = [self \in Procs |-> 0]
         /\ snap = [self \in Procs |-> {}]
         /\ cur = [self \in Procs |-> ""]
         /\ tgts = [self \in Procs |-> {}]
@@ -1121,8 +1142,8 @@ Det == /\ pc[100] = "Det"
                        callerAtAccept, impChk, impAfter, fullDone, badStep, 
                        badStepFail, badNested, revAll, inflight, lost, cache, 
                        up, reading, readSet, sinceRead, seen, nLoss, nRestart, 
-                       ten, phase, attempts, retries, snap, cur, tgts, curT, 
-                       uq >>
+                       ten, phase, attempts, retries, sAtt, snap, cur, tgts, 
+                       curT, uq >>
 
 det == Det
 
@@ -1173,7 +1194,7 @@ Bus(self) == /\ pc[self] = "Bus"
                              stepRead, cascCommitted, cascDone, callerAtAccept, 
                              impChk, impAfter, fullDone, badStep, badStepFail, 
                              badNested, revAll, ten, phase, attempts, retries, 
-                             snap, cur, tgts, curT, uq >>
+                             sAtt, snap, cur, tgts, curT, uq >>
 
 bus(self) == Bus(self)
 
@@ -1224,8 +1245,8 @@ Start(self) == /\ pc[self] = "Start"
                                fullDone, badStep, badStepFail, badNested, 
                                revAll, inflight, lost, cache, up, reading, 
                                readSet, sinceRead, seen, nLoss, nRestart, 
-                               phase, attempts, retries, snap, cur, tgts, curT, 
-                               uq >>
+                               phase, attempts, retries, sAtt, snap, cur, tgts, 
+                               curT, uq >>
 
 XBegin(self) == /\ pc[self] = "XBegin"
                 /\ lvl' = [lvl EXCEPT ![self] = 1]
@@ -1249,7 +1270,8 @@ XBegin(self) == /\ pc[self] = "XBegin"
                                 badStep, badStepFail, badNested, revAll, 
                                 inflight, lost, cache, up, reading, readSet, 
                                 sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                attempts, retries, snap, cur, tgts, curT, uq >>
+                                attempts, retries, sAtt, snap, cur, tgts, curT, 
+                                uq >>
 
 XAdv(self) == /\ pc[self] = "XAdv"
               /\ CanLock(T(self), ten[self], "x") \/ Ab(self)
@@ -1271,8 +1293,8 @@ XAdv(self) == /\ pc[self] = "XAdv"
                               impAfter, fullDone, badStep, badStepFail, 
                               badNested, revAll, inflight, lost, cache, up, 
                               reading, readSet, sinceRead, seen, nLoss, 
-                              nRestart, ten, phase, attempts, retries, snap, 
-                              cur, tgts, curT, uq >>
+                              nRestart, ten, phase, attempts, retries, sAtt, 
+                              snap, cur, tgts, curT, uq >>
 
 X1a(self) == /\ pc[self] = "X1a"
              /\ IF Ab(self)
@@ -1327,8 +1349,8 @@ X1a(self) == /\ pc[self] = "X1a"
                              impAfter, fullDone, badStep, badStepFail, 
                              badNested, revAll, inflight, lost, cache, up, 
                              reading, readSet, sinceRead, seen, nLoss, 
-                             nRestart, ten, phase, attempts, retries, snap, 
-                             cur, tgts, curT >>
+                             nRestart, ten, phase, attempts, retries, sAtt, 
+                             snap, cur, tgts, curT >>
 
 XUserLock(self) == /\ pc[self] = "XUserLock"
                    /\ CanLock(T(self), Head(uq[self]), "s") \/ Ab(self)
@@ -1371,8 +1393,8 @@ XUserLock(self) == /\ pc[self] = "XUserLock"
                                    badStep, badStepFail, badNested, revAll, 
                                    inflight, lost, cache, up, reading, readSet, 
                                    sinceRead, seen, nLoss, nRestart, ten, 
-                                   phase, attempts, retries, snap, cur, tgts, 
-                                   curT >>
+                                   phase, attempts, retries, sAtt, snap, cur, 
+                                   tgts, curT >>
 
 XInsert(self) == /\ pc[self] = "XInsert"
                  /\ IF Ab(self)
@@ -1400,7 +1422,8 @@ XInsert(self) == /\ pc[self] = "XInsert"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, cur, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, cur, tgts, 
+                                 curT, uq >>
 
 XRotLock(self) == /\ pc[self] = "XRotLock"
                   /\ CanLock(T(self), op[self].subj, "x") \/ Ab(self)
@@ -1438,7 +1461,8 @@ XRotLock(self) == /\ pc[self] = "XRotLock"
                                   badStep, badStepFail, badNested, revAll, 
                                   inflight, lost, cache, up, reading, readSet, 
                                   sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                  attempts, retries, snap, cur, tgts, curT, uq >>
+                                  attempts, retries, sAtt, snap, cur, tgts, 
+                                  curT, uq >>
 
 XCommit(self) == /\ pc[self] = "XCommit"
                  /\ IF Ab(self)
@@ -1470,8 +1494,8 @@ XCommit(self) == /\ pc[self] = "XCommit"
                                  impChk, impAfter, fullDone, badStep, 
                                  badStepFail, badNested, revAll, lost, cache, 
                                  up, reading, readSet, sinceRead, seen, nLoss, 
-                                 nRestart, ten, phase, attempts, retries, snap, 
-                                 cur, tgts, curT, uq >>
+                                 nRestart, ten, phase, attempts, retries, sAtt, 
+                                 snap, cur, tgts, curT, uq >>
 
 MSub(self) == /\ pc[self] = "MSub"
               /\ phase' = [phase EXCEPT ![self] = "step"]
@@ -1493,8 +1517,8 @@ MSub(self) == /\ pc[self] = "MSub"
                               impAfter, fullDone, badStep, badStepFail, 
                               badNested, revAll, inflight, lost, cache, up, 
                               reading, readSet, sinceRead, seen, nLoss, 
-                              nRestart, ten, attempts, retries, snap, cur, 
-                              tgts, curT, uq >>
+                              nRestart, ten, attempts, retries, sAtt, snap, 
+                              cur, tgts, curT, uq >>
 
 MSubCaller(self) == /\ pc[self] = "MSubCaller"
                     /\ CanLock(T(self), op[self].caller, "s") \/ Ab(self)
@@ -1532,8 +1556,8 @@ MSubCaller(self) == /\ pc[self] = "MSubCaller"
                                     badStep, badStepFail, badNested, revAll, 
                                     inflight, lost, cache, up, reading, 
                                     readSet, sinceRead, seen, nLoss, nRestart, 
-                                    ten, phase, attempts, retries, snap, cur, 
-                                    tgts, curT, uq >>
+                                    ten, phase, attempts, retries, sAtt, snap, 
+                                    cur, tgts, curT, uq >>
 
 MSubRead(self) == /\ pc[self] = "MSubRead"
                   /\ IF Ab(self)
@@ -1559,7 +1583,7 @@ MSubRead(self) == /\ pc[self] = "MSubRead"
                                   badStep, badStepFail, badNested, revAll, 
                                   lost, cache, up, reading, readSet, sinceRead, 
                                   seen, nLoss, nRestart, ten, phase, attempts, 
-                                  retries, snap, cur, tgts, curT, uq >>
+                                  retries, sAtt, snap, cur, tgts, curT, uq >>
 
 MImp(self) == /\ pc[self] = "MImp"
               /\ lvl' = [lvl EXCEPT ![self] = 1]
@@ -1580,7 +1604,8 @@ MImp(self) == /\ pc[self] = "MImp"
                               impChk, impAfter, fullDone, badStep, badStepFail, 
                               badNested, inflight, lost, cache, up, reading, 
                               readSet, sinceRead, seen, nLoss, nRestart, ten, 
-                              phase, attempts, retries, cur, tgts, curT, uq >>
+                              phase, attempts, retries, sAtt, cur, tgts, curT, 
+                              uq >>
 
 MImpRow(self) == /\ pc[self] = "MImpRow"
                  /\ IF Ab(self)
@@ -1602,7 +1627,7 @@ MImpRow(self) == /\ pc[self] = "MImpRow"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, tgts, curT, uq >>
 
 MImpLock(self) == /\ pc[self] = "MImpLock"
                   /\ CanLock(T(self), cur[self], "x") \/ Ab(self)
@@ -1630,7 +1655,7 @@ MImpLock(self) == /\ pc[self] = "MImpLock"
                                   badStep, badStepFail, badNested, revAll, 
                                   inflight, lost, cache, up, reading, readSet, 
                                   sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                  attempts, retries, cur, tgts, curT, uq >>
+                                  attempts, retries, sAtt, cur, tgts, curT, uq >>
 
 MImpCommit(self) == /\ pc[self] = "MImpCommit"
                     /\ IF Ab(self)
@@ -1662,12 +1687,13 @@ MImpCommit(self) == /\ pc[self] = "MImpCommit"
                                     badNested, revAll, lost, cache, up, 
                                     reading, readSet, sinceRead, seen, nLoss, 
                                     nRestart, ten, phase, attempts, retries, 
-                                    snap, cur, tgts, curT, uq >>
+                                    sAtt, snap, cur, tgts, curT, uq >>
 
 TOuter(self) == /\ pc[self] = "TOuter"
                 /\ phase' = [phase EXCEPT ![self] = "step"]
                 /\ stepRev' = [stepRev EXCEPT ![self] = {}]
                 /\ stepRead' = [stepRead EXCEPT ![self] = FALSE]
+                /\ sAtt' = [sAtt EXCEPT ![self] = sAtt[self] + 1]
                 /\ lvl' = [lvl EXCEPT ![self] = 1]
                 /\ open' = [open EXCEPT ![<<self, 1>>] = TRUE]
                 /\ aborted' = [aborted EXCEPT ![<<self, 1>>] = ""]
@@ -1724,8 +1750,8 @@ TOuterCaller(self) == /\ pc[self] = "TOuterCaller"
                                       badStepFail, badNested, revAll, inflight, 
                                       lost, cache, up, reading, readSet, 
                                       sinceRead, seen, nLoss, nRestart, ten, 
-                                      phase, attempts, retries, snap, cur, 
-                                      tgts, curT, uq >>
+                                      phase, attempts, retries, sAtt, snap, 
+                                      cur, tgts, curT, uq >>
 
 TOuterUser(self) == /\ pc[self] = "TOuterUser"
                     /\ CanLock(T(self), tok[op[self].caller].sub, "s") \/ Ab(self)
@@ -1763,8 +1789,8 @@ TOuterUser(self) == /\ pc[self] = "TOuterUser"
                                     badStep, badStepFail, badNested, revAll, 
                                     inflight, lost, cache, up, reading, 
                                     readSet, sinceRead, seen, nLoss, nRestart, 
-                                    ten, phase, attempts, retries, snap, cur, 
-                                    tgts, curT, uq >>
+                                    ten, phase, attempts, retries, sAtt, snap, 
+                                    cur, tgts, curT, uq >>
 
 TOuterTree(self) == /\ pc[self] = "TOuterTree"
                     /\ IF Ab(self)
@@ -1782,8 +1808,8 @@ TOuterTree(self) == /\ pc[self] = "TOuterTree"
                                     badStepFail, badNested, revAll, inflight, 
                                     lost, cache, up, reading, readSet, 
                                     sinceRead, seen, nLoss, nRestart, ten, 
-                                    phase, attempts, retries, snap, cur, tgts, 
-                                    curT, uq >>
+                                    phase, attempts, retries, sAtt, snap, cur, 
+                                    tgts, curT, uq >>
 
 TOuterStarts(self) == /\ pc[self] = "TOuterStarts"
                       /\ IF Ab(self)
@@ -1802,8 +1828,8 @@ TOuterStarts(self) == /\ pc[self] = "TOuterStarts"
                                       badStepFail, badNested, revAll, inflight, 
                                       lost, cache, up, reading, readSet, 
                                       sinceRead, seen, nLoss, nRestart, ten, 
-                                      phase, attempts, retries, snap, cur, 
-                                      curT, uq >>
+                                      phase, attempts, retries, sAtt, snap, 
+                                      cur, curT, uq >>
 
 TOuterSnap(self) == /\ pc[self] = "TOuterSnap"
                     /\ IF Ab(self)
@@ -1822,33 +1848,31 @@ TOuterSnap(self) == /\ pc[self] = "TOuterSnap"
                                     badStepFail, badNested, revAll, inflight, 
                                     lost, cache, up, reading, readSet, 
                                     sinceRead, seen, nLoss, nRestart, ten, 
-                                    phase, attempts, retries, cur, tgts, curT, 
-                                    uq >>
+                                    phase, attempts, retries, sAtt, cur, tgts, 
+                                    curT, uq >>
 
 TOuterRow(self) == /\ pc[self] = "TOuterRow"
                    /\ IF Ab(self)
                          THEN /\ pc' = [pc EXCEPT ![self] = "Fail"]
-                              /\ UNCHANGED << want, stepRev, cur >>
+                              /\ UNCHANGED << want, cur >>
                          ELSE /\ IF snap[self] = {}
-                                    THEN /\ stepRev' = [stepRev EXCEPT ![self] = DOMAIN wtok[T(self)]]
-                                         /\ pc' = [pc EXCEPT ![self] = "TNext"]
+                                    THEN /\ pc' = [pc EXCEPT ![self] = "TNext"]
                                          /\ UNCHANGED << want, cur >>
                                     ELSE /\ \E j \in snap[self]:
                                               /\ cur' = [cur EXCEPT ![self] = j]
                                               /\ want' = [want EXCEPT ![T(self)] = <<j, "x">>]
                                          /\ pc' = [pc EXCEPT ![self] = "TOuterLock"]
-                                         /\ UNCHANGED stepRev
                    /\ UNCHANGED << op, tok, aud, starts, inval, open, aborted, 
                                    wtok, waud, wst, winv, lvl, sh, ex, nAborts, 
                                    issued, finished, res, callerOf, rootOf, 
                                    tenOf, exchJ, rotated, srcRevAtRead, 
-                                   stepTree, stepRead, cascCommitted, cascDone, 
-                                   callerAtAccept, impChk, impAfter, fullDone, 
-                                   badStep, badStepFail, badNested, revAll, 
-                                   inflight, lost, cache, up, reading, readSet, 
-                                   sinceRead, seen, nLoss, nRestart, ten, 
-                                   phase, attempts, retries, snap, tgts, curT, 
-                                   uq >>
+                                   stepTree, stepRev, stepRead, cascCommitted, 
+                                   cascDone, callerAtAccept, impChk, impAfter, 
+                                   fullDone, badStep, badStepFail, badNested, 
+                                   revAll, inflight, lost, cache, up, reading, 
+                                   readSet, sinceRead, seen, nLoss, nRestart, 
+                                   ten, phase, attempts, retries, sAtt, snap, 
+                                   tgts, curT, uq >>
 
 TOuterLock(self) == /\ pc[self] = "TOuterLock"
                     /\ CanLock(T(self), cur[self], "x") \/ Ab(self)
@@ -1876,8 +1900,8 @@ TOuterLock(self) == /\ pc[self] = "TOuterLock"
                                     badStep, badStepFail, badNested, revAll, 
                                     inflight, lost, cache, up, reading, 
                                     readSet, sinceRead, seen, nLoss, nRestart, 
-                                    ten, phase, attempts, retries, cur, tgts, 
-                                    curT, uq >>
+                                    ten, phase, attempts, retries, sAtt, cur, 
+                                    tgts, curT, uq >>
 
 TNext(self) == /\ pc[self] = "TNext"
                /\ IF Ab(self)
@@ -1889,7 +1913,7 @@ TNext(self) == /\ pc[self] = "TNext"
                                 ELSE /\ \E g \in tgts[self]:
                                           /\ curT' = [curT EXCEPT ![self] = g]
                                           /\ tgts' = [tgts EXCEPT ![self] = tgts[self] \ {g}]
-                                     /\ pc' = [pc EXCEPT ![self] = "TNested"]
+                                     /\ pc' = [pc EXCEPT ![self] = "TTarget"]
                /\ UNCHANGED << op, tok, aud, starts, inval, open, aborted, 
                                wtok, waud, wst, winv, lvl, sh, ex, want, 
                                nAborts, issued, finished, res, callerOf, 
@@ -1899,24 +1923,17 @@ TNext(self) == /\ pc[self] = "TNext"
                                fullDone, badStep, badStepFail, badNested, 
                                revAll, inflight, lost, cache, up, reading, 
                                readSet, sinceRead, seen, nLoss, nRestart, ten, 
-                               phase, attempts, retries, snap, cur, uq >>
+                               phase, attempts, retries, sAtt, snap, cur, uq >>
 
-TNested(self) == /\ pc[self] = "TNested"
+TTarget(self) == /\ pc[self] = "TTarget"
                  /\ IF Ab(self)
                        THEN /\ pc' = [pc EXCEPT ![self] = "Fail"]
-                            /\ UNCHANGED << open, aborted, wtok, waud, wst, 
-                                            winv, lvl, snap >>
-                       ELSE /\ lvl' = [lvl EXCEPT ![self] = 2]
-                            /\ open' = [open EXCEPT ![<<self, 2>>] = TRUE]
-                            /\ aborted' = [aborted EXCEPT ![<<self, 2>>] = ""]
-                            /\ wtok' = [wtok EXCEPT ![<<self, 2>>] = EmptyW]
-                            /\ waud' = [waud EXCEPT ![<<self, 2>>] = {}]
-                            /\ wst' = [wst EXCEPT ![<<self, 2>>] = {}]
-                            /\ winv' = [winv EXCEPT ![<<self, 2>>] = {}]
-                            /\ snap' = [snap EXCEPT ![self] = {j \in Jtis : IsImp(tok[j]) /\ ~tok[j].rev /\ tok[j].ten = curT[self]
-                                                                            /\ tok[j].iten = ten[self] /\ tok[j].ijti \in stepTree[self]}]
-                            /\ pc' = [pc EXCEPT ![self] = "TNestedRow"]
-                 /\ UNCHANGED << op, tok, aud, starts, inval, sh, ex, want, 
+                            /\ snap' = snap
+                       ELSE /\ snap' = [snap EXCEPT ![self] = {j \in Jtis : IsImp(V(T(self), j)) /\ ~V(T(self), j).rev /\ V(T(self), j).ten = curT[self]
+                                                                            /\ V(T(self), j).iten = ten[self] /\ V(T(self), j).ijti \in stepTree[self]}]
+                            /\ pc' = [pc EXCEPT ![self] = "TTargetRow"]
+                 /\ UNCHANGED << op, tok, aud, starts, inval, open, aborted, 
+                                 wtok, waud, wst, winv, lvl, sh, ex, want, 
                                  nAborts, issued, finished, res, callerOf, 
                                  rootOf, tenOf, exchJ, rotated, srcRevAtRead, 
                                  stepTree, stepRev, stepRead, cascCommitted, 
@@ -1924,20 +1941,20 @@ TNested(self) == /\ pc[self] = "TNested"
                                  fullDone, badStep, badStepFail, badNested, 
                                  revAll, inflight, lost, cache, up, reading, 
                                  readSet, sinceRead, seen, nLoss, nRestart, 
-                                 ten, phase, attempts, retries, cur, tgts, 
-                                 curT, uq >>
+                                 ten, phase, attempts, retries, sAtt, cur, 
+                                 tgts, curT, uq >>
 
-TNestedRow(self) == /\ pc[self] = "TNestedRow"
+TTargetRow(self) == /\ pc[self] = "TTargetRow"
                     /\ IF Ab(self)
                           THEN /\ pc' = [pc EXCEPT ![self] = "Fail"]
                                /\ UNCHANGED << want, cur >>
                           ELSE /\ IF snap[self] = {}
-                                     THEN /\ pc' = [pc EXCEPT ![self] = "TNestedCommit"]
+                                     THEN /\ pc' = [pc EXCEPT ![self] = "TNext"]
                                           /\ UNCHANGED << want, cur >>
                                      ELSE /\ \E j \in snap[self]:
                                                /\ cur' = [cur EXCEPT ![self] = j]
                                                /\ want' = [want EXCEPT ![T(self)] = <<j, "x">>]
-                                          /\ pc' = [pc EXCEPT ![self] = "TNestedLock"]
+                                          /\ pc' = [pc EXCEPT ![self] = "TTargetLock"]
                     /\ UNCHANGED << op, tok, aud, starts, inval, open, aborted, 
                                     wtok, waud, wst, winv, lvl, sh, ex, 
                                     nAborts, issued, finished, res, callerOf, 
@@ -1948,10 +1965,10 @@ TNestedRow(self) == /\ pc[self] = "TNestedRow"
                                     badStepFail, badNested, revAll, inflight, 
                                     lost, cache, up, reading, readSet, 
                                     sinceRead, seen, nLoss, nRestart, ten, 
-                                    phase, attempts, retries, snap, tgts, curT, 
-                                    uq >>
+                                    phase, attempts, retries, sAtt, snap, tgts, 
+                                    curT, uq >>
 
-TNestedLock(self) == /\ pc[self] = "TNestedLock"
+TTargetLock(self) == /\ pc[self] = "TTargetLock"
                      /\ CanLock(T(self), cur[self], "x") \/ Ab(self)
                      /\ IF Ab(self)
                            THEN /\ pc' = [pc EXCEPT ![self] = "Fail"]
@@ -1967,7 +1984,7 @@ TNestedLock(self) == /\ pc[self] = "TNestedLock"
                                       ELSE /\ TRUE
                                            /\ wtok' = wtok
                                 /\ snap' = [snap EXCEPT ![self] = snap[self] \ {cur[self]}]
-                                /\ pc' = [pc EXCEPT ![self] = "TNestedRow"]
+                                /\ pc' = [pc EXCEPT ![self] = "TTargetRow"]
                      /\ UNCHANGED << op, tok, aud, starts, inval, open, 
                                      aborted, waud, wst, winv, lvl, nAborts, 
                                      issued, finished, res, callerOf, rootOf, 
@@ -1978,54 +1995,25 @@ TNestedLock(self) == /\ pc[self] = "TNestedLock"
                                      badStepFail, badNested, revAll, inflight, 
                                      lost, cache, up, reading, readSet, 
                                      sinceRead, seen, nLoss, nRestart, ten, 
-                                     phase, attempts, retries, cur, tgts, curT, 
-                                     uq >>
-
-TNestedCommit(self) == /\ pc[self] = "TNestedCommit"
-                       /\ IF Ab(self)
-                             THEN /\ pc' = [pc EXCEPT ![self] = "Fail"]
-                                  /\ UNCHANGED << tok, aud, starts, inval, 
-                                                  open, wtok, lvl, sh, ex, 
-                                                  badStep, badNested, inflight >>
-                             ELSE /\ IF \E j \in DOMAIN wtok[T(self)] :
-                                          ~(IsImp(tok[j]) /\ tok[j].ten = curT[self] /\ tok[j].iten = ten[self] /\ tok[j].ijti \in stepTree[self])
-                                        THEN /\ badNested' = TRUE
-                                        ELSE /\ TRUE
-                                             /\ UNCHANGED badNested
-                                  /\ IF DOMAIN wtok[T(self)] /= {} /\ tok[op[self].caller].ex /\ tok[op[self].caller].rev /\ tok[op[self].caller].by /= self
-                                        THEN /\ badStep' = TRUE
-                                        ELSE /\ TRUE
-                                             /\ UNCHANGED badStep
-                                  /\ inflight' = (inflight \cup (Reps \X NewRevs((T(self)))))
-                                  /\ tok' = Apply((T(self)))
-                                  /\ aud' = (aud \cup waud[(T(self))])
-                                  /\ starts' = (starts \cup wst[(T(self))])
-                                  /\ inval' = (inval \cup winv[(T(self))])
-                                  /\ sh' = [r \in Res |-> sh[r] \ {(T(self))}]
-                                  /\ ex' = [r \in Res |-> IF ex[r] = (T(self)) THEN NoTx ELSE ex[r]]
-                                  /\ open' = [open EXCEPT ![(T(self))] = FALSE]
-                                  /\ wtok' = [wtok EXCEPT ![(T(self))] = EmptyW]
-                                  /\ lvl' = [lvl EXCEPT ![self] = 1]
-                                  /\ pc' = [pc EXCEPT ![self] = "TNext"]
-                       /\ UNCHANGED << op, aborted, waud, wst, winv, want, 
-                                       nAborts, issued, finished, res, 
-                                       callerOf, rootOf, tenOf, exchJ, rotated, 
-                                       srcRevAtRead, stepTree, stepRev, 
-                                       stepRead, cascCommitted, cascDone, 
-                                       callerAtAccept, impChk, impAfter, 
-                                       fullDone, badStepFail, revAll, lost, 
-                                       cache, up, reading, readSet, sinceRead, 
-                                       seen, nLoss, nRestart, ten, phase, 
-                                       attempts, retries, snap, cur, tgts, 
-                                       curT, uq >>
+                                     phase, attempts, retries, sAtt, cur, tgts, 
+                                     curT, uq >>
 
 TOuterCommit(self) == /\ pc[self] = "TOuterCommit"
                       /\ IF Ab(self)
                             THEN /\ pc' = [pc EXCEPT ![self] = "Fail"]
                                  /\ UNCHANGED << tok, aud, starts, inval, open, 
-                                                 wtok, sh, ex, badStep, 
-                                                 inflight >>
-                            ELSE /\ IF DOMAIN wtok[T(self)] /= {} /\ tok[op[self].caller].ex /\ tok[op[self].caller].rev /\ tok[op[self].caller].by /= self
+                                                 wtok, sh, ex, stepRev, 
+                                                 badStep, badNested, inflight >>
+                            ELSE /\ stepRev' = [stepRev EXCEPT ![self] = {j \in DOMAIN wtok[T(self)] : wtok[T(self)][j].ten = ten[self]}]
+                                 /\ IF \E j \in DOMAIN wtok[T(self)] :
+                                         /\ wtok[T(self)][j].ten /= ten[self]
+                                         /\ ~(/\ IsImp(wtok[T(self)][j]) /\ wtok[T(self)][j].iten = ten[self]
+                                              /\ wtok[T(self)][j].ijti \in stepTree[self]
+                                              /\ \E r \in StartsIn(T(self)) : r.ten = ten[self] /\ r.target = wtok[T(self)][j].ten /\ r.ijti \in stepTree[self])
+                                       THEN /\ badNested' = TRUE
+                                       ELSE /\ TRUE
+                                            /\ UNCHANGED badNested
+                                 /\ IF DOMAIN wtok[T(self)] /= {} /\ tok[op[self].caller].ex /\ tok[op[self].caller].rev /\ tok[op[self].caller].by /= self
                                        THEN /\ badStep' = TRUE
                                        ELSE /\ TRUE
                                             /\ UNCHANGED badStep
@@ -2042,14 +2030,13 @@ TOuterCommit(self) == /\ pc[self] = "TOuterCommit"
                       /\ UNCHANGED << op, aborted, waud, wst, winv, lvl, want, 
                                       nAborts, issued, finished, res, callerOf, 
                                       rootOf, tenOf, exchJ, rotated, 
-                                      srcRevAtRead, stepTree, stepRev, 
-                                      stepRead, cascCommitted, cascDone, 
-                                      callerAtAccept, impChk, impAfter, 
-                                      fullDone, badStepFail, badNested, revAll, 
-                                      lost, cache, up, reading, readSet, 
-                                      sinceRead, seen, nLoss, nRestart, ten, 
-                                      phase, attempts, retries, snap, cur, 
-                                      tgts, curT, uq >>
+                                      srcRevAtRead, stepTree, stepRead, 
+                                      cascCommitted, cascDone, callerAtAccept, 
+                                      impChk, impAfter, fullDone, badStepFail, 
+                                      revAll, lost, cache, up, reading, 
+                                      readSet, sinceRead, seen, nLoss, 
+                                      nRestart, ten, phase, attempts, retries, 
+                                      sAtt, snap, cur, tgts, curT, uq >>
 
 Casc(self) == /\ pc[self] = "Casc"
               /\ phase' = [phase EXCEPT ![self] = "casc"]
@@ -2061,7 +2048,7 @@ Casc(self) == /\ pc[self] = "Casc"
               /\ waud' = [waud EXCEPT ![<<self, 1>>] = {}]
               /\ wst' = [wst EXCEPT ![<<self, 1>>] = {}]
               /\ winv' = [winv EXCEPT ![<<self, 1>>] = {}]
-              /\ IF Variant = "I13Lock"
+              /\ IF IsTF
                     THEN /\ want' = [want EXCEPT ![<<self, 1>>] = <<ten[self], "x">>]
                          /\ pc' = [pc EXCEPT ![self] = "CascAdv"]
                     ELSE /\ want' = [want EXCEPT ![<<self, 1>>] = <<op[self].caller, "s">>]
@@ -2074,7 +2061,7 @@ Casc(self) == /\ pc[self] = "Casc"
                               badStep, badStepFail, badNested, revAll, 
                               inflight, lost, cache, up, reading, readSet, 
                               sinceRead, seen, nLoss, nRestart, ten, retries, 
-                              snap, cur, tgts, curT, uq >>
+                              sAtt, snap, cur, tgts, curT, uq >>
 
 CascAdv(self) == /\ pc[self] = "CascAdv"
                  /\ CanLock(T(self), ten[self], "x") \/ Ab(self)
@@ -2097,7 +2084,8 @@ CascAdv(self) == /\ pc[self] = "CascAdv"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, cur, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, cur, tgts, 
+                                 curT, uq >>
 
 CascCaller(self) == /\ pc[self] = "CascCaller"
                     /\ CanLock(T(self), op[self].caller, "s") \/ Ab(self)
@@ -2138,8 +2126,8 @@ CascCaller(self) == /\ pc[self] = "CascCaller"
                                     badStep, badStepFail, badNested, revAll, 
                                     inflight, lost, cache, up, reading, 
                                     readSet, sinceRead, seen, nLoss, nRestart, 
-                                    ten, phase, attempts, retries, snap, cur, 
-                                    tgts, curT, uq >>
+                                    ten, phase, attempts, retries, sAtt, snap, 
+                                    cur, tgts, curT, uq >>
 
 CascUser(self) == /\ pc[self] = "CascUser"
                   /\ CanLock(T(self), tok[op[self].caller].sub, "s") \/ Ab(self)
@@ -2176,7 +2164,8 @@ CascUser(self) == /\ pc[self] = "CascUser"
                                   badStep, badStepFail, badNested, revAll, 
                                   inflight, lost, cache, up, reading, readSet, 
                                   sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                  attempts, retries, snap, cur, tgts, curT, uq >>
+                                  attempts, retries, sAtt, snap, cur, tgts, 
+                                  curT, uq >>
 
 CascSnap(self) == /\ pc[self] = "CascSnap"
                   /\ IF Ab(self)
@@ -2193,8 +2182,8 @@ CascSnap(self) == /\ pc[self] = "CascSnap"
                                   fullDone, badStep, badStepFail, badNested, 
                                   revAll, inflight, lost, cache, up, reading, 
                                   readSet, sinceRead, seen, nLoss, nRestart, 
-                                  ten, phase, attempts, retries, cur, tgts, 
-                                  curT, uq >>
+                                  ten, phase, attempts, retries, sAtt, cur, 
+                                  tgts, curT, uq >>
 
 CascRow(self) == /\ pc[self] = "CascRow"
                  /\ IF Ab(self)
@@ -2216,7 +2205,7 @@ CascRow(self) == /\ pc[self] = "CascRow"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, tgts, curT, uq >>
 
 CascLock(self) == /\ pc[self] = "CascLock"
                   /\ CanLock(T(self), cur[self], "x") \/ Ab(self)
@@ -2244,7 +2233,7 @@ CascLock(self) == /\ pc[self] = "CascLock"
                                   badStep, badStepFail, badNested, revAll, 
                                   inflight, lost, cache, up, reading, readSet, 
                                   sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                  attempts, retries, cur, tgts, curT, uq >>
+                                  attempts, retries, sAtt, cur, tgts, curT, uq >>
 
 CascCommit(self) == /\ pc[self] = "CascCommit"
                     /\ IF Ab(self)
@@ -2277,20 +2266,23 @@ CascCommit(self) == /\ pc[self] = "CascCommit"
                                     fullDone, badStep, badStepFail, badNested, 
                                     revAll, lost, cache, up, reading, readSet, 
                                     sinceRead, seen, nLoss, nRestart, ten, 
-                                    phase, attempts, retries, snap, cur, tgts, 
-                                    curT, uq >>
+                                    phase, attempts, retries, sAtt, snap, cur, 
+                                    tgts, curT, uq >>
 
 IChk(self) == /\ pc[self] = "IChk"
-              /\ impChk' = [impChk EXCEPT ![self] = {r \in Procs : ~cascCommitted[r]}]
-              /\ IF tok[op[self].cb].rev \/ IsImp(tok[op[self].cb])
-                    THEN /\ res' = [res EXCEPT ![self] = "refused_caller"]
-                         /\ finished' = [finished EXCEPT ![self] = TRUE]
-                         /\ pc' = [pc EXCEPT ![self] = "Done"]
-                         /\ UNCHANGED << srcRevAtRead, ten >>
-                    ELSE /\ srcRevAtRead' = [srcRevAtRead EXCEPT ![self] = {s \in {op[self].cb} : tok[s].rev}]
-                         /\ ten' = [ten EXCEPT ![self] = tok[op[self].cb].ten]
-                         /\ pc' = [pc EXCEPT ![self] = "IOuter"]
-                         /\ UNCHANGED << finished, res >>
+              /\ ten' = [ten EXCEPT ![self] = tok[op[self].cb].ten]
+              /\ IF IsTF
+                    THEN /\ pc' = [pc EXCEPT ![self] = "IOuter"]
+                         /\ UNCHANGED << finished, res, srcRevAtRead, impChk >>
+                    ELSE /\ impChk' = [impChk EXCEPT ![self] = {r \in Procs : ~cascCommitted[r]}]
+                         /\ IF tok[op[self].cb].rev \/ IsImp(tok[op[self].cb])
+                               THEN /\ res' = [res EXCEPT ![self] = "refused_caller"]
+                                    /\ finished' = [finished EXCEPT ![self] = TRUE]
+                                    /\ pc' = [pc EXCEPT ![self] = "Done"]
+                                    /\ UNCHANGED srcRevAtRead
+                               ELSE /\ srcRevAtRead' = [srcRevAtRead EXCEPT ![self] = {s \in {op[self].cb} : tok[s].rev}]
+                                    /\ pc' = [pc EXCEPT ![self] = "IOuter"]
+                                    /\ UNCHANGED << finished, res >>
               /\ UNCHANGED << op, tok, aud, starts, inval, open, aborted, wtok, 
                               waud, wst, winv, lvl, sh, ex, want, nAborts, 
                               issued, callerOf, rootOf, tenOf, exchJ, rotated, 
@@ -2299,7 +2291,8 @@ IChk(self) == /\ pc[self] = "IChk"
                               badStep, badStepFail, badNested, revAll, 
                               inflight, lost, cache, up, reading, readSet, 
                               sinceRead, seen, nLoss, nRestart, phase, 
-                              attempts, retries, snap, cur, tgts, curT, uq >>
+                              attempts, retries, sAtt, snap, cur, tgts, curT, 
+                              uq >>
 
 IOuter(self) == /\ pc[self] = "IOuter"
                 /\ phase' = [phase EXCEPT ![self] = "imp"]
@@ -2310,8 +2303,11 @@ IOuter(self) == /\ pc[self] = "IOuter"
                 /\ waud' = [waud EXCEPT ![<<self, 1>>] = {}]
                 /\ wst' = [wst EXCEPT ![<<self, 1>>] = {}]
                 /\ winv' = [winv EXCEPT ![<<self, 1>>] = {}]
-                /\ want' = [want EXCEPT ![<<self, 1>>] = <<tok[op[self].cb].sub, "s">>]
-                /\ pc' = [pc EXCEPT ![self] = "IOuterUser"]
+                /\ IF IsTF
+                      THEN /\ want' = [want EXCEPT ![<<self, 1>>] = <<op[self].cb, "s">>]
+                           /\ pc' = [pc EXCEPT ![self] = "IOuterCb"]
+                      ELSE /\ want' = [want EXCEPT ![<<self, 1>>] = <<tok[op[self].cb].sub, "s">>]
+                           /\ pc' = [pc EXCEPT ![self] = "IOuterUser"]
                 /\ UNCHANGED << op, tok, aud, starts, inval, sh, ex, nAborts, 
                                 issued, finished, res, callerOf, rootOf, tenOf, 
                                 exchJ, rotated, srcRevAtRead, stepTree, 
@@ -2320,7 +2316,49 @@ IOuter(self) == /\ pc[self] = "IOuter"
                                 badStep, badStepFail, badNested, revAll, 
                                 inflight, lost, cache, up, reading, readSet, 
                                 sinceRead, seen, nLoss, nRestart, ten, 
-                                attempts, retries, snap, cur, tgts, curT, uq >>
+                                attempts, retries, sAtt, snap, cur, tgts, curT, 
+                                uq >>
+
+IOuterCb(self) == /\ pc[self] = "IOuterCb"
+                  /\ CanLock(T(self), op[self].cb, "s") \/ Ab(self)
+                  /\ IF Ab(self)
+                        THEN /\ pc' = [pc EXCEPT ![self] = "Fail"]
+                             /\ UNCHANGED << open, wtok, waud, wst, winv, sh, 
+                                             ex, want, finished, res, 
+                                             srcRevAtRead, impChk >>
+                        ELSE /\ IF V(T(self), op[self].cb).rev \/ IsImp(V(T(self), op[self].cb))
+                                   THEN /\ want' = [want EXCEPT ![T(self)] = NoWant]
+                                        /\ sh' = [r \in Res |-> sh[r] \ {(T(self))}]
+                                        /\ ex' = [r \in Res |-> IF ex[r] = (T(self)) THEN NoTx ELSE ex[r]]
+                                        /\ open' = [open EXCEPT ![(T(self))] = FALSE]
+                                        /\ wtok' = [wtok EXCEPT ![(T(self))] = EmptyW]
+                                        /\ waud' = [waud EXCEPT ![(T(self))] = {}]
+                                        /\ wst' = [wst EXCEPT ![(T(self))] = {}]
+                                        /\ winv' = [winv EXCEPT ![(T(self))] = {}]
+                                        /\ res' = [res EXCEPT ![self] = "refused_caller"]
+                                        /\ finished' = [finished EXCEPT ![self] = TRUE]
+                                        /\ pc' = [pc EXCEPT ![self] = "Done"]
+                                        /\ UNCHANGED << srcRevAtRead, impChk >>
+                                   ELSE /\ IF "s" = "s"
+                                              THEN /\ sh' = [sh EXCEPT ![(op[self].cb)] = sh[(op[self].cb)] \cup {(T(self))}]
+                                                   /\ ex' = ex
+                                              ELSE /\ ex' = [ex EXCEPT ![(op[self].cb)] = T(self)]
+                                                   /\ sh' = sh
+                                        /\ impChk' = [impChk EXCEPT ![self] = {r \in Procs : ~cascCommitted[r]}]
+                                        /\ srcRevAtRead' = [srcRevAtRead EXCEPT ![self] = {s \in {op[self].cb} : tok[s].rev}]
+                                        /\ want' = [want EXCEPT ![T(self)] = <<tok[op[self].cb].sub, "s">>]
+                                        /\ pc' = [pc EXCEPT ![self] = "IOuterUser"]
+                                        /\ UNCHANGED << open, wtok, waud, wst, 
+                                                        winv, finished, res >>
+                  /\ UNCHANGED << op, tok, aud, starts, inval, aborted, lvl, 
+                                  nAborts, issued, callerOf, rootOf, tenOf, 
+                                  exchJ, rotated, stepTree, stepRev, stepRead, 
+                                  cascCommitted, cascDone, callerAtAccept, 
+                                  impAfter, fullDone, badStep, badStepFail, 
+                                  badNested, revAll, inflight, lost, cache, up, 
+                                  reading, readSet, sinceRead, seen, nLoss, 
+                                  nRestart, ten, phase, attempts, retries, 
+                                  sAtt, snap, cur, tgts, curT, uq >>
 
 IOuterUser(self) == /\ pc[self] = "IOuterUser"
                     /\ CanLock(T(self), tok[op[self].cb].sub, "s") \/ Ab(self)
@@ -2361,8 +2399,8 @@ IOuterUser(self) == /\ pc[self] = "IOuterUser"
                                     badStep, badStepFail, badNested, revAll, 
                                     inflight, lost, cache, up, reading, 
                                     readSet, sinceRead, seen, nLoss, nRestart, 
-                                    ten, phase, attempts, retries, snap, cur, 
-                                    tgts, curT, uq >>
+                                    ten, phase, attempts, retries, sAtt, snap, 
+                                    cur, tgts, curT, uq >>
 
 INested(self) == /\ pc[self] = "INested"
                  /\ IF Ab(self)
@@ -2386,7 +2424,8 @@ INested(self) == /\ pc[self] = "INested"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, cur, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, cur, tgts, 
+                                 curT, uq >>
 
 INestedUser(self) == /\ pc[self] = "INestedUser"
                      /\ CanLock(T(self), op[self].tu, "s") \/ Ab(self)
@@ -2424,8 +2463,8 @@ INestedUser(self) == /\ pc[self] = "INestedUser"
                                      badStepFail, badNested, revAll, inflight, 
                                      lost, cache, up, reading, readSet, 
                                      sinceRead, seen, nLoss, nRestart, ten, 
-                                     phase, attempts, retries, snap, cur, tgts, 
-                                     curT, uq >>
+                                     phase, attempts, retries, sAtt, snap, cur, 
+                                     tgts, curT, uq >>
 
 INestedCommit(self) == /\ pc[self] = "INestedCommit"
                        /\ IF Ab(self)
@@ -2443,7 +2482,10 @@ INestedCommit(self) == /\ pc[self] = "INestedCommit"
                                   /\ open' = [open EXCEPT ![(T(self))] = FALSE]
                                   /\ wtok' = [wtok EXCEPT ![(T(self))] = EmptyW]
                                   /\ lvl' = [lvl EXCEPT ![self] = 1]
-                                  /\ impAfter' = [impAfter EXCEPT ![self] = {r \in Procs : stepRead[r]}]
+                                  /\ IF ~IsTF
+                                        THEN /\ impAfter' = [impAfter EXCEPT ![self] = {r \in Procs : stepRead[r]}]
+                                        ELSE /\ TRUE
+                                             /\ UNCHANGED impAfter
                                   /\ pc' = [pc EXCEPT ![self] = "IOuterCommit"]
                        /\ UNCHANGED << op, aborted, waud, wst, winv, want, 
                                        nAborts, issued, finished, res, 
@@ -2454,8 +2496,8 @@ INestedCommit(self) == /\ pc[self] = "INestedCommit"
                                        badStep, badStepFail, badNested, revAll, 
                                        lost, cache, up, reading, readSet, 
                                        sinceRead, seen, nLoss, nRestart, ten, 
-                                       phase, attempts, retries, snap, cur, 
-                                       tgts, curT, uq >>
+                                       phase, attempts, retries, sAtt, snap, 
+                                       cur, tgts, curT, uq >>
 
 IOuterCommit(self) == /\ pc[self] = "IOuterCommit"
                       /\ IF Ab(self)
@@ -2474,7 +2516,7 @@ IOuterCommit(self) == /\ pc[self] = "IOuterCommit"
                                  /\ open' = [open EXCEPT ![(T(self))] = FALSE]
                                  /\ wtok' = [wtok EXCEPT ![(T(self))] = EmptyW]
                                  /\ IF IsTF
-                                       THEN /\ impAfter' = [impAfter EXCEPT ![self] = impAfter[self] \cup {r \in Procs : stepRead[r]}]
+                                       THEN /\ impAfter' = [impAfter EXCEPT ![self] = {r \in Procs : stepRead[r] /\ ~cascCommitted[r]}]
                                        ELSE /\ TRUE
                                             /\ UNCHANGED impAfter
                                  /\ issued' = (issued \cup {NewJ(self)})
@@ -2489,8 +2531,8 @@ IOuterCommit(self) == /\ pc[self] = "IOuterCommit"
                                       badStep, badStepFail, badNested, revAll, 
                                       lost, cache, up, reading, readSet, 
                                       sinceRead, seen, nLoss, nRestart, ten, 
-                                      phase, attempts, retries, snap, cur, 
-                                      tgts, curT, uq >>
+                                      phase, attempts, retries, sAtt, snap, 
+                                      cur, tgts, curT, uq >>
 
 FLevel(self) == /\ pc[self] = "FLevel"
                 /\ phase' = [phase EXCEPT ![self] = "full"]
@@ -2511,7 +2553,8 @@ FLevel(self) == /\ pc[self] = "FLevel"
                                 badStep, badStepFail, badNested, revAll, 
                                 inflight, lost, cache, up, reading, readSet, 
                                 sinceRead, seen, nLoss, nRestart, ten, 
-                                attempts, retries, snap, cur, tgts, curT, uq >>
+                                attempts, retries, sAtt, snap, cur, tgts, curT, 
+                                uq >>
 
 FLevelLock(self) == /\ pc[self] = "FLevelLock"
                     /\ CanLock(T(self), op[self].user, "x") \/ Ab(self)
@@ -2535,8 +2578,8 @@ FLevelLock(self) == /\ pc[self] = "FLevelLock"
                                     badStep, badStepFail, badNested, revAll, 
                                     inflight, lost, cache, up, reading, 
                                     readSet, sinceRead, seen, nLoss, nRestart, 
-                                    ten, phase, attempts, retries, snap, cur, 
-                                    tgts, curT, uq >>
+                                    ten, phase, attempts, retries, sAtt, snap, 
+                                    cur, tgts, curT, uq >>
 
 FLevelCommit(self) == /\ pc[self] = "FLevelCommit"
                       /\ IF Ab(self)
@@ -2563,7 +2606,7 @@ FLevelCommit(self) == /\ pc[self] = "FLevelCommit"
                                       badNested, revAll, lost, cache, up, 
                                       reading, readSet, sinceRead, seen, nLoss, 
                                       nRestart, ten, phase, attempts, retries, 
-                                      snap, cur, tgts, curT, uq >>
+                                      sAtt, snap, cur, tgts, curT, uq >>
 
 FSub(self) == /\ pc[self] = "FSub"
               /\ lvl' = [lvl EXCEPT ![self] = 1]
@@ -2573,7 +2616,7 @@ FSub(self) == /\ pc[self] = "FSub"
               /\ waud' = [waud EXCEPT ![<<self, 1>>] = {}]
               /\ wst' = [wst EXCEPT ![<<self, 1>>] = {}]
               /\ winv' = [winv EXCEPT ![<<self, 1>>] = {}]
-              /\ IF Variant = "I13Lock"
+              /\ IF IsTF
                     THEN /\ want' = [want EXCEPT ![<<self, 1>>] = <<ten[self], "x">>]
                          /\ pc' = [pc EXCEPT ![self] = "FSubAdv"]
                     ELSE /\ pc' = [pc EXCEPT ![self] = "FSubSnap"]
@@ -2586,7 +2629,8 @@ FSub(self) == /\ pc[self] = "FSub"
                               badStep, badStepFail, badNested, revAll, 
                               inflight, lost, cache, up, reading, readSet, 
                               sinceRead, seen, nLoss, nRestart, ten, phase, 
-                              attempts, retries, snap, cur, tgts, curT, uq >>
+                              attempts, retries, sAtt, snap, cur, tgts, curT, 
+                              uq >>
 
 FSubAdv(self) == /\ pc[self] = "FSubAdv"
                  /\ CanLock(T(self), ten[self], "x") \/ Ab(self)
@@ -2609,7 +2653,8 @@ FSubAdv(self) == /\ pc[self] = "FSubAdv"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, cur, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, cur, tgts, 
+                                 curT, uq >>
 
 FSubSnap(self) == /\ pc[self] = "FSubSnap"
                   /\ IF Ab(self)
@@ -2626,8 +2671,8 @@ FSubSnap(self) == /\ pc[self] = "FSubSnap"
                                   fullDone, badStep, badStepFail, badNested, 
                                   revAll, inflight, lost, cache, up, reading, 
                                   readSet, sinceRead, seen, nLoss, nRestart, 
-                                  ten, phase, attempts, retries, cur, tgts, 
-                                  curT, uq >>
+                                  ten, phase, attempts, retries, sAtt, cur, 
+                                  tgts, curT, uq >>
 
 FSubRow(self) == /\ pc[self] = "FSubRow"
                  /\ IF Ab(self)
@@ -2649,7 +2694,7 @@ FSubRow(self) == /\ pc[self] = "FSubRow"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, tgts, curT, uq >>
 
 FSubLock(self) == /\ pc[self] = "FSubLock"
                   /\ CanLock(T(self), cur[self], "x") \/ Ab(self)
@@ -2677,7 +2722,7 @@ FSubLock(self) == /\ pc[self] = "FSubLock"
                                   badStep, badStepFail, badNested, revAll, 
                                   inflight, lost, cache, up, reading, readSet, 
                                   sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                  attempts, retries, cur, tgts, curT, uq >>
+                                  attempts, retries, sAtt, cur, tgts, curT, uq >>
 
 FSubCommit(self) == /\ pc[self] = "FSubCommit"
                     /\ IF Ab(self)
@@ -2703,8 +2748,8 @@ FSubCommit(self) == /\ pc[self] = "FSubCommit"
                                     badStepFail, badNested, revAll, lost, 
                                     cache, up, reading, readSet, sinceRead, 
                                     seen, nLoss, nRestart, ten, phase, 
-                                    attempts, retries, snap, cur, tgts, curT, 
-                                    uq >>
+                                    attempts, retries, sAtt, snap, cur, tgts, 
+                                    curT, uq >>
 
 FAct(self) == /\ pc[self] = "FAct"
               /\ lvl' = [lvl EXCEPT ![self] = 1]
@@ -2724,7 +2769,7 @@ FAct(self) == /\ pc[self] = "FAct"
                               badStep, badStepFail, badNested, revAll, 
                               inflight, lost, cache, up, reading, readSet, 
                               sinceRead, seen, nLoss, nRestart, ten, phase, 
-                              attempts, retries, cur, tgts, curT, uq >>
+                              attempts, retries, sAtt, cur, tgts, curT, uq >>
 
 FActRow(self) == /\ pc[self] = "FActRow"
                  /\ IF Ab(self)
@@ -2746,7 +2791,7 @@ FActRow(self) == /\ pc[self] = "FActRow"
                                  badStep, badStepFail, badNested, revAll, 
                                  inflight, lost, cache, up, reading, readSet, 
                                  sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                 attempts, retries, snap, tgts, curT, uq >>
+                                 attempts, retries, sAtt, snap, tgts, curT, uq >>
 
 FActLock(self) == /\ pc[self] = "FActLock"
                   /\ CanLock(T(self), cur[self], "x") \/ Ab(self)
@@ -2774,7 +2819,7 @@ FActLock(self) == /\ pc[self] = "FActLock"
                                   badStep, badStepFail, badNested, revAll, 
                                   inflight, lost, cache, up, reading, readSet, 
                                   sinceRead, seen, nLoss, nRestart, ten, phase, 
-                                  attempts, retries, cur, tgts, curT, uq >>
+                                  attempts, retries, sAtt, cur, tgts, curT, uq >>
 
 FActCommit(self) == /\ pc[self] = "FActCommit"
                     /\ IF Ab(self)
@@ -2803,8 +2848,8 @@ FActCommit(self) == /\ pc[self] = "FActCommit"
                                     badStepFail, badNested, revAll, lost, 
                                     cache, up, reading, readSet, sinceRead, 
                                     seen, nLoss, nRestart, ten, phase, 
-                                    attempts, retries, snap, cur, tgts, curT, 
-                                    uq >>
+                                    attempts, retries, sAtt, snap, cur, tgts, 
+                                    curT, uq >>
 
 EBegin(self) == /\ pc[self] = "EBegin"
                 /\ phase' = [phase EXCEPT ![self] = "end"]
@@ -2825,7 +2870,8 @@ EBegin(self) == /\ pc[self] = "EBegin"
                                 badStep, badStepFail, badNested, revAll, 
                                 inflight, lost, cache, up, reading, readSet, 
                                 sinceRead, seen, nLoss, nRestart, ten, 
-                                attempts, retries, snap, cur, tgts, curT, uq >>
+                                attempts, retries, sAtt, snap, cur, tgts, curT, 
+                                uq >>
 
 ELock(self) == /\ pc[self] = "ELock"
                /\ CanLock(T(self), op[self].root, "x") \/ Ab(self)
@@ -2851,8 +2897,8 @@ ELock(self) == /\ pc[self] = "ELock"
                                impAfter, fullDone, badStep, badStepFail, 
                                badNested, revAll, inflight, lost, cache, up, 
                                reading, readSet, sinceRead, seen, nLoss, 
-                               nRestart, ten, phase, attempts, retries, snap, 
-                               cur, tgts, curT, uq >>
+                               nRestart, ten, phase, attempts, retries, sAtt, 
+                               snap, cur, tgts, curT, uq >>
 
 ECommit(self) == /\ pc[self] = "ECommit"
                  /\ IF Ab(self)
@@ -2880,7 +2926,7 @@ ECommit(self) == /\ pc[self] = "ECommit"
                                  badStep, badStepFail, badNested, revAll, lost, 
                                  cache, up, reading, readSet, sinceRead, seen, 
                                  nLoss, nRestart, ten, phase, attempts, 
-                                 retries, snap, cur, tgts, curT, uq >>
+                                 retries, sAtt, snap, cur, tgts, curT, uq >>
 
 Fail(self) == /\ pc[self] = "Fail"
               /\ IF open[<<self, 1>>]
@@ -2908,22 +2954,27 @@ Fail(self) == /\ pc[self] = "Fail"
                               badStep, badNested, revAll, inflight, lost, 
                               cache, up, reading, readSet, sinceRead, seen, 
                               nLoss, nRestart, ten, phase, attempts, retries, 
-                              snap, cur, tgts, curT, uq >>
+                              sAtt, snap, cur, tgts, curT, uq >>
 
 Fail2(self) == /\ pc[self] = "Fail2"
                /\ IF op[self].kind = "rev" /\ phase[self] = "casc" /\ aborted[<<self, 1>>] = "deadlock" /\ attempts[self] < CascadeAttempts
                      THEN /\ pc' = [pc EXCEPT ![self] = "Casc"]
-                          /\ UNCHANGED << finished, res, retries >>
-                     ELSE /\ IF op[self].kind = "rev" /\ phase[self] = "step" /\ retries[self] < MaxClientRetries
-                                THEN /\ retries' = [retries EXCEPT ![self] = retries[self] + 1]
-                                     /\ IF IsTF
-                                           THEN /\ pc' = [pc EXCEPT ![self] = "TOuter"]
-                                           ELSE /\ pc' = [pc EXCEPT ![self] = "MSub"]
-                                     /\ UNCHANGED << finished, res >>
-                                ELSE /\ res' = [res EXCEPT ![self] = "error"]
-                                     /\ finished' = [finished EXCEPT ![self] = TRUE]
-                                     /\ pc' = [pc EXCEPT ![self] = "Done"]
-                                     /\ UNCHANGED retries
+                          /\ UNCHANGED << finished, res, retries, sAtt >>
+                     ELSE /\ IF IsTF /\ op[self].kind = "rev" /\ phase[self] = "step" /\ aborted[<<self, 1>>] = "deadlock" /\ sAtt[self] < CascadeAttempts
+                                THEN /\ pc' = [pc EXCEPT ![self] = "TOuter"]
+                                     /\ UNCHANGED << finished, res, retries, 
+                                                     sAtt >>
+                                ELSE /\ IF op[self].kind = "rev" /\ phase[self] = "step" /\ retries[self] < MaxClientRetries
+                                           THEN /\ retries' = [retries EXCEPT ![self] = retries[self] + 1]
+                                                /\ sAtt' = [sAtt EXCEPT ![self] = 0]
+                                                /\ IF IsTF
+                                                      THEN /\ pc' = [pc EXCEPT ![self] = "TOuter"]
+                                                      ELSE /\ pc' = [pc EXCEPT ![self] = "MSub"]
+                                                /\ UNCHANGED << finished, res >>
+                                           ELSE /\ res' = [res EXCEPT ![self] = "error"]
+                                                /\ finished' = [finished EXCEPT ![self] = TRUE]
+                                                /\ pc' = [pc EXCEPT ![self] = "Done"]
+                                                /\ UNCHANGED << retries, sAtt >>
                /\ UNCHANGED << op, tok, aud, starts, inval, open, aborted, 
                                wtok, waud, wst, winv, lvl, sh, ex, want, 
                                nAborts, issued, callerOf, rootOf, tenOf, exchJ, 
@@ -2957,7 +3008,8 @@ Quit(self) == /\ pc[self] = "Quit"
                               badStep, badStepFail, badNested, revAll, 
                               inflight, lost, cache, up, reading, readSet, 
                               sinceRead, seen, nLoss, nRestart, ten, phase, 
-                              attempts, retries, snap, cur, tgts, curT, uq >>
+                              attempts, retries, sAtt, snap, cur, tgts, curT, 
+                              uq >>
 
 req(self) == Start(self) \/ XBegin(self) \/ XAdv(self) \/ X1a(self)
                 \/ XUserLock(self) \/ XInsert(self) \/ XRotLock(self)
@@ -2967,20 +3019,20 @@ req(self) == Start(self) \/ XBegin(self) \/ XAdv(self) \/ X1a(self)
                 \/ TOuterCaller(self) \/ TOuterUser(self)
                 \/ TOuterTree(self) \/ TOuterStarts(self)
                 \/ TOuterSnap(self) \/ TOuterRow(self) \/ TOuterLock(self)
-                \/ TNext(self) \/ TNested(self) \/ TNestedRow(self)
-                \/ TNestedLock(self) \/ TNestedCommit(self)
-                \/ TOuterCommit(self) \/ Casc(self) \/ CascAdv(self)
-                \/ CascCaller(self) \/ CascUser(self) \/ CascSnap(self)
-                \/ CascRow(self) \/ CascLock(self) \/ CascCommit(self)
-                \/ IChk(self) \/ IOuter(self) \/ IOuterUser(self)
-                \/ INested(self) \/ INestedUser(self)
-                \/ INestedCommit(self) \/ IOuterCommit(self)
-                \/ FLevel(self) \/ FLevelLock(self) \/ FLevelCommit(self)
-                \/ FSub(self) \/ FSubAdv(self) \/ FSubSnap(self)
-                \/ FSubRow(self) \/ FSubLock(self) \/ FSubCommit(self)
-                \/ FAct(self) \/ FActRow(self) \/ FActLock(self)
-                \/ FActCommit(self) \/ EBegin(self) \/ ELock(self)
-                \/ ECommit(self) \/ Fail(self) \/ Fail2(self) \/ Quit(self)
+                \/ TNext(self) \/ TTarget(self) \/ TTargetRow(self)
+                \/ TTargetLock(self) \/ TOuterCommit(self) \/ Casc(self)
+                \/ CascAdv(self) \/ CascCaller(self) \/ CascUser(self)
+                \/ CascSnap(self) \/ CascRow(self) \/ CascLock(self)
+                \/ CascCommit(self) \/ IChk(self) \/ IOuter(self)
+                \/ IOuterCb(self) \/ IOuterUser(self) \/ INested(self)
+                \/ INestedUser(self) \/ INestedCommit(self)
+                \/ IOuterCommit(self) \/ FLevel(self) \/ FLevelLock(self)
+                \/ FLevelCommit(self) \/ FSub(self) \/ FSubAdv(self)
+                \/ FSubSnap(self) \/ FSubRow(self) \/ FSubLock(self)
+                \/ FSubCommit(self) \/ FAct(self) \/ FActRow(self)
+                \/ FActLock(self) \/ FActCommit(self) \/ EBegin(self)
+                \/ ELock(self) \/ ECommit(self) \/ Fail(self)
+                \/ Fail2(self) \/ Quit(self)
 
 (* Allow infinite stuttering to prevent deadlock on termination. *)
 Terminating == /\ \A self \in ProcSet: pc[self] = "Done"
@@ -3042,19 +3094,21 @@ RequestsTerminate == <>(\A p \in Procs : finished[p])
 \* C6 [ImpersonationEndedOrInWindow].
 \* The accepted window of rule 7: the impersonation's caller check ran before
 \* the cascade committed, and its row (Main) or its start record (TF)
-\* committed after the step's read.  Under TF a start record that has not
-\* committed yet will commit after the read.
+\* committed after the step's read.  Under TF the caller check is the share
+\* read of TF-7, and the start record also committed before the cascade did.
 InWindow(j, r) ==
   \E q \in Procs :
-    /\ NewJ(q) = j /\ r \in impChk[q]
-    /\ r \in impAfter[q] \/ (IsTF /\ ~finished[q])
+    /\ NewJ(q) = j /\ r \in impChk[q] /\ r \in impAfter[q]
 ImpersonationEndedOrInWindow ==
   \A c \in cascDone : \A j \in Jtis :
     (IsImp(tok[j]) /\ ~tok[j].rev /\ tok[j].iten = c.ten /\ tok[j].ijti \in c.tree)
       => InWindow(j, c.p)
 \* The same, leaving out a bearer row whose impersonation start ended in an
-\* error after its nested transaction committed, so no client holds it.
-FailedStart(j) == \E q \in Procs : NewJ(q) = j /\ finished[q] /\ res[q] = "error"
+\* error after its nested transaction committed, so no client holds it.  The
+\* start's first transaction has aborted, or the start has ended in an error.
+FailedStart(j) ==
+  \E q \in Procs : NewJ(q) = j /\ op[q].kind = "imp"
+                   /\ (res[q] = "error" \/ aborted[<<q, 1>>] /= "")
 ImpersonationEndedOrInWindowExceptFailedStart ==
   \A c \in cascDone : \A j \in Jtis :
     (IsImp(tok[j]) /\ ~tok[j].rev /\ tok[j].iten = c.ten /\ tok[j].ijti \in c.tree /\ ~FailedStart(j))
@@ -3087,7 +3141,8 @@ F1RootRevoked ==
       => tok[rootOf[p]].rev
 RetryCompletesStep == ~badStepFail
 
-\* C10 [StepWithoutAll, NestedWritesOnlyNamedRows], for TF.
+\* C10 [StepWithoutAll, NestedWritesOnlyNamedRows], for TF.  At revision 4
+\* the second names the step's updates under a target tenant's context.
 StepWithoutAll == IsTF => ~revAll
 NestedWritesOnlyNamedRows == ~badNested
 =============================================================================

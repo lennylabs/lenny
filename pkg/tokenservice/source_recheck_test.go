@@ -101,8 +101,8 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			revokedJTI: "subj-1",
 			wantReason: "subject_token_revoked",
 			wantSources: []issuedtokenstore.SourceToken{
-				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
-				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
+				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
 			},
 		},
 		{
@@ -111,9 +111,9 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			withActor:  true,
 			wantReason: "actor_token_revoked",
 			wantSources: []issuedtokenstore.SourceToken{
-				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
-				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1"},
-				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
+				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
 			},
 		},
 		{
@@ -122,9 +122,9 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			withActor:  true,
 			wantReason: "subject_token_revoked",
 			wantSources: []issuedtokenstore.SourceToken{
-				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
-				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1"},
-				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
+				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
 			},
 		},
 	}
@@ -199,8 +199,8 @@ func TestHandlerLiveSourcesPassReRead_spec_13_3(t *testing.T) {
 		t.Errorf("records = %d, want 1", len(store.records))
 	}
 	want := []issuedtokenstore.SourceToken{
-		{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
-		{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1"},
+		{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+		{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
 	}
 	if !reflect.DeepEqual(store.sources, want) {
 		t.Errorf("re-read sources = %+v, want %+v", store.sources, want)

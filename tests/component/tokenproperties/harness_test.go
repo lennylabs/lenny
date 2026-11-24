@@ -128,6 +128,31 @@ func (h *harness) seedTenant(t tb, id string) {
 	}
 }
 
+// invalidateUser writes the full-revoke invalidation level of §11.4 on the
+// user's row, creating the row when the user has none, as the admin API
+// commits it before step 1 of the full revoke.
+func (h *harness) invalidateUser(t tb, tenant, sub string, at time.Time) {
+	t.Helper()
+	ctx := context.Background()
+	tx, err := h.pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatalf("begin: %v", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	if _, err := tx.Exec(ctx, "SELECT set_config('app.current_tenant', $1, true)", tenant); err != nil {
+		t.Fatalf("set tenant: %v", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO users (tenant_id, subject, deleted_at) VALUES ($1, $2, $3)
+		 ON CONFLICT (tenant_id, subject) DO UPDATE SET deleted_at = EXCLUDED.deleted_at`,
+		tenant, sub, at); err != nil {
+		t.Fatalf("invalidate user %s: %v", sub, err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatalf("commit user invalidation: %v", err)
+	}
+}
+
 // rowState is the part of an issued_tokens row the properties read.
 type rowState struct {
 	tenant, sub, parent, actSub, impTenant, impJTI, reason string

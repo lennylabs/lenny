@@ -1972,6 +1972,21 @@ auth:
   # lenny-token-service; the schema bounds it to 120..3600 and both
   # binaries refuse to start outside that range.
   capabilityTokenTtlSeconds: 900
+  # tokenLineageMaxDepth is the §13.3 lineage depth cap: an exchange on
+  # POST /v1/oauth/token whose parent token is this many parent_jti links
+  # deep or more is refused with invalid_grant lineage_depth_exceeded.
+  # The chart renders it into --token-lineage-max-depth on
+  # lenny-token-service.
+  tokenLineageMaxDepth: 32
+  # tokenRevocationTimeoutMs is the §13.3 / §11.4 statement timeout, in
+  # milliseconds, of a recursive revocation's cascade and of a full
+  # revoke's token walk. Both hold the tenant's audit advisory lock, so
+  # the tenant's token issuances wait for at most this long. A cascade
+  # that reaches it answers 503 REVOCATION_TIMEOUT, and a full revoke
+  # reports its token step as partial-failure detail. The chart renders
+  # it into --token-revocation-timeout-ms on lenny-token-service and
+  # lenny-gateway.
+  tokenRevocationTimeoutMs: 5000
   # oidc names the OIDC issuer the gateway's Bearer-token validation
   # trusts (§10.3). Both keys are required platform
   # configuration outside global.devMode: the gateway refuses to become

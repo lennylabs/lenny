@@ -899,11 +899,11 @@ The bearer cannot be used to call `POST /v1/admin/impersonation`, cannot obtain 
 **Error codes:**
 
 - `400 VALIDATION_ERROR`: a field is missing, or `durationSeconds` is outside 60 to 3600.
-- `403 FORBIDDEN`: the caller lacks `platform-admin`; the caller's own bearer is an impersonation bearer or has been revoked; or the target user or the calling administrator is hard-disabled or fully revoked. A refusal because of the caller's bearer writes no audit event. A refusal because a user is hard-disabled or fully revoked writes no rejection audit event, and the started event written before it has no ended event. None of these refusals returns a bearer.
+- `403 FORBIDDEN`: the caller lacks `platform-admin`; the caller's own bearer is an impersonation bearer or has been revoked; or the target user or the calling administrator is hard-disabled or fully revoked. The gateway checks the caller's bearer and both users when it records the session, after it writes the started event, so a refusal for any of these reasons writes no rejection audit event and leaves the started event without an ended event. A revocation of the caller's bearer that is in progress when the call records the session either finishes first, and the call is refused, or waits until the session is recorded. None of these refusals returns a bearer.
 - `404 RESOURCE_NOT_FOUND`: the target tenant or the target user does not exist.
 - `422 PLATFORM_AUDIT_REGION_UNRESOLVABLE`: the started event cannot be written in the target tenant's region, and no bearer is issued.
 - `503 KMS_SIGNING_UNAVAILABLE`: the signing key is unavailable, and no bearer is issued.
-- `500 INTERNAL_ERROR`: the bearer cannot be recorded or another internal failure occurred, and no bearer is returned.
+- `500 INTERNAL_ERROR`: the bearer cannot be recorded or another internal failure occurred, and no bearer is returned. A failure in the last part of the record can leave a session that no client holds: `GET /v1/admin/impersonation` lists it until its `expiresAt` passes, a `DELETE` ends it, or a full revoke of the administrator by a platform administrator ends it. A revocation of the administrator's bearer through the Token Service does not end such a session.
 
 ### GET /v1/admin/impersonation
 {: .d-inline-block }
@@ -951,6 +951,10 @@ platform-admin tenant-admin
 Terminate all active sessions for a user and revoke their tokens immediately. Used during incident response. `tenant-admin` is scoped to their own tenant.
 
 In `full_revoke` mode, the call revokes the user's tokens and every token derived from them, including the tokens other users derived from the user's tokens, such as a delegation child the user's token delegated. When a platform administrator invalidates a user, the call also revokes, in every tenant, the impersonation bearers that user started, and counts them in the revoked-token total. When the caller is a `tenant-admin`, the call revokes the user's tokens and the tokens derived from them, skips the impersonation bearers the user started, and reports in the response's token revocation error that the revocation of impersonation bearers the user started was skipped.
+
+In `full_revoke` mode, the call also revokes the delegations the user made with any token of the user, including a token the platform has no record of such as an identity provider ID token: every child token minted with such a token as its `actor_token`, and the tokens derived from those children. A token exchange that runs at the same moment either finishes before the revocation and is revoked by it, or waits and is refused. The revocation of the user's tokens is bounded by a timeout, 5 seconds by default (`auth.tokenRevocationTimeoutMs`); when it reaches the timeout, or cannot start within the same bound, it revokes none of those tokens, and the response reports the failure in its token revocation error while the other effects proceed. Repeat the call to complete it.
+
+In `hard_disable` and `full_revoke` modes, the Token Service refuses every token of the user from then on: on `/v1/oauth/token` such a token cannot be exchanged, used as the actor of a child token, or authenticate a request, whether or not the platform recorded it. A `soft_disable` does not change what the Token Service accepts.
 
 In `full_revoke` mode, when the user's sessions cannot be listed, the call still revokes the user's tokens and dismisses the user's pending elicitations, and then answers `500 INTERNAL_ERROR` with the per-effect counts in the error details.
 

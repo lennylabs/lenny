@@ -35,6 +35,16 @@
           "maximum": 3600,
           "minimum": 120,
           "type": "integer"
+        },
+        "tokenLineageMaxDepth": {
+          "description": "§13.3 lineage depth cap: an exchange whose parent token is this many parent_jti links deep or more is refused. At least 1.",
+          "minimum": 1,
+          "type": "integer"
+        },
+        "tokenRevocationTimeoutMs": {
+          "description": "§13.3 and §11.4 statement timeout, in milliseconds, of a recursive revocation's cascade and a full revoke's token walk. At least 1.",
+          "minimum": 1,
+          "type": "integer"
         }
       },
       "type": "object"

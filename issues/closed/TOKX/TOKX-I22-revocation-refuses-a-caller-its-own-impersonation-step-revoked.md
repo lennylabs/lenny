@@ -1,9 +1,11 @@
 ---
 id: TOKX-I22
-status: open
+status: closed
 kind: build-gap
 severity: low
 requirements: []
+closed: fixed
+closed-by: 0168.S1
 ---
 
 # A recursive-revocation request refuses a caller that its own impersonation step revoked
@@ -26,3 +28,7 @@ A recursive-revocation request whose caller is an impersonation bearer that the 
 ## Suggested resolution
 
 The owner settled the rule on 2026-11-23 as change 0165 decision 15 (answer to FM-14 on the M3 readiness decision page): the cascade accepts a caller that the same request's impersonation step revoked. Option (a) of that decision gives the mechanism: take the `jti` values from the `RETURNING` set of the impersonation update, pass them to `RevokeLineage`, and refuse every other revoked caller as now. A reading by time or by revocation reason would accept a caller that another request revoked and is excluded. Change 0168 carries the fix, together with [TOKX-I20](TOKX-I20-caller-revoked-between-the-subtree-read-and-the-impersonation-step.md), and removes the generator's exclusion and the subtest's skip.
+
+## Resolution
+
+Change 0168 (decision 1) closes it in step 0168.S1. The impersonation step returns the `jti` values it revoked in the request's tenant, and the cascade accepts a revoked caller among them (`LineageRevocation.StepRevokedCallers`) and refuses every other revoked caller. The property tests drop the generator's exclusion of the sequence and the skip of the subtest "an impersonation bearer as the caller of its root's revocation revokes the root".

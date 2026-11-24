@@ -7,13 +7,12 @@ import (
 	"crypto/sha256"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"reflect"
-	"sync"
 	"testing"
 	"time"
 
-	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
@@ -125,7 +124,7 @@ func TestMintRefusesARevokedCallerToken(t *testing.T) {
 	})
 	t.Run("caller is the subject", func(t *testing.T) {
 		got := exchangeSources(recheckClaims("subj-1"), nil, recheckClaims("subj-1"))
-		want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"}}
+		want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"}}
 		if !reflect.DeepEqual(got, want) {
 			t.Errorf("sources = %+v, want %+v", got, want)
 		}
@@ -134,9 +133,13 @@ func TestMintRefusesARevokedCallerToken(t *testing.T) {
 		if len(got) != 2 || got[1].Role != issuedtokenstore.SourceActorToken {
 			t.Errorf("sources = %+v, want the subject and the actor only", got)
 		}
-		got = exchangeSources(recheckClaims("subj-1"), nil, jwt.Claims{Subject: "alice@acme.com"})
-		if !reflect.DeepEqual(got, want) {
-			t.Errorf("sources for a caller without jti = %+v, want %+v", got, want)
+		// A caller without a jti, such as an upstream OIDC ID token, has no
+		// row to re-read and is listed by its sub, so its user row is read.
+		got = exchangeSources(recheckClaims("subj-1"), nil, jwt.Claims{Subject: "bob@acme.com"})
+		wantNoJTI := append(append([]issuedtokenstore.SourceToken{}, want...),
+			issuedtokenstore.SourceToken{Role: issuedtokenstore.SourceCallerToken, Subject: "bob@acme.com"})
+		if !reflect.DeepEqual(got, wantNoJTI) {
+			t.Errorf("sources for a caller without jti = %+v, want %+v", got, wantNoJTI)
 		}
 	})
 }
@@ -184,74 +187,49 @@ func TestRevocationRequestSuppliesTheRowOfARootWithoutOne(t *testing.T) {
 	}
 }
 
-// impersonationRevocationStore is a fakeRevocationStore that also ends
-// impersonation sessions through the impersonator link.
-type impersonationRevocationStore struct {
+// impersonationStepStore is a fakeRevocationStore that also runs the
+// impersonation step.
+type impersonationStepStore struct {
 	fakeRevocationStore
-	ended      []issuedtokenstore.RevokedImpersonation
-	endErr     error
-	subtreeErr error
-	gotTenant  string
-	gotJTIs    []string
-	gotReason  string
-	// gotSubtreeCaller is the caller jti LineageSubtree was asked about,
-	// and cascaded reports whether RevokeLineage ran.
-	gotSubtreeCaller string
-	cascaded         bool
+	stepResult issuedtokenstore.ImpersonationStepResult
+	stepErr    error
+	gotStep    issuedtokenstore.ImpersonationStep
+	stepRan    bool
+	// gotCascade is the request RevokeLineage received, and cascaded
+	// reports whether it ran.
+	gotCascade issuedtokenstore.LineageRevocation
+	cascaded   bool
 }
 
-func (f *impersonationRevocationStore) LineageSubtree(_ context.Context, _, callerJTI, _ string) ([]string, error) {
-	f.gotSubtreeCaller = callerJTI
-	if f.subtreeErr != nil {
-		return nil, f.subtreeErr
+func (f *impersonationStepStore) RevokeImpersonationStep(_ context.Context, req issuedtokenstore.ImpersonationStep) (issuedtokenstore.ImpersonationStepResult, error) {
+	f.stepRan, f.gotStep = true, req
+	if f.stepErr != nil {
+		return issuedtokenstore.ImpersonationStepResult{}, f.stepErr
 	}
-	return f.subtree, nil
+	return f.stepResult, nil
 }
 
-func (f *impersonationRevocationStore) RevokeLineage(ctx context.Context, req issuedtokenstore.LineageRevocation) (issuedtokenstore.CascadeResult, error) {
-	f.cascaded = true
+func (f *impersonationStepStore) RevokeLineage(ctx context.Context, req issuedtokenstore.LineageRevocation) (issuedtokenstore.CascadeResult, error) {
+	f.cascaded, f.gotCascade = true, req
 	return f.fakeRevocationStore.RevokeLineage(ctx, req)
-}
-
-func (f *impersonationRevocationStore) RevokeImpersonationsByImpersonator(_ context.Context, tenant string, jtis []string, reason string, _ time.Time) ([]issuedtokenstore.RevokedImpersonation, error) {
-	f.gotTenant, f.gotJTIs, f.gotReason = tenant, jtis, reason
-	if f.endErr != nil {
-		return nil, f.endErr
-	}
-	return f.ended, nil
-}
-
-// fakeCrossTenantReads records the cross_tenant_read events.
-type fakeCrossTenantReads struct {
-	mu     sync.Mutex
-	events []auditstore.CrossTenantRead
-	err    error
-}
-
-func (f *fakeCrossTenantReads) EmitCrossTenantRead(_ context.Context, r auditstore.CrossTenantRead) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.events = append(f.events, r)
-	return f.err
 }
 
 // spec: §13.3 (Credential Flow)
 //
-// Before a recursive revocation's cascade, the Token Service ends the
-// impersonation sessions whose impersonator link names a token of the
-// root's subtree (the scenario CX-4 of change 0165's model: carol's bearer C
-// started an impersonation of alice in another tenant, and revoking C ends
-// it). It passes the request's tenant and the whole subtree, writes a
-// token.revoked row for each ended session in that session's tenant with
-// the request's root as cascade root, propagates it, emits one
-// cross_tenant_read event, and keeps revoked_count to its own tenant. A
-// failed revocation of the sessions returns 500 token_exchange_failed
-// before the cascade, so a retry by the same caller runs both steps; a
-// revoked caller is refused with 401 invalid_client before either step; a
-// missing cross_tenant_read emitter fails closed without running the
-// query; and a failed emit is logged and keeps the 200.
+// Before a recursive revocation's cascade, the Token Service runs the
+// impersonation step through the store with the request's tenant, its
+// caller's jti and sub, and the root. It writes a token.revoked row for
+// each ended session in that session's tenant with the request's root as
+// cascade root, propagates it, keeps revoked_count to its own tenant, and
+// passes the jtis the step revoked in its own tenant to the cascade, which
+// accepts its caller among them (F1). It emits no cross_tenant_read event.
+// A failed step returns 500 token_exchange_failed before the cascade, so a
+// retry runs both steps; a revoked caller is refused with 401
+// invalid_client, and an invalidated caller user with 401 invalid_client
+// and the reason caller_user_invalidated, at the step or at the cascade; a
+// cascade that times out answers the retryable 503 REVOCATION_TIMEOUT.
 func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
-	newServer := func(t *testing.T, store IssuedTokenStore, auditor *recordingAuditor, reads CrossTenantReads, propagated *[]string) (*Server, *jwt.HMACSigner) {
+	newServer := func(t *testing.T, store IssuedTokenStore, auditor *recordingAuditor, propagated *[]string) (*Server, *jwt.HMACSigner) {
 		t.Helper()
 		signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 		return mustNewServer(t, Options{
@@ -261,7 +239,6 @@ func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
 			Issuer:             "https://lenny.dev.test/token",
 			IssuedTokens:       store,
 			Auditor:            auditor,
-			CrossTenantReads:   reads,
 			RevocationPropagator: func(_ context.Context, tenantID, jti string) error {
 				*propagated = append(*propagated, tenantID+"/"+jti)
 				return nil
@@ -275,20 +252,23 @@ func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
 			GrantType: grantTypeExchange, SubjectToken: carol, RequestedTokenType: revokedTokenType,
 		})
 	}
-	base := func() *impersonationRevocationStore {
-		return &impersonationRevocationStore{
+	base := func() *impersonationStepStore {
+		return &impersonationStepStore{
 			fakeRevocationStore: fakeRevocationStore{
 				revoked: []issuedtokenstore.RevokedToken{{JTI: "carol-1", Subject: "carol@globex.com", IsRoot: true}},
 				subtree: []string{"carol-1", "carol-rotated"},
 			},
-			ended: []issuedtokenstore.RevokedImpersonation{{JTI: "imp-1", TenantID: "initech", Subject: "alice@initech.com"}},
+			stepResult: issuedtokenstore.ImpersonationStepResult{Revoked: []issuedtokenstore.RevokedImpersonation{
+				{JTI: "imp-1", TenantID: "initech", Subject: "alice@initech.com"},
+				{JTI: "imp-own", TenantID: "acme", Subject: "bob@acme.com"},
+			}},
 		}
 	}
 
-	t.Run("ends the sessions", func(t *testing.T) {
-		store, auditor, reads := base(), &recordingAuditor{}, &fakeCrossTenantReads{}
+	t.Run("ends the sessions and passes its own tenant's jtis to the cascade", func(t *testing.T) {
+		store, auditor := base(), &recordingAuditor{}
 		var propagated []string
-		srv, signer := newServer(t, store, auditor, reads, &propagated)
+		srv, signer := newServer(t, store, auditor, &propagated)
 		resp := revoke(t, srv, signer)
 		defer func() { _ = resp.Body.Close() }()
 		if resp.StatusCode != http.StatusOK {
@@ -301,67 +281,113 @@ func TestRevocationRequestEndsTheImpersonationsOfItsSubtree(t *testing.T) {
 		if body["revoked_count"] != float64(1) {
 			t.Errorf("revoked_count = %v, want 1, the request's own tenant only", body["revoked_count"])
 		}
-		if store.gotSubtreeCaller != "carol-1" || !store.cascaded {
-			t.Errorf("subtree read for caller %q, cascaded %v", store.gotSubtreeCaller, store.cascaded)
+		want := issuedtokenstore.ImpersonationStep{
+			TenantID: "acme", CallerJTI: "carol-1", CallerSubject: "carol@globex.com",
+			RootJTI: "carol-1", Reason: revocationReasonCascade, At: store.gotStep.At,
 		}
-		if store.gotTenant != "acme" || !reflect.DeepEqual(store.gotJTIs, []string{"carol-1", "carol-rotated"}) ||
-			store.gotReason != revocationReasonCascade {
-			t.Errorf("impersonator lookup = (%q, %v, %q)", store.gotTenant, store.gotJTIs, store.gotReason)
+		if !store.stepRan || store.gotStep != want {
+			t.Errorf("step request = %+v, want %+v", store.gotStep, want)
+		}
+		if !store.cascaded || !reflect.DeepEqual(store.gotCascade.StepRevokedCallers, []string{"imp-own"}) ||
+			store.gotCascade.CallerSubject != "carol@globex.com" || store.gotCascade.CallerJTI != "carol-1" {
+			t.Errorf("cascade request = %+v", store.gotCascade)
 		}
 		var ended []revokedAuditPayload
 		for _, r := range auditor.snapshot() {
 			if r.TenantID == "initech" {
 				ended = append(ended, revokedPayloads(t, []recordedAudit{r})...)
 			}
+			if r.EventType == "cross_tenant_read" {
+				t.Errorf("the revocation request wrote a cross_tenant_read row: %+v", r)
+			}
 		}
 		if len(ended) != 1 || ended[0].RevokedJTI != "imp-1" || ended[0].CascadeRootJTI != "carol-1" ||
 			ended[0].RevocationReason != revocationReasonCascade {
 			t.Errorf("token.revoked rows in the session's tenant = %+v", ended)
 		}
-		if !reflect.DeepEqual(propagated, []string{"initech/imp-1", "acme/carol-1"}) {
+		if !reflect.DeepEqual(propagated, []string{"initech/imp-1", "acme/imp-own", "acme/carol-1"}) {
 			t.Errorf("propagated = %v", propagated)
 		}
-		if len(reads.events) != 1 || reads.events[0].Category != "impersonation_session" || reads.events[0].RowCount != 1 ||
-			reads.events[0].CallerSubject != "carol@globex.com" {
-			t.Errorf("cross_tenant_read events = %+v", reads.events)
-		}
 	})
-	t.Run("store failure", func(t *testing.T) {
+	t.Run("step failure", func(t *testing.T) {
 		store := base()
-		store.endErr = errors.New("primary unreachable")
+		store.stepErr = errors.New("primary unreachable")
 		var propagated []string
-		srv, signer := newServer(t, store, &recordingAuditor{}, &fakeCrossTenantReads{}, &propagated)
+		srv, signer := newServer(t, store, &recordingAuditor{}, &propagated)
 		assertOAuthRejection(t, revoke(t, srv, signer), http.StatusInternalServerError, "token_exchange_failed", "retry")
 		if store.cascaded || len(propagated) != 0 {
 			t.Error("the cascade ran after the impersonation step failed, so a retry by the revoked caller would be refused")
 		}
 	})
-	t.Run("revoked caller", func(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		stepErr error
+		reason  string
+	}{
+		{"revoked caller at the step", issuedtokenstore.ErrCallerRevoked, "revoked"},
+		{"invalidated caller user at the step", issuedtokenstore.ErrCallerUserInvalidated, "caller_user_invalidated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := base()
+			store.stepErr = tc.stepErr
+			var propagated []string
+			srv, signer := newServer(t, store, &recordingAuditor{}, &propagated)
+			assertOAuthRejection(t, revoke(t, srv, signer), http.StatusUnauthorized, "invalid_client", tc.reason)
+			if store.cascaded {
+				t.Error("a refused caller reached the cascade")
+			}
+		})
+	}
+	for _, tc := range []struct {
+		name       string
+		cascadeErr error
+		reason     string
+	}{
+		{"revoked caller at the cascade", issuedtokenstore.ErrCallerRevoked, "revoked"},
+		{"invalidated caller user at the cascade", fmt.Errorf("%w: user", issuedtokenstore.ErrCallerUserInvalidated), "caller_user_invalidated"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			store := base()
+			store.err = tc.cascadeErr
+			var propagated []string
+			srv, signer := newServer(t, store, &recordingAuditor{}, &propagated)
+			assertOAuthRejection(t, revoke(t, srv, signer), http.StatusUnauthorized, "invalid_client", tc.reason)
+		})
+	}
+	t.Run("cascade timeout", func(t *testing.T) {
 		store := base()
-		store.subtreeErr = issuedtokenstore.ErrCallerRevoked
+		store.err = fmt.Errorf("%w: canceling statement due to statement timeout", issuedtokenstore.ErrRevocationTimeout)
 		var propagated []string
-		srv, signer := newServer(t, store, &recordingAuditor{}, &fakeCrossTenantReads{}, &propagated)
-		assertOAuthRejection(t, revoke(t, srv, signer), http.StatusUnauthorized, "invalid_client", "revoked")
-		if store.cascaded || store.gotTenant != "" {
-			t.Error("a revoked caller reached the impersonator lookup or the cascade")
-		}
-	})
-	t.Run("no cross_tenant_read emitter", func(t *testing.T) {
-		store := base()
-		var propagated []string
-		srv, signer := newServer(t, store, &recordingAuditor{}, nil, &propagated)
-		assertOAuthRejection(t, revoke(t, srv, signer), http.StatusInternalServerError, "token_exchange_failed", "cross_tenant_read")
-		if store.gotTenant != "" {
-			t.Error("the impersonator lookup ran without a cross_tenant_read emitter")
-		}
-	})
-	t.Run("emit failure keeps the revocation", func(t *testing.T) {
-		var propagated []string
-		srv, signer := newServer(t, base(), &recordingAuditor{}, &fakeCrossTenantReads{err: errors.New("audit down")}, &propagated)
+		srv, signer := newServer(t, store, &recordingAuditor{}, &propagated)
 		resp := revoke(t, srv, signer)
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusOK {
-			t.Fatalf("status = %d, want 200", resp.StatusCode)
+		defer func() { _ = resp.Body.Close() }()
+		assertRevocationTimeout(t, resp)
+		if !reflect.DeepEqual(propagated, []string{"initech/imp-1", "acme/imp-own"}) {
+			t.Errorf("propagated = %v, want the step's sessions only", propagated)
 		}
 	})
+}
+
+// assertRevocationTimeout asserts the retryable 503 REVOCATION_TIMEOUT in
+// the Lenny error envelope with a Retry-After header.
+func assertRevocationTimeout(t *testing.T, resp *http.Response) {
+	t.Helper()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+	if resp.Header.Get("Retry-After") == "" {
+		t.Error("503 REVOCATION_TIMEOUT carries no Retry-After")
+	}
+	var body struct {
+		Error struct {
+			Code      string `json:"code"`
+			Retryable bool   `json:"retryable"`
+		} `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Error.Code != "REVOCATION_TIMEOUT" || !body.Error.Retryable {
+		t.Errorf("error = %+v, want REVOCATION_TIMEOUT with retryable true", body.Error)
+	}
 }

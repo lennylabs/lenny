@@ -1,0 +1,12 @@
+-- §13.3 lineage depth.
+--
+-- Each issued_tokens row records the number of parent_jti links between
+-- it and the root of its lineage: the parent row's depth plus one, 1 when
+-- the parent token has no row, and 0 for a row without a parent. Step
+-- (1a) of "Write-before-issue ordering" refuses an exchange whose parent
+-- row is at the lineage depth cap (auth.tokenLineageMaxDepth), which
+-- bounds the chain a recursive revocation walks. Existing rows take 0.
+--
+-- spec: §12.2 (TokenIssuanceStore columns), §13.3 (Write-before-issue
+-- ordering, Lineage of derived tokens).
+ALTER TABLE issued_tokens ADD COLUMN depth INTEGER NOT NULL DEFAULT 0;

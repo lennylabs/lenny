@@ -375,9 +375,11 @@ func TestImpersonationEnd_BodyAndEndedAuditFailure_spec_13_3(t *testing.T) {
 }
 
 // TestImpersonationStart_RefusedCallerReturns403_spec_13_3 covers the rule
-// 1 caller check through the handler: a platform-admin presenting an
-// impersonation bearer gets 403 FORBIDDEN and no audit row is written,
-// where the handler used to mint a nested impersonation bearer.
+// 1 (c) caller check through the handler: a platform-admin presenting an
+// impersonation bearer gets 403 FORBIDDEN and no bearer row is recorded,
+// where the handler used to mint a nested impersonation bearer. The check
+// runs in the record's first transaction, so the started event stays
+// without an ended event, as it does for an invalidated user.
 //
 // spec: 13.3 (Credential Flow: Platform-admin impersonation), 15.1 (REST API)
 func TestImpersonationStart_RefusedCallerReturns403_spec_13_3(t *testing.T) {
@@ -399,8 +401,15 @@ func TestImpersonationStart_RefusedCallerReturns403_spec_13_3(t *testing.T) {
 	if code, _ := decodeAdminError(t, rr); rr.Code != http.StatusForbidden || code != "FORBIDDEN" {
 		t.Fatalf("status = %d code = %q, want 403 FORBIDDEN", rr.Code, code)
 	}
-	if len(app.events) != 0 || len(f.tokens.Records()) != 0 {
-		t.Fatalf("a refused caller must write nothing: events=%v records=%d", app.events, len(f.tokens.Records()))
+	active, err := f.tokens.ListActiveImpersonations(context.Background(), *f.clock)
+	if err != nil {
+		t.Fatalf("list: %v", err)
+	}
+	if len(active) != 1 || active[0].JTI != "outer-imp" {
+		t.Fatalf("a refused caller must record no bearer row: active sessions %+v", active)
+	}
+	if len(app.events) != 1 || app.events[0] != "admin.impersonation_started" {
+		t.Fatalf("events = %v, want the started event only", app.events)
 	}
 }
 

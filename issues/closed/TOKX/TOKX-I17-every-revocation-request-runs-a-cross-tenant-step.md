@@ -1,9 +1,11 @@
 ---
 id: TOKX-I17
-status: open
+status: closed
 kind: spec-defect
 severity: low
 requirements: []
+closed: fixed
+closed-by: 0168.S1
 ---
 
 # Every recursive-revocation request runs a cross-tenant update and writes a `cross_tenant_read` event
@@ -27,3 +29,7 @@ The cross-tenant step and its audit write are unbounded by anything but the toke
 ## Suggested resolution
 
 Record, in the impersonator's own tenant, which bearers started an impersonation (a column on the bearer's own row or a small tenant-scoped table that `RecordImpersonation` writes), and run the cross-tenant step only when the subtree contains such a bearer; or skip the step when the root was already revoked and the subtree has not changed. Either changes rule 7's statement that each request emits one event. The owner chose on 2026-11-23 to keep the step as built for now and to remove it in change 0168 by the first of these, recording in the admin's own tenant which bearers started an impersonation and running the cross-tenant step only when one did (change 0167 decision 12, answer to FM-12 on the M3 readiness decision page).
+
+## Resolution
+
+Change 0168 (decisions 5, 6, and 8) closes it in step 0168.S1. Rule 1 (c) writes a start record in the administrator's tenant (migration 0201), and the impersonation step (`RevokeImpersonationStep`) runs in the request's tenant and switches to a target tenant's context with `SET LOCAL app.current_tenant` only for a tenant a start record names. No statement of the step sets `__all__`, the Token Service writes no `cross_tenant_read` event for it, and §4.2 and §12.3 no longer name the exception.

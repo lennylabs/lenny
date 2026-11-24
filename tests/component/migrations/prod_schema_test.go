@@ -64,6 +64,8 @@ var prodTables = []struct{ migration, name string }{
 	{"0038", "credential_leases"},
 	// §12.8 GDPR erasure-job registry.
 	{"0042", "erasure_jobs"},
+	// §13.3 impersonation start records.
+	{"0201", "impersonation_starts"},
 }
 
 // execTenant runs sql inside a transaction that has set
@@ -94,7 +96,11 @@ func execTenant(ctx context.Context, pg *containers.Postgres, tenant, sql string
 //	missing idx_issued_tokens_parent means migration 0199 did not
 //	apply the lineage index, and a missing
 //	idx_issued_tokens_impersonator means migration 0200 did not apply
-//	the impersonator-link index.
+//	the impersonator-link index. A missing impersonation_starts table
+//	or its idx_impersonation_starts_impersonator index means migration
+//	0201 did not apply, and a missing idx_issued_tokens_act_sub_child
+//	means migration 0202 did not apply the full revoke's delegation
+//	index.
 func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
@@ -120,6 +126,12 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_parent")
 	// 0200 adds the index the impersonator-link revocation reads.
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonator")
+	// 0201 adds the start records the impersonation step reads; R-01
+	// leads their primary key with tenant_id.
+	mustHavePKLeadingColumn(t, ctx, pg, "impersonation_starts", "tenant_id")
+	mustHaveIndex(t, ctx, pg, "impersonation_starts", "idx_impersonation_starts_impersonator")
+	// 0202 adds the index the full revoke's delegation seed reads.
+	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_act_sub_child")
 
 	// Rollback removes every object, including the database roles.
 	pg.MigrateDown(t, dir)

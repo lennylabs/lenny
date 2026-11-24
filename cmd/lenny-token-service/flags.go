@@ -11,6 +11,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/credential"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 )
 
 // tokenServiceFlags carries every lenny-token-service command-line flag as the
@@ -72,6 +73,13 @@ type tokenServiceFlags struct {
 	// expires_in.
 	capabilityTokenTTL *int
 
+	// lineageMaxDepth and revocationTimeoutMs are the §13.3
+	// auth.tokenLineageMaxDepth and auth.tokenRevocationTimeoutMs values:
+	// the lineage depth cap of step (1a) and the statement timeout of the
+	// recursive revocation's cascade. registerLineageFlags binds them.
+	lineageMaxDepth     *int
+	revocationTimeoutMs *int
+
 	// §4/§17.5 KMS provider selector. kmsOpts is the resolved option set and
 	// kmsFinalize is the post-parse validation hook providerflags.Bind returns;
 	// runTokenService calls it before any wiring.
@@ -97,6 +105,7 @@ func parseFlags() *tokenServiceFlags {
 	f.registerIdPFlags()
 	f.registerRateLimitFlags()
 	f.registerLifetimeFlags()
+	f.registerLineageFlags()
 	f.registerTLSFlags()
 	f.registerKMSFlags()
 	flag.Parse()
@@ -247,6 +256,42 @@ func (f *tokenServiceFlags) registerLifetimeFlags() {
 func validateCapabilityTokenTTLFlag(seconds int) error {
 	if err := jwt.ValidateCapabilityTokenTTL(time.Duration(seconds) * time.Second); err != nil {
 		return fmt.Errorf("--capability-token-ttl-seconds: %w", err)
+	}
+	return nil
+}
+
+// registerLineageFlags registers --token-lineage-max-depth and
+// --token-revocation-timeout-ms, the operator-tunable bounds on a token
+// lineage. main rejects a value below 1 before any wiring.
+//
+// spec: §13.3 (Credential Flow: Write-before-issue ordering, step (1a);
+// Recursive-revocation request authorization)
+func (f *tokenServiceFlags) registerLineageFlags() {
+	f.lineageMaxDepth = flag.Int("token-lineage-max-depth",
+		envInt("LENNY_TOKEN_LINEAGE_MAX_DEPTH", issuedtokenstore.DefaultLineageMaxDepth),
+		"§13.3 auth.tokenLineageMaxDepth: an exchange on POST /v1/oauth/token whose parent token is this many parent_jti links deep or more is refused with invalid_grant lineage_depth_exceeded. Default 32. Override via LENNY_TOKEN_LINEAGE_MAX_DEPTH.")
+	f.revocationTimeoutMs = flag.Int("token-revocation-timeout-ms",
+		envInt("LENNY_TOKEN_REVOCATION_TIMEOUT_MS", int(issuedtokenstore.DefaultRevocationTimeout/time.Millisecond)),
+		"§13.3 auth.tokenRevocationTimeoutMs: the statement timeout of a recursive revocation's cascade, which holds the tenant's audit advisory lock; a cascade that reaches it answers 503 REVOCATION_TIMEOUT. Default 5000. Override via LENNY_TOKEN_REVOCATION_TIMEOUT_MS.")
+}
+
+// lineageLimits returns the issued-token store bounds the lineage flags
+// set.
+func (f *tokenServiceFlags) lineageLimits() issuedtokenstore.Limits {
+	return issuedtokenstore.Limits{
+		LineageMaxDepth:   *f.lineageMaxDepth,
+		RevocationTimeout: time.Duration(*f.revocationTimeoutMs) * time.Millisecond,
+	}
+}
+
+// validateLineageFlags rejects a lineage depth cap or a revocation timeout
+// below 1, which would refuse every derived token or every revocation.
+func validateLineageFlags(maxDepth, timeoutMs int) error {
+	if maxDepth < 1 {
+		return fmt.Errorf("--token-lineage-max-depth (auth.tokenLineageMaxDepth) must be at least 1, got %d", maxDepth)
+	}
+	if timeoutMs < 1 {
+		return fmt.Errorf("--token-revocation-timeout-ms (auth.tokenRevocationTimeoutMs) must be at least 1, got %d", timeoutMs)
 	}
 	return nil
 }

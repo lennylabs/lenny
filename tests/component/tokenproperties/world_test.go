@@ -183,6 +183,9 @@ type world struct {
 	rows    map[string]rowState
 	log     []string
 	stats   map[string]int
+	// invalidated holds the tenant and sub of each user a full revoke
+	// invalidated, keyed by userKey.
+	invalidated map[string]bool
 }
 
 func newWorld(t tb, h *harness, stats map[string]int) *world {
@@ -193,6 +196,8 @@ func newWorld(t tb, h *harness, stats map[string]int) *world {
 		tenants: []string{"acme-" + suffix, "globex-" + suffix},
 		byJTI:   map[string]*token{},
 		stats:   stats,
+
+		invalidated: map[string]bool{},
 	}
 	for _, tenant := range w.tenants {
 		h.seedTenant(t, tenant)
@@ -417,6 +422,11 @@ func (w *world) fullRevoke(t tb, o op) outcome {
 	target := w.users[o.other]
 	ctx := context.Background()
 	now := time.Now().UTC()
+	// The admin API commits the invalidation level on the user's row
+	// before step 1 of §11.4, and the token endpoint refuses the user's
+	// tokens from then on.
+	w.h.invalidateUser(t, c.c.TenantID, target.sub, now)
+	w.invalidated[userKey(c.c.TenantID, target.sub)] = true
 	if _, err := w.h.store.RevokeBySubject(ctx, c.c.TenantID, target.sub, fullRevokeNote, now); err != nil {
 		return outcome{status: http.StatusInternalServerError, reason: err.Error()}
 	}
@@ -426,6 +436,15 @@ func (w *world) fullRevoke(t tb, o op) outcome {
 		}
 	}
 	return outcome{status: http.StatusOK}
+}
+
+// userKey names a user by tenant and sub.
+func userKey(tenant, sub string) string { return tenant + "|" + sub }
+
+// userInvalidated reports whether a full revoke invalidated the user that
+// k's tenant and sub name.
+func (w *world) userInvalidated(k *token) bool {
+	return w.invalidated[userKey(k.c.TenantID, k.c.Subject)]
 }
 
 // revoked reports whether k's issued_tokens row in rows is revoked. A

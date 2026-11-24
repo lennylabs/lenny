@@ -752,6 +752,7 @@ spec:
             - --playground-max-idle-time-seconds={{ .Values.playground.maxIdleTimeSeconds }}
             - --playground-oidc-session-ttl-seconds={{ .Values.playground.oidcSessionTtlSeconds }}
             - --capability-token-ttl-seconds={{ .Values.auth.capabilityTokenTtlSeconds }}
+            - --token-revocation-timeout-ms={{ .Values.auth.tokenRevocationTimeoutMs }}
             {{- with .Values.playground.gatewayHost }}
             - --playground-gateway-host={{ . }}
             {{- end }}
