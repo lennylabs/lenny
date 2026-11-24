@@ -7,7 +7,6 @@
 - Whether Claude Code and Codex list the platform server and the `client` server again on `notifications/tools/list_changed` on a stdio server, including for a tool removed that way. The "CA-9" spike saw Claude Code list again for an added tool only and could not measure Codex. The result sizes the stale-list window of "Limits" and changes no enforcement, because the gateway checks every call (RPR-9); [`0126-delegation-availability`](../0126-delegation-availability/steps.md#validation-owed) moved its item here. 0139.S3 waits on it.
 - Whether a harness sends MCP `notifications/cancelled` for a call it abandons, so the bridge can write `tool_cancel`. 0139.S3 waits on it.
 - Whether Claude Code and Codex apply a timeout to a long platform tool call, such as `events.wait` behind the reference tool `await_sessions`, under which the bridge sees `notifications/cancelled` (D11). 0139.S3 waits on it.
-- Whether Claude Code and Codex send the `tools/call` requests of one model step to a stdio MCP server concurrently, which option (b) of O24 needs before it can be chosen. 0139.S3 waits on the answer to O24.
 - How many tool connections a real harness opens per slot, to set the per-slot bound `adapter.maxToolConnectionsPerSlot` ("RP-1"). 0139.S2 waits on it.
 
 ## Steps

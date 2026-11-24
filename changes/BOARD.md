@@ -261,7 +261,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0119](0119-agent-runtimes-only/change.md) | Agent runtimes only | `Draft` | 0 of 4 | 5 |
 | [0120](0120-anthropic-messages-api/change.md) | Anthropic Messages API compatibility | `Draft` | 0 of 3 | 9 |
 | [0121](0121-billing-resource-attribution/change.md) | Billing resource attribution | `Draft` | 0 of 7 | 10 |
-| [0122](0122-client-tools/change.md) | Client-defined tools | `Draft` | 0 of 2 | 11 |
+| [0122](0122-client-tools/change.md) | Client-defined tools | `Draft` | 0 of 2 | 10 |
 | [0123](0123-connector-authorization-and-external-memory/change.md) | Connector authorization and external memory | `Draft` | 0 of 2 | 6 |
 | [0124](0124-connector-removal/change.md) | Connector removal | `Draft` | 0 of 4 | 13 |
 | [0125](0125-decision-records/change.md) | Decision records | `Draft` | 0 of 2 | 0 |
@@ -274,11 +274,11 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0132](0132-llm-response-cache-removal/change.md) | LLM response cache removal | `Draft` | 0 of 1 | 2 |
 | [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 9 |
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 5 | 4 |
-| [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 60 |
+| [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 57 |
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 8 | 22 |
 | [0137](0137-pod-lifecycle-controller/change.md) | Pod lifecycle controllers | `Draft` | 1 of 5 | 7 |
 | [0138](0138-rest-only-client-api/change.md) | REST-only client API | `Draft` | 0 of 6 | 16 |
-| [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 26 |
+| [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 23 |
 | [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 16 |
 | [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 0 |
 | [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 10 |
@@ -288,7 +288,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0146](0146-session-lifecycle/change.md) | Session lifecycle | `Draft` | 0 of 4 | 30 |
 | [0147](0147-tenant-derived-runtimes/change.md) | Tenant-derived runtimes | `Draft` | 0 of 13 | 12 |
 | [0148](0148-tenant-outbound-connector/change.md) | Tenant outbound connector | `Draft` | 0 of 4 | 8 |
-| [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 11 | 12 |
+| [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 11 | 11 |
 | [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 15 |
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 7 |
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
@@ -296,5 +296,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Draft` | 0 of 1 | 0 |
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
-| [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Draft` | 0 of 4 | 0 |
+| [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Draft` | 0 of 4 | 1 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 5 | 20 |

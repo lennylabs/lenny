@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-The M3 readiness review of 2026-11-19 raised O6 to O23, and its second pass raised O24 and O25 at the request of other changes. Revision 26 raised O26 while it took on what [`0166-delegation-primitives`](../0166-delegation-primitives/change.md) "DP-7" lists for this change, and added notes to O13, O14, O15, and O24 where the owner's decisions on 0166 settle part of them. O1 to O5 are settled and sit under "Decisions".
+The M3 readiness review of 2026-11-19 raised O6 to O23, and its second pass raised O24 and O25 at the request of other changes. Revision 26 raised O26, which the owner settled on 2026-11-23, while it took on what [`0166-delegation-primitives`](../0166-delegation-primitives/change.md) "DP-7" lists for this change, and added notes to O13, O14, O15, and O24 where the owner's decisions on 0166 settle part of them. O1 to O5 are settled and sit under "Decisions".
 
 **O6. How 0135.S1 is ordered against 0145.S1 and 0145.S3. Open.**
 
@@ -211,16 +211,6 @@ SL-Q10 of [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md) ask
 
 **Recommendation: (a)**, following the recommendation of SL-Q10. The edit to `steps.md` follows the owner's answer to SL-Q10 and needs no separate choice once the split steps have identifiers. It blocks 0135.S1 and 0135.S5. The other change is [`0146-session-lifecycle`](../0146-session-lifecycle/decisions.md), whose SL-Q10 is the matching decision. (raised by the M3 readiness review, 2026-11-19; requested by change 0146)
 
-**O26. How a child event outside `wakeOn` reaches a parent runtime that declares neither `append` nor `steer`. Open.**
-
-Decision 17 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md) has a child event outside the parent's `wakeOn` open no turn and wake no parent, and DPR-14 of that change, which this change states as MDR-59, requires it. "DP-4" of 0166 says such an event "is steered into an open turn or waits for its end, and otherwise waits in the inbox for the parent's next turn". Revision 26 delivers it with the `append` intent ("MD-1", "MD-22"). On a runtime that declares `append` it is written with no turn, and on one that declares `steer` it is steered into the parent's next turn. A runtime that declares neither has no way to take a message without a turn: every write opens one, and "Delivery of held messages" in "MD-5" writes one entry per turn to such a runtime. Under the default `wakeOn`, which leaves out the `update` class, a child's progress updates to such a parent would stay `pending` until a wait or `events.peek` reads them, and a mid-turn `message` event does not answer a wait.
-
-- (a) Registration refuses `capabilities.childSessions: true` on a revision whose `injection.modes` declares neither `append` nor `steer`. Every parent runtime then takes an event outside `wakeOn` without a turn.
-- (b) On such a runtime, an event outside `wakeOn` reaches the runtime only through `events.wait`, `events.peek`, and `session.get`, and the `update` kind `message` also answers a wait, so a programmatic parent still collects updates.
-- (c) On such a runtime, `wakeOn` takes no effect, and every child event opens a turn as before revision 26.
-
-**Recommendation: (a).** B3 already lets only a runtime that can render child events declare `capabilities.childSessions`, and a runtime that orchestrates children has to take a child's report without starting a turn to honour 0166's decision 17. (b) leaves `update` events in the inbox of a model-driven parent that never waits, and (c) breaks MDR-59. It touches O22, which decides the step that owns `capabilities.childSessions`, and it blocks 0135.S5. The other change is 0166, whose "DP-4" this decision completes. (raised by revision 26, 2026-11-23)
-
 ## Decisions
 
 Settled by the owner on 2026-11-09. S1 to S10 are the investigation's recommendations, which correspond to its decisions D1 to D10, and the owner accepted them generally with the additions in the rows below:
@@ -369,3 +359,9 @@ Settled by the owner on 2026-11-15 and applied with revision 21.
 | U1 | How a reader treats an unknown value of a known enum member, such as a child event's `event` or `state`, a tool result's content type, or an error code. | "2.2: ok": the value is handled as `other` and is never an error, in both directions. A value that selects what the adapter does, such as a `request`'s `kind`, keeps the malformed-frame rule, which answers with an `error` frame and continues the session. | MD-24, MDR-57 |
 
 **Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0135.S1, 0135.S4, and 0135.S5, whose entries in `steps.md` name the operations.
+
+Settled by the owner on 2026-11-23 and applied with revision 26.
+
+| ID | Question | Decision | Where |
+| :-- | :-- | :-- | :-- |
+| O26 | How a child event outside `wakeOn` reaches a parent runtime that declares neither `append` nor `steer`. | "1: ok", to the recommendation that replaced options (a) to (c): such an event waits in the inbox and is delivered at the start of the parent's next turn, whatever starts that turn, so it opens no turn and wakes nothing, and `events.peek` sees it meanwhile. A runtime need not declare `append` or `steer` to declare `capabilities.childSessions`, because option (a) would have barred `cursor-cli`, `gemini-cli`, `langgraph`, `mastra`, `openai-assistants`, and `crewai` from managing children. | MD-5, MD-22 |

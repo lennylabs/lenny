@@ -6,7 +6,7 @@
 - A count of the §8 settings that the reference runtimes of §26 use today, which confirms that the settings "DP-6" moves to the extension have no user in the core. 0166.S3 waits on it.
 - A check, for each reference harness of §26, that it shows its model a child's question with the tools to answer or forward it. 0166.S3 waits on it.
 - A check, for each reference harness of §26, that it refreshes its MCP tool list when the bridge's `client` server changes its tools mid-session. 0122's step that builds the blocking interface waits on it, and 0166.S3's parent tools with it.
-- Open decisions that applying "DP-7" raised in other changes on 2026-11-23 and that still need the owner: O26 of 0135 (how a child event outside `wakeOn` reaches a parent runtime that declares neither `append` nor `steer`), O24 of 0139 with its mirror O23 of 0122 (which bridge marks a call group), and decision 44 of 0149 (whether a client's `maxChildrenTotal: 0` is still stored as `maxDepth: 0`). 0166.S3 waits on the first two, and 0166.S1 on the third. The owner settled O22 of 0122, O18 and O19 of 0126, decision 43 of 0149, and D13 of 0139 (when `toolServers` lists `client`) on 2026-11-23.
+- The open decisions that applying "DP-7" raised in other changes on 2026-11-23 are all settled: O22, O23 (i), and O23 (ii) of 0122, O18 and O19 of 0126, O26 of 0135, D13 and D14 of 0139, and decisions 43 and 44 of 0149. O33 of this change, who may set `maxDepth: 0`, is open, and 0166.S1 waits on it.
 
 ## Steps
 

@@ -37,7 +37,7 @@ Revisions 1 to 12 added client tools as a turn-ending exchange, in which the run
 - The runtime capability `capabilities.clientTools` ("CT-2").
 - Admission of client tool definitions: names, schemas, OpenAI `custom` tools, OpenAI `allowed_tools`, limits, and refusals ("CT-3").
 - Validation of every call and every group a runtime makes, with a do-not-retry failure and a per-revision metric ("CT-4").
-- Open calls: the `tool_call` event to the client, parallel calls delivered as a group, the session's turn rule with the provenance on every event, the hold under `clientToolHoldSeconds` with withdrawal by `tool_call_withdrawn`, the answer route, late results, and cancellation ("CT-5").
+- Open calls: one `tool_call` event per call, independent of every other call, with an optional `group` label for the calls of one model step, the session's turn rule with the provenance on every event, the hold under `clientToolHoldSeconds` with withdrawal by `tool_call_withdrawn`, the answer route, late results, and cancellation ("CT-5").
 - The request and response mapping for REST and the provider adapters, including streaming and errors ("CT-6").
 - Rules for resume, cold continuation, the order of entries in a history the gateway builds, retries, revisions, and derive ("CT-7").
 - Interceptor coverage, reserved names, the trust level of results, the audit of every client tool call with a parent's tool calls included, and ownership ("CT-8").
@@ -75,7 +75,7 @@ Revisions 1 to 12 added client tools as a turn-ending exchange, in which the run
 | Client tool | A tool that a client declares and executes. |
 | Runtime tool | A tool a runtime runs inside its turn: a platform tool, reached through `tool_call` frames ([`0139-runtime-protocol`, "RP-3"](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames)), or a tool inside the runtime's own process. The second kind includes the tools of an operator service, such as an MCP server, that the runtime's harness reaches through egress ([`0124-connector-removal`](../0124-connector-removal/change.md), "CR-3 External services"). |
 | Client tool call (call) | A `tool_call` frame that names `server: "client"`: the runtime's request that its client run one client tool with given arguments. The runtime waits for its `tool_result`. |
-| Group | The calls a runtime makes at one model step, marked with one `group` member that carries the group's id and size. The gateway delivers a group's calls to the client in one event. A call without `group` is a group of one. |
+| Group | The calls a runtime makes at one model step, which a runtime that knows the step labels with one `group` member carrying the group's id and size. A group is a label: each call is validated, delivered, held, and answered on its own, calls may overlap and be answered in any order, and nothing waits for the rest of a group. A call without `group` is a group of one. |
 | Open call | A call that the gateway has neither answered nor withdrawn. |
 | Hold | The time an open call stays open, at most the session's `clientToolHoldSeconds` ("CT-5"). |
 | Withdrawal | The gateway's end of an open call without the client's answer, because the hold passed, the runtime's pod was lost, the runtime cancelled the call, or the session closed. The gateway emits `tool_call_withdrawn` and answers the runtime's frame with an error result. |
@@ -150,7 +150,7 @@ A client that uses OpenAI's or Anthropic's API with its own tools sends the tool
 
 A call waits for at most the session's `clientToolHoldSeconds`, 300 seconds by default. When the hold passes, or when the runtime's pod is lost, the gateway withdraws the call: the runtime receives an error result, the client receives `tool_call_withdrawn`, and the session can become `dormant`. A result the client sends afterwards is a late result, which reaches the runtime in `toolResults` on the client's next message, so the runtime continues from it.
 
-A provider adapter returns a group of calls to its caller as the provider's tool use in one response, and posts the results when the caller's next request brings them. A caller that never returns lets the calls' hold pass.
+A provider adapter returns the calls of one labelled group to its caller as the provider's tool use in one response, and a call without a label in a response of its own, and posts the results when the caller's next request brings them. A caller that never returns lets the calls' hold pass.
 
 The rest of this section states each part in the design's terms, which "Terms" above defines.
 
@@ -160,11 +160,11 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 **Admission (CT-3).** The gateway checks each tool definition when the message arrives: name rules, reserved names, limits, and a schema that compiles with every external reference refused. An OpenAI `custom` tool is admitted for a revision that declares `customTools`, and its grammar is passed to the runtime unchecked. An OpenAI `allowed_tools` choice becomes a list of allowed names in the tool choice.
 
-**Call validation (CT-4).** The gateway checks each call against the declared names, the tool's input schema or, for a custom tool, that the input is a string, and each group against the tool choice with its allowed names and the parallel limit. A violation answers the group's calls with errors, fails the turn with a do-not-retry error, and counts on a per-revision metric. The gateway never repairs a call.
+**Call validation (CT-4).** The gateway checks each call against the declared names, the tool's input schema or, for a custom tool, that the input is a string, and each call, with the calls of its group that arrived before it, against the tool choice with its allowed names and the parallel limit. A violation answers the violating call, and every later call of its group, with errors, fails the turn with a do-not-retry error, and counts on a per-revision metric. The gateway never repairs a call.
 
-**Open calls (CT-5).** The gateway delivers each group in one `tool_call` event that carries the turn's provenance. A client declares for the session whether its tools are callable only in turns its own messages started, the default, or in every turn, and a provider adapter always declares the first (0166, decision 48). An open call counts as the session's activity until its hold passes. The client answers through the answer route, or a parent with `tools.result`, and a late result waits for the client's next message.
+**Open calls (CT-5).** The gateway delivers each call in its own `tool_call` event, which carries the turn's provenance and the call's `group` when the runtime labelled one, and each call is held and answered on its own (decision O23). A client declares for the session whether its tools are callable only in turns its own messages started, the default, or in every turn, and a provider adapter always declares the first (0166, decision 48). An open call counts as the session's activity until its hold passes. The client answers through the answer route, or a parent with `tools.result`, and a late result waits for the client's next message.
 
-**Surfaces (CT-6).** REST carries the declarations on a message, the `tool_call` event on the session's event stream, and the answer route. Each provider adapter maps a group to its provider's tool use and the caller's results to the answer route, in plain and streaming responses.
+**Surfaces (CT-6).** REST carries the declarations on a message, the `tool_call` event on the session's event stream, and the answer route. Each provider adapter maps the calls of a labelled group to its provider's tool use in one response, and an unlabelled call to a response of its own, and the caller's results to the answer route, in plain and streaming responses.
 
 **Continuation (CT-7).** A pod loss withdraws the open calls, and their late results reach the restored runtime. A cold turn delivers earlier calls and results as history. A derive copies no open call. A cold turn of an existing conversation can land on another revision, and a revision without the capability refuses it before a pod is claimed.
 
@@ -206,7 +206,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 | ID | Requirement |
 | :-- | :-- |
 | CTR-1 | A client tool call reaches a client only from a session whose effective capabilities include `capabilities.clientTools`, only for a tool that the client declared, and only in a turn that the client's turn rule admits. |
-| CTR-2 | Every call the gateway delivers names a declared tool, has arguments that validate against that tool's input schema or, for a custom tool, a string input, and belongs to a group that obeys the tool choice, its allowed names, and its parallel limit. The gateway delivers no call of a group that breaks any of these, and it never alters a call. |
+| CTR-2 | Every call the gateway delivers names a declared tool, has arguments that validate against that tool's input schema or, for a custom tool, a string input, and, with the calls of its group that arrived before it, obeys the tool choice, its allowed names, and its parallel limit. The gateway delivers no call that breaks any of these, and it never alters a call. |
 | CTR-3 | A call is answered only by the client of the session that made it, through the answer route or, for a parent, `tools.result`, and the runtime receives at most one result for each call. |
 | CTR-4 | A runtime calls a tool its client offers, whether the client is a REST client, a provider adapter, or a parent, as a blocking call that stays open until the client answers or the call is withdrawn, at the latest when `clientToolHoldSeconds` passes. A result that arrives after the call is withdrawn reaches the runtime in `toolResults` on the next message from that client. This is DPR-13 of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#requirements). |
 | CTR-5 | Open calls are gateway records that survive replica failover. A pod loss withdraws the session's open calls, and their late results reach the restored runtime. |
@@ -340,7 +340,7 @@ A runtime calls a client tool with the `tool_call` frame of [`0139-runtime-proto
 ```
 
 - `id` is the runtime id, unique within the session. A call to a function tool carries `arguments` as a JSON object. A call to a custom tool carries `input` as a string **[design, O9]**.
-- `group` marks the calls the runtime makes at one model step, with an id the runtime chooses and the number of calls in the step. A call without `group` is a group of one. The reference bridge marks the calls a harness makes in one step with one group, and a runtime that runs its own model loop marks the tool uses of one model response.
+- `group` is an optional label for the calls the runtime makes at one model step, with an id the runtime chooses and the number of calls in the step. A call without `group` is a group of one. A runtime that runs its own model loop labels the tool uses of one model response. The in-process bridge labels the calls of one harness step, and the stdio bridge sends calls without a label, because an MCP `tools/call` carries no model step ([`0139-runtime-protocol`, "RP-5"](../0139-runtime-protocol/change.md#rp-5-reference-mcp-bridge)). A label never holds a call back: each call is validated, delivered, held, and answered on its own, so calls may overlap and be answered in any order (decision O23).
 - The runtime waits for each call's `tool_result` on the connection that carried the call, as "Delivery semantics" of the `CH-MSGSOCK` card in [§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod) states for any `tool_call`. The answer carries the client's `content` and `isError`. A withdrawn call is answered with `isError: true` and `error.code: "CLIENT_TOOL_CALL_WITHDRAWN"` with the reason, and a refused call with `error.code: "CLIENT_TOOL_CALL_INVALID"` with the reason ("CT-4").
 - A runtime that stops waiting writes RP-3's `tool_cancel` for the call ("CT-5", "Cancellation and close").
 - The adapter forwards a `client` call to the gateway as it forwards a `platform` call, and [`0139-runtime-protocol`, "RP-4"](../0139-runtime-protocol/change.md#rp-4-availability) states when `toolServers` lists `client` and how the bridge announces a change to its list. 0139 adds the `client` value, `group`, and the `toolServers` entry to its frames.
@@ -398,7 +398,7 @@ The surface decodes the tool definitions before session creation or warm dispatc
 
 ### CT-4 Call validation
 
-The gateway checks each call when its `tool_call` frame arrives, and each group when its last call arrives, before it delivers any call of the group **[design, T6]**:
+The gateway checks each call when its `tool_call` frame arrives, against the rules below and against the calls of its group that arrived before it, and delivers the call once it passes, without waiting for the rest of its group **[design, T6, O23]**:
 
 | Rule | Violation reason |
 | :-- | :-- |
@@ -416,7 +416,7 @@ The gateway checks each call when its `tool_call` frame arrives, and each group 
 | The session's open calls and each call's size are within `maxOpenCalls` and `maxArgumentsBytes`. | `limit_exceeded` |
 | `toolChoice.type` `any` or `tool`: the turn makes at least one call before its end-of-turn `message`. The gateway checks this rule at the end of the turn. | `tool_choice_any` or `tool_choice_tool` |
 
-A violation answers every call of the group that the runtime has written with a `tool_result` carrying `isError: true` and `error.code: "CLIENT_TOOL_CALL_INVALID"`, whose details name the reason, the call id, and for `schema_mismatch` the schema validator's first error path, and fails the turn with the error `CLIENT_TOOL_CALL_INVALID` (category `PERMANENT`, `retryable: false`) (T6). Open decision O17 asks whether the turn fails or continues after the error results. The gateway never drops, reorders, coerces, or rewrites a call, and it delivers no call of a violating group, so a client never receives part of one. A group whose calls do not all arrive is withdrawn when the hold of its first call passes ("CT-5").
+A violation answers the violating call, and every later call of its group, with a `tool_result` carrying `isError: true` and `error.code: "CLIENT_TOOL_CALL_INVALID"`, whose details name the reason, the call id, and for `schema_mismatch` the schema validator's first error path, and fails the turn with the error `CLIENT_TOOL_CALL_INVALID` (category `PERMANENT`, `retryable: false`) (T6). Open decision O17 asks whether the turn fails or continues after the error results. Calls of the group that passed before the violation stay open and are answered as any open call. The gateway never drops, reorders, coerces, or rewrites a call.
 
 Grammar conformance of a custom call's `input` is the runtime's responsibility, and the client verifies it before it runs the tool **[design, O9]**. The gateway has no Lark or regex grammar engine, and a check would add one to the dispatch path of every custom call. A call whose `input` breaks the grammar passes the checks of "CT-4", and the client receives it.
 
@@ -428,7 +428,7 @@ The client receives:
 | A parent | The child's failed turn as a child event under [`0135-message-delivery`, "MD-22"](../0135-message-delivery/change.md#md-22-parents-and-children). |
 | Chat Completions and Responses | `502` in the OpenAI error envelope with `type: "server_error"`, `code: "client_tool_call_invalid"`, and the header `x-should-retry: false`. |
 | Messages API | `500 api_error` in the Anthropic error envelope with the Lenny code in `error.details.error_code`, under the owner's decision on AM-8, and `x-should-retry: false`. |
-| Streaming, after the stream began | The surface's error event (`error` on the Messages API, and `response.failed` on Responses), or on Chat Completions the mid-stream error the translator's stream writer already emits, and no call of the group is streamed. |
+| Streaming, after the stream began | The surface's error event (`error` on the Messages API, and `response.failed` on Responses), or on Chat Completions the mid-stream error the translator's stream writer already emits, and no call after the violation is streamed. |
 
 Output parts streamed before the violation stay with the client. On the translators, the session then ends with the `failed` disposition, as §15 states for a failed dispatch.
 
@@ -440,16 +440,15 @@ Validation is a gateway check over data the gateway already holds for the turn, 
 
 #### Delivery
 
-When a group passes "CT-4", the gateway records each call as an open call of the session, mints an external id for it, and delivers the group to the client in one `tool_call` event **[design, 0166 decision 23]**:
+When a call passes "CT-4", the gateway records it as an open call of the session, mints an external id for it, and delivers it to the client in a `tool_call` event of its own **[design, 0166 decision 23, O23]**:
 
 ```json
 {
   "kind": "tool_call",
-  "group": "g_3",
-  "calls": [
-    { "callId": "call_8Kq...", "name": "lookup_order", "arguments": { "orderId": "A-1009" } },
-    { "callId": "call_8Kr...", "name": "lookup_order", "arguments": { "orderId": "A-1010" } }
-  ],
+  "callId": "call_8Kq...",
+  "name": "lookup_order",
+  "arguments": { "orderId": "A-1009" },
+  "group": { "id": "g_3", "size": 2 },
   "holdUntil": "2026-11-23T10:05:00Z",
   "turn": { "startedBy": { "kind": "client", "id": "client_gateway" }, "contentFrom": [] }
 }
@@ -478,7 +477,6 @@ A call waits for at most the session's `clientToolHoldSeconds` **[design, 0166 d
 - The default is 300 seconds. A client sets the value on the request that creates the session, and a parent on `session.create`, at most the tenant's ceiling. A tenant administrator sets the ceiling, at most the platform's cap, the Helm value `clientTools.maxHoldSeconds` with the gateway flag `--client-tools-max-hold-seconds`, which the operator tunes. When the tenant's ceiling is lower than 300 seconds, the ceiling is the default.
 - An open call counts as the session's qualifying activity under [`0146-session-lifecycle`, "SL-6"](../0146-session-lifecycle/change.md#sl-6-idle-pods-and-dormancy) until its hold passes, so the pod stays while the client works.
 - When the hold passes, the gateway withdraws the call: it answers the runtime's frame with `isError: true` and `error.code: "CLIENT_TOOL_CALL_WITHDRAWN"` with the reason `hold_expired`, and sends the client a `tool_call_withdrawn` event naming the external ids and the reason. The runtime continues its turn from the error result. Once the session has no qualifying activity, it becomes `idle` and then `dormant` under SL-6.
-- A group whose calls do not all arrive is withdrawn with the reason `group_incomplete` when the hold of its first call passes. The gateway delivers none of its calls.
 
 #### Answers
 
@@ -487,7 +485,7 @@ A call waits for at most the session's `clientToolHoldSeconds` **[design, 0166 d
 - An answer to a withdrawn call returns `late`, and the result becomes a late result.
 - An answer naming no call of the session is refused with `404 CLIENT_TOOL_CALL_NOT_FOUND`. An answer from anyone other than the session's client is refused with `403 CLIENT_TOOL_RESULTS_FORBIDDEN`, so another session's message can never answer a call.
 - A client that chooses not to run a tool answers with `isError: true` and a brief explanation, as the provider APIs require of their callers.
-- The answers of a group arrive in any order, and each one returns to its own call.
+- Calls of a group, and calls of different groups, are answered in any order, and each answer returns to its own call. A slow call holds back no other call.
 
 #### Late results
 
@@ -530,11 +528,11 @@ A client declares its tools on each message, so a message that carries no tools 
 
 | Surface | Plain response | Stream |
 | :-- | :-- | :-- |
-| Chat Completions | `message.content` holds the text of the output parts, or `null` when there is none, and `message.tool_calls` holds one `{id, type: "function", function: {name, arguments}}` per function call of the group, with `arguments` serialized as a JSON string, and one `{id, type: "custom", custom: {name, input}}` per custom call. `finish_reason: "tool_calls"`. | Content deltas for the output parts, then one chunk per call carrying `index`, `id`, `type`, `function.name`, and the whole `function.arguments`, then a separate chunk with `finish_reason: "tool_calls"`, then `[DONE]`. The separate final chunk lets the `openai-python` stream helper emit its arguments-done event. A streaming request that declares a custom tool is refused under O10, so no custom call is streamed. |
-| Responses | `message` output items for the output parts, then one `function_call` item per function call of the group with `call_id`, `name`, `arguments` as a JSON string, and `status: "completed"`, and one `custom_tool_call` item per custom call with `call_id`, `name`, `input`, and `status: "completed"`. The response's `status` is `completed` **[unverified]**. | Per function call: `response.output_item.added` with empty `arguments`, one `response.function_call_arguments.delta` with the whole string, `response.function_call_arguments.done`, and `response.output_item.done`. Per custom call: `response.output_item.added` with empty `input`, one `response.custom_tool_call_input.delta` with the whole string, `response.custom_tool_call_input.done`, and `response.output_item.done`. Then `response.completed`. |
+| Chat Completions | `message.content` holds the text of the output parts, or `null` when there is none, and `message.tool_calls` holds one `{id, type: "function", function: {name, arguments}}` per function call the response returns, with `arguments` serialized as a JSON string, and one `{id, type: "custom", custom: {name, input}}` per custom call. `finish_reason: "tool_calls"`. | Content deltas for the output parts, then one chunk per call carrying `index`, `id`, `type`, `function.name`, and the whole `function.arguments`, then a separate chunk with `finish_reason: "tool_calls"`, then `[DONE]`. The separate final chunk lets the `openai-python` stream helper emit its arguments-done event. A streaming request that declares a custom tool is refused under O10, so no custom call is streamed. |
+| Responses | `message` output items for the output parts, then one `function_call` item per function call the response returns with `call_id`, `name`, `arguments` as a JSON string, and `status: "completed"`, and one `custom_tool_call` item per custom call with `call_id`, `name`, `input`, and `status: "completed"`. The response's `status` is `completed` **[unverified]**. | Per function call: `response.output_item.added` with empty `arguments`, one `response.function_call_arguments.delta` with the whole string, `response.function_call_arguments.done`, and `response.output_item.done`. Per custom call: `response.output_item.added` with empty `input`, one `response.custom_tool_call_input.delta` with the whole string, `response.custom_tool_call_input.done`, and `response.output_item.done`. Then `response.completed`. |
 | REST | The `tool_call` event carries each group with its external ids and the turn's provenance, `tool_call_withdrawn` names withdrawn calls, and `openToolCalls` on `GET /v1/sessions/{id}` lists the open calls ("CT-5"). The message route returns delivery receipts alone ([`0135-message-delivery`, "MD-7"](../0135-message-delivery/change.md)). | The session event stream carries the `tool_call` and `tool_call_withdrawn` events. |
-| Messages API | `text` blocks for the output parts, then one `tool_use` block per call of the group with `id`, `name`, and `input`. `stop_reason: "tool_use"`. | Per call: `content_block_start` with the `tool_use` block and `input: {}`, one `input_json_delta` with the whole input, and `content_block_stop`. Then `message_delta` with `stop_reason: "tool_use"` and `message_stop`. |
-| MCP | The tool result's `structuredContent` carries the group's calls. | Not applicable. |
+| Messages API | `text` blocks for the output parts, then one `tool_use` block per call the response returns with `id`, `name`, and `input`. `stop_reason: "tool_use"`. | Per call: `content_block_start` with the `tool_use` block and `input: {}`, one `input_json_delta` with the whole input, and `content_block_stop`. Then `message_delta` with `stop_reason: "tool_use"` and `message_stop`. |
+| MCP | The tool result's `structuredContent` carries the calls the adapter returns in that response. | Not applicable. |
 
 The runtime writes each call whole, so no surface streams partial arguments. Each surface's documented accumulation accepts one delta that carries the whole value.
 
@@ -543,8 +541,8 @@ The runtime writes each call whole, so no surface streams partial arguments. Eac
 A provider adapter is a REST client of the session it creates, so every rule of "CT-5" applies to it **[design, 0166 decision 23]**:
 
 - The adapter sets `clientToolTurns: own` on every session it creates, because its caller receives calls only in the response to the caller's own request (0166, decision 48).
-- The adapter returns a group's calls to its caller in one provider response as the provider's tool use, in Chat Completions, Responses, or the Messages API, and ends that response. The runtime's turn stays open while the calls wait.
-- When the caller's next request brings results, the adapter finds the session through 0138's response identifier or conversation fingerprint, posts each result through the answer route, and answers the caller's request with the output that follows on the session's event stream, up to the next group or the end of the turn.
+- The adapter returns the calls of a labelled group to its caller in one provider response as the provider's tool use, in Chat Completions, Responses, or the Messages API, once it holds `size` of them, and ends that response. It returns a call without a label in a response of its own. The runtime's turn stays open while the calls wait. When a call's hold passes while the adapter still waits for the rest of its group, the withdrawn calls follow "Hold", and the adapter returns the calls of the group that remain open.
+- When the caller's next request brings results, the adapter finds the session through 0138's response identifier or conversation fingerprint, posts each result through the answer route, and answers the caller's request with the output that follows on the session's event stream, up to the next call or the end of the turn.
 - A caller that never returns lets the calls' hold pass. The gateway withdraws them, and a result the caller brings later reaches the runtime as a late result: the adapter posts it, receives `late`, and sends the caller's new input, or a message with no input parts, as the session's next message.
 - A caller whose request the adapter cannot route to the session continues cold in a new session, whose history carries the earlier calls and results ("CT-7").
 
@@ -560,7 +558,7 @@ Every refusal uses the surface's own error envelope: Lenny's REST envelope with 
 | `CLIENT_TOOL_CALL_NOT_FOUND` | `PERMANENT` | 404 | The answer route names no call of the session. |
 | `CLIENT_TOOL_RESULTS_FORBIDDEN` | `POLICY` | 403 | An answer from anyone other than the session's client. |
 | `CLIENT_TOOL_CALL_INVALID` | `PERMANENT` | None: an `error.code` on the runtime's `tool_result`, a turn error on the turn resource, and the `error` event ("CT-4") | A call or a group broke a rule of "CT-4". |
-| `CLIENT_TOOL_CALL_WITHDRAWN` | `TRANSIENT` | None: an `error.code` on the runtime's `tool_result` ("CT-5") | The gateway withdrew an open call, with the reason `hold_expired`, `group_incomplete`, `cancelled`, `interrupted`, `pod_lost`, or `closed`. |
+| `CLIENT_TOOL_CALL_WITHDRAWN` | `TRANSIENT` | None: an `error.code` on the runtime's `tool_result` ("CT-5") | The gateway withdrew an open call, with the reason `hold_expired`, `cancelled`, `interrupted`, `pod_lost`, or `closed`. |
 
 ### CT-7 Continuation
 

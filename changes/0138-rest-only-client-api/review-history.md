@@ -111,3 +111,4 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
     - "RO-10" ends a response at a `tool_call` event and posts the caller's results through R22, and a request whose calls are no longer open runs cold, which replaces the turn-ending exchange.
     - O21 and O22 in `decisions.md` record how decision 23 bears on them. No owner decision of this change conflicts with 0166, so no open decision is added.
     - `steps.md`: 0138.S1 lands R25 and names the steps that land R20 to R24, and 0138.S5 depends on the part of 0166.S1 that builds the hand-off.
+- Later on 2026-11-23, after 0122's O23 (i): R22's `tool_call` event carries one call with an optional `group`, `group_incomplete` leaves the withdrawal reasons, and RO-10 returns a labelled group in one response and an unlabelled call alone.
