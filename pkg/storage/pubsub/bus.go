@@ -22,8 +22,10 @@
 //
 // The pub/sub loop mirrors the canonical pattern in
 // pkg/gateway/breakerstore/cachingstore: client.Subscribe, then a range
-// over pubsub.Channel() in a Run-style loop selected against
-// ctx.Done().
+// over the subscription's receive channel in a Run-style loop selected
+// against ctx.Done(). Subscribe reads the channel that carries the
+// subscription confirmations as well as the messages, so it can tell a
+// caller that the subscription was re-established (OnReconnect).
 package pubsub
 
 import (
@@ -63,31 +65,81 @@ func (b *Bus) Publish(ctx context.Context, channel string, payload []byte) error
 	return b.client.Publish(ctx, channel, payload).Err()
 }
 
+// SubscribeOption configures one Subscribe call.
+type SubscribeOption func(*subscribeConfig)
+
+// subscribeConfig holds the options of one Subscribe call.
+type subscribeConfig struct {
+	onReconnect func()
+}
+
+// OnReconnect sets a callback that Subscribe calls each time Redis
+// confirms the subscription again after the first confirmation. go-redis
+// re-establishes a dropped subscription inside its receive goroutine and
+// resubscribes on the new connection, so a confirmation after the first
+// one means the subscription was down and every message published in
+// the meantime was lost. A cache on top of Bus reconciles that loss by
+// rereading its authoritative store in the callback. The callback runs
+// on the loop goroutine, as the handler does, so a callback that may
+// block hands its work off.
+func OnReconnect(fn func()) SubscribeOption {
+	return func(c *subscribeConfig) { c.onReconnect = fn }
+}
+
 // Subscribe runs a consume loop on channel, delivering every message
 // payload to handler until ctx is cancelled. It blocks; callers run it
 // in a goroutine, the same way the gateway starts cachingstore.Run.
 //
 // A nil Bus blocks until ctx is cancelled and delivers nothing, so a
 // caller that always starts a subscribe goroutine does not have to
-// special-case the no-Redis mode. The handler runs inline on the loop
-// goroutine; a handler that may block should hand off its own work.
-func (b *Bus) Subscribe(ctx context.Context, channel string, handler func(payload []byte)) {
+// special-case the no-Redis mode; it never calls the OnReconnect
+// callback. The handler runs inline on the loop goroutine; a handler
+// that may block should hand off its own work.
+//
+// go-redis drops a message whose delivery to a full receive channel
+// exceeds its send timeout and reports the drop only through its logger,
+// so Subscribe reports no dropped message. The caller's periodic reread
+// of its authoritative store covers that loss.
+func (b *Bus) Subscribe(ctx context.Context, channel string, handler func(payload []byte), opts ...SubscribeOption) {
 	if b == nil || b.client == nil {
 		<-ctx.Done()
 		return
 	}
+	var cfg subscribeConfig
+	for _, o := range opts {
+		o(&cfg)
+	}
 	sub := b.client.Subscribe(ctx, channel)
 	defer func() { _ = sub.Close() }()
-	messages := sub.Channel()
+	received := sub.ChannelWithSubscriptions()
+	confirmed := false
 	for {
 		select {
 		case <-ctx.Done():
 			return
-		case msg, ok := <-messages:
+		case v, ok := <-received:
 			if !ok {
 				return
 			}
-			handler([]byte(msg.Payload))
+			switch m := v.(type) {
+			case *redis.Message:
+				handler([]byte(m.Payload))
+			case *redis.Subscription:
+				if !isConfirmation(m, channel) {
+					continue
+				}
+				if confirmed && cfg.onReconnect != nil {
+					cfg.onReconnect()
+				}
+				confirmed = true
+			}
 		}
 	}
+}
+
+// isConfirmation reports whether s is Redis's confirmation of a
+// SUBSCRIBE to channel, as opposed to an unsubscribe notice or a
+// confirmation for another channel.
+func isConfirmation(s *redis.Subscription, channel string) bool {
+	return s.Kind == "subscribe" && s.Channel == channel
 }

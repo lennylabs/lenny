@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1519
+      count: 1518
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -306,7 +306,7 @@ packages:
     - package: pkg/credential/revocation
       count: 7
     - package: pkg/credential/revocation/propagator
-      count: 2
+      count: 3
     - package: pkg/credential/usercreds
       count: 14
     - package: pkg/ctl
