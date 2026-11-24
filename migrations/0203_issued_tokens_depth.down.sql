@@ -1,0 +1,1 @@
+ALTER TABLE issued_tokens DROP COLUMN IF EXISTS depth;
