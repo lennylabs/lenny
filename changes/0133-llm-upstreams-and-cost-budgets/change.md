@@ -1,6 +1,6 @@
 # LLM upstreams and cost budgets
 
-Status: `Draft`, revision 18, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 19, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -662,7 +662,7 @@ This is the stated exception to the quantities principle of [`0121-billing-resou
 
 ### LU-8 Security
 
-**Keys stay in the gateway.** A credential registered on an upstream is read by the gateway through the Token Service and is held in gateway memory alone. The pod holds the proxy token, which spends credits only through the proxy, within the session's budgets, on the session's upstreams. With `spiffeBinding` on, a token copied out of the pod is refused at the proxy. No LLM credential is minted per pod, so the egress mint checks have nothing to check on this path. A runtime that calls a provider directly uses a key it brought, which the operator never registered on an upstream, so operator-paid spend moves only through the proxy (OD-15) **[design]**.
+**Keys stay in the gateway.** A credential registered on an upstream is read by the gateway through the Token Service and is held in gateway memory alone. The pod holds the proxy token, which spends credits only through the proxy, within the session's budgets, on the session's upstreams. With `spiffeBinding` on and a pod SPIFFE identity in place, a token copied out of the pod is refused at the proxy. The agent pod has no SPIFFE identity yet, so the check compares against an empty value and refuses nothing until open decision 4 settles it. The identity names the pod, so it never tells two sessions of one pod apart (open decision 21). No LLM credential is minted per pod, so the egress mint checks have nothing to check on this path. A runtime that calls a provider directly uses a key it brought, which the operator never registered on an upstream, so operator-paid spend moves only through the proxy (OD-15) **[design]**.
 
 **Long-lived credentials.** Every upstream's credential is a Secret, which an operator rotates by writing the Secret; the next call reads the new value. Lenny exchanges no workload identity for a provider credential (D10), so a deployment that wants no long-lived provider key inside Lenny registers an LLM gateway as the upstream, and that gateway holds the short-lived provider credential under its own identity. Lenny then holds the gateway's key, which reaches only that gateway. Platform and tenant upstreams use the same source.
 
