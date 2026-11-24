@@ -102,12 +102,12 @@ alice holds a platform-admin token with no `scope` claim. She exchanges it for `
 - The options not chosen are listed with each decision in `decisions.md`.
 - A rotation records its predecessor (decision 10), so a holder of a token the user rotated away from and of a live token of the user's can revoke the user's current token and the tokens derived from it. The user signs in again, and an administrator fully revokes the user when more than one token may have leaked or a leaked token may have been exchanged before the rotation. The platform has no call that lifts a full revoke ([AUTHN-I1](../../../issues/AUTHN/AUTHN-I1-no-way-to-lift-a-user-invalidation.md)). No rotation lineage avoids both this and a leak holder keeping a rotated token (change 0165, scenario CX-2).
 - Any token of the user's may send the revocation request (decision 11), including a narrowly scoped one an agent holds; the request reaches only the token it presents and that token's descendants.
-- A self-rotation adds one level to a chain, as other exchanges do ([TOKX-I10](../../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
-- A token derived while a revocation runs escapes it, because the cascade takes no per-tenant lock ([TOKX-I13](../../../issues/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md)).
+- A self-rotation adds one level to a chain, as other exchanges do ([TOKX-I10](../../../issues/closed/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
+- A token derived while a revocation runs escapes it, because the cascade takes no per-tenant lock ([TOKX-I13](../../../issues/closed/TOKX/TOKX-I13-derivation-committed-during-a-cascade-escapes-it.md)).
 - A delegation child that rotates itself loses its `act` claim ([TOKX-I14](../../../issues/closed/TOKX/TOKX-I14-rotated-delegation-child-drops-its-act-claim.md)).
 - A `platform-admin` revokes through the revocation request only within its own tenant, because the tenant check runs first.
 - A refused revocation request writes no audit row ([TOKX-I12](../../../issues/TOKX/TOKX-I12-refused-revocation-request-writes-no-audit-row.md)).
-- Recording a parent for every exchange lets a caller build a long chain of derived tokens. The index of TX-4 keys each step of the cascade, and the change sets no bound on the depth of a chain or on the duration of a cascade ([TOKX-I10](../../../issues/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
+- Recording a parent for every exchange lets a caller build a long chain of derived tokens. The index of TX-4 keys each step of the cascade, and the change sets no bound on the depth of a chain or on the duration of a cascade ([TOKX-I10](../../../issues/closed/TOKX/TOKX-I10-revocation-cascade-has-no-depth-or-time-bound.md)).
 
 ## Specification and non-specification changes
 

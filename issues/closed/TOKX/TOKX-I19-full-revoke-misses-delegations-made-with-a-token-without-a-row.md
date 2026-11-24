@@ -1,9 +1,11 @@
 ---
 id: TOKX-I19
-status: open
+status: closed
 kind: build-gap
 severity: low
 requirements: []
+closed: fixed
+closed-by: 0168.S1
 ---
 
 # A full revoke misses the delegations a user made with a token that has no `issued_tokens` row
@@ -26,3 +28,7 @@ A full revoke of a user leaves live a child that another user minted with an unr
 ## Suggested resolution
 
 The owner settled it on 2026-11-23 as change 0165 decision 16 (answer to FM-15 on the M3 readiness decision page): seed the walk of `RevokeBySubject` also with the child rows whose `act_sub` is the user and whose `parent_jti` is set, which are the delegations the user made with any token. Change 0168 carries the fix.
+
+## Resolution
+
+Change 0168 (decision 3) closes it in step 0168.S1. `RevokeBySubject` also seeds its walk with the child rows whose `act_sub` is the user and whose `parent_jti` is set, through the index of migration 0202, and the subtest "a full revoke reaches the delegations made with a token without a row" runs.

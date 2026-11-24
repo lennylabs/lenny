@@ -1,9 +1,11 @@
 ---
 id: TOKX-I20
-status: open
+status: closed
 kind: build-gap
 severity: low
 requirements: []
+closed: fixed
+closed-by: 0168.S1
 ---
 
 # A caller revoked between the subtree read and the impersonation step still ends impersonation sessions
@@ -25,3 +27,7 @@ A caller whose token is revoked by a concurrent request can still end the impers
 ## Suggested resolution
 
 Re-read the caller's row under `FOR SHARE` inside the transaction of `RevokeImpersonationsByImpersonator`, refusing a revoked caller there, or run the subtree read and the impersonation update in one transaction under `__all__`. Change 0168 fixes it together with [TOKX-I22](TOKX-I22-revocation-refuses-a-caller-its-own-impersonation-step-revoked.md), whose fix under change 0165 decision 15 changes how the cascade reads the caller.
+
+## Resolution
+
+Change 0168 (decisions 2 and 8) closes it in step 0168.S1. The impersonation step reads the caller's row under a share lock in the same transaction that revokes the impersonation rows, and holds it until that transaction commits, so a revocation of the caller either commits first and refuses the request before any session ends, or waits.

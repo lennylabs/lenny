@@ -1,9 +1,11 @@
 ---
 id: TOKX-I13
-status: open
+status: closed
 kind: build-gap
 severity: medium
 requirements: []
+closed: fixed
+closed-by: 0168.S1
 ---
 
 # A token derived while a recursive revocation runs escapes the revocation
@@ -28,3 +30,7 @@ A holder of a leaked token in the subtree of a revocation keeps a derived token 
 ## Suggested resolution
 
 Take the §11.7 per-tenant lock at the start of `revokeLineageOnce` and `RevokeBySubject`, before the statement that reads the snapshot, so that each issuance either commits first and is visible to the walk or runs after the revocation and fails the step (1a) re-read; state the ordering in §13.3; and add a component test for the ordering. Holding the tenant lock for a cascade blocks the tenant's issuances for the cascade's duration, so the owner decides it together with the bound of TOKX-I10.
+
+## Resolution
+
+Change 0168 (decisions 9 and 11) closes it in step 0168.S1. `revokeLineageOnce` and `RevokeBySubject` take the per-tenant audit advisory lock before the statement that reads their subtree (`lockForRevocation`), which every issuance takes before its step (1a) re-read, so an issuance from a token of the subtree either commits before the cascade reads and is revoked with it, or reads its source revoked and is refused. The impersonation start reads its caller bearer's row under a share lock in its first transaction, so an impersonation started from a token of the subtree commits before the cascade revokes its caller bearer or is refused. The `TF` variant of the model in `tests/formal/tokenconcurrency` holds C1 and C7 at revision 4.

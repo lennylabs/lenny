@@ -1,9 +1,11 @@
 ---
 id: TOKX-I10
-status: open
+status: closed
 kind: build-gap
 severity: low
 requirements: []
+closed: fixed
+closed-by: 0168.S1
 ---
 
 # The recursive revocation has no bound on the depth of a chain or on the duration of a cascade
@@ -26,3 +28,7 @@ A tenant user builds a deep chain and repeats revocation requests over it, each 
 ## Suggested resolution
 
 Choose a bound: refuse an exchange whose subject is more than a set number of links deep, stop the walk at nodes an earlier cascade revoked, or set a statement timeout on `RevokeCascade` with an operator-tunable default. The bound and its default need the owner.
+
+## Resolution
+
+Change 0168 (decision 12) closes it in step 0168.S1. Each `issued_tokens` row records its `depth` (migration 0203), step (1a) refuses an exchange whose parent row is at `auth.tokenLineageMaxDepth` (default 32) with `lineage_depth_exceeded`, and the cascade and the full revoke's walk run under the statement timeout `auth.tokenRevocationTimeoutMs` (default 5000 ms): a cascade that reaches it revokes nothing and answers the retryable `503 REVOCATION_TIMEOUT`, and a full revoke reports it as partial-failure detail. A wide subtree is bounded by the timeout only.
