@@ -1,0 +1,14 @@
+# Decisions: 0172 Merge gate wall time
+
+## Open decisions
+
+None.
+
+## Decisions
+
+1. **Narrowing the selection and recording it in the verdict (GS-1).** The `spec/**` row of `tests/non-go-inputs.yaml` moves `pkg/observability/tracing` and `pkg/api/openapi` to a new row target form that runs a package's own tests without walking its dependents, together with any other row whose package reads its input only in tests, and the verdict records each tier's selection as `gate.selection`. The options not chosen were (b), recording `gate.selection` only, and (c), neither. Owner's answer to GS-1 on the M3 readiness decision page, 2026-11-23, option (a).
+2. **Full runs on `main` (GS-2).** A full run (`lenny-test gate --all`) runs on `main` before a milestone is reported complete and once a week on a day a merge landed, and selected runs cover every other batch. This amends v1 program decision 13, and 0172.S1 writes it into the v1 merge policy. The options not chosen were (b), before a milestone only, and (c), the first run of each day on which a merge landed. Owner's answer to GS-2 on the M3 readiness decision page, 2026-11-23, option (a).
+3. **Running the tiers concurrently (GS-3).** The gate runs its tiers concurrently, with the layout and bound of decision 5, and the layout becomes the default once the validation runs in `steps.md` pass. The options not chosen were (b), an option that is off by default, and (c), serial tiers. Owner's answer to GS-3 on the M3 readiness decision page, 2026-11-23, option (a).
+4. **Dropping the coverage profile from the gate's unit run (GS-4).** The gate's unit run drops `-coverprofile` and `-covermode=atomic` and keeps `-race`; `run --changed` and `--tier unit` keep the profile. The options not chosen were (b), keeping the flags and writing the profile where `lenny-test coverage` reads it, and (c), keeping the gate as it is. Owner's answer to GS-4 on the M3 readiness decision page, 2026-11-23, option (a).
+5. **The concurrency bound (GS-5).** "Unit alone": static and contract run beside component and integration, then unit, then the documentation gates, with each tier's default `go test -p`, about 16 minutes before contention. The layout and the `-p` values are gate options. The options not chosen were (b), "two lanes" with `-p` at half the container's CPUs while lanes overlap, and (c), "two lanes" with the default `-p`. Owner's answer to GS-5 on the M3 readiness decision page, 2026-11-23, option (a).
+6. **Program membership (GS-6).** 0172 is not a member of the v1 program. The options not chosen were (b), a member with its steps in M1, and (c), a member with its steps in no milestone. Owner's answer to GS-6 on the M3 readiness decision page, 2026-11-23, option (a).
