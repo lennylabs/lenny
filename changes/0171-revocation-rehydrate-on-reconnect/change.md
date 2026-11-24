@@ -16,7 +16,7 @@ The gateway reads no `issued_tokens` row on validation:
 - `cmd/lenny-gateway/billing_security_workers.go`: the gateway rehydrates the cache once at startup and then every 30 seconds on a ticker. Nothing else triggers a rehydration.
 - `pkg/credential/revocation/propagator/propagator.go`: the package comment states that a dropped revocation "is reconciled by the next index rehydration", and `Run` applies each `token.revoked` message to the local cache.
 
-The gap is a lost `token.revoked` event. Redis pub/sub is at-most-once, so a message published while a replica's subscription is disconnected never reaches that replica. The replica then accepts the revoked token until the next 30-second rehydration, while the text says either that it reads Postgres on every validation or that it reads Postgres after a reconnect. Change 0169 (a concurrency model of the token rules, [decision 14](../0169-token-concurrency-model/decisions.md)) recorded the difference as gap G1 of its model, and property C4 holds for the code rather than for the text.
+The gap is a lost `token.revoked` event. Redis pub/sub is at-most-once, so a message published while a replica's subscription is disconnected never reaches that replica. The replica then accepts the revoked token until the next 30-second rehydration, while the text says either that it reads Postgres on every validation or that it reads Postgres after a reconnect. Change 0169 (a concurrency model of the token rules, [decision 14](../archive/2026-11-23-0169-token-concurrency-model/decisions.md)) recorded the difference as gap G1 of its model, and property C4 holds for the code rather than for the text.
 
 ## Scope
 
