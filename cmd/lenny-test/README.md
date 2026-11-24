@@ -49,6 +49,8 @@ lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotatio
 # The merge gate, in the gate container (TESTING.md "Merge gate")
 lenny-test gate
 lenny-test gate --here      # the gate's tiers in this environment; UNVERIFIED outside the gate image
+lenny-test gate --tier static,unit,component,contract --cover   # the check before a code branch merges (v1 merge policy); then:
+lenny-test coverage --diff main --threshold 0.80                 # reads the profile that --cover wrote
 lenny-test gate --layout unit-alone                 # static and contract beside component and integration, then unit, then the documentation gates (default serial: every tier one after another)
 lenny-test gate --layout unit-alone --go-test-p component=2,integration=2  # the go test -p of a tier while it runs beside another lane
 lenny-test gate --gocache-cap-gb 50   # empty the build cache volume first when it holds more than 50 GB (default 30, LENNY_GATE_GOCACHE_CAP_GB; 0 turns the check off)
