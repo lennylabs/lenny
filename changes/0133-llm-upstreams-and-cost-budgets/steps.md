@@ -1,4 +1,4 @@
-# Steps: 0133 LLM access through egress and external charges
+# Steps: 0133 LLM credential removal and access through a gateway
 
 ## Validation owed
 

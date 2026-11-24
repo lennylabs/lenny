@@ -1,18 +1,9 @@
-# Decisions: 0133 LLM upstreams and cost budgets
+# Decisions: 0133 LLM credential removal and access through a gateway
 
 ## Open decisions
 
 3. **Error detail format for a removed field.** D6 of [`0119-agent-runtimes-only`](../0119-agent-runtimes-only/decisions.md#decisions) refuses a write that names a removed field with `400 VALIDATION_ERROR` whose `details.field` names it, and 0132's O3 and tests and 0133's D9 repeat that wording. §15.1's `VALIDATION_ERROR` example and `docs/reference/error-catalog.md` put the field in `details.fields[].field` instead. Options: (a) state the refusal as `details.fields[].field` in 0119's D6, 0132's O3 and tier 1 and tier 3 tests, and 0133's D9, matching §15.1; (b) keep `details.field` and change §15.1's format for this refusal. Recommendation: (a), because every other validation error already uses the array. Raised on 2026-11-16 by the review of 0132.
    - Extended by the M3 readiness review, 2026-11-19. [`0124-connector-removal`](../0124-connector-removal/change.md) states the same refusal ("Removed fields (D7)": "refuse, with `400 VALIDATION_ERROR` whose `details.field` names the member") and records the question as its open decision O16, so the owner's answer is recorded in 0119, 0124, 0132, and 0133 together. The bootstrap seed, which D9 and "LU-4" name among the surfaces that refuse, answers `207 Multi-Status` with a per-entry `SEED_VALIDATION` error whose `BootstrapError` carries `index`, `id`, `code`, and `message` and no field list (`pkg/gateway/api/admin/bootstrap.go`), so the answer also states how the seed reports a removed field: under (a), as a per-entry error that names the field in the `207` body. Blocks: the refusals of "LU-4" in 0133.S2, the §15.1 row, the `contract` test, and the documentation of the refusal. (raised by the M3 readiness review, 2026-11-19; sources: connectors-llm-billing-C9, program-C5)
-
-Raised on 2026-11-24 by decision 22.
-
-23. **The title of this change.** Decision 22 replaces the metering proxy and the upstream records that the title names, and the folder keeps its name so that links into it keep resolving. **Recommendation: (a)**, because it names the path a model call takes and what Lenny counts. Options:
-    - (a) "LLM access through egress and external charges".
-    - (b) "LLM gateways and external charges".
-    - (c) Keep "LLM upstreams and cost budgets".
-
-   Blocks: the H1 of `change.md` and `steps.md`, and the program's member list.
 
 ## Decisions
 
@@ -106,6 +97,7 @@ Settled by the owner on 2026-11-24, over an exploration of the metering proxy th
    - Decisions 5, 6, and 11 to 20. Decision 5's rule that a refused extension does not end the session stands for the extension that charges start ("LU-5").
    - D9 stands.
 
+23. **The title and the two jobs of this change.** The owner asked on 2026-11-24 "Does this design doc include all the budgeting we've been working through? Does it oevrlap with 0170 and should they be consolidated? Or maybe part of 0133 goes into egress and the other into 0170?", and answered the recommendation with "go with your recommendation". The title is "LLM credential removal and access through a gateway", and the folder keeps its name. The change keeps two jobs: the removal of "LU-4", and LLM access end to end, which cites the rules of 0124, 0127, and 0170 instead of restating them, with the reference integrations of "LU-9", the gateway guide, and the checks owed. Budgets stay wholly in 0170. "LU-1" to "LU-3" and "LU-5" to "LU-8" are cut to the path and the rules this change alone states.
 24. **The default header, the reference integrations, and the gateway validations.** The owner asked on 2026-11-24 for end-to-end examples ("It would be good to see every example end-to-end (including what a runtime must do, how it's configured, and real LLM gateways as examples). I'm not sure if we're building a Frankenstein"), read the walkthroughs of LiteLLM, Envoy AI Gateway, and Kong that day, and answered "go for it". "LU-2" uses the default header of 0124's D15. "LU-9" adds `lenny-litellm`, `lenny-charge-relay`, and the reference verifier, outside Lenny's core. "LU-3" cites the `jti` as proof under 0170's decision 62, and "LU-5" has `netagent` answer a suspended session under 0127's decision 85. "Validation owed" gains the client and gateway checks that the walkthrough could not confirm.
 25. **The order of 0133.S2 before 0133.S1.** The owner answered "Ok on choices 1 and 3" on 2026-11-24, accepting that 0133.S2 lands before 0133.S1 to break the cycle through 0124.S2 and 0151.S1, and that model calls reach no budget between 0133.S2 and 0170.S6.
 

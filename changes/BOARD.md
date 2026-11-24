@@ -274,7 +274,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 8 |
 | [0131](0131-incremental-checkpoint/change.md) | Incremental checkpoints | `Draft` | 0 of 9 | 16 |
 | [0132](0132-llm-response-cache-removal/change.md) | LLM response cache removal | `Draft` | 0 of 1 | 2 |
-| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM access through egress and external charges | `Draft` | 0 of 3 | 2 |
+| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM credential removal and access through a gateway | `Draft` | 0 of 3 | 1 |
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 5 | 4 |
 | [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 57 |
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 8 | 22 |
@@ -299,4 +299,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0162](0162-playground-mint-scope-refusal/change.md) | The playground mint refuses a subject scope it cannot narrow | `In progress` | 1 of 1 | 0 |
 | [0163](0163-token-exchange-default-scope/change.md) | A token exchange without scope issues the subject token's scope | `In progress` | 1 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
-| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 1 |
+| [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |

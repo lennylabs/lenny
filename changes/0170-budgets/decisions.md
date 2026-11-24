@@ -2,14 +2,7 @@
 
 ## Open decisions
 
-Raised on 2026-11-24 by decision 57.
-
-61. **Charging by session identifier.** A service that cannot present an assertion, such as one the client calls with the session identifier it holds ("BG-3" **External costs**), could report charges by `session` alone. **Recommendation: (a)**, because a reporter holding it can charge any session in its scope, so it needs its own grant. Options:
-    - (a) A separate permission granted per reporter, under which a charge may name `session` in place of `proof`, with the same scope, delay, and idempotency checks.
-    - (b) Not offered: every charge carries a proof.
-    - (c) Allowed for every reporter.
-
-   Blocks: "BG-12" **Checks on each charge** and 0170.S6.
+None.
 
 ## Decisions
 
@@ -92,5 +85,6 @@ Settled on 2026-11-24 from the second review of the branch, recorded in `review-
 58. **The `external` meter counts in `money` alone.** The owner answered "0170 #58: ok, but I want to revisit units in general (not just external) after these edits" on 2026-11-24 to option (a), the recommendation. Every limit that counts `external` is in `money` under `budgets.currency`, which may be an invented code under decision 34, and no price list entry converts it. The owner will revisit the units of every meter after these edits.
 59. **A reporter is a record of its own.** The owner answered "0170 #59: ok" on 2026-11-24 to option (a), the recommendation. Reporters are registered at `/v1/admin/charge-reporters`, with a tenant scope written by a `tenant-admin` or a platform scope written by a `platform-admin`, their hosts, and a credential returned once ("BG-12" **Reporters**).
 60. **`budgets.external.maxReportDelaySeconds` defaults to 86400.** The owner answered "0170 #60: ok" on 2026-11-24 to option (a), the recommendation. A charge may arrive up to one day after `occurredAt`, and charge identifiers and the mint index are kept for that window ("BG-12").
+61. **Charge tokens minted by the session's owner, and direct charges by the owner.** The owner chose option (d) on 2026-11-24: "0170 #61: go with (d), charge tokens. The client should also be able to post charges directly, right? Also, should the same charge tokens be the ones injected by netagent (for consistency)? Maybe that's the plan already", and agreed to both points of the answer. There is one token type: the session's owner mints the attribution assertion of 0124 CR-2 for a registered reporter's host with `POST /v1/sessions/{id}/attribution-tokens` (0124's D21), and the reporter cites its `jti` as it cites the `jti` of an assertion that `netagent` attached. The session's owner may also post charges for its own sessions with `POST /v1/sessions/{id}/charges`, with no proof, counted with `source: client`. No reporter charges a session by its identifier alone, so options (a) and (c) are not offered ("BG-12" **Charge tokens minted by the owner.** and **Direct charges by the owner.**).
 62. **A charge cites the `jti` of its assertion, and the reporting rules (amends decision 57).** The owner answered "go for it" on 2026-11-24 to the walkthroughs of LiteLLM, Envoy AI Gateway, and Kong, which found that LiteLLM removes `Authorization` from the headers its callbacks see, that every gateway surveyed can copy one claim into its logs, that LiteLLM prices in USD and prices an unpriced model at zero, and that a stream can outlive a 300-second assertion **[external]**. A charge's proof is `{"jti": ...}`, looked up in the mint index of 0124's D18. The `proofs` list, the verification of each token once per batch, and the retired verification keys of decision 57 leave, so "BG-12" has one proof mechanism. A tenant reporter's hosts are bound to its tenant under 0124's D20. The gateway guide states the reporting rules: `occurredAt` is the call's start, a flush every second or 500 charges, amounts in `budgets.currency`, and an alert on unpriced models.
 63. **The codes and defaults of "BG-12".** The owner answered "Ok on choices 1 and 3" on 2026-11-24 to the codes and the default that the write-up of decision 57 introduced without an open decision: `413 CHARGE_BATCH_TOO_LARGE`, `CHARGE_PROOF_KEY_REVOKED`, and `budgets.external.maxChargesPerSecondPerReporter` with a default of 2000.
