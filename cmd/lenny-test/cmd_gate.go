@@ -187,6 +187,11 @@ type gateRecord struct {
 	// RdepsDepth is the dependent depth the selection walked; -1 is the
 	// full closure the merge gate runs.
 	RdepsDepth int `json:"rdeps_depth"`
+	// Selection records, for each test tier the plan selected, what the
+	// gate ran of it (change 0172, GS-1), so a reader tells a selected run
+	// from a full one (All) and sees how much a selected run covered. A
+	// tier the plan did not select is absent.
+	Selection map[string]gateTierSelection `json:"selection,omitempty"`
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
@@ -196,6 +201,37 @@ type gateRecord struct {
 	// merge base is not the merge base with the integration branch. Any
 	// entry keeps the verdict from PASS.
 	Unverified []string `json:"unverified,omitempty"`
+}
+
+// gateTierSelection is what the gate ran of one tier: the whole tier, or
+// the packages it ran whole and the test functions it ran by name in other
+// packages. A count of zero is omitted.
+type gateTierSelection struct {
+	Whole     bool `json:"whole"`
+	Packages  int  `json:"packages,omitempty"`
+	Functions int  `json:"functions,omitempty"`
+}
+
+// tierSelectionOf summarizes one tier's plan. A plan with no package scope,
+// no named tests, and no subsets runs the whole tier. A scoped plan counts
+// its package patterns and the test functions it runs by name.
+func tierSelectionOf(p tierPlan) gateTierSelection {
+	if p.pkgs == nil && len(p.tests) == 0 && len(p.subsets) == 0 {
+		return gateTierSelection{Whole: true}
+	}
+	s := gateTierSelection{Packages: len(p.pkgs), Functions: len(p.tests)}
+	for _, names := range p.funcs {
+		s.Functions += len(names)
+	}
+	return s
+}
+
+// String renders the selection for the gate's summary.
+func (s gateTierSelection) String() string {
+	if s.Whole {
+		return "whole tier"
+	}
+	return fmt.Sprintf("%d package(s), %d function(s) by name", s.Packages, s.Functions)
 }
 
 // runGate handles `lenny-test gate`.
@@ -1005,6 +1041,10 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		if p.name == tierStatic {
 			continue
 		}
+		if v.Gate.Selection == nil {
+			v.Gate.Selection = map[string]gateTierSelection{}
+		}
+		v.Gate.Selection[p.name] = tierSelectionOf(p)
 		g.runPlannedTier(v, p)
 	}
 
@@ -1283,6 +1323,11 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 	if v.Gate != nil {
 		fmt.Fprintf(w, "  base:        %s (merge base %s; with the integration branch %s)\n", v.Gate.Base, v.Gate.MergeBase, v.Gate.IntegrationMergeBase)
 		fmt.Fprintf(w, "  environment: %s\n", v.Gate.Environment)
+		if v.Gate.All {
+			fmt.Fprintln(w, "  selection:   full run (--all)")
+		} else {
+			fmt.Fprintln(w, "  selection:   selected run (the --changed selection against the base)")
+		}
 		if v.Gate.Dirty {
 			fmt.Fprintln(w, "  tree:        dirty; this verdict is not a verdict for the commit")
 		}
@@ -1298,6 +1343,11 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 		line := fmt.Sprintf("  %-12s %s", name, t.Status)
 		if t.Total > 0 {
 			line += fmt.Sprintf(" (%d passed, %d failed, %d skipped)", t.Passed, t.Failed, t.Skipped)
+		}
+		if v.Gate != nil {
+			if sel, ok := v.Gate.Selection[name]; ok {
+				line += " [" + sel.String() + "]"
+			}
 		}
 		if strings.HasPrefix(t.Reason, gateNotRunPrefix) {
 			line += ": " + t.Reason
