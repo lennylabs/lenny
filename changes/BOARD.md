@@ -242,8 +242,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0166.S2](0166-delegation-primitives/steps.md#0166s2-carved-budget) | Carved budget | Blocked | 0166.S1, 0133.S3, 0170.S1 |
 | [0166.S3](0166-delegation-primitives/steps.md#0166s3-reference-extension-and-parent-controls) | Reference extension and parent controls | Blocked | 0166.S1, 0166.S2, 0139.S2; a part waits on 0135.S5, 0146.S2, 0122.S1, 0153.S5 |
 | [0166.S4](0166-delegation-primitives/steps.md#0166s4-removal-of-built-in-delegation) | Removal of built-in delegation | Blocked | 0166.S3 |
-| [0170.S1](0170-budgets/steps.md#0170s1-budget-objects-and-credit-budgets) | Budget objects and credit budgets | Blocked | 0133.S3, 0149.S3; a part waits on 0143.S1, 0149.S9 |
-| [0170.S2](0170-budgets/steps.md#0170s2-price-lists-and-money-budgets) | Price lists and money budgets | Blocked | 0170.S1 |
+| [0170.S1](0170-budgets/steps.md#0170s1-budget-objects-and-the-llm-meter) | Budget objects and the `llm` meter | Blocked | 0133.S3, 0149.S3; a part waits on 0143.S1, 0149.S9 |
+| [0170.S2](0170-budgets/steps.md#0170s2-price-lists-and-limits-in-money) | Price lists and limits in money | Blocked | 0170.S1 |
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4 |
 | [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Blocked | 0170.S2, 0121.S3, 0121.S6, 0121.S7 |
