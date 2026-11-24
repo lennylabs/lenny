@@ -1,6 +1,6 @@
 # LLM response cache removal
 
-Status: `Draft`, revision 10, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 11, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -257,7 +257,7 @@ This section states what the §4.9 statement of the passthrough says under D2 **
 
 **Passthrough.** §4.9's "Native translator" states that the proxy forwards an Anthropic Messages request body, including `cache_control` at the top level and on content blocks, unchanged, and that a provider's prompt cache is the provider's own mechanism. It states that the proxy does not rewrite a top-level `cache_control`, so a runtime that sends one to an upstream that refuses it receives the upstream's refusal (LUR-10 of the LLM upstreams and cost budgets design). The pass-through applies to the body as the `PreLLMRequest` interceptor phase of §4.8 leaves it: D2 binds Lenny's own translators and handler, and a deployer's interceptor may still remove `cache_control`, which is the one way inside Lenny to close the prefix signal between users who share an upstream.
 
-**Isolation.** It states that the tenants of an upstream share its credential, and so share any prompt cache the provider keys on the account behind it, in the wording that open decision 18 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md) settles. §4.9 states no provider's isolation boundary, and the operator reads its provider's documentation for it (0133's D10). A deployer gives a regulated tenant an upstream of its own, whose credential belongs to a provider account that no other tenant's upstream uses. 0133 reports in posture the sharing of each upstream and warns when a shared upstream is granted to a `hipaa` or `fedramp` tenant, and §4.9 cites both. The provider returns no stored response, so no response content crosses tenants or users.
+**Isolation.** It states that the tenants of an upstream share its credential, and so share any prompt cache the provider keys on the account behind it, as decision 18 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md) states it. §4.9 states no provider's isolation boundary, and the operator reads its provider's documentation for it (0133's D10). A deployer gives a regulated tenant an upstream of its own, whose credential belongs to a provider account that no other tenant's upstream uses. 0133 reports in posture the sharing of each upstream and warns, in the same terms, when a shared upstream is granted to a `hipaa` or `fedramp` tenant, and §4.9 cites both. The provider returns no stored response, so no response content crosses tenants or users.
 
 **Isolation between users.** It states that strict isolation between the users of one tenant is not a Lenny feature. The proxy forwards identity attributes of each request, such as its tenant, user, and session, to the upstream, as the upstreams design specifies, so an operator who runs its own LLM gateway behind Lenny as the upstream can choose a provider account or key per user there.
 

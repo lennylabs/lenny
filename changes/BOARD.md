@@ -273,7 +273,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0130](0130-gitlab-credential-addon/change.md) | GitLab credential add-on | `Draft` | 0 of 3 | 8 |
 | [0131](0131-incremental-checkpoint/change.md) | Incremental checkpoints | `Draft` | 0 of 9 | 16 |
 | [0132](0132-llm-response-cache-removal/change.md) | LLM response cache removal | `Draft` | 0 of 1 | 2 |
-| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 13 |
+| [0133](0133-llm-upstreams-and-cost-budgets/change.md) | LLM upstreams and cost budgets | `Draft` | 0 of 3 | 8 |
 | [0134](0134-mcp-protocol-upgrade/change.md) | MCP protocol upgrade | `Draft` | 0 of 5 | 4 |
 | [0135](0135-message-delivery/change.md) | Message delivery | `Draft` | 0 of 5 | 57 |
 | [0136](0136-placement/change.md) | Placement | `Draft` | 0 of 8 | 22 |
