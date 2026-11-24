@@ -7,7 +7,7 @@
 | Confirm that no route of §15.1, and no code path, changes a session's `labels` after creation. | BGR-4 computes the budget set once, from attributes fixed at creation. A label change would move a session between budgets. | 0170.S1 |
 | Measure the latency of a credit reservation across budget sets of 1, 4, and 16 budgets on a Redis Cluster at the proxy's request rate, and the charge rate at which one budget's key serializes a tenant's calls. | O11 sets the allotment threshold from it, and every proxied call pays the reservation. | 0170.S1 |
 | Measure the rebuild of a budget's open period from checkpoints and durable records after a Redis loss, for a tenant budget over a month of `llm_usage`, `session_pod_windows`, and `artifact_store` rows. | "BG-9" refuses a budget's charges until its rebuild ends. | 0170.S1 |
-| Confirm that a session's directory groups are available at session creation for every identity source of 0149. | The `groups` selector of O5 reads them at creation. | 0170.S1 (part) |
+| Confirm that a session's directory groups are available at session creation for every identity source of 0149. | The `groups` selector of decision 8 reads them at creation. | 0170.S1 (part) |
 | Measure the Redis write rate of the compute tick at the session counts of the Tier 3 sizing of §17.8, at the default tick of 60 seconds and at 10 seconds. | Every session holding a pod writes once per tick in every budget of its set. | 0170.S3 |
 | Confirm that the release of a pod binding writes `closed_at` of `session_pod_windows` in the same transaction as the release in every release path of 0121, the eviction and the resume onto another pod included. | The recovery sweep settles an expired compute tick from `closed_at`. | 0170.S3 |
 
@@ -25,7 +25,7 @@ Budget records with their selectors, references, partitions, periods, schedules,
 
 This is the step that adds budget objects, on which 0166.S2 waits under decision 1: 0166.S2 lists 0170.S1 in its `depends-on`.
 
-It depends on 0133.S3 for the credit reservation, settlement, and recovery sweep it reserves over, and O6 asks whether 0133.S3 narrows to them. It depends on 0149.S3 for the session's stored environment that the `environments` selector reads. The part that waits on 0143.S1 is the `principalKinds` selector, which needs the subject namespaces of service accounts, and the part that waits on 0149.S9 is the `groups` selector of O5.
+It depends on 0133.S3 for the credit reservation, settlement, and recovery sweep it reserves over, to which 0133.S3 narrows under decision 9. It depends on 0149.S3 for the session's stored environment that the `environments` selector reads. The part that waits on 0143.S1 is the `principalKinds` selector, which needs the subject namespaces of service accounts, and the part that waits on 0149.S9 is the `groups` selector of decision 8.
 
 ### 0170.S2 Price lists and money budgets
 - status: Planned

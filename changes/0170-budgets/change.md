@@ -42,7 +42,7 @@ Today's budgets do not meet that request **[source]**:
 - Meters and units: credits for model calls, compute units for the time a session holds a pod, and bytes and byte-hours for stored data, with the tenant-level meters of 0121 ("BG-4").
 - Price lists: the operator's translation of each unit into an amount of money, versioned, and how a money budget counts charges that arrive in several units ("BG-5").
 - Enforcement: where each meter reserves and charges, the soft thresholds, the actions at exhaustion, and lease extension for session budgets ("BG-6").
-- Resets: on demand and on a schedule, with time zones, rollover, and the treatment of reservations held across a reset ("BG-7").
+- Resets: on demand and on a schedule, with time zones, and the treatment of reservations held across a reset ("BG-7").
 - Counter storage, failure behaviour, and the precision of each meter ("BG-9").
 - API routes, RBAC, audit events, metrics, and usage reports by budget object ("BG-10").
 - A statement of what this change supersedes in 0133 and in 0166 ("BG-11").
@@ -80,7 +80,6 @@ Today's budgets do not meet that request **[source]**:
 | Partition | One counter of a budget whose `per` field names an attribute, such as one counter per user ("BG-1"). |
 | Period | The interval over which a budget's counter accumulates, from one reset to the next. A budget with no schedule has one period for its life. |
 | Reset | The close of a period and the start of the next, at a schedule boundary or on demand ("BG-7"). |
-| Rollover | The part of a period's unused amount that a budget adds to its next period's limit ("BG-7"). |
 | Reservation | An amount held against every budget of a charge's budget set before the work that incurs it runs, settled to the actual charge afterwards. |
 | Carve | A reservation that funds a child session's budget from the budgets that apply to its parent ("BG-8"). |
 | Threshold | A fraction of a budget's limit at which the gateway records a notice ("BG-6"). |
@@ -225,7 +224,7 @@ A budget is a record with these fields **[design]**:
 | `attach` | `selector`, `reference`, or `both`. A principal budget is always `reference`. |
 | `usableBy` | For a tenant budget with `attach` including `reference`, the principals and directory groups that may name it in `budgetRefs`. |
 | `per` | Optional partition key: `user`, `session`, `rootSession`, `environment`, `runtime`, or `label:<key>`. The budget keeps one counter for each value, each with the full limit (O18). |
-| `period` | The schedule of "BG-7", with its time zone and rollover. `storageBytes` budgets have no period, because they limit what is held at each moment. |
+| `period` | The schedule of "BG-7", with its time zone. `storageBytes` budgets have no period, because they limit what is held at each moment. |
 | `thresholds` | Fractions of the limit, default `[0.8, 1.0]`, at most `budgets.maxThresholds` (default 8). |
 | `onExhausted` | The actions of "BG-6" for new work and for running sessions. |
 | `mode` | `enforce`, the default, or `observe`. |
@@ -274,7 +273,7 @@ A session creation may carry `budget`, which creates the session's budget object
 - **Defaults and ceilings.** A session budget's amount in each unit resolves under "Resolution" in [DP-1 of 0166](../0166-delegation-primitives/change.md#dp-1-session-grant), which states the order of defaults and ceilings for every limit a session receives (0166 decisions 40 and 49). This change names the per-unit settings that resolution reads: `budget` on the creation request as the requested value, `sessionBudgetDefaults` on a runtime, an environment, a tenant, and the platform as the defaults, and `sessionBudgetCeilings` at the same levels as the ceilings. A session with no default and no request has no session budget and is bound by its shared budgets alone.
 - **Lifetime.** The session budget has no schedule. It is created in the transaction that creates the session, it stops counting when the session reaches a terminal state, and its record is kept with the session's usage records for the session's retention. Storage held after the session ends counts against the shared budgets alone (O12).
 - **Changes.** The session's owner reads it with `GET /v1/sessions/{id}/budget` and raises or lowers a limit with `PATCH /v1/sessions/{id}/budget` within the ceilings. A raise beyond the ceilings goes through lease extension ("BG-6").
-- **Removed fields.** `maxTokenBudget` of the delegation lease and `maxCreditBudget`, which 0133 puts in its place, leave every input of a session grant under 0166's "DP-1": a client's `delegationLease`, a runtime's default lease, the delegation presets, and the tenant and environment ceilings carry no budget amount, and `budget`, `sessionBudgetDefaults`, and `sessionBudgetCeilings` take their place. Under decision D9 of 0133, a write that names either is refused with `400 VALIDATION_ERROR` naming the field.
+- **Removed fields.** `maxTokenBudget` of the delegation lease, and the `maxCreditBudget` that 0133 put in its place until its revision 12, leave every input of a session grant under 0166's "DP-1": a client's `delegationLease`, a runtime's default lease, the delegation presets, and the tenant and environment ceilings carry no budget amount, and `budget`, `sessionBudgetDefaults`, and `sessionBudgetCeilings` take their place. Under decision D9 of 0133, a write that names either is refused with `400 VALIDATION_ERROR` naming the field.
 
 ### BG-3 Matching
 
@@ -286,7 +285,7 @@ A session creation may carry `budget`, which creates the session's budget object
 | `environments` | The session's stored environment under 0149 "TS-1". | The client chooses among environments it is a member of. |
 | `principals` | The session owner's subject, a user or a service account. | The identity provider. |
 | `principalKinds` | `user` or `serviceAccount`. | The identity provider. |
-| `groups` | The owner's directory groups at the session's creation (0149.S9, O5). | The identity provider or the directory. |
+| `groups` | The owner's directory groups at the session's creation (0149.S9, decision 8). | The identity provider or the directory. |
 | `runtimes` | The session's runtime after the `PreRoute` chain. | The client and the routing interceptors. |
 | `pools` | The session's pool. | The routing interceptors. |
 | `labels` | Each key and value of `matchLabels` among the session's `labels`. | The client. |
@@ -297,7 +296,7 @@ A charge of a tenant-level meter has a tenant as its subject and matches only a 
 
 **The budget set [design].** At creation, the gateway computes the session's budget set and stores the identifiers on the session row. Every attribute a selector reads is fixed at creation, so the set changes only when a budget changes. On a budget's creation, change, enablement, disablement, or deletion, the gateway writes an invalidation, each replica refreshes the tenant's budgets from Postgres, and the next charge of each session reads the new set. A charge in flight keeps the set it reserved against. A new tenant budget with a selector therefore applies to running sessions from their next charge.
 
-**Labels are client-chosen [design].** A session's `labels` are the ones its root's client set at the root's creation, inherited unchanged by every descendant, and no parent writes them (0166 decision 44). A parent's `tags` are its own bookkeeping, and no selector reads them. A parent, or a model steered by injected content, therefore cannot add a `team` key that moves a child into another team's budget. A budget that selects on `labels` still binds only a root client that sets the label and is evaded by one that omits it. A budget that must bind selects on `environments`, `principals`, `groups`, `runtimes`, or `pools`, which the client cannot choose freely. O5 asks whether the core adds more.
+**Labels are client-chosen [design].** A session's `labels` are the ones its root's client set at the root's creation, inherited unchanged by every descendant, and no parent writes them (0166 decision 44). A parent's `tags` are its own bookkeeping, and no selector reads them. A parent, or a model steered by injected content, therefore cannot add a `team` key that moves a child into another team's budget. A budget that selects on `labels` still binds only a root client that sets the label and is evaded by one that omits it. A budget that must bind selects on `environments`, `principals`, `groups`, `runtimes`, or `pools`, which the client cannot choose freely (decision 8).
 
 ### BG-4 Meters and units
 
@@ -427,19 +426,15 @@ period:
   cron: "0 6 * * 1"           # cron: five fields, in timeZone
   interval: 7d                # interval: from startsAt
   timeZone: Europe/Madrid     # IANA name, default UTC
-  rollover:
-    mode: none                # none | carry
-    maxAmount: 0              # carry: the most of the unused amount added to the next period
 ```
 
-O8 asks whether rollover is offered at all.
+A new period starts at the budget's limit, whatever the last period left unused (decision 11).
 
 - **Boundaries.** The gateway computes each boundary from the schedule and the time zone. A local time that a daylight-saving change skips moves to the next instant that exists, and a local time that occurs twice takes its first occurrence. A cron schedule whose boundaries fall closer than `budgets.minPeriodSeconds` (default 3600) is refused at write.
 - **Period keys.** A period is named by its start instant, which every replica computes from the schedule, so a charge after a boundary lands in the new period without coordination.
 - **On demand.** `POST /v1/admin/budgets/{name}/reset`, or `POST /v1/budgets/{name}/reset` for a principal budget, closes the current period at once and starts a new one, for every partition or for the one the request names. The request carries a `reason`. The schedule continues at its next boundary, so the period after an on-demand reset is shorter. Whoever may change the budget may reset it. A session budget has no reset.
-- **Rollover.** Under `carry`, the next period's limit is the budget's limit plus the period's unused amount, at most `maxAmount`. A period's unused amount is its limit, its own carried amount included, less its consumption.
-- **Reservations across a reset.** Each reservation outstanding at a boundary, including the unconsumed part of every carve, moves into the new period: the new period's counter starts at the sum of the outstanding reservations plus nothing consumed, and each later settlement settles in the new period. A charge that straddles the boundary is therefore counted in the period in which it settles (O7).
-- **Records.** Closing a period writes a `budget_periods` row with the period's bounds, its consumption by meter, the money estimate of a money budget, the reservations carried, the rollover, and the trigger (`schedule` or `api`, with the actor), and `budget.reset` names the closed period.
+- **Reservations across a reset.** Each reservation outstanding at a boundary, including the unconsumed part of every carve, moves into the new period: the new period's counter starts at the sum of the outstanding reservations plus nothing consumed, and each later settlement settles in the new period. A charge that straddles the boundary is therefore counted in the period in which it settles (decision 10).
+- **Records.** Closing a period writes a `budget_periods` row with the period's bounds, its consumption by meter, the money estimate of a money budget, the reservations carried, and the trigger (`schedule` or `api`, with the actor), and `budget.reset` names the closed period.
 
 ### BG-8 Carves for delegated children
 
@@ -521,7 +516,7 @@ A service account holds the `user` row's rights over its own principal budgets. 
 | [0121](../0121-billing-resource-attribution/change.md) | None. | Every part. This change reads 0121's records as the durable source of compute and storage charges. |
 | [0131](../0131-incremental-checkpoint/change.md#ic-4-catalog-reference-closure-and-quota) | "Quota" in IC-4 charges the tenant's storage quota, which becomes every `storageBytes` budget of the owning session's set. | Every other part. |
 
-0133 revision 11 hands its tree scope to this change in "The tree scope" under LU-6, and 0166 revision 8 cites this change for the carve. The other scopes of "LU-6" stay in 0133 as written until O6 settles whether 0133.S3 builds them before this change replaces them. The edits to 0121, 0131, and the rest of 0133 that this table lists land when the owner settles the open decisions that name them.
+0133 revision 12 replaces the scopes of "LU-6" with this change's budget set and drops `maxCreditBudget` (decision 9), and 0166 revision 8 cites this change for the carve. The edits to 0121, 0131, and the quota settings of 0133 that this table lists land when the owner settles the open decisions that name them.
 
 ## Worked examples
 
@@ -566,7 +561,7 @@ POST /v1/admin/budgets
   "appliesTo": { "groups": ["payments-eng"] },
   "attach": "selector",
   "period": { "schedule": "calendar", "calendar": { "every": "month", "dayOfMonth": 1, "at": "00:00" },
-              "timeZone": "Europe/Madrid", "rollover": { "mode": "none" } },
+              "timeZone": "Europe/Madrid" },
   "thresholds": [0.8, 1.0],
   "onExhausted": { "new": "refuse", "running": "release" },
   "notify": [{ "url": "https://alerts.acme.com/lenny-budgets" }]
@@ -696,7 +691,7 @@ POST /v1/sessions
 **Limits [design]:**
 
 - Enforcement is best effort per meter, with the bounds of BGR-9. A byte-hour budget cannot stop the time that data is held.
-- A budget that selects on `labels` binds only clients that set the label (O5).
+- A budget that selects on `labels` binds only clients that set the label (decision 8).
 - Money figures are estimates under the operator's price list, which leaves out volume tiers, commitments, credits, and taxes, as 0133's credit estimate does.
 - A carve holds capacity in every budget of the parent's set while the child lives ("BG-8").
 - Budgets cover model calls through the proxy alone, as OD-15 of 0133 states, and costs that reach no tenant under 0121.
@@ -753,7 +748,7 @@ Each page below is **[design]** and lands with the step that changes what it des
 | Page | Reader | What changes |
 | :-- | :-- | :-- |
 | `docs/operator-guide/budgets.md` (new) | Operator | Budgets, meters, and units; `budgets.currency` (no default; money budgets are refused without it); the independence of budgets and billing, and what the billing stream carries for a billing system to compute compute units itself; price lists and their versions, validation, and estimate label; compute rates with `budgets.compute.rates.cpuPerVCPU` (default 1), `budgets.compute.rates.memoryPerGiB` (default 0.125), `budgets.compute.rates.gpu.<type>` (no default), `budgets.compute.isolationMultipliers` (default 1 per profile), and the pins `resourceClasses.<name>.computeUnitsPerSecond` and the pool's `computeUnitsPerSecond` (unset), with the formula and a worked rate for each shipped class; `budgets.compute.tickSeconds` (default 60, from 10 to 600); `budgets.storage.accrualIntervalSeconds` (default 300, from 60 to 3600); `budgets.tenantDefaults`; `budgets.maxPerTenant` (default 500), `budgets.maxPerPrincipal` (default 20), `budgets.maxPerTenantCeiling` (default 5000), `budgets.maxPerPrincipalCeiling` (default 200), and the tenant record's `budgetCaps`; `budgets.maxRefsPerSession` (default 8), `budgets.maxThresholds` (default 8), and `budgets.minPeriodSeconds` (default 3600); `defaultDelegationFraction` per unit (default 0.5); the platform's `sessionBudgetDefaults` and `sessionBudgetCeilings`; the reservation across slots and the hot-budget question; failure behaviour, rebuild, and precision per meter; the metrics and alerts. |
-| `docs/operator-guide/multi-tenancy.md` | Operator, tenant administrator | Tenant budgets and their RBAC, the caps on their number with a tenant's override and a `tenant-admin`'s lower principal cap, a tenant's credit conversions and which budgets use them, chargeback from usage reports, selectors, partitions, references and `usableBy`, schedules with time zones and rollover, resets on demand, thresholds and notices, exhaustion actions and their effect on running sessions, observe mode, and the tenant's and environment's session budget defaults and ceilings. The storage quota section becomes a storage budget. |
+| `docs/operator-guide/multi-tenancy.md` | Operator, tenant administrator | Tenant budgets and their RBAC, the caps on their number with a tenant's override and a `tenant-admin`'s lower principal cap, a tenant's credit conversions and which budgets use them, chargeback from usage reports, selectors, partitions, references and `usableBy`, schedules with time zones, resets on demand, thresholds and notices, exhaustion actions and their effect on running sessions, observe mode, and the tenant's and environment's session budget defaults and ceilings. The storage quota section becomes a storage budget. |
 | `docs/operator-guide/configuration.md` and `docs/reference/configuration.md` | Operator | Every `budgets.*` value with its default and range, and the removal of `storageQuotaBytes` and the token quota settings. |
 | `docs/client-guide/budgets.md` (new) | Client | The session budget with its defaults, ceilings, `PATCH`, and extension; principal budgets and `budgetRefs`; reading a session's budget set; resets of a principal budget; and how a refusal appears. |
 | `docs/client-guide/error-handling.md` and `docs/reference/error-catalog.md` | Client, operator | `BUDGET_EXHAUSTED` with its details, `BUDGET_NOT_ATTACHABLE`, and the retirement of `STORAGE_QUOTA_EXCEEDED`. |
@@ -774,7 +769,7 @@ The tiers are those of `.claude/rules/test-coverage.md`.
 
 | Tier | Tests | Requirements |
 | :-- | :-- | :-- |
-| `unit` | Selector matching for each field and for tenant-level subjects; the budget set's invalidation; schedule boundaries for each schedule kind across daylight-saving changes in several time zones, cron spacing, on-demand resets, and rollover; money conversion with rounding per charge and version selection by time, and the order of a tenant's and the platform's credit conversions for a tenant budget and for a platform budget; the compute rate from resources and isolation multipliers, the pins of a pool and a class, and the per-slot share; partition keys; the caps with a tenant's override, its ceiling, and a lower principal cap. | BGR-1, BGR-4, BGR-5, BGR-6 |
+| `unit` | Selector matching for each field and for tenant-level subjects; the budget set's invalidation; schedule boundaries for each schedule kind across daylight-saving changes in several time zones, cron spacing, and on-demand resets; money conversion with rounding per charge and version selection by time, and the order of a tenant's and the platform's credit conversions for a tenant budget and for a platform budget; the compute rate from resources and isolation multipliers, the pins of a pool and a class, and the per-slot share; partition keys; the caps with a tenant's override, its ceiling, and a lower principal cap. | BGR-1, BGR-4, BGR-5, BGR-6 |
 | `component` | The reservation, settlement, and reservation-index scripts on a Redis Cluster across budgets in different slots, with the compensating release on a refusal; a period boundary with outstanding reservations and carves; the recovery sweep for each meter; the rebuild from checkpoints and durable records. | BGR-2, BGR-6, BGR-7, BGR-10 |
 | `contract` | The routes' schemas, `If-Match`, `dryRun`, the error details, and the redaction of `details.budget` for a caller that may not read it. | BGR-11, BGR-12 |
 | `integration` | Example 1 to Example 4 on the compose stack: a team money budget across sessions with a threshold notice and exhaustion; a storage cap and a storage money budget; a CI engine under principal budgets with a reset on demand; a carve with a transfer and a return. | BGR-1 to BGR-8, BGR-12 |
