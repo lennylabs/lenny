@@ -1,6 +1,6 @@
 # Merge gate wall time
 
-Status: `Decided`, revision 2, 2026-11-23.
+Status: `Decided`, revision 3, 2026-11-24.
 
 ## Problem
 
