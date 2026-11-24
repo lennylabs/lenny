@@ -95,3 +95,7 @@ The security review of 0116.S5 raised open decision 4: whether 0133.S2 depends o
 ## Revision 13 (2026-11-23)
 
 - 2026-11-23, change 0170. Decisions 16 to 18 of [`0170-budgets`](../0170-budgets/decisions.md#decisions) name the unit of model calls `llmCredits`, separate meters from units, and give budgets named limits. "Credits", "Budget scope", and the 0170 row in "Terms", the "Budget set" row of "Scopes" under "LU-6", "Reservation" step 4, and the pipeline diagram name the limits that count the `llm` meter, in `llmCredits` or in money. This change's own prose about rate cards keeps "credits".
+
+## Revision 14 (2026-11-23)
+
+- 2026-11-23, change 0170. Records open decision 6 as settled with the owner's option (d) of 0170's O11, 0170's decision 24: the proxy reserves a call in the session's own budget and the carves that fund it, and shared budgets count the settled cost after the fact through each replica's flush. Settled decisions 6 and 7 of revision 13 are renumbered 11 and 12, so that decision 6 keeps the number it had while open and no settled decision shares a number with an open one. "Terms", LUR-5, LUR-7, the budget set row, "Reservation" step 4, "Settlement", "Recovery", "Bounds", the worked example, the §12 row, the `component` tests, and 0133.S3's note follow.

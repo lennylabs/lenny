@@ -1,6 +1,6 @@
 # Delegation as session primitives
 
-Status: `Draft`, revision 10, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 11, 2026-11-23. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -69,7 +69,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 | Transfer and release | The two ways a session leaves its parent. A transferred session stays in its tree with the root's client as its client, and a released session becomes a root outside the tree ("DP-2", decisions 32 and 46). |
 | Fenced child | A child created with fewer credential bindings, fewer egress hosts, or a stronger isolation profile than its parent ("DP-8"). |
 | Parent link | The `parentSessionId` of a session created under a session grant, with the lineage, principal, environment, and cascade that follow from it ("DP-2"). |
-| Carved budget | The budget a child receives at creation, reserved from what applies to its parent and returned at the child's end ("DP-3"). |
+| Carved budget | The budget a child receives at creation, reserved from its parent's session budget and returned at the child's end ("DP-3", 0170 "BG-8"). |
 | Reference extension | The session tool set implemented over the primitives and shipped with the runtime SDKs and the reference MCP bridge, which a runtime author may use, replace, or omit ("DP-5"). |
 | Orchestration policy | A rule about how an orchestrator uses its children, such as cycle avoidance, retry, visibility of siblings, discovery, and presets. This change moves orchestration policy out of the core. |
 | Labels | Parts of the design carry the label DP-n, and requirements carry the label DPR-n. |
@@ -115,7 +115,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 
 ## High-level design
 
-Lenny keeps the guarantees of delegation and stops providing the orchestrator. A session that its configuration allows to delegate holds a session grant. With the grant, the session can create sessions as its children, act as their client, and do nothing else that a client credential could do. Each child is an ordinary session, as MD-22 already states, linked to its parent, inside its parent's environment and principal, under a budget carved from what applies to its parent, at an isolation level no lower than its parent's, and with a grant whose caveats are at least as narrow as its parent's. When the parent ends, its children end under `onParentEnd`. The gateway delivers each child's events and questions to the parent under MD-22, and the parent chooses which of them wake it.
+Lenny keeps the guarantees of delegation and stops providing the orchestrator. A session that its configuration allows to delegate holds a session grant. With the grant, the session can create sessions as its children, act as their client, and do nothing else that a client credential could do. Each child is an ordinary session, as MD-22 already states, linked to its parent, inside its parent's environment and principal, under a budget carved from its parent's session budget, at an isolation level no lower than its parent's, and with a grant whose caveats are at least as narrow as its parent's. When the parent ends, its children end under `onParentEnd`. The gateway delivers each child's events and questions to the parent under MD-22, and the parent chooses which of them wake it.
 
 The gateway resolves a root session's grant from settings that people with authority over the session set. A platform administrator sets the platform defaults and ceilings. A tenant administrator writes the tenant's delegation policies, as §10.2 already allows, and sets a policy and numeric ceilings for the whole tenant and for each environment. A tenant's security team holds the security-tier switches in the security record of 0142, where one writer and one weakening rule govern them. The runtime contributes its policy reference, its defaults, and its ceilings, and the client can only narrow what the others allow. A parent can only narrow its own grant for a child, with two exceptions that move resources rather than authority: lease extension raises a resource limit within its ceilings, and a parent can move unused budget between itself and a live child.
 
@@ -152,7 +152,7 @@ A mechanism that every session uses, such as child events, client tools, recover
 | DPR-1 | A session creates a child only under its session grant, and a session with no grant creates none. |
 | DPR-2 | A child's grant carries every caveat of its parent's grant. No later hop, lease extension, or setting below the platform widens a security caveat. A resource caveat rises only through lease extension within its ceilings, or through a transfer from the parent's own unused amount. |
 | DPR-3 | A child's isolation level and placement are at least its parent's, its remaining depth is less than its parent's, and its environment and principal are its parent's unless a sharing path of TS-3 applies. Within one environment, the credential bindings and egress hosts a child receives are a subset of its parent's. Across environments, TS-3 decides what the child receives (decision 41). |
-| DPR-4 | A child's budget is reserved from what applies to its parent at creation, and the unused part returns to the parent when the child ends or when the parent takes it back. |
+| DPR-4 | A child's budget is reserved from its parent's session budget at creation, and the unused part returns to the parent when the child ends or when the parent takes it back. |
 | DPR-5 | No pod holds a bearer token for the session grant. The gateway applies the grant to the session that the adapter names. |
 | DPR-6 | When a parent ends, its non-terminal children end under the parent's `onParentEnd`. A force-terminate of the parent, and a tree terminate, close every descendant at once whatever `onParentEnd` holds. |
 | DPR-8 | The session tool set is implemented outside the gateway, over the primitives, and a runtime that omits it starts no child through the platform tool server. |
@@ -291,7 +291,7 @@ A leave carries these rules (decision 33):
 
 ### DP-3 Carved budget
 
-A child's creation reserves its budget from what applies to its parent and returns the unused part when the child ends **[design]**. The budget objects and the mechanics of the reservation are 0170's, and the carve is 0170's reservation for a child (decision 12, "DP-7"). `limits.budget` on `session.create` and the budget part of `session.set_limits` name amounts by the limit keys of the parent's session budget, as 0170 "BG-8" states (0170 decisions 16 to 18). This change keeps DPR-4 and the operations that move a carve.
+A child's creation reserves its budget from its parent's session budget and returns the unused part when the child ends, as 0170 "BG-8" states **[design]**. The budget objects and the mechanics of the reservation are 0170's, and the carve is 0170's reservation for a child (decision 12, "DP-7"). `limits.budget` on `session.create` and the budget part of `session.set_limits` name amounts by the limit keys of the parent's session budget, as 0170 "BG-8" states (0170 decisions 16 to 18). This change keeps DPR-4 and the operations that move a carve.
 
 **Moving budget within a tree.** `session.set_limits` moves an amount of any resource caveat between a parent and a live child: a raise draws on the parent's unused amount, and a cut returns the child's unused amount to the parent. A parent that keeps idle helpers open for follow-up work takes their unused budget back this way, and a parent gives a child that needs more than its estimate the difference without restarting it.
 
