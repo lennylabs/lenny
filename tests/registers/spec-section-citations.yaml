@@ -304,9 +304,9 @@ packages:
     - package: pkg/credential/impersonation/impersonationtest
       count: 1
     - package: pkg/credential/revocation
-      count: 7
+      count: 13
     - package: pkg/credential/revocation/propagator
-      count: 3
+      count: 5
     - package: pkg/credential/usercreds
       count: 14
     - package: pkg/ctl
@@ -899,6 +899,8 @@ packages:
       count: 4
     - package: pkg/storage/pgtenant
       count: 24
+    - package: pkg/storage/pubsub
+      count: 3
     - package: pkg/storage/rediskeys
       count: 3
     - package: pkg/storage/redistopology
@@ -990,7 +992,7 @@ packages:
     - package: sdks/runtime/go/runtime
       count: 129
     - package: tests/chaos
-      count: 340
+      count: 343
     - package: tests/component/admission
       count: 20
     - package: tests/component/auditintegrity
@@ -1058,7 +1060,7 @@ packages:
     - package: tests/component/secretprobe
       count: 2
     - package: tests/component/securitycaches
-      count: 3
+      count: 4
     - package: tests/component/slotrelease
       count: 25
     - package: tests/component/storagequota
@@ -1230,7 +1232,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 564
+      count: 566
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build
