@@ -64,7 +64,7 @@ func newRefusingServer(t *testing.T, store *refusingStore) (*httptest.Server, *j
 	return ts, signer
 }
 
-// spec: 13.3 (Credential Flow), 15.1 (REST API)
+// spec: §13.3 (Credential Flow), §15.1 (REST API)
 // diagnosis: a failure means POST /v1/oauth/token did not answer a step
 // (1a) refusal of an invalidated user with 400 invalid_grant
 // subject_user_invalidated or actor_user_invalidated, or 401
@@ -111,7 +111,7 @@ func TestOAuthTokenInvalidatedUserAndDepthRefusalsOnTheWire(t *testing.T) {
 	}
 }
 
-// spec: 13.3 (Credential Flow), 15.1 (REST API)
+// spec: §13.3 (Credential Flow), §15.1 (REST API)
 // diagnosis: a failure means a recursive-revocation request whose cascade
 // timed out was not answered with 503 REVOCATION_TIMEOUT in the Lenny
 // error envelope with retryable true and Retry-After, or an invalidated

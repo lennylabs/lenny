@@ -144,8 +144,9 @@ func TestMutualImpersonationStepsEndWithOneRootRevoked(t *testing.T) {
 	defer cancel()
 	for run := 0; run < 25; run++ {
 		acme, globex := f.tenant(t, ctx), f.tenant(t, ctx)
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "A", TenantID: acme, Subject: "alice@acme.com"})
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "G", TenantID: globex, Subject: "carol@globex.com"})
+		s := "-" + acme // jti is a global key, so each run names its own tokens
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "A" + s, TenantID: acme, Subject: "alice@acme.com"})
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "G" + s, TenantID: globex, Subject: "carol@globex.com"})
 		start := func(jti, target, sub, callerTenant, caller string) {
 			now := time.Now().UTC()
 			if err := f.store.RecordImpersonation(ctx, issuedtokenstore.IssuedToken{
@@ -155,12 +156,12 @@ func TestMutualImpersonationStepsEndWithOneRootRevoked(t *testing.T) {
 				t.Fatalf("run %d: start %s: %v", run, jti, err)
 			}
 		}
-		start("Ia-"+acme, acme, "alice@acme.com", globex, "G")
-		start("Ig-"+globex, globex, "carol@globex.com", acme, "A")
+		start("Ia-"+acme, acme, "alice@acme.com", globex, "G"+s)
+		start("Ig-"+globex, globex, "carol@globex.com", acme, "A"+s)
 		var errs [2]error
 		f.race(
-			func() { errs[0] = f.revocationRequest(ctx, acme, "Ia-"+acme, "alice@acme.com", "A") },
-			func() { errs[1] = f.revocationRequest(ctx, globex, "Ig-"+globex, "carol@globex.com", "G") },
+			func() { errs[0] = f.revocationRequest(ctx, acme, "Ia-"+acme, "alice@acme.com", "A"+s) },
+			func() { errs[1] = f.revocationRequest(ctx, globex, "Ig-"+globex, "carol@globex.com", "G"+s) },
 		)
 		won := 0
 		for i, err := range errs {
@@ -172,7 +173,7 @@ func TestMutualImpersonationStepsEndWithOneRootRevoked(t *testing.T) {
 				t.Fatalf("run %d: request %d: %v", run, i, err)
 			}
 		}
-		aLive, gLive := len(f.liveUnder(t, ctx, acme, "A")) == 1, len(f.liveUnder(t, ctx, globex, "G")) == 1
+		aLive, gLive := len(f.liveUnder(t, ctx, acme, "A"+s)) == 1, len(f.liveUnder(t, ctx, globex, "G"+s)) == 1
 		if won != 1 || aLive == (errs[0] == nil) || gLive == (errs[1] == nil) {
 			t.Fatalf("run %d: accepted %d requests (errs %v), A live %t, G live %t; want one root revoked by the accepted request", run, won, errs, aLive, gLive)
 		}
@@ -191,27 +192,28 @@ func TestIssuancesRacingACascadeLeaveNoLiveDescendant(t *testing.T) {
 	defer cancel()
 	for run := 0; run < 30; run++ {
 		acme := f.tenant(t, ctx)
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "L", TenantID: acme, Subject: "alice@acme.com"})
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "C", TenantID: acme, Subject: "alice@acme.com"})
+		s := "-" + acme // jti is a global key, so each run names its own tokens
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "L" + s, TenantID: acme, Subject: "alice@acme.com"})
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "C" + s, TenantID: acme, Subject: "alice@acme.com"})
 		mint := func(jti string) issuedtokenstore.IssuedToken {
 			now := time.Now().UTC()
 			return issuedtokenstore.IssuedToken{
 				JTI: jti, TenantID: acme, Subject: "alice@acme.com", TokenHash: []byte(jti),
-				IssuedAt: now, ExpiresAt: now.Add(time.Hour), ParentJTI: "L",
+				IssuedAt: now, ExpiresAt: now.Add(time.Hour), ParentJTI: "L" + s,
 			}
 		}
-		src := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "L", Subject: "alice@acme.com"}}
+		src := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "L" + s, Subject: "alice@acme.com"}}
 		f.race(
-			func() { _ = f.revocationRequest(ctx, acme, "C", "alice@acme.com", "L") },
+			func() { _ = f.revocationRequest(ctx, acme, "C"+s, "alice@acme.com", "L"+s) },
 			func() {
-				_, _, _ = f.store.RecordWithRotationAudit(ctx, mint("rotated"), src, "L", "rotation_replaced", "token.exchanged", json.RawMessage(`{}`), time.Now().UTC())
+				_, _, _ = f.store.RecordWithRotationAudit(ctx, mint("rotated"+s), src, "L"+s, "rotation_replaced", "token.exchanged", json.RawMessage(`{}`), time.Now().UTC())
 			},
 			func() {
-				_, _ = f.store.RecordWithAudit(ctx, mint("narrowed"), src, "token.exchanged", json.RawMessage(`{}`), time.Now().UTC())
+				_, _ = f.store.RecordWithAudit(ctx, mint("narrowed"+s), src, "token.exchanged", json.RawMessage(`{}`), time.Now().UTC())
 			},
-			func() { _ = f.store.RecordWithSources(ctx, mint("playground"), src) },
+			func() { _ = f.store.RecordWithSources(ctx, mint("playground"+s), src) },
 		)
-		if live := f.liveUnder(t, ctx, acme, "L"); len(live) != 0 {
+		if live := f.liveUnder(t, ctx, acme, "L"+s); len(live) != 0 {
 			t.Fatalf("run %d: rows live under the revoked root: %v", run, live)
 		}
 	}
@@ -229,8 +231,9 @@ func TestMintsRacingAFullRevokeLeaveNoLiveToken(t *testing.T) {
 	defer cancel()
 	for run := 0; run < 30; run++ {
 		acme := f.tenant(t, ctx)
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "A", TenantID: acme, Subject: "alice@acme.com"})
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "K", TenantID: acme, Subject: "bob@acme.com", ParentJTI: "A"})
+		s := "-" + acme // jti is a global key, so each run names its own tokens
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "A" + s, TenantID: acme, Subject: "alice@acme.com"})
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "K" + s, TenantID: acme, Subject: "bob@acme.com", ParentJTI: "A" + s})
 		mint := func(jti, sub, parent string) issuedtokenstore.IssuedToken {
 			now := time.Now().UTC()
 			return issuedtokenstore.IssuedToken{
@@ -252,17 +255,17 @@ func TestMintsRacingAFullRevokeLeaveNoLiveToken(t *testing.T) {
 				}
 			},
 			func() {
-				_, _ = f.store.RecordWithAudit(ctx, mint("bob-narrowed", "bob@acme.com", "K"), []issuedtokenstore.SourceToken{
-					{Role: issuedtokenstore.SourceSubjectToken, JTI: "K", Subject: "bob@acme.com"},
+				_, _ = f.store.RecordWithAudit(ctx, mint("bob-narrowed"+s, "bob@acme.com", "K"+s), []issuedtokenstore.SourceToken{
+					{Role: issuedtokenstore.SourceSubjectToken, JTI: "K" + s, Subject: "bob@acme.com"},
 				}, "token.exchanged", json.RawMessage(`{}`), time.Now().UTC())
 			},
 			func() {
-				_, _ = f.store.RecordWithAudit(ctx, mint("alice-narrowed", "alice@acme.com", "A"), []issuedtokenstore.SourceToken{
-					{Role: issuedtokenstore.SourceSubjectToken, JTI: "A", Subject: "alice@acme.com"},
+				_, _ = f.store.RecordWithAudit(ctx, mint("alice-narrowed"+s, "alice@acme.com", "A"+s), []issuedtokenstore.SourceToken{
+					{Role: issuedtokenstore.SourceSubjectToken, JTI: "A" + s, Subject: "alice@acme.com"},
 				}, "token.exchanged", json.RawMessage(`{}`), time.Now().UTC())
 			},
 		)
-		if live := f.liveUnder(t, ctx, acme, "A"); len(live) != 0 {
+		if live := f.liveUnder(t, ctx, acme, "A"+s); len(live) != 0 {
 			t.Fatalf("run %d: rows live under alice's revoked token: %v", run, live)
 		}
 	}
@@ -280,12 +283,13 @@ func TestRevocationOfTheCallerRacingTheImpersonationStep(t *testing.T) {
 	defer cancel()
 	for run := 0; run < 30; run++ {
 		acme, globex := f.tenant(t, ctx), f.tenant(t, ctx)
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "B", TenantID: acme, Subject: "bob@acme.com"})
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "Bd", TenantID: acme, Subject: "bob@acme.com"})
+		s := "-" + acme // jti is a global key, so each run names its own tokens
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "B" + s, TenantID: acme, Subject: "bob@acme.com"})
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "Bd" + s, TenantID: acme, Subject: "bob@acme.com"})
 		now := time.Now().UTC()
 		if err := f.store.RecordImpersonation(ctx, issuedtokenstore.IssuedToken{
 			JTI: "Ig-" + globex, TenantID: globex, Subject: "carol@globex.com", TokenHash: []byte("Ig"),
-			IssuedAt: now, ExpiresAt: now.Add(time.Hour), ActSubject: "bob@acme.com", ImpersonatorTenantID: acme, ImpersonatorJTI: "B",
+			IssuedAt: now, ExpiresAt: now.Add(time.Hour), ActSubject: "bob@acme.com", ImpersonatorTenantID: acme, ImpersonatorJTI: "B" + s,
 		}, acme); err != nil {
 			t.Fatalf("run %d: start: %v", run, err)
 		}
@@ -293,10 +297,10 @@ func TestRevocationOfTheCallerRacingTheImpersonationStep(t *testing.T) {
 		f.race(
 			func() {
 				_, stepErr = f.store.RevokeImpersonationStep(ctx, issuedtokenstore.ImpersonationStep{
-					TenantID: acme, CallerJTI: "Bd", RootJTI: "B", Reason: "cascade_from_parent", At: time.Now().UTC(),
+					TenantID: acme, CallerJTI: "Bd" + s, RootJTI: "B" + s, Reason: "cascade_from_parent", At: time.Now().UTC(),
 				})
 			},
-			func() { _ = f.store.Revoke(ctx, acme, "Bd", "explicit_revoke", time.Now().UTC()) },
+			func() { _ = f.store.Revoke(ctx, acme, "Bd"+s, "explicit_revoke", time.Now().UTC()) },
 		)
 		row, err := f.store.Get(ctx, globex, "Ig-"+globex)
 		if err != nil {
@@ -326,7 +330,8 @@ func TestImpersonationStartRacingACascadeOfItsCaller(t *testing.T) {
 	defer cancel()
 	for run := 0; run < 30; run++ {
 		acme, globex := f.tenant(t, ctx), f.tenant(t, ctx)
-		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "B", TenantID: acme, Subject: "bob@acme.com"})
+		s := "-" + acme // jti is a global key, so each run names its own tokens
+		f.record(t, ctx, issuedtokenstore.IssuedToken{JTI: "B" + s, TenantID: acme, Subject: "bob@acme.com"})
 		var (
 			startErr   error
 			startedAt  time.Time
@@ -338,13 +343,13 @@ func TestImpersonationStartRacingACascadeOfItsCaller(t *testing.T) {
 				now := time.Now().UTC()
 				startErr = f.store.RecordImpersonation(ctx, issuedtokenstore.IssuedToken{
 					JTI: bearer, TenantID: globex, Subject: "carol@globex.com", TokenHash: []byte(bearer),
-					IssuedAt: now, ExpiresAt: now.Add(time.Hour), ActSubject: "bob@acme.com", ImpersonatorTenantID: acme, ImpersonatorJTI: "B",
+					IssuedAt: now, ExpiresAt: now.Add(time.Hour), ActSubject: "bob@acme.com", ImpersonatorTenantID: acme, ImpersonatorJTI: "B" + s,
 				}, acme)
 				startedAt = time.Now()
 			},
 			func() {
 				_, _ = f.store.RevokeLineage(ctx, issuedtokenstore.LineageRevocation{
-					TenantID: acme, Root: issuedtokenstore.IssuedToken{JTI: "B"}, RootReason: "explicit_revoke", At: time.Now().UTC(),
+					TenantID: acme, Root: issuedtokenstore.IssuedToken{JTI: "B" + s}, RootReason: "explicit_revoke", At: time.Now().UTC(),
 				})
 				cascadeEnd = time.Now()
 			},
