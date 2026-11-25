@@ -246,3 +246,119 @@ func TestNilTriggerFireIsANoOp(t *testing.T) {
 		t.Error("a nil Trigger returned a request channel, want nil")
 	}
 }
+
+// steppedClock is a test clock that a source can advance during a read.
+type steppedClock struct {
+	mu  sync.Mutex
+	now time.Time
+}
+
+func (s *steppedClock) Now() time.Time {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.now
+}
+
+func (s *steppedClock) advance(d time.Duration) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = s.now.Add(d)
+}
+
+func (s *steppedClock) set(at time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.now = at
+}
+
+// slowSource advances the clock by its delay on every read, standing in
+// for a read of Postgres that takes that long.
+type slowSource struct {
+	clock *steppedClock
+	delay time.Duration
+}
+
+func (s slowSource) ListRevoked(context.Context, string) ([]issuedtokenstore.IssuedToken, error) {
+	s.clock.advance(s.delay)
+	return nil, nil
+}
+
+// TestStalenessCountsFromTheStartOfTheRead pins that the staleness gate
+// measures the age of a successful rehydration from the instant its read
+// began, so a read that takes 40 seconds does not extend the 90-second
+// window by 40 seconds for a revocation committed while it ran.
+//
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
+func TestStalenessCountsFromTheStartOfTheRead(t *testing.T) {
+	clock := &steppedClock{now: time.Unix(1_700_000_000, 0)}
+	started := clock.Now()
+	c := NewCache(WithClock(clock.Now))
+	if err := c.Rehydrate(context.Background(), fakeLister{"acme"}, slowSource{clock: clock, delay: 40 * time.Second}); err != nil {
+		t.Fatalf("Rehydrate: %v", err)
+	}
+	clock.set(started.Add(89 * time.Second))
+	if c.Stale() {
+		t.Error("the cache is stale 89 s after its read began, want fresh")
+	}
+	clock.set(started.Add(91 * time.Second))
+	if !c.Stale() {
+		t.Error("the cache is fresh 91 s after its read began and 51 s after it finished, want stale")
+	}
+}
+
+// TestAnOlderOverlappingReadDoesNotMoveTheLastSuccessBack pins that a
+// read that began first and finishes last does not age the cache: the
+// last success stays at the start of the later read that finished first.
+//
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
+func TestAnOlderOverlappingReadDoesNotMoveTheLastSuccessBack(t *testing.T) {
+	clock := &steppedClock{now: time.Unix(1_700_000_000, 0)}
+	c := NewCache(WithClock(clock.Now))
+	held := newCountingSource()
+	held.hold = make(chan struct{})
+	first := make(chan error, 1)
+	go func() { first <- c.Rehydrate(context.Background(), fakeLister{"acme"}, held) }()
+	awaitRead(t, held, 1)
+
+	clock.advance(10 * time.Second)
+	laterStart := clock.Now()
+	if err := c.Rehydrate(context.Background(), fakeLister{"acme"}, newCountingSource()); err != nil {
+		t.Fatalf("later Rehydrate: %v", err)
+	}
+	held.hold <- struct{}{}
+	if err := <-first; err != nil {
+		t.Fatalf("earlier Rehydrate: %v", err)
+	}
+
+	clock.set(laterStart.Add(89 * time.Second))
+	if c.Stale() {
+		t.Error("the earlier read moved the last success back to its own start")
+	}
+}
+
+// TestAHangingRehydrationFailsAtTheIntervalDeadline pins that a read that
+// never returns fails after one interval and is reported, so the loop
+// does not block on an unresponsive connection.
+//
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
+func TestAHangingRehydrationFailsAtTheIntervalDeadline(t *testing.T) {
+	c := NewCache()
+	src := newCountingSource()
+	src.hold = make(chan struct{}) // never released: each read waits for its deadline
+	errs := make(chan error, 8)
+	trigger := NewTrigger()
+	runLoop(t, c, 50*time.Millisecond, trigger, src, func(err error) {
+		select {
+		case errs <- err:
+		default:
+		}
+	})
+	select {
+	case err := <-errs:
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Errorf("onError got %v, want a deadline error", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a hanging rehydration was not cut off at its deadline")
+	}
+}

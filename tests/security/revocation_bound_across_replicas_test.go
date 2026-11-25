@@ -29,8 +29,9 @@ const revBoundPeriodic = 35 * time.Second
 
 // revBoundReconnect bounds a replica's refusal of a revoked bearer whose
 // event it missed, measured from its Redis link coming back: the reconnect
-// and the rehydration it triggers, well inside the 30 s periodic one.
-const revBoundReconnect = 10 * time.Second
+// and the rehydration it triggers. It is a sixth of the 30 s period, so a
+// periodic rehydration lands inside it on at most one run in six.
+const revBoundReconnect = 5 * time.Second
 
 // revBoundReplicas is two gateway replicas over one Postgres and one Redis.
 // Replica B reaches Redis through linkB, so a case can cut B's link alone.
@@ -137,7 +138,7 @@ func awaitRefused(t *testing.T, name string, gw *gateway.Process, bearer string,
 // replica did not publish the jti or the peer did not apply it. A failure
 // with B's Redis link held down means B's periodic rehydration of
 // issued_tokens does not run every 30 seconds. A failure after B's link
-// comes back, within 10 seconds, means B does not rehydrate when its
+// comes back, within 5 seconds, means B does not rehydrate when its
 // revocation subscription reconnects, and waits for the periodic read.
 func TestRevokedBearerIsRefusedOnEveryReplicaWithinTheRevocationBound(t *testing.T) {
 	t.Parallel()
@@ -162,12 +163,26 @@ func TestRevokedBearerIsRefusedOnEveryReplicaWithinTheRevocationBound(t *testing
 	})
 
 	t.Run("with the peer's Redis link restored after the revocation", func(t *testing.T) {
-		tok, id := r.bearer(t, "dave@acme.com")
-		r.linkB.Cut()
-		r.revoke(t, id)
-		awaitRefused(t, "replica A", r.a, tok, revBoundPropagation)
-		r.linkB.Restore(t)
-		took := awaitRefused(t, "replica B after its Redis link came back", r.b, tok, revBoundReconnect)
-		t.Logf("replica B refused the bearer %s after its Redis link came back", took.Round(time.Millisecond))
+		// B's periodic rehydration can run between the revocation and the
+		// restore, which would apply the revocation without the reconnect.
+		// The attempt is repeated with a fresh bearer until B still admits
+		// the bearer when its link comes back, so the refusal measured
+		// after the restore is the reconnect's.
+		for attempt, subject := range []string{"dave@acme.com", "erin@acme.com", "frank@acme.com"} {
+			tok, id := r.bearer(t, subject)
+			r.linkB.Cut()
+			r.revoke(t, id)
+			awaitRefused(t, "replica A", r.a, tok, revBoundPropagation)
+			code, _ := spoofCall(t, http.MethodGet, r.b.BaseURL()+"/v1/admin/me", tok, nil, nil)
+			r.linkB.Restore(t)
+			if code == http.StatusUnauthorized {
+				t.Logf("attempt %d: replica B's periodic rehydration applied the revocation before the restore; retrying", attempt+1)
+				continue
+			}
+			took := awaitRefused(t, "replica B after its Redis link came back", r.b, tok, revBoundReconnect)
+			t.Logf("replica B refused the bearer %s after its Redis link came back", took.Round(time.Millisecond))
+			return
+		}
+		t.Fatal("replica B's periodic rehydration applied the revocation before the restore on every attempt")
 	})
 }

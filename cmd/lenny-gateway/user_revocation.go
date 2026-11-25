@@ -293,10 +293,10 @@ const (
 	adminRotationExchangeType     = "admin_rotation"
 	adminRotationRevocationReason = "rotation_replaced"
 	// adminRotationPropagationMode records that the durable Postgres write
-	// is the authoritative revocation store; a peer replica falls back to
-	// issued_tokens.revoked_at, so the durable revoke alone satisfies the
-	// no-grace-period guarantee. The gateway path does not publish on the
-	// EventBus, so the mode is postgres_only. spec: §16.7.
+	// is the authoritative revocation store; a peer replica that receives
+	// no event applies the revocation at its next revocation-cache
+	// rehydration of issued_tokens, within the §13.3 bound. The mode is
+	// postgres_only. spec: §16.7.
 	adminRotationPropagationMode = "postgres_only"
 )
 

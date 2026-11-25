@@ -212,7 +212,7 @@ func proxiedRedis(t *testing.T, addr string) (*redis.Client, *tcpfault.Proxy) {
 }
 
 // spec: §13.3 (Credential Flow) "Authoritative durability for revocation", §13.3 (Credential Flow) "Token rotation and revocation — no grace period"
-// diagnosis: replica B, whose Redis went away while replica A revoked a
+// diagnosis: replica B, whose Redis link was cut while replica A revoked a
 // token, kept admitting the token after its Redis came back, although its
 // periodic rehydration is an hour away. B's revocation subscriber did not
 // report the re-established subscription, or the rehydration loop did not
@@ -220,7 +220,7 @@ func proxiedRedis(t *testing.T, addr string) (*redis.Client, *tcpfault.Proxy) {
 // means the revoking replica does not apply its own revocation; a 401 from
 // B while its Redis is down means the event reached B some other way and
 // the case did not exercise the reconnect.
-func TestRevocationMissedDuringARedisRestartIsRefusedAfterTheReplicaReconnects(t *testing.T) {
+func TestRevocationMissedDuringARedisLinkLossIsRefusedAfterTheReplicaReconnects(t *testing.T) {
 	e := startRevChaosEnv(t)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -232,7 +232,7 @@ func TestRevocationMissedDuringARedisRestartIsRefusedAfterTheReplicaReconnects(t
 	e.revoke(t, a, "jti-probe")
 	b.awaitStatus(t, "replica B with the probe over a live subscription", probe, http.StatusUnauthorized, 10*time.Second)
 
-	bearer := e.mint(t, "jti-revoked-during-restart")
+	bearer := e.mint(t, "jti-revoked-during-link-loss")
 	for name, r := range map[string]*revChaosReplica{"A": a, "B": b} {
 		if code, errCode := r.call(t, bearer); code != http.StatusOK {
 			t.Fatalf("replica %s answered %d %s before the revocation, want 200", name, code, errCode)
@@ -240,7 +240,7 @@ func TestRevocationMissedDuringARedisRestartIsRefusedAfterTheReplicaReconnects(t
 	}
 
 	linkB.Cut()
-	e.revoke(t, a, "jti-revoked-during-restart")
+	e.revoke(t, a, "jti-revoked-during-link-loss")
 	if code, errCode := a.call(t, bearer); code != http.StatusUnauthorized || errCode != "TOKEN_REVOKED" {
 		t.Errorf("replica A answered %d %s after it revoked the token, want 401 TOKEN_REVOKED", code, errCode)
 	}
