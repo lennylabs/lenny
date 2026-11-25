@@ -304,7 +304,7 @@ packages:
     - package: pkg/credential/impersonation/impersonationtest
       count: 1
     - package: pkg/credential/revocation
-      count: 18
+      count: 26
     - package: pkg/credential/revocation/propagator
       count: 6
     - package: pkg/credential/usercreds

@@ -147,7 +147,11 @@ func TestSubscribeCallsOnSubscribedWhenTheFirstConfirmationComesLate(t *testing.
 
 	var confirmations atomic.Int32
 	got := newPayloadSet()
-	go bus.Subscribe(ctx, "ch", got.handler, OnSubscribed(func() { confirmations.Add(1) }))
+	done := make(chan struct{})
+	go func() {
+		bus.Subscribe(ctx, "ch", got.handler, OnSubscribed(func() { confirmations.Add(1) }))
+		close(done)
+	}()
 
 	time.Sleep(300 * time.Millisecond)
 	if n := confirmations.Load(); n != 0 {
@@ -162,6 +166,13 @@ func TestSubscribeCallsOnSubscribedWhenTheFirstConfirmationComesLate(t *testing.
 	awaitDelivery(t, bus, "ch", "first", got.has)
 	if n := confirmations.Load(); n != 1 {
 		t.Errorf("OnSubscribed ran %d times for one late confirmation, want 1", n)
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Subscribe did not return after the context was cancelled")
 	}
 }
 
