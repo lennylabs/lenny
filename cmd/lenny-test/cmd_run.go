@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -176,6 +178,13 @@ type tierPlan struct {
 	// `run --changed` and `--tier unit` leave it false and keep writing
 	// tests/results/cover.out, which `lenny-test coverage --diff` reads.
 	noCoverage bool
+	// exclude lists package directories, relative to the module root,
+	// whose packages an unscoped unit run leaves out; the run lists the
+	// module's packages and runs the rest, packages below those
+	// directories among them.
+	// The merge gate's full run sets it (gateFullRunExcludes); every other
+	// run leaves it nil and runs `./...`. It is read only when pkgs is nil.
+	exclude []string
 	// goTestP is the `go test -p` of the tier's runs, or 0 for the go
 	// command's default. The merge gate sets it on a tier that shares its
 	// phase with another lane when `--go-test-p` names the tier (change
@@ -676,57 +685,87 @@ type staticCheck struct {
 // carries the specification migration gates, and its budget is the larger
 // while those gates remain. Each entry names its package literally, so the
 // documentation test that reconciles TESTING.md with this table reads it.
-func staticPackageChecks() []staticCheck {
+// Each package runs in the checkout at root.
+func staticPackageChecks(root string) []staticCheck {
 	return []staticCheck{
-		{name: "go test ./tests/static/build/...", run: goTestCheck("./tests/static/build/..."), classify: classifyUnverified, budget: 30 * time.Second},
-		{name: "go test ./tests/static/chart/...", run: goTestCheck("./tests/static/chart/..."), classify: classifyUnverified, budget: 30 * time.Second},
-		{name: "go test ./tests/static/lint/...", run: goTestCheck("./tests/static/lint/..."), classify: classifyUnverified, budget: 30 * time.Second},
-		{name: "go test ./tests/static/structure/...", run: goTestCheck("./tests/static/structure/..."), classify: classifyUnverified, budget: 60 * time.Second},
+		{name: "go test ./tests/static/build/...", run: goTestCheck(root, "./tests/static/build/..."), classify: classifyUnverified, budget: 30 * time.Second},
+		{name: "go test ./tests/static/chart/...", run: goTestCheck(root, "./tests/static/chart/..."), classify: classifyUnverified, budget: 30 * time.Second},
+		{name: "go test ./tests/static/lint/...", run: goTestCheck(root, "./tests/static/lint/..."), classify: classifyUnverified, budget: 30 * time.Second},
+		{name: "go test ./tests/static/structure/...", run: goTestCheck(root, "./tests/static/structure/..."), classify: classifyUnverified, budget: 60 * time.Second},
 	}
 }
 
 // goTestCheck returns a check body that runs the static-tier Go tests of
-// pattern. A static-tier test that ran but could not reach a conclusion (a
+// pattern in the checkout at root. A static-tier test that ran but could not reach a conclusion (a
 // generator it needs is absent, for example) passes and writes the
 // unverified marker to stdout, and the check's classifier, classifyUnverified,
 // reads it, so such a test reports "proved nothing" rather than a green run
 // that proved nothing silently.
-func goTestCheck(pattern string) func() (string, error) {
+func goTestCheck(root, pattern string) func() (string, error) {
 	return func() (string, error) {
-		out, err := exec.Command("go", goTestArgs(pattern)...).CombinedOutput()
+		cmd := exec.Command("go", goTestArgs(pattern)...)
+		cmd.Dir = root
+		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
 }
 
-// runStaticTier runs the static-tier check table. The checks are
-// independent, so they run concurrently, and every check runs whatever
-// the others report: a failure early in the table does not hide the
-// checks after it. The result carries one failure entry per failed
-// check. base is the ref the branch merges into, which the changed-line
-// lint compares with; empty selects the default integration refs
-// (resolveLintBase).
+// runStaticTier runs the static-tier check table on the checkout that
+// holds the current directory, with the secret scan reading the tree at
+// HEAD (runStaticTierAt). `lenny-test run` runs the static tier this way.
 func runStaticTier(base string) (string, string, *tierResult) {
+	return runStaticTierAt(repoRoot(), base, "HEAD")
+}
+
+// runStaticTierAt runs the static-tier check table in the checkout at
+// root: every check runs there, and the secret scan reads the tree of rev.
+// The gate passes the snapshot of the commit it resolved HEAD to, and that
+// commit (change 0172, decision 14). The checks are independent, so they
+// run concurrently, and every check runs whatever the others report: a
+// failure early in the table does not hide the checks after it. The result
+// carries one failure entry per failed check. base is the ref the branch
+// merges into, which the changed-line lint compares with; empty selects
+// the default integration refs (resolveLintBase).
+func runStaticTierAt(root, base, rev string) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return verdictstatus.Skipped, "go not on PATH", nil
 	}
+	outcomes := runStaticChecks(staticChecks(root, base, rev))
+	status, msg := reduceStaticOutcomes(outcomes)
+	return status, msg, staticTierResult(outcomes)
+}
 
+// staticSelfFn locates the running lenny-test, which two checks of the
+// static tier run again. Tests replace it with a stand-in.
+var staticSelfFn = os.Executable
+
+// staticChecks returns the static tier's check table for the checkout at
+// root: every check runs its command there, with base for the
+// changed-line lint and rev for the secret scan (runStaticTierAt).
+func staticChecks(root, base, rev string) []staticCheck {
 	checks := []staticCheck{
 		{name: "go vet ./...", run: func() (string, error) {
-			out, err := exec.Command("go", "vet", "./...").CombinedOutput()
+			cmd := exec.Command("go", "vet", "./...")
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		}},
 		{name: "go vet -tags=contract ./tests/contract/...", run: func() (string, error) {
 			// Verify contract-tagged tests compile without running them.
 			// They are expected to fail at runtime in the current phase;
 			// the static tier guarantees they at least compile.
-			out, err := exec.Command("go", "vet", "-tags=contract", "./tests/contract/...").CombinedOutput()
+			cmd := exec.Command("go", "vet", "-tags=contract", "./tests/contract/...")
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		}},
 		{name: "buf lint", run: func() (string, error) {
 			if _, err := exec.LookPath("buf"); err != nil {
 				return "buf not on PATH; skipping (run scripts/setup-dev.sh)", nil
 			}
-			out, err := exec.Command("buf", "lint").CombinedOutput()
+			cmd := exec.Command("buf", "lint")
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		}},
 		{name: "buf breaking", run: func() (string, error) {
@@ -742,7 +781,7 @@ func runStaticTier(base string) (string, string, *tierResult) {
 			// case (pre-Phase 2) with a skip — buf reports it via the
 			// "had no .proto files" message.
 			cmd := exec.Command("buf", "breaking", "schemas/", "--against", ".git#branch=main")
-			cmd.Dir = repoRoot()
+			cmd.Dir = root
 			out, err := cmd.CombinedOutput()
 			body := string(out)
 			if err != nil && (strings.Contains(body, "does not exist") || strings.Contains(body, "no .proto files")) {
@@ -759,7 +798,7 @@ func runStaticTier(base string) (string, string, *tierResult) {
 			// release.
 			if err != nil {
 				branchCmd := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD")
-				branchCmd.Dir = repoRoot()
+				branchCmd.Dir = root
 				branch, _ := branchCmd.Output()
 				if strings.TrimSpace(string(branch)) != "main" {
 					return "advisory: buf breaking diffs against `main`; on a feature branch the findings are the branch's deliberate proto evolution, not a regression. Not failing the static gate:\n" + body, nil
@@ -773,7 +812,7 @@ func runStaticTier(base string) (string, string, *tierResult) {
 				return "gofumpt not on PATH; skipping (install via go install mvdan.cc/gofumpt@latest)", nil
 			}
 			cmd := exec.Command(path, "-l", ".")
-			cmd.Dir = repoRoot()
+			cmd.Dir = root
 			out, err := cmd.CombinedOutput()
 			// gofumpt walks every directory under the root, including
 			// other agents' worktrees under .claude/worktrees/ and
@@ -797,7 +836,7 @@ func runStaticTier(base string) (string, string, *tierResult) {
 				return "goimports not on PATH; skipping (install via go install golang.org/x/tools/cmd/goimports@latest)", nil
 			}
 			cmd := exec.Command(path, "-l", "-local", "github.com/lennylabs/lenny", ".")
-			cmd.Dir = repoRoot()
+			cmd.Dir = root
 			out, err := cmd.CombinedOutput()
 			// A testdata/ tree is fixture material rather than source: the go
 			// tool ignores it by convention, and a fixture is often malformed
@@ -821,77 +860,77 @@ func runStaticTier(base string) (string, string, *tierResult) {
 		// A finding on a line the branch changes fails the tier. The
 		// findings elsewhere, which predate the check, are a warning until
 		// they reach zero (GATE-I1, lint_changed.go).
-		{name: "golangci-lint run", run: newGolangciLint(repoRoot(), base).run, classify: classifyGolangciLint},
+		{name: "golangci-lint run", run: newGolangciLint(root, base).run, classify: classifyGolangciLint},
 		{name: "scripts/lint-schema.sh (R-01)", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "lint-schema.sh")
+			script := filepath.Join(root, "scripts", "lint-schema.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "lint-schema.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/lint-queries.sh (R-02)", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "lint-queries.sh")
+			script := filepath.Join(root, "scripts", "lint-queries.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "lint-queries.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/lint-migrations.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "lint-migrations.sh")
+			script := filepath.Join(root, "scripts", "lint-migrations.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "lint-migrations.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/check-adr-catalog.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "check-adr-catalog.sh")
+			script := filepath.Join(root, "scripts", "check-adr-catalog.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "check-adr-catalog.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/check-doc-examples.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "check-doc-examples.sh")
+			script := filepath.Join(root, "scripts", "check-doc-examples.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "check-doc-examples.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/check-helm-charts.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "check-helm-charts.sh")
+			script := filepath.Join(root, "scripts", "check-helm-charts.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "check-helm-charts.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/check-schema-breaking.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "check-schema-breaking.sh")
+			script := filepath.Join(root, "scripts", "check-schema-breaking.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "check-schema-breaking.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/check-action-pins.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "check-action-pins.sh")
+			script := filepath.Join(root, "scripts", "check-action-pins.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "check-action-pins.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "scripts/check-tool-pins.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "check-tool-pins.sh")
+			script := filepath.Join(root, "scripts", "check-tool-pins.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "check-tool-pins.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			return string(out), err
 		}},
 		{name: "gitleaks dir (committed tree at HEAD)", run: func() (string, error) {
@@ -899,15 +938,16 @@ func runStaticTier(base string) (string, string, *tierResult) {
 			// allowlist in .gitleaks.toml and the coverage registers
 			// under tests/registers (see secretscan.go). A host without
 			// gitleaks, or with another gitleaks release, reports
-			// unverified rather than a pass.
-			return runSecretScan(repoRoot())
+			// unverified rather than a pass. It reads the tree of rev, the
+			// commit the gate resolved HEAD to.
+			return runSecretScanAt(root, rev)
 		}, classify: classifyUnverified},
 		{name: "scripts/lint-determinism.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "lint-determinism.sh")
+			script := filepath.Join(root, "scripts", "lint-determinism.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "lint-determinism.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			if err != nil {
 				// §17.4 violations are informational today —
 				// pre-existing tests use real clocks for JWT expiry
@@ -919,22 +959,22 @@ func runStaticTier(base string) (string, string, *tierResult) {
 			return string(out), nil
 		}},
 		{name: "scripts/lint-test-conventions.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "lint-test-conventions.sh")
+			script := filepath.Join(root, "scripts", "lint-test-conventions.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "lint-test-conventions.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			if err != nil {
 				return fmt.Sprintf("WARNING (non-fatal, §17.6/§17.7):\n%s", out), nil
 			}
 			return string(out), nil
 		}},
 		{name: "scripts/check-markdown-links.sh", run: func() (string, error) {
-			script := filepath.Join(repoRoot(), "scripts", "check-markdown-links.sh")
+			script := filepath.Join(root, "scripts", "check-markdown-links.sh")
 			if _, err := os.Stat(script); err != nil {
 				return "check-markdown-links.sh not present; skipping", nil
 			}
-			out, err := exec.Command("bash", script).CombinedOutput()
+			out, err := bashScript(root, script)
 			if err != nil {
 				// Jekyll renders many internal links at site-build
 				// time that markdown-link-check cannot resolve in
@@ -951,29 +991,38 @@ func runStaticTier(base string) (string, string, *tierResult) {
 			// _test.go file and confirms each test function carries
 			// the §17.2 annotation (or is a scaffold whose t.Skip
 			// already names the spec section).
-			self, err := os.Executable()
+			self, err := staticSelfFn()
 			if err != nil {
 				return "", fmt.Errorf("locate self: %w", err)
 			}
-			out, err := exec.Command(self, "validate-diagnosis").CombinedOutput()
+			cmd := exec.Command(self, "validate-diagnosis")
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		}},
 		{name: "lenny-test validate", run: func() (string, error) {
 			// The selection and register files parse and resolve, and
 			// every component-and-up test carries a spec annotation.
-			self, err := os.Executable()
+			self, err := staticSelfFn()
 			if err != nil {
 				return "", fmt.Errorf("locate self: %w", err)
 			}
-			out, err := exec.Command(self, "validate").CombinedOutput()
+			cmd := exec.Command(self, "validate")
+			cmd.Dir = root
+			out, err := cmd.CombinedOutput()
 			return string(out), err
 		}},
 	}
 
-	checks = append(checks, staticPackageChecks()...)
-	outcomes := runStaticChecks(checks)
-	status, msg := reduceStaticOutcomes(outcomes)
-	return status, msg, staticTierResult(outcomes)
+	return append(checks, staticPackageChecks(root)...)
+}
+
+// bashScript runs a static-tier shell script with bash in the checkout at
+// root and returns its combined output.
+func bashScript(root, script string) ([]byte, error) {
+	cmd := exec.Command("bash", script)
+	cmd.Dir = root
+	return cmd.CombinedOutput()
 }
 
 // goTestArgs returns the argv (after the "go" binary itself) that runs
@@ -1188,9 +1237,11 @@ func tierStatusRank(status string) int {
 
 // runUnitTier runs `go test` over the plan's scope: its package patterns
 // whole and its by-name functions (see scopedRuns), or the whole module
-// (`./...`) when the plan is unscoped. --changed and --pkg pass the scope
-// they resolved, also when --tier unit restricts them; --tier unit alone,
-// --gate alone, and --all leave it nil.
+// (`./...`) when the plan is unscoped. An unscoped plan with exclude set,
+// which the merge gate's full run has, lists the module's packages and
+// runs those outside the directories it names. --changed and --pkg pass
+// the scope they resolved, also when --tier unit restricts them; --tier
+// unit alone, --gate alone, and --all leave it nil.
 func runUnitTier(p tierPlan) (string, string, *tierResult) {
 	// Race detection is on by default per §17.4. The coverage profile
 	// goes to unitCoverProfile(p): none for a plan with noCoverage set,
@@ -1203,6 +1254,20 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 		return "pass", "no Go packages under pkg/ yet", &tierResult{}
 	}
 	profile := unitCoverProfile(p)
+	if p.pkgs == nil && len(p.exclude) > 0 {
+		all, err := listModulePackagesFn()
+		if err != nil {
+			return verdictstatus.Fail, fmt.Sprintf("list the module's packages to leave out %s: %v", strings.Join(p.exclude, ", "), err), nil
+		}
+		kept := excludePackages(all, p.exclude)
+		if len(kept) == 0 {
+			// go test with no package argument would test the working
+			// directory instead.
+			return verdictstatus.Fail, "the module lists no package outside " + strings.Join(p.exclude, ", "), nil
+		}
+		result, runErr := runGoTestJSONFn(unitTierArgs(kept, profile, p.goTestP)...)
+		return tierOutcome("unit", result, runErr)
+	}
 	if p.pkgs == nil {
 		result, runErr := runGoTestJSONFn(unitTierArgs(nil, profile, p.goTestP)...)
 		return tierOutcome("unit", result, runErr)
@@ -1222,6 +1287,56 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 		return withGoTestP(unitTierFlags(""), p)
 	})
 	return tierOutcome("unit", result, runErr)
+}
+
+// listModulePackagesFn lists the import paths of the module's packages, as
+// `go test ./...` would run them. Tests replace it to list a fixed set.
+var listModulePackagesFn = listModulePackages
+
+// moduleListArgs are the arguments of the go command that lists the
+// module's packages for a full run's unit tier (listModulePackages).
+var moduleListArgs = []string{"list", "-e", "-race", "-f", "{{.ImportPath}}", "./..."}
+
+// listModulePackages runs `go list -e -race ./...` in the current
+// directory and returns the import paths it prints. -e keeps a package
+// that fails to load in the list, so `go test` reports its failure as
+// `./...` would, and -race sets the build tag the unit tier's `go test
+// -race` sets, so a package whose files need that tag is listed as `go
+// test -race ./...` would run it. The listing is the first module-wide
+// load of a full run, which can download modules into a cold cache, so it
+// shares the unit tier's own cap rather than the selection's.
+func listModulePackages() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), tierUnitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", moduleListArgs...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list ./...: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// excludePackages returns the import paths of pkgs, in order, without the
+// package of each directory exclude names, relative to the module root. A
+// package below such a directory stays, so a test package moved under it
+// still runs.
+func excludePackages(pkgs, exclude []string) []string {
+	out := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		left := false
+		for _, dir := range exclude {
+			if p == moduleImportPath+"/"+strings.Trim(dir, "/") {
+				left = true
+				break
+			}
+		}
+		if !left {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // unitCoverProfile returns the path the unit tier writes its coverage
@@ -1472,7 +1587,7 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	// reference-catalog runtimes whose package is present on disk.
 	referenceCatalog := []string{
 		"claude-code", "gemini-cli", "codex", "cursor-cli", "chat",
-		"langgraph", "mastra", "openai-assistants", "crewai",
+		"langgraph", "mastra", "crewai",
 	}
 	expandReferenceCatalog := func() []string {
 		built := []string{}

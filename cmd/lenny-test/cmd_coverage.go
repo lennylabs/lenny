@@ -20,7 +20,7 @@ import (
 //
 //	lenny-test coverage --spec [<identifier | code | §N.M>...] [--area <area>]
 //	lenny-test coverage --go        # Go package coverage (reads cover.out)
-//	lenny-test coverage --diff <ref>
+//	lenny-test coverage --diff <ref> [--require-gate]
 //
 // The queries of --spec may sit before, between, or after the flags.
 func runCoverage(args []string) int {
@@ -30,6 +30,7 @@ func runCoverage(args []string) int {
 	wantGo := fs.Bool("go", false, "report Go coverage from tests/results/cover.out")
 	wantDiff := fs.String("diff", "", "report coverage on lines changed since this git ref (e.g. main, HEAD~5)")
 	threshold := fs.Float64("threshold", 0.0, "fail when coverage is below this fraction (0..1)")
+	requireGate := fs.Bool("require-gate", false, "with --diff, refuse unless a gate run with --cover on HEAD is recorded and wrote the profile; the check before a merge passes it")
 	jsonOut := fs.Bool("json", false, "machine-readable output")
 	queries, err := parseInterspersed(fs, args)
 	if err != nil {
@@ -43,8 +44,12 @@ func runCoverage(args []string) int {
 		fmt.Fprintln(os.Stderr, "coverage: specify --spec, --go, or --diff <ref>")
 		return 2
 	}
+	if *requireGate && *wantDiff == "" {
+		fmt.Fprintln(os.Stderr, "coverage: --require-gate applies only to --diff <ref>")
+		return 2
+	}
 	if *wantDiff != "" {
-		return reportDiffCoverage(*wantDiff, *threshold, *jsonOut)
+		return reportDiffCoverage(*wantDiff, *threshold, *jsonOut, *requireGate)
 	}
 	if *wantSpec {
 		return reportSpecCoverage(specCoverageOptions{queries: queries, area: *area, threshold: *threshold, jsonOut: *jsonOut})
@@ -77,17 +82,32 @@ func parseInterspersed(fs *flag.FlagSet, args []string) ([]string, error) {
 // <ref> and HEAD. Walks `git diff <ref>..HEAD --unified=0 -- *.go`
 // to identify changed line ranges per file, then cross-references
 // tests/results/cover.out for those lines. Applies --threshold to
-// the resulting overall rate.
-func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
+// the resulting overall rate. Before it measures, it checks the profile
+// against the gate run that wrote it (checkProfileAgainstGate), even when
+// no .go file changed, so --require-gate and the refusal of a profile from
+// a gate run that did not pass hold for every branch.
+func reportDiffCoverage(ref string, threshold float64, jsonOut, requireGate bool) int {
 	root := repoRoot()
 	profile := os.Getenv("LENNY_COVER_PROFILE")
 	if profile == "" {
 		profile = filepath.Join(root, coverProfileFile)
 	}
 	if _, err := os.Stat(profile); err != nil {
-		fmt.Fprintf(os.Stderr, "coverage --diff: %v\nRun `lenny-test --tier unit` first to emit %s.\n", err, profile)
+		fmt.Fprintf(os.Stderr, "coverage --diff: %v\nRun `lenny-test gate --tier static,unit,component,contract --cover`, or `lenny-test --tier unit`, first to write %s.\n", err, profile)
 		return 1
 	}
+
+	body, err := os.ReadFile(profile)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "coverage --diff: read profile: %v\n", err)
+		return 1
+	}
+	note, err := checkProfileAgainstGate(root, profile, body, requireGate)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "coverage --diff: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "coverage --diff: %s\n", note)
 
 	changedLines, err := changedLineRanges(root, ref)
 	if err != nil {
@@ -97,12 +117,6 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 	if len(changedLines) == 0 {
 		fmt.Println("coverage --diff: no .go files changed since", ref)
 		return 0
-	}
-
-	body, err := os.ReadFile(profile)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "coverage --diff: read profile: %v\n", err)
-		return 1
 	}
 	prof := parseCoverProfileRanges(string(body))
 
@@ -143,6 +157,7 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 			"total_covered": totalCovered,
 			"rate":          rate,
 			"threshold":     threshold,
+			"gate_check":    note,
 		}, "", "  ")
 		fmt.Println(string(out))
 	} else {

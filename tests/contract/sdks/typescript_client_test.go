@@ -330,14 +330,17 @@ func runSDKStreamingReconnect(t *testing.T, name string, cmd []string) {
 		}
 	}()
 
-	// Publish the first batch, give the probe time to open its
-	// connection and receive them, then force the disconnect. The
-	// gateway's retained backlog survives the dropped connection, so
-	// the SDK reconnect resumes from its Last-Event-ID cursor.
+	// Publish the first batch, wait for the probe to open its events
+	// connection, then force the disconnect. The gateway's retained
+	// backlog survives the dropped connection, so the SDK reconnect
+	// resumes from its Last-Event-ID cursor. A fixed pause here lost
+	// the drop whenever the probe's interpreter started slowly on a
+	// loaded host: the drop found no connection, and the SDK never
+	// reconnected.
 	for seq := 1; seq <= 3; seq++ {
 		publish(seq)
 	}
-	time.Sleep(750 * time.Millisecond)
+	d.waitForFirstConnection(t, name, 30*time.Second)
 	d.dropFirstConnection()
 	// Publish the remaining events. They land in the bus history and
 	// are replayed to the reconnecting SDK from the cursor it sends.

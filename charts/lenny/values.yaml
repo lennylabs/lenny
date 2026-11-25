@@ -3357,31 +3357,6 @@ referenceRuntimes:
       credentialCapabilities:
         hotRotation: true
         proxyDialect: [anthropic, openai, google]
-    # spec: §26.10 operator warning — OpenAI's hosted code interpreter
-    # runs outside Lenny's sandbox. Operators concerned about code
-    # execution isolation should disable code_interpreter in their
-    # assistant configuration on OpenAI's side; Lenny does not proxy or
-    # intercept code-interpreter invocations.
-    # spec: §26.10 — openai-assistants declares the openai
-    # proxy dialect, multi_turn + immediate-only injection, and the v1
-    # runtimeOptionsSchema URL. F-26.10.2.
-    - name: openai-assistants
-      image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
-      # spec: §26.1 — every reference runtime is a sidecar runtime whose
-      # §5.1 command is its lenny-<name>-adapter binary, which the runtime
-      # supervisor launches as the runtime process.
-      command: ["/usr/local/bin/lenny-openai-assistants-adapter"]
-      integrationLevel: full
-      supportedProviders: [openai_direct, azure_openai]
-      capabilities:
-        interaction: multi_turn
-        injection:
-          supported: true
-          modes: [immediate]
-      runtimeOptionsSchemaRef: https://schemas.lenny.dev/runtime-options/openai-assistants/v1.json
-      credentialCapabilities:
-        hotRotation: true
-        proxyDialect: [openai]
     # spec: §26.11 — crewai declares the anthropic/openai
     # proxy dialects, multi_turn + queued injection, the v1
     # runtimeOptionsSchema URL, and a required delegationPolicyRef bound

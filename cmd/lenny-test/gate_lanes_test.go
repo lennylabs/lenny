@@ -64,7 +64,7 @@ func laneRunner(l *laneLog, sleeps map[string]time.Duration, status map[string]s
 			return st, "", &tierResult{Total: 1, Passed: 1}
 		}
 	}
-	g.static = func(string) (string, string, *tierResult) { return tier(tierStatic)() }
+	g.static = func(string, string, string) (string, string, *tierResult) { return tier(tierStatic)() }
 	g.docs = tier(tierDocs)
 	for _, name := range gateChangedTiers {
 		name := name
@@ -93,8 +93,10 @@ func runLaneGate(g gateRunner, layout string, goTestP map[string]int) *verdict {
 
 // TestGateLayoutsHoldEveryTierOnce checks that each layout runs every
 // tier the gate can run exactly once, that the unit-alone layout is the
-// one decision 5 of change 0172 chose, and that the default stays serial
-// while its validation is with the owner (decision 7, GS-11).
+// one decision 5 of change 0172 chose, that the static-first layout is
+// the one decision 15 chose, that static-first is the default (decision
+// 19), and that the serial layout, the way back of decision 7, still
+// parses.
 func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
 	want := append(append([]string{tierStatic}, gateChangedTiers...), tierDocs)
 	for name, phases := range gateLayouts {
@@ -123,8 +125,20 @@ func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
 	if !reflect.DeepEqual(gateLayouts[gateLayoutUnitAlone], unitAlone) {
 		t.Errorf("unit-alone = %v; want %v", gateLayouts[gateLayoutUnitAlone], unitAlone)
 	}
-	if defaultGateLayout != gateLayoutSerial {
-		t.Errorf("default layout %s; want serial until the owner settles GS-11", defaultGateLayout)
+	staticFirst := []gatePhase{
+		{{tierStatic}},
+		{{tierContract}, {tierComponent, tierIntegration}},
+		{{tierUnit}},
+		{{tierDocs}},
+	}
+	if !reflect.DeepEqual(gateLayouts[gateLayoutStaticFirst], staticFirst) {
+		t.Errorf("static-first = %v; want %v", gateLayouts[gateLayoutStaticFirst], staticFirst)
+	}
+	if defaultGateLayout != gateLayoutStaticFirst {
+		t.Errorf("default layout %s; want static-first (decision 19)", defaultGateLayout)
+	}
+	if _, err := parseGateLayout(gateLayoutSerial); err != nil {
+		t.Errorf("parseGateLayout(serial), the way back of decision 7: %v", err)
 	}
 }
 
@@ -152,8 +166,8 @@ func barrier(l *laneLog, timeout time.Duration) *bool {
 	return &timedOut
 }
 
-// TestGateLanesRunAtTheSameTimeAndEachInOrder checks the default layout:
-// the static tier and the component tier run at the same time, each lane
+// TestGateLanesRunAtTheSameTimeAndEachInOrder checks the unit-alone
+// layout: the static tier and the component tier run at the same time, each lane
 // runs its tiers in order, the unit tier starts after the first phase's
 // lanes have both ended, and the documentation gates run last.
 func TestGateLanesRunAtTheSameTimeAndEachInOrder(t *testing.T) {
@@ -177,6 +191,60 @@ func TestGateLanesRunAtTheSameTimeAndEachInOrder(t *testing.T) {
 	before("end contract", "start unit")
 	before("end integration", "start unit")
 	before("end unit", "start docs")
+}
+
+// TestGateStaticFirstRunsTheStaticTierAlone checks the static-first
+// layout: no other tier starts before the static tier ends, the contract
+// tier runs at the same time as the component tier, the container lane
+// runs its tiers in order, and the unit tier and then the documentation
+// gates follow.
+func TestGateStaticFirstRunsTheStaticTierAlone(t *testing.T) {
+	l := &laneLog{}
+	contractUp, componentUp := make(chan struct{}), make(chan struct{})
+	var mu sync.Mutex
+	timedOut := false
+	wait := func(own, other chan struct{}) func() {
+		return func() {
+			close(own)
+			select {
+			case <-other:
+			case <-time.After(10 * time.Second):
+				mu.Lock()
+				timedOut = true
+				mu.Unlock()
+			}
+		}
+	}
+	l.hooks = map[string]func(){tierContract: wait(contractUp, componentUp), tierComponent: wait(componentUp, contractUp)}
+	v := runLaneGate(laneRunner(l, map[string]time.Duration{tierStatic: 50 * time.Millisecond}, nil), gateLayoutStaticFirst, map[string]int{tierContract: 2, tierComponent: 2})
+	if timedOut {
+		t.Fatalf("the contract and component tiers did not run at the same time: %v", l.events)
+	}
+	if v.Verdict != verdictstatus.VerdictPass {
+		t.Fatalf("verdict %s; tiers %+v", v.Verdict, v.Tiers)
+	}
+	if len(l.events) < 2 || l.events[0] != "start static" || l.events[1] != "end static" {
+		t.Errorf("events %v; want the static tier to start and end before any other tier starts", l.events)
+	}
+	before := func(a, b string) {
+		t.Helper()
+		if ia, ib := l.index(a), l.index(b); ia < 0 || ib < 0 || ia > ib {
+			t.Errorf("%q at %d, %q at %d; want the first before the second in %v", a, ia, b, ib, l.events)
+		}
+	}
+	before("end component", "start integration")
+	before("end contract", "start unit")
+	before("end integration", "start unit")
+	before("end unit", "start docs")
+	if l.plans[tierContract].goTestP != 2 || l.plans[tierComponent].goTestP != 2 {
+		t.Errorf("the go test -p of the overlapping tiers: contract %d, component %d; want 2", l.plans[tierContract].goTestP, l.plans[tierComponent].goTestP)
+	}
+	if err := checkGoTestP(gateLayoutStaticFirst, gateLayouts[gateLayoutStaticFirst], map[string]int{tierUnit: 2}); err == nil {
+		t.Error("--go-test-p unit=2 with the static-first layout was accepted; the unit tier runs alone there")
+	}
+	if _, err := parseGateLayout(gateLayoutStaticFirst); err != nil {
+		t.Errorf("parseGateLayout(static-first): %v", err)
+	}
 }
 
 // TestGateSerialLayoutRunsEveryTierInOrder checks the serial layout: each
@@ -353,7 +421,7 @@ func TestParseGoTestPAndLayoutRefuseBadValues(t *testing.T) {
 			t.Errorf("parseGoTestP(%q) succeeded", bad)
 		}
 	}
-	if _, err := parseGateLayout("parallel"); err == nil || !strings.Contains(err.Error(), "serial, unit-alone") {
+	if _, err := parseGateLayout("parallel"); err == nil || !strings.Contains(err.Error(), "serial, static-first, unit-alone") {
 		t.Errorf("an unknown layout = %v; want an error naming the layouts", err)
 	}
 	if _, err := gateRunOptions(gateFlagValues{base: "main", rdeps: -1, layout: "parallel"}); err == nil {

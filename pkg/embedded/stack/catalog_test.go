@@ -9,11 +9,11 @@ import (
 
 func TestReferenceRuntimesCoversCatalog(t *testing.T) {
 	rts := ReferenceRuntimes()
-	// §26.1 lists nine reference runtimes. Spot-check the names rather
-	// than the count so the test states which entries are expected.
+	// The names §26.1 lists. Naming them, rather than asserting a count
+	// alone, states which entries are expected.
 	wantNames := []string{
 		"claude-code", "gemini-cli", "codex", "cursor-cli", "chat",
-		"langgraph", "mastra", "openai-assistants", "crewai",
+		"langgraph", "mastra", "crewai",
 	}
 	got := map[string]ReferenceRuntime{}
 	for _, rt := range rts {

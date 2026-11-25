@@ -6,6 +6,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"google.golang.org/grpc/codes"
@@ -18,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
 
@@ -239,5 +243,44 @@ func TestVCSTokenNotRegisteredWithoutResolver_spec_26_2_119(t *testing.T) {
 	mcptools.Register(srv, mcptools.Deps{SessionService: ownerprincipal.ToolAccess{}, SessionAccess: ownerprincipal.ToolAccess{}, DevTenantFallback: true, TenantID: "fallback"})
 	if _, ok, _ := srv.DispatchTool(context.Background(), "lenny/vcs_token", json.RawMessage(`{"host":"github.com"}`)); ok {
 		t.Fatal("lenny/vcs_token registered without a VCSCreds resolver")
+	}
+}
+
+// TestVCSTokenResultIsNotStoredForAnIdempotentRetry checks that a
+// JSON-RPC POST of lenny/vcs_token through the REST idempotency middleware,
+// with an Idempotency-Key header, leaves no record holding the minted
+// token, and that a retry with the same key mints again.
+//
+// spec: §11.5 (Idempotency)
+func TestVCSTokenResultIsNotStoredForAnIdempotentRetry(t *testing.T) {
+	r := &stubVCSResolver{cred: vcscred.Credential{Username: "x-access-token", Token: "ghs_secret"}}
+	srv := vcsTokenServer(t, r, nil)
+	store := idempotencymw.NewMemoryStore()
+	principal := authmw.Principal{TenantID: "acme", SessionID: "sess-1", Subject: "u", CallerType: "agent"}
+	h := idempotencymw.Wrap(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		srv.Handler().ServeHTTP(w, req.WithContext(authmw.WithPrincipal(req.Context(), principal)))
+	}), store, idempotencymw.Options{})
+	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/vcs_token","arguments":{"host":"github.com"}}}`
+	calls := 0
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set(idempotencymw.HeaderName, "vcs-1")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, req)
+		if !strings.Contains(rec.Body.String(), "ghs_secret") {
+			t.Fatalf("attempt %d: response %s, want the minted token", i, rec.Body)
+		}
+		if r.gotScope != "" {
+			calls++
+			r.gotScope = ""
+		}
+	}
+	if calls != 2 {
+		t.Fatalf("resolver ran %d times, want 2: a retry mints again", calls)
+	}
+	if _, found, _ := store.Get(context.Background(), "acme", "vcs-1"); found {
+		t.Fatal("the idempotency store holds a record of the VCS token result")
 	}
 }

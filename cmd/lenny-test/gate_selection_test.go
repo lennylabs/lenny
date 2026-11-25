@@ -64,7 +64,8 @@ func TestGateRecordsTheSelectionOfEachTierOfASelectedRun(t *testing.T) {
 
 // TestGateRecordsAFullRunAsWholeForEveryTier checks that a run with --all
 // records every test tier of the merge gate as whole, with gate.all set,
-// from the plan the gate resolves for --all.
+// from the plan the gate resolves for --all, and the unit tier with
+// tests/docs left out (change 0172, decision 16).
 func TestGateRecordsAFullRunAsWholeForEveryTier(t *testing.T) {
 	g := stubGateRunner()
 	g.plan = gateChangedPlan
@@ -73,6 +74,7 @@ func TestGateRecordsAFullRunAsWholeForEveryTier(t *testing.T) {
 	for _, name := range gateChangedTiers {
 		want[name] = gateTierSelection{Whole: true}
 	}
+	want[tierUnit] = gateTierSelection{Whole: true, Excludes: []string{"tests/docs"}}
 	if !v.Gate.All || !reflect.DeepEqual(v.Gate.Selection, want) {
 		t.Fatalf("gate all %v selection %+v; want a full run with %+v", v.Gate.All, v.Gate.Selection, want)
 	}
@@ -105,13 +107,13 @@ func TestGateRecordsNoSelectionWhenThePlanFails(t *testing.T) {
 // TestTierSelectionOfCountsNamedTestsAndSubsets checks that a plan
 // narrowed by named tests or subsets is not recorded as whole.
 func TestTierSelectionOfCountsNamedTestsAndSubsets(t *testing.T) {
-	if got := tierSelectionOf(tierPlan{name: tierUnit, tests: []string{"TestA", "TestB"}}); got != (gateTierSelection{Functions: 2}) {
+	if got := tierSelectionOf(tierPlan{name: tierUnit, tests: []string{"TestA", "TestB"}}); !reflect.DeepEqual(got, gateTierSelection{Functions: 2}) {
 		t.Errorf("named tests = %+v", got)
 	}
 	if got := tierSelectionOf(tierPlan{name: tierComponent, subsets: []string{"stores"}}); got.Whole {
 		t.Errorf("a subset plan is recorded as whole: %+v", got)
 	}
-	if got := tierSelectionOf(tierPlan{name: tierUnit, pkgs: []string{}}); got != (gateTierSelection{}) {
+	if got := tierSelectionOf(tierPlan{name: tierUnit, pkgs: []string{}}); !reflect.DeepEqual(got, gateTierSelection{}) {
 		t.Errorf("an empty scope = %+v; want no packages and no functions", got)
 	}
 }

@@ -80,3 +80,42 @@ func TestGateIsInertWithoutWithGate_spec_11_5(t *testing.T) {
 		t.Error("DoNotStore did not set the gate")
 	}
 }
+
+// TestWrapDoesNotStoreAResponseMarkedAsCarryingACredential checks that a
+// handler's DoNotStoreCredential mark releases the claim with the
+// credential skip reason, so a same-key retry runs the handler again, and
+// that the mark is not read as a forward refusal.
+//
+// spec: §11.5 (Idempotency)
+func TestWrapDoesNotStoreAResponseMarkedAsCarryingACredential(t *testing.T) {
+	var calls atomic.Int64
+	var forwardRefused atomic.Bool
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		DoNotStoreCredential(r.Context())
+		forwardRefused.Store(NotStored(r.Context()))
+		_, _ = w.Write([]byte(`{"token":"t"}`))
+	})
+	store := NewMemoryStore()
+	metrics := &recordingMetrics{}
+	h := Wrap(inner, store, Options{Metrics: metrics})
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
+		req.Header.Set(HeaderName, "k-cred")
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	}
+	if n := calls.Load(); n != 2 {
+		t.Errorf("handler ran %d times, want 2", n)
+	}
+	if forwardRefused.Load() {
+		t.Error("a credential mark reads as a forward refusal")
+	}
+	if _, ok, _ := store.Get(context.Background(), "acme", "k-cred"); ok {
+		t.Error("the response left a cache row")
+	}
+	if len(metrics.skipped) != 2 || metrics.skipped[0].reason != SkipReasonCredential || metrics.skipped[1].reason != SkipReasonCredential {
+		t.Errorf("skip reasons = %v, want two %q", metrics.skipped, SkipReasonCredential)
+	}
+	DoNotStoreCredential(context.Background())
+}

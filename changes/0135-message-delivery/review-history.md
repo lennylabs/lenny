@@ -288,3 +288,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 - 2026-11-24, revision 32. From the review of the 0166 branch: the `suspended` and `resumed` row of MD-22 adds `reason: external_limit` for 0146's L39.
 - 2026-11-24, revision 33. From the second review of the 0166 branch: the MD-22 `suspended`/`resumed` row states that the root's client resumes a child that an external limit suspended, and the `llm_request_completed` term and the runtime-reported usage limit drop the LLM proxy and LU-10.
 - 2026-11-25, revision 34. "MD-22"'s `suspended` and `resumed` row follows 0146's L44 and L45: a budget's room resumes a child within the hold or by an extension or a raise for it, and an external-limit suspension ends with an acknowledged resume.
+
+## Removal of openai-assistants (2026-11-25)
+
+- [0174](../archive/2026-11-25-0174-openai-assistants-removal/change.md) removes the `openai-assistants` reference runtime (decision 12 of program v1), so "Validation owed" drops the OpenAI Assistants API from the mid-run input item. The design text that names the runtime is left for the next revision of this change.

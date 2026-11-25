@@ -239,7 +239,7 @@ subsets:
 
   reference-catalog:
     tier: conformance
-    runtimes: [claude-code, gemini-cli, codex, cursor-cli, chat, langgraph, mastra, openai-assistants, crewai]
+    runtimes: [claude-code, gemini-cli, codex, cursor-cli, chat, langgraph, mastra, crewai]
 
   # ---- contract subsets ----
 

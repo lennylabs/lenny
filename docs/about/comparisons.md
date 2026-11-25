@@ -81,7 +81,7 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 
 ## 2026 open-source entrants
 
-Three Apache 2.0 projects launched in Q1 2026 cover adjacent surface area. All three ship pre-wired for AI coding workflows: Scion and OpenShell only launch coding-agent CLIs (Claude Code, Codex, Gemini CLI, OpenCode, Copilot); OpenSandbox lists coding agents as its first use case alongside GUI/computer-use, eval, and RL. Lenny is workload-agnostic — any JSON-over-stdio program is a runtime, and its reference catalog spans coding CLIs, chat, and framework adapters (LangGraph, Mastra, CrewAI, OpenAI Assistants). None of the three is a drop-in replacement for Lenny's full scope, but each is the right choice for a specific need. Full narrative comparisons are below; this table is a quick orientation.
+Three Apache 2.0 projects launched in Q1 2026 cover adjacent surface area. All three ship pre-wired for AI coding workflows: Scion and OpenShell only launch coding-agent CLIs (Claude Code, Codex, Gemini CLI, OpenCode, Copilot); OpenSandbox lists coding agents as its first use case alongside GUI/computer-use, eval, and RL. Lenny is workload-agnostic — any JSON-over-stdio program is a runtime, and its reference catalog spans coding CLIs, chat, and framework adapters (LangGraph, Mastra, and CrewAI). None of the three is a drop-in replacement for Lenny's full scope, but each is the right choice for a specific need. Full narrative comparisons are below; this table is a quick orientation.
 
 | Dimension | Lenny | Google Scion | NVIDIA OpenShell | Alibaba OpenSandbox |
 |:---|:---|:---|:---|:---|
@@ -278,7 +278,7 @@ A fair comparison requires aligning on the same end-point definition. Lenny's nu
 - **Smaller surface to learn.** A single `scion message` primitive plus tmux-based inspection. Lenny's delegation machinery (token budgets, scope narrowing, isolation invariants, gateway interceptors) is more to pick up if the goal is just watching agents talk.
 - **Demo artifact.** *Relics of the Athenaeum* is a ready-made, inspectable multi-agent workload.
 
-Lenny matches Scion on the things that look like advantages at first glance: the `lenny up` embedded single-binary stack provides a comparable laptop-scale start with no outside dependencies, and the reference runtime catalog covers the same coding CLIs (plus `cursor-cli`, `chat`, and four framework adapters).
+Lenny matches Scion on the things that look like advantages at first glance: the `lenny up` embedded single-binary stack provides a comparable laptop-scale start with no outside dependencies, and the reference runtime catalog covers the same coding CLIs (plus `cursor-cli`, `chat`, and the framework adapters for LangGraph, Mastra, and CrewAI).
 
 ---
 

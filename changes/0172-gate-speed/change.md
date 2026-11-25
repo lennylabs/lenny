@@ -1,6 +1,6 @@
 # Merge gate wall time
 
-Status: `In progress`, revision 6, 2026-11-24.
+Status: `In progress`, revision 8, 2026-11-25.
 
 ## Problem
 
@@ -51,7 +51,7 @@ It leaves out:
 | :-- | :-- |
 | Base | The commit the gate compares with: the merge base of `--base` (default `main`) and `HEAD`. On `main` under the v1 merge policy, it is the commit of the latest `PASS` run on `main`, which the run reads by running in a clone whose local `main` points at that commit. |
 | Selected run | A gate run whose unit, component, contract, and integration tiers are the `--changed` selection against the base (`gateChangedPlan`). This is the gate's default today. |
-| Full run | A gate run with `--all`, which runs every package of the unit tier and every test of the component, contract, and integration tiers whatever the diff. The verdict records it as `gate.all`. |
+| Full run | A gate run with `--all`, which runs every package of the unit tier but `tests/docs` (decision 16) and every test of the component, contract, and integration tiers whatever the diff. The verdict records it as `gate.all`. |
 | Row target | A tier name or a package directory that a row of `tests/non-go-inputs.yaml` lists under `runs`. |
 | Container tier | A tier whose tests start containers on the host Docker daemon: component and integration. |
 | Lane | A sequence of tiers the gate runs one after another. Lanes run at the same time. |

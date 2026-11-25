@@ -7,7 +7,7 @@ None.
 ## Steps
 
 ### 0171.S1 Rehydration on reconnect
-- status: Building
+- status: Landed
 - lanes: [specification, code, documentation]
 - depends-on: []
 - closes: []

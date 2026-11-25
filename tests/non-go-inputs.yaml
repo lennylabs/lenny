@@ -136,6 +136,9 @@ inputs:
   - paths: ["docs/runbooks/**"]
     runs:
       - e2e_kind
+      - chaos
+      - security
+      - load_kind
       - integration
       - tests/testinfra/kind/imagetag
     tests:
@@ -144,9 +147,11 @@ inputs:
       - pkg/alerting/rules
       - pkg/gateway/opsendpoints/health
     reason: >-
-      The platform image copies the runbooks for the e2e_kind runbook index
-      test; the integration tests run lenny-ops, which indexes docs/runbooks
-      from the repository root; the image-tag helper hashes them; the runbook
+      The platform image copies the runbooks; the e2e_kind tier's runbook
+      index test reads them there, and the chaos, security, and load_kind
+      tiers run the same image on Kind; the integration tests run
+      lenny-ops, which indexes docs/runbooks from the repository root; the
+      image-tag helper hashes them; the runbook
       component test, the chaos helper's runbook map test, the alert rules'
       tests, and the operability health bundle's test read them.
   - paths: ["spec/**"]
@@ -194,6 +199,12 @@ inputs:
     runs:
       - integration
     reason: An integration test reads the quarantine list.
+  - paths: [".github/workflows/release.yml"]
+    tests:
+      - tests/security
+    reason: >-
+      The security tier's SBOM test reads the release workflow's SBOM,
+      attestation, and upload steps.
   - paths: ["tests/spec-anchor-moves.json"]
     runs:
       - scripts/specshift/anchor

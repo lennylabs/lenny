@@ -5,7 +5,7 @@ tests:
   - it: registers the §26 reference runtimes by default
     asserts:
       - hasDocuments:
-          count: 9
+          count: 8
 
   - it: renders each entry as a lenny.dev/v1alpha1 Runtime
     documentSelector:
@@ -129,7 +129,7 @@ tests:
       - hasDocuments:
           count: 0
 
-  # spec: §26.3 + §26.9 + §26.10 + §26.11 — every catalog entry MUST surface capabilities.interaction
+  # spec: §26.3 + §26.9 + §26.11 — every catalog entry MUST surface capabilities.interaction
   # and capabilities.injection so the registered Runtime advertises the
   # spec-anchored §15.4.6 conformance battery. F-26.3.1 / F-26.9.2 /
   # F-26.10.2 / F-26.11.2.
@@ -150,18 +150,6 @@ tests:
       - contains:
           path: spec.capabilities.injection.modes
           content: queued
-
-  - it: stamps capabilities + injection.modes = [immediate] on openai-assistants per §26.10
-    documentSelector:
-      path: metadata.name
-      value: openai-assistants
-    asserts:
-      - equal:
-          path: spec.capabilities.interaction
-          value: multi_turn
-      - contains:
-          path: spec.capabilities.injection.modes
-          content: immediate
 
   - it: stamps capabilities + injection.modes = [immediate, queued] on crewai per §26.11
     documentSelector:
@@ -218,7 +206,7 @@ tests:
           path: spec.credentialCapabilities.proxyDialect
           content: google
 
-  # spec: §26.9 / §26.10 / §26.11 — the v1
+  # spec: §26.9 / §26.11 — the v1
   # runtimeOptionsSchema URL is stamped on every reference runtime so the
   # gateway/controller can resolve the schema at session-creation time.
   # F-26.9.2 / F-26.10.2 / F-26.11.2.
@@ -389,7 +377,7 @@ tests:
         include: []
     asserts:
       - hasDocuments:
-          count: 9
+          count: 8
 
   # An include entry that names no catalog runtime registers nothing for
   # that name; a list of only-unknown names yields an empty release.

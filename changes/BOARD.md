@@ -8,11 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
-| Ready | 5 |
-| Waiting on decisions | 31 |
-| Blocked | 162 |
-| Landed | 19 |
+| Ready | 4 |
+| Waiting on decisions | 32 |
+| Blocked | 160 |
+| Landed | 25 |
 | Cancelled | 3 |
 
 ## Program v1
@@ -54,11 +53,9 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
-| [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -90,6 +87,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | 0149 is `Draft` |
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft`; a part waits on 0150.S1 |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
+| [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Waiting on decisions | 0175 is `Draft` |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Blocked | 0119.S1, 0119.S2, 0131.S9 |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
 | [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
@@ -250,14 +248,18 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
-| [0172.S7](0172-gate-speed/steps.md#0172s7-the-full-runs-unit-tier-and-two-selection-rows) | The full run's unit tier and two selection rows | Blocked | 0172.S6 |
-| [0172.S8](0172-gate-speed/steps.md#0172s8-the-coverage-profiles-hash-and-the-container-messages) | The coverage profile's hash and the container messages | Blocked | 0172.S7 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
+| [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
 | [0172.S1](0172-gate-speed/steps.md#0172s1-selection-width-and-the-verdicts-selection-record) | Selection width and the verdict's selection record | Landed |  |
 | [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Landed |  |
 | [0172.S3](0172-gate-speed/steps.md#0172s3-no-coverage-profile-in-the-gates-unit-run) | No coverage profile in the gate's unit run | Landed |  |
 | [0172.S4](0172-gate-speed/steps.md#0172s4-the-gates-tier-and-coverage-options-and-the-check-before-a-merge) | The gate's tier and coverage options, and the check before a merge | Landed |  |
 | [0172.S5](0172-gate-speed/steps.md#0172s5-lenny-test-run-in-the-gate-container) | `lenny-test run` in the gate container | Landed |  |
+| [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Landed |  |
+| [0172.S7](0172-gate-speed/steps.md#0172s7-the-full-runs-unit-tier-and-two-selection-rows) | The full run's unit tier and two selection rows | Landed |  |
+| [0172.S8](0172-gate-speed/steps.md#0172s8-the-coverage-profiles-hash-and-the-container-messages) | The coverage profile's hash and the container messages | Landed |  |
+| [0172.S9](0172-gate-speed/steps.md#0172s9-the-static-first-default-and-the-coverage-checks-gate-run) | The static-first default and the coverage check's gate run | Landed |  |
+| [0173.S1](0173-idempotency-stored-credentials/steps.md#0173s1-stored-idempotency-responses-hold-no-upload-token) | Stored idempotency responses hold no upload token | Landed |  |
 | [0133.S3](0133-llm-upstreams-and-cost-budgets/steps.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Cancelled |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 | [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Cancelled |  |
@@ -290,7 +292,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0138](0138-rest-only-client-api/change.md) | REST-only client API | `Draft` | 0 of 6 | 16 |
 | [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 23 |
 | [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 15 |
-| [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 0 |
+| [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 3 |
 | [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 8 |
 | [0143](0143-service-account-credentials/change.md) | Service account credentials | `Draft` | 0 of 4 | 7 |
 | [0144](0144-session-derive/change.md) | Session derive | `Draft` | 0 of 1 | 5 |
@@ -301,10 +303,12 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 12 | 11 |
 | [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 14 |
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 7 |
-| [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
+| [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 8 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
-| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 0 of 1 | 2 |
-| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 5 of 8 | 0 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 1 | 2 |
+| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 9 | 1 |
+| [0173](0173-idempotency-stored-credentials/change.md) | Credentials in stored idempotency responses | `In progress` | 1 of 1 | 2 |
+| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |

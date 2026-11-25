@@ -23,7 +23,7 @@ import (
 // it.
 func TestStaticPackageChecksCoverEveryStaticPackage(t *testing.T) {
 	listed := map[string]bool{}
-	for _, c := range staticPackageChecks() {
+	for _, c := range staticPackageChecks(repoRoot()) {
 		dir, ok := strings.CutPrefix(c.name, "go test ./")
 		if !ok || !strings.HasSuffix(dir, "/...") || !strings.HasPrefix(dir, staticTierTree+"/") {
 			t.Errorf("check %q does not name a static-tier package", c.name)

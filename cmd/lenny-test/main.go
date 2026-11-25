@@ -96,6 +96,8 @@ func main() {
 		os.Exit(runGate(args[1:]))
 	case "lint-cache-fill":
 		os.Exit(runLintCacheFill(args[1:]))
+	case "static-snapshot":
+		os.Exit(runStaticSnapshot(args[1:]))
 	case "secretscan":
 		os.Exit(runSecretScanSubcommand(args[1:]))
 	case "stress":
@@ -147,6 +149,10 @@ Usage:
                                            checkout with the static tier's
                                            whole-tree run (the gate container runs
                                            it before the gate).
+  lenny-test static-snapshot <commit> <dir>
+                                           Make <dir> a checkout of <commit> for the
+                                           gate's static tier (the gate container
+                                           runs it before the gate).
   lenny-test secretscan [--root <dir>]     Run the static tier's secret scan on the
                                            committed tree at HEAD; exit 0 on PASS,
                                            1 on FAIL, 3 on UNVERIFIED.
@@ -160,7 +166,10 @@ Usage:
   lenny-test watch [--tier <t> | --changed | --pattern <re>]
                                            Rerun tests on file changes.
   lenny-test coverage --go|--spec|        Report Go, spec-section, or diff
-                       --diff <ref>        coverage (§5, §19).
+                       --diff <ref>        coverage (§5, §19). With --diff,
+                       [--require-gate]    --require-gate refuses when no
+                                           gate run with --cover on HEAD is
+                                           recorded.
   lenny-test mutation [--pkg <pat>]       Run scripts/mutation.sh and compare
                       [--threshold <f>]   against the per-package threshold.
   lenny-test baseline diff --before <a>   Diff two baseline JSON documents and

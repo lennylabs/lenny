@@ -55,14 +55,18 @@ type treeBlob struct {
 	size int64
 }
 
-// committedTree lists every entry of the tree at HEAD under root,
-// recursively, with its mode, object ID, and size.
-func committedTree(root string) ([]treeBlob, error) {
-	cmd := exec.Command("git", "ls-tree", "-r", "-z", "-l", "--full-tree", "HEAD")
+// committedTree lists every entry of the tree of rev under root,
+// recursively, with its mode, object ID, and size. A rev that begins with
+// a dash is refused, because git would read it as an option.
+func committedTree(root, rev string) ([]treeBlob, error) {
+	if strings.HasPrefix(rev, "-") {
+		return nil, fmt.Errorf("list the committed tree: the revision %q begins with '-'", rev)
+	}
+	cmd := exec.Command("git", "ls-tree", "-r", "-z", "-l", "--full-tree", rev)
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		return nil, fmt.Errorf("list the committed tree at HEAD: %w", err)
+		return nil, fmt.Errorf("list the committed tree at %s: %w", rev, err)
 	}
 	var blobs []treeBlob
 	for _, rec := range bytes.Split(out, []byte{0}) {
@@ -170,16 +174,16 @@ func readOneBlob(r *bufio.Reader, b treeBlob) ([]byte, error) {
 // as binary: the `binary` macro set, or the `diff` attribute unset, which
 // is how git diff decides to print "Binary files differ" without reading
 // the file. The attributes are read from the .gitattributes files of the
-// tree at HEAD, through a temporary index that holds that tree, because
+// tree of rev, through a temporary index that holds that tree, because
 // `git check-attr --source` needs git 2.40 and the gate image ships an
 // older git.
-func attributeBinaryFiles(root, work string, files []string) (map[string]bool, error) {
+func attributeBinaryFiles(root, rev, work string, files []string) (map[string]bool, error) {
 	env := append(os.Environ(), "GIT_INDEX_FILE="+filepath.Join(work, "attr-index"))
-	readTree := exec.Command("git", "read-tree", "HEAD")
+	readTree := exec.Command("git", "read-tree", rev)
 	readTree.Dir = root
 	readTree.Env = env
 	if out, err := readTree.CombinedOutput(); err != nil {
-		return nil, fmt.Errorf("secret scan coverage: git read-tree HEAD: %w: %s", err, out)
+		return nil, fmt.Errorf("secret scan coverage: git read-tree %s: %w: %s", rev, err, out)
 	}
 	cmd := exec.Command("git", "check-attr", "--cached", "-z", "--stdin", "binary", "diff")
 	cmd.Dir = root

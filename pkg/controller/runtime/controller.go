@@ -277,13 +277,12 @@ func applyCRDFields(dst *runtimestore.Runtime, rt *lennyv1.Runtime) {
 	// AllowSymlinks toggle the deployer declared on the Runtime resource.
 	// F-7.4.4.
 	dst.ArchivePolicy = archivePolicyFromCRD(rt.Spec.ArchivePolicy)
-	// spec: §5.1; §26.9; §26.10; §26.11 — capabilities (interaction + injection.{supported, modes}) are
+	// §5.1, §26.9, and §26.11: capabilities (interaction + injection.{supported, modes}) are
 	// mirrored from the CRD so the gateway registry advertises the §15.4.6
 	// conformance battery the runtime actually implements. F-26.9.2 /
 	// F-26.10.2 / F-26.11.2.
 	dst.Capabilities = capabilitiesFromCRD(rt.Spec.Capabilities)
-	// spec: §5.1; §26.9; §26.10; §26.11
-	// — runtimeOptionsSchemaRef is rendered as a JSON {"$ref": "<url>"}
+	// §5.1, §26.9, and §26.11: runtimeOptionsSchemaRef is rendered as a JSON {"$ref": "<url>"}
 	// schema fragment so the §14 validator resolves the v1 schema URL the
 	// runtime advertises. An empty CRD field leaves the registry schema
 	// nil. F-26.9.2 / F-26.10.2 / F-26.11.2.

@@ -126,7 +126,6 @@ Every installation comes with these pre-registered:
 | `cursor-cli`        | Cursor's CLI, running in a sandboxed workspace.                   |
 | `langgraph`         | A LangGraph graph runner.                                         |
 | `mastra`            | A Mastra agent runner.                                            |
-| `openai-assistants` | An OpenAI Assistants adapter.                                     |
 | `crewai`            | A CrewAI crew runner.                                             |
 
 List what's available and what each can do with `GET /v1/runtimes` or `lenny runtime list`.

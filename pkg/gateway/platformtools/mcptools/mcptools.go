@@ -57,6 +57,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/treearchive"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/gateway/session/memorystore"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/runtime/poolstore"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimecapoverride"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
@@ -1017,8 +1018,21 @@ func registerVCSTokenTool(srv *mcp.Server, deps Deps, defaultTenant string) {
 		if merr != nil {
 			return mcp.ToolResult{}, fmt.Errorf("vcs token serialization: %w", merr)
 		}
+		markVCSTokenNotStored(ctx)
 		return textResult(string(body)), nil
 	})
+}
+
+// markVCSTokenNotStored keeps a minted VCS token out of the idempotency
+// store. A JSON-RPC POST to /mcp that carries an Idempotency-Key header
+// passes through the REST idempotency middleware, which would otherwise
+// store the tool result with the token. A replay cannot mint a VCS token
+// again from a stored reference, so the result is not stored, and a retry
+// mints a new token.
+//
+// spec: §11.5 (Idempotency)
+func markVCSTokenNotStored(ctx context.Context) {
+	idempotencymw.DoNotStoreCredential(ctx)
 }
 
 // vcsTokenError maps a GWSEAM-IssueVCSToken failure to the §15.1

@@ -89,21 +89,29 @@ type committedScan struct {
 	skipReg []byte
 }
 
-// runSecretScan checks that every committed file gitleaks does not read
-// has a reviewed entry, then runs gitleaks over the committed tree at HEAD
-// under root. It reports the unverified marker when gitleaks is not
+// runSecretScan runs the secret scan over the committed tree at HEAD under
+// root (runSecretScanAt).
+func runSecretScan(root string) (string, error) {
+	return runSecretScanAt(root, "HEAD")
+}
+
+// runSecretScanAt checks that every committed file gitleaks does not read
+// has a reviewed entry, then runs gitleaks over the tree of rev under
+// root. The gate passes the commit it resolved HEAD to, so a test that
+// moves HEAD while the static tier runs does not change what the scan
+// reads (change 0172, decision 14). It reports the unverified marker when gitleaks is not
 // installed or is not the release the check's copied rules belong to,
 // because such a scan proves nothing, and it fails closed when the
 // committed tree cannot be read, a register or the configuration is
 // missing, the configuration has an allowlist that skips whole files, or
 // a file gitleaks does not read lacks its entry.
-func runSecretScan(root string) (string, error) {
+func runSecretScanAt(root, rev string) (string, error) {
 	work, err := os.MkdirTemp("", "lenny-secretscan-")
 	if err != nil {
 		return "", fmt.Errorf("secret scan work directory: %w", err)
 	}
 	defer os.RemoveAll(work)
-	scan, err := readCommittedScan(root, work)
+	scan, err := readCommittedScanAt(root, rev, work)
 	if err != nil {
 		return "", err
 	}
@@ -139,10 +147,15 @@ func runSecretScan(root string) (string, error) {
 	return summary, nil
 }
 
-// readCommittedScan reads every blob of the tree at HEAD, writes each
-// regular file into the scan tree, and records the facts of each file.
+// readCommittedScan reads the committed tree at HEAD (readCommittedScanAt).
 func readCommittedScan(root, work string) (*committedScan, error) {
-	blobs, err := committedTree(root)
+	return readCommittedScanAt(root, "HEAD", work)
+}
+
+// readCommittedScanAt reads every blob of the tree of rev, writes each
+// regular file into the scan tree, and records the facts of each file.
+func readCommittedScanAt(root, rev, work string) (*committedScan, error) {
+	blobs, err := committedTree(root, rev)
 	if err != nil {
 		return nil, err
 	}
@@ -156,7 +169,7 @@ func readCommittedScan(root, work string) (*committedScan, error) {
 		}
 		paths = append(paths, b.path)
 	}
-	attrBinary, err := attributeBinaryFiles(root, work, paths)
+	attrBinary, err := attributeBinaryFiles(root, rev, work, paths)
 	if err != nil {
 		return nil, err
 	}

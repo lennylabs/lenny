@@ -173,7 +173,14 @@ type gateOptions struct {
 	// (prepareCoverProfile).
 	cover        bool
 	coverProfile string
-	environment  string
+	// commit is the commit the container script resolved HEAD to
+	// (gateEnvCommit), or "" for a run that resolves HEAD itself.
+	commit string
+	// snapshot is the checkout of commit the container script created for
+	// the static tier (gateEnvSnapshot), or "" for a run that creates its
+	// own (prepareStaticSnapshot).
+	snapshot    string
+	environment string
 	// environmentErr says why the environment is not the gate image, or
 	// is nil when it is.
 	environmentErr error
@@ -219,6 +226,13 @@ type gateRecord struct {
 	RestrictedTo []string `json:"restricted_to,omitempty"`
 	Cover        bool     `json:"cover,omitempty"`
 	CoverProfile string   `json:"cover_profile,omitempty"`
+	// CoverProfileSHA256 is the SHA-256 of the profile a --cover run
+	// wrote, which `lenny-test coverage --diff` compares with the profile
+	// it reads (change 0172, decision 18).
+	CoverProfileSHA256 string `json:"cover_profile_sha256,omitempty"`
+	// StaticSnapshot is the checkout of the commit the static tier read
+	// (change 0172, decision 14), or "" when the static tier did not run.
+	StaticSnapshot string `json:"static_snapshot,omitempty"`
 	// Selection records, for each test tier the plan selected, what the
 	// gate ran of it (change 0172, GS-1), so a reader tells a selected run
 	// from a full one (All) and sees how much a selected run covered. A
@@ -242,6 +256,9 @@ type gateTierSelection struct {
 	Whole     bool `json:"whole"`
 	Packages  int  `json:"packages,omitempty"`
 	Functions int  `json:"functions,omitempty"`
+	// Excludes lists the package directories a whole tier left out, with
+	// the packages below them (tierPlan.exclude).
+	Excludes []string `json:"excludes,omitempty"`
 }
 
 // tierSelectionOf summarizes one tier's plan. A plan with no package scope,
@@ -249,7 +266,7 @@ type gateTierSelection struct {
 // its package patterns and the test functions it runs by name.
 func tierSelectionOf(p tierPlan) gateTierSelection {
 	if p.pkgs == nil && len(p.tests) == 0 && len(p.subsets) == 0 {
-		return gateTierSelection{Whole: true}
+		return gateTierSelection{Whole: true, Excludes: p.exclude}
 	}
 	s := gateTierSelection{Packages: len(p.pkgs), Functions: len(p.tests)}
 	for _, names := range p.funcs {
@@ -260,6 +277,9 @@ func tierSelectionOf(p tierPlan) gateTierSelection {
 
 // String renders the selection for the gate's summary.
 func (s gateTierSelection) String() string {
+	if s.Whole && len(s.Excludes) > 0 {
+		return "whole tier except " + strings.Join(s.Excludes, ", ")
+	}
 	if s.Whole {
 		return "whole tier"
 	}
@@ -275,7 +295,7 @@ func runGate(args []string) int {
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
 	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
-	layout := fs.String("layout", defaultGateLayout, "how the tiers run: "+gateLayoutUnitAlone+" runs the static and contract tiers beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutSerial+" runs every tier one after another")
+	layout := fs.String("layout", defaultGateLayout, "how the tiers run: "+gateLayoutStaticFirst+" runs the static tier alone, then the contract tier beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutUnitAlone+" runs the static and contract tiers beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutSerial+" runs every tier one after another")
 	tiers := fs.String("tier", "", "restrict the run to these tiers of the merge gate, as a comma-separated list such as static,unit,component,contract; the diff selection applies within them, and the verdict records the restriction")
 	cover := fs.Bool("cover", false, "write the unit run's coverage profile to tests/results/cover.out, which `lenny-test coverage --diff` reads (with --here, LENNY_COVER_PROFILE can name another path); without it the gate's unit run writes no profile")
 	goTestP := fs.String("go-test-p", "", "the go test -p of a tier that runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name keeps the go command's default, and a tier that runs alone in the layout is refused")
@@ -312,6 +332,7 @@ func runGate(args []string) int {
 	}
 	if *here {
 		opts.root = root
+		opts.commit, opts.snapshot = os.Getenv(gateEnvCommit), os.Getenv(gateEnvSnapshot)
 		opts.environment, opts.environmentErr = gateEnvironment(root, gateImageMarker, os.Getenv)
 		return finishGate(root, defaultGateRunner(root).run(opts))
 	}
@@ -462,6 +483,7 @@ func runGateInContainer(root string, passArgs []string, rebuild, withSocket bool
 		label:    "lenny-test gate",
 		passArgs: passArgs,
 		hint:     "run `lenny-test gate --here` on a Linux host with the gate's toolchain",
+		snapshot: gateSnapshotPath(root),
 	}, rebuild, withSocket, capGB)
 }
 
@@ -480,6 +502,9 @@ type gateContainerRun struct {
 	tmpPrefix string
 	// volumes are extra `-v` mounts for the container.
 	volumes []string
+	// snapshot is the path of the static tier's checkout in the container
+	// (gateSnapshotPath), or "" for a container that creates none.
+	snapshot string
 }
 
 // runInGateContainer builds or reuses the gate image, caps the build cache
@@ -502,7 +527,7 @@ func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket boo
 		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
-	id, err := ensureGateImage(root, image, rebuild, store)
+	id, err := ensureGateImage(root, image, rebuild, store, c.label)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
@@ -516,9 +541,9 @@ func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket boo
 		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
-	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: c.passArgs, script: c.script, scriptName: c.name, volumes: c.volumes}
+	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: c.passArgs, script: c.script, scriptName: c.name, volumes: c.volumes, snapshot: c.snapshot}
 	ctx, cancel := context.WithTimeout(context.Background(), gateGoCacheTimeout)
-	capGateGoCache(ctx, execGateCommand, h.imageRef(), capGB, os.Stderr)
+	capGateGoCache(ctx, execGateCommand, h.imageRef(), capGB, c.label, os.Stderr)
 	cancel()
 	h.uid, h.gid = pathOwner(root)
 	if common, err := gitCommonDir(root); err == nil {
@@ -543,14 +568,16 @@ func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket boo
 
 // ensureGateImage returns the ID of the gate image to run. It builds the
 // image first when gateImageNeedsBuild says so, and records the ID of an
-// image it builds in store.
-func ensureGateImage(root, image string, rebuild bool, store gateImageStore) (string, error) {
+// image it builds in store. Its message names label, the command that
+// runs the container, `lenny-test gate` or `lenny-test run` (change 0172,
+// decision 18).
+func ensureGateImage(root, image string, rebuild bool, store gateImageStore, label string) (string, error) {
 	id := dockerImageID(image)
 	build, why := gateImageNeedsBuild(rebuild, id, store.load(image))
 	if !build {
 		return id, nil
 	}
-	fmt.Fprintf(os.Stderr, "lenny-test gate: building %s from %s (%s)\n", image, gateDockerfile, why)
+	fmt.Fprintln(os.Stderr, gateImageBuildMessage(label, image, why))
 	if err := runStreaming("docker", gateDockerBuildArgs(root, image)...); err != nil {
 		return "", fmt.Errorf("build the gate image: %w", err)
 	}
@@ -561,6 +588,12 @@ func ensureGateImage(root, image string, rebuild bool, store gateImageStore) (st
 		return "", fmt.Errorf("record the gate image ID: %w", err)
 	}
 	return id, nil
+}
+
+// gateImageBuildMessage is the line ensureGateImage prints before it
+// builds the image, opening with the command that runs the container.
+func gateImageBuildMessage(label, image, why string) string {
+	return fmt.Sprintf("%s: building the gate image %s from %s (%s)", label, image, gateDockerfile, why)
 }
 
 // gateImageNeedsBuild reports whether the gate builds its image before
@@ -690,6 +723,9 @@ type gateHost struct {
 	script, scriptName string
 	// volumes are extra `-v` mounts, in docker's source:target form.
 	volumes []string
+	// snapshot is the path of the static tier's checkout in the container,
+	// passed as gateEnvSnapshot, or "" for none.
+	snapshot string
 }
 
 // gateDockerRunArgs is the argv of `docker run` for one gate run.
@@ -784,6 +820,9 @@ func gateDockerRunArgs(h gateHost) []string {
 	if h.imageID != "" {
 		args = append(args, "-e", gateEnvImageID+"="+h.imageID)
 	}
+	if h.snapshot != "" {
+		args = append(args, "-e", gateEnvSnapshot+"="+h.snapshot)
+	}
 	if h.dockerSocket != "" {
 		args = append(
 			args,
@@ -825,10 +864,14 @@ func (h gateHost) imageRef() string {
 // root, and the runtime supervisor tests derive the adapter UID from the
 // test's own.
 //
+// The user first resolves HEAD to a commit, once (the resolve step), and
+// the script exports it as gateEnvCommit: the build, the static tier's
+// snapshot, and the gate all read that commit (change 0172, decision 14).
+//
 // The user then compiles lenny-test (the build step). It exports the
-// commit HEAD names with git archive into a new directory under GOTMPDIR,
-// on the container's own file system, and checks that the export holds
-// every file of HEAD's tree, so an export-ignore attribute cannot drop a
+// commit with git archive into a new directory under GOTMPDIR, on the
+// container's own file system, and checks that the export holds every
+// file of the commit's tree, so an export-ignore attribute cannot drop a
 // file from the harness. In the export it runs go mod verify and go build
 // with GOWORK=off and -mod=readonly, so a go.work file and a vendor
 // directory play no part, and with a build cache of its own: a new, empty
@@ -848,8 +891,27 @@ func (h gateHost) imageRef() string {
 // golangci-lint and the tiers' builds among them, still uses the volume,
 // and the module cache volume stays writable to the gate user.
 //
+// Root then creates the directory gateEnvSnapshot names, under the
+// root-owned gateSnapshotParent, and gives it to the user, who makes it a
+// checkout of the commit with the installed binary (lenny-test
+// static-snapshot; createStaticSnapshot). Root then gives the checkout to
+// root, removes every write bit, refreshes its index, whose recorded file
+// times the ownership and mode changes made stale, so each git read there
+// does not rehash the whole tree, and bind-mounts it read-only over
+// itself. The gate image's git configuration already lists every directory
+// as safe, so the gate user's git reads the root-owned checkout. The
+// static tier runs its checks there, so a test in a lane beside it, which
+// runs as the gate user, cannot change the files or the refs it reads.
+// Writers remain: a gate run as root, whose tests hold CAP_SYS_ADMIN and
+// can remount the checkout; any process with the host Docker socket; and,
+// in a main checkout, the gate user through the worktree's object store,
+// which the checkout borrows through git's alternates file and whose
+// objects git does not verify when it reads them (createStaticSnapshot).
+//
 // The user then fills golangci-lint's cache with the installed binary
-// (lenny-test lint-cache-fill). A fill that does not finish, such as one
+// (lenny-test lint-cache-fill), in the checkout, because golangci-lint
+// names its cache directory for the checkout's path (golangciLintCache)
+// and the static tier's lint runs there. A fill that does not finish, such as one
 // the kernel kills for memory, logs one line and sets gateEnvLintFill, and
 // the static tier's golangci-lint runs then use a private, empty cache
 // created for that run (privateLintCache) and report it in the tier's
@@ -875,14 +937,15 @@ const gateContainerScript = `set -e
 if [ -n "${LENNY_TEST_SHARED_TMPDIR:-}" ]; then find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete; fi
 mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" "${GOLANGCI_LINT_CACHE:?}" /go/pkg/mod
 export ` + gateEnvHarness + `=` + gateHarnessPath + `
+resolve='git rev-parse --verify --quiet "HEAD^{commit}" || { echo "lenny-test gate: HEAD does not name a commit" >&2; exit 1; }'
 build='set -e
 src="$(mktemp -d "$GOTMPDIR/lenny-test-src.XXXXXX")"
-git archive -o "$src.tar" HEAD
+git archive -o "$src.tar" "${` + gateEnvCommit + `:?}"
 tar -x -f "$src.tar" -C "$src"
 rm -f "$src.tar"
-want="$(git ls-tree -r -z --format="%(objecttype)" HEAD | tr "\000" "\n" | grep -c "^blob$")"
+want="$(git ls-tree -r -z --format="%(objecttype)" "$` + gateEnvCommit + `" | tr "\000" "\n" | grep -c "^blob$")"
 got="$(find "$src" ! -type d -print0 | tr -cd "\000" | wc -c | tr -d " ")"
-if [ "$want" != "$got" ]; then echo "lenny-test gate: the export of HEAD holds $got files and HEAD holds $want; an export-ignore attribute kept files out of the harness build" >&2; exit 1; fi
+if [ "$want" != "$got" ]; then echo "lenny-test gate: the export of $` + gateEnvCommit + ` holds $got files and its tree holds $want; an export-ignore attribute kept files out of the harness build" >&2; exit 1; fi
 cd "$src"
 export GOWORK=off GOFLAGS="-buildvcs=false -mod=readonly"
 go mod verify
@@ -890,12 +953,26 @@ build_cache="$(mktemp -d "$GOTMPDIR/lenny-test-build.XXXXXX")"
 GOCACHE="$build_cache" go build -o "$GOTMPDIR/lenny-test" ./cmd/lenny-test
 cd /
 rm -rf "$build_cache" "$src"'
-fill='"$` + gateEnvHarness + `" lint-cache-fill'
+snapshot='"$` + gateEnvHarness + `" static-snapshot "$` + gateEnvCommit + `" "$` + gateEnvSnapshot + `"'
+fill='cd "$` + gateEnvSnapshot + `" && "$` + gateEnvHarness + `" lint-cache-fill'
 run='exec "$` + gateEnvHarness + `" gate --here "$@"'
 install_harness() {
 	mkdir -p "$(dirname "$` + gateEnvHarness + `")"
 	install -o 0 -g 0 -m 0555 "$GOTMPDIR/lenny-test" "$` + gateEnvHarness + `"
 	rm -f "$GOTMPDIR/lenny-test"
+}
+prepare_snapshot() {
+	mkdir -p "$(dirname "${` + gateEnvSnapshot + `:?}")"
+	rm -rf "$` + gateEnvSnapshot + `"
+	mkdir "$` + gateEnvSnapshot + `"
+	chown "$1" "$` + gateEnvSnapshot + `"
+}
+lock_snapshot() {
+	chown -R 0:0 "$` + gateEnvSnapshot + `"
+	chmod -R a-w "$` + gateEnvSnapshot + `"
+	git -C "$` + gateEnvSnapshot + `" update-index -q --refresh || echo "lenny-test gate: warning: the static tier's snapshot index was not refreshed, so its git reads rehash the tree" >&2
+	mount --bind "$` + gateEnvSnapshot + `" "$` + gateEnvSnapshot + `"
+	mount -o remount,bind,ro "$` + gateEnvSnapshot + `"
 }
 fill_failed() {
 	echo "lenny-test gate: warning: the golangci-lint cache fill did not finish; the static tier's golangci-lint runs use a private, empty cache for this run, and the shared cache stays read-only" >&2
@@ -908,14 +985,24 @@ lock_lint_cache() {
 uid="${LENNY_GATE_UID:-0}"
 gid="${LENNY_GATE_GID:-0}"
 if [ "$uid" = 0 ]; then
+	` + gateEnvCommit + `="$(sh -c "$resolve")"
+	export ` + gateEnvCommit + `
 	sh -c "$build"
 	install_harness
+	prepare_snapshot 0:0
+	sh -c "$snapshot"
+	lock_snapshot
 	sh -c "$fill" || fill_failed
 	lock_lint_cache
 	exec sh -c "$run" lenny-test-gate "$@"
 fi
-` + gateUserSetup + `setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$build"
+` + gateUserSetup + gateEnvCommit + `="$(setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$resolve")"
+export ` + gateEnvCommit + `
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$build"
 install_harness
+prepare_snapshot "$uid:$gid"
+setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$snapshot"
+lock_snapshot
 setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$fill" || fill_failed
 lock_lint_cache
 exec setpriv --reuid="$uid" --regid="$gid" --groups="$groups" sh -c "$run" lenny-test-gate "$@"`
@@ -1018,11 +1105,16 @@ func runStreaming(name string, args ...string) error {
 // gateRunner holds the tier executors one gate run calls. Tests replace
 // them to run the gate's control flow without go test or Docker.
 type gateRunner struct {
-	// static runs the static tier with the gate's --base, which the
-	// changed-line lint compares with.
-	static func(base string) (string, string, *tierResult)
-	plan   func(base string, rdepsDepth int, all bool) (resolvedSelector, error)
-	exec   map[string]tierExecFn
+	// static runs the static tier in the checkout at dir, with the gate's
+	// --base, which the changed-line lint compares with, and the commit
+	// the secret scan reads.
+	static func(dir, base, rev string) (string, string, *tierResult)
+	// snapshot returns the checkout of commit the static tier reads: the
+	// one given, which the container script created, or one the run
+	// creates (prepareStaticSnapshot).
+	snapshot func(commit, given string) (staticSnapshot, error)
+	plan     func(base string, rdepsDepth int, all bool) (resolvedSelector, error)
+	exec     map[string]tierExecFn
 	// precheck returns why a tier cannot run in this environment, or
 	// nil when it can.
 	precheck map[string]func() error
@@ -1134,9 +1226,12 @@ func defaultGateRunner(root string) gateRunner {
 		execs[name] = steps[name].exec
 	}
 	return gateRunner{
-		static: runStaticTier,
-		plan:   gateChangedPlan,
-		exec:   execs,
+		static: runStaticTierAt,
+		snapshot: func(commit, given string) (staticSnapshot, error) {
+			return prepareStaticSnapshot(context.Background(), gitOutput, root, commit, given)
+		},
+		plan: gateChangedPlan,
+		exec: execs,
 		precheck: map[string]func() error{
 			tierComponent: func() error {
 				if err := dockerReachable(); err != nil {
@@ -1156,8 +1251,9 @@ func defaultGateRunner(root string) gateRunner {
 // merge gate's tiers (`run --changed --gate merge`), keeping the tiers the
 // gate takes from the plan (gateChangedTiers): the gate runs the static
 // tier and its general documentation gates itself. With all, it resolves
-// those tiers in full instead: the whole unit tier (./...) and every test
-// of the component, contract, and integration tiers. The unit tier runs
+// those tiers in full instead: the whole unit tier (./...) except the
+// directories of gateFullRunUnitExcludes, and every test of the component,
+// contract, and integration tiers. The unit tier runs
 // without a coverage profile (gateUnitWithoutCoverage).
 func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, error) {
 	sel := selector{changed: true, since: base, gate: gateMerge, rdepsDepth: rdepsDepth}
@@ -1170,7 +1266,29 @@ func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, e
 	}
 	r.tiers, _ = keepTiers(r.tiers, append([]string{tierStatic}, gateChangedTiers...))
 	gateUnitWithoutCoverage(r.tiers)
+	if all {
+		gateFullRunExcludes(r.tiers)
+	}
 	return r, nil
+}
+
+// gateFullRunUnitExcludes are the package directories a full run's unit
+// tier leaves out (change 0172, decision 16). tests/docs holds the docs
+// tier's tests, which build without a tag and so fall under the unit
+// tier's `./...`. A selected run places the package in the docs tier, of
+// which the merge gate runs only the general gates (gateDocsFiles); the
+// rest of the package runs at the area gate. Issue GATE-I9 records the
+// gap-record reconciliation tests there that failed in the full run.
+var gateFullRunUnitExcludes = []string{"tests/docs"}
+
+// gateFullRunExcludes sets the unit plan of a full run to leave out
+// gateFullRunUnitExcludes.
+func gateFullRunExcludes(plans []tierPlan) {
+	for i := range plans {
+		if plans[i].name == tierUnit && plans[i].pkgs == nil {
+			plans[i].exclude = append([]string{}, gateFullRunUnitExcludes...)
+		}
+	}
 }
 
 // gateUnitWithoutCoverage sets noCoverage on the unit tier's plan, so the
@@ -1203,8 +1321,16 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	v.Command = gateCommandLine(o, layout)
 	v.Trigger.Mode = "gate"
 	head, dirty := g.state()
-	if head != "" {
-		v.Trigger.GitRevision = head
+	// The gate resolves HEAD once: the container script resolves it before
+	// it builds lenny-test and passes the commit, and a run without the
+	// container takes the HEAD it read here. The static tier reads that
+	// commit, and the end-of-run check compares HEAD with it.
+	commit := o.commit
+	if commit == "" {
+		commit = head
+	}
+	if commit != "" {
+		v.Trigger.GitRevision = commit
 	}
 	bases := g.bases(o.base)
 	v.Gate = &gateRecord{Base: o.base, MergeBase: bases.used, IntegrationMergeBase: bases.integration, Dirty: dirty, Environment: o.environment, All: o.all, Layout: layout}
@@ -1229,12 +1355,23 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		v.recordTier(tierStatic, verdictstatus.Fail, 0, layoutErr.Error())
 	}
 	plans := g.resolvePlans(v, o, compare)
+	coverReady := o.cover
 	if o.cover {
 		if err := prepareCoverProfile(o.coverProfile, plans); err != nil {
+			coverReady = false
 			// The unit tier does not run, so its result cannot overwrite
 			// the failure, and coverage --diff finds no fresh profile.
 			delete(plans, tierUnit)
 			v.recordTier(tierUnit, verdictstatus.Fail, 0, err.Error())
+		}
+	}
+
+	var snap staticSnapshot
+	var snapErr error
+	if layoutErr == nil && gateRuns(o.tiers, tierStatic) {
+		snap, snapErr = g.prepareSnapshot(v, commit, o.snapshot)
+		if snap.cleanup != nil {
+			defer snap.cleanup()
 		}
 	}
 
@@ -1245,30 +1382,73 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		}
 		switch name {
 		case tierStatic:
-			if layoutErr == nil {
-				g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(compare) })
+			switch {
+			case layoutErr != nil:
+			case snapErr != nil:
+				g.record(v, tierStatic, func() (string, string, *tierResult) {
+					return verdictstatus.Fail, "the static tier did not run, because its snapshot of the commit is not ready: " + snapErr.Error(), nil
+				})
+			default:
+				g.record(v, tierStatic, func() (string, string, *tierResult) { return g.static(snap.dir, compare, commit) })
 			}
 		case tierDocs:
 			g.record(v, tierDocs, g.docs)
 		}
 	})
 	v.Gate.WallTimeMS = time.Since(start).Milliseconds()
-	if o.cover {
+	// A run whose earlier profile could not be removed records no profile
+	// and no hash, because the file is the earlier run's. The hash is taken
+	// after the last phase rather than when the unit tier ends, so another
+	// command that rewrites the profile while the later tiers run, such as
+	// a `run --changed` on the host, has its profile recorded as the gate's;
+	// coverage --diff then reads the profile it hashed.
+	if coverReady {
 		if err := finishCoverProfile(o.coverProfile); err != nil {
 			v.recordTier(tierUnit, verdictstatus.Fail, 0, err.Error())
 		}
 		v.Gate.CoverProfile = coverProfileRecord(o.root, o.coverProfile)
+		if v.Gate.CoverProfile != "" {
+			// A profile that cannot be hashed fails the unit tier, unless
+			// the tier already failed, whose own reason the verdict keeps.
+			sum, err := fileSHA256(o.coverProfile)
+			if err != nil && v.Tiers[tierUnit].Status != verdictstatus.Fail {
+				v.recordTier(tierUnit, verdictstatus.Fail, 0, fmt.Sprintf("hash the coverage profile %s: %v", o.coverProfile, err))
+			}
+			v.Gate.CoverProfileSHA256 = sum
+		}
 	}
 
 	v.Gate.RdepsDepth = o.rdepsDepth
 	if o.rdepsDepth >= 0 && !o.all {
 		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
 	}
-	if why := gateStateChange(head, dirty, bases, g); why != "" {
+	if o.commit != "" && head != o.commit {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("HEAD was %s when the gate started, and the container resolved it to %s before it built lenny-test; run the gate again", shortCommit(head), shortCommit(o.commit)))
+	}
+	if why := gateStateChange(commit, dirty, bases, g); why != "" {
 		v.Gate.Unverified = append(v.Gate.Unverified, why)
 	}
 	withholdGatePass(v, dirty, o.environmentErr, gateBaseError(o.base, bases))
 	return v
+}
+
+// prepareSnapshot readies the checkout of commit the static tier reads and
+// records it in the verdict. A checkout the gate's user can write keeps
+// the verdict from PASS, because a test in another lane could then change
+// what the static tier reads.
+func (g gateRunner) prepareSnapshot(v *verdict, commit, given string) (staticSnapshot, error) {
+	if commit == "" {
+		return staticSnapshot{}, errors.New("git could not resolve HEAD")
+	}
+	snap, err := g.snapshot(commit, given)
+	if err != nil {
+		return snap, err
+	}
+	v.Gate.StaticSnapshot = snap.dir
+	if snapshotWritable(snap.dir) {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("the static tier's snapshot %s is writable by the gate's user, so a test in another lane could change what the static tier read; the gate container's snapshot is read-only", snap.dir))
+	}
+	return snap, nil
 }
 
 // gateCommandLine renders the verdict's command for a run.
@@ -1609,6 +1789,9 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 			profile := v.Gate.CoverProfile
 			if profile == "" {
 				profile = "none written"
+			}
+			if sum := v.Gate.CoverProfileSHA256; len(sum) >= 12 {
+				profile += " (SHA-256 " + sum[:12] + ")"
 			}
 			fmt.Fprintf(w, "  coverage:    %s\n", profile)
 		}

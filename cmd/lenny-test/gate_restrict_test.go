@@ -178,6 +178,9 @@ func TestGateCoverFailsWhenTheProfileCannotBeReadied(t *testing.T) {
 	if v.Verdict != verdictstatus.VerdictFail || !strings.Contains(v.Tiers[tierUnit].Detail+v.Tiers[tierUnit].Reason, "remove the earlier coverage profile") {
 		t.Errorf("verdict %s unit %+v", v.Verdict, v.Tiers[tierUnit])
 	}
+	if v.Gate.CoverProfile != "" || v.Gate.CoverProfileSHA256 != "" {
+		t.Errorf("the run recorded the earlier profile %q with hash %q as its own", v.Gate.CoverProfile, v.Gate.CoverProfileSHA256)
+	}
 }
 
 // TestDiffCoverageBelowPassesADiffWithNothingToCover checks the threshold

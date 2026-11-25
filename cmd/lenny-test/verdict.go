@@ -504,6 +504,9 @@ func appendHistory(path string, v *verdict) error {
 		if v.Gate.Cover {
 			rec["cover"] = true
 		}
+		if v.Gate.CoverProfileSHA256 != "" {
+			rec["cover_profile_sha256"] = v.Gate.CoverProfileSHA256
+		}
 	}
 	line, err := json.Marshal(rec)
 	if err != nil {

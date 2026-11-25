@@ -1,6 +1,6 @@
 # SPDX-License-Identifier: MIT
 #
-# §26 reference-runtime catalog. The nine first-party runtimes ship
+# §26 reference-runtime catalog. The first-party runtimes ship
 # from github.com/lennylabs/runtime-templates and are published as
 # OCI images the nightly conformance run pulls and exercises against
 # the harness. This manifest is the catalog of record consulted by:
@@ -76,12 +76,6 @@ runtimes:
     level: full
     image: lennylabs/runtime-mastra:1.0.0
     notes: "Mastra agent framework in TypeScript (§26.9)."
-
-  - name: openai-assistants
-    category: framework
-    level: full
-    image: lennylabs/runtime-openai-assistants:1.0.0
-    notes: "OpenAI Assistants API-compatible runtime (§26.10)."
 
   - name: crewai
     category: framework

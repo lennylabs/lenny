@@ -550,6 +550,8 @@ Idempotency-Key: 550e8400-e29b-41d4-a716-446655440000
 
 Within a 24-hour window, a duplicate request with the same key returns the cached response (same HTTP status and body) without re-executing the operation. A 5xx response is not cached, so a retry against a recovered backend re-executes. Reusing a key with a different request body returns `422 IDEMPOTENCY_KEY_REUSED`.
 
+The gateway does not store the `uploadToken` that a session-creating response carries. It stores a reference in the token's place and signs the token again when it replays the response, so the replayed response carries the same `uploadToken` as the first one. When the gateway has since retired the signing key that signed the token, the first token no longer verifies, and the replayed response carries the reference, which the upload endpoints refuse with `401 UPLOAD_TOKEN_INVALID`.
+
 Idempotency keys are scoped per tenant. The header applies to:
 
 - `POST /v1/sessions` (CreateSession)
