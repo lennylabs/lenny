@@ -87,3 +87,11 @@ Decisions 19, 23, and 24. The gate's default layout becomes `static-first`, with
 - closes: []
 
 Decision 25. Under `--require-gate`, `lenny-test coverage --diff` refuses a gate run whose `gate.restricted_to` leaves out any of the static, unit, component, and contract tiers, and names the run's tiers in its note. A run that `--tier` did not restrict, a full run with `gate.all` included, records no `gate.restricted_to` and is accepted. Then "Merge gate" in `TESTING.md` drops the limit it states for the check, and `cmd/lenny-test/README.md` states the refusal. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
+
+### 0172.S11 A narrower check before a merge
+- status: Planned
+- lanes: [code, documentation]
+- depends-on: [0172.S10]
+- closes: []
+
+Decision 26. `lenny-test gate --rerun-failed` reruns the failed tests of the latest gate run on the same commit and records a `PASS` verdict that names that run and carries its coverage profile, and `coverage --diff --require-gate` accepts it; the gate's selection under `--tier static,unit,component,contract` stops at the packages that import a changed package directly, while the gate on `main` keeps the full walk; and a change to a generated file selects the check that regenerates or reads it rather than the packages of its row in `tests/non-go-inputs.yaml`. Then the check before a merge in `.claude/rules/git-workflow.md`, `.claude/rules/test-coverage.md`, and the build skill, "Merge gate" in `TESTING.md`, and `cmd/lenny-test/README.md`. The diff touches `cmd/lenny-test/` and `tests/non-go-inputs.yaml`, so it is reviewed with the `review` skill before it merges.
