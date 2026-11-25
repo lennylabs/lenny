@@ -104,6 +104,12 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 		fmt.Fprintf(os.Stderr, "coverage --diff: read profile: %v\n", err)
 		return 1
 	}
+	note, err := checkProfileAgainstGate(root, profile, body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "coverage --diff: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(os.Stderr, "coverage --diff: %s\n", note)
 	prof := parseCoverProfileRanges(string(body))
 
 	type fileCov struct {
