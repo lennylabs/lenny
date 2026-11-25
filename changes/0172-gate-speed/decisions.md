@@ -2,7 +2,10 @@
 
 ## Open decisions
 
-None.
+- **GS-21. The tiers of the gate run that `--require-gate` accepts.** The merge-gate review of 0172.S9 (security and general reviewers, Low) found that `coverage --diff --require-gate` accepts the latest gate run with `--cover` on `HEAD` whatever tiers `--tier` restricted it to: `readCoverVerdict` reads the verdict, `gate.dirty`, and `gate.cover_profile_sha256`, and not `gate.restricted_to` or `gate.all`. After a `--tier static,unit,component,contract --cover` run that fails on a contract test, a later `--tier unit --cover` run that passes makes the check pass and name that run, so the check does not show that decision 8's run passed. The coverage figure is not inflated, because the unit selection is the same and a run without the unit tier writes a profile that covers nothing. Decision 23 asks for "a gate run with `--cover` on `HEAD`", which the build meets, and TESTING.md states the limit.
+  - (a) Under `--require-gate`, also refuse a run whose `gate.restricted_to` leaves out any of static, unit, component, and contract, and name the run's tiers in the note.
+  - (b) Keep the check as built, with the limit stated in TESTING.md and the merge commit message naming decision 8's run.
+  - Recommendation: (a), because it is a few lines in `refuseGateRun`, and it lets the merge check read the gate run and the coverage check as one result, as decision 24 intends.
 
 ## Decisions
 

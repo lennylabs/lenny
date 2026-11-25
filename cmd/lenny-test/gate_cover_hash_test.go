@@ -74,6 +74,7 @@ func TestGateCoverRunRecordsTheProfileHash(t *testing.T) {
 // writeCoverHistory writes the run history and the gate verdicts under root:
 // one line per run, and a verdict file for each gate run whose hash is
 // given (an empty hash writes a verdict without one, and "-" writes none).
+// Each verdict it writes is PASS.
 func writeCoverHistory(t *testing.T, root string, lines []historyLine, hashes map[string]string) {
 	t.Helper()
 	dir := filepath.Join(root, gateResultsDir)
@@ -97,9 +98,9 @@ func writeCoverHistory(t *testing.T, root string, lines []historyLine, hashes ma
 		if hash == "-" {
 			continue
 		}
-		body := `{"gate":{"cover":true}}`
+		body := `{"verdict":"PASS","gate":{"cover":true}}`
 		if hash != "" {
-			body = `{"gate":{"cover":true,"cover_profile_sha256":"` + hash + `"}}`
+			body = `{"verdict":"PASS","gate":{"cover":true,"cover_profile_sha256":"` + hash + `"}}`
 		}
 		if err := os.WriteFile(filepath.Join(dir, "gate-"+run+".json"), []byte(body), 0o644); err != nil {
 			t.Fatal(err)
@@ -147,55 +148,55 @@ func TestCoverageDiffRefusesAProfileTheGateDidNotWrite(t *testing.T) {
 	profile := filepath.Join(r.root, coverProfileFile)
 	written := []byte("mode: atomic\nexample.com/m/a.go:1.1,2.2 1 1\n")
 
-	note, err := checkProfileAgainstGate(r.root, profile, written)
+	note, err := checkProfileAgainstGate(r.root, profile, written, false)
 	if err != nil || !strings.Contains(note, "not checked") {
 		t.Errorf("no gate run: %q, %v; want a note and no refusal", note, err)
 	}
 
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "r1", TriggerMode: "gate", GitRevision: head, Cover: true}}, map[string]string{"r1": profileHash(written)})
-	if note, err := checkProfileAgainstGate(r.root, profile, written); err != nil || !strings.Contains(note, "r1") {
+	if note, err := checkProfileAgainstGate(r.root, profile, written, false); err != nil || !strings.Contains(note, "r1") {
 		t.Errorf("the gate's own profile: %q, %v; want it accepted", note, err)
 	}
 	rewritten := append(append([]byte{}, written...), "example.com/m/a.go:3.1,4.2 1 0\n"...)
-	if _, err := checkProfileAgainstGate(r.root, profile, rewritten); err == nil || !strings.Contains(err.Error(), "gate run r1") {
+	if _, err := checkProfileAgainstGate(r.root, profile, rewritten, false); err == nil || !strings.Contains(err.Error(), "gate run r1") {
 		t.Errorf("a rewritten profile: %v; want a refusal naming gate run r1", err)
 	}
 
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "r2", TriggerMode: "gate", GitRevision: head, Cover: true}}, map[string]string{"r2": ""})
-	if _, err := checkProfileAgainstGate(r.root, profile, written); err == nil || !strings.Contains(err.Error(), "no hash") {
+	if _, err := checkProfileAgainstGate(r.root, profile, written, false); err == nil || !strings.Contains(err.Error(), "no hash") {
 		t.Errorf("a verdict without a hash: %v; want a refusal", err)
 	}
 
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "r3", TriggerMode: "gate", GitRevision: "0000000", Cover: true}}, map[string]string{"r3": profileHash(written)})
-	if note, err := checkProfileAgainstGate(r.root, profile, rewritten); err != nil || !strings.Contains(note, "not checked") {
+	if note, err := checkProfileAgainstGate(r.root, profile, rewritten, false); err != nil || !strings.Contains(note, "not checked") {
 		t.Errorf("a gate run on another commit only: %q, %v; want the profile measured", note, err)
 	}
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "r4", TriggerMode: "gate", GitRevision: "0000000", Cover: true, CoverProfileSHA256: profileHash(written)}}, map[string]string{"r4": profileHash(written)})
-	if _, err := checkProfileAgainstGate(r.root, profile, written); err == nil || !strings.Contains(err.Error(), "a gate run on 0000000") {
+	if _, err := checkProfileAgainstGate(r.root, profile, written, false); err == nil || !strings.Contains(err.Error(), "a gate run on 0000000") {
 		t.Errorf("the profile of a gate run on another commit: %v; want a refusal naming that commit", err)
 	}
 
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "r5", TriggerMode: "gate", GitRevision: head, Cover: true}}, map[string]string{"r5": profileHash(written)})
-	dirtyVerdict := `{"gate":{"cover":true,"dirty":true,"cover_profile_sha256":"` + profileHash(written) + `"}}`
+	dirtyVerdict := `{"verdict":"PASS","gate":{"cover":true,"dirty":true,"cover_profile_sha256":"` + profileHash(written) + `"}}`
 	if err := os.WriteFile(filepath.Join(r.root, gateResultsDir, "gate-r5.json"), []byte(dirtyVerdict), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := checkProfileAgainstGate(r.root, profile, written); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
+	if _, err := checkProfileAgainstGate(r.root, profile, written, false); err == nil || !strings.Contains(err.Error(), "uncommitted changes") {
 		t.Errorf("a gate run on a dirty tree: %v; want a refusal", err)
 	}
 
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "../../x", TriggerMode: "gate", GitRevision: head, Cover: true}}, nil)
-	if note, err := checkProfileAgainstGate(r.root, profile, written); err != nil || !strings.Contains(note, "not checked") {
+	if note, err := checkProfileAgainstGate(r.root, profile, written, false); err != nil || !strings.Contains(note, "not checked") {
 		t.Errorf("a run identifier with a path in it: %q, %v; want the line skipped", note, err)
 	}
 
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "r6", TriggerMode: "gate", GitRevision: head, Cover: true}}, map[string]string{"r6": profileHash(written)})
 	r.write("a.go", "package m\n\nvar edited = 1\n")
-	if note, err := checkProfileAgainstGate(r.root, profile, rewritten); err != nil || !strings.Contains(note, "uncommitted changes") {
+	if note, err := checkProfileAgainstGate(r.root, profile, rewritten, false); err != nil || !strings.Contains(note, "uncommitted changes") {
 		t.Errorf("a tree with uncommitted changes: %q, %v; want the check skipped with a note", note, err)
 	}
 
-	if _, err := checkProfileAgainstGate(t.TempDir(), profile, written); err == nil {
+	if _, err := checkProfileAgainstGate(t.TempDir(), profile, written, false); err == nil {
 		t.Error("a directory outside a repository: HEAD resolved")
 	}
 }
@@ -247,13 +248,13 @@ func TestCoverageDiffRunsTheGateCheckBeforeItMeasures(t *testing.T) {
 		t.Fatal(err)
 	}
 	writeCoverHistory(t, r.root, []historyLine{{RunID: "w1", TriggerMode: "gate", GitRevision: head, Cover: true}}, map[string]string{"w1": profileHash(written)})
-	if code := reportDiffCoverage("main", 0, true); code != 1 {
+	if code := reportDiffCoverage("main", 0, true, false); code != 1 {
 		t.Errorf("a profile the gate did not write: exit %d; want 1", code)
 	}
 	if err := os.WriteFile(profile, written, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if code := reportDiffCoverage("main", 0, true); code != 0 {
+	if code := reportDiffCoverage("main", 0, true, false); code != 0 {
 		t.Errorf("the gate's own profile: exit %d; want 0", code)
 	}
 }
