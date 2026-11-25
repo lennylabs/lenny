@@ -1208,7 +1208,7 @@ packages:
     - package: tests/e2e_kind
       count: 236
     - package: tests/integration
-      count: 737
+      count: 740
     - package: tests/load_cloud
       count: 13
     - package: tests/load_kind
