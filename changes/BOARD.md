@@ -10,7 +10,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | --: |
 | Building | 2 |
 | Ready | 4 |
-| Waiting on decisions | 32 |
+| Waiting on decisions | 33 |
 | Blocked | 149 |
 | Landed | 24 |
 | Cancelled | 1 |
@@ -91,6 +91,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | 0149 is `Draft` |
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft`; a part waits on 0150.S1 |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
+| [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Waiting on decisions | 0175 is `Draft` |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Blocked | 0119.S1, 0119.S2, 0131.S9 |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
 | [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
@@ -299,3 +300,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 9 | 1 |
 | [0173](0173-idempotency-stored-credentials/change.md) | Credentials in stored idempotency responses | `In progress` | 0 of 1 | 2 |
 | [0174](0174-openai-assistants-removal/change.md) | Removal of the openai-assistants reference runtime | `In progress` | 0 of 1 | 0 |
+| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
