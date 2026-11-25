@@ -1,6 +1,6 @@
 # Merge gate wall time
 
-Status: `In progress`, revision 7, 2026-11-24.
+Status: `In progress`, revision 7, 2026-11-25.
 
 ## Problem
 

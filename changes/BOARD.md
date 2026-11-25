@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Building | 4 |
 | Ready | 4 |
 | Waiting on decisions | 32 |
-| Blocked | 149 |
+| Blocked | 150 |
 | Landed | 19 |
 | Cancelled | 1 |
 
@@ -242,6 +242,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S7](0153-workspace-materialization/steps.md#0153s7-slot-memory-floor-and-writeback-pacing) | Slot memory floor and writeback pacing | Blocked | 0121.S1 |
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
+| [0172.S9](0172-gate-speed/steps.md#0172s9-the-static-first-default-and-the-coverage-checks-gate-run) | The static-first default and the coverage check's gate run | Blocked | 0172.S8 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0172.S1](0172-gate-speed/steps.md#0172s1-selection-width-and-the-verdicts-selection-record) | Selection width and the verdict's selection record | Landed |  |
 | [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Landed |  |
@@ -293,4 +294,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 0 of 1 | 2 |
-| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 5 of 8 | 6 |
+| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 5 of 9 | 0 |
