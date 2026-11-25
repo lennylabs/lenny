@@ -544,7 +544,7 @@ packages:
     - package: pkg/gateway/platformtools/leasecontrol/leaseelicit
       count: 13
     - package: pkg/gateway/platformtools/mcp
-      count: 123
+      count: 124
     - package: pkg/gateway/platformtools/mcptools
       count: 677
     - package: pkg/gateway/platformtools/mcptools/internal/genmcpschemas
@@ -610,7 +610,7 @@ packages:
     - package: pkg/idempotency
       count: 7
     - package: pkg/idempotency/idempotencymw
-      count: 49
+      count: 54
     - package: pkg/kms
       count: 31
     - package: pkg/kms/aws
@@ -956,7 +956,7 @@ packages:
     - package: pkg/upload/archive
       count: 15
     - package: pkg/uploadtoken
-      count: 9
+      count: 24
     - package: pkg/webhookdelivery
       count: 1
     - package: pkg/workspacepack
@@ -1066,7 +1066,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 320
+      count: 322
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
@@ -1176,7 +1176,7 @@ packages:
     - package: tests/contract/rest_circuitbreaker
       count: 6
     - package: tests/contract/rest_idempotency
-      count: 6
+      count: 8
     - package: tests/contract/rest_mcp_consistency
       count: 76
     - package: tests/contract/rest_openai_chat
