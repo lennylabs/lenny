@@ -1,10 +1,10 @@
 # Credentials in stored idempotency responses
 
-Status: `In progress`, revision 2, 2026-11-25.
+Status: `Implemented`, revision 3, 2026-11-25.
 
 ## Problem
 
-The gateway stores the response of every idempotent request so that a retry with the same key replays it ([§11.5](../../spec/11_policy-and-controls.md#115-idempotency)). Some of those responses carry the `uploadToken` of [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow), a bearer credential that authorizes uploads into a session and its `FinalizeWorkspace`. The idempotency table therefore holds bearer credentials for 24 hours, in Postgres under `--postgres-dsn`, with no application-layer encryption. [§12.9](../../spec/12_storage-architecture.md#129-data-classification) does not classify idempotency records, so no control in the classification table applies to them.
+The gateway stores the response of every idempotent request so that a retry with the same key replays it ([§11.5](../../../spec/11_policy-and-controls.md#115-idempotency)). Some of those responses carry the `uploadToken` of [§7.1](../../../spec/07_session-lifecycle.md#71-normal-flow), a bearer credential that authorizes uploads into a session and its `FinalizeWorkspace`. The idempotency table therefore holds bearer credentials for 24 hours, in Postgres under `--postgres-dsn`, with no application-layer encryption. [§12.9](../../../spec/12_storage-architecture.md#129-data-classification) does not classify idempotency records, so no control in the classification table applies to them.
 
 Evidence from the tree:
 
@@ -37,7 +37,7 @@ The change covers every response the gateway's idempotency store holds, on the R
 
 It leaves out:
 
-- The `lenny-ops` idempotency records of [§25.4](../../spec/25_agent-operability.md#254-the-lenny-ops-service), which use their own table (`ops_idempotency_keys`) and their own store (`pkg/ops/opsidem`). Decision 1 names the critical operations of §11.5.
+- The `lenny-ops` idempotency records of [§25.4](../../../spec/25_agent-operability.md#254-the-lenny-ops-service), which use their own table (`ops_idempotency_keys`) and their own store (`pkg/ops/opsidem`). Decision 1 names the critical operations of §11.5.
 - Values a client sends that a response echoes back, such as session `env` and `metadata`. They are the client's data, and the §12.9 classification of the record applies to them.
 - The verification of an upload token against its session row, which the M3 readiness review proposed as a separate change.
 
@@ -45,8 +45,8 @@ It leaves out:
 
 | Term | Meaning |
 | :-- | :-- |
-| Idempotency record | A row of the `idempotency_keys` table, or an entry of the in-memory store: the tenant, the key, the request hash, and the stored response ([§11.5](../../spec/11_policy-and-controls.md#115-idempotency)). |
-| Upload token | The `uploadToken` of [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow), `<session_id>.<expiry_unix_seconds>.<hmac_hex>`, an HMAC-SHA256 under a key of the gateway's signing-key ring. |
+| Idempotency record | A row of the `idempotency_keys` table, or an entry of the in-memory store: the tenant, the key, the request hash, and the stored response ([§11.5](../../../spec/11_policy-and-controls.md#115-idempotency)). |
+| Upload token | The `uploadToken` of [§7.1](../../../spec/07_session-lifecycle.md#71-normal-flow), `<session_id>.<expiry_unix_seconds>.<hmac_hex>`, an HMAC-SHA256 under a key of the gateway's signing-key ring. |
 | Signing-key ring | The active upload-token signing key and the previous keys still inside the rotation overlap window (`uploadtoken.KeyRing`). |
 | Redaction reference | What a stored response holds in place of an upload token: `<session_id>.<expiry_unix_seconds>.redacted.<mark>`, where the mark is an HMAC of the token under the key that signed it. The token cannot be recovered from the reference, and the reference does not verify as a token. |
 
@@ -82,7 +82,7 @@ Both operate on raw bytes, so they reach a token wherever the body carries it: a
 
 §12.9 lists idempotency records as T3, Confidential, in Postgres, because a stored response holds session metadata, user identifiers, and, for `Resume`, task results, which the table classifies as Confidential. §11.5 states that a stored response holds no credential that the gateway issues, and §7.1 states that the gateway persists no upload token.
 
-The T3 controls of §12.9 apply to idempotency records as they apply to the other T3 rows in Postgres, and this change implements none of them for the table. Retention and erasure are within the T3 bounds already, because a record expires after 24 hours and the garbage-collection sweep removes it. Encryption at rest and the audit logging of reads and writes are the controls that [0150](../0150-tenant-security-settings/change.md) "TSS-8" names an enforcement point for, and its decision D13 settles Postgres Confidential data through the preflight volume-encryption check. 0150's inventory of data types gains this row in its next revision.
+The T3 controls of §12.9 apply to idempotency records as they apply to the other T3 rows in Postgres, and this change implements none of them for the table. Retention and erasure are within the T3 bounds already, because a record expires after 24 hours and the garbage-collection sweep removes it. Encryption at rest and the audit logging of reads and writes are the controls that [0150](../../0150-tenant-security-settings/change.md) "TSS-8" names an enforcement point for, and its decision D13 settles Postgres Confidential data through the preflight volume-encryption check. 0150's inventory of data types gains this row in its next revision.
 
 ### SC-4 Responses not stored
 
@@ -97,8 +97,8 @@ The T3 controls of §12.9 apply to idempotency records as they apply to the othe
 - A replay rebuilds a token only on a gateway replica whose ring holds the key that signed it. Each gateway replica seeds its own ring at start (`cmd/lenny-gateway/token_signing.go`), so a replay that another replica serves returns the reference, which no replica accepts, where it returned the original token before this change. That token verified only on the replica that minted it, because upload tokens verify on the same condition, so only a client whose uploads reach the minting replica loses a working token. The per-replica ring predates this change.
 - The reference keeps the token's session id and expiry, which the response's `id` field and the session row already hold.
 - Options (b), encrypting the stored body under the tenant key, and (c), classifying the records as Secret and relying on volume encryption, were not taken (decision 1).
-- The replay mints the token under the key that signed the original, so the minted token equals the original while that key is in the ring. Minting under the active key on every replay was not taken: after a key rotation, the new token's digest would differ from the digest on the session row, which `FinalizeWorkspace` marks consumed, so the replayed token would escape single-use invalidation, and the replayed body would differ from the original. Decision 1 states that a replay "mints a fresh token", and open decision 2 asks the owner to confirm this reading.
-- A value a client sends that has the token's form or the reference's form, and that the response echoes, is stored with a mark no key reproduces, so its replay differs from the original response. Open decision 3 asks the owner to confirm the byte-level redaction.
+- The replay mints the token under the key that signed the original, so the minted token equals the original while that key is in the ring. Minting under the active key on every replay was not taken: after a key rotation, the new token's digest would differ from the digest on the session row, which `FinalizeWorkspace` marks consumed, so the replayed token would escape single-use invalidation, and the replayed body would differ from the original. Decision 1 states that a replay "mints a fresh token", and decision 2 confirms this reading.
+- A value a client sends that has the token's form or the reference's form, and that the response echoes, is stored with a mark no key reproduces, so its replay differs from the original response. Decision 3 confirms the byte-level redaction.
 - Strip scans every stored body, and Remint scans every stored body that holds a reference, so a replay of a large response that holds many references costs more CPU than a copy of the stored body.
 
 ## Specification and non-specification changes

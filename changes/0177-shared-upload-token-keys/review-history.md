@@ -1,0 +1,3 @@
+# Review history: 0177 A shared upload-token key ring and consumed-token tracker
+
+- 2026-11-25, revision 1. Created from the owner's answer to IK-4 on the M3 readiness decision page of 2026-11-25, option (a), recorded as decision 1, which asks for the design before the store is chosen. The revision compares Postgres only, Redis only, and both, recommends Postgres only, and raises open decisions O1 (the store) and O2 (minting when the ring cannot be refreshed). Status `Draft`, with step 0177.S1 waiting on both. The change is not a member of the v1 program, as changes 0162, 0171, and 0173 are not.

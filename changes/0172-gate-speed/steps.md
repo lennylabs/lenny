@@ -79,3 +79,11 @@ Decision 18. The verdict of a gate run with `--cover` records the SHA-256 of `te
 - closes: []
 
 Decisions 19, 23, and 24. The gate's default layout becomes `static-first`, with `--layout serial` kept as the way back that decision 7 names. `lenny-test coverage --diff` gains `--require-gate`, which refuses when no gate run with `--cover` on `HEAD` is recorded, and refuses the profile of a gate run whose verdict is not `PASS`. The check before a merge in `.claude/rules/git-workflow.md`, `.claude/rules/test-coverage.md`, and the build skill names `--require-gate`. Then "Merge gate" in `TESTING.md` and `cmd/lenny-test/README.md`. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
+
+### 0172.S10 The tiers of the gate run that the coverage check accepts
+- status: Planned
+- lanes: [code, documentation]
+- depends-on: [0172.S9]
+- closes: []
+
+Decision 25. Under `--require-gate`, `lenny-test coverage --diff` refuses a gate run whose `gate.restricted_to` leaves out any of the static, unit, component, and contract tiers, and names the run's tiers in its note. A run that `--tier` did not restrict, a full run with `gate.all` included, records no `gate.restricted_to` and is accepted. Then "Merge gate" in `TESTING.md` drops the limit it states for the check, and `cmd/lenny-test/README.md` states the refusal. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.

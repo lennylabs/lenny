@@ -1,0 +1,3 @@
+# Review history: 0178 Idempotency keys scoped by principal
+
+- 2026-11-25, revision 1. Created from the owner's answer to IK-3 on the M3 readiness decision page of 2026-11-25, option (a), recorded as decision 1. The principal is resolved from `authmw.Principal`, whose subject is the session owner of §10.2, and the migration discards the existing rows rather than backfilling them. Writing the design raised open decision O1, whether a bearer bound to a session narrows the scope to that session, so the status is `Draft`, with step 0178.S1 waiting on it. The change is not a member of the v1 program, as changes 0162, 0171, and 0173 are not.
