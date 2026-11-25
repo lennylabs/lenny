@@ -30,7 +30,7 @@ on:
         type: boolean
         default: false
       base:
-        description: 'A commit of main to compare with instead of the latest successful run of this workflow.'
+        description: 'A commit of main to compare with, at or before the head of the latest successful run of this workflow; it widens the selection.'
         type: string
         default: ''
 
@@ -40,7 +40,9 @@ permissions:
 
 # One group for main. A run in progress is never cancelled; GitHub keeps at
 # most one pending run and cancels an older pending run when a newer push
-# replaces it, and the newer run's base still covers the replaced push.
+# replaces it, and the newer run's base still covers the replaced push. A
+# pending full run is cancelled the same way; dispatch a full run by hand
+# when the week's scheduled run did not finish.
 concurrency:
   group: gate-main
   cancel-in-progress: false
@@ -48,7 +50,7 @@ concurrency:
 env:
   # The base before this workflow has a successful run on main: the commit
   # of the latest PASS of the local gate on main (run
-  # d3dcc8ba00e6fef49bb6eaf5). A base further back selects more, never less.
+  # d3dcc8ba00e6fef49bb6eaf5). A base further back selects at least as much.
   GATE_FALLBACK_BASE: 64d2b7c3aa61db5cde25b2fe2adc8098390dce39
   # The serial layout runs one tier at a time. The default static-first
   # layout overlaps the contract, component, and integration tiers, which
