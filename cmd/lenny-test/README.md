@@ -51,7 +51,7 @@ lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotatio
 lenny-test gate
 lenny-test gate --here      # the gate's tiers in this environment; UNVERIFIED outside the gate image
 lenny-test gate --tier static,unit,component,contract --cover   # the check before a code branch merges (v1 merge policy); then:
-lenny-test coverage --diff main --threshold 0.80                 # reads the profile that --cover wrote, and refuses it when its SHA-256 differs from the one the latest --cover gate run on HEAD recorded
+lenny-test coverage --diff main --threshold 0.80                 # reads the profile that `--cover` wrote, and refuses a profile that the latest `--cover` gate run on `HEAD` did not write (TESTING.md "Restricted runs and coverage")
 lenny-test gate --layout static-first              # static alone, then contract beside component and integration, then unit, then the documentation gates (default serial: every tier one after another)
 lenny-test gate --layout unit-alone                 # static and contract beside component and integration, then unit, then the documentation gates
 lenny-test gate --layout static-first --go-test-p component=2,integration=2  # the go test -p of a tier while it runs beside another lane
