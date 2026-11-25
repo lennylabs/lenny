@@ -316,6 +316,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 2 | 0 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 10 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
-| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 0 of 1 | 0 |
+| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 0 of 1 | 4 |
 | [0177](0177-shared-upload-token-keys/change.md) | A shared upload-token key ring and consumed-token tracker | `Draft` | 0 of 1 | 2 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `Draft` | 0 of 1 | 1 |
