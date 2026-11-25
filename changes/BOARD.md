@@ -8,7 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 6 |
+| Building | 1 |
+| Ready | 5 |
 | Waiting on decisions | 32 |
 | Blocked | 151 |
 | Landed | 19 |
@@ -53,11 +54,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Ready |  |
-| [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |

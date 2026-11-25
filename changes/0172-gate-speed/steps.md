@@ -49,7 +49,7 @@ Decisions 8 and 9. `--tier` and `--cover` on `lenny-test gate`, their record in 
 Decision 10. `--container` on `lenny-test run`, reusing the gate's container setup, with unit tests on the arguments it builds, and the repository fix for the `go vet` failure on macOS hosts. Then the developer loop in `.claude/rules/test-coverage.md` ("How to run"), `TESTING.md`, and `cmd/lenny-test/README.md`. It depends on 0172.S4 because both edit the gate's container setup and the same pages. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S6 The static tier reads a snapshot
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0172.S2]
 - closes: []
