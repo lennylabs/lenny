@@ -116,7 +116,9 @@ def sections(text):
     return out
 
 
-TABLE_SEPARATOR = re.compile(r'^\|(\s*:?-+:?\s*\|)+\s*$')
+# A Markdown table separator row: cells of dashes with optional alignment
+# colons, with or without a closing pipe.
+TABLE_SEPARATOR = re.compile(r'^\|(\s*:?-+:?\s*\|)*\s*:?-+:?\s*\|?\s*$')
 
 
 def count_open_decisions(text):
@@ -124,14 +126,23 @@ def count_open_decisions(text):
     section. A decision is written as a list item (a numbered item or a bullet
     at the start of a line) or as a data row of a Markdown table. A table's
     header row, the row directly above its separator row, and the separator row
-    are not decisions. A section that opens with "None" or "To be framed" holds
-    none."""
+    are not decisions, and neither is a line inside a fenced code block. A
+    section that opens with "None" or "To be framed" holds none."""
     text = text.strip()
     if not text or re.match(r'(?i)^(none|to be framed)', text):
         return 0
-    lines = text.split('\n')
-    n = len(re.findall(r'(?m)^(\d+\.|-) ', text))
+    lines, fenced = [], False
+    for line in text.split('\n'):
+        if line.lstrip().startswith('```'):
+            fenced = not fenced
+            continue
+        if not fenced:
+            lines.append(line)
+    n = 0
     for i, line in enumerate(lines):
+        if re.match(r'^(\d+\.|-) ', line):
+            n += 1
+            continue
         if not line.startswith('|') or TABLE_SEPARATOR.match(line):
             continue
         if i + 1 < len(lines) and TABLE_SEPARATOR.match(lines[i + 1]):

@@ -161,6 +161,8 @@ class BoardTest(Fixture):
         self.assertIn('| [0101](0101-beta/change.md) | Beta | `Draft` | 0 of 1 | 3 |', board)
         self.assertEqual(C.count_open_decisions('None.\n\n| ID | Q |\n| :-- | :-- |\n| D1 | x |\n'), 0)
         self.assertEqual(C.count_open_decisions('| ID | Q |\n|---|---|\n'), 0)
+        self.assertEqual(C.count_open_decisions('| ID | Q |\n| :-- | :--\n| D1 | x |\n'), 1)
+        self.assertEqual(C.count_open_decisions('1. **Q.** Options.\n\n```\n- not a decision\n| a | b |\n```\n'), 1)
 
     def test_board_check_detects_a_stale_board(self):
         self.run_cli('board')
