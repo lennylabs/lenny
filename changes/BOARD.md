@@ -8,11 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
 | Ready | 4 |
 | Waiting on decisions | 32 |
 | Blocked | 149 |
-| Landed | 23 |
+| Landed | 24 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -54,7 +53,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0172.S9](0172-gate-speed/steps.md#0172s9-the-static-first-default-and-the-coverage-checks-gate-run) | The static-first default and the coverage check's gate run | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
@@ -249,6 +247,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Landed |  |
 | [0172.S7](0172-gate-speed/steps.md#0172s7-the-full-runs-unit-tier-and-two-selection-rows) | The full run's unit tier and two selection rows | Landed |  |
 | [0172.S8](0172-gate-speed/steps.md#0172s8-the-coverage-profiles-hash-and-the-container-messages) | The coverage profile's hash and the container messages | Landed |  |
+| [0172.S9](0172-gate-speed/steps.md#0172s9-the-static-first-default-and-the-coverage-checks-gate-run) | The static-first default and the coverage check's gate run | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -294,4 +293,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 1 | 2 |
-| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 8 of 9 | 1 |
+| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 9 | 1 |
