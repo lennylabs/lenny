@@ -1455,7 +1455,7 @@ lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json
 
 **Built-in vs. registered runtimes.**
 - The three test runtimes (`echo`, `streaming-echo`, `delegation-echo`) run conformance on every PR.
-- The nine reference runtimes (§spec/26.3–§spec/26.11: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, `crewai`) run conformance on every nightly. Each runtime declares its integration level (Basic / Standard / Full) per §spec/26.2; the harness asserts the level-specific battery passes and that the runtime advertises only the capabilities it actually implements.
+- The reference runtimes (§spec/26.3–§spec/26.11: `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `crewai`) run conformance on every nightly. Each runtime declares its integration level (Basic / Standard / Full) per §spec/26.2; the harness asserts the level-specific battery passes and that the runtime advertises only the capabilities it actually implements.
 - Third-party runtimes register themselves via the `RegisterAdapterUnderTest(adapter)` mechanism in the harness.
 
 **Fidelity matrix.** A separate table-driven test asserts the documented OpenAI/Anthropic Completions/Responses translation fidelity. For each `MessagePart` type, the lossy fields are documented and the suite confirms the exact loss.

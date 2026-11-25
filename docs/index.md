@@ -308,7 +308,7 @@ At the Basic and Standard levels, a credential rotation checkpoints the session,
 
 A runtime of `type: mcp` wraps an existing MCP server without code changes. Lenny serves it at `/mcp/runtimes/{name}` with the same isolation, credentials, egress control, and audit.
 
-Runtime author SDKs for Go, Python, and TypeScript implement the wire format, and `lenny runtime init`, `lenny runtime validate`, and `lenny runtime publish` scaffold, test, and register a runtime. The reference runtime catalog defines runtimes for `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, `openai-assistants`, and `crewai`, and the `echo` runtime is the conformance example. The [runtime author guide](/lenny/runtime-author-guide/) covers the contract.
+Runtime author SDKs for Go, Python, and TypeScript implement the wire format, and `lenny runtime init`, `lenny runtime validate`, and `lenny runtime publish` scaffold, test, and register a runtime. The reference runtime catalog defines runtimes for `claude-code`, `gemini-cli`, `codex`, `cursor-cli`, `chat`, `langgraph`, `mastra`, and `crewai`, and the `echo` runtime is the conformance example. The [runtime author guide](/lenny/runtime-author-guide/) covers the contract.
 
 ## Client protocols
 

@@ -81,7 +81,7 @@ If two or more boxes are unchecked, read the specific alternative below — you 
 
 ## 2026 open-source entrants
 
-Three Apache 2.0 projects launched in Q1 2026 cover adjacent surface area. All three ship pre-wired for AI coding workflows: Scion and OpenShell only launch coding-agent CLIs (Claude Code, Codex, Gemini CLI, OpenCode, Copilot); OpenSandbox lists coding agents as its first use case alongside GUI/computer-use, eval, and RL. Lenny is workload-agnostic — any JSON-over-stdio program is a runtime, and its reference catalog spans coding CLIs, chat, and framework adapters (LangGraph, Mastra, CrewAI, OpenAI Assistants). None of the three is a drop-in replacement for Lenny's full scope, but each is the right choice for a specific need. Full narrative comparisons are below; this table is a quick orientation.
+Three Apache 2.0 projects launched in Q1 2026 cover adjacent surface area. All three ship pre-wired for AI coding workflows: Scion and OpenShell only launch coding-agent CLIs (Claude Code, Codex, Gemini CLI, OpenCode, Copilot); OpenSandbox lists coding agents as its first use case alongside GUI/computer-use, eval, and RL. Lenny is workload-agnostic — any JSON-over-stdio program is a runtime, and its reference catalog spans coding CLIs, chat, and framework adapters (LangGraph, Mastra, and CrewAI). None of the three is a drop-in replacement for Lenny's full scope, but each is the right choice for a specific need. Full narrative comparisons are below; this table is a quick orientation.
 
 | Dimension | Lenny | Google Scion | NVIDIA OpenShell | Alibaba OpenSandbox |
 |:---|:---|:---|:---|:---|
