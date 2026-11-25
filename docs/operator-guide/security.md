@@ -496,6 +496,8 @@ tenants:
 
 When a tenant sets `workspaceTier: T4`, the platform applies Restricted-tier controls to all workspace files, snapshots, and session transcripts. T4 requires dedicated node pools for per-tenant key isolation. The setting is inherited by all environments under the tenant unless explicitly overridden to a **stricter** (never looser) tier.
 
+Idempotency records, the responses the gateway keeps for 24 hours so that a client retry with the same `Idempotency-Key` returns the first response, are T3 Confidential data in Postgres. A stored response holds no `uploadToken`: the gateway stores a reference in the token's place and signs the token again on replay, so a reader of the `idempotency_keys` table obtains no upload credential.
+
 ---
 
 ## GDPR Erasure
