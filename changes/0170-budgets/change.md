@@ -1,6 +1,6 @@
 # Budgets
 
-Status: `Draft`, revision 13, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 14, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -369,7 +369,7 @@ A meter is what a charge measures, and each meter has one unit, in which every l
 
 **Combining meters [design].** A limit counts meters of one unit. The currency meters combine in one limit, which counts their charges together, and `computeUnits` and `storageBytes` each stand alone. The gateway refuses any other limit at write with `400 VALIDATION_ERROR` naming the meters. A limit carries no `unit` field, and `budgets.currency` names the currency once ("BG-5", decision 66).
 
-**Capacity limits [design].** A limit on `storageBytes` is a capacity limit. It counts the bytes held now, ignores the period, and has no reset. It refuses a write whose declared size would carry it past its amount, under the write rules of "BG-6", and the checkpoint that releases a pod passes it as decisions 25 and 28 state. It takes no carve, no extension, and no `defaultDelegationFraction`, because bytes held are not spent and return when data is deleted: a delegated child's session budget holds a capacity limit at the amount of its parent's limit of the same key, which counts the child's own bytes, and a shared capacity limit, such as a tenant's storage cap, bounds a tree's total. The owner raises a session budget's capacity limit with `PATCH` within its ceilings ("BG-2").
+**Capacity limits [design].** A limit on `storageBytes` is a capacity limit. It counts the bytes held now, ignores the period, and has no reset. It refuses a write whose declared size would carry it past its amount, under the write rules of "BG-6", and the checkpoint that releases a pod passes it as decisions 25 and 28 state. It takes no carve, no extension, and no `defaultDelegationFraction`, because bytes held are not spent and return when data is deleted. A session budget's capacity limit bounds its whole delegation tree: one counter at the root counts the bytes that the root and every descendant hold, and a delegated child holds no capacity limit of its own for that key, so a write by any session of the tree is admitted against the root's counter (decision 69). A transfer moves the child's held bytes to its new root's counter and is refused when they do not fit, as a transfer that cannot reserve its carve is refused. A released session takes its held bytes out of the tree's counter, and its own session budget's capacity limit, resolved from its defaults and ceilings, counts them from then on. A shared capacity limit, such as a tenant's storage cap, bounds every tree of its scope. The owner raises a session budget's capacity limit with `PATCH` within its ceilings ("BG-2").
 
 The costs that 0121 attributes to a tenant and to no session, the idle pods of its owned or pinned pools (`pool.idle_usage`), its dedicated nodes (`node.dedicated_usage`), and legal-hold escrow, feed no budget (decision 29). A refusal of sessions cannot stop them, so a budget that counted them would refuse a tenant's sessions while the costs went on. They stay billing events, from which the operator, the deployer, and the tenant follow that spend at their own prices outside Lenny.
 
@@ -877,7 +877,7 @@ POST /v1/sessions
 - A budget suspension that outlasts its hold costs a checkpoint and a later restore for each session of the subtree, and a session under `sealOnly` or `none` expires at the end of the hold.
 - Under `gateway.delegation.sessionBudget: optional`, a parent with no session budget creates children that no carve bounds, so DPR-4 of 0166 holds only for a parent with a session budget.
 - Costs attributed to a tenant and to no session, such as idle pods, dedicated nodes, and legal-hold escrow, reach no budget (decision 29).
-- A capacity limit of a session budget is copied to each child rather than carved, so each session of a tree may hold up to its amount, and a shared capacity limit bounds the tree's total (decision 67).
+- A capacity limit of a session budget counts the bytes of its whole delegation tree at the root rather than being carved, so the tree shares one amount and no child holds a share of its own (decision 69).
 - A session that an external limit suspends stays suspended after the gateway's limit resets, until its client resumes it, and a runtime that never sends `external_limit` behind a gateway that sends no notices keeps retrying until its own logic stops (decision 68).
 
 **Alternatives considered:**
