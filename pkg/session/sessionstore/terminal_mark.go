@@ -141,7 +141,10 @@ func MarkPodReleased(now time.Time) func(*Session) error {
 // TerminatedAt, for the reasons InPostTerminalWindow states for the same
 // cases. Every write of the pipeline runs under a context whose deadline is
 // TerminatedAt plus the budget, so once the budget has elapsed no step of the
-// pipeline can still write, whether or not the replica wrote the mark.
+// pipeline can still write to a store, whether or not the replica wrote the
+// mark. The exception is a billing event whose primary write failed, which the
+// billing failover tiers stage and a flusher inserts later; the erasure job
+// purges the staged events it can reach (issue F-12.8.53 tracks the rest).
 //
 // spec: §7.1 (Pipeline-pending session)
 func TerminalPipelinePending(s Session, now time.Time, budget time.Duration) bool {
