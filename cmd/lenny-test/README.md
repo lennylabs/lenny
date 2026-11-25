@@ -52,8 +52,9 @@ lenny-test gate
 lenny-test gate --here      # the gate's tiers in this environment; UNVERIFIED outside the gate image
 lenny-test gate --tier static,unit,component,contract --cover   # the check before a code branch merges (v1 merge policy); then:
 lenny-test coverage --diff main --threshold 0.80                 # reads the profile that --cover wrote
-lenny-test gate --layout unit-alone                 # static and contract beside component and integration, then unit, then the documentation gates (default serial: every tier one after another)
-lenny-test gate --layout unit-alone --go-test-p component=2,integration=2  # the go test -p of a tier while it runs beside another lane
+lenny-test gate --layout static-first              # static alone, then contract beside component and integration, then unit, then the documentation gates (default serial: every tier one after another)
+lenny-test gate --layout unit-alone                 # static and contract beside component and integration, then unit, then the documentation gates
+lenny-test gate --layout static-first --go-test-p component=2,integration=2  # the go test -p of a tier while it runs beside another lane
 lenny-test gate --gocache-cap-gb 50   # empty the build cache volume first when it holds more than 50 GB (default 30, LENNY_GATE_GOCACHE_CAP_GB; 0 turns the check off)
 
 # Actually run (Phase 0: static + unit only)
@@ -102,7 +103,8 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `cmd_run.go` | Default run command: parses selectors, resolves into tier plan, executes |
 | `cmd_gate.go` | `gate` subcommand: builds the gate image from `tests/gate/Dockerfile`, runs the merge gate in it, and writes `tests/results/gate-<run>.json` |
 | `run_container.go` | `run --container`: the `run` selection inside the gate image, with the gate's container setup and the worktree owner's user |
-| `gate_lanes.go` | The gate's layouts (`--layout unit-alone` or `serial`): the phases and lanes its tiers run in, and the `go test -p` of a tier that runs beside another lane (`--go-test-p`) |
+| `gate_lanes.go` | The gate's layouts (`--layout static-first`, `unit-alone`, or `serial`): the phases and lanes its tiers run in, and the `go test -p` of a tier that runs beside another lane (`--go-test-p`) |
+| `gate_snapshot.go` | The static tier's snapshot: the read-only checkout of the commit the gate resolved `HEAD` to, which the static tier's checks read, and `lenny-test static-snapshot`, which the gate container runs to make it |
 | `gate_gocache.go` | The size cap of the gate's build cache volume `lenny-gate-gocache`: measured with `du -sk` before the gate container starts and emptied with `go clean -cache` when it holds more than `--gocache-cap-gb` (default 30 GB, `LENNY_GATE_GOCACHE_CAP_GB`, 0 turns the check off) and no running container has it mounted |
 | `cmd_validate.go` | `validate` and `validate-diagnosis` subcommands |
 | `cmd_validate_annotated.go` | The `validate` check that every test from the component tier on carries a `// spec:` annotation or says it verifies no requirement |
