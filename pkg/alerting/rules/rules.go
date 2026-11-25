@@ -1579,7 +1579,7 @@ func warningAlerts() []Rule {
 			For:         5 * time.Minute,
 			Severity:    SeverityWarning,
 			Summary:     "Token revocation propagation lag exceeds SLO",
-			Description: "Revoked tokens are taking longer than the 50ms P99 SLO to propagate to peer replicas via EventBus. A peer replica that misses an event applies the revocation at its next revocation-cache rehydration, at most 30 seconds later, and at once when its EventBus subscription reconnects.",
+			Description: "Revoked tokens are taking longer than the 50ms P99 SLO to propagate to peer replicas via EventBus. A peer replica that misses an event applies the revocation at its next successful revocation-cache rehydration, which runs every 30 seconds and at once when its EventBus subscription reconnects.",
 			SpecRef:     "§16.5",
 		},
 		{
