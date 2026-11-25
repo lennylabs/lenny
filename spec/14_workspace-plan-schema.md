@@ -154,7 +154,7 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
       "settingSources":   { "type": "array", "items": { "type": "string", "enum": ["project", "user", "global"] }, "description": "Ordered list of settings sources" },
       "streamingMode":    { "type": "boolean", "default": true, "description": "Enable SSE streaming output" },
       "maxTokens":        { "type": "integer", "minimum": 1, "maximum": 200000, "description": "Override max output tokens" },
-      "temperature":      { "type": "number", "minimum": 0, "maximum": 1, "description": "Sampling temperature. Note: the Anthropic Messages API accepts `temperature` in [0, 1]; other first-party runtimes below (openai-assistants, gemini-cli, codex, chat) use [0, 2] per their respective provider APIs." },
+      "temperature":      { "type": "number", "minimum": 0, "maximum": 1, "description": "Sampling temperature. Note: the Anthropic Messages API accepts `temperature` in [0, 1]; other first-party runtimes below (gemini-cli, codex, chat) use [0, 2] per their respective provider APIs." },
       "thinkingBudget":   { "type": "integer", "minimum": 0, "description": "Extended thinking token budget; 0 disables thinking" }
     },
     "additionalProperties": false
@@ -173,23 +173,6 @@ The `WorkspacePlan` is the declarative specification for how a session's workspa
       "configSchema":     { "type": "object", "description": "Runtime-specific config forwarded as LangGraph RunnableConfig.configurable" }
     },
     "required": ["graphModule"],
-    "additionalProperties": false
-  }
-  ```
-
-  **`openai-assistants` runtime:**
-
-  ```json
-  {
-    "type": "object",
-    "properties": {
-      "assistantId":      { "type": "string", "description": "OpenAI Assistants API assistant ID (asst_...)" },
-      "model":            { "type": "string", "description": "Optional model override; defaults to the assistant's configured model" },
-      "temperature":      { "type": "number", "minimum": 0, "maximum": 2 },
-      "parallelToolCalls":{ "type": "boolean", "default": true },
-      "responseFormat":   { "type": "string", "enum": ["text", "json_object", "json_schema"], "default": "text" }
-    },
-    "required": ["assistantId"],
     "additionalProperties": false
   }
   ```
