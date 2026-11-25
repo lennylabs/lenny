@@ -39,6 +39,8 @@ The M3 readiness review of 2026-11-19 raised decisions 23 to 32. The records of 
    - (a) Retire `billing.dualControlThreshold`, and state in §11.2.1 one dual-control rule per event type: the credit threshold for `llm_usage`, and dual control always for this design's event types.
    - (b) Keep it with an explicit list of the fields it sums.
 
+   Decision 22 of 0133 since removed `llm_usage` and `billing.dualControlCreditThreshold`, so the credit threshold of option (a) no longer exists: option (a) retires `billing.dualControlThreshold` with dual control always for this design's event types.
+
    **Recommendation: (a)**, when no field remains for it to sum. Blocks the §11.2.1 dual-control edits of 0121.S2 and of the step of `0133-llm-upstreams-and-cost-budgets` that edits **Correction semantics**. The other change records the same question. (raised by the M3 readiness review, 2026-11-19; sources: connectors-llm-billing-C7, 0121-F13)
 
 29. **Operating rules of the accrual and the emitter.** The design leaves these rules unstated:

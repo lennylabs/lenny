@@ -285,3 +285,4 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
 - 2026-11-24, revision 29. Under decision 22 of `0133-llm-upstreams-and-cost-budgets`, MD-20's `source: gateway` becomes `source: external`, the `usage` member of a charge under 0170 "BG-12", with `amount` in money in place of `costUnits`, and the labels row, the worked example, and the instruction to 0133 follow. `source: runtime` is unchanged.
 - 2026-11-24, revision 30. Under decision 67 of `0170-budgets`, "MD-18" names the limits on the storage meters in place of limits that count `storage`.
 - 2026-11-24, revision 31. The crossing watch names the child's caps in place of its carve, after decision 70 of `0170-budgets`.
+- 2026-11-24, revision 32. From the review of the 0166 branch: the `suspended` and `resumed` row of MD-22 adds `reason: external_limit` for 0146's L39.

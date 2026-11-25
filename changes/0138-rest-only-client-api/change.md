@@ -1,6 +1,6 @@
 # REST-only client API
 
-Status: `Draft`, revision 12, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 13, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -440,7 +440,7 @@ A runtime with `interrupt` keeps its pod, and its session stays `idle`. `lenny s
 
 **R21. Transfer and release by the root's client (decisions 32, 33, and 46 of 0166) [design].** `POST /v1/sessions/{id}/transfer` and `POST /v1/sessions/{id}/release` let the root's client take over a descendant of its root, as a parent does with `session.transfer` and `session.release`. "Leaving the parent" in "DP-2" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-2-parent-link) defines what each leave does and what it carries, and DPR-16 governs both routes:
 
-- Caller: the owner of the root of the named session's tree, under session ownership. A session the caller may not read answers `404 RESOURCE_NOT_FOUND` under rule 7, and a root, which has no parent, answers `409 INVALID_STATE_TRANSITION`.
+- Caller: the owner of the root of the named session's tree, under session ownership. A principal that carries a session claim, which the gateway gives a runtime's platform tool calls, is refused by the predicate of SLR-22 of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md#sl-4-tree-suspension) even when its subject owns the root, so a runtime cannot move a session out of its parent through this route. A session the caller may not read answers `404 RESOURCE_NOT_FOUND` under rule 7, and a root, which has no parent, answers `409 INVALID_STATE_TRANSITION`.
 - Body: `transfer` takes none. `release` takes `handoff`, `false` by default; `handoff: true` ends the root of the tree with the released session as its successor under R24 and 0146's hand-off.
 - Checks: the gateway checks the call against the root's grant, its `leave` and `leaveMaxDepth`, and the security record, read at the call, and refuses a leave they do not allow with the refusal 0166 states for it. A release of a session in another environment than its parent also meets that environment's admission check under TS-3 (decision 41 of 0166).
 - Answer: `200` with the session resource after the leave. A session that already left in the mode the route names answers `200` with its resource and changes nothing, and R5's `Idempotency-Key` applies.
