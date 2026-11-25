@@ -252,6 +252,9 @@ type gateTierSelection struct {
 	Whole     bool `json:"whole"`
 	Packages  int  `json:"packages,omitempty"`
 	Functions int  `json:"functions,omitempty"`
+	// Excludes lists the package directories a whole tier left out, with
+	// the packages below them (tierPlan.exclude).
+	Excludes []string `json:"excludes,omitempty"`
 }
 
 // tierSelectionOf summarizes one tier's plan. A plan with no package scope,
@@ -259,7 +262,7 @@ type gateTierSelection struct {
 // its package patterns and the test functions it runs by name.
 func tierSelectionOf(p tierPlan) gateTierSelection {
 	if p.pkgs == nil && len(p.tests) == 0 && len(p.subsets) == 0 {
-		return gateTierSelection{Whole: true}
+		return gateTierSelection{Whole: true, Excludes: p.exclude}
 	}
 	s := gateTierSelection{Packages: len(p.pkgs), Functions: len(p.tests)}
 	for _, names := range p.funcs {
@@ -270,6 +273,9 @@ func tierSelectionOf(p tierPlan) gateTierSelection {
 
 // String renders the selection for the gate's summary.
 func (s gateTierSelection) String() string {
+	if s.Whole && len(s.Excludes) > 0 {
+		return "whole tier except " + strings.Join(s.Excludes, ", ")
+	}
 	if s.Whole {
 		return "whole tier"
 	}
@@ -1233,8 +1239,9 @@ func defaultGateRunner(root string) gateRunner {
 // merge gate's tiers (`run --changed --gate merge`), keeping the tiers the
 // gate takes from the plan (gateChangedTiers): the gate runs the static
 // tier and its general documentation gates itself. With all, it resolves
-// those tiers in full instead: the whole unit tier (./...) and every test
-// of the component, contract, and integration tiers. The unit tier runs
+// those tiers in full instead: the whole unit tier (./...) except the
+// directories of gateFullRunUnitExcludes, and every test of the component,
+// contract, and integration tiers. The unit tier runs
 // without a coverage profile (gateUnitWithoutCoverage).
 func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, error) {
 	sel := selector{changed: true, since: base, gate: gateMerge, rdepsDepth: rdepsDepth}
@@ -1247,7 +1254,29 @@ func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, e
 	}
 	r.tiers, _ = keepTiers(r.tiers, append([]string{tierStatic}, gateChangedTiers...))
 	gateUnitWithoutCoverage(r.tiers)
+	if all {
+		gateFullRunExcludes(r.tiers)
+	}
 	return r, nil
+}
+
+// gateFullRunUnitExcludes are the package directories a full run's unit
+// tier leaves out (change 0172, decision 16). tests/docs holds the docs
+// tier's tests, which build without a tag and so fall under the unit
+// tier's `./...`. A selected run places the package in the docs tier, of
+// which the merge gate runs only the general gates (gateDocsFiles); the
+// rest of the package runs at the area gate. Issue GATE-I9 records the
+// gap-record reconciliation tests there that failed in the full run.
+var gateFullRunUnitExcludes = []string{"tests/docs"}
+
+// gateFullRunExcludes sets the unit plan of a full run to leave out
+// gateFullRunUnitExcludes.
+func gateFullRunExcludes(plans []tierPlan) {
+	for i := range plans {
+		if plans[i].name == tierUnit && plans[i].pkgs == nil {
+			plans[i].exclude = append([]string{}, gateFullRunUnitExcludes...)
+		}
+	}
 }
 
 // gateUnitWithoutCoverage sets noCoverage on the unit tier's plan, so the

@@ -209,3 +209,29 @@ func TestNonGoInputProblemsRefuseMalformedTestsTargets(t *testing.T) {
 		t.Errorf("a row whose only target is under tests was reported:\n%s", joined)
 	}
 }
+
+// TestCommittedRowsSelectTheTiersThatReadTheRunbooksAndTheReleaseWorkflow
+// pins the two rows change 0172 decision 17 completes: a runbook edit
+// selects the chaos, security, and load_kind tiers, which run the image
+// that copies docs/runbooks, beside the e2e_kind tier, and an edit of the
+// release workflow selects the security tier, whose SBOM test reads it,
+// beside the harness's tests.
+func TestCommittedRowsSelectTheTiersThatReadTheRunbooksAndTheReleaseWorkflow(t *testing.T) {
+	inputs, err := readNonGoInputs(repoRoot())
+	if err != nil {
+		t.Fatal(err)
+	}
+	runbook := selectChanged([]string{"docs/runbooks/index.md"}, nil, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth})
+	for _, tier := range []string{tierE2EKind, tierChaos, tierSecurity, tierLoadKind, tierIntegration} {
+		if s := runbook.scopes[tier]; s == nil || !s.whole {
+			t.Errorf("a runbook edit does not select the %s tier whole: %+v", tier, s)
+		}
+	}
+	release := selectChanged([]string{".github/workflows/release.yml"}, nil, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth})
+	if s := release.scopes[tierSecurity]; s == nil || !s.whole {
+		t.Errorf("a release workflow edit does not select the security tier: %+v", s)
+	}
+	if s := release.scopes[tierUnit]; s == nil || !s.pkgs["cmd/lenny-test"] {
+		t.Errorf("a release workflow edit no longer selects the harness's tests: %+v", s)
+	}
+}

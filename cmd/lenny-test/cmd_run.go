@@ -3,6 +3,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"errors"
 	"flag"
 	"fmt"
@@ -176,6 +178,13 @@ type tierPlan struct {
 	// `run --changed` and `--tier unit` leave it false and keep writing
 	// tests/results/cover.out, which `lenny-test coverage --diff` reads.
 	noCoverage bool
+	// exclude lists package directories, relative to the module root,
+	// whose packages an unscoped unit run leaves out; the run lists the
+	// module's packages and runs the rest, packages below those
+	// directories among them.
+	// The merge gate's full run sets it (gateFullRunExcludes); every other
+	// run leaves it nil and runs `./...`. It is read only when pkgs is nil.
+	exclude []string
 	// goTestP is the `go test -p` of the tier's runs, or 0 for the go
 	// command's default. The merge gate sets it on a tier that shares its
 	// phase with another lane when `--go-test-p` names the tier (change
@@ -1228,9 +1237,11 @@ func tierStatusRank(status string) int {
 
 // runUnitTier runs `go test` over the plan's scope: its package patterns
 // whole and its by-name functions (see scopedRuns), or the whole module
-// (`./...`) when the plan is unscoped. --changed and --pkg pass the scope
-// they resolved, also when --tier unit restricts them; --tier unit alone,
-// --gate alone, and --all leave it nil.
+// (`./...`) when the plan is unscoped. An unscoped plan with exclude set,
+// which the merge gate's full run has, lists the module's packages and
+// runs those outside the directories it names. --changed and --pkg pass
+// the scope they resolved, also when --tier unit restricts them; --tier
+// unit alone, --gate alone, and --all leave it nil.
 func runUnitTier(p tierPlan) (string, string, *tierResult) {
 	// Race detection is on by default per §17.4. The coverage profile
 	// goes to unitCoverProfile(p): none for a plan with noCoverage set,
@@ -1243,6 +1254,20 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 		return "pass", "no Go packages under pkg/ yet", &tierResult{}
 	}
 	profile := unitCoverProfile(p)
+	if p.pkgs == nil && len(p.exclude) > 0 {
+		all, err := listModulePackagesFn()
+		if err != nil {
+			return verdictstatus.Fail, fmt.Sprintf("list the module's packages to leave out %s: %v", strings.Join(p.exclude, ", "), err), nil
+		}
+		kept := excludePackages(all, p.exclude)
+		if len(kept) == 0 {
+			// go test with no package argument would test the working
+			// directory instead.
+			return verdictstatus.Fail, "the module lists no package outside " + strings.Join(p.exclude, ", "), nil
+		}
+		result, runErr := runGoTestJSONFn(unitTierArgs(kept, profile, p.goTestP)...)
+		return tierOutcome("unit", result, runErr)
+	}
 	if p.pkgs == nil {
 		result, runErr := runGoTestJSONFn(unitTierArgs(nil, profile, p.goTestP)...)
 		return tierOutcome("unit", result, runErr)
@@ -1262,6 +1287,56 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 		return withGoTestP(unitTierFlags(""), p)
 	})
 	return tierOutcome("unit", result, runErr)
+}
+
+// listModulePackagesFn lists the import paths of the module's packages, as
+// `go test ./...` would run them. Tests replace it to list a fixed set.
+var listModulePackagesFn = listModulePackages
+
+// moduleListArgs are the arguments of the go command that lists the
+// module's packages for a full run's unit tier (listModulePackages).
+var moduleListArgs = []string{"list", "-e", "-race", "-f", "{{.ImportPath}}", "./..."}
+
+// listModulePackages runs `go list -e -race ./...` in the current
+// directory and returns the import paths it prints. -e keeps a package
+// that fails to load in the list, so `go test` reports its failure as
+// `./...` would, and -race sets the build tag the unit tier's `go test
+// -race` sets, so a package whose files need that tag is listed as `go
+// test -race ./...` would run it. The listing is the first module-wide
+// load of a full run, which can download modules into a cold cache, so it
+// shares the unit tier's own cap rather than the selection's.
+func listModulePackages() ([]string, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), tierUnitTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "go", moduleListArgs...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("go list ./...: %w: %s", err, strings.TrimSpace(stderr.String()))
+	}
+	return strings.Fields(string(out)), nil
+}
+
+// excludePackages returns the import paths of pkgs, in order, without the
+// package of each directory exclude names, relative to the module root. A
+// package below such a directory stays, so a test package moved under it
+// still runs.
+func excludePackages(pkgs, exclude []string) []string {
+	out := make([]string, 0, len(pkgs))
+	for _, p := range pkgs {
+		left := false
+		for _, dir := range exclude {
+			if p == moduleImportPath+"/"+strings.Trim(dir, "/") {
+				left = true
+				break
+			}
+		}
+		if !left {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 // unitCoverProfile returns the path the unit tier writes its coverage

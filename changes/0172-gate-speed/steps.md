@@ -57,7 +57,7 @@ Decision 10. `--container` on `lenny-test run`, reusing the gate's container set
 Decision 14. The gate resolves `HEAD` once and passes the commit to the secret scan and the static tier's git reads, and the static tier's checks that read the working tree run on an export of that commit that the gate user cannot write, so a test in a concurrent lane cannot change what the static tier reads. It also adds the layout of decision 15, which runs the static tier in a phase of its own ahead of the lanes of decision 5, and makes it the default when its validation run under "Validation owed" is clean. Then "Merge gate" in `TESTING.md`. It is built after 0172.S1 to 0172.S5 merge. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S7 The full run's unit tier and two selection rows
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0172.S6]
 - closes: []
