@@ -1,6 +1,6 @@
 # Delegation as session primitives
 
-Status: `Decided`, revision 14, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Decided`, revision 15, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -49,7 +49,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 **Out of scope:**
 
 - Agent-to-agent protocols and external agents. 0124 removed them, and this change does not reintroduce them.
-- §8.4's `approval` mode, which is reserved and unimplemented. Approval of a child by a person is SO-5a's of 0142, which gains conditions on the target runtime and on an amount of spend in money (decisions 36 and 55).
+- §8.4's `approval` mode, which is reserved and unimplemented. Approval of a child by a person is SO-5a's of 0142, which gains conditions on the target runtime and on an amount of spend in the deployment's currency (decisions 36 and 55).
 - The availability of the platform tools that are unrelated to children, such as `ask_question`. 0126 "DA-7" reviews them.
 - Root-session creation by a client through the public API. It is unchanged.
 
@@ -83,7 +83,7 @@ The owner prefers integrations outside Lenny's core, reached through REST or egr
 | Platform tool server | The tool server `platform`, through which a runtime calls Lenny's platform tools with `tool_call` and `list_tools` frames on `CH-MSGSOCK`, forwarded by the adapter to the gateway ([`0139-runtime-protocol`, "RP-3"](../0139-runtime-protocol/change.md#rp-3-tool-calls-on-frames)). |
 | Reference MCP bridge | The MCP server the runtime SDKs ship, which serves one MCP server per tool server to a harness and turns each MCP request into tool frames ([`0139-runtime-protocol`, "RP-5"](../0139-runtime-protocol/change.md#rp-5-reference-mcp-bridge)). |
 | Token exchange | `POST /v1/oauth/token` under RFC 8693, which narrows scope and can mint an `a2a_delegation` child token whose `act` claim names the parent session and its `delegation_depth` ([§13.3](../../spec/13_security-model.md#133-credential-flow)). |
-| External charges | The charges that an operator's LLM gateway, or another registered reporter, sends for a session, which budgets count on the `external` meter of [`0170-budgets`](../0170-budgets/change.md#bg-12-external-charges) under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions). |
+| External charges | The charges that an operator's LLM gateway, or another registered reporter, sends for a session, which budgets count on the `externalCost` meter of [`0170-budgets`](../0170-budgets/change.md#bg-12-external-charges) under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions). |
 | `onParentEnd` | The policy for a parent's non-terminal children when the parent ends, `close_all` or `let_finish` ([`0146-session-lifecycle`, "SL-9"](../0146-session-lifecycle/change.md#sl-9-when-a-parent-ends)). |
 | Child event | A message in a parent's inbox that reports a child's mid-turn message, end of turn, end, or other change ([`0135-message-delivery`, "MD-22"](../0135-message-delivery/change.md#md-22-parents-and-children)). MD-22 takes on the event classes, `from`, and the new kinds ("DP-7"). |
 | Question | An elicitation that a child raises with `ask_question` or with a `request` of `kind: "question"`, which travels one hop at a time under the [§9.2](../../spec/09_mcp-integration.md#92-elicitation-chain) chain and reaches a parent as a child event under MD-22. |
@@ -231,13 +231,13 @@ The numeric caveats are fixed when the grant is created. Lowering a ceiling appl
 | `requiredToCreate` | A session creation that would give the session a grant and no session budget is refused with `422 SESSION_BUDGET_REQUIRED`. A child always has a session budget, its carve, so the value bears on roots and on a released session. |
 | `optional` | A parent without a session budget creates children that no carve funds, each with the session budget its own defaults and ceilings give it. |
 
-Under either required value, the session budget must hold at least one limit that counts `external` and one that counts `compute`, which may be one limit that counts both (decision 55), so a session budget with only a storage limit does not satisfy the requirement and is refused at the same point with `422 SESSION_BUDGET_REQUIRED` (decision 53).
+Under either required value, the session budget must hold at least one limit that counts `externalCost` and one that counts a compute meter, `computeCost` or `computeUnits`, which may be one currency limit that counts both `externalCost` and `computeCost` (decisions 55 and 56), so a session budget with only a storage limit does not satisfy the requirement and is refused at the same point with `422 SESSION_BUDGET_REQUIRED` (decision 53).
 
 The Helm value sets the platform's level, the tenant delegation settings the tenant's, and the environment's delegation settings the environment's. A lower level may only make the value stricter, in the order `optional`, `requiredToDelegate`, `requiredToCreate`, and a write that loosens it is refused with `400 VALIDATION_ERROR` naming the level that binds. The value in effect is the strictest of the values the levels set, computed at each read, so a level tightened later binds a lower level's stored looser value (decision 53). It is read live at each `session.create` and session creation, as the policy references are. Under either required value DPR-4 holds for every child.
 
 **Policy authoring.** Delegation policies keep the RBAC of §10.2: a `tenant-admin` creates, edits, and deletes the policies of its own tenant, and a `platform-admin` those of every tenant. A tenant administrator therefore controls which runtimes the sessions of its tenant may start as children, without a platform administrator, and cannot widen what a platform runtime's policy or the platform ceilings allow, because every level intersects.
 
-**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` take `when`, with `targets` or `targetLabels` for the target runtime and `spendAbove` for the carve's amount in money (decision 55), as SO-5a of 0142 states them, and the hold applies at `session.create`, on the final runtime at the post-chain point, at a `session.set_limits` raise, and at a lease extension of a carve that crosses the amount, on the amounts SO-5a states it reads (0170 decision 46). The call waits under SO-5a's hold and its timeout, as any held platform call does.
+**Approval.** A person's approval of a child is SO-5a's of 0142 (decision 36). SO-5a's rules on `session.create` take `when`, with `targets` or `targetLabels` for the target runtime and `spendAbove` for the carve's amount in the deployment's currency (decision 55), as SO-5a of 0142 states them, and the hold applies at `session.create`, on the final runtime at the post-chain point, at a `session.set_limits` raise, and at a lease extension of a carve that crosses the amount, on the amounts SO-5a states it reads (0170 decision 46). The call waits under SO-5a's hold and its timeout, as any held platform call does.
 
 **Where the checks run.** The gateway checks the policy cap, the isolation floor, the remaining depth, and the binding and egress subsets on the final runtime and pool, at the post-chain point of 0141 RT-2, so a `PreRoute` interceptor that moves a child cannot move it past them ("DP-7").
 
@@ -379,7 +379,7 @@ The MCP adapter's client-facing tools of 0138 include `send_message` and `close_
 | Environment and sharing paths | 0149 TS-3 | Primitive, as a security caveat (DP-2). TS-3 owns crossing (decision 41). |
 | The cascade when a parent ends, and orphan cleanup | §8.10, 0146 SL-9 | SL-9's, with `onParentEnd` as a caveat and a tree terminate for a `tenant-admin` (DP-2). |
 | Child event delivery and the wait, with its modes | 0135 MD-22, 0146 SL-12 | MD-22's and SL-12's, with `wakeOn` and `events.peek` added (DP-4). |
-| Approval of a child by a person | 0142 SO-5a | SO-5a's, with conditions on the target runtime and an amount of spend in money (decisions 36 and 55). |
+| Approval of a child by a person | 0142 SO-5a | SO-5a's, with conditions on the target runtime and an amount of spend in the deployment's currency (decisions 36 and 55). |
 | `contentPolicy.maxInputSize` and `interceptorRef` at `PreDelegation` | §8.3 | Primitive, in the content caveat (decision 45). `PreDelegation` folds into the `PreRoute` chain of RT-2 for `kind: delegate`, so one chain sees every creation (decision 4). |
 | `scanExportedFiles`, `maxExportedFileSize`, and the weakening cooldown on export scanning | §8.3, §8.7 | Primitive, in the content caveat, applied on every transfer path, with 0142's cooldown covering each path (decisions 4 and 45). |
 | `messagingRateLimit` | §8.3 | Primitive, as a resource caveat that counts what MD-9 counts. |
@@ -518,7 +518,7 @@ POST /v1/sessions
   "runtime": "claude-code",
   "labels": { "project": "checkout" },
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 4, "maxParallelChildren": 2 },
-  "budget": { "limits": { "models": { "meters": ["external"], "amount": 40.00, "unit": "money" } } }
+  "budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 40.00 } } }
 }
 ```
 
@@ -610,7 +610,7 @@ POST /v1/sessions
 {
   "runtime": "repo-audit",
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 60, "maxParallelChildren": 8 },
-  "budget": { "limits": { "models": { "meters": ["external"], "amount": 300.00, "unit": "money" } } }
+  "budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 300.00 } } }
 }
 ```
 
@@ -696,7 +696,7 @@ The wrapper turns off the reference tool set and adds the team's server:
 }
 ```
 
-**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "models": { "meters": ["external"], "amount": 150.00, "unit": "money" } } }`.
+**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 150.00 } } }`.
 
 **What happens.**
 
@@ -778,7 +778,7 @@ PUT /v1/admin/tenants/acme/delegation
 ```http
 PUT /v1/admin/tenants/acme/session-budget
 {
-  "ceilings": { "models": { "meters": ["external"], "amount": 200.00, "unit": "money" } }
+  "ceilings": { "models": { "meters": ["externalCost"], "amount": 200.00 } }
 }
 ```
 

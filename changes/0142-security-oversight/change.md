@@ -1,6 +1,6 @@
 # Security oversight for customers and the operator
 
-Status: `Draft`, revision 69, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 70, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -663,7 +663,7 @@ These routes sit on the admin surface, so the session surface keeps its existenc
 
 - `targets`: a list of runtime names, each a name or a pattern with a trailing `*`, matched against the child's final runtime.
 - `targetLabels`: a map of runtime labels, matched when the child's final runtime carries every one, as a `DelegationPolicy` selects runtimes by label.
-- `spendAbove`: an amount in money under `budgets.currency`, matched when any limit that counts the `external` meter of [`0170-budgets`](../0170-budgets/change.md#bg-12-external-charges) exceeds it, in the child's carved budget ([`0170-budgets`, "BG-8"](../0170-budgets/change.md#bg-8-carves-for-delegated-children)), or, when no carve funds the child, in the child's session budget as "BG-2" of 0170 resolves it (decisions 46 and 48). Every limit of a parent's session budget is carved under 0170 decision 55, so a carve always holds an amount for each limit that counts `external`, in money, with no conversion (decision 48).
+- `spendAbove`: an amount in the deployment's currency, `budgets.currency`, matched when any currency limit, a limit on `externalCost`, `computeCost`, or `storageCost` of [`0170-budgets`](../0170-budgets/change.md#bg-4-meters-and-units), exceeds it, in the child's carved budget ([`0170-budgets`, "BG-8"](../0170-budgets/change.md#bg-8-carves-for-delegated-children)), or, when no carve funds the child, in the child's session budget as "BG-2" of 0170 resolves it (decisions 46 and 48). Every limit of a parent's session budget is carved under 0170 decision 55, so a carve always holds an amount for each currency limit, in the deployment's currency, with no conversion (decisions 48 and 49).
 
 The gateway evaluates a `session.create` rule at the post-chain point of [RT-2](../0141-runtime-routing/change.md#post-chain-point), on the final runtime and the resolved carve, because a `PreRoute` interceptor can change the target after the call names one. The same rule also holds a `session.set_limits` call that raises a child's carve above `spendAbove`, and a lease extension of [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) that would take a child's carve above it, before the gateway reserves the added amount, for a child whose runtime `targets` and `targetLabels` cover, so a parent cannot create a child below the amount and grow it afterwards without approval, whether by a raise or by an extension in `auto` mode (decision 46). It also holds a `session.release` of a child whose budget crosses the amount, and a lease extension of a released session whose lineage shows that it was created under the rule, which would take it above the amount, so a release does not carry a child out of the rule's reach (decision 47). `when` is refused with `400 VALIDATION_ERROR` naming the field on a rule that matches any other tool. Narrowing `targets`, adding a key to `targetLabels`, or raising `spendAbove` is a weakening, and removing `when`, widening `targets`, removing a key from `targetLabels`, or lowering `spendAbove` is a tightening. With `showArguments: true` the approver sees the target, the limits, and the task.
 
@@ -1000,7 +1000,7 @@ Each proposal carries the tests for its own surface at the tiers `test-coverage.
 
 ### `integration`
 
-- A `session.create` rule with `when` holds a child whose final runtime matches `targets` after a `PreRoute` interceptor changed the target, and releases one whose final runtime does not; a `session.set_limits` raise past `spendAbove` is held, and one below it is not; a carve that names no `external` key is held when its default share crosses the amount; and a release, and an extension of a released session, past the amount are held.
+- A `session.create` rule with `when` holds a child whose final runtime matches `targets` after a `PreRoute` interceptor changed the target, and releases one whose final runtime does not; a `session.set_limits` raise past `spendAbove` is held, and one below it is not; a carve that names no `externalCost` key is held when its default share crosses the amount; and a release, and an extension of a released session, past the amount are held.
 - An `approvals.parentTools` rule holds a parent tool call before the parent receives the `tool_call` child event, for `approver: owner` and `approver: security`, with a denial and a timeout each answering the child's call with an error result.
 - A role assignment takes effect on the next request and survives `PUT` and `DELETE` of the user's role.
 - `security-auditor` reads audit, evidence, posture, and subscriptions, is refused session content, and is refused retranslate and republish.

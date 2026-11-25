@@ -48,6 +48,8 @@ The owner has settled every decision below, and the design above is written to t
 
 48. **SO-5a's amount is `spendAbove` in money, and the posture `llm` section leaves (decision 22 of 0133).** The owner settled on 2026-11-24 that Lenny removes the LLM proxy and that budgets count an operator gateway's charges on the `external` meter of `0170-budgets` (its decision 57), in the words recorded in [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions), decision 22. `when.llmCreditsAbove` becomes `when.spendAbove`, an amount in money under `budgets.currency`, matched against every limit that counts `external` in the resolved carve, with no conversion, so the conversion at the cheapest upstream of decision 47 leaves and the rest of decisions 46 and 47 stands. The posture `llm` section leaves with upstream records, and open decision 38, on how a tenant's posture names the other tenants that share an upstream, is withdrawn: no upstream is shared through Lenny.
 
+49. **`spendAbove` reads every currency limit (decision 67 of 0170).** The owner settled on 2026-11-24 that each meter carries its unit, "So basically each meter has a unit associated to it. External always uses currency. They all use 'amount'.", and then "2. go with your recommendations" (decision 67 of `0170-budgets`). `when.spendAbove` is an amount in the deployment's currency, matched against every currency limit of the resolved carve, a limit on `externalCost`, `computeCost`, or `storageCost`, with no conversion. A limit on `computeUnits` or `storageBytes` is not read ("SO-5a").
+
 ## Open decisions
 
 The M3 readiness review of 2026-11-19 raised the entries below. Each needs the owner's answer before the steps it names are built.

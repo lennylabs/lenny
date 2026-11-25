@@ -1,6 +1,6 @@
 # Session derive
 
-Status: `Draft`, revision 27, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 28, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -94,7 +94,7 @@ This design builds on mechanisms other designs and the specification define. The
 | Playground caps | The limits [§27.6](../../spec/27_web-playground.md#276-session-lifecycle-and-cleanup) places on sessions a web playground caller creates. Under [`0138-rest-only-client-api`, "RO-7"](../0138-rest-only-client-api/change.md#ro-7-lennys-own-clients), the playground creates and derives sessions through the REST routes with the client API bearer that `POST /v1/playground/token` mints, and the caps bind on that bearer's `origin: "playground"` claim, so a playground caller's derive meets them on the REST route as its create does. |
 | VCS pool | A credential pool for git hosts, separate from the pools of warm pods above, that names repository prefixes and a provider credential ([`0152-user-git-identity`](../0152-user-git-identity/change.md)). Its repository allowlist names the repositories sessions can use, and `allowWrite` lets them push. `userAuthorization: required` makes each repository need the user's own access at the provider, and `prAuthoring: user` has pull requests authored as the user. |
 | Writable entries and `allowedRefPatterns` | A plan's `writableRepositories` names the repositories a session may push to, and `allowedRefPatterns` on an entry limits the branches it may push. `netagent`, the egress proxy in each agent pod, enforces both. |
-| Storage counter | Today the tenant's storage quota counter, which `Reserve` charges and `cataloging.DeleteBySession` releases. Under [`0170-budgets`](../0170-budgets/change.md#bg-6-enforcement) the limits that count `storage` in a session's budget set take its place (0170 decision 30). |
+| Storage counter | Today the tenant's storage quota counter, which `Reserve` charges and `cataloging.DeleteBySession` releases. Under [`0170-budgets`](../0170-budgets/change.md#bg-6-enforcement) the limits on the storage meters in a session's budget set take its place (0170 decision 30). |
 | Delivery states and intent | The states a message takes in [`0135-message-delivery`, "MD-3"](../0135-message-delivery/change.md#md-3-inbox-states-and-custody), such as `pending`, `delivered`, `consumed`, and `consumed_unrecorded`, and its delivery intent, `steer`, `queue`, or `interrupt`, which that design adds to every message. |
 | Activity row | A transcript row with the role `activity`, which [`0135-message-delivery`, "MD-15"](../0135-message-delivery/change.md#md-15-activity) writes when a runtime's recorded activity ends. It reports what the runtime did and is never a message. |
 | Output file | A file an agent produces for the user, which [`0135-message-delivery`, "MD-18"](../0135-message-delivery/change.md#md-18-files) copies into the session's checkpoint packs and records in an `output_files` row for the session's retention. |
@@ -209,7 +209,7 @@ This section records what the tree does today. Function and file names are the c
   "runtimeOptions": { "model": "<model (optional)>" },
   "delegationLease": { "maxDepth": "<integer, at most the carried value (optional)>" },
   "labels": { "project": "checkout" },
-  "budget": { "limits": { "models": { "meters": ["external"], "amount": 40.00, "unit": "money" } } },
+  "budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 40.00 } } },
   "budgetRefs": ["principal/ci-weekly"],
   "allowIsolationDowngrade": false,
   "ticketId": "<ticket (with allowIsolationDowngrade)>"
@@ -234,7 +234,7 @@ At create, the gateway copies the source's stored plan to the new row, with `env
 | :-- | :-- | :-- |
 | **Tree** | The snapshot, with the runtime's session state under `/session`. The adapter restores it through the slot's broker, and the helper then runs `restore-complete`, which reconnects each repository to the pod's store and refreshes its index. `exclusiveBindRequest` and `slotBindRequest` pass the binder none of the plan's sources, so a clone's commit, local commits, and uncommitted changes, an edited default file, and a deleted path all stay as they were. | The plan's sources, at each `resolvedCommitSha`, with no snapshot. The helper runs `materialize` from the copied plan with the copied uploads, into an empty workspace and an empty `/session`. |
 | **Source needs** | A snapshot, and `allowStale: true` when the source is live. A source whose effective `checkpointPolicy` is `none` has none ([IC-8](../0131-incremental-checkpoint/change.md#ic-8-checkpoint-policy-interval-and-change-tracker)). A source whose effective `checkpointPolicy` is `sealOnly` has one only after its seal at session end, because it writes no checkpoint while it runs, and an idle one stays on its pod until its idle timeout ends it ([SL-6](../0146-session-lifecycle/change.md#sl-6-idle-pods-and-dormancy)), so a derive `from: latest` of it while it is live is refused with `no_snapshot`. | A bound plan, in any state |
-| **Uploads** | Dropped from the plan copy, because the snapshot holds their files, and `bindprepare.go` would otherwise fetch each one and fail once it has expired | Copied to the new session, with `uploadRef` rewritten, each a write declared by its size to the limits that count `storage` in the new session's budget set under 0170 "BG-6". An unreadable upload refuses. How long a copy lives is open decision 12. |
+| **Uploads** | Dropped from the plan copy, because the snapshot holds their files, and `bindprepare.go` would otherwise fetch each one and fail once it has expired | Copied to the new session, with `uploadRef` rewritten, each a write declared by its size to the limits on the storage meters in the new session's budget set under 0170 "BG-6". An unreadable upload refuses. How long a copy lives is open decision 12. |
 | **A resume before the first checkpoint** | Repeats the first bind, because `snapshotIsOwn` is still false | Takes the rebuild path, which reads the plan |
 
 In both modes the plan stays on the row, because the new session's read checks, its readable set of repositories, the read tokens of the provisional binding, the base-commit fetch of `restore-complete`, and a later derive all read it. Setup commands run at finalize in both modes, as the slot UID through the slot's supervisor, followed by `additionalSetupCommands`. [WM-13](../0153-workspace-materialization/change.md#wm-13-resume-and-derive) lists the helper run of each path. A new pod lacks anything installed outside the workspace, so `from: latest` runs them too, over the restored tree. That can change the exact state, because `npm ci` resets `node_modules`, and a command that is unsafe to repeat can fail.

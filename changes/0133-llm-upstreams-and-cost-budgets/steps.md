@@ -48,7 +48,7 @@ It deletes the rows of `tests/registers/gateway-layout.yaml` with `removed-by: '
 - lanes: [specification, code, documentation]
 - depends-on: [0133.S2]
 
-Cancelled by decision 22 on 2026-11-24: rate cards, credits, the input estimate, reservations per call, settlement, and `llm_usage` leave with the proxy. Budgets on model spend count charges on the `external` meter under 0170.S6.
+Cancelled by decision 22 on 2026-11-24: rate cards, credits, the input estimate, reservations per call, settlement, and `llm_usage` leave with the proxy. Budgets on model spend count charges on the `externalCost` meter under 0170.S6, and the gateway guide states the two setups of "LU-3" (decision 26).
 
 ### Notes on the steps
 

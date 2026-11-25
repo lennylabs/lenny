@@ -1,6 +1,6 @@
 # Runtime routing
 
-Status: `Draft`, revision 24, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 25, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -316,7 +316,7 @@ One Go type in `pkg/policy/interceptor` serializes the payload for every creatio
 | `routing` | Yes | The routing labels so far ("RT-3"). |
 | `input` | Yes | The task input, as today. For `kind: delegate`, the `task` of the parent's `session.create` ([`0166-delegation-primitives`, "DP-1"](../0166-delegation-primitives/change.md#dp-1-session-grant)). Empty for `kind: derive`. |
 | `budget_refs` | Add only | The shared budgets the session references under [`0170-budgets`, "BG-3"](../0170-budgets/change.md#bg-3-matching), the client's `budgetRefs`, the derive request's for `kind: derive`, and, for `kind: delegate`, the ancestors' references. An interceptor may add names, and may not remove one. The immutable field enforcement of §4.8 refuses a `MODIFY` that removes a name with `INTERCEPTOR_IMMUTABLE_FIELD_VIOLATION`. |
-| `session_budget` | Lower or add only | The session budget's limits by key, as "BG-2" of 0170 resolves them. An interceptor may lower a limit's amount and add a limit, and may not raise or remove one, under the same enforcement. A limit it adds or lowers that sets `onExhausted.running: continue` on a limit that counts `compute` is refused, and its actions resolve to the strictest across levels, as "BG-2" of 0170 states (its decision 50). |
+| `session_budget` | Lower or add only | The session budget's limits by key, as "BG-2" of 0170 resolves them. An interceptor may lower a limit's amount and add a limit, and may not raise or remove one, under the same enforcement. A limit it adds or lowers that sets `onExhausted.running: continue` on a limit that counts a compute meter is refused, and its actions resolve to the strictest across levels, as "BG-2" of 0170 states (its decision 50). |
 | `runtime_options` | No | The session's `runtimeOptions`: the create request's, the `runtimeOptions` of the parent's `session.create` for `kind: delegate`, and the derive request's or the source's for `kind: derive`. The post-chain point validates them, so no interceptor may change them ([`0140-runtime-revisions`, "RV-7 Session options"](../0140-runtime-revisions/change.md#rv-7-session-options)). |
 
 The immutable fields join the existing immutable field enforcement. `InterceptRequest.session_id` carries the same `session_id`, and `metadata` carries the session context below. The `PostRoute` payload carries `runtime_options` as an immutable field as well, so the options the post-chain point validates are the options the runtime receives.
