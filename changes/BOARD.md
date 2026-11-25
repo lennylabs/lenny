@@ -297,5 +297,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 1 | 2 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 9 | 1 |
-| [0173](0173-idempotency-stored-credentials/change.md) | Credentials in stored idempotency responses | `In progress` | 0 of 1 | 0 |
+| [0173](0173-idempotency-stored-credentials/change.md) | Credentials in stored idempotency responses | `In progress` | 0 of 1 | 2 |
 | [0174](0174-openai-assistants-removal/change.md) | Removal of the openai-assistants reference runtime | `In progress` | 0 of 1 | 0 |
