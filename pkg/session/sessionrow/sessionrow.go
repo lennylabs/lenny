@@ -72,6 +72,17 @@ type Session struct {
 	// spec: §7.1 (Post-terminal window).
 	PodReleasedAt time.Time
 
+	// TerminalPipelineDoneAt is the pipeline mark: the wall-clock instant the
+	// replica that ran this terminal session's terminal pipeline finished the
+	// pipeline's last step, the session.completed billing event included. It
+	// is the zero time until that replica records it with
+	// MarkTerminalPipelineDone, and it stays zero for a row created terminal
+	// and for a pipeline the process exit cut or that ran past its budget. A
+	// terminal row with no mark is pending until TerminatedAt plus the
+	// terminal pipeline budget (TerminalPipelinePending), whether or not it
+	// names a pod.
+	TerminalPipelineDoneAt time.Time
+
 	// SuspendedAt and SuspendedReason carry the §7.2 Suspended
 	// session-condition fact, relocated off AgentPod.status.conditions
 	// alongside the Terminated fact. SuspendedAt is the wall-clock instant
