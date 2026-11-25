@@ -97,6 +97,18 @@ func mergeTierResult(into, r *tierResult) {
 	into.Failed += r.Failed
 	into.Skipped += r.Skipped
 	into.Failures = append(into.Failures, r.Failures...)
+	for _, pkg := range r.PackageFailures {
+		if !contains(into.PackageFailures, pkg) {
+			into.PackageFailures = append(into.PackageFailures, pkg)
+		}
+	}
+	sort.Strings(into.PackageFailures)
+	for k := range r.passed {
+		if into.passed == nil {
+			into.passed = map[string]bool{}
+		}
+		into.passed[k] = true
+	}
 	if r.RawOut != "" {
 		if into.RawOut != "" {
 			into.RawOut += "\n"
@@ -111,9 +123,23 @@ func tierOutcome(label string, result *tierResult, runErr error) (string, string
 		return "fail", fmt.Sprintf("%s suite failed: %v\n%s", label, runErr, result.RawOut), result
 	}
 	if result.Failed > 0 {
-		return "fail", summarizeFailures(result), result
+		return "fail", summarizeFailures(result) + packageFailuresNote(result), result
+	}
+	if len(result.PackageFailures) > 0 {
+		// A package that failed with no failed test fails the tier even
+		// when go test's exit status was lost.
+		return "fail", fmt.Sprintf("%s suite failed%s\n%s", label, packageFailuresNote(result), result.RawOut), result
 	}
 	return "pass", "", result
+}
+
+// packageFailuresNote names the packages that failed with no failed test
+// to account for it (tierResult.PackageFailures), or is empty.
+func packageFailuresNote(r *tierResult) string {
+	if len(r.PackageFailures) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("; %d package(s) failed outside a test (a build or setup failure, a failure with no failed test, or a panic or timeout that ended the test binary): %s", len(r.PackageFailures), strings.Join(r.PackageFailures, ", "))
 }
 
 // runScopedTier runs a scoped plan of a tagged tier with the tier's flags.

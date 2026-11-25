@@ -239,6 +239,14 @@ type gateRecord struct {
 	// from a full one (All) and sees how much a selected run covered. A
 	// tier the plan did not select is absent.
 	Selection map[string]gateTierSelection `json:"selection,omitempty"`
+	// PackageFailuresRecorded reports a run whose tiers record the
+	// packages that failed outside a test (tierStat.PackageFailures), so
+	// `--rerun-failed` can tell a run whose failures are individual tests
+	// from one whose test binary did not finish (change 0172, decision 26).
+	PackageFailuresRecorded bool `json:"package_failures_recorded,omitempty"`
+	// RerunOf is set on the verdict of `--rerun-failed`: the run whose
+	// failed tests it reran, and each test's runs (gateRerun).
+	RerunOf *gateRerun `json:"rerun_of,omitempty"`
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
@@ -300,6 +308,8 @@ func runGate(args []string) int {
 	tiers := fs.String("tier", "", "restrict the run to these tiers of the merge gate, as a comma-separated list such as static,unit,component,contract; the diff selection applies within them, and the verdict records the restriction")
 	cover := fs.Bool("cover", false, "write the unit run's coverage profile to tests/results/cover.out, which `lenny-test coverage --diff` reads (with --here, LENNY_COVER_PROFILE can name another path); without it the gate's unit run writes no profile")
 	goTestP := fs.String("go-test-p", "", "the go test -p of a tier that runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name keeps the go command's default, and a tier that runs alone in the layout is refused")
+	rerunFailed := fs.Bool("rerun-failed", false, "rerun only the tests that failed in the latest gate run on HEAD, each --rerun-count times, in the gate container, and write a verdict that names that run and carries its selection, tiers, and coverage profile; it refuses a tree with uncommitted changes, a run that did not fail, and a run whose failures are not individual tests of the unit, component, contract, or integration tier")
+	rerunCount := fs.Int("rerun-count", defaultRerunCount, "with --rerun-failed, how many times each failed test runs; every run must pass")
 	capGB := fs.Int("gocache-cap-gb", defaultGateGoCacheCapGB, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (1 GB is 10^9 bytes) and no running container uses it; 0 turns the check off; without the flag, "+gateEnvGoCacheCap+" sets the cap when it is set; a --here run does not use the volume and skips the check")
 	flagArgs, err := gateCommandArgs(args)
 	if err != nil {
@@ -313,6 +323,11 @@ func runGate(args []string) int {
 		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
 		fs.Usage()
 		return 2
+	}
+	if *rerunFailed {
+		capSet := false
+		fs.Visit(func(f *flag.Flag) { capSet = capSet || f.Name == "gocache-cap-gb" })
+		return runGateRerun(fs, *here, *rerunCount, *rebuild, !*noSocket, capSet, *capGB)
 	}
 	if *base == "" {
 		fmt.Fprintln(os.Stderr, "lenny-test gate: --base is empty; the merge gate compares with the merge base of a ref, main by default")
@@ -1378,6 +1393,7 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 	v.Gate.RestrictedTo = o.tiers
 	v.Gate.Cover = o.cover
+	v.Gate.PackageFailuresRecorded = true
 	// The static tier and the plan compare with the commit resolved here
 	// rather than with the ref, so the commit the verdict records and
 	// checks is the one they read even when the ref moves during the run.

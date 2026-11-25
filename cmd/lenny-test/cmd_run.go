@@ -190,6 +190,13 @@ type tierPlan struct {
 	// phase with another lane when `--go-test-p` names the tier (change
 	// 0172, GS-3); every other run leaves it 0.
 	goTestP int
+	// byNameProfile is the coverage profile the unit tier's by-name
+	// invocation (`go test -run`) writes, or "" for none. `lenny-test gate
+	// --rerun-failed` sets it on the first rerun of failed unit tests, so
+	// the lines those tests reach after the point where they failed join
+	// the original run's profile (change 0172, decision 26). Every other
+	// run leaves it empty, and its by-name invocation writes no profile.
+	byNameProfile string
 }
 
 // resolve expands the selector into a concrete plan.
@@ -1283,6 +1290,9 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 		// coverage profile; a second invocation would overwrite it.
 		if i == 0 && tail[0] != "-run" {
 			return withGoTestP(unitTierFlags(profile), p)
+		}
+		if tail[0] == "-run" && p.byNameProfile != "" {
+			return withGoTestP(unitTierFlags(p.byNameProfile), p)
 		}
 		return withGoTestP(unitTierFlags(""), p)
 	})
