@@ -2,7 +2,28 @@
 
 ## Open decisions
 
-None.
+- **GS-15. The static tier's working files and caches in the same run.** The merge-gate review of 0172.S6 (security reviewer, High) found that the snapshot of decision 14 fixes the tree, `HEAD`, and the refs the static tier reads, while the static tier still writes its working files under the fixture root that the gate user owns: the secret scan's tree and `report.json` (`runSecretScanAt`, `os.MkdirTemp("", "lenny-secretscan-")`), the lint's patch and whole-tree report (`lint_changed.go`, `os.CreateTemp("", "lenny-lint-*.patch")`), and the test binaries `go test` links under `GOTMPDIR`. The static tier also builds from the module cache and the build cache, which the gate user can write in the same run (TESTING.md "Merge gate" item 9 records the later-run case). A process of the gate user can rewrite those files between their write and their read: a test in a lane beside the static tier in the `unit-alone` layout, and in every layout the branch's own `scripts/*.sh`, which the static tier runs alongside the secret scan and the lint. The `static-first` layout of decision 15 removes the concurrent tests; the branch's scripts remain, as in issue GATE-I7.
+  - (a) Run the static tier's checks under a second user, with a private `TMPDIR`, `GOTMPDIR`, and build cache, so no test and no branch script can write what they read.
+  - (b) Run the secret scan and the two golangci-lint runs in the container script before the gate starts, as the fill runs now, and lock their outputs as the snapshot is locked; the branch's scripts still run as the gate user.
+  - (c) Accept the window as a limit, recorded beside GT-11 and GT-16 in TESTING.md, and make `static-first` the default so that no test runs beside the static tier.
+  - Recommendation: (c) now, because during the v1 program only the owner's branches run the gate and decision 15 already moves the tests out of the static tier's phase, with (a) filed as an issue for when contributors arrive.
+- **GS-16. The snapshot's object store.** The snapshot borrows the worktree's objects through git's alternates file (`createStaticSnapshot`), and git does not check an object's content against its name when it reads it; the security reviewer reproduced a substituted loose object that `git cat-file --batch`, `git reset --hard`, and `git diff` returned without error. In a main checkout, such as the clone the gate on `main` runs in, the object store lies in the writable worktree mount, so a process of the gate user can change what the secret scan, the lint's register read at the merge base, and `buf breaking` read, in the same run or for a later run. A linked worktree's object store is mounted read-only.
+  - (a) Fill the snapshot's own object store with `git fetch` from the worktree, which re-hashes every object it receives, and lock it with the snapshot; the cost is a fetch of the history on every run.
+  - (b) Keep the alternates, and make the verdict `UNVERIFIED` when the git common directory lies inside the writable worktree mount.
+  - (c) Keep the alternates and record the limit, as the build now does in TESTING.md and the code comments.
+  - Recommendation: (c) during the v1 program, for the reason of GS-15, with (a) measured and filed as an issue.
+- **GS-17. The writers of the snapshot that remain.** A gate that runs as root holds `CAP_SYS_ADMIN` and can remount the snapshot writable, and a process with the host Docker socket can reach it; the writability check runs before the tiers. The owner accepted the same writers for the golangci-lint cache (GT-16). The build records both in TESTING.md.
+  - (a) Extend the acceptance of GT-16 to the snapshot.
+  - (b) Make a gate that runs as root in a concurrent layout `UNVERIFIED`.
+  - Recommendation: (a).
+- **GS-18. A merge check with no recorded `--cover` gate run.** Decision 18 has `lenny-test coverage --diff` refuse a profile whose hash does not match the latest restricted gate verdict for the same commit. 0172.S8 measures the profile with a note when no gate run with `--cover` on `HEAD` is recorded, so the profiles of `lenny-test run --changed`, `lenny-test --tier unit`, and the `unit` job of `.github/workflows/pr.yml` keep working; it refuses a profile that a gate run on another commit recorded. The merge check of decision 8 then passes on a profile that no gate run on the head wrote, for example after a `gate --tier ...` run without `--cover`, or a history line the gate failed to append (`writeGateVerdict` treats that failure as a warning).
+  - (a) Add `coverage --diff --require-gate`, which refuses when no such run is recorded, and use it in the check before a merge in `.claude/rules/git-workflow.md`, `.claude/rules/test-coverage.md`, and the build skill.
+  - (b) Keep the note, as built.
+  - Recommendation: (a).
+- **GS-19. A profile from a gate run that did not pass.** 0172.S8 accepts the profile of the latest `--cover` gate run on `HEAD` whatever its verdict, and refuses one from a run on a dirty tree. Decision 8 requires the gate run to pass separately, and the run the merge records may not be the latest one.
+  - (a) Refuse a profile whose gate run's verdict is not `PASS`.
+  - (b) Accept it, as built, and leave the verdict to the merge record.
+  - Recommendation: (a), because the merge check reads the two results as one.
 
 ## Decisions
 
