@@ -21,10 +21,14 @@
 // other change. IsRevoked and Len delegate to the wrapped cache so the
 // propagator is a drop-in for the auth middleware's read path too.
 //
-// Redis pub/sub is at-most-once. A dropped revocation is reconciled by
-// the next index rehydration, so a missed publish degrades propagation
-// latency from sub-second to one rehydration interval rather than
-// dropping the revocation.
+// Redis pub/sub is at-most-once. A revocation published while a
+// replica's subscription is down never reaches that replica, so Run takes
+// a rehydration callback and calls it when the subscription is
+// re-established: the replica rereads the issued-token index at once
+// rather than at its next periodic rehydration. A revocation dropped on a
+// connected subscription is reconciled by the next periodic rehydration,
+// so a missed publish degrades propagation latency from sub-second to at
+// most one rehydration interval rather than dropping the revocation.
 package propagator
 
 import (
@@ -113,8 +117,20 @@ func (p *Propagator) Len() int { return p.local.Len() }
 // the gateway runs it in a goroutine alongside the other background
 // loops. A Propagator built with a nil Bus has Run block until ctx is
 // cancelled and apply nothing.
-func (p *Propagator) Run(ctx context.Context) {
+//
+// rehydrate, when non-nil, is called each time the subscription is
+// re-established after a disconnection, because every revocation
+// published while it was down is lost. It runs on the subscribe loop, so
+// it must not block: the gateway passes a non-blocking signal to its
+// rehydration loop. lenny-ops passes nil and keeps its own periodic read.
+//
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation".
+func (p *Propagator) Run(ctx context.Context, rehydrate func()) {
+	var opts []pubsub.SubscribeOption
+	if rehydrate != nil {
+		opts = append(opts, pubsub.OnReconnect(rehydrate))
+	}
 	p.bus.Subscribe(ctx, Channel, func(payload []byte) {
 		p.local.Revoke(string(payload))
-	})
+	}, opts...)
 }

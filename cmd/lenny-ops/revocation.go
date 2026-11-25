@@ -103,7 +103,7 @@ func (r *opsRevocation) runReads(ctx context.Context, tenants revocation.TenantL
 // until ctx is cancelled (§25.4 rule 2). The events go through
 // Cache.Revoke, so a read in flight keeps them at its swap.
 func (r *opsRevocation) runEvents(ctx context.Context, bus *pubsub.Bus) {
-	propagator.New(r.cache, bus).Run(ctx)
+	propagator.New(r.cache, bus).Run(ctx, nil)
 }
 
 // logRevocationRead logs a failed rule-1 read through slog at error

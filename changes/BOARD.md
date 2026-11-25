@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 3 |
-| Ready | 5 |
+| Building | 4 |
+| Ready | 4 |
 | Waiting on decisions | 32 |
 | Blocked | 149 |
 | Landed | 19 |
@@ -54,13 +54,13 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Building |  |
 | [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Building |  |
 | [0172.S7](0172-gate-speed/steps.md#0172s7-the-full-runs-unit-tier-and-two-selection-rows) | The full run's unit tier and two selection rows | Building |  |
 | [0172.S8](0172-gate-speed/steps.md#0172s8-the-coverage-profiles-hash-and-the-container-messages) | The coverage profile's hash and the container messages | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
-| [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -292,5 +292,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
-| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `Decided` | 0 of 1 | 0 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 0 of 1 | 2 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 5 of 8 | 6 |

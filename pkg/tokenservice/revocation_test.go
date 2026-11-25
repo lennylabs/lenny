@@ -158,7 +158,8 @@ func TestHandlerRecursiveRevocationEventBusMode_spec_16_7_5(t *testing.T) {
 }
 
 // spec: §16.7 — a publish failure after the durable commit
-// records propagation_mode=postgres_only (peers fall back to Postgres).
+// records propagation_mode=postgres_only (peers apply it at their next
+// revocation-cache rehydration).
 func TestHandlerRecursiveRevocationPublishFailureIsPostgresOnly_spec_16_7_5(t *testing.T) {
 	store := &fakeRevocationStore{revoked: []issuedtokenstore.RevokedToken{{JTI: "root-jti", Subject: "alice@acme.com", IsRoot: true}}}
 	auditor := &recordingAuditor{}
