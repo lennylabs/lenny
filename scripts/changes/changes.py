@@ -116,6 +116,30 @@ def sections(text):
     return out
 
 
+TABLE_SEPARATOR = re.compile(r'^\|(\s*:?-+:?\s*\|)+\s*$')
+
+
+def count_open_decisions(text):
+    """Count the open decisions in the text of a decisions.md "Open decisions"
+    section. A decision is written as a list item (a numbered item or a bullet
+    at the start of a line) or as a data row of a Markdown table. A table's
+    header row, the row directly above its separator row, and the separator row
+    are not decisions. A section that opens with "None" or "To be framed" holds
+    none."""
+    text = text.strip()
+    if not text or re.match(r'(?i)^(none|to be framed)', text):
+        return 0
+    lines = text.split('\n')
+    n = len(re.findall(r'(?m)^(\d+\.|-) ', text))
+    for i, line in enumerate(lines):
+        if not line.startswith('|') or TABLE_SEPARATOR.match(line):
+            continue
+        if i + 1 < len(lines) and TABLE_SEPARATOR.match(lines[i + 1]):
+            continue
+        n += 1
+    return n
+
+
 def read(p):
     with open(p) as f:
         return f.read()
@@ -142,10 +166,7 @@ def load(tree):
             errors.append(f'{d}: change.md holds step entries; they belong in steps.md')
         dp = tree.path(d, 'decisions.md')
         secs = sections(read(dp)) if os.path.exists(dp) else {}
-        open_dec = secs.get('Open decisions', '').strip()
-        n_open = 0
-        if open_dec and not re.match(r'(?i)^(none|to be framed)', open_dec):
-            n_open = len(re.findall(r'(?m)^(\d+\.|-) ', open_dec))
+        n_open = count_open_decisions(secs.get('Open decisions', ''))
         changes[num] = {'dir': d, 'title': title, 'status': status, 'open': n_open, 'steps': [],
                         'archived': d.startswith('archive')}
         sp = tree.path(d, 'steps.md')

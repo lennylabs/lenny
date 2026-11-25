@@ -278,7 +278,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0138](0138-rest-only-client-api/change.md) | REST-only client API | `Draft` | 0 of 6 | 16 |
 | [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 23 |
 | [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 15 |
-| [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 0 |
+| [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 3 |
 | [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 9 |
 | [0143](0143-service-account-credentials/change.md) | Service account credentials | `Draft` | 0 of 4 | 7 |
 | [0144](0144-session-derive/change.md) | Session derive | `Draft` | 0 of 1 | 5 |
@@ -289,7 +289,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 11 | 11 |
 | [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 14 |
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 7 |
-| [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
+| [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 8 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 1 | 2 |

@@ -149,6 +149,19 @@ class BoardTest(Fixture):
         C.write(p, C.read(p).replace('- ruled-ready: 2026-02-03, names only\n', ''))
         self.assertTrue(any('status Draft but a step has started' in e for e in self.problems()[0]))
 
+    def test_board_counts_open_decisions_written_as_table_rows(self):
+        p = os.path.join(self.root, 'changes', '0101-beta', 'decisions.md')
+        C.write(p, '# Decisions\n\n## Open decisions\n\nThe owner settles these.\n\n'
+                   '| ID | Question | Recommendation |\n| :-- | :-- | --: |\n'
+                   '| D1 | First? | (a) |\n| D2 | Second? | (b) |\n\n'
+                   '- 3. **A list item beside the table.** Options.\n\n'
+                   '## Decisions\n\n| # | Question | Answer |\n| :-- | :-- | :-- |\n| 1 | Settled? | Yes |\n')
+        self.run_cli('board')
+        board = C.read(os.path.join(self.root, 'changes', 'BOARD.md'))
+        self.assertIn('| [0101](0101-beta/change.md) | Beta | `Draft` | 0 of 1 | 3 |', board)
+        self.assertEqual(C.count_open_decisions('None.\n\n| ID | Q |\n| :-- | :-- |\n| D1 | x |\n'), 0)
+        self.assertEqual(C.count_open_decisions('| ID | Q |\n|---|---|\n'), 0)
+
     def test_board_check_detects_a_stale_board(self):
         self.run_cli('board')
         self.assertEqual(self.run_cli('board', '--check')[0], 0)
