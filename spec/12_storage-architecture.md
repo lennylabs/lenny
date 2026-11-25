@@ -1071,6 +1071,7 @@ The platform defines four classification tiers. Every data element maps to exact
 | Memory store contents                           | T3 — Confidential | Postgres (or pluggable)          |
 | Semantic cache entries                          | T3 — Confidential | Redis (or pluggable)             |
 | Eviction state records (`last_message_context`) | T3 — Confidential | Postgres                         |
+| Idempotency records (key, request hash, stored response; [§11.5](11_policy-and-controls.md#115-idempotency)); a stored response holds no credential | T3 — Confidential | Postgres |
 | OAuth/refresh tokens                            | T4 — Restricted   | Postgres (encrypted)             |
 | Credential pool secrets                         | T4 — Restricted   | Kubernetes Secrets (credentials namespace) |
 | Credential leases                               | T4 — Restricted   | Redis (encrypted)                |
