@@ -338,7 +338,9 @@ func (s *Server) OnSessionExpired(_ context.Context, sess sessionstore.Session, 
 // writers. It runs the post-terminal hook (AfterTerminalWrite) first, with
 // terminalSignals as the hook's signal tail, and then, on the row the hook
 // returned, the session-log close hook, the input-wait forget, the quota
-// checkpoint, and the billing event. The seal precedes every terminal
+// checkpoint, and the billing event, and last the pipeline mark
+// (recordTerminalPipelineDone), on every path, including the one with no
+// billing store. The seal precedes every terminal
 // signal, and the pod release follows the operational event, the callback,
 // the terminal lifecycle signals, and the archive, child-failed, watermark,
 // and cascade steps. All are best-effort: a failure never fails the
@@ -361,6 +363,7 @@ func (s *Server) recordSessionCompleted(ctx context.Context, fromState session.S
 	defer cancel()
 	sess = s.afterTerminalWrite(ctx, fromState, sess, s.terminalSignals)
 	s.afterTerminalRelease(ctx, sess)
+	s.recordTerminalPipelineDone(ctx, sess)
 }
 
 // terminalSignals is the funnel writers' terminal-signal tail, which the
