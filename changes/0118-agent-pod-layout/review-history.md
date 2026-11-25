@@ -164,6 +164,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
     - Applied for 0136 (pod-structure-C7): 0118.S6 depends on 0136.S7 and 0136.S8 in place of 0136.S3, and its description keeps the quota agent's policy, metrics, alert, and `diskQuota` in 0118.S6.
     - Applied for 0145 (0145 O17): option (b) of O11 states that its edges close cycles with 0145.S2, 0145.S3, and 0131.S8, which depend on 0118.S4, and that option (a) avoids them.
     - Raised O17 for 0136 (its O16): the 1 KiB bound on `lenny.dev/quota-agent-status`. Recommendation (a), 1 KiB.
+- 2026-11-24. Decision 22 of `0133-llm-upstreams-and-cost-budgets` removes the LLM proxy and the `llm` member of `session_start`; the credentials file at `/run/lenny/credentials.json` leaves with LLM leases as 0133 "LU-4" already stated.
 
 ## Owner answers on the M3 readiness decision page (2026-11-23)
 

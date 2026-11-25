@@ -39,6 +39,8 @@ The M3 readiness review of 2026-11-19 raised decisions 23 to 32. The records of 
    - (a) Retire `billing.dualControlThreshold`, and state in §11.2.1 one dual-control rule per event type: the credit threshold for `llm_usage`, and dual control always for this design's event types.
    - (b) Keep it with an explicit list of the fields it sums.
 
+   Decision 22 of 0133 since removed `llm_usage` and `billing.dualControlCreditThreshold`, so the credit threshold of option (a) no longer exists: option (a) retires `billing.dualControlThreshold` with dual control always for this design's event types.
+
    **Recommendation: (a)**, when no field remains for it to sum. Blocks the §11.2.1 dual-control edits of 0121.S2 and of the step of `0133-llm-upstreams-and-cost-budgets` that edits **Correction semantics**. The other change records the same question. (raised by the M3 readiness review, 2026-11-19; sources: connectors-llm-billing-C7, 0121-F13)
 
 29. **Operating rules of the accrual and the emitter.** The design leaves these rules unstated:
@@ -53,7 +55,7 @@ The M3 readiness review of 2026-11-19 raised decisions 23 to 32. The records of 
    Blocks 0121.S1 for (vi) and (vii), 0121.S2 for (ii), and 0121.S3 and 0121.S7 for (i), (iii), (iv), and (v). (raised by the M3 readiness review, 2026-11-19; sources: 0121-F11 item 9, 0121-F19, 0121-F23)
 
 30. **Usage figures outside the billing stream.** A `STORAGE_RECONCILIATION` correction lowers billing events, and nothing lowers `usagestore`, so the `storageByteHours` of `GET /v1/usage` diverges from the corrected stream. §8.8's task record reports `usage.podMinutes`, which `BUILD-GAPS.md` finding F-8.8.21 (open, no step) reports as zero for a session that ends without naming a pod, and `session_pod_windows` holds the accumulation that the finding suggests.
-   - (a) The emitter of each correction also records its replacement values in `usagestore`, so the report is corrected, coordinated with the `llm_usage` usage record of `0133-llm-upstreams-and-cost-budgets`; and 0121.S2 derives the task record's `podMinutes` from `session_pod_windows` and closes F-8.8.21.
+   - (a) The emitter of each correction also records its replacement values in `usagestore`, so the report is corrected; and 0121.S2 derives the task record's `podMinutes` from `session_pod_windows` and closes F-8.8.21.
    - (b) The report stays uncorrected and the documentation states it, and the task record's `podMinutes` stays a separate figure.
 
    **Recommendation: (a).** One source for each figure keeps the report and the bill in agreement. Blocks 0121.S2 and 0121.S4. (raised by the M3 readiness review, 2026-11-19; sources: 0121-F20, 0121-F21)

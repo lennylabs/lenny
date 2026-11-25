@@ -1,82 +1,55 @@
-# Steps: 0133 LLM upstreams and cost budgets
+# Steps: 0133 LLM credential removal and access through a gateway
 
 ## Validation owed
 
 | Item | Why it matters | Status |
 | :-- | :-- | :-- |
-| Read the usage of a Claude response on Bedrock InvokeModel, on the Bedrock Messages API, and on Vertex `rawPredict`, streaming and non-streaming, including `cache_creation` and its split | The class table assumes the Anthropic field names on every Anthropic-format channel. | Open. The cache removal design lists the same gap. |
-| Confirm that `message_start`'s `cache_creation` split is final for the call | "Streams" takes the split from `message_start` and the total from the last `message_delta`. | Open. |
-| Confirm whether OpenAI Chat Completions includes `cache_write_tokens` in `prompt_tokens`, and how it reports the write lifetime | The caching guide's worked example uses the Responses names alone **[external]**. | Open. |
-| Confirm what each provider reports and bills for a stream the client cancels | Settlement at the reservation assumes a cancelled stream can carry no usage. | Open. |
-| Measure the ratio estimator of OD-7 on recorded agent traffic per format: the error of the first-call estimate at `k` of 3, the error of the stored-ratio estimate on later calls, the undershoot per call, and refusals near a limit that the call would have fit | The overshoot that LUR-7 accepts is the estimator's error, and the default `k` rests on the stated bytes per token alone. | Open. |
-| Measure the image and document block estimates per format against the tokens each provider reports for images and PDFs of known size and page count | "Input estimate" states the defaults **[unverified]**. | Open. |
-| Read Google's documentation of `generateContent`, `streamGenerateContent`, and `countTokens` on the Gemini API and on Vertex AI: the paths, the `x-goog-api-key` header, the `usageMetadata` fields and whether `promptTokenCount` includes `cachedContentTokenCount`, whether `thoughtsTokenCount` is apart from `candidatesTokenCount` and billed as output, how `toolUsePromptTokenCount` is billed, whether a stream's last `usageMetadata` carries the totals, and `generationConfig.maxOutputTokens` | The `google-generate` column, routes, and output limit are **[unverified]**. | Open. |
-| Confirm that `gemini-cli` accepts a base URL and sends the proxy token in a header the proxy reads, for the Gemini API and for Vertex AI | OD-9 moves `gemini-cli` onto the proxy. | Open. |
-| Confirm the token exchange from the gateway's Kubernetes service account to a Google service account for Vertex AI on a live project | "No long-lived key for cloud channels" relies on it. | Open. |
-| Measure `llm_credit_reserve.lua` latency at the proxy's request rate | Each call adds a read of the input ratio and two script runs. | Open. |
-| Confirm Bedrock's endpoints for Opus 4.7 and later, SigV4 from the gateway's workload identity, and per-tenant session tags on a live account | "Pass-through" and "Credential sources" rely on them. | Open. |
-| Confirm Azure Foundry's Responses API path and its usage fields | `openai-responses` on `azure-foundry` is assumed. | Open. |
-| Confirm which gateways preserve provider usage fields and report the served model | `channel: gateway` meters what the gateway returns. | Open. |
-| Confirm that no VCS path uses `AssignCredentials` or the adapter's credentials file at `/run/lenny/credentials.json` | "LU-4" deletes them for LLM leases. If a VCS path still uses the file, it stays at that path on the slot's run volume, and `session_start` keeps naming it in `credentialsPath` ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)). | Open. |
-| Confirm, against a running LiteLLM and a self-hosted Portkey, that `extra_spend_tag_headers`, `tag_regex`, `x-litellm-tags`, and `HEADERS_TO_METADATA` act on the `Lenny-*` headers as "LU-11" states | The plain headers that OD-13 settled rest on the documentation alone. | Open. |
-| File the defects found while verifying: Bedrock streams sent to the non-streaming `invoke` path, the 120-second client timeout on streams, the unregistered `OpenAIResponsesTranslator` and its provider key collision, the missing Pattern B base URL, `UserProxyDialect` mapping `vertex_ai` to an unserved dialect, and `credential.leased` emitted for no LLM lease | They are defects in the tree today, independent of this design. | Open. This design edits no record. |
-| Read the hosted tool types that `openai-responses` and `google-generate` offer (for example a remote MCP tool with a caller-supplied server URL, and URL and search grounding tools), and which of them make the provider reach the network | Open decision 1 is settled for every metered format, and its allowlist of tool types needs the list per format **[unverified]**. | Open. Waits on 0133.S2. |
-| Confirm whether Claude models on Google Cloud (Google managed) accept a top-level `cache_control` on `rawPredict` | "LU-9" states that the proxy passes a provider's refusal of a top-level `cache_control` back unchanged and that Anthropic's guide states no such restriction for Google Cloud; Google Cloud's prompt-caching page for Claude documents only the block placement. Moved from [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/steps.md) on 2026-11-19. | Open. Waits on 0133.S2 (LU-9). |
-| Reconcile Anthropic's statement of organization-level cache isolation on Google Cloud (Google managed) with Google Cloud's statement that a cache is unique to its project | "LU-9" states that isolation follows the upstream's provider account or workspace, and names organization-level isolation on Claude models on Google Cloud. Moved from `0132-llm-response-cache-removal` on 2026-11-19. | Open. Waits on 0133.S2 (LU-9). |
-| Read again the external facts this design carries from the analysis: the Bedrock and Vertex endpoint facts, Anthropic's workspace limits and cost reports, Azure's deployment types, and AWS's per-user role sessions for gateways | "Sources" marks them. | Open. |
+| Confirm, against a running LiteLLM, Envoy AI Gateway, and Kong, that each verifies the `lenny-attribution+jwt` of 0124 CR-2 under the `deployment` key set, or calls the reference verifier before it serves a call | "LU-2" relies on the gateway refusing a call without a valid assertion. The documentation read on 2026-11-24 states that LiteLLM's JWT authentication needs its Enterprise licence and its open-source `custom_auth` can verify, that Envoy Gateway's `SecurityPolicy` verifies ES256 against a remote key set, that Kong's free `jwt` plugin reads no key set, and that Portkey's open-source gateway authenticates no caller **[external]**. Neither Envoy nor LiteLLM documents a `typ` check **[unverified]**. | Open. |
+| Confirm that each of those gateways can copy the assertion's `jti` into its per-call cost record and deliver the records in batches, through `lenny-litellm`, `lenny-charge-relay`, or its own logging | "LU-3" and `0170-budgets` "BG-12" rely on it. LiteLLM's custom callbacks batch, Envoy exports access logs over OpenTelemetry, and Kong's `http-log` batches **[external]**; whether LiteLLM's `custom_auth` metadata reaches its callbacks on a released version is **[unverified]**. | Open. |
+| Run Claude Code with an `http://` base URL through `HTTP_PROXY` and record whether it sends an absolute-form request or opens a `CONNECT` tunnel | "LU-1" relies on `netagent` reading a plain request to a bound host. Claude Code's behaviour is undocumented **[unverified]**, and a `CONNECT` tunnel to port 80 would carry cleartext that 0127 does not describe. | Open. |
+| Run gemini-cli non-interactively with `GOOGLE_GEMINI_BASE_URL` and an `http://` base URL | Its documentation requires HTTPS unless the URL names `localhost`, and its non-interactive mode may refuse the gateway authentication type **[unverified]**. | Open. |
+| Confirm whether LiteLLM and Envoy refetch a key set when an assertion names an unknown `kid` | A gateway that does not refetch refuses calls after a rotation until its cache expires. 0124's D14 publishes a key an hour before its first use against LiteLLM's 600-second cache **[external]**; the refetch behaviour is **[unverified]**. | Open. |
+| Measure the binding propagation delay, from an exhaustion recorded by Lenny to `netagent` refusing to attach the assertion, on the pod binding API | LUR-5 and LUR-6 bound the overshoot by it. | Open. Waits on 0127.S4. |
+| Confirm that no VCS path uses `AssignCredentials` or the adapter's credentials file at `/run/lenny/credentials.json` | "LU-4" deletes them for LLM leases. If a VCS path still uses the file, it stays at that path on the slot's run volume ([PL-3](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout)). | Open. |
+| File the defect found while verifying that has no finding yet: `credential.leased` named for LLM leases that never emit it | It is a defect in the tree today, independent of this design. | Open. |
+
+The validation items of revisions 1 to 19 on usage fields, streams, the input estimate, Gemini paths, `gemini-cli` on the proxy, reservation latency, gateway usage fields, and hosted tool types are withdrawn with the proxy (decision 22).
 
 ## Steps
 
-### 0133.S1 Metering corrections
+### 0133.S1 LLM gateway access
 - status: Planned
-- aliases: [LU-A]
-- lanes: [specification, code, documentation]
-- closes: [F-11.2.38]
+- aliases: [LU-A, LU-1, LU-2, LU-3, LU-5, LU-6, LU-7, LU-8]
+- lanes: [specification, documentation]
+- depends-on: [0133.S2, 0124.S2, 0127.S4]
 
-Metering corrections: token classes with cache writes by lifetime, the parsers and streaming rules of "Usage normalization", the `llm_usage` records, the class counts on `token_usage.checkpoint`, and the correction fields. The client-facing usage of the Open Responses and Chat Completions surfaces, which revision 6 placed here, moves to the provider adapters under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), which read R3. It absorbs RC-B and O2 of the cache removal design.
+The specification of "LLM gateways and external charges" in §4.9 with LUR-1 to LUR-7, and the operator and runtime-author documentation of "Documentation pages" assigned to this step: the gateway as an egress destination, the attribution binding, the gateway's checks, charges, enforcement by binding suspension, usage, and calls outside the gateway. It builds no code of its own: 0124.S2 mints the attribution assertion and keeps the mint index, 0127.S4 attaches it, removes the placeholder, suspends bindings, and answers a suspended session, and 0170.S6 counts charges by `jti`. The reference integrations of "LU-9" live in their own repositories, outside this step, and the gateway guide links them. Its `integration` and `security` tests run once those steps have landed, and they land with whichever of this step and 0170.S6 merges second.
 
-It has no dependency. It runs on today's proxy and records the pool in place of the upstream until 0133.S2. It lands first because it fixes a metering defect that exists today.
-
-Until 0133.S3 converts budgets to credits, the session token budget, the §8.6 extension trigger, and the Redis quota counters count a call's total input (`input`, `cacheRead`, and every `cacheWrite` lifetime) plus its output, so the budget and quota half of F-11.2.38 closes in this step with the records half. The §11.2 **Quota Update Timing:** and §4.9 **Request flow:** item 6 edits of this step state that count.
-
-### 0133.S2 Upstreams and removal
+### 0133.S2 Removal
 - status: Planned
-- aliases: [LU-B, LU-1, LU-2, LU-3, LU-4, LU-8, LU-9, LU-10, LU-11]
+- aliases: [LU-B, LU-4]
 - lanes: [specification, code, documentation]
-- depends-on: [0133.S1, 0127.S2, 0141.S1 (part)]
-- closes: [F-4.9.48, CHEGRESS-I1, CHGWPOD-I9, CHGWPOD-I12, CHGWPOD-I15, F-4.9.32, F-4.9.33, F-4.9.34, F-4.9.37, F-4.9.38, F-4.9.39, F-4.9.40, F-4.9.41 (part), F-4.9.47 (part), F-4.7.31, F-11.4.10]
+- depends-on: [0127.S2]
+- closes: [F-4.9.48, F-11.2.38, CHEGRESS-I1, CHGWPOD-I9, CHGWPOD-I12, CHGWPOD-I15, F-4.9.29, F-4.9.32, F-4.9.33, F-4.9.34, F-4.9.37, F-4.9.38, F-4.9.39, F-4.9.40, F-4.9.41 (part), F-4.9.47 (part), F-4.7.31, F-11.4.10, F-4.9.49, F-4.9.50, F-4.9.51, F-4.9.52, F-4.9.53, F-4.9.54]
 
-Upstreams and removal: LU-1, LU-2, the routes and session binding of LU-3, LU-4, LU-8, LU-9, LU-10, and LU-11, with the specification rewrite of §4.9's LLM half and every section of "Specification changes" that the removal reaches. It includes the `google-generate` format with its routes, its parser, and the `gemini-api` channel, Google Cloud workload identity beside the AWS and Azure exchangers, the §26 format declarations with `gemini-cli` on `google-generate`, and the statement of calls outside the proxy. It resolves the lease findings.
+The removal of "LU-4": LLM credential pools, leases, direct mode and its webhook, the router, fallback, renewal, rotation, the pre-claim check, the LLM proxy with its listener, routes, translators, usage parsing, and in-process budget enforcer, the proxy token and the `llm` member of `session_start`, `PreLLMRequest` and `PostLLMResponse`, `llmFormats`, `supportedProviders`, `credentialCapabilities`, `credentialPropagation`, `vault_transit`, and the `provider` path of `POST /v1/credentials` with the `credentials` table and its gateway-side store, with every section of "Specification changes" that the removal reaches. It resolves the lease and proxy findings of "Records" as obsolete.
 
-It needs EG-2 for the removal of `provider-direct`. It deletes the `lenny-direct-mode-isolation` webhook and checks (1) and (2) of the `direct_mode_isolation` validator with `deliveryMode`, in place of 0127.S2, which removes check (3) with `provider-direct`, so that `main` does not admit a direct-mode pool on `isolationProfile: standard` or a multi-tenant pool with `spiffeBinding: disabled` between the two merges ("LU-4"); open decision 4 settles whether it restates the `spiffeBinding` refusal in the admin API's pool validation, and it decides CHEGRESS-I2.
+It lands before 0133.S1, because 0151.S1 waits on it for the removal of the `credentials` table and 0124.S2, which 0133.S1 needs, waits on 0151. Between this step and 0170.S6, model calls reach no budget, which no deployment relies on before v1 ships. The owner accepted this order on 2026-11-24 (decision 25). It needs EG-2 (0127.S2) for the removal of `provider-direct`, and it deletes the `lenny-direct-mode-isolation` webhook and checks (1) and (2) of the `direct_mode_isolation` validator with `deliveryMode`. 0151.S1 depends on this step for the removal of the `credentials` table (0151-F4).
 
-It needs the post-chain point of RT-2 in 0141.S1 for the list check of "LU-2" **Session creation.** Until 0140.S1 lands, the check reads `llmFormats` from the runtime record, and 0140.S1 moves it onto the chosen revision as 0140's instruction from this change states. The `llm` posture section and its tests land in whichever of 0133.S2 and 0142.S2 merges second, because 0142.S2 builds the posture endpoint ("LU-8" **Posture.**). If the owner settles option (a) of open decision 41 of [`0142-security-oversight`](../0142-security-oversight/decisions.md), which splits 0142.S2, the `llm` section lands with whichever of 0133.S2 and 0142's posture step merges second.
-
-0132.S1 and 0133.S2 rebase on whichever of them lands first, because both edit `pkg/gateway/meteringproxy/llmproxy/handler.go`, `pkg/credential/credentialpoolstore`, and the admin pool validator (0132-L8).
-
-The metering proxy of this step keeps the refusal of a session's new calls and the cancellation of its calls in flight when the session's suspension cannot take hold, from the pod in use until that pod is released, as SLR-23 of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) states (L24). 0146.S1 lands the refusal in the proxy the tree has when it lands, so whichever of 0146.S1 and 0133.S2 lands second carries it over ("LU-3" **Session binding**).
-
-With the `provider` path of `POST /v1/credentials` (OD-10), the step removes the `credentials` table and its gateway-side store, `credentialpg` in `cmd/lenny-gateway/credentialsurface.go` (`pkg/credential/credentialstore/pgstore`) and `pkg/credential/usercreds`, which serve only that path. 0151.S1 depends on this step for that removal (0151-F4).
-
-The resolved lease findings are those of "Records" in `change.md`. F-4.9.41 (part) keeps its VCS half open. F-4.9.47 (part) is shared with 0151, whose UC-1 settles the wire names. F-4.9.46 is closed by 0151.S1. CHINTRA-I1 and CHGWPOD-I14 become obsolete in this step only if the validation item on `AssignCredentials` and the credentials file finds no VCS use, so they are not listed under `closes`; the step closes them when that item is resolved that way. Open decision 8 asks whether this step splits into smaller steps.
+Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it removes: `GWSEAM-CheckChildCredentials`, `GWSEAM-RotateCredential`, `GWSEAM-TenantCredentialProviders`, `GWSEAM-ExtendForBudget` and `GWSEAM-RaiseBudget` in their proxy form, and the LLM half of `GWSEAM-RevokePoolCredentials` and `GWSEAM-RevokeUserLeases`, and it reshapes `GWSEAM-MaterializeChild`, which no longer assigns an LLM credential lease. It keeps `GWSEAM-ExpireSession`, which 0146.S1 needs.
 
 It deletes the rows of `tests/registers/gateway-layout.yaml` with `removed-by: '0133'` as it deletes their packages, and its diff is reviewed under "Review changes to the merge gate" of `.claude/rules/git-workflow.md` because it touches `tests/registers/`.
 
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It removes `GWSEAM-CheckChildCredentials` with the pre-claim credential check and `GWSEAM-RotateCredential` with the credential fallback (LU-4), reshapes `GWSEAM-MaterializeChild`, which no longer assigns an LLM credential lease, and removes `GWSEAM-TenantCredentialProviders` with the tenant's `credentialPolicy`. It also reshapes or removes `GWSEAM-RevokePoolCredentials` and `GWSEAM-RevokeUserLeases`, through which the admin API revokes a pool credential's leases and returns a revoked user's leases, with the credential renewal propagator and the lease revoker it removes. Removing the renewal propagator removes one of the two callers of `GWSEAM-ExpireSession` (`cmd/lenny-gateway/cred_renewal.go`), and 0133.S3 removes the operation with the other.
+0132.S1 and 0133.S2 rebase on whichever of them lands first, because both edit `pkg/gateway/meteringproxy/llmproxy/handler.go`, `pkg/credential/credentialpoolstore`, and the admin pool validator (0132-L8).
 
 ### 0133.S3 Rate cards and credit budgets
-- status: Planned
-- aliases: [LU-C, LU-5, LU-6, LU-7]
+- status: Cancelled
+- aliases: [LU-C]
 - lanes: [specification, code, documentation]
 - depends-on: [0133.S2]
-- closes: [F-11.2.34, F-8.3.9]
 
-Rate cards and credit budgets: LU-5 with the fallback entry, LU-6 with the input estimate and best-effort bounds, and the estimated cost of LU-7, with §8.3, §8.6, §11.2, and §11.2.1 in credits.
-
-Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ExtendForBudget` and `GWSEAM-RaiseBudget`, and the delegation budget operations (`GWSEAM-ReturnBudget`, `GWSEAM-RearmBudget`, `GWSEAM-ObserveHighWatermark`, `GWSEAM-NodeUsage`, `GWSEAM-TreeUsage`, and `GWSEAM-SubtreeTokens`), which count credits (LU-6), and `GWSEAM-HandleBudgetKeysExpired`, the tree cleanup a reservation runs when the tree's budget keys expired. Under decision 5, a refused extension no longer ends the session, so the step removes `GWSEAM-TerminateForBudget` and `GWSEAM-ExpireSession` with the in-process enforcer; 0133.S2 has already removed the operation's other caller. It removes `GWSEAM-TrackedBudgetSessions` with the in-process budget state that `budget_state_sweep.go` sweeps, and reshapes or removes `GWSEAM-ForgetBudget` according to whether the session's Redis budget record is deleted when the session ends or expires.
-
-Open decision 6 settles the reservation protocol under Redis Cluster, and open decision 9 the future of `billing.dualControlThreshold`, before this step's §12.4, "LU-6", and §11.2.1 edits.
+Cancelled by decision 22 on 2026-11-24: rate cards, credits, the input estimate, reservations per call, settlement, and `llm_usage` leave with the proxy. Budgets on model spend count charges on the `externalCost` meter under 0170.S6, and the gateway guide states the two setups of "LU-3" (decision 26).
 
 ### Notes on the steps
 
-0133.S2 and 0133.S3 can merge into one step if the owner prefers to change budgets in the same step as their anchor. Revision 2's LU-D, which carried the gate, the guardrail, and the posture entries of the unmetered path, and its LU-E, which carried `google-generate` and Google Cloud workload identity, are retired: OD-8 removes LU-D's mechanisms and 0133.S2 (LU-B) carries the statement of calls outside the proxy, and OD-9 moves LU-E's content into 0133.S2. The labels are not reused.
+Revision 20 rewrote 0133.S1, which carried the metering corrections, and 0133.S2, which carried upstreams and the proxy, under decision 22. The labels LU-A, LU-B, and LU-C keep naming the steps. Revision 2's LU-D and LU-E stay retired.

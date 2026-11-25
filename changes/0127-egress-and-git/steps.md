@@ -65,6 +65,8 @@ Requests from other changes: 0127.S4 carries `handling`, the asserted route and 
 
 Requests still open from [`0148-tenant-outbound-connector`, "Changes requested of 0127-egress-and-git"](../0148-tenant-outbound-connector/change.md#changes-requested-of-0127-egress-and-git), which land with this step and with 0148.S2 (OC-2): a binding with `secret: {kind: none}` is refused on a covered host. The credential-pinned half of the refusal lands with 0127.S12.
 
+Under decision 22 of 0133, the step also lands the platform and pool bindings of "Credential bindings" and **Binding suspension.** through the pod binding API, which 0170.S6 calls, with `netagent`'s answers to a suspended session's requests under decision 85 and the removal of the placeholder from other headers on an attribution binding's hosts. Decision 84 offers both scopes, and a pool binding replaces a platform binding on the same host for that pool's sessions.
+
 ### 0127.S5 Git mirror and warm fill
 - status: Planned
 - aliases: [EG-5, proposal 5]

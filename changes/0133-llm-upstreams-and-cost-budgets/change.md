@@ -1,15 +1,17 @@
-# LLM upstreams and cost budgets
+# LLM credential removal and access through a gateway
 
-Status: `Draft`, revision 11, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 28, 2026-11-24. Programs: [v1](../programs/v1.md).
+
+The folder keeps its name, `0133-llm-upstreams-and-cost-budgets`, so that links into it keep resolving. Decision 23 sets the title. The change does two jobs: it removes Lenny's LLM credential machinery and its proxy ("LU-4"), and it states how the mechanisms that `0124-connector-removal`, `0127-egress-and-git`, and `0170-budgets` own combine into LLM access through an operator's gateway, with the reference integrations, the gateway guide, and the checks owed. Each rule of that path is stated once, in its owner, and this change cites it. Revision 20 replaces the metering proxy design of revisions 1 to 19 under decision 22, which the owner settled on 2026-11-24. `review-history.md` records the earlier revisions, and the decisions they rest on stay in `decisions.md`, marked where decision 22 supersedes them.
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
 | Tag | Meaning |
 | :-- | :-- |
 | **[source]** | Read in the Lenny tree or the specification on 2026-11-09. |
-| **[external]** | Read on an external site on 2026-11-09. "Sources" lists the pages and says which this design read again. |
+| **[external]** | Read on an external site. "Sources" lists the pages. |
 | **[design]** | What this design requires. Nothing implements it. |
-| **[unverified]** | A provider fact this design states without having read the provider's page. "Validation owed" in `steps.md` lists each one for reading. |
+| **[unverified]** | An external product fact this design states without having read the product's page. "Validation owed" in `steps.md` lists each one. |
 
 ## Problem
 
@@ -17,213 +19,131 @@ Each factual claim about behaviour carries one of these tags where the source ma
 
 Lenny holds LLM provider credentials in credential pools, leases them to sessions, and either injects them in its LLM proxy (proxy mode) or writes them into the pod (direct mode). Around the pools sit assignment strategies, health scoring, cooldown, fallback chains, proactive renewal, rotation into running pods, the `CredentialRouter`, and a pre-claim availability check ([§4.9 Credential Leasing Service](../../spec/04_system-components.md#49-credential-leasing-service)) **[source]**. These are the functions of an LLM gateway. Operators who need them already run one, and Lenny's versions carry most of the open High findings in credential leasing ("Current state").
 
-What only Lenny can do is attribute LLM spend to its own identities (tenant, environment, user, session, delegation tree, and runtime revision) and stop spend on those identities before it happens. Today it does neither well:
+Revisions 1 to 19 of this change replaced the pools with a thin metering proxy: upstream records, routes and usage parsers for four API formats, rate cards per model in credits, a reservation per call with an input estimate, and usage records per call. Every one of those parts changes when a provider adds a model, a token class, a pricing dimension, or a streaming field, so Lenny would carry the work of keeping up with the providers' APIs. The owner asked on 2026-11-24 to remove the proxy, or every part of it that tracks models and APIs, while keeping budgets on model spend optional and best effort (decision 22).
 
-- The usage record names no provider, model, channel, or contract, so a cost cannot be computed from Lenny's records even with prices in hand **[source]**.
-- The proxy counts Anthropic `input_tokens` alone, so cache reads and writes escape quotas, budgets, and billing (F-11.2.38) **[source]**.
-- The proxy serves the Anthropic format alone, so an OpenAI-format runtime receives 404 (F-4.9.48) **[source]**.
-- Budgets are raw token counts. A token of one model can cost many times a token of another, cache reads are billed at a fraction of input, and a new tokenizer changes the count for the same text **[external]**.
-- Enforcement happens after the provider answers. A call that exhausts a budget has already been billed, and a stream is never stopped **[source]**.
-- Direct mode places a long-lived provider key in a file the runtime reads, and its usage comes from the runtime's own optional reports **[source]**.
-
-The owner settled the direction: keep a thin proxy that meters usage and enforces budgets, remove the LLM use of credential pools, add an LLM upstream record, express budgets as estimated cost in unitless credits from operator rate cards, and leave pooling and failover to an operator-run LLM gateway placed behind Lenny as an upstream ("Decisions" in `decisions.md`).
+What only Lenny can do is tell an operator's LLM gateway which tenant, user, session, and delegation tree each call belongs to, and count the gateway's charges against Lenny's budgets. The gateway already holds provider keys, routes, fails over, and prices calls.
 
 ## Scope
 
 **Added:**
 
-- The LLM upstream record: endpoint, provider, channel, contract, API format, credential source, model allowlist, and rate card, written by a `platform-admin` for the platform or by a `tenant-admin` for one tenant ("LU-1").
-- Upstream lists on tenants and pools, grants of platform upstreams to tenants, and resolution of each call to one upstream by API format and model ("LU-2").
-- Proxy routes for OpenAI Chat Completions, OpenAI Responses, and Google `generateContent` beside Anthropic Messages, one proxy token per session, and usage normalization into token classes with cache writes by lifetime ("LU-3").
-- Rate cards: per upstream, per model, and per token class, with multipliers, a discount, an optional fallback entry for unpriced models, and versions by `effectiveFrom` ("LU-5").
-- Credit budgets with reservation before a call and settlement after it, across the per-call, session, tree, user, tenant, and global scopes, with the [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) extension requested before the call ("LU-6"). Budgets cover the calls a runtime sends through the proxy, and enforcement is best effort: a scope can overshoot its limit by the input estimate's error on the calls in flight.
-- One usage record per model call through the proxy, and LLM usage entries with a labelled estimated cost on `token_usage.checkpoint` ("LU-7").
-- Workload identity as a credential source for platform upstreams on Amazon Bedrock, Google Cloud, and Azure ("LU-8").
-- A statement of the calls the proxy does not see: a runtime whose format the proxy does not parse, or that holds its own provider key, reaches the provider over egress like any other traffic, with no budget and no LLM usage record ("LU-10").
-- Attribution forwarded to the upstream: the proxy sets identity attributes on every forwarded request, with user identifiers pseudonymized per upstream, so that an operator-run LLM gateway behind Lenny can choose per-user keys, workspaces, caches, or budgets itself ("LU-11").
-- Posture rows that list the other tenants sharing each of a tenant's upstreams, and a warning when a grant makes a `hipaa` or `fedramp` tenant share an upstream ("LU-9").
+- The operator's LLM gateway as an ordinary egress destination. A runtime reaches it through `netagent` and `lenny-egress` like any other host, at a base URL that the pool's injected configuration gives it ("LU-1").
+- Attribution on the gateway's host: an attribution binding under which `netagent` attaches a Lenny-signed attribution assertion, the `lenny-attribution+jwt` of [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion), to every request for the gateway's host. The agent process never sees it ("LU-2").
+- Charges: the gateway prices each call and reports a charge to Lenny citing the `jti` of the call's assertion as proof, through the charge ingestion API of [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges), and budgets count charges on the `externalCost` meter ("LU-3").
+- Enforcement: an exhausted limit that counts `externalCost` suspends the session's attribution binding, so `netagent` answers the session's next call to the gateway itself, and `onExhausted` acts on the running session as for any meter ("LU-5").
+- Reference integrations outside Lenny's core: a LiteLLM module, a charge relay, and the reference verifier ("LU-9").
 
 **Changed:**
 
-- `credentialCapabilities.proxyDialect` becomes the runtime field `llmFormats`, the API formats the runtime speaks to the proxy.
-- The `llm` member of `session_start` carries one base URL per format and the proxy token in place of the delivery mode, dialect, and lease token.
-- The token limits of [§11.2](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) and `maxTokenBudget` of [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) become credit limits and `maxCreditBudget`.
-- The §8.6 trigger moves from the settlement of a completed call to the refused reservation of the next call.
-- `billing_correction` covers the new LLM fields, and LLM corrections get a dual-control threshold in credits.
+- The `llm` meter and the unit `llmCredits` of `0170-budgets` give way to the `externalCost` meter, counted in the deployment's currency ("LU-3", and 0170's decisions 57 and 67).
+- The token limits of [§11.2](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) and `maxTokenBudget` of [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) become limits on the `externalCost` meter in the budget objects of `0170-budgets`.
+- The §8.6 extension starts when charges exhaust a limit of a session budget or a cap, and a call refused meanwhile is retried by the runtime ("LU-5").
 - `CredentialPool` serves VCS providers alone.
 
 **Removed:**
 
 - LLM providers on `CredentialPool`, LLM credential leases, `credentialPolicy`, direct delivery mode, the `CredentialRouter`, assignment strategies, health scoring, cooldown, fallback, proactive renewal, rotation of LLM credentials into pods, `hotRotation`, `supportedProviders`, `credentialPropagation`, and the pre-claim credential availability check ("LU-4").
-- The direct-mode usage path: `ReportUsage`, `FINAL_USAGE_REPORT`, and the token-usage anomaly detector. `llm_request_started` and `llm_request_completed` stay as the runtime's own report of a call it sends outside the proxy, which [`0135-message-delivery`](../0135-message-delivery/change.md) "MD-20" shows as `source: runtime` usage and which no budget reads ("LU-10").
+- The LLM proxy: its listener and routes, the proxy token, the `llm` member of `session_start`, the provider-specific translators, the channel `CH-LLMPROXY`, and the `PreLLMRequest` and `PostLLMResponse` interceptor phases ("LU-4").
+- The direct-mode usage path: `ReportUsage`, `FINAL_USAGE_REPORT`, and the token-usage anomaly detector. `llm_request_started` and `llm_request_completed` stay as the runtime's own report of a call ("LU-6").
 - `provider-direct`, NET-006, NET-044, and the `lenny-direct-mode-isolation` webhook, which [`0127-egress-and-git`](../0127-egress-and-git/change.md#consolidating-provider-direct) already proposes to remove with direct mode's last consumer.
 - `vault_transit` and the `provider` path of `POST /v1/credentials` (OD-10).
+- `llmFormats` on the runtime record and the check at the post-chain point that a session's upstream list serves one of them.
 
 **Out of scope:**
 
-- Failover between upstreams, multi-key pooling, and routing across providers. An operator places an LLM gateway behind Lenny as an upstream.
-- Per-user upstreams and per-user provider keys inside Lenny. A downstream LLM gateway makes that choice from the forwarded user attribute ("LU-11").
-- Translation between API formats. Each call reaches an upstream in the format the runtime sent.
-- Per-token-class budgets, which the owner rejected.
-- Currency, invoices, and rating. Credits are unitless, and the operator's billing system prices quantities as it chooses (OD-6).
-- Budgets and LLM metering for calls that do not pass through the proxy. A runtime may call a provider directly with a key it holds, over whatever egress its pool permits, and Lenny neither blocks that traffic nor reports it as LLM traffic (OD-15).
-- Metering of API formats the proxy does not parse, such as the protocol that `cursor-cli` speaks to Cursor's own backend.
-- The removal of Lenny's semantic response cache, which [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md) owns as RC-A. Its RC-B and O2 move into this design.
+- Holding provider keys, routing, failover, pooling, model allowlists, pricing, prompt caching, and guardrails on prompts. The operator's LLM gateway does each of them.
+- Any parsing of a model call's body or response. Lenny reads no model name, token class, or price.
+- Budgets for model calls that reach no gateway that reports charges. A runtime may call a provider directly with a key it holds, over whatever egress its pool permits, and Lenny neither blocks that traffic nor reports it as LLM traffic ("LU-7").
+- Currency conversion, invoices, and rating. Charges arrive in `budgets.currency`.
+- The removal of Lenny's semantic response cache, which [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md) owns as RC-A.
 
 ## Terms
 
 | Term | Meaning |
 | :-- | :-- |
-| LLM upstream | A record that binds one endpoint, one provider, one channel, one contract, one API format, one credential source, a model allowlist, and a rate card. Every proxied call is sent to exactly one upstream. "LU-1" defines it. |
-| Platform upstream and tenant upstream | A platform upstream is written by a `platform-admin` and serves tenants it is granted to. A tenant upstream is written by a `tenant-admin` and serves its own tenant alone. |
-| Upstream list | The ordered set of upstream names a tenant or a pool names. A session uses its pool's list when the pool has one, and its tenant's list otherwise. |
-| API format | The wire format of an LLM call: `anthropic-messages`, `openai-chat` (OpenAI Chat Completions), `openai-responses` (OpenAI Responses), or `google-generate` (Google's `generateContent`, served by the Gemini API and by Vertex AI). The proxy meters these formats (OD-9). |
-| Provider | The company whose models an upstream serves, such as `anthropic`, `openai`, or `google`. |
-| Channel | The route by which an upstream reaches the provider: `anthropic-api`, `aws-bedrock`, `gcp-vertex`, `azure-foundry`, `openai-api`, `gemini-api` (Google's Gemini Developer API), or `gateway` for an operator-run LLM gateway. |
-| Contract | An operator label for the commercial terms behind an upstream, such as `acme-anthropic-2026`. It is carried on every usage record so that usage can be split by the agreement it was bought under. |
-| LLM gateway | An operator-run proxy, such as LiteLLM or Envoy AI Gateway, that pools keys, fails over, or routes across providers. Lenny reaches it as an upstream with `channel: gateway`. |
-| Metered path | An LLM call that a runtime sends to the proxy, which resolves an upstream, reserves credits, injects the upstream's credential, forwards the call, and records its usage. |
-| Unmetered path | An LLM call that a runtime sends to a provider without the proxy: over an ordinary egress route, through an egress credential binding, or with a key the runtime holds. Lenny records no LLM usage for it and applies no budget to it. "LU-10" defines it. |
-| Proxy token | The bearer a session's runtime presents to the proxy. One is minted per session, bound to the pod's SPIFFE identity when the pool requires it, and revoked when the session ends. It replaces the lease token. |
-| Token class | A category of tokens a provider prices separately: `input` (uncached input), `cacheRead`, `cacheWrite` by lifetime (`5m`, `1h`, `30m`, or `12h`), and `output`. `reasoning` is recorded inside `output` for information. |
-| Rate card | An operator-written price list for one upstream: per model, credits per million tokens of each token class, with multipliers, a discount, an optional fallback entry, and versions. It weights token classes for budget enforcement and computes no real cost. "LU-5" defines it. |
-| Fallback entry | The model entry of a rate-card version that prices a call whose model no other entry matches. Such a call is flagged `priced_as: fallback` in its usage record. "LU-5" defines it. |
-| Rate-card version | One entry of a rate card with an `effectiveFrom` time. Versions are append-only, and a call is priced at the version in force when it started. |
-| Credits | The unitless budget unit. A rate card prices tokens in credits, and every budget is a credit amount. Lenny stores credits as integer micro-credits, one millionth of a credit. |
-| Estimated cost | The credits a call costs under its rate-card version. It is Lenny's enforcement figure, labelled as an estimate wherever it is reported, and the operator computes real cost from the quantities in the usage record. |
-| Reservation | The credits the proxy holds against every budget scope of a call before forwarding it, computed from the call's output limit and its input estimate. |
-| Input estimate | The proxy's estimate of a call's input tokens before the call runs: the body's text bytes divided by the bytes-per-token constant `k` on a session's first call to an upstream and model, and the text bytes times the session's input ratio on later calls, plus a fixed estimate per image or document block. "LU-6" defines it. |
-| Input ratio | The total input tokens of a session's last settled call to one upstream and model, divided by that call's text bytes. Settlement stores it in the session's Redis budget record, so every gateway replica reads it. |
-| Best-effort enforcement | The budget guarantee of "LU-6": a reservation is admitted only within every scope's limit, a scope can still overshoot by the input estimate's error on the calls in flight, and the next call's reservation in that scope is refused once the limit is passed. |
-| Settlement | The replacement of a reservation with the call's estimated cost once the provider reports usage. |
-| Budget scope | A level at which credits are limited: per call, session, delegation tree, user window, tenant window, and global window. |
-| Requested model and served model | The model the request names, and the model the response names. They differ when an alias or an LLM gateway picks the model. |
-| Usage record | The per-call record of a metered call: identities, upstream, models, token classes, rate-card version, reservation, and estimated cost. "LU-7" defines it. |
-| Forwarded attribution | The identity attributes the proxy sets on each request it forwards to an upstream: tenant, environment, user, session, root session, runtime, runtime revision, pool, and upstream. The upstream's `attribution` settings choose which are sent. "LU-11" defines it. |
-| Pseudonymous identifier | An attribute value replaced by an HMAC-SHA256 of the raw value under a key held per upstream. It is stable for one user on one upstream and differs between upstreams. |
-| Downstream LLM gateway | An LLM gateway that Lenny's proxy calls as an upstream with `channel: gateway`, downstream of Lenny's proxy in the request path. |
-| Shared upstream | A platform upstream granted to more than one tenant. Its tenants share the provider's prompt cache. |
-| LU-n, LUR-n, and LU-A to LU-C | The parts of this design under "Detailed design" carry LU-n, and its requirements under "Requirements" carry LUR-n. LU-A, LU-B, and LU-C name the steps 0133.S1, 0133.S2, and 0133.S3 of `steps.md`, which lists the parts each step lands. |
+| LLM gateway | An operator-run proxy, such as LiteLLM or Envoy AI Gateway, that holds provider keys, routes calls, prices them, and reports charges to Lenny. Lenny reaches it as an egress destination. |
+| Gateway host | A host of an LLM gateway that an attribution binding names. |
+| Attribution binding | A credential binding of [`0127-egress-and-git`](../0127-egress-and-git/change.md#credential-bindings) whose secret is an attribution assertion and whose hosts are gateway hosts. `netagent` attaches the assertion under `delivery: inject`. A `platform-admin` writes one at platform or pool scope for a gateway that serves every tenant, and a `tenant-admin` writes one for its own gateway. |
+| Attribution assertion | The short Lenny-signed token `lenny-attribution+jwt` of [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion) **Attribution assertion.**, naming the session's tenant, environment, pseudonymous user, session, root session, and depth. It attributes spend and authenticates no user. |
+| Charge | A priced amount that a reporter sends to Lenny for one call, naming the call's session through its attribution assertion ([`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges)). |
+| Reporter | A registered client of the charge ingestion API, scoped to one tenant or to the platform, and bound to the gateway hosts whose assertions it may present. |
+| `externalCost` meter | The meter of `0170-budgets` that counts charges in the deployment's currency, `budgets.currency`. It replaces the `llm` meter, and 0170's decision 67 renamed it from `external`. |
+| Binding suspension | The state in which `netagent` stops attaching a session's attribution binding and answers the session's requests to the binding's hosts itself, and the Token Service mints no assertion for it ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.**). |
+| Calls outside the gateway | A model call that a runtime sends to a provider or a gateway that no attribution binding names, or with a key the runtime holds. Lenny applies no budget to it ("LU-7"). |
+| LU-n, LUR-n, and LU-A to LU-C | The parts of this design under "Detailed design" carry LU-n, and its requirements carry LUR-n. LU-A, LU-B, and LU-C name the steps 0133.S1, 0133.S2, and 0133.S3 of `steps.md`. The LU-n and LUR-n labels of revisions 1 to 19 are retired with their sections, and revision 20 assigns them anew. |
 
 ### Terms from other designs and the platform
 
 | Term | Meaning |
 | :-- | :-- |
-| Credential pool | A tenant-scoped, admin-managed set of credentials for one provider, stored in `credentialpoolstore` with each credential's Secret in the credentials namespace ([§4.9](../../spec/04_system-components.md#credential-pool)). Today it holds LLM and VCS credentials. After this design it holds VCS credentials alone. |
-| VCS pool | A credential pool whose provider serves git hosts, selected by `hostPatterns` (`ResolveVCSPool`). [`0127-egress-and-git`](../0127-egress-and-git/change.md), [`0152-user-git-identity`](../0152-user-git-identity/change.md), and the GitHub and GitLab add-on designs build on it. |
-| Credential lease | Today, the LLM credential assigned to a session, with `materializedConfig`. In proxy mode it carries `proxyUrl`, `proxyDialect`, `leaseToken`, and `upstreamModel`, and in direct mode the provider's secret fields. This design removes it for LLM credentials. |
-| `deliveryMode` | Today, the pool setting `proxy` (the gateway calls the provider) or `direct` (the pod receives a short-lived lease and calls the provider itself). This design removes it. |
-| LLM proxy | The gateway subsystem that serves `POST /llm-proxy/v1/messages` on its own listener, runs the [§4.8](../../spec/04_system-components.md#48-gateway-policy-engine) `PreLLMRequest` and `PostLLMResponse` interceptor phases, translates to the upstream provider, injects the credential, and records usage. Its channel identifier is `CH-LLMPROXY` ([§28.5.5](../../spec/28_communication-channels.md#2855-pod-egress)). |
-| Token Service | The separate Deployment that holds credentials and resolves Secrets in the credentials namespace on behalf of the gateway ([§4.3](../../spec/04_system-components.md#43-token-service)). |
-| Credentials namespace | The namespace that holds one Kubernetes Secret per credential, readable only through the Token Service (§4.9, **Credential Storage Topology**). |
+| Credential pool | A tenant-scoped, admin-managed set of credentials for one provider ([§4.9](../../spec/04_system-components.md#credential-pool)). Today it holds LLM and VCS credentials. After this design it holds VCS credentials alone. |
+| Credential lease | Today, the LLM credential assigned to a session, with `materializedConfig`. This design removes it for LLM credentials. |
+| `deliveryMode` | Today, the pool setting `proxy` or `direct`. This design removes it. |
 | `netagent` | The per-pod network agent of [`0127-egress-and-git`](../0127-egress-and-git/change.md) that terminates TLS for bound hosts and attaches credentials the agent process never sees. |
-| Credential binding | The egress design's tenant object that names a secret source, the hosts it serves, and a `delivery` mode. Under `delivery: inject`, `netagent` attaches the credential to requests ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings)). |
-| Posture | The read-only security posture report of SO-2 at `GET /v1/admin/tenants/{id}/security-posture` ([`0142-security-oversight`, "SO-2"](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture)). |
-| LLM host reservation | The egress design's rule that a tenant egress route cannot claim a host that carries an operator's LLM credential, checked at each egress decision ([`0127-egress-and-git`, "Configuration by scope"](../0127-egress-and-git/change.md#configuration-by-scope)). |
-| `llm_request_started` and `llm_request_completed` | The runtime frames by which a runtime reports an LLM call it sends itself, the second optionally with `inputTokens` and `outputTokens` ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). The specification carries them on `CH-RUNTIMEOPS` today. Under decision O7 (a) of [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md#decisions), settled on 2026-11-12, that channel merges into `CH-MSGSOCK`, so they travel on the runtime connection. They are runtime-started frames, so they need no declared capability ([RP-2](../0139-runtime-protocol/change.md#rp-2-capabilities-and-their-dependencies)). |
-| Post-chain point | The step at session creation, after the `PreRoute` chain fixes the runtime and pool and a revision is chosen, where every check that depends on them runs ([`0141-runtime-routing`, "RT-2"](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract)). |
-| Delegation lease and `lease_slice` | The limits a delegated child runs under, carved from its parent, including `maxTokenBudget` today ([§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism) and [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease)). |
-| Lease extension | The [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) operation that raises a session's budget in `auto` mode or after a user approves an elicitation, with `GRANTED`, `PARTIALLY_GRANTED`, `CEILING_REACHED`, and `REJECTED` outcomes. |
-| `billing_correction` | A billing event that replaces the quantity fields of an earlier event, latest first, with dual control above `billing.dualControlThreshold` ([§11.2.1](../../spec/11_policy-and-controls.md#1121-billing-event-stream)). |
-| Regulated tenant | A tenant whose `complianceProfile` is `soc2`, `fedramp`, or `hipaa`. |
-| Runtime revision | An immutable copy of a runtime's versioned fields ([`0140-runtime-revisions`](../0140-runtime-revisions/change.md)). A gateway-read field reaches a session through the gateway. |
-| `platform-admin`, `tenant-admin`, and `security-admin` | Lenny's administrative roles for the platform, for one tenant, and for one tenant's security record. |
+| Credential binding | The egress design's object that names a secret source, the hosts it serves, and a `delivery` mode ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings)). |
+| Identity assertion | The CR-2 token `lenny-identity+jwt`, which names the session's user to an operator service and which D11 of 0124 restricts to pods that no other session used. |
+| Budget object, cap, and session budget | The records of [`0170-budgets`](../0170-budgets/change.md). |
+| Lease extension | The [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) operation that raises a session's budget in `auto` mode or after a person approves an elicitation. |
+| Egress halt | The halt of a slot's egress when its suspension cannot take hold ([`0124-connector-removal`, "CR-4 Egress halt at suspension"](../0124-connector-removal/change.md#cr-4-egress-halt-at-suspension)). |
+| `llm_request_started` and `llm_request_completed` | The runtime frames by which a runtime reports a model call it sends, the second optionally with `inputTokens` and `outputTokens` ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). |
+| `platform-admin` and `tenant-admin` | Lenny's administrative roles for the platform and for one tenant. |
 | BUILD-GAPS | `BUILD-GAPS.md` at the repository root, the audit of gaps between the specification and the code, with findings named F-n.n.n. |
-| Test tiers | The tiers of `.claude/rules/test-coverage.md`, "The tier model", by name: `static`, `unit`, `component`, `contract`, `integration` on the compose stack, `e2e_kind`, `load_local`, `chaos`, `security`, and `docs`. |
-
-### Labels from other designs
-
-| Labels | Source | What they name |
-| :-- | :-- | :-- |
-| RC-A, RC-B, RC-5, O1, and O2 | [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/steps.md#steps) | RC-A removes the semantic cache. RC-B and its part RC-5 state the `cache_control` passthrough (O1) and the cached-token metering (O2). RC-B and O2 move here. |
-| EG-2 and P3 | [`0127-egress-and-git`](../0127-egress-and-git/change.md#security-properties) | `netagent` and the removal of `provider-direct` (EG-2), and the property that LLM credentials keep their §4.7 delivery rules (P3). |
-| SO-2 and SO-3 | [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) | The tenant security record with guardrails and posture (SO-2), and the per-tenant SIEM destination whose secrets sit in the credentials namespace (SO-3). |
-| UC-1 and UC-6 | [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) | Typed user credentials registered with a `type` field (UC-1), and leak scanning (UC-6). |
-| DR-4, DR-5, DR-6, and decision 14 | [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-4-tenant-runtime-records) | Tenant runtime records and their field table, owned pools and their template copy, base changes, and the overlay decision that names the LLM lease residual. |
-| RV-1 and RV-5 | [`0140-runtime-revisions`](../0140-runtime-revisions/change.md#rv-1-revisions) | Field classes of revisions, and derived runtimes over base revisions. |
-| RT-2 | [`0141-runtime-routing`](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract) | The interceptor contract, the `PostRoute` payload, and the post-chain point. |
-| TS-3 and TS-6 | [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md#ts-3-session-environment-context-and-cross-environment-sharing) | Cross-environment sharing with its `credentialPropagation` row (TS-3), and the identity source whose issuer is reached through the gateway's LLM upstream egress rule (TS-6). |
-| AM-6 and AM-8 | [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md#am-6-responses-and-streaming) | Response usage mapping, and the error table with `CREDENTIAL_POOL_EXHAUSTED`. |
-| CA-7 | [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md) | Delegated children and the check at delegation. CR-1 of [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) withdraws CA-7 with connectors. |
-| DA-6 | [`0126-delegation-availability`](../0126-delegation-availability/change.md#da-6-per-hop-narrowing) | Per-hop narrowing through `lease_slice`. |
-| R3 | [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md) | [R3](../0138-rest-only-client-api/change.md#ro-2-rest-additions) the turn resource, whose `usage` the provider adapters read for their client-facing usage. |
-| MD-20 | [`0135-message-delivery`](../0135-message-delivery/change.md#md-20-turn-and-usage-events) | Turn and usage session events. A `usage` event carries `source: gateway` for a call the proxy metered and `source: runtime` for the counts a runtime reports on `llm_request_completed`, and budgets read only the gateway source. |
+| Test tiers | The tiers of `.claude/rules/test-coverage.md`, "The tier model", by name. |
 
 ## High-level design
 
-Lenny stops being an LLM credential broker and keeps the part of LLM traffic only it can do. A runtime sends a model call to Lenny's proxy when it uses the `llm` endpoints that `session_start` gives it, and presents a per-session proxy token. Budgets cover those calls alone. A runtime can also call a provider directly with a key it holds, over whatever egress its pool permits, and Lenny neither meters nor blocks that call ("LU-10"). For a call through the proxy, the proxy picks the one upstream that serves the call's API format and model for the session's tenant or pool, checks that the session, its delegation tree, its user, its tenant, and the platform each have enough credits for the call's output limit and its estimated input, holds those credits, adds the upstream's credential and the session's attribution headers, and forwards the body unchanged. When the response arrives, it reads every token class the provider reports, prices them with the upstream's rate card, replaces the held credits with the estimated cost, and writes one usage record. The provider key registered on the upstream stays in the gateway, and the runtime never sees it.
-
-An operator who wants several keys behind one upstream, failover, or routing across providers runs an LLM gateway and registers it as an upstream. Lenny meters what comes back and attributes it to that upstream's provider, channel, and contract.
-
-The rest of this section states each part in the design's terms, which "Terms" above defines.
-
-**Upstreams (LU-1).** An upstream binds an endpoint, a credential source, a provider, a channel, a contract, a format, a model allowlist, and a rate card. A `platform-admin` writes platform upstreams and grants them to tenants. A `tenant-admin` writes the tenant's own. The credential source is a Secret or the gateway's workload identity, so Lenny holds no provider key per user.
-
-**Assignment and resolution (LU-2).** A tenant names an upstream list, and a pool may name one that replaces it, for example to keep a pool's traffic on an EU endpoint. At each call the proxy takes the format from the route and the model from the body, and the list holds at most one upstream for that pair, because a write that would put two in one list is refused.
-
-**The proxy (LU-3).** The proxy serves Anthropic Messages, OpenAI Chat Completions, OpenAI Responses, and Google `generateContent`, forwards each body unchanged apart from provider rehosting and turning on stream usage reports, and maps each format's usage fields to token classes. Cache writes are recorded by lifetime, and stream totals come from the last cumulative report.
-
-**Removal (LU-4).** LLM credential pools, leases, `credentialPolicy`, direct mode, the router, health, cooldown, fallback, renewal, rotation, `hotRotation`, `supportedProviders`, `credentialPropagation`, and the pre-claim check leave the specification and the tree. VCS pools stay.
-
-**Rate cards (LU-5).** The operator writes a card per upstream that prices each model's token classes in credits, with multipliers and a discount. The card weights the token classes so that a credit budget charges a cached read less than fresh input, and Lenny computes no real cost. A card may name a fallback entry that prices a model it does not list, and such a call is flagged and alerted on. Versions are append-only by `effectiveFrom`, and Lenny ships no prices.
-
-**Credit budgets (LU-6).** The proxy reserves the call's output limit and its estimated input before it forwards a call, and settles to the estimated cost afterwards. The input estimate divides the body's bytes by a constant on a session's first call to an upstream and model, and uses the ratio of tokens to bytes that settlement stored in the session's Redis budget record on later calls. A session or tree scope that refuses a reservation triggers the §8.6 extension before the provider is called, so no tokens are spent on a refused call. Enforcement is best effort: a scope can overshoot by the estimate's error on calls in flight, and the next reservation in that scope is refused. Budgets apply to calls through the proxy alone.
-
-**Usage and billing (LU-7).** Each metered call writes one usage record. `token_usage.checkpoint` rolls the records up per upstream, model, and rate-card version, with the token classes and a labelled estimated cost.
-
-**Security (LU-8).** No provider key registered on an upstream reaches a pod. Platform upstreams on Bedrock, Google Cloud, and Azure can use the gateway's workload identity, so no long-lived key exists for them. Posture reports each tenant's upstreams and shared cache domains.
-
-**Cache isolation (LU-9).** Lenny never strips or rewrites `cache_control`. A provider's prompt cache is isolated by the provider account or workspace behind the upstream, so a regulated tenant gets its own upstream. Posture lists the other tenants that share each of a tenant's upstreams, and a grant that makes a `hipaa` or `fedramp` tenant share one emits a warning.
-
-**Calls outside the proxy (LU-10).** A runtime whose format the proxy does not parse, or that holds its own provider key, reaches the provider over egress like any other traffic, including through an ordinary egress credential binding under `delivery: inject`. Lenny applies no budget to that traffic and does not report it as LLM traffic. A runtime that reports its own calls on `llm_request_completed` has those counts shown as `source: runtime` usage, as MD-20 states.
-
-**Forwarded attribution (LU-11).** The proxy sets `Lenny-*` headers on every forwarded request naming the tenant, environment, user, session, root session, runtime and revision, pool, and upstream, after removing any same-named header the runtime sent. User identifiers are pseudonymized per upstream by default. A downstream LLM gateway reads them to choose a per-user key or workspace, which also isolates each user's prompt cache, or to apply its own budgets.
+Lenny stops brokering LLM credentials and stops proxying model calls. An operator that wants model spend in Lenny's budgets runs an LLM gateway, registers its host in an attribution binding, and registers the gateway as a reporter.
 
 ```
- Runtime (pod)                       Gateway: LLM proxy                                Upstream
- ─────────────                       ──────────────────                                ────────
- POST /llm-proxy/v1/messages  ──>  1. proxy token -> session (SPIFFE check)
-   model: claude-sonnet-5-5         2. format + model -> one upstream of the session's
-   max_tokens: 8000                    list (pool list, else tenant list)
-                                    3. rate card version in force; unpriced ->
-                                       fallback entry, else refuse
-                                    4. reserve output limit + input estimate in
-                                       session, tree, user, tenant, and global
-                                       scopes (one Redis script)
-                                         refused in session or tree -> §8.6 extension
-                                         terminal -> BUDGET_EXHAUSTED, no provider call
-                                    5. PreLLMRequest, inject upstream credential,
-                                       strip and set Lenny-* attribution        ──>  Anthropic API,
-                                                                                       Bedrock, Vertex,
-                                    6. read usage: input, cacheRead,             <──   OpenAI, Azure,
-                                       cacheWrite by lifetime, output                  Gemini API,
-                                    7. PostLLMResponse, settle reservation to          or an LLM gateway
-                                       estimated cost, store input ratio,
-                                       write usage record
-                 <──  response
+ Runtime (slot)          netagent (pod)                 Operator's LLM gateway           Lenny
+ ──────────────          ──────────────                 ──────────────────────           ─────
+ POST http://llm-gw/...  1. attribute the connection
+   (placeholder key,        to the slot's session
+    no identity)         2. binding suspended? -> answer
+                            429 (extension pending)
+                            or 403 (final) itself
+                         3. strip any inbound copy of
+                            the assertion header, attach
+                            the session's assertion  ──>  4. verify assertion
+                         (TLS via lenny-egress)            (signature, aud, exp)
+                                                          5. own key, routing,
+                                                             model policy -> provider
+                                                          6. price the call
+                                                          7. batch charges, ─────────>  8. look up each jti in
+                                                             each citing its               the mint index, count
+                                                             assertion's jti               on `externalCost`
+                                                                                         9. limit exhausted ->
+                                                                                            suspend the binding,
+                                                                                            onExhausted, §8.6
 ```
 
-"Limits" states what the change costs: rate cards for the operator to maintain, an estimate that differs from the invoice, best-effort budgets that a scope can overshoot by the input estimate's error, a reservation that can refuse a call that would have fit, the loss of Lenny-side failover, and no budget or metering for calls outside the proxy.
+**The gateway as a destination (LU-1).** The gateway is a host in the tenant's egress allow set, or a private egress upstream that the platform registers. The runtime calls it with its own SDK at the base URL the pool's injected configuration names, with no key of its own.
+
+**Attribution (LU-2).** An attribution binding on the gateway's host makes `netagent` attach the session's attribution assertion to each request. The gateway verifies the assertion against Lenny's published keys and reads the session, tenant, and pseudonymous user from it. By default the assertion is the gateway's caller credential in `Authorization: Bearer`.
+
+**Charges (LU-3).** The gateway prices each call and posts charges in batches to `POST /v1/charges`, each charge citing the `jti` of its call's assertion. Lenny counts accepted charges on the `externalCost` meter of the budgets of the session's set that each charge's source reaches, as 0170 "BG-12" **Counting by source.** states. The session's owner can also post charges for work outside the pod, which count in its own tree and principal budgets alone (0170's decisions 61 and 71).
+
+**Removal (LU-4).** The proxy, the LLM credential pools, the leases, direct mode, and the machinery around them leave the specification and the tree. VCS pools stay.
+
+**Enforcement (LU-5).** Budgets on `externalCost` are best effort. When a limit is exhausted, Lenny suspends the attribution bindings of the sessions that charge it, and `netagent` answers each session's next call to the gateway itself: `429` with `Retry-After` while an extension is pending, and `403` naming the budget once the exhaustion is final. `onExhausted.running` suspends or ends a running session as for any meter, and a session budget or a cap starts the §8.6 extension.
+
+**Usage (LU-6).** A charge may carry the call's token counts in a neutral schema, which usage events show. A runtime's own reports stay displayed and read by no budget.
+
+**Calls outside the gateway (LU-7).** A call to a host no attribution binding names is ordinary egress, with no budget.
+
+"Limits" states what the change costs: no refusal before spend, an overshoot of the report delay plus the calls in flight, no interceptor or leak scan on model calls, no idle evidence from model calls, and no LLM budget without a gateway that reports charges.
 
 ## Requirements
 
 | ID | Requirement |
 | :-- | :-- |
-| LUR-1 | No provider credential registered on an LLM upstream, or exchanged from the gateway's workload identity for one, enters a pod, its environment, its files, or a frame the runtime receives. |
-| LUR-2 | Each proxied call resolves to exactly one upstream of the session's effective list by API format and model, or is refused before any upstream is contacted. |
-| LUR-3 | Every proxied call that reaches an upstream produces exactly one usage record, attributed to the tenant, environment, user, session, root session, runtime revision, routing labels, upstream, provider, channel, contract, requested model, served model, and rate-card version. |
-| LUR-4 | A usage record carries every token class the format reports, with cache writes split by lifetime. Uncached input excludes cached and cache-write tokens on every format. On a stream, the totals are the last cumulative values the provider sent. |
-| LUR-5 | No proxied call reaches an upstream unless its reservation was admitted in every budget scope the call belongs to. Open decision 6 in `decisions.md` asks how the reservation keeps this guarantee when the scopes' counters sit in different Redis hash slots. |
-| LUR-6 | Settlement replaces each reservation with the call's estimated cost under the rate-card version in force when the call started. A call that reached the upstream and returned no usage settles at its reservation. |
-| LUR-7 | Budget enforcement is best effort. Outside a Redis fail-open window, a scope's consumption exceeds its limit by no more than the input estimate's error on the calls in flight in that scope, the next reservation in a scope past its limit is refused, and settlement records each call's quantities as the provider reported them. |
-| LUR-8 | Rate-card versions are append-only, and no release of Lenny carries a price. |
-| LUR-9 | A session or tree scope that refuses a reservation triggers the §8.6 extension before the upstream is called, and a terminal extension returns `BUDGET_EXHAUSTED` with no upstream call. |
-| LUR-10 | The proxy forwards `cache_control` and every other request field unchanged, apart from provider rehosting and the stream usage option. |
-| LUR-11 | A tenant egress route never claims the endpoint host of an LLM upstream record, so no tenant proxy receives a request that carries an operator's LLM credential. |
-| LUR-12 | A tenant sees and names only its own upstreams and platform upstreams granted to it, and never reads an upstream's secret. |
-| LUR-13 | Every request the proxy forwards to an upstream carries exactly the attribution that upstream's `attribution` settings select, with values the proxy computed from the session record. No header or body field of the same name that the runtime sent reaches the upstream. |
-| LUR-14 | Each tenant's posture lists, for each of its upstreams, the other tenants that share it, and shows a warning for every shared upstream of a `hipaa` or `fedramp` tenant. Open decision 7 in `decisions.md` asks whether a tenant's posture names the other tenants or reports the sharing as a boolean, as `0142-security-oversight` reports pool sharing. |
-| LUR-15 | A call whose model no entry of the rate-card version in force matches is priced as the version's fallback entry and its usage record carries `priced_as: fallback`, or, when the version names no fallback entry, is refused with `LLM_MODEL_UNPRICED` before any reservation. |
+| LUR-1 | Lenny holds no LLM provider credential and parses no model call's request or response. |
+| LUR-2 | A request that `netagent` forwards to a host of an attribution binding of the session carries the session's attribution assertion in the binding's header, and no value of that header that the runtime sent. |
+| LUR-3 | No assertion is attached to a request for a host that no attribution binding of the session names, and none while the binding is suspended, during which `netagent` answers the session's requests to the binding's hosts itself. |
+| LUR-4 | A charge counts in a budget only as BGR-13 of `0170-budgets` states: its proof verifies, it arrives in time, and each charge identifier counts once per reporter. |
+| LUR-5 | When a limit that counts `externalCost` is exhausted, Lenny suspends the attribution bindings of every session that charges it, the tree for the root's limit and the capped subtree for a cap, within the binding propagation delay, and lifts the suspension when an extension, an adjustment, a raise, or a void restores room. |
+| LUR-6 | Budget enforcement on `externalCost` is best effort. A limit exceeds its amount by no more than the charges of the calls the gateway admitted before the suspension took hold, plus the report delay of the charges in flight. |
+| LUR-7 | A runtime's own usage report is displayed as `source: runtime` usage, and no budget, quota, or billing event reads it. |
 
 ## Current state
 
@@ -267,170 +187,56 @@ The rest of this section states each part in the design's terms, which "Terms" a
 
 | Record | State | Relation |
 | :-- | :-- | :-- |
-| F-4.9.48 | Open, High | The missing OpenAI routes. LU-B closes it. |
-| F-11.2.38 | Open, High | The cached-token undercount. LU-A closes it. |
+| F-4.9.48 | Open, High | The missing OpenAI routes. Obsolete under LU-B, which removes the proxy. |
+| F-11.2.38 | Open, High | The cached-token undercount. Obsolete under LU-B, which removes the proxy and its usage parser. |
 | F-4.9.32, F-4.9.33, F-4.9.37, F-4.9.39 | Open, High | Lease release, fallback exhaustion, the expired-lease sweep, and per-replica credential counts. LU-B resolves each as obsolete, because the machinery leaves. |
 | F-4.9.34, F-4.9.38, F-4.9.40, F-4.9.41 | Open, Medium | Lease release retry, the user-credential availability check, lease-store errors, and the deny-list key. Obsolete under LU-B for the LLM half. F-4.9.41 is re-checked for VCS pools. |
 | F-4.9.46, F-4.9.47 | Open, Medium | The inert `provider` values and the `/v1/credentials` wire names. Resolved by OD-10 and UC-1. |
 | F-4.7.31, F-11.4.10 | Open | The rotation in-flight gate and the lease set `full_revoke` revokes. Obsolete for LLM leases. |
-| F-8.3.9 | Open, Medium | No `FINAL_USAGE_REPORT` ends the usage quiescence wait. Obsolete, because quiescence becomes the settlement of in-flight reservations ("LU-6"). |
-| F-11.2.34 | Open, Medium | Budget termination lost to a crash, because the enforcer counts in process memory. The same per-replica count lets a session whose calls land on several replicas spend up to about its budget times the number of replicas, because pods reach the proxy through one URL that the gateway Service balances across replicas. LU-C closes it through the Redis reservation and settlement of "LU-6". |
-| F-4.9.29 | Open, Medium | No adapter code fills `llm.headers`. It stays, under the new `llm` member. |
-| F-8.6.6 | Closed | Proposal 0023 placed the §8.6 trigger in the proxy at settlement. LU-C moves it to the refused reservation. |
+| F-8.3.9 | Open, Medium | No `FINAL_USAGE_REPORT` ends the usage quiescence wait. 0166.S2 closes it with the count of a tree at its root, which leaves nothing to return when a child ends, and LU-B removes `FINAL_USAGE_REPORT`. |
+| F-11.2.34 | Open, Medium | Budget termination lost to a crash, because the enforcer counts in process memory. LU-B removes the in-process enforcer, and 0170.S1 closes the finding with budget counters in Redis. |
+| F-4.9.29 | Open, Medium | No adapter code fills `llm.headers`. Obsolete under LU-B, which removes the `llm` member. |
+| F-8.6.6 | Closed | Proposal 0023 placed the §8.6 trigger in the proxy at settlement. LU-B moves it to the exhaustion of a limit by charges. |
+| F-4.9.49, F-4.9.50 | Open, High | The Bedrock translator sends streams to the non-streaming `invoke` operation, and the gateway mints no short-lived credential for Bedrock or Vertex AI. Obsolete under LU-B, which deletes both translators (D10). |
+| F-4.9.51 | Open, High | The 120-second client timeout cuts a stream. Obsolete under LU-B, which removes the proxy. |
+| F-4.9.52 | Open, Low | `OpenAIResponsesTranslator` is unregistered and shares a provider key. Obsolete under LU-B. |
+| F-4.9.53 | Open, Medium | The provider and dialect names differ between §4.9, §26, and `pkg/credential`. Obsolete under LU-B, which removes providers, dialects, and `UserProxyDialect`. |
+| F-4.9.54 | Open, High | Pattern B has no per-pool upstream base URL. Obsolete under LU-B: the gateway's base URL is in the pool's injected configuration. |
 
-The Bedrock streaming endpoint, the 120-second stream cut, the unregistered Responses translator, and the missing Pattern B base URL have no finding yet. "Validation owed" in `steps.md` lists them for filing.
+The defect that §11.2.1 names `credential.leased` for LLM leases while no LLM lease emits it has no finding yet. "Validation owed" in `steps.md` lists it for filing.
 
 ## Detailed design
 
-### LU-1 LLM upstreams
+### LU-1 The LLM gateway as an egress destination
 
-#### Record
+The operator runs the gateway and makes it reachable as any egress destination: a public host in the tenant's effective allow set ([`0127-egress-and-git`, "Effective policy"](../0127-egress-and-git/change.md#effective-policy)), or a private egress upstream that the platform registers and grants ("Configuration by scope" of the egress design) **[design]**. The pool's injected configuration ([`0127-egress-and-git`, "Injected configuration"](../0127-egress-and-git/change.md#injected-configuration)) names the gateway's base URL for each SDK the runtime uses, such as `ANTHROPIC_BASE_URL`, `GOOGLE_GEMINI_BASE_URL`, or a Codex provider block, and the placeholder key `lenny-injected` where an SDK refuses to start without one. A plain `http://` base URL lets `netagent` upgrade the request to TLS ("Delivery modes", **Plain HTTP to a bound host.**), so an SDK that does not trust the per-pod CA still works, subject to the client checks in "Validation owed". The gateway holds the provider keys, and no provider key reaches a pod on this path (LUR-1). One gateway serves every tenant through a platform or pool binding, or one tenant through a tenant binding (0127's decision 84), and it applies its own keys, routing, and model policy per tenant from the verified assertion.
 
-An upstream is a named record **[design]**:
+### LU-2 Attribution on the gateway's host
+
+An attribution binding names the gateway's host **[design]**:
 
 ```yaml
-name: anthropic-acme
-scope: tenant                      # tenant or platform
-provider: anthropic                # the model vendor
-channel: anthropic-api             # anthropic-api | aws-bedrock | gcp-vertex | azure-foundry | openai-api | gemini-api | gateway
-contract: acme-anthropic-2026      # operator label on every usage record
-format: anthropic-messages         # anthropic-messages | openai-chat | openai-responses | google-generate
-endpoint: https://api.anthropic.com
-credential:
-  secretRef: {name: llm-anthropic-acme, key: apiKey}   # or workloadIdentity
-models: ["claude-sonnet-5-5*", "claude-haiku-5-5"]     # exact names or one trailing *
-rateCard: acme-anthropic-2026
-headers: {anthropic-version: "2023-06-01"}             # defaults the proxy adds when the call sends none
-attribution:                       # "LU-11"; the defaults depend on the channel
-  attributes: []                   # none toward a provider by default
-state: enabled                     # enabled | disabled
+credentialBindings:
+  - name: llm-gateway-attribution
+    hosts: [llm-gw.lenny-system.svc]
+    secret:
+      kind: attributionAssertion
+      lifetimeSeconds: 300
+    attach: "Authorization: Bearer {{secret}}"
+    delivery: inject
+    scope: always
 ```
 
-- **Identity.** A tenant upstream's name is unique within its tenant, and a platform upstream's name is unique on the platform. A tenant upstream may not take a platform upstream's name, so a name in a list resolves to one record.
-- **Format and channel.** The pair selects the translator: `anthropic-messages` on `anthropic-api` forwards the body, on `aws-bedrock` and `gcp-vertex` rehosts it as `rehostAnthropicBody` does today, and on `gateway` forwards it to the endpoint. `openai-chat` and `openai-responses` on `openai-api`, `azure-foundry`, and `gateway` forward the body with the channel's authentication and path. `google-generate` on `gemini-api` and `gateway` forwards the body to the Gemini API path, and on `gcp-vertex` forwards it to the Vertex AI publisher-model path under the project and location that the upstream's endpoint names. A pair with no translator is refused at write.
-- **Provider.** One per upstream. An LLM gateway that routes to several providers is registered as one upstream per provider, each with its own model allowlist.
-- **Model allowlist.** Each entry is an exact model name or a prefix followed by one `*`. A call naming another model is refused with `LLM_MODEL_NOT_ALLOWED`.
-- **Disabling.** A disabled upstream refuses its calls with `LLM_UPSTREAM_DISABLED`. Revoking a credential is rotating its Secret or disabling the upstream.
+[`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) states the binding, its scopes, how `netagent` attaches it per slot, and the removal of the SDK's placeholder on its hosts. [`0124-connector-removal`, "CR-2 Identity assertion"](../0124-connector-removal/change.md#cr-2-identity-assertion) **Attribution assertion.** states the assertion: its claims, key set, header (D15), lifetime, mint index, hosts bound to one tenant, the pods it is minted on, and its residual on reused pods. The gateway verifies the assertion as CR-2's verifier states, or behind the reference verifier of "LU-9", and refuses a request without a valid one. A gateway that keeps its own caller keys takes the assertion in another header, such as `Lenny-Attribution`, as D15 of 0124 states.
 
-#### Credential sources
+### LU-3 Charges and budgets
 
-| Source | What the gateway holds | Who may use it |
-| :-- | :-- | :-- |
-| `secretRef` | A Secret in the credentials namespace, read through **Token Service secret resolution** as VCS tokens are, and cached in gateway memory per upstream. A `platform-admin` may register an existing Secret by reference. A `tenant-admin` submits `secretData`, which the gateway writes under `lenny-gateway-credential-writer`, as the admin API does for pool credentials today. | Platform and tenant upstreams. |
-| `workloadIdentity` | The gateway's Kubernetes service account, federated to an AWS IAM role, a Google service account, or an Entra identity. The gateway exchanges it for short-lived provider credentials and signs or bears them per call. On Bedrock it can assume a role per tenant with the tenant as a session tag, as AWS documents for gateways **[external]**. | Platform upstreams alone, because the identity is the gateway's. |
+The gateway prices each call with its own prices and reports one charge per call to `POST /v1/charges`, citing the `jti` of the call's assertion **[design]**. [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges) owns the reporter registry, batching, the proof checks, idempotency, the report delay, voids, and the `external_charges` record, and budgets count charges on the `externalCost` meter in the deployment's currency (0170's decisions 57 and 67). The same API serves any other paid service: one that the runtime calls through egress cites the `jti` of its own attribution or identity binding, and the cost of a service that the session's owner calls reaches budgets when the owner posts it as a direct charge, which counts in the session's tree and the owner's own principal budgets alone (0170's decisions 61 and 71).
 
-No credential source resolves per user (D8). An operator who wants each user billed to, or cached in, the user's own provider account runs a downstream LLM gateway that holds the per-user keys and selects one from the forwarded user attribute ("LU-11").
+**Two ways to enforce (decision 26).** A deployer chooses between two setups, and may use both:
 
-The proxy never forwards a source's secret to a pod, and a `secretRef` Secret is named `lenny-llmupstream-` so the Token Service can admit its reads by prefix, as SO-3 does for `lenny-siemdest-` **[design]**.
-
-**Names of the Secrets the gateway writes.** An upstream's name is unique only within its scope and tenant, and the credentials namespace is shared, so a gateway-written Secret is not named from the upstream name alone. The gateway names the Secret it writes for a `secretData` submission, and the attribution key Secret of "LU-11", `lenny-llmupstream-` followed by the first 40 hexadecimal characters of SHA-256 over the scope, the tenant identifier (empty for a platform upstream), the upstream name, and the purpose (`credential` or `attribution`) joined by NUL bytes, as §4.9 **Credential values submitted through the admin API.** names `lenny-cred-` Secrets today. The upstream record stores the reference. §4.9 **Secret references.** rule 3, which reserves `lenny-cred-` for Secrets the gateway writes, reserves `lenny-llmupstream-` in the same way, so a `secretRef` registration cannot name a Secret the gateway wrote for another upstream **[design]**.
-
-#### Admin API
-
-| Route | Role | Effect |
-| :-- | :-- | :-- |
-| `POST`, `GET`, `PUT`, and `DELETE /v1/admin/llm-upstreams[/{name}]` | `platform-admin` for `scope: platform`, `tenant-admin` for the caller's tenant, under a new `manage_llm_upstreams` permission | Write and read upstreams. A read never returns secret material. `DELETE` is refused while a tenant or pool list names the upstream. |
-| `PUT` and `DELETE /v1/admin/llm-upstreams/{name}/grants/{tenantId}` | `platform-admin` | Grant a platform upstream to a tenant, or withdraw the grant. A withdrawal removes the name from the tenant's lists and refuses the tenant's next call to it. |
-| `GET /v1/admin/llm-upstreams?visibleTo={tenantId}` | `platform-admin`, `tenant-admin`, `tenant-viewer` | The tenant's own upstreams and the platform upstreams granted to it, with name, provider, channel, contract, format, models, rate card, and whether the upstream serves other tenants. |
-| `POST`, `GET`, and `DELETE /v1/admin/llm-rate-cards[/{name}]` | `platform-admin` for the card of a platform upstream, `tenant-admin` for the card of an upstream of the caller's tenant, under `manage_llm_upstreams`; reads also `tenant-viewer` | Create, read, list, and delete rate cards ("LU-5"). A `tenant-admin` or `tenant-viewer` reads the cards of the tenant's upstreams and of the platform upstreams granted to it. `DELETE` is refused while an upstream names the card or a usage record cites one of its versions. |
-| `POST /v1/admin/llm-rate-cards/{name}/versions` | As for the card | Append a version ("LU-5" **Versions.**). |
-
-Bootstrap gains `bootstrap.llmUpstreams` and `bootstrap.llmRateCards` beside `bootstrap.credentialPools`, which keeps VCS pools.
-
-### LU-2 Assignment and resolution
-
-**Lists.** The tenant record gains `llm.upstreams`, an ordered list that a `tenant-admin` writes and that may name the tenant's upstreams and platform upstreams granted to it. A pool gains an optional `llmUpstreams` list **[design]**:
-
-- On a shared pool, the list may name platform upstreams alone, and at a session's creation it is filtered to those granted to the session's tenant.
-- On an owned pool of [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md#dr-5-owned-pools), the owning tenant writes the list and may name its upstreams and granted platform upstreams. The setting is gateway-read and adds nothing to the pod-set key.
-- When the pool has a list, it replaces the tenant list for the session. The lists are never merged, so a pool placed on an EU endpoint never sends a call elsewhere.
-
-**Uniqueness.** A list may not hold two upstreams that serve one format and one model. Two allowlist entries of one format conflict when they are equal, or when one is a prefix pattern whose prefix the other entry starts with. A write that would create a conflict in any list is refused with `LLM_UPSTREAM_CONFLICT` naming both upstreams and the overlapping entries. The check runs on a write to a list, to an upstream's `models` or `format`, and to a grant, against every list that names the upstream **[design]**.
-
-**Session creation.** At the post-chain point, the gateway fixes the session's effective list and checks that it serves at least one format in the chosen revision's `llmFormats`. A runtime with an empty `llmFormats` needs no upstream. A session whose list serves none of its runtime's formats is refused with `LLM_UPSTREAM_NOT_CONFIGURED` (422), which replaces `CREDENTIAL_POOL_EXHAUSTED` at creation. The check reads configuration alone and replaces the pre-claim availability check. The session record keeps the effective list's names, so later list edits apply to new sessions only, and a withdrawn grant or a disabled upstream still refuses calls at once.
-
-**Each call.** The route fixes the format, and the body's `model` fixes the model. On `google-generate` the model is the `{model}` segment of the request path, because Google's API names the model there. The proxy finds the one upstream of the session's list whose format matches and whose allowlist matches the model, and refuses with `LLM_MODEL_NOT_ALLOWED` when none does. No call is retried on another upstream.
-
-**Delegation.** A delegated child resolves its own list from its own tenant and pool, as any session does. `credentialPropagation` goes, so a child never draws on its parent's credential. Under cross-environment sharing (TS-3), the child uses the list of the environment it runs in.
-
-### LU-3 The metering proxy
-
-#### Routes
-
-| Format | Route on the proxy listener | Upstream path |
-| :-- | :-- | :-- |
-| `anthropic-messages` | `POST /llm-proxy/v1/messages` and `POST /llm-proxy/v1/messages/count_tokens` | `/v1/messages`, rehosted on Bedrock and Vertex. `count_tokens` is forwarded and charges nothing. |
-| `openai-chat` | `POST /llm-proxy/v1/chat/completions` | `/v1/chat/completions`, or the Azure deployment path. |
-| `openai-responses` | `POST /llm-proxy/v1/responses` | `/v1/responses`. |
-| `google-generate` | `POST /llm-proxy/v1beta/models/{model}:generateContent`, `POST /llm-proxy/v1beta/models/{model}:streamGenerateContent`, and `POST /llm-proxy/v1beta/models/{model}:countTokens` | The same paths on `gemini-api`, and `/v1/projects/{project}/locations/{location}/publishers/google/models/{model}:generateContent` or `:streamGenerateContent` on `gcp-vertex` **[unverified]**. `countTokens` is forwarded and charges nothing. |
-
-Every other path, including batch, file, realtime, and Google's `cachedContents` APIs, is answered with 404, because a path on the proxy that no parser reads could spend without a usage record. `OpenAIResponsesTranslator` is registered under its own key, so it no longer collides with `OpenAIDirectTranslator` **[design]**.
-
-#### Session binding
-
-At bind, the gateway mints a proxy token for the session, a random value stored as a hash with the session, its tenant, and the pod's SPIFFE URI, and revoked when the session ends or its pod is released. The pool's existing `spiffeBinding` setting keeps its meaning: when it is on, a request whose peer SPIFFE URI differs is refused **[design]**.
-
-- **Store.** The token record is kept in Postgres under the SHA-256 hash of the token, as the lease store keeps `lease_token_hash` today (`pkg/gateway/credentials/credleasestore/pgstore`), so every replica resolves a token without holding it in memory. The proxy reads the record on each call.
-- **Revocation.** Revoking a token deletes its record, so the next call that presents it is refused on every replica.
-- **Suspension.** When a session's suspension cannot take hold, the proxy refuses the session's new calls from the pod in use and cancels its calls in flight, until that pod is released, and a restored pod carries no refusal, as SLR-23 of [`0146-session-lifecycle`](../0146-session-lifecycle/change.md) states (L24). 0146.S1 lands the refusal in the proxy the tree has when it lands, and whichever of 0146.S1 and 0133.S2 lands second carries it over.
-- **Re-bind.** A session holds one live token at a time. Each bind, including a resume onto a replacement pod, mints a new token with the new pod's SPIFFE URI and deletes the previous record in the same write.
-- **Parts.** The session core writes and deletes the token record at bind, at session end, and at pod release, and fixes the session's effective upstream list on the session record ("LU-2"). The metering proxy reads both through stores that sit in concern directories under `pkg/` rather than in a gateway part ("Non-specification changes"), as it reads the lease store today. Neither part calls the other for them, so the crossing adds no gateway seam operation; a build that needs a call between the parts adds the operation under decision 8 of `0117-gateway-package-layout`.
-
-`session_start` carries an `llm` member with one entry per format the session's list serves and its runtime declares **[design]**:
-
-```json
-"llm": {
-  "token": "<proxy token>",
-  "formats": [
-    {"format": "anthropic-messages", "baseUrl": "https://gateway-internal:8443/llm-proxy", "apiKeyEnv": "ANTHROPIC_API_KEY",
-     "models": ["claude-sonnet-5-5*", "claude-haiku-5-5"], "headers": {"anthropic-version": "2023-06-01"}},
-    {"format": "openai-chat", "baseUrl": "https://gateway-internal:8443/llm-proxy/v1", "apiKeyEnv": "OPENAI_API_KEY",
-     "models": ["gpt-6.1*"]},
-    {"format": "google-generate", "baseUrl": "https://gateway-internal:8443/llm-proxy", "apiKeyEnv": "GEMINI_API_KEY",
-     "models": ["gemini-3-pro*"]}
-  ]
-}
-```
-
-The proxy reads the token from `x-api-key` or `Authorization: Bearer`, as it reads the lease token today, and on `google-generate` also from `x-goog-api-key`, the header Google's SDKs send the key in **[unverified]**. The runtime keeps the token out of its process environment, as §28.5.3 requires of the lease token today. `deliveryMode`, `dialect`, and the credentials file leave the frame and the adapter manifest.
-
-#### Pass-through
-
-The proxy forwards the body unchanged apart from these edits **[design]**:
-
-- Bedrock and Vertex rehosting, as today.
-- On `openai-chat`, a streaming request without `stream_options.include_usage` gains it, because OpenAI reports stream usage only when asked **[external]**. The extra final chunk carries an empty `choices` array, which OpenAI SDKs read as the end of the stream.
-- When the upstream sets `attribution.nativeUserField`, the provider-native user field carries the forwarded user value ("LU-11").
-
-Open decision 1 in `decisions.md` settles whether the proxy forwards provider server tools that reach the network (such as Anthropic's `web_fetch` and `web_search`, the `mcp_servers` field that an `anthropic-beta` value enables, and web search on `openai-responses`) on every metered format, or refuses each tool type that the upstream does not allow.
-
-The proxy never strips or rewrites `cache_control`, and never sets or rewrites OpenAI's `prompt_cache_key`, so a runtime's caching requests reach the provider as sent (D7). It removes inbound `Lenny-*` headers and the headers an upstream's `attribution.headerMap` names, and sets its own ("LU-11").
-
-`PreLLMRequest` and `PostLLMResponse` run on every metered call, and no longer carry the qualifier "proxy mode only". The upstream's `headers` are added when the request sends none, as the proxy adds `anthropic-version` today. A streaming call reads its body without the 120-second client timeout of `Forwarder`, under a deadline per format that the operator sets, so a long stream is not cut.
-
-On `gemini-api` under `secretRef`, the translator sends the key as `x-goog-api-key`. On `gcp-vertex` under `workloadIdentity`, it sends a Google access token exchanged from the gateway's identity as a bearer **[unverified]**.
-
-On `aws-bedrock`, the translator calls the Messages API at the `bedrock-mantle` endpoint when the upstream's endpoint names it, and InvokeModel otherwise, with `invoke-with-response-stream` for a stream. Anthropic's documentation places Opus 4.7 and later on the Messages API endpoint **[external]**. Under `workloadIdentity` it signs with SigV4, and under `secretRef` it sends a Bedrock API key as a bearer, as today.
-
-#### Usage normalization
-
-The proxy maps each format's usage to token classes, so a rate card sees the same classes from every upstream **[design]**:
-
-| Class | `anthropic-messages` | `openai-chat` | `openai-responses` | `google-generate` **[unverified]** |
-| :-- | :-- | :-- | :-- | :-- |
-| `input` | `input_tokens` | `prompt_tokens − cached_tokens − cache_write_tokens` (under `prompt_tokens_details`) | `input_tokens − cached_tokens − cache_write_tokens` (under `input_tokens_details`) | `promptTokenCount − cachedContentTokenCount + toolUsePromptTokenCount` (under `usageMetadata`) |
-| `cacheRead` | `cache_read_input_tokens` | `prompt_tokens_details.cached_tokens` | `input_tokens_details.cached_tokens` | `usageMetadata.cachedContentTokenCount` |
-| `cacheWrite` by lifetime | `cache_creation.ephemeral_5m_input_tokens` as `5m` and `ephemeral_1h_input_tokens` as `1h` | `cache_write_tokens`, with its lifetime split where the response reports one | `cache_write_tokens_details.ttl_30m_tokens` as `30m` and `ttl_12h_tokens` as `12h` | none: Google bills explicit context caches as storage through the `cachedContents` API, which the proxy does not serve |
-| `output` | `output_tokens` | `completion_tokens` | `output_tokens` | `candidatesTokenCount + thoughtsTokenCount` |
-| `reasoning`, inside `output` | `output_tokens_details.thinking_tokens` | `completion_tokens_details.reasoning_tokens` | `output_tokens_details.reasoning_tokens` | `usageMetadata.thoughtsTokenCount` |
-| Per-request tools | `server_tool_use.web_search_requests` and `web_fetch_requests` | none metered | web search request counts | none metered |
-| Modifiers | `service_tier`, `inference_geo`, and `speed` | `service_tier` | `service_tier` | none |
-
-The Anthropic reference states that total input "is the summation of `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens`", so `input_tokens` excludes cached tokens **[external]**. OpenAI's caching guide computes ordinary input as `input_tokens - cached_tokens - cache_write_tokens`, so OpenAI's cached and cache-write tokens are parts of the total input rather than additions to it **[external]**. A parser that added OpenAI's cached tokens to the input count would count each one twice, and one that read Anthropic's `input_tokens` alone undercounts, which is F-11.2.38. The `google-generate` column is **[unverified]**: this design has not read Google's documentation, and it assumes that `promptTokenCount` includes `cachedContentTokenCount`, that `thoughtsTokenCount` is reported apart from `candidatesTokenCount` and billed as output, and that `toolUsePromptTokenCount` is billed as input. "Validation owed" in `steps.md` lists the reading. The table is the contract each parser is tested against.
-
-**Streams.** The counts on Anthropic's `message_delta` are cumulative **[external]**, so the parser keeps the last value of each count it carries (`input_tokens`, `cache_read_input_tokens`, `cache_creation_input_tokens`, `output_tokens`, and `server_tool_use`). `message_delta` carries no `cache_creation` split by lifetime **[external]**, so the split comes from `message_start`. When the last `cache_creation_input_tokens` exceeds the sum of `message_start`'s split, the remainder is priced in the most expensive write lifetime the rate card's model entry defines. On `openai-chat` and `openai-responses`, usage comes from the final usage chunk and the `response.completed` event. On `google-generate`, streamed chunks carry `usageMetadata`, and the parser keeps the last one **[unverified]**. A stream whose usage never arrives settles at its reservation ("LU-6").
-
-**Client-facing surfaces.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), the Open Responses and Chat Completions surfaces leave the gateway for the provider adapters, which report a turn's usage from the turn resource of that design's [R3](../0138-rest-only-client-api/change.md#ro-2-rest-additions). R3's `usage` totals the turn's `usage` events by source ([MD-20](../0135-message-delivery/change.md#md-20-turn-and-usage-events)), and each gateway `usage` event carries `cacheReadTokens` and `cacheWriteTokens` from the usage records of this section, so an adapter maps `input_tokens_details.cached_tokens` from those totals and hard-codes no zero. This design changes no client-facing surface, and LU-A carries no client-facing usage. Revision 6 required the gateway's own surfaces to report the turn's usage from the session's usage records **[design]**.
+- **Charges with Lenny's budgets.** The gateway reports a charge per call, and Lenny's budgets on `externalCost` count them, with caps on children, extensions, thresholds, and the `onExhausted` actions of 0170. This is the precise setup, and it needs a reporter.
+- **External enforcement.** The gateway enforces its own limits, such as LiteLLM's team budgets, and reports no charge. When a session hits one, the gateway's reporter sends a limit notice ("BG-12" **Limit notices.**), or the runtime sends the `external_limit` frame of [`0139-runtime-protocol`, "RP-9"](../0139-runtime-protocol/change.md#rp-9-external-limits). Either suspends the session and its subtree as a budget suspension does, and only the root's client resumes it ([`0146-session-lifecycle`](../0146-session-lifecycle/change.md#sl-4-tree-suspension), L39). This is the simple setup, and it needs no charge reporting.
 
 ### LU-4 Removal
 
@@ -440,508 +246,188 @@ The following leave the specification and the tree **[design]**. "Specification 
 | :-- | :-- |
 | LLM providers on `CredentialPool` (`anthropic_direct`, `aws_bedrock`, `vertex_ai`, `azure_openai`, and the catalog's other LLM names) | LLM upstreams. The admin API refuses an LLM provider on a pool. |
 | `vault_transit` (OD-10) | None. |
-| `credentialPolicy` on the tenant and in the workspace plan | The tenant's `llm.upstreams` list. |
-| LLM `CredentialLease`, `materializedConfig` for LLM providers, and the lease token | The proxy token. |
-| `deliveryMode` and direct mode, with the credentials file, which [`0118-agent-pod-layout`, "PL-3"](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout) places at `/run/lenny/credentials.json` on the slot's run volume, the adapter's expiry timer, and `ExtendCredentialLease` | The metered path, and calls outside the proxy ("LU-10"). The `lenny-cred-readers` group that delivered the file leaves with the pod layout, under which the adapter writes the file with mode `0444` and no volume relies on group permissions ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). |
+| `credentialPolicy` on the tenant and in the workspace plan | None. The gateway chooses keys per tenant from the verified assertion. |
+| LLM `CredentialLease`, `materializedConfig` for LLM providers, and the lease token | The attribution binding ("LU-2"). |
+| `deliveryMode` and direct mode, with the credentials file, which [`0118-agent-pod-layout`, "PL-3"](../0118-agent-pod-layout/change.md#pl-3-runtime-visible-filesystem-layout) places at `/run/lenny/credentials.json` on the slot's run volume, the adapter's expiry timer, and `ExtendCredentialLease` | The gateway path ("LU-1"), and calls outside the gateway ("LU-7"). The `lenny-cred-readers` group that delivered the file leaves with the pod layout, under which the adapter writes the file with mode `0444` and no volume relies on group permissions ([PL-5](../0118-agent-pod-layout/change.md#pl-5-volumes-size-limits-and-eviction)). |
 | `CredentialRouter`, assignment strategies, `maxConcurrentSessions` per credential, health scoring, and cooldown | An LLM gateway behind an upstream. |
 | Fallback chains, `CREDENTIAL_FALLBACK_EXHAUSTED`, and `maxRotationsPerSession` | None. A failed call returns the provider's error. |
 | Proactive renewal, rotation into pods, `rotationTrigger`, `credentials_rotated`, `credentials_acknowledged`, `hotRotation`, and §4.7.8 | Secret rotation in the gateway, which the next call reads. |
-| The pre-claim availability check and `CREDENTIAL_POOL_EXHAUSTED` | The configuration check at the post-chain point and `LLM_UPSTREAM_NOT_CONFIGURED`. |
-| `supportedProviders` | `llmFormats` with the session's list. |
-| `credentialPropagation` and `CREDENTIAL_PROVIDER_MISMATCH` | Each child resolves its own list. |
-| `ReportUsage`, `FINAL_USAGE_REPORT`, the token-usage anomaly detector, and `TokenUsageAnomaly` | Proxy usage records for calls through the proxy. Activity is stamped by the proxy on each call, as `activity_stamp` does today. `llm_request_started` and `llm_request_completed` stay with their optional counts as the runtime's own report of a call it sends outside the proxy, shown as `source: runtime` usage under MD-20 and read by no budget, quota, or billing event. |
+| The pre-claim availability check and `CREDENTIAL_POOL_EXHAUSTED` | None. A call the gateway cannot serve returns the gateway's error. |
+| `supportedProviders` | None. |
+| `credentialPropagation` and `CREDENTIAL_PROVIDER_MISMATCH` | Each child holds its own attribution bindings under their `scope`. |
+| `ReportUsage`, `FINAL_USAGE_REPORT`, the token-usage anomaly detector, and `TokenUsageAnomaly` | Charges on the `externalCost` meter ("LU-3"). `llm_request_started` and `llm_request_completed` stay with their optional counts as the runtime's own report, shown as `source: runtime` usage under MD-20 and read by no budget, quota, or billing event ("LU-6"). |
 | `provider-direct`, NET-006, NET-044, and `egressCIDRs.providers` | None, as EG-2 already proposes. 0127.S2 removes them, with check (3) of the `direct_mode_isolation` validator, which refuses `deliveryMode: proxy` with `egressProfile: provider-direct`. |
-| The `lenny-direct-mode-isolation` webhook with `allowDirectModeStandardIsolation` (`charts/lenny/templates/admission-policies/direct-mode-isolation-webhook.yaml` and its chart test, `pkg/admission/webhook/direct_mode_isolation.go`), and checks (1) and (2) of the `direct_mode_isolation` validator (`pkg/admission/direct_mode_isolation`) that the admin API's pool validation calls (`pkg/gateway/api/admin/pools.go`) | None for direct mode, which this step removes. 0133.S2 deletes them with `deliveryMode`, in place of 0127.S2, which removes check (3) with `provider-direct`, so `main` never admits a `deliveryMode: direct` pool on `isolationProfile: standard`, or a multi-tenant pool with `spiffeBinding: disabled`, between the two merges. Open decision 4 in `decisions.md` settles whether the multi-tenant refusal of `spiffeBinding: disabled` is restated, keyed on `spiffeBinding` alone, in the admin API's pool validation. |
-| The LLM rows of the credential deny list and LLM emergency revocation | Disabling an upstream or rotating its Secret. |
+| The `lenny-direct-mode-isolation` webhook with `allowDirectModeStandardIsolation` (`charts/lenny/templates/admission-policies/direct-mode-isolation-webhook.yaml` and its chart test, `pkg/admission/webhook/direct_mode_isolation.go`), and checks (1) and (2) of the `direct_mode_isolation` validator (`pkg/admission/direct_mode_isolation`) that the admin API's pool validation calls (`pkg/gateway/api/admin/pools.go`) | None for direct mode, which this step removes. 0133.S2 deletes them with `deliveryMode`, in place of 0127.S2, which removes check (3) with `provider-direct`, so `main` never admits a `deliveryMode: direct` pool on `isolationProfile: standard`, or a multi-tenant pool with `spiffeBinding: disabled`, between the two merges. The multi-tenant refusal of `spiffeBinding: disabled` leaves with the proxy token it protected (decision 22). |
+| The LLM rows of the credential deny list and LLM emergency revocation | Binding suspension, and the gateway's own key rotation. |
 | The `provider` path of `POST /v1/credentials` (OD-10), with the `credentials` table and its gateway-side store (`credentialpg` in `cmd/lenny-gateway/credentialsurface.go`, which is `pkg/credential/credentialstore/pgstore`, and `pkg/credential/usercreds`), which serve only that path | None in Lenny. A downstream LLM gateway holds per-user provider keys and selects them from the forwarded user attribute (D8). The typed credentials of [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md#uc-1-credential-types-and-the-registered-source) use a new table in the Token Service's store, and 0151.S1 depends on 0133.S2 (UC-1 **Storage.**). |
+| The provider-specific translators `AWSBedrockTranslator` (`bedrock_translator.go`), `VertexAITranslator` (`vertex_translator.go`), and `AzureOpenAITranslator` (`azure_translator.go`) in `pkg/gateway/meteringproxy/llmproxy` with their tests, `rehostAnthropicBody`, the provider-keyed `TranslatorRegistry` with `Translator.Provider()` and the provider constants, and the flags `--llm-bedrock-region`, `--llm-vertex-region`, `--llm-vertex-project`, `--llm-azure-endpoint`, `--llm-azure-api-version`, `--llm-openai-base-url`, `--llm-openai-organization`, and `--anthropic-version` with their environment variables (D10) | None. The proxy leaves (decision 22). |
+| The provider tables of §4.9: the `anthropic_direct`, `aws_bedrock`, `vertex_ai`, and `azure_openai` rows of **Credential Provider**, the per-provider lease TTL table and the `aws_bedrock` example of **Credential Pool**, the LLM rows of **Secret shape**, the LLM provider rows of **`materializedConfig` Schema by Provider**, the user-scoped row's "user-specific Bedrock roles", and, in **LLM Reverse Proxy**, the translator list ("Anthropic Messages API, Bedrock Converse/InvokeModel, Vertex AI `generateContent`, Azure OpenAI"), **Request flow:** item 4's provider lookup, the Bedrock and Vertex version mapping of **Proxy dialects.**, the per-provider field names of **Authoritative token counting.**, **Supported upstream providers (v1 target set):**, and the provider set of **External LLM routing proxy integration.** (D10) | The subsection **LLM gateways and external charges**, which names no provider. |
+| The LLM proxy: the listener, `POST /llm-proxy/...` routes for every format, the forwarders and translators, usage normalization, the stream rules, the body edits, the `CH-LLMPROXY` channel, and `pkg/gateway/meteringproxy` | The operator's LLM gateway, reached through egress ("LU-1"). |
+| Upstream records, grants, tenant and pool upstream lists, `llmUpstreamsPolicy`, `llm.tenantEndpointHosts`, rate cards, credits, the input estimate, reservations per call, the per-call ceiling, `quotas.llmProxy.maxConcurrentCallsPerSession`, and `llm_usage` | The gateway's own configuration and pricing, and charges on the `externalCost` meter ("LU-3"). |
+| The proxy token and the `llm` member of `session_start` | The attribution binding ("LU-2") and the gateway's base URL in the pool's injected configuration ("LU-1"). |
+| `PreLLMRequest` and `PostLLMResponse` | None in Lenny. A deployer that needs guardrails on prompts runs them in its gateway. |
+| `llmFormats` and the check at the post-chain point that a session's list serves one of them | None. |
 
 **Writes that name a removed field (D9) [design].** A write that names `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, `credentialPropagation`, `rotationTrigger`, and `maxRotationsPerSession` is refused with `400 VALIDATION_ERROR`, whose `details.field` names the member, whatever value it carries. The refusal covers every surface that accepted the field: the admin API's runtime, pool, and tenant writes, the bootstrap seed, `lenny-ctl runtime validate`, derived-runtime writes, session creation for `credentialPolicy` in the workspace plan, and delegation leases for `credentialPropagation`. A nested member such as `credentialCapabilities.hotRotation` is refused through its parent. The names stay in the validators' lists of removed fields and nowhere else. A pool that names an LLM provider is refused as the first row of the table states.
 
 `CredentialPool` keeps VCS providers, `hostPatterns`, the Secret topology, the Token Service secret read, emergency revocation of VCS credentials, KMS key rotation, and the audit events that VCS mints emit. Whether the adapter's credential file and `AssignCredentials` serve any VCS path is confirmed before deletion ("Validation owed" in `steps.md`).
 
-### LU-5 Rate cards
+### LU-5 Enforcement
 
-#### Card
+Enforcement on the `externalCost` meter is best effort **[design]**. A charge counts in the session budget of the session's tree, kept at its root, in the cap of every capped session on the session's path to the root, and in the shared budgets of its set that its source reaches ([`0170-budgets`, "BG-8"](../0170-budgets/change.md#bg-8-tree-counters-and-caps), and "BG-12" **Counting by source.**). When charges exhaust a limit, [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges) **Exhaustion** suspends the attribution bindings of every session under the session that holds the limit, and `netagent` answers each session's next call to the gateway as [`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.** states: `429` with `Retry-After` while a §8.6 extension of a session budget or a cap is pending, and `403` naming the budget once the exhaustion is final. `onExhausted.running` and admission act as 0170 "BG-6" states. Calls already in flight at the gateway are not cancelled, and LUR-6 bounds the overshoot.
 
-A rate card belongs to one upstream, which fixes provider, channel, and contract, and holds versions **[design]**:
+### LU-6 Usage reporting
 
-```yaml
-name: acme-anthropic-2026
-versions:
-  - version: 3
-    effectiveFrom: 2026-12-01T00:00:00Z
-    endpointMultiplier: 1.0              # for example 1.1 on a regional endpoint
-    discount: 0.0                        # applied after every multiplier
-    fallback: "claude-sonnet-5-5*"       # optional: the entry that prices an unlisted model
-    models:
-      - match: "claude-sonnet-5-5*"      # exact name or prefix with one trailing *
-        creditsPerMillionTokens:
-          input: 2.0
-          output: 10.0
-          cacheRead: 0.10
-          cacheWrite: {5m: 2.5, 1h: 4.0}
-        maxOutputTokens: 64000           # reservation ceiling when the call names no limit
-        longContext:                     # optional higher rates above a prompt size
-          aboveInputTokens: 200000
-          creditsPerMillionTokens: {input: 4.0, output: 15.0, cacheRead: 0.20, cacheWrite: {5m: 5.0, 1h: 8.0}}
-    responseModifiers:                   # multipliers from fields the response reports
-      service_tier: {batch: 0.5, priority: 2.0}
-      inference_geo: {us: 1.1}
-      speed: {fast: 2.0}
-    serverTools:
-      creditsPerRequest: {web_search_requests: 0.01}
-      reserveRequestsPerCall: 5          # reservation ceiling when the call sets no max_uses
-```
+A charge's optional `usage` member ("BG-12") reaches the usage events of [`0135-message-delivery`](../0135-message-delivery/change.md#md-20-turn-and-usage-events) "MD-20" as `source: external` and the client-facing usage of the turn resource. No billing event of [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) carries a charge: charges reach a reader through usage reports and the `external_charges` rows of 0170 "BG-12", and the operator's gateway keeps its own billing records (decision 28, 0170's decision 78). A runtime's own counts on `llm_request_completed` stay `source: runtime` usage (LUR-7).
 
-The figures are illustrative credits, and no figure in this document is a price Lenny ships.
+### LU-7 Calls outside the gateway
 
-- **Purpose.** The card weights the token classes so that credit budgets are enforced fairly across them: a cached read costs fewer credits than fresh input, and a token of an expensive model costs more than one of a cheap model. Lenny does not compute real cost. The operator computes it from the quantities in each usage record, which are the token classes, model, upstream, channel, and contract. Credits are unitless, and an operator who enters real prices gets credits that track currency (OD-6).
-- **Cardinality.** A card belongs to one upstream, so two upstreams never name the same card. An upstream write refuses a `rateCard` that another upstream already names, and refuses an upstream with no `rateCard`.
-- **Validation.** The admin API refuses a card whose classes the upstream's format does not report, such as `cacheWrite.30m` on an `anthropic-messages` upstream, a model entry whose `match` the upstream's allowlist can never match, a model entry without `maxOutputTokens`, a `fallback` that names no `match` of the same version, and a version without `effectiveFrom`. Every reservation therefore has an output bound ("LU-6", **Reservation** step 1).
-- **No version in force.** A call that starts while every version of the card has an `effectiveFrom` in the future has no entry to price it, and is refused with `LLM_MODEL_UNPRICED` before reservation, as LUR-15 states for a version with no matching entry and no fallback.
-- **Owner of prices.** A `platform-admin` writes cards for platform upstreams. A `tenant-admin` writes cards for the tenant's upstreams, where the tenant pays its own provider. A tenant reads the cards of its platform upstreams so that it can predict its budget use.
-- **Versions.** A version is appended with `POST /v1/admin/llm-rate-cards/{name}/versions` and never edited or deleted while a usage record cites it. `effectiveFrom` may lie in the future and not in the past, so a recorded call's price never changes. Each usage record carries the card name and version.
-- **Matching.** Reservation prices the requested model's entry. Settlement prices the served model when the version has an entry for it, and the requested model's entry otherwise. When neither model has an entry, both steps use the fallback entry. Both models are recorded.
-- **No shipped prices.** Prices compiled into a release would go stale between releases, and an operator's contract differs from list prices. The documentation carries an example card, and `lenny-ctl llm rate-card validate` checks a card against its upstream.
-- **Unpriced models (OD-5).** A call whose requested model no entry of the version in force matches is priced as the version's `fallback` entry. Its usage record carries `priced_as: fallback`, where a call priced by its own model's entry carries `priced_as: model`, and `lenny_llm_fallback_priced_calls_total` counts it by upstream and model. The alert `LLMModelPricedAsFallback` fires while the counter rises, so the operator adds an entry for the model. When the version names no `fallback`, the call is refused with `LLM_MODEL_UNPRICED` before reservation and counted in `lenny_llm_unpriced_model_refusals_total` by upstream and model. `lenny-ctl llm unpriced` lists, for a period, the upstream and model pairs priced as the fallback entry and the pairs refused, so the operator sees each model that needs a price.
-
-#### Pricing a call
-
-The estimated cost of a call, in micro-credits, is the sum over its token classes of count times the class rate, plus server-tool requests times their rate, multiplied by the endpoint multiplier and each response modifier the response reports, and reduced by the discount. The long-context rates apply when the call's total input, cached and cache-write tokens included, exceeds `aboveInputTokens`. The computation uses integers with one rounding up at the end of each call, so no drift accumulates **[design]**.
-
-The estimate leaves out volume tiers, committed-use discounts, provider credits, provisioned throughput, and taxes. An upstream on provisioned throughput carries a card with the operator's shadow price.
-
-### LU-6 Credit budgets
-
-#### Scopes
-
-Every token limit of §11.2 becomes a credit limit at the same scope, and `maxTokenBudget` becomes `maxCreditBudget` on the delegation lease, on `lease_slice`, and in the delegation presets **[design]**:
-
-| Scope | Setting | Kept in |
-| :-- | :-- | :-- |
-| Per call | `quotas.llmCredits.perCall` | Checked against the reservation alone. |
-| Session | The session's budget, or its `maxCreditBudget` slice | Redis, per session, in the session's budget record. |
-| Delegation tree | The root's `maxCreditBudget` | Redis, per root session, beside the tree counters `budget_reserve.lua` keeps. |
-| User window | `quotas.llmCredits.perUser` with its window | Redis, per tenant and user. |
-| Tenant window | `quotas.llmCredits.perTenant` with its window | Redis, per tenant. |
-| Global window | `quotas.llmCredits.global` with its window | Redis. |
-
-Budgets apply to calls through the proxy alone (OD-15). A call that a runtime sends to a provider outside the proxy, with a key it holds, draws on no scope, and Lenny does not count it ("LU-10").
-
-#### Reservation
-
-Before forwarding a call, the proxy computes its reservation **[design]**:
-
-1. **Output.** The call's output limit (`max_tokens`, `max_completion_tokens`, `max_output_tokens`, or `generationConfig.maxOutputTokens`), else the model entry's `maxOutputTokens`, which every entry carries ("LU-5" **Validation.**). The proxy does not add a limit to the body.
-2. **Input estimate (OD-7).** The estimate of "Input estimate" below.
-3. **Price the reservation.** The input estimate at the highest input-class rate the call can incur: the 1-hour write rate when a `cache_control` asks for `ttl: 1h`, the 5-minute write rate when one asks for the default, the highest write rate of the entry on an OpenAI format, and the input rate otherwise. The output limit at the output rate, the long-context rates when the estimate exceeds the threshold, server tools at `max_uses` or `reserveRequestsPerCall`, and the largest multiplier the card defines for each modifier the request does not fix. The entry is the requested model's, or the version's `fallback` entry when the requested model has none. When the version has neither, the proxy refuses the call with `LLM_MODEL_UNPRICED` before this step reserves anything (OD-5, "LU-5").
-4. **Reserve.** One Redis script, `llm_credit_reserve.lua`, checks the per-call ceiling and adds the amount to every scope's counter, or adds nothing and names the first scope that refuses. The tree counters hash to the `{root_session_id}` slot and the tenant and user counters to the `{tenant_id}` slot of §12.4, and the global counter has no tenant or session component, so one script cannot span them under the Redis Cluster topology §12.4 requires at Tier 3. Open decision 6 in `decisions.md` settles the reservation protocol, the key of each new counter in §12.4's key table, and the global window. A reservation is recorded with its expiry, the call's deadline plus a margin, so that the recovery of "Settlement" finds a reservation whose replica died.
-5. **Extension.** When the refusing scope is the session or the tree, the proxy requests the §8.6 extension for the session, waits up to `proxyExtensionWaitTimeout`, and on `GRANTED` or `PARTIALLY_GRANTED` reserves again. On `CEILING_REACHED`, `REJECTED`, an extension still pending at the deadline, or a refusal by a user, tenant, or global window, the proxy returns `BUDGET_EXHAUSTED` with `details.limitType` naming the scope and does not call the upstream. A reservation above `quotas.llmCredits.perCall` is refused with `BUDGET_EXHAUSTED` whose `details.limitType` is `perCall`, with no extension. A refusal ends the call and leaves the session running (decision 5): each later call is refused in the same way until the budget is raised, and the §8.6 rejection cool-off bounds how often a refused session asks for an extension again.
-
-#### Input estimate
-
-The proxy runs on every gateway replica and keeps no per-session memory that survives load balancing, and a later call need not share an earlier call's history. The estimate therefore keeps its one piece of per-session state, the input ratio, in the session's budget record in Redis, the record the reservation script already reads and writes, and adds no store (OD-7) **[design]**.
-
-- **Text bytes.** The body's byte count, less the bytes of each base64 image or document block. The blocks are Anthropic `image` and `document` blocks with a base64 source, OpenAI `image_url` and `input_image` parts with a `data:` URL and file parts with inline `file_data`, and Google `inlineData` parts.
-- **Blocks.** Each block counts at the fixed estimate the table below gives for its format, in place of its bytes, which keeps its bytes out of the ratio.
-- **First call.** A session's first call to an upstream and requested model estimates input as text bytes divided by `k`, plus the block estimates.
-- **Later calls.** A later call estimates input as text bytes times the stored input ratio for the session, upstream, and requested model, plus the block estimates. The proxy reads the ratio from the session's budget record before it prices the reservation, so any replica serves the call.
-- **The ratio.** The settlement script, which runs on every call that returns usage, computes the call's total input (`input`, `cacheRead`, and every `cacheWrite` lifetime) less its block estimates, divides it by the call's text bytes, and stores the result in the session's budget record under the upstream and requested model. A call with no text bytes, with no usage, or whose total input does not exceed its block estimates leaves the stored ratio unchanged. The ratio leaves Redis with the session's budget record.
-- **Redis outage.** During a fail-open window the proxy cannot read the ratio, and every call estimates text bytes divided by `k`, plus the block estimates, alongside the in-memory counters of "Bounds".
-
-The estimate's constants are deployment settings per format under `llm.inputEstimate`, with these defaults:
-
-| Format | `k`, bytes per token | Image block, tokens | Document block, tokens |
-| :-- | :-- | :-- | :-- |
-| `anthropic-messages` | 3 | 1,600 | 20,000 |
-| `openai-chat` | 3 | 1,600 | 20,000 |
-| `openai-responses` | 3 | 1,600 | 20,000 |
-| `google-generate` | 3 | 1,100 | 5,000 |
-
-- **`k` of 3.** English prose averages about 4 bytes per token. A request body adds JSON structure, escaped strings, code, and tool schemas, which tokenize more densely, so its bytes per token sit below 4. A `k` of 3 places a first call's estimate at or above its input on most bodies, which errs toward reserving more than the call uses, and settlement corrects the figure from the second call on.
-- **Image blocks.** 1,600 tokens is about the cost Anthropic states for an image at its default maximum size of about 1.15 megapixels, at (width × height) / 750 tokens, and lies above OpenAI's high-detail cost of a full-size image under its tile rule. 1,100 tokens covers four of Google's 768-pixel tiles at 258 tokens each. Each figure is **[unverified]**.
-- **Document blocks.** A document's tokens follow its page count, which a fixed figure cannot follow. 20,000 tokens covers a PDF of about seven pages at the upper per-page figure of about 3,000 tokens that Anthropic states for text and page images, and 5,000 tokens covers about nineteen pages at Google's 258 tokens per page. Each figure is **[unverified]**, and a longer document is an estimate error that settlement records exactly.
-
-"Validation owed" in `steps.md` lists the measurement of `k`, of the block estimates, and of the ratio estimator's error.
-
-#### Settlement
-
-When the response's usage arrives, the proxy prices it, and a second script replaces the reservation with the estimated cost in every scope it was added to and stores the call's input ratio ("Input estimate"). A call that returned an upstream error with no usage settles at zero. A call that reached the upstream and ended without usage, such as an interrupted stream, settles at its reservation, and its usage record says so **[design]**.
-
-**Recovery.** A reservation whose replica stopped, whether it crashed, restarted, or was removed by a scale-down, is never settled by that replica. Its reserved amount stays in the counters of every scope it was added to, which is the reservation settlement LUR-6 states for a call that returned no usage. Each reservation is entered in an index ordered by its expiry, held beside the reservation's counters under the key layout that open decision 6 settles. A recovery sweep that one replica runs at a time, as `cmd/lenny-gateway/leader_sweeps.go` runs the gateway's other leader-gated sweeps, scans the index for expired entries, marks each recovered, removes it from the index, and writes its usage record with `usage_source: reservation_recovered` at the reserved amount. The settlement script is a no-op on the counters for a reservation already marked recovered, so a late settlement never subtracts twice. A usage report that arrives after the sweep recovered its reservation updates that usage record with the call's quantities as the provider reported them and changes no counter **[design]**.
-
-Settlement can take a scope past its limit when the input estimate undershot. The next call's reservation then refuses, and the extension runs before that call. No call is refused after it has run, so the §8.6 paths that deliver an already-computed response and that let a committed stream stand are no longer needed.
-
-#### Bounds
-
-Budget enforcement is best effort, as the owner accepted under OD-7 (LUR-7) **[design]**:
-
-- A reservation is admitted only when every scope has room for it, so no call starts in a scope that is already past its limit.
-- A call's input estimate can fall short of its input. Settlement then takes the scope past its limit by that error, and when a scope runs out, every call in flight in it can add its own error. The overshoot of a scope is the sum of those errors, plus fail-open drift during a Redis outage.
-- The next call's reservation in a scope past its limit is refused, and for a session or tree scope the refusal triggers the §8.6 extension before the upstream is called.
-- Settlement records each call's quantities as the provider reported them, so the usage record and the billing event are exact whatever the estimate was. The estimate's error affects enforcement alone.
-- The estimate errs on a first call, through `k`; on a call whose content differs from the call that set the ratio, because a later call need not share an earlier call's history; on image and document blocks, through their fixed estimates; and on images or files referenced by URL or file ID, which the estimate counts only by the reference's bytes. `lenny_llm_reservation_undershoot_credits` records each shortfall per upstream and model, so the operator sees the estimator's error.
-
-Today's handler starts no reservation and lets every in-flight call complete after a scope is exhausted.
-
-During a Redis outage the proxy keeps the §11.2 fail-open model: it reserves against in-memory counters per session under the per-replica ceiling of §12.4, in credits, with the input estimate at text bytes divided by `k`, and reconciles with the MAX rule on recovery.
-
-The session scope lives in Redis, so every replica that serves a session's calls reserves against and settles into the same counter, and a replica crash loses no count. This closes F-11.2.34, where today's in-process `sessionbudget.Enforcer` counts each replica's share of a session's calls separately and starts from zero after a crash **[design]**.
-
-#### Delegation
-
-`budget_reserve.lua` carves a child's `maxCreditBudget` from its parent at `delegate_task`, as it carves tokens today. A child's budget return waits for the session's in-flight reservations to settle or expire, which replaces the `ReportUsage` and `FINAL_USAGE_REPORT` quiescence wait. §8.3 item 5, **Over-run semantics.**, becomes the best-effort bound of "Bounds": no call starts in a slice past its limit, and a slice overshoots by the input estimate's error on the calls in flight in it.
-
-#### Worked example
-
-A session's card prices `claude-sonnet-5-5` at 2.0 credits per million input tokens, 10.0 output, 0.10 cache read, and 2.5 for a 5-minute write. Its last call to that upstream and model stored an input ratio of 0.30 tokens per text byte. The new body holds 420,000 text bytes and no image or document block, and sets `max_tokens: 8000` with a 5-minute `cache_control` **[design]**.
-
-- Input estimate: 420,000 bytes times 0.30 is 126,000 tokens. As the session's first call to that upstream and model, the same body would have been estimated at 420,000 divided by 3, which is 140,000 tokens.
-- Reservation: input 126,000 at 2.5 is 0.315 credits, output 8,000 at 10.0 is 0.080 credits, for 0.395 credits held in every scope.
-- The provider reports 2,000 input, 110,000 cache read, 6,000 5-minute write, and 1,500 output tokens, for a total input of 118,000 tokens.
-- Settlement: 0.004 for input, 0.011 for cache reads, 0.015 for writes, and 0.015 for output, for 0.045 credits, and 0.350 credits return to every scope. The stored input ratio becomes 118,000 divided by 420,000, about 0.281 tokens per text byte.
-
-### LU-7 Usage records and billing events
-
-#### Usage record (OD-11)
-
-Each metered call that reaches an upstream writes one row to a new `llm_usage` table in Postgres, keyed by an upstream request ID **[design]**:
-
-- Identities: tenant, environment, user, session, root session, runtime, runtime revision, and routing labels.
-- Upstream: name, scope, provider, channel, contract, and format.
-- Models: requested and served.
-- Counts: each token class with cache writes by lifetime, reasoning, and server-tool requests.
-- Modifiers as reported: service tier, inference geography, and speed.
-- Pricing: rate card, version, `priced_as` of `model` or `fallback` (OD-5), reserved micro-credits, estimated micro-credits, and `usage_source` of `response`, `reservation`, or `reservation_recovered`.
-- The provider's request ID, so a call can be matched against the provider's records.
-
-Rows follow the retention, erasure, and residency rules of the usage store, and a user erasure deletes the user's rows. A call that a runtime sends outside the proxy writes no row (OD-15).
-
-#### Billing events
-
-`token_usage.checkpoint` keeps its window and gains `llm_usage`, one entry per upstream, served model, and rate-card version in the window, with the token class counts, server-tool counts, the count of calls priced as the fallback entry, and `estimated_cost_credits`, which the schema documents as Lenny's estimate under the named rate-card version (OD-6). `tokens_input` and `tokens_output` leave the event in favour of the class counts, with no duplicate fields **[design]**.
-
-`credential.leased` keeps its VCS meaning, and its `delivery_mode` field names the VCS delivery mode. No LLM event replaces it, because no LLM lease exists.
-
-#### Corrections
-
-- **Replacement fields.** A `billing_correction` of a `token_usage.checkpoint` replaces `llm_usage` as a whole, entry by entry, with counts and estimated cost together.
-- **Dual control.** A new `billing.dualControlCreditThreshold`, in credits, governs operator corrections of `llm_usage`, with the default `0` of `billing.dualControlThreshold`. This change removes `tokens_input` and `tokens_output`, and under [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) a correction of its new event types always takes dual control, so no corrected field remains for `billing.dualControlThreshold` to sum. Open decision 9 in `decisions.md` settles whether that threshold is retired or kept with an explicit field list.
-- **Reconstruction.** Category 1 `GATEWAY_CRASH_RECONSTRUCTION` rebuilds a lost checkpoint from `llm_usage` rows, and `METERING_BUG` names a disagreement with the provider's records, in place of pod-reported totals.
-
-This is the stated exception to the quantities principle of [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) that the owner settled under OD-6: Lenny prices LLM calls for enforcement and reports the price as an estimate in credits, and the quantities remain the billing record. Lenny does not compute real cost. The operator's billing system computes it from the token classes, model, upstream, channel, and contract that each usage record and each `llm_usage` entry carry, and decides whether to show the estimate.
+A runtime can reach a provider, or a gateway that no attribution binding names, over egress like any other traffic: with a key it holds, through an ordinary `inject` binding, or in a format no gateway serves. Lenny neither blocks that traffic nor reports it as LLM traffic, attaches no assertion to it, and applies no budget to it (OD-8, OD-15). The egress controls of the runtime's pool apply to it as to any other connection **[design]**.
 
 ### LU-8 Security
 
-**Keys stay in the gateway.** A provider secret registered on an upstream is read by the gateway through the Token Service or exchanged from its workload identity, and is held in gateway memory alone. The pod holds the proxy token, which spends credits only through the proxy, within the session's budgets, on the session's upstreams. With `spiffeBinding` on, a token copied out of the pod is refused at the proxy. No LLM credential is minted per pod, so the egress mint checks have nothing to check on this path. A runtime that calls a provider directly uses a key it brought, which the operator never registered on an upstream, so operator-paid spend moves only through the proxy (OD-15) **[design]**.
+- **No keys in Lenny.** Lenny holds no LLM provider credential. The gateway holds them, outside every pod (LUR-1).
+- **The assertion.** CR-2 **Attribution assertion.** of 0124 states why a runtime that bypasses `netagent` cannot forge one, the residual on reused pods within the tenant, and why the assertion is exempt from D11. That residual is the one that open decision 21 of revision 19 found for the proxy token.
+- **Charges.** "BG-12" of 0170 states which sessions a reporter can charge, the `jti` proof that keeps credentials out of gateway logs, hosts bound to one tenant or shared under per-tenant keys, the budgets that each source of a charge counts in, a platform budget counting platform reporters alone, and the reach of an owner's direct charges, which stays within its own tree and principal budgets.
+- **Guardrails.** Lenny runs no interceptor and no leak scan on model calls. A deployer that needs them runs them in its gateway.
 
-**No long-lived key for cloud channels.** A platform upstream on `aws-bedrock`, `gcp-vertex`, or `azure-foundry` can use `workloadIdentity`, so no long-lived provider key exists for it. On `gcp-vertex` the gateway's service account is federated to a Google service account and exchanged for a short-lived access token, for `anthropic-messages` and `google-generate` upstreams alike (OD-9). A `gemini-api` upstream uses a `secretRef` API key. Tenant upstreams use `secretRef`, because the gateway's identity cannot act for a tenant's cloud account without a trust relationship this design does not specify.
+### LU-9 Reference integrations
 
-**Tenant boundaries.** A tenant names only its own upstreams and granted platform upstreams (LUR-12). A tenant upstream's endpoint must be a host in the platform's LLM host catalog or in `llm.tenantEndpointHosts`, which a `platform-admin` maintains (OD-12), and the gateway refuses a connection whose resolved address is in a cluster, private, or link-local range, checked at each connection.
+Lenny ships three integrations outside its core, each in its own first-party repository with its own releases, as the client adapters of [`0138-rest-only-client-api`, "RO-5"](../0138-rest-only-client-api/change.md#ro-5-packaging-versioning-and-deployment) ship **[design]**. None is required: a gateway that verifies the assertion and reports charges by itself needs none of them.
 
-**Network.** The gateway's upstream egress rule of §13.2.5, `allow-gateway-egress-llm-upstream`, renders from the upstreams' endpoints, or from the operator's CIDR list, in place of `credentialPools[*]`. Open decision 10 in `decisions.md` settles whether the rule keeps the broad `0.0.0.0/0` and `::/0` peers with their excepts unless the operator sets a CIDR list, which `0149-tenant-scoping-identity` relies on to reach customer issuers when `identity.customerSources.enabled` is true. The agent pod's egress to the proxy listener becomes unconditional for pods whose runtime declares a format, because every call on the metered path goes there. The pod's other egress follows its pool's `egressProfile` as before, and Lenny adds no LLM-specific rule to it ("LU-10"). The proxy still bypasses `netagent`, as [`0127-egress-and-git`](../0127-egress-and-git/change.md) states today.
+- **`lenny-litellm`.** A Python module that LiteLLM loads from its configuration: a `custom_auth` function that verifies the attribution assertion and maps `tenant` to a LiteLLM team and `user` to an end user, and a batching callback that reports charges citing each call's `jti`, flushing every second or 500 charges and converting LiteLLM's USD prices to `budgets.currency` when configured, and that sends a limit notice when LiteLLM refuses a call for a spent team or key budget. LiteLLM's built-in JWT authentication requires its Enterprise licence, and its open-source `custom_auth` replaces virtual-key authentication for every client of that proxy, so the guide recommends a LiteLLM instance dedicated to Lenny's sessions **[external]**.
+- **`lenny-charge-relay`.** A Go service that accepts OpenTelemetry log records or a gateway's JSON log batches, maps their fields to charges through a configuration file, applies an optional price table to token counts, and posts "BG-12" batches. It serves gateways that report token counts or cost through logs, such as Envoy AI Gateway's access logs and Kong's `http-log` **[external]**.
+- **The reference verifier.** An external-authorization service that verifies the assertion under either key set of 0124's D14, including the tenant match that the `perTenant` key set needs, and passes its claims to the gateway as headers (0124's D19). A service that several tenants share on one host under the `perTenant` key set checks each assertion against its tenant's issuer, which the reference verifier does, and refuses an assertion of a tenant it is not configured for (0124's D25). The reference verifier requires a configured list of the tenants it accepts, or an explicit setting that accepts every tenant for a gateway that a platform reporter serves, under either key set, because the deployment key set verifies every tenant's assertions (0124 CR-2 **Keys and issuer (D14).**).
 
-**Posture.** The SO-2 posture report gains an `llm` section: the tenant's effective upstream list per pool, each upstream's scope, provider, channel, contract, and credential source kind, the other tenants that share each upstream with their shared-cache warning (LUR-14), each upstream's attribution settings with the attributes sent and whether user identifiers are pseudonymous, the rate-card versions in force, and the budgets per scope. It lists no LLM traffic outside the proxy, which posture treats as any other egress traffic (OD-8, OD-15). Open decision 7 in `decisions.md` settles whether a tenant's view names the other tenants or reports the sharing as a boolean, since the posture route is readable by `tenant-admin`, `security-auditor`, and `security-admin` and [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) reports pool sharing to a tenant with no tenant names or counts. The `llm` section is added to the posture report by whichever of 0133.S2 and 0142.S2 lands second, because the posture endpoint is built by 0142.S2.
-
-**Interceptors.** `PreLLMRequest` and `PostLLMResponse` stay, and with direct mode gone they see every metered call. The interceptor residual of [`0142-security-oversight`](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) is unchanged.
-
-**Leak scanning.** UC-6's proxy-mode scan of `PreLLMRequest` covers every metered call, and its direct-mode gap closes. Calls outside the proxy are not scanned.
-
-### LU-9 Cache isolation
-
-Lenny never strips or rewrites `cache_control` (D7) **[design]**. §4.9 states that provider cache isolation follows the upstream's provider account or workspace. Anthropic isolates caches by workspace on the Claude API, Claude Platform on AWS, and Microsoft Foundry, and by organization on Bedrock and Claude models on Google Cloud **[external]**. The isolation therefore follows the upstream:
-
-- **Between tenants.** A shared upstream is one cache domain for every tenant it is granted to. A regulated tenant, or any tenant that must not share a cache, gets its own upstream backed by its own provider workspace or account. On the Claude API, a workspace per tenant also splits Anthropic's cost report by tenant **[external]**.
-- **Posture.** Each tenant's posture lists, for each of its upstreams, the other tenants that share it, and so share its provider cache. Open decision 7 in `decisions.md` settles whether the tenant's view names them ("LU-8" **Posture.**).
-- **Warning on grant.** A grant that makes a tenant whose `complianceProfile` is `hipaa` or `fedramp` share an upstream, either by granting a shared upstream to that tenant or by granting that tenant's upstream to another tenant, succeeds with a `Warning` header and an audit event naming the tenants. The tenant's posture shows the warning while the sharing lasts, including after a later raise of the tenant's profile.
-- **Within a tenant.** Sessions on one upstream share its cache. Lenny does not isolate users from one another. A downstream LLM gateway that uses the forwarded user attribute to choose a per-user provider workspace or key gives each user a separate cache ("LU-11"), and that is the documented option for strict isolation within a tenant.
-
-The residual: users of a shared upstream without such a gateway can detect each other's cached prompt prefixes, through `cache_read_input_tokens` in their own usage and through latency. The provider returns no stored response, so no content crosses.
-
-The proxy does not rewrite a top-level `cache_control`. A provider that refuses one returns its error to the runtime unchanged. Anthropic's caching guide states that the legacy Bedrock integration for Opus 4.6 and earlier returns 400 for a top-level `cache_control`, and states no such restriction for Google Cloud **[external]**.
-
-### LU-10 Calls outside the proxy
-
-Budgets and LLM usage records cover the calls a runtime sends to the proxy through the `llm` endpoints of `session_start`. A runtime can also reach a provider without the proxy, and Lenny treats that traffic as any other egress traffic (OD-8, OD-15) **[design]**:
-
-- **Formats the proxy does not parse.** A runtime whose format the proxy does not parse reaches its provider over egress. `cursor-cli`, which talks to Cursor's own backend, is the reference runtime on this path. `gemini-cli` uses the proxy's `google-generate` route (OD-9).
-- **Credential bindings.** An egress credential binding with `delivery: inject` on a provider's host is an ordinary egress binding of the egress design, which `netagent` attaches so that the agent process sees only a placeholder. It needs no special grant, and no guardrail or posture entry singles it out.
-- **Keys a runtime holds.** A runtime may call a provider directly with a key it holds, over whatever egress its pool permits. The operator's provider keys are registered on upstreams and never reach a pod (LUR-1), so such a call spends the key the runtime brought.
-- **What Lenny does.** Lenny neither blocks this traffic nor reports it as LLM traffic. It records no LLM usage row for it, charges no budget scope, and runs no `PreLLMRequest` scan on it. The egress controls of the runtime's pool apply to it as to any other connection.
-- **Runtime-reported usage.** A runtime that reports its own calls on `llm_request_completed` keeps having those counts shown as they are today, as the `source: runtime` usage events of [`0135-message-delivery`](../0135-message-delivery/change.md#md-20-turn-and-usage-events) "MD-20". Budgets, quotas, and billing events read none of them.
-
-The LLM host reservation stays: the egress design's reserved hosts include the endpoint hosts of upstream records, so a tenant egress route cannot claim a host that carries an operator's LLM credential (LUR-11). The reservation protects operator keys, and it is separate from the treatment of calls outside the proxy.
-
-### LU-11 Forwarded attribution
-
-The proxy tells the upstream whom each call is for, so a downstream LLM gateway can choose per-user provider keys, workspaces, caches, or budgets without Lenny resolving any of them (D8) **[design]**.
-
-#### Attributes
-
-| Attribute | Header | Value |
-| :-- | :-- | :-- |
-| `tenant` | `Lenny-Tenant` | The tenant ID. |
-| `environment` | `Lenny-Environment` | The session's environment, or empty for a session with none. |
-| `user` | `Lenny-User` | The session's user ID, pseudonymous by default. A delegated child sends the user its own session record names. |
-| `session` | `Lenny-Session` | The session ID. |
-| `rootSession` | `Lenny-Root-Session` | The root session ID, which names the delegation tree. |
-| `runtime` and `runtimeRevision` | `Lenny-Runtime` and `Lenny-Runtime-Revision` | The runtime name and the session's revision number. |
-| `pool` | `Lenny-Pool` | The pool name. |
-| `upstream` | `Lenny-Upstream` | The upstream's name, prefixed with `platform/` or `tenant/`. |
-
-The values come from the session record that the proxy token resolves to, never from the request. A header value carries only printable ASCII, and an attribute that would carry anything else is sent percent-encoded.
-
-#### Carrier (OD-13)
-
-The owner settled option (c) of OD-13: plain headers on every upstream that sends attribution, and a signed assertion beside them where the upstream sets `attribution.signed: true`.
-
-- **Headers.** The proxy sets one `Lenny-*` header per selected attribute. Headers carry the attribution because they are the same for every format, they leave the body untouched, and off-the-shelf gateways read them: LiteLLM records the headers listed in `extra_spend_tag_headers` as spend tags and can route deployments on a header pattern with `tag_regex`, and self-hosted Portkey merges headers into request metadata through `HEADERS_TO_METADATA` **[external]**.
-- **Gateway-native headers.** `attribution.headerMap` copies attributes into a gateway's own headers, such as `x-litellm-tags`, which LiteLLM reads as a comma-separated tag list for routing and spend, or `x-portkey-metadata`, whose `_user` key drives Portkey's per-user analytics **[external]**. Each entry is a template over the attributes, and the proxy escapes substituted values for the template's form, a comma-separated list or a JSON object, and refuses any other form at write.
-- **Signature.** With `attribution.signed: true`, the proxy also sets `Lenny-Attribution`, a JWT valid for 60 seconds with `typ: lenny-llm-attribution+jwt`, the audience `lenny-llm-attribution:<upstream>`, and the selected attributes as claims, signed with a deployment attribution key. `GET /v1/admin/llm-attribution-keys` publishes the public keys as a JWK Set for the gateway's verifier. The key is separate from the gateway's signing key, and the type and audience follow the pattern of the egress design's gateway cause assertion (`lenny-cause+jwt`), so the assertion passes as no other Lenny token and no other Lenny token passes as it.
-
-#### Provider-native fields
-
-Providers define their own user fields: Anthropic's `metadata.user_id`, "an external identifier for the user", at most 512 characters, which must carry no name, email address, or phone number, and OpenAI's `safety_identifier`, at most 128 characters, which replaces `user` with `prompt_cache_key`. OpenAI recommends hashing usernames or email addresses for it. LiteLLM keys its end-user budgets on the request's `user` field and warns that a client can set that field itself **[external]**.
-
-With `attribution.nativeUserField: true`, the proxy writes the forwarded user value into `metadata.user_id` on `anthropic-messages`, into `safety_identifier` on the OpenAI formats, and also into `user` on an `openai-chat` upstream with `channel: gateway`, replacing any value the runtime sent. With it off, the default, the proxy leaves those fields as the runtime sent them, and a downstream gateway keys on the `Lenny-*` headers. An operator whose gateway keys budgets on the body's `user` turns the setting on, so a runtime cannot pick the identity its spend is charged to. The proxy never sets `prompt_cache_key`, because it steers the provider's cache (D7).
-
-#### Trust
-
-Before forwarding, the proxy removes every inbound header whose name starts with `Lenny-`, case-insensitively, and every header an upstream's `headerMap` names, and then sets its own (LUR-13). With `nativeUserField` on, the runtime's values of the native fields are replaced. A downstream gateway trusts the headers because the request carries the upstream's credential, which only the gateway's proxy holds, and where other clients share that credential or path, it verifies `Lenny-Attribution`.
-
-#### Pseudonymization (OD-14)
-
-The owner settled option (a) of OD-14: user identifiers are pseudonymous by default, and raw identifiers are sent only where the upstream sets `attribution.rawIdentifiers`. `user` is sent as the base64url HMAC-SHA256 of the user ID under a key held per upstream, 43 characters, which fits every native field above. The key is a Secret that the gateway creates with the upstream, named as "LU-1" **Names of the Secrets the gateway writes.** states, so two tenants' upstreams of one name hold separate keys. The value is stable for one user on one upstream and differs between upstreams. `attribution.pseudonymize` lists the attributes that are hashed, `[user]` by default, and an upstream's writer may add `tenant` or `environment`. `attribution.rawIdentifiers: true` sends every attribute raw. A `tenant-admin` may set it on the tenant's upstreams, and a `platform-admin` on platform upstreams. Rotating the key changes every pseudonym on that upstream, which resets a gateway's per-user state.
-
-#### Per-upstream configuration
-
-```yaml
-attribution:
-  attributes: [tenant, environment, user, session, rootSession, runtime, runtimeRevision, pool, upstream]
-  pseudonymize: [user]
-  rawIdentifiers: false
-  nativeUserField: false
-  signed: false
-  headerMap:
-    x-litellm-tags: "lenny-tenant:{tenant},lenny-user:{user}"
-```
-
-| Channel | Default `attributes` | Reason |
-| :-- | :-- | :-- |
-| `gateway` | Every attribute, with `user` pseudonymous | The operator runs the gateway and placed it there to act on them. |
-| Any provider channel | None | A provider has no use for Lenny's identifiers. An operator who wants per-user abuse attribution at the provider turns on `nativeUserField` with `attributes: [user]`. |
-
-Posture reports each upstream's attribution settings, and the usage record names the upstream, so an operator can match a gateway's per-user spend against Lenny's records by pseudonym.
+`docs/operator-guide/external-llm-proxy.md`, replaced by the LLM gateway guide, links each integration and gives an end-to-end configuration for LiteLLM, Envoy AI Gateway, and a gateway run by a tenant.
 
 ## Limits
 
-- The operator maintains rate cards. A price change the operator misses is enforced at the old price until a new version is added.
-- The estimate differs from the invoice by volume tiers, committed-use terms, credits, provisioned throughput, taxes, and provider rounding.
-- Budget enforcement is best effort. A scope can overshoot its limit by the input estimate's error on the calls in flight in it, and the next call's reservation in that scope is refused. Usage records and billing events carry the quantities exactly.
-- A first call's estimate from bytes divided by `k`, and a later call's estimate from a ratio set by a call with different content, can refuse a call near a limit that would have fit, or admit one that overshoots.
-- A call priced as the fallback entry is charged at that entry's rates until the operator adds an entry for its model.
-- Lenny no longer fails over between credentials or providers. An operator who needs it runs an LLM gateway, and a gateway's choice of deployment reaches Lenny's records only through the served model it reports.
-- A rate-card entry priced per model cannot tell two deployments of one model apart behind one gateway upstream. The operator registers each as its own upstream when their prices differ.
-- Tenant upstreams cannot use workload identity.
-- Budgets cover calls through the proxy alone. A runtime that calls a provider outside the proxy, in a format the proxy does not parse or with a key it holds, spends with no budget, no LLM usage record, and no `PreLLMRequest` scan, and Lenny does not report that traffic as LLM traffic ("LU-10"). Its own `llm_request_completed` counts, where it sends them, are shown for display alone.
-- Within an upstream, cache timing and `cache_read_input_tokens` reveal shared prompt prefixes across users, unless a downstream LLM gateway separates users by the forwarded user attribute ("LU-9").
-- Lenny holds no per-user provider key. An operator who bills users to their own provider accounts runs a downstream LLM gateway for it, and Lenny's rate card then prices calls the user's account pays for, so the operator writes that upstream's card to suit its own budgeting.
-- With `nativeUserField` off, a runtime can set a provider-native user field itself, and a gateway that keys on that field trusts a value the runtime chose.
-- Rotating an upstream's attribution key changes every pseudonym on it.
-- Settlement at the reservation for a stream that ends without usage can overcharge a budget, by design in the safe direction.
-- A runtime whose SDK cannot present a client certificate runs with `spiffeBinding` off, and its proxy token is a bearer that works from any address that reaches the proxy listener.
+- Budget enforcement on model spend is best effort. A limit can be exceeded by the charges of the calls the gateway admitted before the suspension took hold, which grow with the gateway's report interval and the binding propagation delay, plus every call in flight.
+- Calls in flight are not cancelled at an exhaustion or a suspension that takes hold. The egress halt stops them only when a suspension cannot take hold.
+- An extension holds no call. `netagent` answers `429` while it is pending, and the runtime's SDK retries.
+- Lenny runs no `PreLLMRequest` or `PostLLMResponse` interceptor and no leak scan of user secrets on model calls ([`0151-user-credential-delivery`, "UC-6"](../0151-user-credential-delivery/change.md)).
+- Model calls are no session activity. A runtime that waits on a model reports `busy: true` on its heartbeats, as for any operator service.
+- A deployment without an LLM gateway that reports charges has no budget on model spend. Compute and storage budgets work without one.
+- Lenny cannot refuse provider server tools that reach the network, such as `web_fetch`, because it reads no request body. The gateway refuses them, or the operator accepts the path.
+- On a reused pod, a compromised adapter, sandbox kernel, or `netagent` reaches later sessions' attribution within the tenant, bounded by their budgets ("LU-8").
+- Token counts reach usage events only when the reporter supplies them.
 
 ## Alternatives rejected
 
-- **Keep credential pools and add attribution and budgets (the analysis's option A).** It keeps LLM-gateway functions, their open High findings, and direct mode's key in the pod.
-- **Remove the proxy and the pools (option C).** Lenny would lose enforcement before spend, delegation-tree budgets, the §8.6 extension, and trusted per-session usage.
-- **Meter at egress through an operator gateway (option D2).** `netagent` would run per-format parsers in every pod and need a reservation round trip per call, or Lenny would depend on one gateway product's spend schema. Neither gateway nor egress knows delegation trees.
-- **Per-token-class budgets.** The owner rejected them. They give a token of a cheap model and one of an expensive model the same weight, and a cache-read budget penalizes caching.
-- **Weighted tokens with fixed class weights.** Cache-read and cache-write multipliers differ by model and lifetime **[external]**, so fixed weights misprice models, and per-model weights are a rate card in another unit. A card in credits expresses either.
-- **A currency unit per deployment or per tenant.** The owner chose unitless credits. A currency implies conversion and invoices that Lenny does not produce.
-- **Failover across the upstreams of one list.** Two upstreams that serve one format and model would make attribution and cache isolation depend on which answered. A gateway upstream gives failover with one attribution.
-- **Injecting a default output limit into the body.** Changing a runtime's request changes its behaviour. The card's `maxOutputTokens` bounds the reservation without touching the body.
-- **Moving the proxy token into a `netagent` binding.** It would keep the token from the agent process, and it would route every LLM call through `netagent`, which the egress design keeps off the LLM path.
-- **Per-user upstreams in Lenny.** An upstream whose credential is the session user's own key would isolate each user's cache, and the owner declined it as a requirement (D8). A downstream gateway gives the same isolation from the forwarded user attribute and keeps per-user keys out of Lenny.
-- **Provider-native fields as the only carrier.** Each format has a different field with a different length limit, OpenAI's `metadata` is limited to 16 pairs, and writing them changes the body. Headers carry the same attributes for every format, and the native field remains a per-upstream option.
-- **Raw user identifiers by default.** Provider guidance asks for opaque or hashed identifiers, and a raw email address would reach every upstream's logs.
-- **Keeping §8.6's settlement-time trigger.** It lets a call run past a budget and then refuses its response, which the provider has billed.
-- **Refusing every unpriced model (OD-5, option (a)).** The owner chose a fallback entry, so that a new model reaches its users at an assumed price while the alert asks the operator for the real one. A version with no fallback entry still refuses.
-- **Quantities alone on billing events (OD-6, option (a)).** The estimate is the figure each budget was charged, and the owner chose to carry it, labelled, beside the quantities.
-- **Estimating input from the byte count alone, from the last settled input plus the growth in bytes, or from the provider's token-count endpoint (OD-7).** The byte count alone ignores what settlement learns about a session's bodies. The last settled input plus growth assumes that a later call extends the earlier call's history, which a call need not do. The token-count endpoint adds a round trip and its own rate limit to every call.
-- **A gate, a guardrail, and posture entries for LLM egress outside the proxy (revision 2's OD-8, option (a)), or a ban on it (option (b)).** The owner treats direct traffic to LLM providers as any other egress traffic.
-- **Reporting pools and sessions that reach LLM providers outside the proxy in posture (OD-15, option (a)).** The owner treats that traffic as any other egress traffic, and operator keys never reach a pod.
-- **Refusing LLM catalog hosts at the egress decision on `proxied` pools unless a grant is held (OD-15, option (b)).** It cannot be enforced on `egressProfile: internet` pools, where raw sockets bypass the decision.
-- **Deferring `google-generate` (OD-9, option (b)).** It would leave `gemini-cli` without budgets.
-- **Keeping `vault_transit` and the `provider` path (OD-10, option (a)).** Neither has a consumer once LLM leases leave.
-- **Checkpoint windows alone, or one billing event per call (OD-11, options (b) and (c)).** Windows alone lose the per-call attribution D2 asks for, and an event per call multiplies the billing stream's rate.
-- **Tenant upstream endpoints on any public HTTPS host (OD-12, option (b)).** The gateway would send a tenant's secret and its agents' prompts from its own network position to any host the tenant names.
-- **Plain headers alone, or a signed header alone (OD-13, options (a) and (b)).** Plain headers alone give a gateway shared with other clients nothing to verify, and a signed header alone is unreadable by off-the-shelf gateways.
+- **Keep the thin metering proxy of revisions 1 to 19.** It tracks every provider's routes, usage fields, stream rules, token classes, and prices, which the owner asked to leave (decision 22).
+- **A relay that reads no body (option B of the analysis of 2026-11-24).** It keeps key custody, the proxy token, interceptors over bytes, and cancellation in flight, and it keeps a listener on the gateway hot path for every model stream. The owner chose the egress path with its trade-offs.
+- **A session token that the deployer's gateway introspects (option D).** The token is a bearer the runtime holds, usable from any address that reaches the gateway, and every gateway needs an introspection client.
+- **Plain identity headers attached by `netagent`.** Their trust rests on every request reaching the gateway through `netagent`, which raw sockets on `internet` pools defeat, and on an extra gateway key per tenant. A signed assertion needs neither.
+- **The identity assertion of CR-2 as it stands.** D11 confines it to pods no other session used, which would confine LLM budgets to those pods. The attribution assertion authenticates no user, so its residual on reused pods is bounded spend within the tenant.
+- **A generic gateway-side proxy for every service.** It duplicates `netagent` and `lenny-egress`, and it identifies a session from a reused pod no better than `netagent` does.
+- **The assertion itself as a charge's proof.** Gateways keep credentials out of their logging paths: LiteLLM removes `Authorization` from the headers its callbacks see **[external]**. Every deployer would write code to carry a credential into its cost reports, where it would rest in log storage while it still counted as proof. The `jti` reaches the logs through the claim mapping each gateway already has.
+- **The gateway refusing a suspended session's call.** A call with no assertion fails as an authentication error, which the Anthropic SDK does not retry **[external]**, and a gateway that keeps its own keys beside the assertion would serve it. `netagent` answers with a status the runtime retries, whatever the gateway's configuration.
+- **Credential injection of the gateway's key by `netagent` with budget-aware minting alone (option C).** The Token Service would refuse to mint once a budget is exhausted, so the lag would be the assertion's lifetime. Suspending the binding takes effect at the next request.
+- **Keeping credential pools and adding attribution and budgets (the analysis's option A of 2026-11-09).** It keeps LLM-gateway functions, their open High findings, and direct mode's key in the pod.
 
 ## Specification changes
 
-The following edits locate their targets by heading. Subsections of §4.9 named here are its bold-labelled H4 headings.
-
-The rows name the numbered sections as they stood on 2026-11-16, and they state the content to move. Change 0115 placed this change's content on the pages that name 0133 under "Changes of the v1 program whose content lands on this page": `LLMUP` (`spec/capabilities/network-and-egress/llm-upstreams.md`) for "Requirements", LU-1, LU-2, LU-3, LU-8, LU-9, LU-10, LU-11, and "Limits"; `GWLLM` (`spec/components/gateway/metering-proxy.md`) and `CHEGRESS` (`spec/interfaces/channels/pod-egress.md`) for LU-3; `ERR` (`spec/cross-cutting/error-model.md`) for LU-4; `RATE` (`spec/capabilities/billing-and-usage/rate-cards.md`) for LU-5; `BUDGET` (`spec/capabilities/billing-and-usage/budgets.md`) for LU-6; `USAGE` (`spec/capabilities/billing-and-usage/usage-records.md`) and `EVTBILL` (`spec/interfaces/events/billing-events.md`) for LU-7; `DLG` (`spec/capabilities/delegation/delegation.md`) and `SCREATE` (`spec/capabilities/sessions/session-lifecycle/session-creation.md`) for LU-2; and `STREAM` (`spec/capabilities/messaging/event-stream.md`) for LU-10. The new **LLM Upstreams** subsection of the §4.9 row is the `LLMUP` page, and the LUR labels become that page's requirement identifiers when it is written. A step that lands after the area change that migrates a numbered section edits the page that received its content, as that section's successor stub states. The §18 and §23 rows apply to their successors under "Retired records and sections" of the [v1 program](../programs/v1.md): §18.15, §18.18, §18.23, and §18.26 to the program, its board, and `docs/about/status.md`, and §23 to `docs/about/comparisons.md`, so the §18.18 anchor redirect is moot. An edit to §26 applies to `docs/runtime-author-guide/` or to the reference runtime repositories, and the edit to row 13 of §19 applies where the area change placed that row, as its successor stub states.
+The following edits locate their targets by heading. Subsections of §4.9 named here are its bold-labelled H4 headings. The rows name the numbered sections as they stood on 2026-11-16 and state the content to move. A step that lands after the area change that migrates a numbered section edits the page that received its content, as that section's successor stub states. The §18 and §23 rows apply to their successors under "Retired records and sections" of the [v1 program](../programs/v1.md).
 
 | Section | Change |
 | :-- | :-- |
-| [§4.1 Edge Gateway Replicas](../../spec/04_system-components.md#41-edge-gateway-replicas), "Gateway Internal Subsystems", item 4 **LLM Proxy** | Describe the proxy as the metering, budget-enforcing pass-through that injects the upstream's credential. |
-| [§4.3 Token Service](../../spec/04_system-components.md#43-token-service), **Role:** item 2 and the availability bullets | LLM credentials become the Secrets that upstreams name, read through Token Service secret resolution. Remove credential leases from the availability bullets. |
-| [§4.7.1](../../spec/04_system-components.md#471-role-and-gateway-rpc-contract), [§4.7.3](../../spec/04_system-components.md#473-adapter-events-on-ch-adapterevents), [§4.7.7](../../spec/04_system-components.md#477-runtime-integration-levels-agent-type-only), [§4.7.8](../../spec/04_system-components.md#478-credential-rotation-by-integration-level), [§4.7.9](../../spec/04_system-components.md#479-startup-sequence-for-type-agent-runtimes), and [§4.7.11](../../spec/04_system-components.md#4711-adapter-agent-security-boundary) | Remove `AssignCredentials`, `RotateCredentials`, `ExtendCredentialLease`, and `ReportUsage`, the `FINAL_USAGE_REPORT` row, credential rotation, §4.7.8, startup step 5, and the LLM entries of **Runtime credential file contract.**, keeping any VCS use that validation finds. §4.7.7's integration levels and §4.7.9's startup steps become capabilities and the handshake at bind under [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#specification-changes), so no capability for rotation remains. The **`CH-RUNTIMEOPS` completions.** activity rule stays for `llm_request_completed`, restated for the frame on `CH-MSGSOCK` under that design's O7 (a). |
-| [§4.7.6 Adapter Manifest Field Reference](../../spec/04_system-components.md#476-adapter-manifest-field-reference), **Per-session fields.** | Replace `llm.deliveryMode`, `llm.dialect`, and `llm.apiKeyEnv` with `llm.token` and `llm.formats` entries carrying `format`, `baseUrl`, `apiKeyEnv`, `models`, and `headers`. |
-| [§4.8 Gateway Policy Engine](../../spec/04_system-components.md#48-gateway-policy-engine) | The `QuotaEvaluator` row names credit budgets. The `PreLLMRequest` and `PostLLMResponse` rows and **LLM interceptor phases.** state that the phases fire on every metered call and on no call outside the proxy. The `PostRoute` row drops the credential pool assignment. |
-| [§4.9 Credential Leasing Service](../../spec/04_system-components.md#49-credential-leasing-service), opening, **Credential Provider**, and **Credential Pool** | Narrow to VCS providers. Remove the LLM providers, `vault_transit`, the per-provider lease TTL rows for LLM providers, and the direct-mode text. |
-| §4.9 **Credential Storage Topology** | Add `lenny-llmupstream-` Secrets beside pool credentials, named as "LU-1" **Names of the Secrets the gateway writes.** states, and keep the topology. **Secret references.** rule 3 reserves `lenny-llmupstream-` as it reserves `lenny-cred-`. Remove the LLM rows of **Secret shape**. |
-| §4.9 **Pre-Claim Credential Availability Check**, **Credential Policy**, **Three Credential Modes**, **Fallback Flow**, **Proactive Lease Renewal**, **`CredentialRouter` Interface**, and **Credential Governance Boundaries** | Delete, leaving a successor pointer to the new **LLM Upstreams** subsection for each identifier that moves. |
-| §4.9 **Credential Lease** and **`materializedConfig` Schema by Provider** | Keep only what VCS mints use. Remove the proxy-mode and LLM direct-mode tables. |
-| §4.9 **Pre-Authorized Credential Flow** | Remove the `provider` path (OD-10). |
-| §4.9, new subsection **LLM Upstreams** | The upstream record with the `gemini-api` channel, credential sources with Google Cloud workload identity, grants with the shared-upstream warning for `hipaa` and `fedramp` tenants, tenant and pool lists, resolution with the `google-generate` model taken from the path, rate cards with versions and the fallback entry, the endpoint rule of `llm.tenantEndpointHosts`, and forwarded attribution with pseudonymization by default and the signed assertion. |
-| §4.9 **LLM Reverse Proxy** | Rewrite in place: the routes per format, `google-generate` included, the pass-through and its edits, session binding by proxy token, usage normalization with the class table and the stream rules, the statement that Lenny never strips or rewrites `cache_control` and that provider cache isolation follows the upstream's provider account or workspace, with the residual within a tenant, and the statement that a call a runtime sends outside the proxy is ordinary egress traffic that no budget covers. **Proxy dialects.**, **Authoritative token counting.**, and **Per-pool configuration.** give way to formats, normalization, and lists. |
-| §4.9 **Emergency Credential Revocation**, **Security Boundaries**, and [§4.9.2](../../spec/04_system-components.md#492-credential-audit-events) | Remove the direct-mode steps, the LLM deny-list rows, `credential.renewed`, `credential.rotation_ceiling_hit`, `credential.fallback_exhausted`, the LLM meaning of `credential.rotated`, and `credential.proxy_mode_spiffe_binding_disabled`. |
-| [§5.1 Runtime](../../spec/05_runtime-registry-and-pool-model.md#51-runtime), examples and "Normative Merge Algorithm" | Replace `supportedProviders` and `credentialCapabilities` with `llmFormats`, a list a derived runtime may narrow. |
-| [§5.2](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes), **Slot (session mode)** | Remove the slot's credential lease and the slot's credentials file at `/run/lenny/credentials.json` from the scrub. Add the pool's `llmUpstreams`. |
-| [§6.1](../../spec/06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like) and [§6.2](../../spec/06_warm-pod-model.md#62-pod-state-machine) | Remove **Per-session credential lease lifecycle.**, the direct-mode idle-clock bullet, and lease assignment from the `resuming` failures. |
-| [§7.1 Normal Flow](../../spec/07_session-lifecycle.md#71-normal-flow) and [§7.3 Retry and Resume](../../spec/07_session-lifecycle.md#73-retry-and-resume) | Replace step 3's pre-claim check with the list check at the post-chain point, and remove the lease map at finalize, rotation on `RATE_LIMITED`, lease release, derive rule 3's credential handling, and **Credential leases on the replacement pod.** |
-| [§8.1](../../spec/08_recursive-delegation.md#81-design-philosophy), [§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism), and [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) | `maxTokenBudget` becomes `maxCreditBudget` on the lease, `lease_slice`, and the presets. Remove **Credential propagation:** with its pre-check and `CREDENTIAL_PROVIDER_MISMATCH`. Quiescence waits for in-flight reservations. Restate item 5, **Over-run semantics.**, as the best-effort bound of the input estimate. |
-| [§8.6 Lease Extension](../../spec/08_recursive-delegation.md#86-lease-extension), opening, **Trigger:**, **Request:**, **Extendable fields:**, and the approval modes | The trigger is a session or tree reservation refused before the call. A terminal extension outcome refuses the call and leaves the session running, and the rejection cool-off bounds repeated requests (decision 5). Remove the delivery of an already-computed response, the committed-stream case, and the direct-mode paragraph. `additionalTokenBudget`, `grantedTokenBudget`, and `maxExtendableBudget` are in credits. |
-| [§8.8](../../spec/08_recursive-delegation.md#taskrecord) and [§8.10](../../spec/08_recursive-delegation.md#810-delegation-tree-recovery) | Remove the credential pre-check and lease from `created`, and state tree charging in credits. |
-| [§10.2 Authentication](../../spec/10_gateway-internals.md#102-authentication) | Remove credential lease bearers in direct mode. Add `manage_llm_upstreams`. |
-| [§11.2 Budgets and Quotas](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) | The "Token limits" row becomes "Credit limits" with the same scopes, which cover calls through the proxy alone. A refused reservation refuses the call and does not end the session (decision 5). **Quota Update Timing:** names the reservation and settlement, the input estimate with `k`, the stored input ratio, the block estimates, and `llm.inputEstimate`, and drops direct mode. The fail-open paragraph, with the estimate at bytes divided by `k`, **Crash Recovery for Quota Counters:**, **Crash Recovery for Delegation Budget Counters:**, and **Maximum Overshoot Formula:** restate in credits with the best-effort bound. |
-| [§11.2.1 Billing Event Stream](../../spec/11_policy-and-controls.md#1121-billing-event-stream) | `llm_usage` on `token_usage.checkpoint` in place of `tokens_input` and `tokens_output`, with the count of calls priced as the fallback entry, the estimate label as the stated exception to quantities-only billing, `credential.leased` for VCS, the correction replacement of `llm_usage`, `billing.dualControlCreditThreshold`, and reconstruction from `llm_usage` rows. |
-| [§11.3](../../spec/11_policy-and-controls.md#113-timeouts-and-cancellation) and [§11.4](../../spec/11_policy-and-controls.md#114-user-invalidation) | Remove the credential lease TTL and expiry warning rows, and lease return from user invalidation. Add the stream deadline per format. |
-| [§12.2](../../spec/12_storage-architecture.md#122-storage-roles), [§12.4](../../spec/12_storage-architecture.md#124-redis-ha-and-failure-modes), [§12.6](../../spec/12_storage-architecture.md#126-interface-design), and [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces) | `CredentialPoolStore` loses lease, health, and cooldown state. Add the `llm_usage` store with its erasure row, the proxy token store, the reservation keys and the reservation index of "LU-6" **Recovery.**, and credit counters in the fail-open rules. §12.4's key table gains a row for each new counter, the session budget record that holds the input ratio included, under the key layout open decision 6 settles. `QuotaStore` counts credits. Remove the LLM `CredentialLease` type. |
-| [§13.1](../../spec/13_security-model.md#131-pod-security), [§13.2.2](../../spec/13_security-model.md#1322-agent-pod-allow-list-policies), [§13.2.4](../../spec/13_security-model.md#1324-lenny-system-namespace-networkpolicies), and [§13.2.5](../../spec/13_security-model.md#1325-gateway-egress-to-upstream-llm-providers) | The pod holds a proxy token. The proxy egress policy applies to pods whose runtime declares a format, without a delivery-mode label. Remove the `lenny-direct-mode-isolation` webhook row. NET-046 renders from upstream endpoints. |
-| [§13.2.6](../../spec/13_security-model.md#1326-per-pool-egress-relaxation-and-egressprofile) | Remove `provider-direct`, NET-006, and NET-044, as EG-2 stages. |
-| [§13.3 Credential Flow](../../spec/13_security-model.md#133-credential-flow) and [§13.5](../../spec/13_security-model.md#135-delegation-chain-content-security) | Replace the direct-mode and proxy-mode LLM flows with the metered path and the statement that calls outside the proxy are ordinary egress, restate **Translator trust boundary:** and **Key distinction:**, and name `maxCreditBudget`. |
-| [§14](../../spec/14_workspace-plan-schema.md#14-workspace-plan-schema) and [§14.1](../../spec/14_workspace-plan-schema.md#141-workspaceplan-schema-versioning) | Remove `credentialPolicy` from the plan and from `CreateSessionRequest`. |
-| [§15.1 REST API](../../spec/15_external-api-surface.md#151-rest-api) | Add the upstream, grant, rate-card, and `GET /v1/admin/llm-attribution-keys` endpoints, the `Warning` on a grant that makes a `hipaa` or `fedramp` tenant share an upstream, the tenant `llm.upstreams` and pool `llmUpstreams` fields, and the codes `LLM_UPSTREAM_NOT_CONFIGURED`, `LLM_UPSTREAM_CONFLICT`, `LLM_UPSTREAM_DISABLED`, `LLM_MODEL_NOT_ALLOWED`, and `LLM_MODEL_UNPRICED`. `BUDGET_EXHAUSTED` gains `credit_budget` and the scope in `details.limitType`, `perCall` among the scopes. Remove `CREDENTIAL_POOL_EXHAUSTED`, `CREDENTIAL_PROVIDER_MISMATCH`, `CREDENTIAL_RENEWAL_FAILED`, `LEASE_SPIFFE_MISMATCH` in favour of a proxy-token refusal, the lease delete blocker, and under OD-10 the `provider` field of `/v1/credentials`. State that a write that names `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, `credentialPropagation`, `rotationTrigger`, and `maxRotationsPerSession` is refused with `400 VALIDATION_ERROR` naming the field (D9). `GET /v1/usage` reports credits and per-upstream counts. |
-| [§15.2](../../spec/15_external-api-surface.md#152-mcp-api), §15.2.1, [§15.4.3](../../spec/15_external-api-surface.md#1543-runtime-integration-levels), §15.4.4, §15.4.6, and [§15.7](../../spec/15_external-api-surface.md#157-runtime-author-sdks) | `get_token_usage` reports token classes and credits. Remove `CREDENTIAL_POOL_EXHAUSTED` from the error classes, credential rotation from the sample runtime and the conformance suite, and the SDKs' rebind loop. §15.4.3 becomes "Runtime Capabilities" under [RP-2](../0139-runtime-protocol/change.md#rp-2-capabilities-and-their-dependencies), whose catalog has no rotation capability once this design lands, and `llm_request_started` and `llm_request_completed` need no capability. |
-| [§16.1 Metrics](../../spec/16_observability.md#161-metrics), §16.1.1, [§16.3](../../spec/16_observability.md#163-distributed-tracing), [§16.4](../../spec/16_observability.md#164-logging), [§16.5](../../spec/16_observability.md#165-alerting-rules-and-slos), and [§16.6](../../spec/16_observability.md#166-operational-events-catalog) | Remove the LLM lease, pool, rotation, renewal, pre-claim, and anomaly metrics, the `proxy_dialect` and `delivery_mode` labels, `CredentialPoolExhausted`, `CredentialProactiveRenewalExhausted`, `OutstandingInflightAtRotationCeiling`, `DirectModeIsolationWebhookUnavailable`, and `TokenUsageAnomaly`, and the LLM meaning of `credential_rotated` and `credential_pool_exhausted`. Add `lenny_llm_calls_total`, `lenny_llm_credits_reserved_total`, `lenny_llm_credits_settled_total`, `lenny_llm_reservation_undershoot_credits`, `lenny_llm_usage_missing_total`, `lenny_llm_unpriced_model_refusals_total`, and `lenny_llm_fallback_priced_calls_total`, labelled by upstream, `format`, and model, with alerts for missing usage, frequent unpriced refusals, and `LLMModelPricedAsFallback`. |
-| [§17.2](../../spec/17_deployment-topology.md#172-namespace-layout), [§17.7](../../spec/17_deployment-topology.md#177-operational-runbooks), and [§17.8.2](../../spec/17_deployment-topology.md#1782-capacity-tier-reference) | Remove webhook item 6 and its feature-flag row, the LLM parts of **Credential pool exhaustion** and **Emergency credential revocation**, and the LLM rows of **Credential pool sizing:**. Add a runbook for unpriced models, calls priced as the fallback entry, and missing usage. |
-| [§18.15](../../spec/18_build-sequence.md#1815-phase-55--basic-credential-leasing-token-service), [§18.18](../../spec/18_build-sequence.md#1818-phase-58--llm-proxy-lenny-direct-mode-isolation-admission-webhook), §18.23, and [§18.26](../../spec/18_build-sequence.md#1826-phase-11--advanced-credentials-multi-provider-translators-revocation) | Restate the phases for upstreams and the metering proxy, retitle §18.18 without the webhook with an anchor redirect, and remove hot rotation, fallback chains, and the direct-mode runbook. Update `spec/README.md`. |
-| [§19 Resolved Decisions](../../spec/19_resolved-decisions.md#19-resolved-decisions), row 13 | The extension is triggered by a refused reservation. |
-| [§23](../../spec/23_competitive-landscape.md#23-competitive-landscape) and [§23.1](../../spec/23_competitive-landscape.md#231-why-lenny) | Restate **Credential management** and item 9 as upstreams, metering, and credit budgets, without pooling, health scoring, or failover. |
-| [§24.5 Credential Management](../../spec/24_lenny-ctl-command-reference.md#245-credential-management) | Keep VCS pool commands, remove per-credential health scores and direct-mode text, and add `lenny-ctl llm` commands for upstreams, rate cards, and unpriced models, where `lenny-ctl llm unpriced` lists the models priced as the fallback entry and the models refused. |
-| [§25.3](../../spec/25_agent-operability.md#253-gateway-side-ops-endpoints), [§25.6](../../spec/25_agent-operability.md#256-diagnostic-endpoints), and §25.7 | Restate pool sizing and diagnosis for VCS, and map the new LLM codes to runbooks. |
-| [§26.2](../../spec/26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes) and §26.3 to §26.11 | Replace **Credential delivery.**, **Common `credentialCapabilities`.**, and the LLM lease scopes with `llmFormats` and the metered path. Each runtime declares its formats. `gemini-cli` (§26.4) declares `google-generate`. `cursor-cli` declares none and reaches Cursor's backend over egress, and §26.6's **Note on LLM-proxy dialect.** is restated to say so. |
-| [§28.3](../../spec/28_communication-channels.md#283-registers), [§28.5.2](../../spec/28_communication-channels.md#2852-pod-to-gateway), [§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod), [§28.5.5](../../spec/28_communication-channels.md#2855-pod-egress), and [§28.8](../../spec/28_communication-channels.md#288-failure-and-degradation-matrix) | Remove `FINAL_USAGE_REPORT`, direct-mode `AUTH_EXPIRED`, and the rotation frames. The `CH-RUNTIMEOPS` register row and `lifecycle_capabilities` leave under [`0139-runtime-protocol`](../0139-runtime-protocol/change.md#specification-changes) O7 (a) and RP-1, so this design removes rotation from neither. Restate `llm_request_started` and `llm_request_completed` as runtime-started frames on `CH-MSGSOCK` by which a runtime reports a call it sends outside the proxy, without the direct-mode qualifier and with no declared capability, with counts that MD-20 shows as `source: runtime` usage and that no budget reads. Restate `session_start`'s `llm` member. `CH-LLMPROXY` keeps its identifier, and its card names formats, the proxy token, and the reservation refusal. |
+| [§4.1 Edge Gateway Replicas](../../spec/04_system-components.md#41-edge-gateway-replicas), "Gateway Internal Subsystems", item 4 **LLM Proxy** | Remove the LLM proxy subsystem. |
+| [§4.3 Token Service](../../spec/04_system-components.md#43-token-service) | Remove LLM credentials and leases. The Token Service mints attribution assertions as CR-2 of `0124-connector-removal` states. |
+| [§4.7.1](../../spec/04_system-components.md#471-role-and-gateway-rpc-contract), [§4.7.3](../../spec/04_system-components.md#473-adapter-events-on-ch-adapterevents), [§4.7.6](../../spec/04_system-components.md#476-adapter-manifest-field-reference), and §4.7.7 | Remove `AssignCredentials`, `RotateCredentials`, `ExtendCredentialLease`, `ReportUsage`, the rotation frames, §4.7.8, and the `llm` member of `session_start` with `deliveryMode`, `dialect`, and `apiKeyEnv`. |
+| [§4.8 Gateway Policy Engine](../../spec/04_system-components.md#48-gateway-policy-engine) | Remove the `PreLLMRequest` and `PostLLMResponse` phases and **LLM interceptor phases.** The `QuotaEvaluator` row names budgets on the `externalCost` meter. |
+| [§4.9 Credential Leasing Service](../../spec/04_system-components.md#49-credential-leasing-service), opening, **Credential Provider**, **Credential Pool**, **Credential Lease**, and **`materializedConfig` Schema by Provider** | Narrow to VCS providers. Remove the LLM provider rows and the LLM lease tables. |
+| §4.9 **Pre-Claim Credential Availability Check**, **Credential Policy**, **Three Credential Modes**, **Fallback Flow**, **Proactive Lease Renewal**, **`CredentialRouter` Interface**, **LLM Reverse Proxy**, and **Semantic Caching** | Remove. A successor pointer names "LLM gateways and external charges", the new subsection below. |
+| §4.9, new subsection **LLM gateways and external charges** | The operator's LLM gateway as an egress destination, the attribution binding and its assertion, charges on the `externalCost` meter, enforcement by binding suspension, and calls outside the gateway, with LUR-1 to LUR-7. |
+| §4.9 **Pre-Authorized Credential Flow**, **Emergency Credential Revocation**, **Security Boundaries**, and [§4.9.2](../../spec/04_system-components.md#492-credential-audit-events) | Remove the `provider` path (OD-10), the direct-mode steps, and the LLM deny-list and audit rows. |
+| [§5.1 Runtime](../../spec/05_runtime-registry-and-pool-model.md#51-runtime) and [§5.2](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) | Remove `supportedProviders` and `credentialCapabilities` with no replacement field, and the slot's credential lease and credentials file. |
+| [§6.1](../../spec/06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like), [§6.2](../../spec/06_warm-pod-model.md#62-pod-state-machine), [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow), and [§7.3](../../spec/07_session-lifecycle.md#73-retry-and-resume) | Remove the per-session credential lease lifecycle and the pre-claim check. |
+| [§8.1](../../spec/08_recursive-delegation.md#81-design-philosophy), [§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism), [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease), [§8.8](../../spec/08_recursive-delegation.md#taskrecord), and [§8.10](../../spec/08_recursive-delegation.md#810-delegation-tree-recovery) | Remove `credentialPropagation`, the credential pre-check, `ReportUsage`, and `FINAL_USAGE_REPORT`. Token budgets are limits on the `externalCost` meter under `0170-budgets`. |
+| [§8.6 Lease Extension](../../spec/08_recursive-delegation.md#86-lease-extension) | The trigger is the exhaustion by charges of a limit of a session budget or a cap. The extension holds no call, and a granted extension lifts the binding suspension. |
+| [§10.2 Authentication](../../spec/10_gateway-internals.md#102-authentication) | Remove credential lease bearers. |
+| [§11.2](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) and [§11.2.1](../../spec/11_policy-and-controls.md#1121-billing-event-stream) | The "Token limits" row gives way to budgets on the `externalCost` meter of `0170-budgets`. `token_usage.checkpoint` loses its LLM token counts, and charges reach billing as `0121-billing-resource-attribution` states. |
+| [§11.3](../../spec/11_policy-and-controls.md#113-timeouts-and-cancellation) and [§11.4](../../spec/11_policy-and-controls.md#114-user-invalidation) | Remove the credential lease TTL and expiry warnings. |
+| [§12.2](../../spec/12_storage-architecture.md#122-storage-roles) and [§12.4](../../spec/12_storage-architecture.md#124-redis-ha-and-failure-modes) | Remove the LLM lease and token-budget keys. |
+| [§13.1](../../spec/13_security-model.md#131-pod-security), [§13.2.2](../../spec/13_security-model.md#1322-agent-pod-allow-list-policies), [§13.2.4](../../spec/13_security-model.md#1324-lenny-system-namespace-networkpolicies), [§13.2.5](../../spec/13_security-model.md#1325-gateway-egress-to-upstream-llm-providers), and [§13.2.6](../../spec/13_security-model.md#1326-per-pool-egress-relaxation-and-egressprofile) | Remove the pod's proxy listener allowance, the gateway's upstream egress rule `allow-gateway-egress-llm-upstream`, whose remaining purposes move to `allow-gateway-egress-external` of [`0138-rest-only-client-api`, "RO-2"](../0138-rest-only-client-api/change.md#ro-2-rest-additions) **Gateway egress.**, `provider-direct`, NET-006, and NET-044. |
+| [§13.3 Credential Flow](../../spec/13_security-model.md#133-credential-flow) | Replace the direct-mode and proxy-mode flows with the gateway path of "LLM gateways and external charges". |
+| [§14](../../spec/14_workspace-plan-schema.md#14-workspace-plan-schema) | Remove `credentialPolicy` from the plan. |
+| [§15.1 REST API](../../spec/15_external-api-surface.md#151-rest-api) | Remove `CREDENTIAL_POOL_EXHAUSTED`, `CREDENTIAL_PROVIDER_MISMATCH`, `CREDENTIAL_RENEWAL_FAILED`, `LEASE_SPIFFE_MISMATCH`, and the `provider` field of `/v1/credentials`. The charge routes and codes are `0170-budgets`'s. A write that names `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, `credentialPropagation`, `rotationTrigger`, or `maxRotationsPerSession` is refused with `400 VALIDATION_ERROR` naming the field (D9). |
+| [§16.1 Metrics](../../spec/16_observability.md#161-metrics), §16.1.1, and [§16.5](../../spec/16_observability.md#165-alerting-rules-and-slos) | Remove the lease, pool, rotation, renewal, pre-claim, proxy, and token-anomaly metrics and alerts. |
+| [§18.15](../../spec/18_build-sequence.md#1815-phase-55--basic-credential-leasing-token-service) and §18.18 | Restate the build phases without LLM leasing and the proxy. |
+| [§19 Resolved Decisions](../../spec/19_resolved-decisions.md#19-resolved-decisions), row 13 | The extension starts when charges exhaust a limit. |
+| [§23](../../spec/23_competitive-landscape.md#23-competitive-landscape) | Restate **Credential management** as the operator's gateway with Lenny's attribution and budgets. |
+| [§24.5 Credential Management](../../spec/24_lenny-ctl-command-reference.md#245-credential-management) | Keep VCS pool commands and remove the LLM ones. |
+| [§26.2](../../spec/26_reference-runtime-catalog.md#262-shared-patterns-for-coding-agent-runtimes) and §26.3 to §26.11 | Replace **Credential delivery.** and **Common `credentialCapabilities`.** with the gateway base URL of the pool's injected configuration. |
+| [§28.3](../../spec/28_communication-channels.md#283-registers), [§28.5.2](../../spec/28_communication-channels.md#2852-pod-to-gateway), [§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod), and [§28.5.5](../../spec/28_communication-channels.md#2855-pod-egress) | Retire `CH-LLMPROXY` in the naming table, remove the lease and rotation frames, and keep `llm_request_started` and `llm_request_completed`. |
 | [§29.2](../../spec/29_communication-scenarios.md#292-session-start), §29.4, §29.6, and §29.10 | Remove the pre-claim step, `AssignCredentials`, `ReportUsage`, `FINAL_USAGE_REPORT`, and per-slot leases. |
-| §2, §12.9, §17 compose warnings, §24.2, §24.15, and §24.18 | Restate the single mentions of token budgets, LLM keys in pools, pool diagnosis, and the `chat` template's lease rebind loop. |
 
 ## Non-specification changes
 
 | Area | Change |
 | :-- | :-- |
-| `pkg/gateway/meteringproxy/llmproxy` | Routes per format, the translator registry keyed by format and channel with `OpenAIResponsesTranslator` registered, SigV4 and the Messages API endpoint on Bedrock, the streaming endpoint fix, the stream deadline in place of the client timeout, `Usage` with token classes, the parsers of "Usage normalization" with the `google-generate` parser and its routes, the `gemini-api` and Vertex `generateContent` translators, `stream_options.include_usage`, upstream resolution with the model taken from the path on `google-generate`, and the proxy-token check, including `x-goog-api-key`. |
-| `pkg/llmupstream` (new concern directory) | The upstream and rate-card stores in Postgres, grants with the shared-upstream warning, list conflict checks, the pricing function with the fallback entry, and the proxy token store of "LU-3" **Session binding**. The API front, the session core, and the metering proxy read them, so they sit in a concern directory under `pkg/` rather than in a gateway part (`pkg/gateway/ARCHITECTURE.md`). |
-| `pkg/gateway/meteringproxy` (new packages beside `llmproxy`) | The workload identity exchangers for AWS, Google Cloud, and Azure, and forwarded attribution: the header strip and set, `headerMap` templates with escaping, the native user field, the per-upstream HMAC keys, and the `Lenny-Attribution` signer with its key set. |
+| `pkg/gateway/meteringproxy` with `llmproxy` and `sessionbudget`, `cmd/lenny-gateway/llmproxy_server.go`, and `llmproxy_usage.go` | Delete. |
 | `pkg/gateway/llmproxy/credrouter` and `pkg/gateway/session/tokenanomaly` | Delete. |
-| `tests/registers/gateway-layout.yaml` | The step that deletes a package listed with `removed-by: '0133'` deletes its row in the same commit: 0133.S2 the rows of `credassign`, `credfallback`, `credleasestore`, `credleasestore/pgstore`, `credrenewal`, `credrenewal/propagator`, `leaserevoke`, `pkg/gateway/llmproxy/credrouter`, and `pkg/gateway/session/tokenanomaly`. The register is a merge-gate file, so the step's diff is reviewed under "Review changes to the merge gate" of `.claude/rules/git-workflow.md`. |
-| `pkg/gateway/meteringproxy/sessionbudget` | Replace the in-process enforcer with `llm_credit_reserve.lua`, the settlement script that also stores the input ratio, the input estimate with its block detection per format, the recovery sweep, and the §8.6 call at reservation. |
-| `pkg/billing` and `pkg/billing/usagestore` | `llm_usage` rows, the checkpoint rollup, the correction fields, and the credit dual-control threshold. 0121.S2 of [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md) gives `usagestore` a keyed record, a unique key on `usage_window_key` with an insert that absorbs a duplicate, and 0133.S1 changes the record of an LLM call in the same store, so whichever of 0133.S1 and 0121.S2 lands second rebases on the other. Whether a `billing_correction` of `llm_usage` also corrects the `GET /v1/usage` figures is open decision 30 of 0121, whose option (a) names this change's usage record. |
 | `pkg/gateway/credentials` | Delete `credassign`, `credleasestore` with `credleasestore/pgstore`, `credrenewal` with `credrenewal/propagator`, `credfallback`, and `leaserevoke`. |
-| `pkg/credential` subpackages | Remove the LLM parts of `pkg/credential/denylist` and `pkg/credential/revocation`, and LLM providers in `pkg/credential/credentialpoolstore`. Keep VCS pool reads and writes, `pkg/credential/credentialstore` as UC-1 decides, and `pkg/credential/impersonation`. Delete `pkg/credential/credentialstore/pgstore` and `pkg/credential/usercreds`, which serve only the `provider` path, as UC-1 **Storage.** of `0151-user-credential-delivery` states. |
-| `pkg/credential` and `pkg/tokenservice` | Remove the LLM providers, `vault_transit`, `CredentialPolicy`, lease minting and validation, and `UserProxyDialect`. Admit `lenny-llmupstream-` reads. |
-| `pkg/gateway/core/session/sessionserver` | Replace `credential_preclaim.go` with the list check at the post-chain point. Remove `credentialPolicy` from creation and responses. |
-| `pkg/gateway/platformtools/delegation`, `pkg/gateway/platformtools/mcptools`, `pkg/gateway/platformtools/treebudget`, and `pkg/delegation/lease` | Remove `credentialPropagation`, and rename the budget to `maxCreditBudget`. |
-| `pkg/gateway/environment` | The tenant's `llm.upstreams`. The Open Responses and Chat Completions usage from records leaves this row, because those translators move to the provider adapters under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md). |
-| `pkg/gateway/api/admin` and `pkg/api/errorclassify` | The new routes and codes, the refusal of LLM providers on pools, the removed codes, and the lists of removed fields that the runtime, pool, tenant, bootstrap, derived-runtime, session-creation, and delegation-lease validators refuse by name under D9. |
-| `pkg/adapter` and `cmd/lenny-adapter` | Remove `credentials.go`, `credexpiry.go`, `slotcreds.go`, and `credfile` to the extent they serve LLM leases, `usage.go`'s `ReportUsage`, the rotation and usage frames in `runtimeops.go`, and the `ManifestLLM` delivery fields. Add the `llm` member's new fields. |
-| `cmd/lenny-gateway` | Remove `cred_renewal.go`, `cred_fallback.go`, `credential_lease_sweep.go`, `credential_lease_backfill.go`, `credential_denylist_rebuild.go`'s LLM part, `direct_usage.go`, `direct_usage_recovery.go`, and the LLM parts of `executor_credentials.go`, `credential_revocation.go`, `credentialsurface.go`, and `credentialsurface_seams.go` (0133.S2). Replace `session_budget.go`, `lease_budget_source.go`, and `budget_state_sweep.go`, which wire the in-process enforcer, and the usage quiescence wait (`validateUsageQuiescenceTimeout` in `startupgates.go`, `--delegation-usage-quiescence-timeout-seconds`, and `UsageQuiescenceTimeoutFor` in `pkg/gateway/core/session/sessionserver/usage.go`) with the wait for in-flight reservations (0133.S3). Wire the upstream stores, the reservation, and the recovery sweep. |
-| `pkg/apis/lenny/v1alpha1`, `pkg/controller/runtime`, and `pkg/gateway/runtime` | `llmFormats` in place of `supportedProviders` and `credentialCapabilities`. Regenerate the CRD manifests. |
-| `schemas/lenny-adapter.proto` and `schemas/lenny-tokenservice.proto` | Remove `AssignCredentials`, `RotateCredentials`, `ExtendCredentialLease`, and `ReportUsage` with `reserved` numbers, and the LLM lease messages. |
-| `migrations` | New tables `llm_upstreams`, `llm_upstream_grants`, `llm_rate_card_versions`, and `llm_usage`. Drop the LLM lease tables and the tenant `credential_policy` column. |
-| `charts/lenny` | Remove the direct-mode webhook, `egressCIDRs.providers`, and the `deliveryMode` gates. Render `allow-gateway-egress-llm-upstream` from upstreams. Add `bootstrap.llmUpstreams`, `bootstrap.llmRateCards`, `llm.tenantEndpointHosts`, and `llm.inputEstimate` with the defaults of "Input estimate". |
-| SDKs and reference runtimes | Read `llm.formats` and `llm.token`. Remove the rotation handling and the lease rebind loop. `gemini-cli` takes the `google-generate` base URL and the proxy token. |
-| Documentation | Replace `docs/operator-guide/external-llm-proxy.md` with a guide to gateway upstreams, add an operator guide to rate cards and credit budgets with an example card, and update the glossary, `security.md`, `metrics.md`, the API reference, the error catalog, the runtime author guide, and the runbooks the egress design lists. The pages state every item that follows. Settings and defaults: the upstream record and its fields with the channel and format pairs, the credential sources and who may use each, grants, the tenant `llm.upstreams` and pool `llmUpstreams` lists and their uniqueness rule, `bootstrap.llmUpstreams` and `bootstrap.llmRateCards`, `llm.tenantEndpointHosts`, `llm.inputEstimate` with the defaults of "Input estimate", `quotas.llmCredits.perCall`, `perUser`, `perTenant`, and `global` with their windows, `maxCreditBudget`, `proxyExtensionWaitTimeout`, the stream deadline per format, `billing.dualControlCreditThreshold` (default 0), `spiffeBinding`, and the `attribution` settings `attributes`, `headerMap`, `nativeUserField`, `pseudonymize` (default `[user]`), `rawIdentifiers`, and `signed`. Rate cards: versions, token classes, modifiers, and the fallback entry. Failure modes: the `400 VALIDATION_ERROR` that names a removed field of "LU-4" (D9), `LLM_UPSTREAM_NOT_CONFIGURED`, `LLM_MODEL_NOT_ALLOWED`, `LLM_MODEL_UNPRICED`, `LLM_UPSTREAM_DISABLED`, `LLM_UPSTREAM_CONFLICT`, `BUDGET_EXHAUSTED` with `details.limitType`, the 404 on every unparsed proxy path, an upstream error with no usage settling at zero, a stream without usage settling at its reservation, and the fail-open reservation during a Redis outage. Limits: every item of "Limits", including best-effort enforcement and its overshoot, unmetered calls outside the proxy, and a proxy token that works as a bearer when `spiffeBinding` is off. Metrics and alerts: the `lenny_llm_*` metrics and `LLMModelPricedAsFallback`. Runtime-facing rules: `llmFormats`, the `llm` member of `session_start` with its token and formats, the proxy routes per format, the token headers the proxy reads, the rule that the token stays out of the process environment, the pass-through of `cache_control` and the provider's refusal of a top-level one passed back unchanged, the stripping of inbound `Lenny-*` headers, and `llm_request_started` and `llm_request_completed` as the runtime's own report, shown as `source: runtime` usage and read by no budget. Cache isolation: "LU-9", including the residual signal between users of one upstream and provider retention. |
-| `BUILD-GAPS.md` | Close F-4.9.48, F-11.2.38, and F-11.2.34, resolve the lease-accounting findings of "Records" as obsolete, and file the findings "Validation owed" in `steps.md` lists. |
+| `pkg/credential` and `pkg/tokenservice` | Remove the LLM providers, `vault_transit`, `CredentialPolicy`, lease minting and validation, `UserProxyDialect`, and the LLM parts of `denylist` and `revocation`. Keep VCS pool reads and writes. |
+| `pkg/gateway/core/session/sessionserver` | Delete `credential_preclaim.go`. Remove `credentialPolicy` from creation and responses. |
+| `pkg/gateway/platformtools/delegation`, `pkg/gateway/platformtools/treebudget`, and `pkg/delegation/lease` | Remove `credentialPropagation` and the token budget of the lease. |
+| `pkg/gateway/api/admin` and `pkg/api/errorclassify` | The refusal of LLM providers on pools, the removed codes, and the lists of removed fields. |
+| `pkg/adapter` and `cmd/lenny-adapter` | Remove `credentials.go`, `credexpiry.go`, `slotcreds.go`, and `credfile` to the extent they serve LLM leases, `usage.go`'s `ReportUsage`, the rotation frames, and the `llm` member. |
+| `pkg/apis/lenny/v1alpha1`, `pkg/controller/runtime`, and `pkg/gateway/runtime` | Remove `supportedProviders` and `credentialCapabilities`. Regenerate the CRD manifests. |
+| `schemas/lenny-adapter.proto` and `schemas/lenny-tokenservice.proto` | Remove `AssignCredentials`, `RotateCredentials`, `ExtendCredentialLease`, and `ReportUsage` with `reserved` numbers. |
+| `migrations` | Drop the LLM lease tables and the tenant `credential_policy` column. |
+| `charts/lenny` | Remove the direct-mode webhook, `egressCIDRs.providers`, the `deliveryMode` gates, the proxy listener and its Service port, and `allow-gateway-egress-llm-upstream`, whose remaining purposes `allow-gateway-egress-external` of 0138 takes. |
+| `tests/registers/gateway-layout.yaml` | The step that deletes a package listed with `removed-by: '0133'` deletes its row in the same commit, and its diff is reviewed under "Review changes to the merge gate". |
+| SDKs and reference runtimes | Read the gateway base URL from the injected configuration. Remove the rotation handling and the lease rebind loop. |
+| `BUILD-GAPS.md` | Resolve the lease and proxy findings of "Records" as obsolete. |
 
 ### Documentation pages
 
-The "Documentation" row above states the content. The table below names each page the change edits, adds, or removes, its reader, and the step that edits it. A search of `docs/` on 2026-11-19 for `deliveryMode`, `credentialPolicy`, `proxyDialect`, `hotRotation`, `supportedProviders`, `credentialPropagation`, `credentialCapabilities`, `maxTokenBudget`, `CREDENTIAL_POOL_EXHAUSTED`, `CredentialPoolExhausted`, `TokenUsageAnomaly`, direct mode, and credential leases found the pages it lists.
-
 | Page | Reader | What changes for the reader | Step |
 | :-- | :-- | :-- | :-- |
-| `docs/tutorials/multi-tenant-setup.md` (the `GET /v1/usage` example) | Operator | Usage reports the token classes with cache writes by lifetime. | 0133.S1 |
-| `docs/operator-guide/external-llm-proxy.md` | Operator | Replaced by a guide to gateway upstreams: Patterns A and B give way to an upstream with `channel: gateway` and forwarded attribution ("LU-11"). | 0133.S2 |
-| New operator guide to rate cards and credit budgets | Operator | Rate cards, versions, the fallback entry, credit scopes, the input estimate, and the best-effort bound, with an example card that `lenny-ctl llm rate-card validate` accepts. | 0133.S3 |
-| `docs/operator-guide/configuration.md`, `docs/reference/configuration.md`, and `docs/operator-guide/installation.md` | Operator | `supportedProviders`, `credentialCapabilities`, `proxyDialect`, `deliveryMode`, and the direct-mode webhook leave; the upstream record, the lists, `bootstrap.llmUpstreams`, `bootstrap.llmRateCards`, `llm.tenantEndpointHosts`, and `llm.inputEstimate` arrive. | 0133.S2, with the credit settings in 0133.S3 |
-| `docs/operator-guide/security.md`, `docs/operator-guide/security-principles.md`, and `docs/operator-guide/multi-tenancy.md` | Operator | Keys stay in the gateway, the proxy token and `spiffeBinding`, tenant upstream endpoints, cache isolation per upstream with its residual, and calls outside the proxy as ordinary egress. | 0133.S2 |
-| `docs/operator-guide/observability.md`, `docs/reference/metrics.md`, `docs/alerting/rules.yaml`, and `docs/tutorials/alerting-and-openslo.md` | Operator | The LLM lease, pool, rotation, renewal, pre-claim, and anomaly metrics and the alerts `CredentialPoolExhausted`, `CredentialProactiveRenewalExhausted`, `OutstandingInflightAtRotationCeiling`, `DirectModeIsolationWebhookUnavailable`, and `TokenUsageAnomaly` leave; the `lenny_llm_*` metrics and `LLMModelPricedAsFallback` arrive. | 0133.S2 for the removals, 0133.S3 for the credit metrics and alerts |
-| `docs/operator-guide/lenny-ctl.md` | Operator | VCS pool commands stay; `lenny-ctl llm` commands for upstreams, rate cards, and unpriced models arrive. | 0133.S2, with `rate-card` and `unpriced` in 0133.S3 |
-| `docs/operator-guide/troubleshooting.md`, `docs/runbooks/index.md`, `docs/runbooks/credential-pool-exhaustion.md`, `docs/runbooks/credential-revocation.md`, `docs/runbooks/emergency-credential-revocation.md`, `docs/runbooks/token-usage-anomaly.md`, `docs/runbooks/admission-plane-feature-flag-downgrade.md`, `docs/runbooks/slo-session-creation.md`, `docs/runbooks/token-service-outage.md`, `docs/runbooks/postgres-failover.md`, and `docs/runbooks/elicitation-content-tamper-detected.md` | Operator on call | The runbooks for LLM pool exhaustion, LLM lease revocation, and token anomalies are removed or narrowed to VCS pools, and a runbook for unpriced models, calls priced as the fallback entry, and missing usage is added. | 0133.S2, with the pricing runbook in 0133.S3 |
-| `docs/reference/glossary.md`, `docs/getting-started/concepts.md`, `docs/getting-started/architecture.md`, `docs/index.md`, and `docs/about/why-lenny.md` | Evaluator and new operator | Credential leasing for LLM providers gives way to upstreams, the metering proxy, and credit budgets. | 0133.S2, with credit budgets in 0133.S3 |
-| `docs/api/rest.md`, `docs/api/admin.md`, `docs/api/index.md`, `docs/api/mcp.md`, `docs/api/internal.md`, and `docs/reference/error-catalog.md` | Client developer and operator | The upstream, grant, rate-card, and attribution-key routes, the new codes, the `400 VALIDATION_ERROR` for a removed field, and `BUDGET_EXHAUSTED` with `details.limitType`; `CREDENTIAL_POOL_EXHAUSTED` and `CREDENTIAL_PROVIDER_MISMATCH` leave. | 0133.S2, with `BUDGET_EXHAUSTED` in 0133.S3 |
-| `docs/client-guide/error-handling.md`, `docs/client-guide/session-lifecycle.md`, `docs/client-guide/authentication.md`, `docs/client-guide/delegation-and-tasks.md`, and `docs/reference/workspace-plan.md` | Client developer | `credentialPolicy` leaves the workspace plan and the create request, `LLM_UPSTREAM_NOT_CONFIGURED` replaces `CREDENTIAL_POOL_EXHAUSTED` at creation, and `maxTokenBudget` becomes `maxCreditBudget`. | 0133.S2, with `maxCreditBudget` in 0133.S3 |
-| `docs/reference/adapter-contract.md`, `docs/reference/state-machines.md`, `docs/runtime-author-guide/runtime-configuration.md`, `docs/runtime-author-guide/lifecycle.md`, `docs/runtime-author-guide/publishing.md`, and `docs/runtime-author-guide/platform-tools.md` | Runtime author | `llmFormats` replaces `supportedProviders` and `credentialCapabilities`; the `llm` member of `session_start` carries the token and formats; rotation, the credentials file, and `deliveryMode` leave. | 0133.S2 |
-| `docs/runtime-author-guide/delegation.md`, `docs/tutorials/recursive-delegation.md`, and `docs/tutorials/user-credentials.md` | Runtime author and client developer | `credentialPropagation` and the `provider` path of `/v1/credentials` leave (0133.S2); `maxTokenBudget` becomes `maxCreditBudget` (0133.S3). | 0133.S2 and 0133.S3 |
-| `docs/about/contributing.md` and `docs/about/status.md` outside its generated markers | Contributor | The examples that name `CREDENTIAL_POOL_EXHAUSTED` or `deliveryMode` follow the removal. | 0133.S2 |
+| `docs/operator-guide/external-llm-proxy.md` | Operator | Replaced by a guide to LLM gateways: the gateway as an egress destination, the attribution binding with its default `Authorization: Bearer` header and the `Lenny-Attribution` configuration for a gateway that keeps its own keys, the removal of the placeholder from other headers, verifying the assertion under either key set, the rule that a gateway grants no per-user privilege from it, the check of the `tenant` claim by a gateway run by a tenant, the two setups of "LU-3", charges with Lenny's budgets and external enforcement with limit notices and the runtime's `external_limit` frame, with a session's suspension until its client resumes it; reporting batched charges by `jti` with the reporting rules of "BG-12" (the call's start as `occurredAt`, the flush every second or 500 charges, `budgets.currency`, and an alert on unpriced models), `netagent`'s `429` and `403` once attribution is suspended, the runtime configuration per client (Claude Code with `ANTHROPIC_BASE_URL` and `ANTHROPIC_AUTH_TOKEN`, Codex CLI with a `model_providers` entry, and gemini-cli with `GOOGLE_GEMINI_BASE_URL` and `GEMINI_API_KEY`), the reference integrations of "LU-9", end-to-end configurations for LiteLLM, Envoy AI Gateway, and a gateway run by a tenant, and the checks of "Validation owed". | 0133.S1 |
+| `docs/runtime-author-guide/runtime-configuration.md`, `docs/reference/adapter-contract.md`, and `docs/runtime-author-guide/lifecycle.md` | Runtime author | The gateway base URL from the injected configuration in place of the `llm` member, `busy: true` heartbeats while waiting on a model, and `llm_request_completed` as the runtime's own report. | 0133.S1 |
+| `docs/operator-guide/security.md`, `docs/operator-guide/security-principles.md`, and `docs/operator-guide/multi-tenancy.md` | Operator | No LLM key in Lenny, the attribution assertion and its residual on reused pods, guardrails in the gateway, and calls outside the gateway. | 0133.S1 |
+| `docs/operator-guide/configuration.md`, `docs/reference/configuration.md`, `docs/operator-guide/installation.md`, and `docs/operator-guide/lenny-ctl.md` | Operator | `supportedProviders`, `credentialCapabilities`, `proxyDialect`, `deliveryMode`, `credentialPolicy`, and the LLM pool commands leave. | 0133.S2 |
+| `docs/operator-guide/observability.md`, `docs/reference/metrics.md`, `docs/alerting/rules.yaml`, the runbooks of credential pools, revocation, and rotation, and `docs/operator-guide/troubleshooting.md` | Operator | The lease, pool, rotation, renewal, pre-claim, and proxy metrics, alerts, and runbooks leave. | 0133.S2 |
+| `docs/reference/glossary.md`, `docs/getting-started/concepts.md`, `docs/getting-started/architecture.md`, `docs/index.md`, and `docs/about/why-lenny.md` | Evaluator and new operator | Credential leasing and the proxy give way to the operator's gateway with Lenny's attribution and budgets. | 0133.S2 |
+| `docs/api/rest.md`, `docs/api/admin.md`, `docs/api/internal.md`, `docs/reference/error-catalog.md`, `docs/client-guide/error-handling.md`, `docs/client-guide/delegation-and-tasks.md`, and `docs/reference/workspace-plan.md` | Client developer and operator | The removed codes and fields. | 0133.S2 |
+| `docs/runtime-author-guide/delegation.md`, `docs/tutorials/recursive-delegation.md`, and `docs/tutorials/user-credentials.md` | Runtime author and client developer | `credentialPropagation` and the `provider` path leave. | 0133.S2 |
 
 ## Tests
 
 | Tier | Coverage |
 | :-- | :-- |
-| `unit` | Each parser against the class table, on fixtures for every format, `google-generate` included, non-streaming and streaming: Anthropic input excludes cached tokens, OpenAI input subtracts cached and cache-write tokens, Google input subtracts `cachedContentTokenCount` and its output adds `thoughtsTokenCount`, the last `message_delta` wins, the write split comes from `message_start` with the remainder priced at the higher lifetime, and a stream without usage yields no counts (LUR-4). Allowlist matching and the prefix conflict rule, the refusal of a conflicting list, upstream, or grant write, and resolution to one upstream or a refusal (LUR-2). The pool list replaces the tenant list, and a shared pool's list is filtered by grant. Pricing in integer micro-credits with long-context rates, modifiers, server tools, the endpoint multiplier, and the discount. Version selection by call start, refusal of a past `effectiveFrom`, and served-model pricing with the requested-model fallback (LUR-8). An unpriced model priced as the version's fallback entry with `priced_as: fallback` and the counter raised, an unpriced model refused with `LLM_MODEL_UNPRICED` before reservation when the version names no fallback entry, and a `fallback` that names no entry refused at write (LUR-15). The `google-generate` model taken from the request path. The input estimate: text bytes divided by `k` on a first call, text bytes times the stored ratio on a later call, base64 image and document blocks counted at their fixed estimates and excluded from text bytes for each format, the ratio computed at settlement with block estimates subtracted, a call with no usage or no text bytes leaving the ratio unchanged, and the fallback to `k` when the ratio cannot be read. The reservation price for each `cache_control` lifetime. Settlement at the reservation for a missing usage report and at zero for an upstream error. The worked example's figures. Forwarded attribution: each channel's default attribute set, the pseudonym stable for one user on one upstream and different on another, `rawIdentifiers` sending raw values, `headerMap` templates escaped for a tag list and for a JSON object and a template of another form refused at write, the native user field written per format when set and left alone when not, `prompt_cache_key` and `cache_control` never changed, and the `Lenny-Attribution` JWT's type, audience, expiry, and claims (LUR-13). The grant warning fires when a grant makes a `hipaa` or `fedramp` tenant share an upstream in either direction, and not otherwise. A call that starts while every version of its card has a future `effectiveFrom` is refused with `LLM_MODEL_UNPRICED` before reservation, and a reservation above `quotas.llmCredits.perCall` is refused with `BUDGET_EXHAUSTED` and `details.limitType: perCall`. The name of a gateway-written Secret differs for two tenants' upstreams of one name and for the credential and attribution purposes of one upstream. |
-| `component` | `llm_credit_reserve.lua` and the settlement script against Redis: all scopes or none, the per-call ceiling, the refusing scope named, expiry of an abandoned reservation, the recovery sweep, and the input ratio written by settlement into the session's budget record and read for the next call, kept per upstream and model and deleted with the record. The new tables and the dropped columns on Postgres, and `llm_usage` erasure by user. Recovery: an expired reservation stays in its scopes' counters at the reserved amount, the sweep marks it recovered and writes `usage_source: reservation_recovered`, a settlement that arrives after the recovery changes no counter, and a late usage report updates the usage record alone. The proxy token record is found by the token's hash, a re-bind replaces it, and its deletion makes the token unresolvable. These scripts also run against a Redis Cluster under the key layout open decision 6 settles. |
-| `contract` | The admin schemas for upstreams, grants, and rate cards, with no secret in any read. A runtime, pool, tenant, bootstrap, derived-runtime, session-creation, or delegation-lease write that names any of `deliveryMode`, `credentialPolicy`, `supportedProviders`, `credentialCapabilities`, `credentialPropagation`, `rotationTrigger`, and `maxRotationsPerSession`, with any value, is refused with `400 VALIDATION_ERROR` whose `details.field` names it, and the same write without the field succeeds (D9). The `llm` member of `session_start` and the manifest without delivery fields. The new error codes and `BUDGET_EXHAUSTED` details. `token_usage.checkpoint` with `llm_usage`, the fallback-priced count, and the estimate label, the usage record's `priced_as`, and the correction body. The proto files with reserved numbers. The rate-card routes with their roles: a `tenant-admin` reads the cards of granted platform upstreams and writes only its tenant's cards, a card write with a model entry that lacks `maxOutputTokens` is refused, an upstream write with no `rateCard` or with a card another upstream names is refused, and a card `DELETE` is refused while an upstream names it or a usage record cites one of its versions. |
-| `integration` | On the compose stack against an upstream fake per format, `google-generate` included: a session's calls through each route record usage with every attribution field (LUR-3). A call over the session budget triggers the extension before the fake is called, and a terminal extension returns `BUDGET_EXHAUSTED` with no call reaching the fake (LUR-5, LUR-9). A user, tenant, or global window refusal returns `BUDGET_EXHAUSTED` with no extension. A delegated child carves `maxCreditBudget`, resolves its own list, and returns its budget after its reservations settle. A checkpoint rolls up per upstream, model, and version. A session whose list serves none of its runtime's formats is refused at creation. `cache_control` reaches the fake byte for byte (LUR-10). An `inject` binding on a provider host is accepted as an ordinary binding, and posture lists no LLM entry for it. A tenant egress route on an upstream's endpoint host does not take that host (LUR-11). A session's second call lands on another replica and reserves from the ratio the first call's settlement stored. A call whose model only the fallback entry prices reaches the fake and its usage record carries `priced_as: fallback`. A runtime that sends `Lenny-User`, `lenny-tenant`, an `x-litellm-tags` header that the upstream's `headerMap` names, or, with `nativeUserField` on, its own `metadata.user_id` reaches the gateway fake with the proxy's values alone, and a delegated child's request carries its own session and its root (LUR-13). The `Lenny-Attribution` JWT verifies against `GET /v1/admin/llm-attribution-keys` and fails for another upstream's audience. Posture lists the tenants sharing each upstream and the warning for a shared upstream of a `hipaa` tenant (LUR-14), in the form open decision 7 settles. A session whose call was refused after a terminal extension stays running, its later calls are refused until its budget is raised, and a call after the raise reaches the fake (decision 5). |
-| `e2e_kind` | On Kind: the agent pod reaches the proxy listener without a delivery-mode label, the gateway reaches an upstream through the rendered egress rule, a Bedrock upstream under workload identity signs with the gateway's role against a recorded endpoint, and a Vertex upstream under workload identity presents a token exchanged from the gateway's Google service account against a recorded endpoint. |
-| `load_local` | Concurrent calls in one session and one tree never start a call in a scope past its limit, take a scope past its limit by no more than the summed estimate error of the calls in flight, and refuse the next reservation once the limit is passed, under `-race`. A withdrawn grant during concurrent calls refuses every later call. |
-| `chaos` | A replica killed mid-stream leaves a reservation that the sweep settles at its amount. A Redis outage falls back to the per-replica ceiling in credits with the input estimate at bytes divided by `k`, and reconciles on recovery. A replica removed by a scale-down, with reservations in flight, never restarts, and the sweep on the replica that holds the leader lease recovers its reservations. |
-| `security` | No provider secret appears in a pod's environment, files, `session_start`, or logs (LUR-1). A proxy token from another pod is refused under `spiffeBinding`. A tenant cannot name another tenant's upstream or an ungranted platform upstream, cannot read a secret, and cannot point an upstream at a host outside the allowlist or at a cluster, private, or link-local address (LUR-12). A runtime cannot raise its budget by omitting `max_tokens` or by streaming. A runtime cannot forge or remove any forwarded attribute, and a raw user ID never reaches an upstream whose settings make it pseudonymous (LUR-13). A proxy token is refused after its session ends, after its pod is released, and, after a resume onto a replacement pod, the previous pod's token is refused. Two tenants that each register an upstream named `anthropic` hold separate credential and attribution Secrets and produce different pseudonyms for one user ID, and a `secretRef` registration that names a `lenny-llmupstream-` Secret is refused. |
-| `docs` | The rate-card guide's example validates with `lenny-ctl llm rate-card validate`, every new code maps to a runbook, and no document describes direct mode or LLM credential pools. |
-| `static` | A repository check finds no `deliveryMode`, `credentialPolicy`, `CredentialRouter`, `hotRotation`, `supportedProviders`, `credentialPropagation`, or `vault_transit` outside migrations, the validators' lists of removed fields and their tests (D9), the records, and `proposals/`. |
+| `contract` | A runtime, pool, tenant, bootstrap, derived-runtime, session-creation, or delegation-lease write that names a removed field is refused with `400 VALIDATION_ERROR` naming it (D9). |
+| `integration` | On the compose stack with a gateway fake that verifies the assertion and reports charges: a call through `netagent` reaches the fake with the session's assertion and no runtime-sent value of its header (LUR-2); a call to an unbound host carries none (LUR-3); charges citing each call's `jti` count against the session's budgets; charges exhaust a session budget, the bindings of every session of the tree are suspended, and `netagent` answers the next call with `429` and `Retry-After` while the extension is pending and `403` naming the budget once it is final, with no request reaching the fake (LUR-3, LUR-5); a granted extension, or a void of the exhausting charge, lifts the suspension and the retried call reaches the fake; a request from an SDK that sends `x-api-key: lenny-injected` reaches the fake with the assertion in `Authorization` and no `x-api-key`; a call outside the gateway carries no assertion and charges nothing (LUR-7). |
+| `e2e_kind` | On Kind: a runtime reaches an in-cluster gateway registered as a private egress upstream, through `netagent` and `lenny-egress`. |
+| `security` | No LLM provider key appears in a pod's environment, files, frames, or logs (LUR-1). A runtime that sends its own `Lenny-Attribution` header reaches the gateway with the session's assertion alone. A raw-socket request from an `internet` pool carries no valid assertion. |
+| `docs` | No document describes direct mode, LLM credential pools, the proxy, or rate cards. |
+| `static` | A repository check finds no `deliveryMode`, `credentialPolicy`, `CredentialRouter`, `hotRotation`, `supportedProviders`, `credentialPropagation`, `vault_transit`, `llmFormats`, or `/llm-proxy/` outside migrations, the validators' lists of removed fields, and archived records. |
 
 Every test carries the `// spec:` annotation, and tests of the `component` tier and the tiers after it carry `// diagnosis:`, as `test-coverage.md` requires.
 
 ## Instructions for reviewers of other designs
 
-- [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md): its reviewer:
-  - replaces RC-B in "Steps" in `steps.md`, the "Metering (O2)" half of RC-5, O2, RCR-6, the O2 rows of "Specification changes", and the O2 tests with a pointer to LU-A of this design, which adopts the cost weighting of O2's option (c) through rate cards in credits and keeps every class as a separate count;
-  - keeps O1 and the passthrough half of RC-5, restated by D7 as settled: Lenny never strips or rewrites `cache_control`, isolation follows the upstream's provider account or workspace, posture lists the tenants sharing each upstream, a grant that makes a `hipaa` or `fedramp` tenant share one emits a warning, and users of a shared upstream can detect each other's cached prompt prefixes through `cache_read_input_tokens` and latency unless a downstream LLM gateway separates them by the forwarded user attribute (LU-11). Its advice to give each tenant's pools a separate provider organization or workspace becomes a separate upstream per tenant;
-  - corrects the provider facts against the pages read on 2026-11-09: Anthropic's caching guide states that the legacy Bedrock integration for Opus 4.6 and earlier returns 400 for a top-level `cache_control` and states no restriction for Google Cloud, so RCR-5 and its test expect the provider's error to pass through unchanged on that integration, and the OpenAI retention figure is checked against the guide's 30-minute and 12-hour write lifetimes **[external]**;
-  - adds the anchor redirect for the retitled §18.39, which `TESTING.md` links.
-- [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md): its reviewer states the exception to "Lenny records quantities, and the operator's billing system prices them" for LLM calls (OD-6), names `llm_usage` among the fields a `billing_correction` replaces, adds `billing.dualControlCreditThreshold` beside the threshold that "adds tokens and pod minutes", and keeps "Token metering, which §11.2 already covers" out of its scope, pointing at this design.
-- [`0127-egress-and-git`](../0127-egress-and-git/change.md): its reviewer:
-  - restates P3 as "Provider keys registered on LLM upstreams reach a provider only from the gateway", and states that a provider key in a tenant's `inject` binding is an ordinary binding credential, with no LLM-specific grant (OD-8);
-  - drops the `deliveryMode: direct` pairing from "Consolidating `provider-direct`" and decision 1, the "Long LLM streams in direct mode" scenario, and the residuals that rest on direct mode;
-  - states in "Delivery modes" that an `inject` binding on an LLM provider's host needs no grant beyond an ordinary binding, and that egress to a provider outside the LLM proxy is treated as any other egress traffic (OD-8, OD-15);
-  - restates the LLM host reservation in "Configuration by scope" as the endpoint hosts of upstream records;
-  - restates the Token Service readiness text without "the gateway lease path" for LLM credentials, the quota sentence on concurrent sessions per pod times the LLM streams, and `credential.leased` as a VCS event;
-  - keeps the LLM proxy outside `netagent` and keeps `CH-LLMPROXY` unchanged.
-- [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md): its reviewer removes the `supportedProviders` row from "Fields", replaces the `credentialCapabilities` row with `llmFormats` (narrow, a subset of the base's), removes `deliveryMode` and `allowDirectModeStandardIsolation` from DR-5's template copy row, adds the owned pool's `llmUpstreams` as a tenant-settable, gateway-read setting, replaces DR-6's "no provider left" case with an emptied `llmFormats`, removes `validatePoolProxyDialect` from DR-4 "Reading", and records a change to settled decision 14: the residual is the session's proxy token on a pool with `egressProfile: internet`, bounded by its budgets, since no LLM credential lease exists.
-- [`0140-runtime-revisions`](../0140-runtime-revisions/change.md): its reviewer replaces `credentialCapabilities` with `llmFormats` (versioned, gateway-read) in "Field classes", removes `supportedProviders` from the live class, replaces the note that "A pool with `deliveryMode: proxy` requires `credentialCapabilities.proxyDialect`" with the list check at the post-chain point on the chosen revision, restates RV-5's narrowing examples with `llmFormats`, and changes the tier 1 test row accordingly.
-- [`0142-security-oversight`](../0142-security-oversight/change.md): its reviewer adds the `llm` posture section of LU-8, with the other tenants that share each upstream and the shared-upstream warning for `hipaa` and `fedramp` tenants of D7, adds no gate, guardrail, or posture entry for LLM traffic outside the proxy (OD-8, OD-15), and confirms that SO-3's citations of **Credential Storage Topology** and **Token Service secret resolution** stay in §4.9. The interceptor residual is unchanged.
-- [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md): its reviewer, under OD-10, makes decision 3 the `type` path alone, with no LLM provider among the types, because Lenny stores no user LLM key and a downstream LLM gateway holds per-user keys (D8); drops decision 5's LLM-path meaning and the statement that the `credentials` table stays for LLM credentials; drops "`RotateUser` only re-caches for the LLM proxy" and the `credentialPropagation` remark in UC-3; and removes the direct-mode gap from UC-6, adding calls outside the proxy to its limits.
-- [`0126-delegation-availability`](../0126-delegation-availability/change.md): its reviewer reads the budgets of §8.3 in its terms and its O3 recommendation as credit budgets. D4's per-hop switch `lease_slice.maxChildrenTotal: 0` is unaffected, and `lease_slice.maxTokenBudget` becomes `maxCreditBudget`.
-- [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md): its reviewer:
-  - replaces the AM-8 row `503 CREDENTIAL_POOL_EXHAUSTED` with `422 LLM_UPSTREAM_NOT_CONFIGURED` mapped to `invalid_request_error` with `x-should-retry: false`, and adds `BUDGET_EXHAUSTED` with its scope;
-  - restates AM-6's usage from the session's usage records in the turn, so `cache_read_input_tokens` and `cache_creation_input_tokens` report the turn's values, and decides whether `input_tokens` reports the sum over the turn's model calls or the last call's input, because a summed figure can trigger a client's compaction;
-  - keeps "Kept" for the proxy's `anthropic-messages` route and listener, now one of several formats, and states that the proxy's wire types stay shared with the client surface.
-- [`0135-message-delivery`](../0135-message-delivery/change.md): its reviewer reads `costUnits` in MD-20 as the estimated cost in credits of a call through the proxy, and keeps the `source: runtime` usage from `llm_request_completed`, which this design keeps as the runtime's report of a call it sends outside the proxy. No budget reads it (OD-15).
-- [`0123-connector-authorization-and-external-memory`](../0123-connector-authorization-and-external-memory/change.md): its reviewer replaces the `CREDENTIAL_POOL_EXHAUSTED` analogy in "Check at delegation" under CA-7 with `LLM_UPSTREAM_NOT_CONFIGURED`. [`0124-connector-removal`](../0124-connector-removal/change.md#cr-1-removal) has since withdrawn CA-7 with connectors, so the instruction has no target and stands as the record of what was asked.
-- [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md): its reviewer replaces "any LLM host a pool names" in the reserved set and the `outboundGateway.reservedHosts` row with the endpoint hosts of upstream records. 0148 revision 33 applied this instruction on 2026-11-19 (0148-F10, connectors-llm-billing-C3).
-- [`0141-runtime-routing`](../0141-runtime-routing/change.md): its reviewer removes `credential_pool_id` from the `PostRoute` payload rows and "the credential pool assignment" from RT-2's payload audit.
-- [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md): its reviewer removes the `credentialPropagation: inherit` row from TS-3's interactions table and states that a crossing child uses the target environment's upstream list. TS-6 keeps `allow-gateway-egress-llm-upstream`, which now renders from upstream endpoints.
+Decision 22 retires the metering proxy, upstream records, rate cards, credits, reservations per call, `llm_usage`, the proxy token, `PreLLMRequest`, `PostLLMResponse`, and `llmFormats`. Each change below records what it takes on in its own `decisions.md` or review history and edits the sections named. A reviewer of a change not listed searches it for those terms and the LU-n and LUR-n labels of revisions 1 to 19, and restates each mention as this revision does, or removes it.
+
+- [`0170-budgets`](../0170-budgets/change.md): the `externalCost` meter replaces the `llm` meter and `llmCredits` (its decision 57), "BG-12" owns the charge ingestion API, and the price list loses its `llm` section and the tenant upstream prices of decision 54.
+- [`0124-connector-removal`](../0124-connector-removal/change.md): CR-2 gains the attribution assertion with its D11 exemption, its residual, its key set, its header, its mint index, and hosts bound to one tenant (its decisions D13 to D20).
+- [`0127-egress-and-git`](../0127-egress-and-git/change.md): bindings at platform or pool scope (its decision 84), binding suspension with `netagent`'s answers to a suspended session (its decision 85), and the removal of the placeholder on an attribution binding's hosts; the LLM host reservation and the restatement of P3 around upstream records leave, because Lenny holds no LLM credential.
+- [`0166-delegation-primitives`](../0166-delegation-primitives/change.md): decision 53's required limits are `externalCost` and a compute meter, and the extension of DP-3 starts on exhaustion by charges (its decision 55).
+- [`0142-security-oversight`](../0142-security-oversight/change.md): SO-5a's `llmCreditsAbove` becomes `spendAbove` in the currency on `externalCost`, and the posture `llm` section leaves (its decision 48).
+- [`0146-session-lifecycle`](../0146-session-lifecycle/change.md): SLR-23's refusal in the proxy gives way to the egress halt, and SL-6 drops usage reports as activity (its decision L38).
+- [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md): UC-6 scans no model call.
+- [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md): a quarantine stops LLM access by suspending the session's attribution bindings.
+- [`0141-runtime-routing`](../0141-runtime-routing/change.md) and §4.8: `PreLLMRequest` and `PostLLMResponse` leave, and the post-chain point runs no upstream-list check.
+- [`0135-message-delivery`](../0135-message-delivery/change.md), [`0121-billing-resource-attribution`](../0121-billing-resource-attribution/change.md), [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), and [`0120-anthropic-messages-api`](../0120-anthropic-messages-api/change.md): usage comes from charges' optional `usage` (`source: external`) and from runtime reports, and `llm_usage` and the credit estimate on billing events leave. 0138 also states `allow-gateway-egress-external`, the gateway's one outbound HTTPS rule, which takes the remaining purposes of `allow-gateway-egress-llm-upstream`.
+- [`0147-tenant-derived-runtimes`](../0147-tenant-derived-runtimes/change.md) and [`0140-runtime-revisions`](../0140-runtime-revisions/change.md): `llmFormats` and the creation-time format check leave, and the proxy token residual becomes the attribution residual of CR-2.
+- [`0132-llm-response-cache-removal`](../0132-llm-response-cache-removal/change.md): RC-B and O2, which moved here, are moot with the proxy, and RC-5's passthrough statement has nothing left to describe.
+- [`0149-tenant-scoping-identity`](../0149-tenant-scoping-identity/change.md): the gateway reaches customer issuers over `allow-gateway-egress-external` of 0138, and a crossing child carries no upstream list.
+- [`0117-gateway-package-layout`](../0117-gateway-package-layout/change.md), [`0144-session-derive`](../0144-session-derive/change.md), [`0148-tenant-outbound-connector`](../0148-tenant-outbound-connector/change.md), [`0139-runtime-protocol`](../0139-runtime-protocol/change.md), [`0118-agent-pod-layout`](../0118-agent-pod-layout/change.md), and [`0126-delegation-availability`](../0126-delegation-availability/change.md): the `meteringproxy` packages, examples in `llmCredits`, the LLM host reservation, the `llm` member of `session_start`, the credentials file, and credit budgets in §8.3 leave or are restated.
 
 ## Sources
 
-This design read the pages marked "re-read" on 2026-11-09. The others were read on the same date by the owner's analysis that this design develops, and "Validation owed" in `steps.md` lists them for a second reading.
-
-- Anthropic, Messages API reference, https://platform.claude.com/docs/en/api/messages/create, re-read. The `usage` fields and the statement that total input is the sum of `input_tokens`, `cache_creation_input_tokens`, and `cache_read_input_tokens`.
-- Anthropic, Streaming messages, https://platform.claude.com/docs/en/build-with-claude/streaming, re-read. "The token counts shown in the `usage` field of the `message_delta` event are *cumulative*", and the fields of `MessageDeltaUsage`.
-- Anthropic, Prompt caching, https://platform.claude.com/docs/en/build-with-claude/prompt-caching, re-read. Isolation by workspace and by organization per platform, and the legacy Bedrock refusal of a top-level `cache_control`.
-- Anthropic, Pricing, https://platform.claude.com/docs/en/about-claude/pricing, re-read. Cache writes at 1.25 times and 2 times base input, and cache reads at 0.1 times with per-model exceptions.
-- OpenAI, Prompt caching guide, https://developers.openai.com/api/docs/guides/prompt-caching, re-read. Ordinary input computed as `input_tokens - cached_tokens - cache_write_tokens`, and `cache_write_tokens_details` with `ttl_30m_tokens` and `ttl_12h_tokens`.
-- OpenAI, Chat Completions create, https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create, re-read. Stream usage under `stream_options.include_usage`, and the final usage chunk that may not arrive on an interrupted stream.
-- Anthropic, Claude in Amazon Bedrock, https://platform.claude.com/docs/en/build-with-claude/claude-in-amazon-bedrock, from the analysis. The Messages API endpoint on `bedrock-mantle`.
-- Amazon Web Services, IAM principal cost tracking, https://docs.aws.amazon.com/bedrock/latest/userguide/cost-mgmt-iam-principal-tracking.html, from the analysis. Per-user role sessions with session tags for gateways.
-- Anthropic, Workspaces, https://platform.claude.com/docs/en/manage-claude/workspaces, and Usage and Cost API, https://platform.claude.com/docs/en/manage-claude/usage-cost-api, from the analysis. Workspace cost reports and limits.
-- Microsoft, Deployment types, https://learn.microsoft.com/en-us/azure/ai-foundry/foundry-models/concepts/deployment-types, from the analysis.
-- Anthropic, Messages API reference, https://platform.claude.com/docs/en/api/messages/create, re-read for `metadata.user_id`: "An external identifier for the user who is associated with the request", at most 512 characters, "a uuid, hash value, or other opaque identifier", with no name, email address, or phone number.
-- OpenAI, Chat Completions create, https://developers.openai.com/api/reference/resources/chat/subresources/completions/methods/create, re-read for `user`, which "is being replaced by `safety_identifier` and `prompt_cache_key`", `safety_identifier` at most 128 characters with hashing recommended, and `metadata` as 16 pairs.
-- LiteLLM, Cost tracking, https://docs.litellm.ai/docs/proxy/cost_tracking, read. The `user` field recorded as the end user, with the warning that end users can set it themselves, `metadata.tags`, `x-litellm-tags`, `extra_spend_tag_headers`, and `x-litellm-spend-logs-metadata`.
-- LiteLLM, Users and budgets, https://docs.litellm.ai/docs/proxy/users, read. End-user budgets keyed by the request's `user` through `max_end_user_budget_id`.
-- LiteLLM, Tag routing, https://docs.litellm.ai/docs/proxy/tag_routing, read. Tags from the body or `x-litellm-tags`, deployment tags, and `tag_regex` over request headers.
-- Portkey, Metadata, https://portkey.ai/docs/product/observability/metadata, read. `x-portkey-metadata` with the `_user` key, string values of at most 128 characters, and `HEADERS_TO_METADATA` on self-hosted Enterprise gateways.
+- LiteLLM, Cost tracking, https://docs.litellm.ai/docs/proxy/cost_tracking, read on 2026-11-09. Spend per request, tags from headers through `extra_spend_tag_headers`.
+- Portkey, Metadata, https://portkey.ai/docs/product/observability/metadata, read on 2026-11-09. `HEADERS_TO_METADATA` on self-hosted deployments.
+- RFC 8725, JSON Web Token Best Current Practices, section 3.11 on explicit typing, as CR-2 of `0124-connector-removal` cites it **[external]**.

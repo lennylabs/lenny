@@ -15,16 +15,18 @@
 
 ### 0138.S1 REST additions
 - status: Planned
-- aliases: [RO-A, RO-2, R1, R2, R3, R4, R5, R7, R8, R12, R13, R14, R15, R16, R17, R19]
+- aliases: [RO-A, RO-2, R1, R2, R3, R4, R5, R7, R8, R12, R13, R14, R15, R16, R17, R19, R25]
 - lanes: [specification, code, documentation]
 - depends-on: [0135.S5, 0146.S1, 0122.S1, 0120.S1, 0139.S1 (part), 0141.S2 (part), 0142.S6 (part)]
 - closes: [APICONV-I1]
 
-The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, and R19, R13's download origin, the event stream's rules moved from §15.2 with its close at expiry and revocation, and their tests. It needs MD-E's events, SL's routes, CT-A, and AM-A, so that the message and conversation members exist. It needs the effective capabilities of RP-2 (0139.S1) for R19, the aliases of RT-4's "Discovery" (0141.S2) for R8, and the tool-use approvals of SO-5a (0142.S6) for R4's approval list.
+The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, R19, and R25, R13's download origin, the event stream's rules moved from §15.2 with its close at expiry and revocation, and their tests. It needs MD-E's events, SL's routes, CT-A, and AM-A, so that the message and conversation members exist. It needs the effective capabilities of RP-2 (0139.S1) for R19, the aliases of RT-4's "Discovery" (0141.S2) for R8, and the tool-use approvals of SO-5a (0142.S6) for R4's approval list.
 
 R5's key scope changes `Key` in `pkg/idempotency` from the tenant and the key to the scope R5 states, with a migration of `idempotency_keys`, which §11.5 keys by `(tenant_id, idempotency_key)` today. R4's link-prompt entries of UC-8 land with 0151.S8, which depends on this step and adds them to R4's lists. R19 sends the `Interrupt` RPC, whose check of the coordination generation is open as [CHGWPOD-I10](../../issues/CHGWPOD/CHGWPOD-I10-interrupt-ignores-coordination-generation.md).
 
 This step goes first because every adapter and every Lenny client depends on it.
+
+R25, the history read, lands here, and 0166.S3 binds `session.messages` to it. R20 to R24 and R26 are stated in "RO-2" and land with the steps that build their mechanisms, each of which edits §15.1 for its addition and depends on this step for the REST surface it extends: R20 with the step of [`0135-message-delivery`](../0135-message-delivery/steps.md#steps) that makes the `append` intent ready for every sender; R21 and R23 with [0166.S1](../0166-delegation-primitives/steps.md#steps), which builds `session.transfer` and `session.release`; R22 with the step of [`0122-client-tools`](../0122-client-tools/steps.md#steps) that builds the blocking interface; and R24 with 0166.S1 and the step of [`0146-session-lifecycle`](../0146-session-lifecycle/steps.md#steps) that builds the hand-off; and R26 with [0170.S6](../0170-budgets/steps.md#steps), which lands the external limit suspension of 0146 (L45). Decision 35 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md) assigns these additions to this change.
 
 Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-PendingInputWaits` so that it returns a session's pending elicitation entries with their provenance in place of their identifiers (R4), and adds the list of a session's pending approvals (R4), a crossing that has no operation yet. It reshapes `GWSEAM-HandleRoute` and `GWSEAM-RegisterRoutes` for the route tags (R7) and for the download listener of R13, which `GWSEAM-HandleRoute` does not know today. For the stream close of "RO-1", it reshapes `GWSEAM-RequestCaller` so that the caller it returns carries the bearer's expiry, and gives `GWSEAM-IsBearerRevoked` the stream proxy as a caller, under the revocation sources that open decision O15 settles. R1's `seq` is the sequence number that `GWSEAM-Publish` already returns, so that operation keeps its form.
 
@@ -63,9 +65,9 @@ Lenny's clients on REST: SDKs, CLI, and playground ("RO-7").
 - status: Planned
 - aliases: [RO-E, RO-5, RO-6, RO-8, RO-9, RO-10]
 - lanes: [specification, code, documentation]
-- depends-on: [0138.S1, 0138.S2, 0138.S3]
+- depends-on: [0138.S1, 0138.S2, 0138.S3, 0166.S1 (part)]
 
-The conformance kit, the umbrella chart's dependencies and routes, and the creation of the adapter repositories with their first releases. It needs 0138.S3 for the A2A adapter.
+The conformance kit, the umbrella chart's dependencies and routes, and the creation of the adapter repositories with their first releases. It needs 0138.S3 for the A2A adapter. It needs the part of 0166.S1 that builds `session.release` with `handoff: true`, so that the MCP and A2A adapters follow a hand-off under "RO-3" and the kit checks it. The provider adapters' client tool calls need R22, which lands with the step of 0122 that builds the blocking interface.
 
 ### 0138.S6 Removal of the surfaces that leave Lenny
 - status: Planned

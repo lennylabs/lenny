@@ -44,11 +44,11 @@ It has no dependency. It can land at any point, and it should land early because
 - lanes: [specification, code, documentation]
 - closes: [F-8.2.35, F-9.1.13, F-10.6.15, F-10.6.16, F-10.6.17, F-10.6.18, F-10.6.19, F-10.6.20, F-10.6.23]
 
-Derive and delegation propagation of the session's environment, the session-based delegation gate and its fail-closed reads, the calling-session parent rule, the Bridge allow-list, groups on exchanged tokens, the active-session delete guard, the transparent create check, and the naming correction. It closes F-10.6.17 with its rules running at the post-chain point of [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract). What the gate reads for a session with E = ∅ is open as decision 32, and its answer decides whether this step closes F-10.6.16 in full. The client delegation limits of TS-3 are 0149.S10, and cross-environment sharing is 0149.S11.
+Derive and delegation propagation of the session's environment, the session-based delegation gate and its fail-closed reads, which [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-1-session-grant) turns into the environment caveat of the session grant, the calling-session parent rule for every platform operation of 0166, the Bridge allow-list, which admits those operations, an environment's `defaultDelegationPolicy` applied at every `session.create` and its `delegationCeilings`, groups on exchanged tokens, the active-session delete guard, the transparent create check, and the naming correction. It closes F-10.6.17 with its rules running at the post-chain point of [RT-2](../0141-runtime-routing/change.md#rt-2-the-interceptor-contract). What the gate reads for a session with E = ∅ is open as decision 32, and its answer decides whether this step closes F-10.6.16 in full. The client delegation limits of TS-3 are 0149.S10, and cross-environment sharing is 0149.S11.
 
 Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ResolveEnvironments` with the session-based delegation gate.
 
-It has no dependency and can land at any point. Its post-chain step, shared with 0149.S1, depends on 0141.S1 in the same way, as 0149.S1 states.
+It has no dependency and can land at any point. Its post-chain step, shared with 0149.S1, depends on 0141.S1 in the same way, as 0149.S1 states. 0166.S1 depends on this step for the session's stored environment. The rules that act on 0166's operations rather than on today's delegation tools, and the environment's delegation inputs, which feed 0166's resolution, land with whichever of this step and 0166.S1 lands second; until 0166.S1 lands, this step applies the gate and the parent rule to today's delegation tools.
 
 ### 0149.S4 User lifecycle path
 - status: Planned
@@ -130,7 +130,7 @@ It needs 0149.S3 for groups on exchanged tokens and 0149.S8 for directory data.
 - depends-on: [0149.S3]
 - closes: [F-8.2.34 (part), F-8.3.12]
 
-The client delegation limits of decision 26 under TS-3: one reading of `maxDepth`, a stored value on every root creator, resolution as a minimum, depth from the parent's row, `gateway.delegation.defaultMaxDepth` as a chart value that replaces `deploymentAudit.defaultMaxDepth`, `DELEGATION_DISABLED`, and hiding the tool. It closes F-8.2.34 apart from `delegationPolicyRef`. Until [0138.S6](../0138-rest-only-client-api/steps.md#steps) removes them, `lenny/create_and_start_session` and `BindSingleShot` write the resolved value as `POST /v1/sessions/start` does, and 0138.S6 removes that wiring with the paths. [0126.S1](../0126-delegation-availability/steps.md#steps) builds on this step: it adds the explicit stored `maxChildrenTotal: 0` of that design's D4, the derive narrowing of its O5, and `details.disabledBy`.
+The client delegation limits of decision 26 under TS-3: one reading of `maxDepth`, a stored value on every root creator, the client layer of the resolution that [`0166-delegation-primitives`, "DP-1"](../0166-delegation-primitives/change.md#dp-1-session-grant) owns (0166 decision 40), with 0 from a client alone, depth from the parent's row, `gateway.delegation.defaultMaxDepth` as a chart value that replaces `deploymentAudit.defaultMaxDepth`, `DELEGATION_DISABLED`, and hiding the tool. It closes F-8.2.34 apart from `delegationPolicyRef`. Until [0138.S6](../0138-rest-only-client-api/steps.md#steps) removes them, `lenny/create_and_start_session` and `BindSingleShot` write the resolved value as `POST /v1/sessions/start` does, and 0138.S6 removes that wiring with the paths. [0126.S1](../0126-delegation-availability/steps.md#steps) builds on this step: it adds the explicit stored `maxChildrenTotal: 0` of that design's D4, the derive narrowing of its O5, and `details.disabledBy`. 0166.S1 depends on this step for a client's `maxDepth: 0`, and wires the levels of the resolution other than the client's.
 
 Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-CreateSession`, through which the platform tools seam's session tools create a session from a client API body, so that the session stores the resolved lease.
 
@@ -142,13 +142,21 @@ It needs 0149.S3 for the calling-session parent rule and the allow-list, which t
 - depends-on: [0149.S3, 0149.S10, 0127.S10 (part)]
 - closes: [F-10.6.24]
 
-Cross-environment sharing of decision 14 under TS-3: the tenant setting and `dangerouslyShare` with its write rules, the check, no second crossing with `sessions.crossed_from_environment`, both environments on records, the guardrails, and the rule for messages between environments.
+Cross-environment sharing of decision 14 under TS-3: the tenant setting and `dangerouslyShare` with its write rules, the check, no second crossing with `sessions.crossed_from_environment`, both environments on records, the guardrails, and the rule for messages between environments. Under decision 41 of [`0166-delegation-primitives`](../0166-delegation-primitives/decisions.md#decisions) it also carries crossing for every operation of 0166: what a crossing child receives from T, files under both content caveats, the list a parent's watch and read of a crossed child carry, the refusal of parent tools, and the admission check on a release, with decision 43 for a transfer. The parts that act on 0166's operations land with whichever of this step and 0166.S1 lands second, the read filter with 0135's MD-25 step, and the refusal of parent tools and the `materialize` path with 0166.S3.
 
 Under decision 8 of [0117](../0117-gateway-package-layout/decisions.md), this step edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` for the gateway seam operations it changes. It reshapes `GWSEAM-ResolveEnvironments` with cross-environment sharing.
 
 It needs 0149.S3 for the session-based gate and child propagation, and 0149.S10 for check 1, which reads the stored lease. Its evidence field step needs the envelope field in [0127.S10](../0127-egress-and-git/steps.md#steps) (EG-10) to put both environments on `credential.mint` and evidence.
 
 Its guardrail case depends on [SO-2](../0142-security-oversight/change.md#so-2-tenant-security-record-and-posture) (0142.S2), whichever lands second adding the case, for `crossEnvironmentSharing: forbid` and the delay. Its lock case depends on [UC-5](../0151-user-credential-delivery/change.md#uc-5-delivery-file) (0151.S5), whichever lands second adding the case, because check 2 reads the lock UC-5 adds. Its post-chain evaluation, which selects T, runs at the post-chain point once 0141.S1 lands, as 0149.S1 states.
+
+### 0149.S12 Label rules
+- status: Planned
+- aliases: [TS-10]
+- lanes: [specification, code, documentation]
+- depends-on: [0149.S1, 0149.S9]
+
+The label rules of "Label rules (TS-10)" (decision 45): the tenant's rules and their route, an environment's `labelRules`, `labels.reservedPrefixes`, `values`, `allow`, `valueFrom` with its anchored RE2 `match`, `source`, and `${1}` replacement, and `required`, the check at a root's creation, a derive's own labels, and a crossing child's labels against the target environment's rules, `403 LABEL_NOT_PERMITTED`, the `Warning` on a rule write that frees a key a budget selects on (decision 46), the limits, and the audit events. It needs 0149.S1 for the environment resource and 0149.S9 for the directory groups that `allow` and `valueFrom` read. 0170.S1 depends on its part that tells a governed key from a free one.
 
 ### Notes on the steps
 

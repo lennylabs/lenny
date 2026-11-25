@@ -58,3 +58,7 @@ Second pass, 2026-11-19: the requests that other changes' fix agents returned to
 - Raised O14 for 0142: the re-pointing of 0143.S3's edge on 0142.S2 if the owner settles 0142 decision 41 as its option (a), mirroring that decision.
 - Already open for 0142 (credentials-git-C16): item 2's `~svc~` prefix check follows O11, which is 0142 decision 36, and O11 now names 0142 decision 36 and 0149 decision 33. The posture request for `client_secret_post` and `assumedLifetimeSeconds` types was already in the request list from the first pass.
 - Already done for 0148 (credentials-git-C12): 0143.S2 already depends on 0127.S6 and 0148.S2 (part).
+
+## Revision 4 (2026-11-23)
+
+- 2026-11-23, change 0166. Revision 4 carries out the row for 0143 in "DP-7 What each change takes on" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on), revision 7, which states that 0143 takes on no rule: a child's principal and `caller_type` follow from the parent link (0166 "DP-2", decision 35). The edits rename only. "Scope", SAR-6, and **Delegation.** under the protections name the rule that a child receives a binding only when its parent's `session.create` names it, in place of the delegation lease, and "Terms" and **The release rule.** cite the parent link. "Labels from other designs" gains 0166.

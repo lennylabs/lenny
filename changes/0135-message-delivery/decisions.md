@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-The M3 readiness review of 2026-11-19 raised O6 to O23, and its second pass raised O24 and O25 at the request of other changes. O1 to O5 are settled and sit under "Decisions".
+The M3 readiness review of 2026-11-19 raised O6 to O23, and its second pass raised O24 and O25 at the request of other changes. Revision 26 raised O26, which the owner settled on 2026-11-23, while it took on what [`0166-delegation-primitives`](../0166-delegation-primitives/change.md) "DP-7" lists for this change, and added notes to O13, O14, O15, and O24 where the owner's decisions on 0166 settle part of them. O1 to O5 are settled and sit under "Decisions".
 
 **O6. How 0135.S1 is ordered against 0145.S1 and 0145.S3. Open.**
 
@@ -88,6 +88,8 @@ Under B-O6 and MDR-8, the frame consumes every message that is `delivered` when 
 
 **Recommendation: (a), with the protection of client messages from (b).** It keeps each child event's delivery exactly once and moves the backpressure to the sender. The cap needs a default. It blocks 0135.S1 (the overflow rule of "MD-3") and 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F3)
 
+*Note of revision 26.* Under decision 17 of 0166, a child's `update` events are outside the default `wakeOn` and take the `append` intent, so on a parent runtime that declares `steer` and not `append` they stay `pending` until the parent's next turn, which raises the count this decision bounds. The options stand, and the per-child cap of (a) covers it.
+
 **O14. Which watched events pass the parent's content policy. Open.**
 
 "MD-25" delivers a watched child's `output`, `activity`, `turn_start`, `turn_end`, `usage`, `tool_use`, and `message_state` events, and runs the parent's `contentPolicy` and `PreMessageDelivery` interceptors only on `output` parts. An `activity` `detail` can carry a tool's output and `tool_use` carries arguments and results, so text a child produced reaches the parent's runtime unscanned, while MDR-52 says no part of a watched stream does, and B-O5 requires the receiving environment's rules on every message between environments.
@@ -98,6 +100,8 @@ Under B-O6 and MDR-8, the frame consumes every message that is `delivered` when 
 
 **Recommendation: (a).** B13 asked for parity with a root client, and an edge between environments has to meet the receiving environment's rules. It blocks 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F4)
 
+*Note of revision 26.* Decision 34 of 0166 settles this for a child in another environment than its parent: the watch carries only what TS-3 "Model" lists and never `activity`, `tool_use`, or their content, which is option (b) for that case ("MD-25", **Across environments**). The choice remains open for a child in its parent's environment.
+
 **O15. How an imported child file is scanned. Open.**
 
 "MD-26" invokes `contentPolicy.interceptorRef` at `PreExportMaterialization` once per imported file before a grant is signed. That phase's payload carries `content_bytes`, §8.3 caps a scanned file at `contentPolicy.maxExportedFileSize` (10 MiB) with `EXPORT_FILE_SCAN_SIZE_EXCEEDED`, and the gateway holds no bytes of an output file, which may be 5 GiB. The design does not say how the gateway obtains the bytes, what happens to a file over the scan limit, or what a `MODIFY` answer does.
@@ -107,6 +111,8 @@ Under B-O6 and MDR-8, the frame consumes every message that is `delivered` when 
 - (c) No scan for imports, documented as a limit.
 
 **Recommendation: (a).** It is the smallest change that keeps §8.7's control on files that cross from child to parent. It blocks 0135.S5. (raised by the M3 readiness review, 2026-11-19; sources: 0135-p2-F6)
+
+*Note of revision 26.* Decision 45 of 0166 settles whose policy applies: the sender's content caveat when a message carries the part to another session, and the importer's at the import, each resolved for every session ("MD-26", **Content**). How the gateway obtains a stored file's bytes for either scan, a file over the scan limit, and `MODIFY` remain open, and option (a) applies to both scans.
 
 **O16. How a download of an output file is authorized. Open.**
 
@@ -193,6 +199,8 @@ The "MD-11" table and CT-5 of [`0122-client-tools`](../0122-client-tools/change.
 - (b) The gRPC receive limit for `CallPlatformToolResponse` rises to cover a 50 MB part, with the size check from metadata before the fetch.
 
 **Recommendation: (a).** No large payload crosses `LNK-GWCONTROL`, and the runtime reads a large part through the path that already moves files. It blocks 0135.S5 and 0139.S2. The other change is [`0139-runtime-protocol`](../0139-runtime-protocol/decisions.md), whose O17 is the matching decision. (raised by the M3 readiness review, 2026-11-19; requested by change 0139)
+
+*Note of revision 26.* `await_child_sessions` is now `events.wait` of 0166, with `maxEntries`. Without `maxEntries`, a wait's result holds what fits the result bound ("MD-22", **Wait**), so the bound decides the page size, and a single entry over the bound is still the case this decision settles.
 
 **O25. Which 0146 steps 0135.S1 and 0135.S5 bind to if 0146.S1 is split. Open.**
 
@@ -351,3 +359,9 @@ Settled by the owner on 2026-11-15 and applied with revision 21.
 | U1 | How a reader treats an unknown value of a known enum member, such as a child event's `event` or `state`, a tool result's content type, or an error code. | "2.2: ok": the value is handled as `other` and is never an error, in both directions. A value that selects what the adapter does, such as a `request`'s `kind`, keeps the malformed-frame rule, which answers with an `error` frame and continues the session. | MD-24, MDR-57 |
 
 **Gateway seam operations (0117, decision 8).** Settled by the owner on 2026-11-17 in [0117](../0117-gateway-package-layout/decisions.md), which raised the conflict between its seam interface page and this change: a member change that removes, reshapes, or adds a mechanism behind a gateway seam operation edits `spec/interfaces/gateway-seams.md` and `pkg/gateway/seam` in the step that changes the mechanism. In this change that is 0135.S1, 0135.S4, and 0135.S5, whose entries in `steps.md` name the operations.
+
+Settled by the owner on 2026-11-23 and applied with revision 26.
+
+| ID | Question | Decision | Where |
+| :-- | :-- | :-- | :-- |
+| O26 | How a child event outside `wakeOn` reaches a parent runtime that declares neither `append` nor `steer`. | "1: ok", to the recommendation that replaced options (a) to (c): such an event waits in the inbox and is delivered at the start of the parent's next turn, whatever starts that turn, so it opens no turn and wakes nothing, and `events.peek` sees it meanwhile. A runtime need not declare `append` or `steer` to declare `capabilities.childSessions`, because option (a) would have barred `cursor-cli`, `gemini-cli`, `langgraph`, `mastra`, `openai-assistants`, and `crewai` from managing children. | MD-5, MD-22 |

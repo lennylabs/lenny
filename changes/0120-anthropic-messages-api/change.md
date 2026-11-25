@@ -1,6 +1,6 @@
 # Anthropic Messages API compatibility
 
-Status: `Draft`, revision 13, 2026-11-19. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 15, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 > **Adapter project banner.** Under [`0138-rest-only-client-api`](../0138-rest-only-client-api/change.md), Lenny serves a REST client API alone, and the Anthropic Messages protocol mapping moves to the Anthropic adapter's repository, `lenny-adapter-anthropic-messages`. Only the sections marked as Lenny's still govern Lenny. The sections marked as moving belong to the Anthropic adapter project: they stay in this file unchanged until that repository takes them, govern the adapter rather than Lenny, and stage no edit to Lenny's specification. The owner settled this as O8 of that design on 2026-11-14, in the words "yes. Don't delete anything though, just flag it appropriately or move it to a subfolder or something", so nothing here is deleted or moved.
 >
@@ -64,7 +64,7 @@ Under the banner, the items of this section that still govern Lenny are the conv
 
 - The shared create-and-start service behind every built-in adapter, so admission, quota, the `PreRoute` chain, revision selection, and the post-chain point apply unchanged.
 - The session as the unit of billing, ownership, erasure, and audit.
-- The LLM proxy's `anthropic-messages` route and its listener, which [`0133-llm-upstreams-and-cost-budgets`, "LU-3"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-3-the-metering-proxy) keeps as one of several formats. The proxy's Messages wire types stay shared with the client surface this design adds.
+- The LLM proxy's `anthropic-messages` route and its listener, which decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions) removes. The Messages wire types stay with the client surface this design adds.
 
 **Out of scope:**
 
@@ -119,7 +119,7 @@ Under the banner, the items of this section that still govern Lenny are the conv
 | Link check and `LINKS_REQUIRED` | The post-chain check that refuses a session whose user has not linked every account the session would use, with `403 LINKS_REQUIRED` and `details.userLinks` ([`0151-user-credential-delivery`, UC-3](../0151-user-credential-delivery/change.md#uc-3-the-usercredential-binding)). Each entry names the link provider and its `linkUrl` (UC-2, "Flow"). |
 | Impersonation bearer and F-13.3.26 | A token a `platform-admin` obtains to act as a user ([§13.3](../../spec/13_security-model.md#133-credential-flow), **Platform-admin impersonation**). F-13.3.26 is the `BUILD-GAPS.md` finding, recorded in [`0151-user-credential-delivery`](../0151-user-credential-delivery/change.md), that session input routes and the OpenAI translators admit one. |
 | Tool-use approval | A platform tool call held at the gateway until an approver resolves it ([`0142-security-oversight`, SO-5a](../0142-security-oversight/change.md#so-5a-tool-use-approvals)), and the §7.2 approval gate the executor runs today. Approvals for the tools of an operator service are the service's. |
-| `LLM_UPSTREAM_NOT_CONFIGURED` and `BUDGET_EXHAUSTED` | Two codes of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), which removes LLM credential pools and `CREDENTIAL_POOL_EXHAUSTED`. `422 LLM_UPSTREAM_NOT_CONFIGURED` refuses a session creation whose LLM upstream list serves none of its runtime's formats, a check on configuration alone at the post-chain point. `BUDGET_EXHAUSTED` answers a runtime's model call through the LLM proxy when a credit budget refuses its reservation and no extension is granted, with `details.limitType` naming the scope. |
+| `BUDGET_EXHAUSTED` | A code of [`0170-budgets`](../0170-budgets/change.md#bg-6-enforcement) that answers a session creation, a child, or a write refused by a budget. Under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions), a model call is refused by the operator's LLM gateway once the session's attribution is suspended, and `LLM_UPSTREAM_NOT_CONFIGURED` leaves with upstream lists. |
 | Test tiers | The tiers of the test suite that `.claude/rules/test-coverage.md` names: `static`, `unit`, `contract`, `integration`, `e2e_kind` (end to end on Kind), `load_local` (local concurrency), `chaos`, `security`, `conformance` (runtime adapter conformance), and `docs`. Change 0155 replaced the former numbers 0, 1, 3, 4, 5, 7a, 8, 9, 10, and 11 with these names. |
 
 ### Labels from other designs
@@ -530,7 +530,7 @@ The adapter creates ordinary sessions, and Lenny keeps no held-session state and
 
 A session the adapter created can receive a message from another session between client requests **[design, MD O3]**. The main case is asynchronous delegation: the runtime delegates a child, replies to its client, and the child later finishes or sends the parent a message after that reply. The same session can also be used through REST with the `lenny-session-id` the response headers carry, and a sibling can send it a message under the `siblings` messaging scope. Under MD O3, such a message is delivered on arrival under the ordinary intent rules of [`0135-message-delivery`](../0135-message-delivery/change.md), and this adapter adds no hold of its own. Two rules keep the turn it causes away from the Messages client:
 
-1. **No client tools.** Client tools are offered only in turns a client request caused. A turn that no client request caused carries no `conversation.clientTools` and no `conversation.toolChoice`, and a call in it fails the check of [`0122-client-tools`, CT-4](../0122-client-tools/change.md#ct-4-response-validation) with `no_tools_declared`.
+1. **No client tools.** Client tools are offered only in turns a client request caused. A turn that no client request caused carries no `conversation.clientTools` and no `conversation.toolChoice`, and a call in it fails the check of [`0122-client-tools`, CT-4](../0122-client-tools/change.md#ct-4-call-validation) with `no_tools_declared`.
 2. **No appearance in a Messages response.** A turn that no client request caused never appears in a Messages response. Its output reaches the transcript and the session's REST event stream. The client's next response is the output of the client's own turn, the turn that consumed the request's message, under the consumption attribution of MD-4.
 
 The conversation digest is unaffected, because it covers only what the client sent and what Lenny returned. A turn that no client request caused writes no digest, no response record, and no request record, and reserves no ordinal, so condition 3 of "Warm and cold" still holds for the client's next request.
@@ -556,7 +556,7 @@ A `ref` is dereferenced inside the gateway and never returned, as §15.1 require
 
 **`stop_reason` [design].** `end_turn` when the runtime's end-of-turn `message` ends the turn. `tool_use` when that `message` carries `clientToolCalls` ("AM-7"). `max_tokens` when a runtime that declares `maxTokens` reports that the cap ended its visible output, and `stop_sequence`, with the matched sequence in `stop_sequence`, when a runtime that declares `stopSequences` reports that a sequence ended it. An end-of-turn `message` with an `error` member is not a stop reason: it answers `500 api_error` with the runtime's code, except `BUDGET_EXHAUSTED`, which "AM-8" maps to `429 rate_limit_error`. The adapter never reports `pause_turn`, `refusal`, or `model_context_window_exceeded`, because a turn's model calls are the runtime's own.
 
-**`usage` [design].** The counts come from the session's LLM usage records of the turn, which the LLM proxy writes for every call through it in the token classes of [`0133-llm-upstreams-and-cost-budgets`, "LU-3"](../0133-llm-upstreams-and-cost-budgets/change.md#lu-3-the-metering-proxy): `input_tokens` sums the `input` class, `cache_read_input_tokens` sums `cacheRead`, `cache_creation_input_tokens` sums every `cacheWrite` lifetime, and `output_tokens` sums `output`. Each sums every model call of the turn. A call the runtime sends outside the proxy has no usage record and is not counted. `service_tier` is `standard`. The upstreams design asked this design to choose between the sum over the turn's calls and the last call's input for `input_tokens`. The owner settled O12 on the sum on 2026-11-13, because it is the turn's cost and it matches the other surfaces' usage reports. "Limits" states the effect of the sum on a client that compacts its history by `input_tokens`.
+**`usage` [design].** The counts come from the turn's `usage` events of [`0135-message-delivery`](../0135-message-delivery/change.md#md-20-turn-and-usage-events) "MD-20", which carry the counts that the session's LLM gateway reports with its charges (`source: external`) or that the runtime reports, under decision 22 of [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/decisions.md#decisions): `input_tokens` sums the `input` class, `cache_read_input_tokens` sums `cacheRead`, `cache_creation_input_tokens` sums every `cacheWrite` lifetime, and `output_tokens` sums `output`. Each sums every model call of the turn. A call that neither a reporter nor the runtime reports is not counted. `service_tier` is `standard`. The upstreams design asked this design to choose between the sum over the turn's calls and the last call's input for `input_tokens`. The owner settled O12 on the sum on 2026-11-13, because it is the turn's cost and it matches the other surfaces' usage reports. "Limits" states the effect of the sum on a client that compacts its history by `input_tokens`.
 
 #### Streaming
 
@@ -642,8 +642,8 @@ Every refusal on the adapter's routes uses the Anthropic error envelope **[desig
 | 413 | 413 | `request_too_large` |
 | 429 and the admission rate limits, with `Retry-After` | 429 | `rate_limit_error` |
 | 503 `SESSION_CREATION_FAILED` and `POOL_DRAINING`, with `Retry-After` | 503 | `overloaded_error` |
-| 422 `LLM_UPSTREAM_NOT_CONFIGURED` under [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), as a validation error | 400 | `invalid_request_error` |
-| An end-of-turn `message` whose `error` carries `BUDGET_EXHAUSTED`, with `details.limitType` naming the scope, under decision O11 | 429 | `rate_limit_error` |
+| 422 `LLM_UPSTREAM_NOT_CONFIGURED` | Removed under decision 22 of 0133 | n/a |
+| An end-of-turn `message` whose `error` carries `BUDGET_EXHAUSTED`, with `details.budget` and `details.limit` naming the budget and limit (0170 "BG-6"), under decision O11 | 429 | `rate_limit_error` |
 | 504 | 504 | `timeout_error` |
 | Any other 5xx | 500 | `api_error` |
 
