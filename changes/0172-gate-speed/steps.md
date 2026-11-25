@@ -65,7 +65,7 @@ Decision 14. The gate resolves `HEAD` once and passes the commit to the secret s
 Decisions 16 and 17. The unit tier of a `--all` run leaves out `tests/docs`, with a test of the package list it runs; issue GATE-I9 records the failing gap-record tests. The row of `.github/workflows/release.yml` in `tests/non-go-inputs.yaml` runs `tests/security`, and the runbooks row names the chaos, security, and load_kind tiers. Then "Merge gate" in `TESTING.md`. The diff touches `cmd/lenny-test/` and `tests/non-go-inputs.yaml`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S8 The coverage profile's hash and the container messages
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0172.S7]
 - closes: []
