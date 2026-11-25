@@ -292,7 +292,7 @@ type lostFanOutErasure struct {
 
 // startLostFanOutErasure starts one session on each of two replicas, starts
 // the user's erasure job with the drain on replica a and a release gate of
-// admin.ReleasePending on the harness clock, and runs the job until it waits
+// admin.TerminalPipelinesPending on the harness clock, and runs the job until it waits
 // in store_deleting.
 func startLostFanOutErasure(t *testing.T) *lostFanOutErasure {
 	t.Helper()
@@ -322,8 +322,8 @@ func startLostFanOutErasure(t *testing.T) *lostFanOutErasure {
 			return err
 		}).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
-		WithReleaseGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
-			return admin.ReleasePending(ctx, h.Store, tenantID, userID, h.Clock.Now(), lifecycleharness.PostTerminalCap)
+		WithPipelineGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
+			return admin.TerminalPipelinesPending(ctx, h.Store, tenantID, userID, h.Clock.Now(), lifecycleharness.PostTerminalCap)
 		}).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
 	job, err := runner.Start(ctx, lifecycleharness.Tenant, forwardChaosUser, "carol@acme.com", nil)
@@ -385,7 +385,7 @@ func (e *lostFanOutErasure) requireCompleted(t *testing.T) {
 // the erasure job deleted the user's stores while that session was still in
 // its post-terminal window, or never deleted them after the peer released
 // the binding or the window cap passed. Check the store_deleting release gate
-// in pkg/storage/erasurejob/runner_phases.go, admin.ReleasePending in
+// in pkg/storage/erasurejob/runner_phases.go, admin.TerminalPipelinesPending in
 // pkg/gateway/externalapi/admin/drain.go, and the release marker the peer's
 // terminal binding release records.
 func TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7(t *testing.T) {

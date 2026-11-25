@@ -68,15 +68,45 @@ func TestPostTerminalCapIsTheTerminalPipelineBudget_spec_7_1(t *testing.T) {
 	}
 }
 
+// TestErasureGateBudgetIsTheTerminalContextBudget pins the budget the erasure
+// pipeline gate and the tenant-deletion terminator read (postTerminalCap) to
+// the budget the session server's terminalContext applies to every write of
+// the terminal pipeline, for the session server built from the same flags as
+// buildSessionServer builds it. The gate's budget arm ends the wait only
+// because no pipeline write can land after it, so the two values are one.
+//
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session),
+// §7.1 (Terminal pipeline context)
+func TestErasureGateBudgetIsTheTerminalContextBudget(t *testing.T) {
+	for _, args := range [][]string{
+		nil,
+		{"--workspace-seal-max-duration-seconds=100", "--stream-failure-report-timeout=10s"},
+		{"--workspace-seal-max-duration-seconds=0", "--stream-failure-report-timeout=0s"},
+	} {
+		w := flagPostureWiring(t, args...)
+		srv := sessionserver.New(memstore.New(), sessionserver.Options{
+			WorkspaceSealMaxDuration:   time.Duration(*w.f.workspaceSealMaxDurationSeconds) * time.Second,
+			StreamFailureReportTimeout: *w.f.streamFailureReportTimeout,
+		})
+		if got := srv.TerminalPipelineBudget(); got != w.postTerminalCap {
+			t.Errorf("flags %v: session server budget %v, erasure gate budget %v; want one value", args, got, w.postTerminalCap)
+		}
+		srv.Close()
+	}
+}
+
 // TestPostTerminalCapGatesErasureDeletionAndRetention_spec_12_8 pins the
 // three readers of the cap: a terminal, unreleased row inside the budget
-// blocks the erasure release gate, the tenant-deletion terminator, and a
-// retention collector built from retentionGCOptions; once the release is
-// recorded none of them is held. With the cap zero, the gate and the
-// terminator return an error wrapping ErrReleaseCapUnset and the collector
-// collects no row that names a pod.
+// blocks the erasure pipeline gate, the tenant-deletion terminator, and a
+// retention collector built from retentionGCOptions. Once the release is
+// recorded the collector is no longer held, while the gate and the terminator
+// still wait for the pipeline mark; once the mark is recorded none of them is
+// held. With the cap zero, the gate and the terminator return an error
+// wrapping ErrPipelineBudgetUnset and the collector collects no row that
+// names a pod.
 //
-// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window)
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window),
+// §7.1 (Pipeline-pending session)
 func TestPostTerminalCapGatesErasureDeletionAndRetention_spec_12_8(t *testing.T) {
 	ctx := context.Background()
 	w := memoryPostureWiring(t)
@@ -101,7 +131,7 @@ func TestPostTerminalCapGatesErasureDeletionAndRetention_spec_12_8(t *testing.T)
 		return n
 	}
 
-	if ids, err := w.erasureReleaseGate()(ctx, "acme", "alice@acme.com"); err != nil || len(ids) != 1 {
+	if ids, err := w.erasurePipelineGate()(ctx, "acme", "alice@acme.com"); err != nil || len(ids) != 1 {
 		t.Errorf("erasure gate = (%v, %v), want the sealing session", ids, err)
 	}
 	if err := term.TerminateTenantSessions(ctx, "acme"); err == nil {
@@ -113,11 +143,11 @@ func TestPostTerminalCapGatesErasureDeletionAndRetention_spec_12_8(t *testing.T)
 
 	budget := w.postTerminalCap
 	w.postTerminalCap = 0
-	if _, err := w.erasureReleaseGate()(ctx, "acme", "alice@acme.com"); !errors.Is(err, admin.ErrReleaseCapUnset) {
-		t.Errorf("erasure gate with no cap = %v, want ErrReleaseCapUnset", err)
+	if _, err := w.erasurePipelineGate()(ctx, "acme", "alice@acme.com"); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
+		t.Errorf("erasure gate with no cap = %v, want ErrPipelineBudgetUnset", err)
 	}
-	if err := w.newTenantSessionTerminator(&sleepyDrainTerminator{}, nil, time.Second).TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrReleaseCapUnset) {
-		t.Errorf("tenant terminator with no cap = %v, want ErrReleaseCapUnset", err)
+	if err := w.newTenantSessionTerminator(&sleepyDrainTerminator{}, nil, time.Second).TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
+		t.Errorf("tenant terminator with no cap = %v, want ErrPipelineBudgetUnset", err)
 	}
 	zeroArts := &countingArtifacts{}
 	zc := retentiongc.New(w.sessions, retentiongc.StaticTenants{"acme"}, []retentiongc.Artifact{zeroArts.artifact()}, w.retentionGCOptions(time.Minute))
@@ -129,14 +159,23 @@ func TestPostTerminalCapGatesErasureDeletionAndRetention_spec_12_8(t *testing.T)
 	if err := sessionstore.RecordPodRelease(ctx, w.sessions, "acme", "sess-sealing", now); err != nil {
 		t.Fatalf("record release: %v", err)
 	}
-	if ids, err := w.erasureReleaseGate()(ctx, "acme", "alice@acme.com"); err != nil || len(ids) != 0 {
-		t.Errorf("erasure gate after the release = (%v, %v), want none", ids, err)
+	if ids, err := w.erasurePipelineGate()(ctx, "acme", "alice@acme.com"); err != nil || len(ids) != 1 {
+		t.Errorf("erasure gate after the release alone = (%v, %v), want the session whose pipeline has not ended", ids, err)
 	}
-	if err := term.TerminateTenantSessions(ctx, "acme"); err != nil {
-		t.Errorf("tenant terminator after the release = %v, want nil", err)
+	if err := term.TerminateTenantSessions(ctx, "acme"); err == nil {
+		t.Error("tenant terminator after the release alone = nil, want the terminal pipeline wait")
 	}
 	if n := collect(); n != 1 {
 		t.Errorf("retention after the release collected %d rows, want 1", n)
+	}
+	if _, err := w.sessions.Update(ctx, "acme", "sess-sealing", sessionstore.MarkTerminalPipelineDone(now)); err != nil {
+		t.Fatalf("record the pipeline mark: %v", err)
+	}
+	if ids, err := w.erasurePipelineGate()(ctx, "acme", "alice@acme.com"); err != nil || len(ids) != 0 {
+		t.Errorf("erasure gate after the pipeline mark = (%v, %v), want none", ids, err)
+	}
+	if err := term.TerminateTenantSessions(ctx, "acme"); err != nil {
+		t.Errorf("tenant terminator after the pipeline mark = %v, want nil", err)
 	}
 }
 

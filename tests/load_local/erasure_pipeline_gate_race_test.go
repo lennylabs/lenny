@@ -3,13 +3,14 @@
 //go:build load_local
 
 // load_local-tier coverage for the §12.8 store-deletion gate on the §7.1
-// post-terminal window. A fake seal writes an object under a drained
-// session's prefix and then records the pod release, while erasure runner
-// ticks race it over a fake blob store. The gate holds the store deletions
-// until the release is recorded, so no object of the erased user survives a
-// completed job.
+// post-terminal window and the terminal pipeline. A fake seal writes an
+// object under a drained session's prefix, records the pod release, and then
+// records the pipeline mark, while erasure runner ticks race it over a fake
+// blob store. The gate holds the store deletions until both are recorded, so
+// no object of the erased user survives a completed job.
 //
-// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window).
+// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window),
+// §7.1 (Pipeline-pending session).
 package loadlocal_test
 
 import (
@@ -73,8 +74,8 @@ func (b *gateBlobs) userObjects(tenantID, userID string) []string {
 }
 
 // gateRunner builds an erasure runner whose store deletion removes the
-// user's objects and whose release gate is admin.ReleasePending over the
-// session store with the given cap.
+// user's objects and whose pipeline gate is admin.TerminalPipelinesPending
+// over the session store with the given budget.
 func gateRunner(jobs erasurejob.Store, sessions sessionstore.Store, blobs *gateBlobs, capD time.Duration) *erasurejob.Runner {
 	orch := erasure.New(erasure.Config{UserScoped: []erasure.Eraser{{
 		Name: "artifacts",
@@ -86,8 +87,8 @@ func gateRunner(jobs erasurejob.Store, sessions sessionstore.Store, blobs *gateB
 		WithLogger(slog.New(slog.NewTextHandler(io.Discard, nil))).
 		WithSessionDrain(func(context.Context, string, string) error { return nil }).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
-		WithReleaseGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
-			return admin.ReleasePending(ctx, sessions, tenantID, userID, time.Now(), capD)
+		WithPipelineGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
+			return admin.TerminalPipelinesPending(ctx, sessions, tenantID, userID, time.Now(), capD)
 		}).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
 }
@@ -139,6 +140,10 @@ func TestErasureWaitsForThePostTerminalRelease_spec_12_8(t *testing.T) {
 			runtime.Gosched()
 			if err := sessionstore.RecordPodRelease(ctx, sessions, "acme", "sess-sealing", time.Now()); err != nil {
 				t.Errorf("round %d: record release: %v", round, err)
+			}
+			runtime.Gosched()
+			if _, err := sessions.Update(ctx, "acme", "sess-sealing", sessionstore.MarkTerminalPipelineDone(time.Now())); err != nil {
+				t.Errorf("round %d: record the pipeline mark: %v", round, err)
 			}
 		}()
 		go func() {
