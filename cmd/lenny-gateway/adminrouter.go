@@ -573,9 +573,8 @@ func (w *gatewayWiring) buildAdminRouter(
 				_, err := admin.DrainSessions(ctx, w.sessions, erasureTerm, userPods, tenantID, userID)
 				return err
 			}).
-			// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending
-			// session) — the store deletions wait until no drained session
-			// of the user has a terminal pipeline that may still write.
+			// The store deletions wait until no drained session of the user
+			// has a terminal pipeline that may still write.
 			WithPipelineGate(w.erasurePipelineGate()).
 			WithHoldCheck(func(ctx context.Context, tenantID, userID string) ([]erasurejob.Hold, error) {
 				held, err := admin.HeldResourcesForUser(ctx, w.sessions, artifactHolds, tenantID, userID)

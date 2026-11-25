@@ -133,9 +133,9 @@ func MarkPodReleased(now time.Time) func(*Session) error {
 // records no pipeline mark, and now is before TerminatedAt plus budget.
 //
 // It reads neither PodAssignment nor PodReleasedAt, so a session that never
-// had a pod is pending in the same way as one that had: the terminal billing
-// event, the final quota checkpoint, and the session-log close follow the pod
-// release in the pipeline, and a session without a pod runs them too.
+// had a pod is pending in the same way as one that had: the pipeline appends
+// its billing event and writes its quota checkpoint after the pod release,
+// and a session without a pod runs those steps too.
 //
 // A non-positive budget reports false, and so does a terminal row with a zero
 // TerminatedAt, for the reasons InPostTerminalWindow states for the same
