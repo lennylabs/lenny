@@ -63,6 +63,11 @@ func TestGateUnitTierRunsWithRaceAndWithoutCoverage(t *testing.T) {
 		t.Errorf("the --changed unit plan = %+v; want a scoped plan without coverage", scoped)
 	}
 
+	prev := listModulePackagesFn
+	t.Cleanup(func() { listModulePackagesFn = prev })
+	listModulePackagesFn = func() ([]string, error) {
+		return []string{moduleImportPath + "/pkg/a", moduleImportPath + "/tests/docs"}, nil
+	}
 	calls := recordGoTest(t)
 	if st, _, _ := runUnitTier(full); st != "pass" {
 		t.Fatalf("the --all unit tier = %q", st)
@@ -72,10 +77,10 @@ func TestGateUnitTierRunsWithRaceAndWithoutCoverage(t *testing.T) {
 		t.Fatalf("the scoped unit tier = %q", st)
 	}
 	if len(*calls) != 3 {
-		t.Fatalf("invocations = %v; want ./... then the whole packages and the by-name run", *calls)
+		t.Fatalf("invocations = %v; want the module's packages then the whole packages and the by-name run", *calls)
 	}
-	if last := (*calls)[0][len((*calls)[0])-1]; last != "./..." {
-		t.Errorf("the --all invocation runs %q; want ./...", last)
+	if last := (*calls)[0][len((*calls)[0])-1]; last != moduleImportPath+"/pkg/a" {
+		t.Errorf("the --all invocation runs %q; want the module's packages without tests/docs", last)
 	}
 	for _, call := range *calls {
 		assertNoCoverage(t, call)

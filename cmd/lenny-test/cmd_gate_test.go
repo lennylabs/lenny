@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"syscall"
@@ -789,6 +790,15 @@ func TestGateAllSelectsEveryTierUpToIntegrationInFull(t *testing.T) {
 		if p.pkgs != nil || p.tests != nil || p.subsets != nil {
 			t.Errorf("tier %s is narrowed: pkgs %v tests %v subsets %v", p.name, p.pkgs, p.tests, p.subsets)
 		}
+		// The unit tier of a full run leaves out tests/docs (change 0172,
+		// decision 16); no other tier leaves anything out.
+		var want []string
+		if p.name == tierUnit {
+			want = []string{"tests/docs"}
+		}
+		if !reflect.DeepEqual(p.exclude, want) {
+			t.Errorf("tier %s leaves out %v; want %v", p.name, p.exclude, want)
+		}
 	}
 	if got, want := strings.Join(names, ","), strings.Join([]string{tierStatic, tierUnit, tierComponent, tierContract, tierIntegration}, ","); got != want {
 		t.Errorf("--all plan tiers %s; want %s", got, want)
@@ -1315,5 +1325,98 @@ func TestTailLinesKeepsTheLastLines(t *testing.T) {
 	}
 	if got := tailLines("a", 5); got != "a" {
 		t.Errorf("tailLines = %q", got)
+	}
+}
+
+// TestGateFullRunUnitTierLeavesOutTestsDocs checks the package list a full
+// run's unit tier runs: every package the module lists except tests/docs
+// and the packages below it, and not a package whose name only begins
+// with docs (change 0172, decision 16; issue GATE-I9). The selection
+// records the tier as whole with tests/docs left out, and the summary says
+// so. A selected run's unit plan leaves nothing out.
+func TestGateFullRunUnitTierLeavesOutTestsDocs(t *testing.T) {
+	t.Setenv("LENNY_COVER_PROFILE", "")
+	prev := listModulePackagesFn
+	t.Cleanup(func() { listModulePackagesFn = prev })
+	listModulePackagesFn = func() ([]string, error) {
+		return []string{
+			moduleImportPath + "/pkg/a",
+			moduleImportPath + "/tests/docs",
+			moduleImportPath + "/tests/docs/sub",
+			moduleImportPath + "/tests/docsfoo",
+			moduleImportPath + "/tests/static/build",
+		}, nil
+	}
+	calls := recordGoTest(t)
+	p := tierPlan{name: tierUnit, noCoverage: true, exclude: []string{"tests/docs"}}
+	if st, msg, _ := runUnitTier(p); st != verdictstatus.Pass {
+		t.Fatalf("unit tier %s: %s", st, msg)
+	}
+	if len(*calls) != 1 {
+		t.Fatalf("invocations = %v", *calls)
+	}
+	call := (*calls)[0]
+	var pkgs []string
+	for _, a := range call {
+		if strings.HasPrefix(a, moduleImportPath) || a == "./..." {
+			pkgs = append(pkgs, a)
+		}
+	}
+	want := []string{moduleImportPath + "/pkg/a", moduleImportPath + "/tests/docsfoo", moduleImportPath + "/tests/static/build"}
+	if !reflect.DeepEqual(pkgs, want) {
+		t.Errorf("the unit tier ran %v; want %v", pkgs, want)
+	}
+	if !contains(call, "-race") {
+		t.Errorf("the unit tier ran without -race: %v", call)
+	}
+
+	sel := tierSelectionOf(p)
+	if !sel.Whole || !reflect.DeepEqual(sel.Excludes, []string{"tests/docs"}) || sel.String() != "whole tier except tests/docs" {
+		t.Errorf("selection %+v (%s); want whole except tests/docs", sel, sel)
+	}
+
+	listModulePackagesFn = func() ([]string, error) { return nil, errors.New("go list failed") }
+	if st, msg, _ := runUnitTier(p); st != verdictstatus.Fail || !strings.Contains(msg, "go list failed") {
+		t.Errorf("a failed listing: %s %q; want a failure naming it", st, msg)
+	}
+	listModulePackagesFn = func() ([]string, error) { return []string{moduleImportPath + "/tests/docs"}, nil }
+	if st, _, _ := runUnitTier(p); st != verdictstatus.Fail {
+		t.Errorf("a listing with nothing outside tests/docs: %s; want a failure rather than a run of the working directory", st)
+	}
+	if len(*calls) != 1 {
+		t.Errorf("a failed listing still ran go test: %v", *calls)
+	}
+
+	plans := []tierPlan{{name: tierUnit, pkgs: []string{"./pkg/a"}}, {name: tierComponent}}
+	gateFullRunExcludes(plans)
+	if plans[0].exclude != nil || plans[1].exclude != nil {
+		t.Errorf("a scoped unit plan or another tier got an exclusion: %+v", plans)
+	}
+}
+
+// TestModulePackageListingNamesThisModule checks that the listing the full
+// run's unit tier uses names this module's packages, tests/docs among
+// them, so the exclusion has something to remove.
+func TestModulePackageListingNamesThisModule(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("blocked: go is not on PATH")
+	}
+	t.Chdir(repoRoot())
+	pkgs, err := listModulePackages()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !contains(pkgs, moduleImportPath+"/cmd/lenny-test") || !contains(pkgs, moduleImportPath+"/tests/docs") {
+		t.Errorf("the listing of %d packages lacks cmd/lenny-test or tests/docs", len(pkgs))
+	}
+	docs := 0
+	for _, p := range pkgs {
+		if p == moduleImportPath+"/tests/docs" || strings.HasPrefix(p, moduleImportPath+"/tests/docs/") {
+			docs++
+		}
+	}
+	kept := excludePackages(pkgs, gateFullRunUnitExcludes)
+	if contains(kept, moduleImportPath+"/tests/docs") || len(kept) != len(pkgs)-docs {
+		t.Errorf("the exclusion kept tests/docs or removed another package: %d of %d kept, %d under tests/docs", len(kept), len(pkgs), docs)
 	}
 }
