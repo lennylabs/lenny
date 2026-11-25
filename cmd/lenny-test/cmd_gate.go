@@ -226,6 +226,10 @@ type gateRecord struct {
 	RestrictedTo []string `json:"restricted_to,omitempty"`
 	Cover        bool     `json:"cover,omitempty"`
 	CoverProfile string   `json:"cover_profile,omitempty"`
+	// CoverProfileSHA256 is the SHA-256 of the profile a --cover run
+	// wrote, which `lenny-test coverage --diff` compares with the profile
+	// it reads (change 0172, decision 18).
+	CoverProfileSHA256 string `json:"cover_profile_sha256,omitempty"`
 	// StaticSnapshot is the checkout of the commit the static tier read
 	// (change 0172, decision 14), or "" when the static tier did not run.
 	StaticSnapshot string `json:"static_snapshot,omitempty"`
@@ -523,7 +527,7 @@ func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket boo
 		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
 	}
-	id, err := ensureGateImage(root, image, rebuild, store)
+	id, err := ensureGateImage(root, image, rebuild, store, c.label)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%s: %v\n", c.label, err)
 		return 2
@@ -539,7 +543,7 @@ func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket boo
 	}
 	h := gateHost{root: root, image: image, imageID: id, tmpDir: tmp, passArgs: c.passArgs, script: c.script, scriptName: c.name, volumes: c.volumes, snapshot: c.snapshot}
 	ctx, cancel := context.WithTimeout(context.Background(), gateGoCacheTimeout)
-	capGateGoCache(ctx, execGateCommand, h.imageRef(), capGB, os.Stderr)
+	capGateGoCache(ctx, execGateCommand, h.imageRef(), capGB, c.label, os.Stderr)
 	cancel()
 	h.uid, h.gid = pathOwner(root)
 	if common, err := gitCommonDir(root); err == nil {
@@ -564,14 +568,16 @@ func runInGateContainer(root string, c gateContainerRun, rebuild, withSocket boo
 
 // ensureGateImage returns the ID of the gate image to run. It builds the
 // image first when gateImageNeedsBuild says so, and records the ID of an
-// image it builds in store.
-func ensureGateImage(root, image string, rebuild bool, store gateImageStore) (string, error) {
+// image it builds in store. Its message names label, the command that
+// runs the container, `lenny-test gate` or `lenny-test run` (change 0172,
+// decision 18).
+func ensureGateImage(root, image string, rebuild bool, store gateImageStore, label string) (string, error) {
 	id := dockerImageID(image)
 	build, why := gateImageNeedsBuild(rebuild, id, store.load(image))
 	if !build {
 		return id, nil
 	}
-	fmt.Fprintf(os.Stderr, "lenny-test gate: building %s from %s (%s)\n", image, gateDockerfile, why)
+	fmt.Fprintln(os.Stderr, gateImageBuildMessage(label, image, why))
 	if err := runStreaming("docker", gateDockerBuildArgs(root, image)...); err != nil {
 		return "", fmt.Errorf("build the gate image: %w", err)
 	}
@@ -582,6 +588,12 @@ func ensureGateImage(root, image string, rebuild bool, store gateImageStore) (st
 		return "", fmt.Errorf("record the gate image ID: %w", err)
 	}
 	return id, nil
+}
+
+// gateImageBuildMessage is the line ensureGateImage prints before it
+// builds the image, opening with the command that runs the container.
+func gateImageBuildMessage(label, image, why string) string {
+	return fmt.Sprintf("%s: building the gate image %s from %s (%s)", label, image, gateDockerfile, why)
 }
 
 // gateImageNeedsBuild reports whether the gate builds its image before
@@ -1343,8 +1355,10 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		v.recordTier(tierStatic, verdictstatus.Fail, 0, layoutErr.Error())
 	}
 	plans := g.resolvePlans(v, o, compare)
+	coverReady := o.cover
 	if o.cover {
 		if err := prepareCoverProfile(o.coverProfile, plans); err != nil {
+			coverReady = false
 			// The unit tier does not run, so its result cannot overwrite
 			// the failure, and coverage --diff finds no fresh profile.
 			delete(plans, tierUnit)
@@ -1382,11 +1396,26 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		}
 	})
 	v.Gate.WallTimeMS = time.Since(start).Milliseconds()
-	if o.cover {
+	// A run whose earlier profile could not be removed records no profile
+	// and no hash, because the file is the earlier run's. The hash is taken
+	// after the last phase rather than when the unit tier ends, so another
+	// command that rewrites the profile while the later tiers run, such as
+	// a `run --changed` on the host, has its profile recorded as the gate's;
+	// coverage --diff then reads the profile it hashed.
+	if coverReady {
 		if err := finishCoverProfile(o.coverProfile); err != nil {
 			v.recordTier(tierUnit, verdictstatus.Fail, 0, err.Error())
 		}
 		v.Gate.CoverProfile = coverProfileRecord(o.root, o.coverProfile)
+		if v.Gate.CoverProfile != "" {
+			// A profile that cannot be hashed fails the unit tier, unless
+			// the tier already failed, whose own reason the verdict keeps.
+			sum, err := fileSHA256(o.coverProfile)
+			if err != nil && v.Tiers[tierUnit].Status != verdictstatus.Fail {
+				v.recordTier(tierUnit, verdictstatus.Fail, 0, fmt.Sprintf("hash the coverage profile %s: %v", o.coverProfile, err))
+			}
+			v.Gate.CoverProfileSHA256 = sum
+		}
 	}
 
 	v.Gate.RdepsDepth = o.rdepsDepth
@@ -1760,6 +1789,9 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 			profile := v.Gate.CoverProfile
 			if profile == "" {
 				profile = "none written"
+			}
+			if sum := v.Gate.CoverProfileSHA256; len(sum) >= 12 {
+				profile += " (SHA-256 " + sum[:12] + ")"
 			}
 			fmt.Fprintf(w, "  coverage:    %s\n", profile)
 		}

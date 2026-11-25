@@ -67,7 +67,7 @@ func TestGateGoCacheUnderTheCapIsKept(t *testing.T) {
 	for _, kb := range []int64{0, 1000, capKB} {
 		f := &fakeGateCommands{duOut: duLine(kb)}
 		var log strings.Builder
-		if capGateGoCache(context.Background(), f.run, "img", 30, &log) {
+		if capGateGoCache(context.Background(), f.run, "img", 30, "lenny-test gate", &log) {
 			t.Errorf("%d KiB: emptied; want kept at or under the 30 GB cap", kb)
 		}
 		if f.cleaned() || len(f.calls) != 1 {
@@ -83,7 +83,7 @@ func TestGateGoCacheOverTheCapIsEmptiedAndLogged(t *testing.T) {
 	for _, kb := range []int64{capKB + 1, kb96_8GB} {
 		f := &fakeGateCommands{duOut: duLine(kb)}
 		var log strings.Builder
-		if !capGateGoCache(context.Background(), f.run, "img", 30, &log) {
+		if !capGateGoCache(context.Background(), f.run, "img", 30, "lenny-test gate", &log) {
 			t.Errorf("%d KiB: kept; want emptied over the 30 GB cap", kb)
 		}
 		if !f.cleaned() {
@@ -96,7 +96,7 @@ func TestGateGoCacheOverTheCapIsEmptiedAndLogged(t *testing.T) {
 	}
 	f := &fakeGateCommands{duOut: duLine(kb96_8GB)}
 	var log strings.Builder
-	capGateGoCache(context.Background(), f.run, "img", 30, &log)
+	capGateGoCache(context.Background(), f.run, "img", 30, "lenny-test gate", &log)
 	if !strings.Contains(log.String(), "96.8 GB") || !strings.Contains(log.String(), "30 GB cap") {
 		t.Errorf("logged %q; want the size 96.8 GB and the 30 GB cap", log.String())
 	}
@@ -105,7 +105,7 @@ func TestGateGoCacheOverTheCapIsEmptiedAndLogged(t *testing.T) {
 func TestGateGoCacheInUseByAnotherContainerIsNotEmptied(t *testing.T) {
 	f := &fakeGateCommands{duOut: duLine(kb96_8GB), psOut: "1a2b3c\n4d5e6f\n"}
 	var log strings.Builder
-	if capGateGoCache(context.Background(), f.run, "img", 30, &log) {
+	if capGateGoCache(context.Background(), f.run, "img", 30, "lenny-test gate", &log) {
 		t.Error("emptied while other containers use the volume")
 	}
 	if f.cleaned() {
@@ -120,7 +120,7 @@ func TestGateGoCacheInUseByAnotherContainerIsNotEmptied(t *testing.T) {
 func TestGateGoCacheInUseListingErrorKeepsTheCache(t *testing.T) {
 	f := &fakeGateCommands{duOut: duLine(kb96_8GB), psErr: errors.New("daemon gone")}
 	var log strings.Builder
-	if capGateGoCache(context.Background(), f.run, "img", 30, &log) {
+	if capGateGoCache(context.Background(), f.run, "img", 30, "lenny-test gate", &log) {
 		t.Error("emptied when the in-use listing failed")
 	}
 	if f.cleaned() {
@@ -134,7 +134,7 @@ func TestGateGoCacheInUseListingErrorKeepsTheCache(t *testing.T) {
 func TestGateGoCacheCapZeroRunsNothing(t *testing.T) {
 	f := &fakeGateCommands{duOut: duLine(1 << 40)}
 	var log strings.Builder
-	if capGateGoCache(context.Background(), f.run, "img", 0, &log) {
+	if capGateGoCache(context.Background(), f.run, "img", 0, "lenny-test gate", &log) {
 		t.Error("emptied with the cap at 0; want the check off")
 	}
 	if len(f.calls) != 0 || log.Len() != 0 {
@@ -158,7 +158,7 @@ func TestGateGoCacheComparisonHoldsAtTheExtremes(t *testing.T) {
 	for _, c := range cases {
 		f := &fakeGateCommands{duOut: duLine(c.kb)}
 		var log strings.Builder
-		if got := capGateGoCache(context.Background(), f.run, "img", maxGateGoCacheCapGB, &log); got != c.want {
+		if got := capGateGoCache(context.Background(), f.run, "img", maxGateGoCacheCapGB, "lenny-test gate", &log); got != c.want {
 			t.Errorf("%d KiB under a cap of %d GB: emptied %v; want %v", c.kb, maxGateGoCacheCapGB, got, c.want)
 		}
 	}
@@ -174,7 +174,7 @@ func TestGateGoCacheMeasurementErrorLogsAndKeepsTheCache(t *testing.T) {
 	for name, f := range cases {
 		t.Run(name, func(t *testing.T) {
 			var log strings.Builder
-			if capGateGoCache(context.Background(), f.run, "img", 30, &log) {
+			if capGateGoCache(context.Background(), f.run, "img", 30, "lenny-test gate", &log) {
 				t.Error("emptied after a failed measurement; want the cache kept")
 			}
 			if f.cleaned() || len(f.calls) != 1 {
@@ -190,7 +190,7 @@ func TestGateGoCacheMeasurementErrorLogsAndKeepsTheCache(t *testing.T) {
 func TestGateGoCacheCleanupErrorLogsAndProceeds(t *testing.T) {
 	f := &fakeGateCommands{duOut: duLine(kb96_8GB), cleanErr: errors.New("exit status 1")}
 	var log strings.Builder
-	if capGateGoCache(context.Background(), f.run, "img", 30, &log) {
+	if capGateGoCache(context.Background(), f.run, "img", 30, "lenny-test gate", &log) {
 		t.Error("reported the cache emptied after the cleanup failed")
 	}
 	if got := log.String(); !strings.Contains(got, "emptying it failed") || !strings.Contains(got, "exit status 1") {

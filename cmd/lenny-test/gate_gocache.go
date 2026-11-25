@@ -171,7 +171,11 @@ func formatKBAsGB(kb int64) string {
 // cleanup, and one warning when it cannot measure, list, or empty; none of
 // these stops the gate, because the cap bounds disk use and decides
 // nothing about the verdict. It reports whether it emptied the volume.
-func capGateGoCache(ctx context.Context, run gateCommandRunner, imageRef string, capGB int, logw io.Writer) bool {
+//
+// label names the command the lines belong to, `lenny-test gate` or
+// `lenny-test run`, because `run --container` caps the same volume
+// (change 0172, decision 18).
+func capGateGoCache(ctx context.Context, run gateCommandRunner, imageRef string, capGB int, label string, logw io.Writer) bool {
 	if capGB <= 0 {
 		return false
 	}
@@ -179,11 +183,21 @@ func capGateGoCache(ctx context.Context, run gateCommandRunner, imageRef string,
 	if err == nil {
 		var kb int64
 		if kb, err = parseDuKilobytes(out); err == nil {
-			return emptyGateGoCacheOverCap(ctx, run, imageRef, kb, capGB, logw)
+			return emptyGateGoCacheOverCap(ctx, run, imageRef, kb, capGB, label, logw)
 		}
 	}
-	fmt.Fprintf(logw, "lenny-test gate: warning: measure the build cache volume %s: %v; the gate runs without the size check\n", gateBuildVolume, err)
+	fmt.Fprintf(logw, "%s: warning: measure the build cache volume %s: %v; the run goes ahead without the size check\n", label, gateBuildVolume, err)
 	return false
+}
+
+// gateCacheCapKnob names the setting of the build cache volume's cap for
+// the command label names: the gate's flag, or the variable `lenny-test
+// run --container` reads.
+func gateCacheCapKnob(label string) string {
+	if label == "lenny-test gate" {
+		return "--gocache-cap-gb"
+	}
+	return gateEnvGoCacheCap
 }
 
 // emptyGateGoCacheOverCap empties the build cache volume, which holds kb
@@ -192,24 +206,24 @@ func capGateGoCache(ctx context.Context, run gateCommandRunner, imageRef string,
 // any does, because `go clean -cache` deletes entries a running gate's
 // builds may still read. The comparison runs in KiB with the cap rounded
 // down, which cannot overflow under maxGateGoCacheCapGB.
-func emptyGateGoCacheOverCap(ctx context.Context, run gateCommandRunner, imageRef string, kb int64, capGB int, logw io.Writer) bool {
+func emptyGateGoCacheOverCap(ctx context.Context, run gateCommandRunner, imageRef string, kb int64, capGB int, label string, logw io.Writer) bool {
 	if kb <= int64(capGB)*1e9/1024 {
 		return false
 	}
 	size := formatKBAsGB(kb)
 	users, err := run(ctx, "docker", gateGoCacheInUseArgs()...)
 	if err != nil {
-		fmt.Fprintf(logw, "lenny-test gate: warning: the build cache volume %s holds %s, over the %d GB cap, and listing the containers that use it failed, so it was not emptied: %v\n", gateBuildVolume, size, capGB, err)
+		fmt.Fprintf(logw, "%s: warning: the build cache volume %s holds %s, over the %d GB cap, and listing the containers that use it failed, so it was not emptied: %v\n", label, gateBuildVolume, size, capGB, err)
 		return false
 	}
 	if ids := strings.Fields(string(users)); len(ids) > 0 {
-		fmt.Fprintf(logw, "lenny-test gate: the build cache volume %s holds %s, over the %d GB cap; not emptied, because %d running container(s) use it (%s)\n", gateBuildVolume, size, capGB, len(ids), strings.Join(ids, " "))
+		fmt.Fprintf(logw, "%s: the build cache volume %s holds %s, over the %d GB cap; not emptied, because %d running container(s) use it (%s)\n", label, gateBuildVolume, size, capGB, len(ids), strings.Join(ids, " "))
 		return false
 	}
 	if _, err := run(ctx, "docker", gateGoCacheCleanArgs(imageRef)...); err != nil {
-		fmt.Fprintf(logw, "lenny-test gate: warning: the build cache volume %s holds %s, over the %d GB cap, and emptying it failed: %v\n", gateBuildVolume, size, capGB, err)
+		fmt.Fprintf(logw, "%s: warning: the build cache volume %s holds %s, over the %d GB cap, and emptying it failed: %v\n", label, gateBuildVolume, size, capGB, err)
 		return false
 	}
-	fmt.Fprintf(logw, "lenny-test gate: the build cache volume %s held %s, over the %d GB cap (--gocache-cap-gb); emptied it, so this run compiles from cold\n", gateBuildVolume, size, capGB)
+	fmt.Fprintf(logw, "%s: the build cache volume %s held %s, over the %d GB cap (%s); emptied it, so this run compiles from cold\n", label, gateBuildVolume, size, capGB, gateCacheCapKnob(label))
 	return true
 }
