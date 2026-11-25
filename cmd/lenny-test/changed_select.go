@@ -40,12 +40,21 @@ import (
 // moduleImportPath is the import-path prefix of this repository's module.
 const moduleImportPath = "github.com/lennylabs/lenny"
 
-// defaultRdepsDepth is how many hops of in-module dependents `--changed`
-// and `--pkg` add to the changed packages. A negative depth walks the full
-// closure, which is the "changed packages and their dependents" the merge
-// gate runs (change 0154): one hop left out dependents whose build still
-// breaks. Operators narrow the walk in an inner loop with `--rdeps-depth`.
-const defaultRdepsDepth = -1
+// fullRdepsDepth is the dependent depth that walks the full closure of
+// in-module dependents of the changed packages: the "changed packages and
+// their dependents" the gate on `main` runs (change 0154), and the depth
+// of a gate run without `--tier`.
+const fullRdepsDepth = -1
+
+// premergeRdepsDepth is the dependent depth of the check before a merge:
+// the changed packages, the packages whose build imports one, and the
+// packages whose tests import one (change 0172, decision 26). A gate run
+// that `--tier` restricts uses it unless `--rdeps-depth` names another
+// depth, and `lenny-test run --changed` and `--pkg` use it by default, so
+// the developer loop selects what the check before a merge runs. A break
+// that only a package further away sees is caught by the gate on `main`,
+// which walks the full closure, after the merge.
+const premergeRdepsDepth = 1
 
 // goListTimeout bounds the `go list` call that loads the package graph.
 // The default sits well above the load's two seconds on a warm cache, so
@@ -283,7 +292,7 @@ func parsePkgGraph(out []byte, root string) (*pkgGraph, error) {
 
 // selectOpts carries the operator-tunable knobs of package-level selection.
 type selectOpts struct {
-	// rdepsDepth is the dependent depth; see defaultRdepsDepth.
+	// rdepsDepth is the dependent depth; see fullRdepsDepth.
 	rdepsDepth int
 	// all runs every package in the unit tier regardless of the diff.
 	all bool
@@ -496,7 +505,10 @@ type specEdits struct {
 // path adds its targets: a tier name under `runs` selects the whole tier, a
 // package directory under `runs` is changed too (see addTarget), and a
 // package directory under `tests` runs its own tests without its
-// dependents (see addOwnTests). The packages whose code cites an identifier a
+// dependents (see addOwnTests). A path that a generated row matches reads
+// only the generated rows, and its owning packages are not changed: its
+// generator's check, which the row names, stands for it (change 0172,
+// decision 26). The packages whose code cites an identifier a
 // specification edit changes are changed too. The changed packages and
 // their dependents to opts.rdepsDepth hops are then selected, each in the
 // tier that runs it, and the test functions the specification edits name
@@ -513,7 +525,7 @@ func selectChanged(paths []string, g *pkgGraph, inputs *nonGoInputs, spec specEd
 			continue
 		}
 		var owners []string
-		if g != nil {
+		if g != nil && !inputs.generated(p) {
 			owners = g.ownersOf(p)
 		}
 		targets := inputs.targetsFor(p)

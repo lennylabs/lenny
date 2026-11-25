@@ -69,7 +69,7 @@ func TestGateRecordsTheSelectionOfEachTierOfASelectedRun(t *testing.T) {
 func TestGateRecordsAFullRunAsWholeForEveryTier(t *testing.T) {
 	g := stubGateRunner()
 	g.plan = gateChangedPlan
-	v := g.run(gateOptions{root: ".", base: "no-such-ref", rdepsDepth: defaultRdepsDepth, all: true, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: ".", base: "no-such-ref", rdepsDepth: fullRdepsDepth, all: true, environment: "lenny-gate:test"})
 	want := map[string]gateTierSelection{}
 	for _, name := range gateChangedTiers {
 		want[name] = gateTierSelection{Whole: true}

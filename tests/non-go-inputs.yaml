@@ -21,6 +21,13 @@
 #   package's tests run, and none of its dependents is selected, because
 #   nothing imports a package's tests. A package whose code outside its
 #   tests reads the input belongs under `runs`.
+# - `generated: true`: the row's paths are generated files, which a
+#   generator regenerates from a source or a check's run writes back, and
+#   its targets are the checks that regenerate or read them. A changed path
+#   that a generated row matches selects the targets of the generated rows
+#   that match it, and no other row and no owning or embedding package. A
+#   change to the source selects its own dependents, and a hand edit fails
+#   the generator's check.
 # - `reason`: how the targets read the paths.
 #
 # A row needs a pattern, a target under `runs` or `tests`, and a reason. A
@@ -28,8 +35,12 @@
 # tier only, and the selection notes name it. `lenny-test validate` fails a
 # row whose pattern matches no tracked file, whose `runs` target is neither
 # a tier name nor a Go package directory, or whose `tests` target is not a
-# Go package directory or is also under `runs`. TESTING.md, "Selection
-# algorithm", describes the sources of a selection.
+# Go package directory or is also under `runs`. It also fails a generated
+# row whose pattern is not a literal tracked file, whose file is neither
+# generated nor a register a run writes back, whose `runs` names a package,
+# or whose file lies in a Go package that the row does not list under
+# `tests`. TESTING.md, "Selection algorithm", describes the sources of a
+# selection.
 kind: non-go-inputs
 version: 1
 inputs:
@@ -225,6 +236,42 @@ inputs:
     tests:
       - scripts/specshift
     reason: The harness, the specification tooling, and documentation-tier tests read the registers.
+  - paths:
+      - "tests/registers/spec-section-citations.yaml"
+      - "tests/registers/line-citations.yaml"
+      - "tests/registers/golangci-lint-findings.yaml"
+    generated: true
+    runs:
+      - static
+    reason: >-
+      The static tier's section-citation ratchet, line-citation ratchet, and
+      golangci-lint check read these registers and write a fallen count back,
+      and the static tier runs on every invocation.
+  - paths:
+      - "charts/lenny/files/alerting-rules.yaml"
+      - "docs/alerting/rules.yaml"
+    generated: true
+    runs:
+      - docs
+    tests:
+      - tests/component/observability
+    reason: >-
+      cmd/gen-alerting-rules regenerates these files from the alert catalog in
+      pkg/alerting/rules, whose own change selects the packages that import
+      it. The catalog cross-check of the observability component package runs
+      the generator with -check and renders the chart's alert rules, and the
+      documentation tier reads both files.
+  - paths: ["pkg/embedded/manifests/manifests.yaml"]
+    generated: true
+    runs:
+      - docs
+    tests:
+      - pkg/embedded/manifests
+    reason: >-
+      `make generate` renders the chart under the development profile into
+      this file. The documentation tier's sync check compares it with a fresh
+      render, and the embedding package's own tests decode it. A change to the
+      chart selects the chart's readers through the chart's own row.
   - paths: ["cmd/lenny-test/**"]
     runs:
       - docs

@@ -117,7 +117,7 @@ func selectedTiers(g *pkgGraph, inputs *nonGoInputs, source string) []string {
 	if _, ok := g.dirToPkg[source]; ok {
 		source += "/doc.go"
 	}
-	sel := selectChanged([]string{source}, g, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth})
+	sel := selectChanged([]string{source}, g, inputs, specEdits{}, selectOpts{rdepsDepth: fullRdepsDepth})
 	return planNames(sel.plan())
 }
 

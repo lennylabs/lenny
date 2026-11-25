@@ -94,7 +94,7 @@ func TestGateCoverWritesAnEmptyProfileWhenTheUnitTierWroteNone(t *testing.T) {
 	g.plan = func(string, int, bool) (resolvedSelector, error) {
 		return resolvedSelector{tiers: []tierPlan{{name: tierUnit, pkgs: []string{}, funcs: map[string][]string{"./pkg/a": {"TestA"}}, noCoverage: true}}}, nil
 	}
-	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: defaultRdepsDepth, cover: true, coverProfile: profile, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: fullRdepsDepth, cover: true, coverProfile: profile, environment: "lenny-gate:test"})
 	if body, _ := os.ReadFile(profile); string(body) != "mode: atomic\n" || v.Gate.CoverProfile != "cover.out" {
 		t.Errorf("profile %q recorded %q; want one that covers nothing", body, v.Gate.CoverProfile)
 	}
@@ -106,7 +106,7 @@ func TestGateCoverWritesAnEmptyProfileWhenTheUnitTierWroteNone(t *testing.T) {
 func TestGateHistoryLineNamesWhatTheRunRan(t *testing.T) {
 	dir := t.TempDir()
 	g := laneRunner(&laneLog{}, nil, nil)
-	v := g.run(gateOptions{root: dir, base: "main", rdepsDepth: defaultRdepsDepth, tiers: []string{tierStatic, tierUnit}, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: dir, base: "main", rdepsDepth: fullRdepsDepth, tiers: []string{tierStatic, tierUnit}, environment: "lenny-gate:test"})
 	v.finalize()
 	hist := filepath.Join(dir, "history.jsonl")
 	if err := appendHistory(hist, v); err != nil {

@@ -88,7 +88,7 @@ func laneRunner(l *laneLog, sleeps map[string]time.Duration, status map[string]s
 }
 
 func runLaneGate(g gateRunner, layout string, goTestP map[string]int) *verdict {
-	return g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, layout: layout, goTestP: goTestP, environment: "lenny-gate:test"})
+	return g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, layout: layout, goTestP: goTestP, environment: "lenny-gate:test"})
 }
 
 // TestGateLayoutsHoldEveryTierOnce checks that each layout runs every

@@ -92,7 +92,7 @@ func tierNamesOf(plan map[string]tierPlan) []string {
 // it. The static tier's own packages are never selected again, and a
 // single-package tier runs whole.
 func TestSelectionWalksTheFullClosureOfDependents(t *testing.T) {
-	plan := planOf(selectChanged([]string{"pkg/leaf/a.go"}, fixtureGraph(), nil, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	plan := planOf(selectChanged([]string{"pkg/leaf/a.go"}, fixtureGraph(), nil, specEdits{}, selectOpts{rdepsDepth: fullRdepsDepth}))
 	if got, want := tierNamesOf(plan), []string{tierStatic, tierUnit, tierComponent, tierContract, tierIntegration}; !reflect.DeepEqual(got, want) {
 		t.Fatalf("tiers = %v, want %v", got, want)
 	}
@@ -193,7 +193,7 @@ func TestEmbeddedFilesTestdataAndBrokenFilesSelectTheirOwners(t *testing.T) {
 // and go.work: no package scope describes them, so the selection notes them
 // and only --all runs the whole unit tier.
 func TestModuleWideFilesAreReportedAndAllRunsEveryPackage(t *testing.T) {
-	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	opts := selectOpts{rdepsDepth: fullRdepsDepth}
 	sel := selectChanged([]string{"go.mod", "go.sum"}, fixtureGraph(), nil, specEdits{}, opts)
 	if got := tierNamesOf(planOf(sel)); !reflect.DeepEqual(got, []string{tierStatic}) {
 		t.Errorf("tiers = %v", got)
@@ -216,7 +216,7 @@ func TestModuleWideFilesAreReportedAndAllRunsEveryPackage(t *testing.T) {
 // the whole tier, a test package target runs that package, and a helper
 // package target selects the tests that import it.
 func TestNonGoInputRowsSelectTiersAndPackages(t *testing.T) {
-	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	opts := selectOpts{rdepsDepth: fullRdepsDepth}
 	plan := planOf(selectChanged([]string{"charts/lenny/templates/x.yaml"}, fixtureGraph(), fixtureInputs(), specEdits{}, opts))
 	if got := tierNamesOf(plan); !reflect.DeepEqual(got, []string{tierStatic, tierComponent, tierE2EKind}) {
 		t.Fatalf("tiers = %v", got)
@@ -246,7 +246,7 @@ func TestBaseRowsJoinTheBranchRowsAndDeadTargetsSelectNothing(t *testing.T) {
 	base := fixtureInputs()
 	base.Inputs = append(base.Inputs, nonGoInput{Paths: []string{"compose/**"}, Runs: []string{"pkg/gone"}, Reason: "removed since"})
 	merged := branch.union(base)
-	plan := planOf(selectChanged([]string{"charts/lenny/values.yaml", "compose/default.yml"}, fixtureGraph(), merged, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	plan := planOf(selectChanged([]string{"charts/lenny/values.yaml", "compose/default.yml"}, fixtureGraph(), merged, specEdits{}, selectOpts{rdepsDepth: fullRdepsDepth}))
 	if _, ok := plan[tierE2EKind]; !ok {
 		t.Errorf("a row the branch deleted must still select; tiers = %v", tierNamesOf(plan))
 	}
@@ -264,7 +264,7 @@ func TestBaseRowsJoinTheBranchRowsAndDeadTargetsSelectNothing(t *testing.T) {
 // unreadable diff each run the unit, component, contract, and integration
 // tiers whole.
 func TestUnreadableSourcesFailSafeToTheMergeGateTiers(t *testing.T) {
-	plan := planOf(selectChanged([]string{"spec/05_pools.md"}, fixtureGraph(), fixtureInputs(), specEdits{failed: true}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	plan := planOf(selectChanged([]string{"spec/05_pools.md"}, fixtureGraph(), fixtureInputs(), specEdits{failed: true}, selectOpts{rdepsDepth: fullRdepsDepth}))
 	for _, tier := range failSafeTiers {
 		if p, ok := plan[tier]; !ok || p.pkgs != nil {
 			t.Errorf("unreadable edits must run %s whole; got %+v", tier, p)
@@ -273,7 +273,7 @@ func TestUnreadableSourcesFailSafeToTheMergeGateTiers(t *testing.T) {
 	if _, err := changedPathsFor("no-such-ref-0116"); err == nil {
 		t.Errorf("an unknown ref must fail the diff rather than read as empty")
 	}
-	diffPlan, notes := resolveChangedPlanFor("no-such-ref-0116", selectOpts{rdepsDepth: defaultRdepsDepth})
+	diffPlan, notes := resolveChangedPlanFor("no-such-ref-0116", selectOpts{rdepsDepth: fullRdepsDepth})
 	got := map[string]tierPlan{}
 	for _, p := range diffPlan {
 		got[p.name] = p
@@ -321,7 +321,7 @@ func TestNoGoFileNegatesATierTag(t *testing.T) {
 // path no package owns and no row matches, and that the records no test
 // reads select nothing without a note.
 func TestUnownedPathsAreReportedAndSelectOnlyTheStaticTier(t *testing.T) {
-	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	opts := selectOpts{rdepsDepth: fullRdepsDepth}
 	paths := []string{".github/workflows/ci.yml", "changes/0001-x/change.md", "proposals/0001.md", "issues/X/X-I1.md", "CHANGELOG.md"}
 	sel := selectChanged(paths, fixtureGraph(), fixtureInputs(), specEdits{}, opts)
 	if got := tierNamesOf(planOf(sel)); !reflect.DeepEqual(got, []string{tierStatic}) {
@@ -354,7 +354,7 @@ func TestSpecificationEditsRunFunctionsByName(t *testing.T) {
 		unitDirs:    []string{"pkg/helper"},
 		notes:       []string{"a note"},
 	}
-	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	opts := selectOpts{rdepsDepth: fullRdepsDepth}
 	sel := selectChanged(nil, fixtureGraph(), nil, edits, opts)
 	plan := planOf(sel)
 	if got := plan[tierUnit].pkgs; !reflect.DeepEqual(got, []string{"./cmd/app", "./pkg/helper", "./pkg/mid", "./pkg/top"}) {
@@ -386,7 +386,7 @@ func TestSpecificationEditsRunFunctionsByName(t *testing.T) {
 // or under each named directory are changed, and an unknown name is
 // returned.
 func TestSelectPackagesResolvesThroughTheGraph(t *testing.T) {
-	sel, unknown := selectPackages([]string{"./pkg/mid/...", "pkg/nowhere"}, fixtureGraph(), selectOpts{rdepsDepth: defaultRdepsDepth})
+	sel, unknown := selectPackages([]string{"./pkg/mid/...", "pkg/nowhere"}, fixtureGraph(), selectOpts{rdepsDepth: fullRdepsDepth})
 	plan := planOf(sel)
 	if got := plan[tierUnit].pkgs; !reflect.DeepEqual(got, []string{"./cmd/app", "./pkg/mid", "./pkg/top"}) {
 		t.Errorf("unit scope = %v", got)
@@ -397,7 +397,7 @@ func TestSelectPackagesResolvesThroughTheGraph(t *testing.T) {
 	if !reflect.DeepEqual(unknown, []string{"pkg/nowhere"}) {
 		t.Errorf("unknown = %v", unknown)
 	}
-	tagged, _ := selectPackages([]string{"cmd/lenny-ops"}, fixtureGraph(), selectOpts{rdepsDepth: defaultRdepsDepth, all: true})
+	tagged, _ := selectPackages([]string{"cmd/lenny-ops"}, fixtureGraph(), selectOpts{rdepsDepth: fullRdepsDepth, all: true})
 	tp := planOf(tagged)
 	if got := tp[tierComponent].pkgs; !reflect.DeepEqual(got, []string{"./cmd/lenny-ops"}) {
 		t.Errorf("a package with in-package component tests runs in the component tier too; got %v", got)
@@ -633,7 +633,7 @@ func planNames(plan []tierPlan) []string {
 // `tests` target the graph does not hold selects nothing and still counts
 // as a match, and without a graph the package is selected alone.
 func TestATestsTargetRunsThePackageWithoutItsDependents(t *testing.T) {
-	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	opts := selectOpts{rdepsDepth: fullRdepsDepth}
 	row := func(runs, tests []string) *nonGoInputs {
 		return &nonGoInputs{Kind: nonGoInputsKind, Version: nonGoInputsVersion, Inputs: []nonGoInput{
 			{Paths: []string{"compose/**"}, Runs: runs, Tests: tests, Reason: "reads it"},
@@ -700,7 +700,7 @@ func TestCommittedSpecRowSelectsNoDependentOfItsPackages(t *testing.T) {
 	g.addPackage(m+"tests/integration", "tests/integration", nil, []string{m + "pkg/observability/tracing"}, nil)
 	g.addPackage(m+"tests/conformance", "tests/conformance", nil, nil, nil)
 
-	plan := planOf(selectChanged([]string{"spec/05_pools.md"}, g, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	plan := planOf(selectChanged([]string{"spec/05_pools.md"}, g, inputs, specEdits{}, selectOpts{rdepsDepth: fullRdepsDepth}))
 	if got, want := plan[tierUnit].pkgs, []string{"./pkg/api/openapi", "./pkg/observability/tracing"}; !reflect.DeepEqual(got, want) {
 		t.Errorf("unit scope = %v, want %v", got, want)
 	}

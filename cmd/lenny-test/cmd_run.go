@@ -42,7 +42,7 @@ func runRun(args []string) int {
 	changedFlag := fs.Bool("changed", false, "run tests affected by uncommitted changes (working tree diff)")
 	sinceFlag := fs.String("since", "", "diff from the merge base of the given git ref and HEAD (e.g. main, HEAD~5), or an explicit range (A..B, A...B), instead of the working tree")
 	allFlag := fs.Bool("all", false, "with --changed or --pkg, run the unit tier over every package (./...) instead of the packages the selection reaches")
-	rdepsFlag := fs.Int("rdeps-depth", defaultRdepsDepth, "with --changed or --pkg, how many hops of in-module dependents of a changed package the selection adds (0: changed packages only; -1, the default: the full closure)")
+	rdepsFlag := fs.Int("rdeps-depth", premergeRdepsDepth, "with --changed or --pkg, how many hops of in-module dependents of a changed package the selection adds (0: changed packages only; 1, the default: the changed packages and the packages that import them directly, as the check before a merge selects; -1: the full closure, as the gate on main selects)")
 	specFlag := fs.String("spec", "", "comma-separated identifiers, page codes, or numbered sections (§N.M); runs the tests whose // spec: annotations cite them")
 	pkgFlag := fs.String("pkg", "", "comma-separated package directories; runs the tests of the packages at or under them and of their dependents, through the import graph")
 	subsetFlag := fs.String("subset", "", "comma-separated subset names of one tier (requires exactly one --tier)")
@@ -141,7 +141,7 @@ type selector struct {
 	cached      bool
 	noInfra     bool
 	all         bool // run the unit tier over ./... whatever the selection
-	rdepsDepth  int  // importer hops --changed adds; see defaultRdepsDepth
+	rdepsDepth  int  // importer hops --changed adds; see premergeRdepsDepth
 }
 
 func (s selector) valid() bool {

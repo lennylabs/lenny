@@ -16,6 +16,9 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/lennylabs/lenny/scripts/specshift/annotation"
+	"github.com/lennylabs/lenny/scripts/specshift/scope"
 )
 
 // This file holds tests/non-go-inputs.yaml (change 0116, CS-6): the inputs
@@ -37,6 +40,10 @@ type nonGoInputs struct {
 	Kind    string       `yaml:"kind"`
 	Version int          `yaml:"version"`
 	Inputs  []nonGoInput `yaml:"inputs"`
+	// base is the list at the diff's base commit that union merged in, or
+	// nil. A generated row narrows a path's selection only when the base
+	// list also carries a generated row for the path (generated).
+	base *nonGoInputs
 }
 
 // nonGoInput is one row: path patterns, the targets that read the paths,
@@ -57,6 +64,17 @@ type nonGoInput struct {
 	// reaches the input only through the package's tests, which nothing
 	// imports.
 	Tests []string `yaml:"tests"`
+	// Generated marks a row whose paths are generated files: each is
+	// regenerated from a source by a generator, or written back by a run
+	// of a check, and a check of the row's targets regenerates or reads it
+	// (change 0172, decision 26). A changed path that a generated row
+	// matches selects the targets of the generated rows that match it and
+	// nothing else: no other row that matches the path, and no package
+	// that owns or embeds it. The change to the source selects its own
+	// dependents, and a hand edit fails the generator's check. Its paths
+	// are literal files, and its `runs` holds tier names only
+	// (generatedRowProblems).
+	Generated bool `yaml:"generated"`
 	// Reason says how the targets read the paths.
 	Reason string `yaml:"reason"`
 }
@@ -97,6 +115,7 @@ func (n *nonGoInputs) union(other *nonGoInputs) *nonGoInputs {
 	}
 	out := *n
 	out.Inputs = append(append([]nonGoInput{}, n.Inputs...), other.Inputs...)
+	out.base = other
 	return &out
 }
 
@@ -114,15 +133,43 @@ func (n *nonGoInputs) testsFor(p string) []string {
 	return n.collect(p, func(in nonGoInput) []string { return in.Tests })
 }
 
+// generated reports whether a generated row matches the changed path, so
+// the selection reads only the generated rows for it (see nonGoInput's
+// Generated field). A list that union merged with the base's list narrows
+// the path only when the base's list also carries a generated row for it:
+// the union keeps a branch that narrows a row running what the row named
+// before, and a generated row that the branch adds narrows the selection
+// of the branches after it merges, not its own. A nil list matches
+// nothing.
+func (n *nonGoInputs) generated(p string) bool {
+	if n == nil || !n.matchesGenerated(p) {
+		return false
+	}
+	return n.base == nil || n.base.matchesGenerated(p)
+}
+
+// matchesGenerated reports whether a generated row of the list matches the
+// path.
+func (n *nonGoInputs) matchesGenerated(p string) bool {
+	for _, in := range n.Inputs {
+		if in.Generated && in.matches(p) {
+			return true
+		}
+	}
+	return false
+}
+
 // collect returns the values field gives for every row with a pattern that
-// matches the path, in row order and without duplicates.
+// matches the path, in row order and without duplicates. When the path is
+// generated (generated), only the generated rows count.
 func (n *nonGoInputs) collect(p string, field func(nonGoInput) []string) []string {
 	if n == nil {
 		return nil
 	}
+	onlyGenerated := n.generated(p)
 	var out []string
 	for _, in := range n.Inputs {
-		if !in.matches(p) {
+		if !in.matches(p) || (onlyGenerated && !in.Generated) {
 			continue
 		}
 		for _, t := range field(in) {
@@ -197,6 +244,7 @@ func validateNonGoInputsFile(root string) checkResult {
 	dirs := pkgDirs{
 		isPackage: func(dir string) bool { return holdsFile(filepath.Join(root, dir), ".go") },
 		hasTests:  func(dir string) bool { return holdsFile(filepath.Join(root, dir), "_test.go") },
+		generated: func(p string) (bool, error) { return isGeneratedInput(root, p) },
 	}
 	problems := nonGoInputProblems(n, tracked, dirs)
 	if len(problems) > 0 {
@@ -211,6 +259,37 @@ type pkgDirs struct {
 	isPackage func(dir string) bool
 	// hasTests reports whether the directory holds a Go test file.
 	hasTests func(dir string) bool
+	// generated reports whether a file is one a generated row may name
+	// (isGeneratedInput); nil answers no for every file.
+	generated func(path string) (bool, error)
+}
+
+// writeBackRegisters are the registers under tests/registers/ whose counts
+// a run of a static-tier check writes back when a count falls, each with
+// the check that reads and rewrites it. A generated row may name them
+// beside the files a generator writes (change 0172, decision 26).
+var writeBackRegisters = map[string]string{
+	annotation.RatchetBaselinePath:        "the section-citation ratchet of the static tier",
+	"tests/registers/line-citations.yaml": "the line-citation ratchet of the static tier",
+	golangciLintRegister:                  "the golangci-lint check of the static tier",
+}
+
+// isGeneratedInput reports whether the file at p, relative to root, is one
+// a generated row may name: a register in writeBackRegisters, or a file the
+// generated-artifact rule of the specification tooling classifies as
+// generated, by a generation marker in its header or its document metadata
+// or as the output of a named producer (scope.Generated).
+func isGeneratedInput(root, p string) (bool, error) {
+	if _, ok := writeBackRegisters[p]; ok {
+		return true, nil
+	}
+	d, err := scope.Generated(p, func(target string) ([]byte, error) {
+		return os.ReadFile(filepath.Join(root, filepath.FromSlash(target)))
+	})
+	if err != nil {
+		return false, err
+	}
+	return d != scope.NotGenerated, nil
 }
 
 // nonGoInputProblems returns what is wrong with each row of the list
@@ -245,8 +324,63 @@ func nonGoInputProblems(n *nonGoInputs, tracked []string, dirs pkgDirs) []string
 			}
 		}
 		problems = append(problems, testsTargetProblems(row, in, dirs)...)
+		if in.Generated {
+			problems = append(problems, generatedRowProblems(row, in, tracked, dirs)...)
+		}
 	}
 	return problems
+}
+
+// generatedRowProblems returns what is wrong with a generated row. Its
+// narrow selection holds only for a file that a check regenerates or reads,
+// so each pattern names one tracked file, without a wildcard, that is a
+// generated file or a register a run writes back (isGeneratedInput); its
+// `runs` names tiers only, because a package target would be walked for
+// its dependents; and a file inside a Go package directory, which its
+// owning package would otherwise select, has that package under `tests`,
+// so the package's own tests still run.
+func generatedRowProblems(row string, in nonGoInput, tracked []string, dirs pkgDirs) []string {
+	var problems []string
+	for _, target := range in.Runs {
+		if !contains(allTiers(), target) {
+			problems = append(problems, fmt.Sprintf("%s: a generated row lists %q under runs; list a tier there, and a package whose tests check the file under tests", row, target))
+		}
+	}
+	for _, p := range in.Paths {
+		if strings.ContainsAny(p, "*?") {
+			problems = append(problems, fmt.Sprintf("%s: a generated row's pattern %q is not a literal file path", row, p))
+			continue
+		}
+		if !contains(tracked, p) {
+			continue // the pattern check reports a pattern that matches no tracked file
+		}
+		gen := false
+		var err error
+		if dirs.generated != nil {
+			gen, err = dirs.generated(p)
+		}
+		switch {
+		case err != nil:
+			problems = append(problems, fmt.Sprintf("%s: %v", row, err))
+		case !gen:
+			problems = append(problems, fmt.Sprintf("%s: %q is neither a generated file nor a register a run writes back, so a generated row cannot name it", row, p))
+		}
+		if owner := owningPackageDir(p, dirs); owner != "" && !contains(in.Tests, owner) {
+			problems = append(problems, fmt.Sprintf("%s: %q lies in the Go package %s, which a generated row lists under tests", row, p, owner))
+		}
+	}
+	return problems
+}
+
+// owningPackageDir returns the nearest directory above p that holds a Go
+// package, as the selection's package graph would own the file, or "".
+func owningPackageDir(p string, dirs pkgDirs) string {
+	for dir := path.Dir(p); dir != "." && dir != "/" && dir != ""; dir = path.Dir(dir) {
+		if dirs.isPackage(dir) {
+			return dir
+		}
+	}
+	return ""
 }
 
 // testsTargetProblems returns what is wrong with the `tests` targets of

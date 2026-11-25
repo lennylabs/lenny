@@ -308,7 +308,7 @@ func TestRuntimeSupervisorSourcesSelectTheHarnessAndTheImageTiers(t *testing.T) 
 	if err != nil {
 		t.Fatalf("read the non-Go input list: %v", err)
 	}
-	opts := selectOpts{rdepsDepth: defaultRdepsDepth}
+	opts := selectOpts{rdepsDepth: fullRdepsDepth}
 	c := planOf(selectChanged([]string{"supervisor/supervisor.c"}, g, inputs, specEdits{}, opts))
 	if !contains(c[tierUnit].pkgs, "./tests/testinfra/supervisorbuild") {
 		t.Errorf("an edit under supervisor/ selects unit %v, without the C harness driver", c[tierUnit].pkgs)
