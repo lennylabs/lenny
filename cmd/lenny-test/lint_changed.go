@@ -695,7 +695,11 @@ func (l golangciLint) wholeTree(ctx context.Context, comparable bool, base *lint
 	c := compareLintCounts(counted, carried)
 	if len(c.lowered) > 0 {
 		if err := writeLintRegister(filepath.Join(l.root, golangciLintRegister), c.kept); err != nil {
-			return summary + "\n" + err.Error() + raised, err
+			// The merge gate's static tier reads a read-only snapshot of
+			// the commit (change 0172, decision 14), so the write fails
+			// there; the section still names every lowered count.
+			note := fmt.Sprintf("\nThe lowered counts were not written to %s (%v); run `lenny-test --tier static` in the worktree to write them.", golangciLintRegister, err)
+			return lintRegisterSection(summary, c, findings) + note + raised, err
 		}
 	}
 	return lintRegisterSection(summary, c, findings) + raised, lintRegisterError(c)

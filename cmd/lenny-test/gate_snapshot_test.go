@@ -133,8 +133,8 @@ func TestStaticSnapshotRefusesADirectoryThatHoldsFilesOrNoCommit(t *testing.T) {
 
 // TestHereSnapshotIsReadOnlyAndRemovedAfterTheRun checks the snapshot a
 // `--here` run creates: it lies under the temporary directory, replaces
-// what an earlier run left there, has no write bits, and its cleanup
-// removes it. A checkout the container gave is checked rather than
+// what an earlier run left there, has no write bits, reads as writable
+// because its own user can restore them, and its cleanup removes it. A checkout the container gave is checked rather than
 // created, and its cleanup leaves it alone.
 func TestHereSnapshotIsReadOnlyAndRemovedAfterTheRun(t *testing.T) {
 	r, head := snapshotFixture(t)
@@ -156,8 +156,8 @@ func TestHereSnapshotIsReadOnlyAndRemovedAfterTheRun(t *testing.T) {
 	if _, err := os.Stat(filepath.Join(snap.dir, "left-behind")); !errors.Is(err, os.ErrNotExist) {
 		t.Errorf("an earlier run's file survived (stat: %v)", err)
 	}
-	if os.Geteuid() != 0 && snapshotWritable(snap.dir) {
-		t.Error("the --here snapshot is writable by its own user")
+	if !snapshotWritable(snap.dir) {
+		t.Error("the --here snapshot reads as not writable, and its own user can give it back its write bits")
 	}
 	if info, err := os.Stat(filepath.Join(snap.dir, "b.go")); err != nil || info.Mode().Perm()&0o222 != 0 {
 		t.Errorf("the snapshot's b.go has mode %v (%v); want no write bits", info.Mode(), err)
@@ -346,5 +346,49 @@ func TestStaticChecksRunInTheCheckoutTheyAreGiven(t *testing.T) {
 		if _, err := c.run(); err == nil {
 			t.Errorf("%s passed in an empty directory, so it did not run there", c.name)
 		}
+	}
+}
+
+// TestSnapshotWritableJudgesOwnershipAndMode checks the writability check:
+// a directory another user owns without write bits for this user is not
+// writable, and a directory this user owns is writable whatever its mode,
+// because its owner can restore the bits.
+func TestSnapshotWritableJudgesOwnershipAndMode(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("blocked: root writes a directory whatever its mode")
+	}
+	own := t.TempDir()
+	if err := os.Chmod(own, 0o555); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(own, 0o755) })
+	if !snapshotWritable(own) {
+		t.Error("a directory this user owns, without write bits, reads as not writable")
+	}
+	if snapshotWritable("/") {
+		t.Error("the root directory, which root owns, reads as writable")
+	}
+	if snapshotWritable(filepath.Join(t.TempDir(), "missing")) {
+		t.Error("a missing directory reads as writable")
+	}
+}
+
+// TestStaticSnapshotOfAShallowClone checks that the snapshot of a shallow
+// clone carries the clone's shallow boundary, so a history walk in it
+// stops at the boundary rather than failing on a missing parent.
+func TestStaticSnapshotOfAShallowClone(t *testing.T) {
+	r, _ := snapshotFixture(t)
+	r.commit("c.go", "package m\n", "a second feature commit")
+	shallow := filepath.Join(t.TempDir(), "shallow")
+	if out, err := exec.Command("git", "clone", "-q", "--depth", "1", "--branch", "feature", "file://"+r.root, shallow).CombinedOutput(); err != nil {
+		t.Fatalf("shallow clone: %v\n%s", err, out)
+	}
+	head := snapGit(t, shallow, "rev-parse", "HEAD")
+	dir := filepath.Join(t.TempDir(), "snap")
+	if err := createStaticSnapshot(context.Background(), gitOutput, shallow, head, dir); err != nil {
+		t.Fatal(err)
+	}
+	if got := snapGit(t, dir, "rev-list", "--count", "HEAD"); got != "1" {
+		t.Errorf("the snapshot's history holds %s commit(s); want the clone's single commit", got)
 	}
 }

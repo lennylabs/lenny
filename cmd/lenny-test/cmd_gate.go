@@ -877,15 +877,18 @@ func (h gateHost) imageRef() string {
 // root-owned gateSnapshotParent, and gives it to the user, who makes it a
 // checkout of the commit with the installed binary (lenny-test
 // static-snapshot; createStaticSnapshot). Root then gives the checkout to
-// root, removes every write bit, registers it as a safe directory in git's
-// system configuration, so the gate user's git reads it, and bind-mounts it
-// read-only over itself. The static tier runs its checks there, so a test
-// in a lane beside it, which runs as the gate user, cannot change what it
-// reads. A gate run as root holds CAP_SYS_ADMIN and can remount it, as it
-// can the lint cache below. The checkout borrows the worktree's objects
-// through git's alternates file, and the gate user can write the objects
-// of a main checkout; an object git reads is named by the hash of its
-// content.
+// root, removes every write bit, refreshes its index, whose recorded file
+// times the ownership and mode changes made stale, so each git read there
+// does not rehash the whole tree, and bind-mounts it read-only over
+// itself. The gate image's git configuration already lists every directory
+// as safe, so the gate user's git reads the root-owned checkout. The
+// static tier runs its checks there, so a test in a lane beside it, which
+// runs as the gate user, cannot change the files or the refs it reads.
+// Writers remain: a gate run as root, whose tests hold CAP_SYS_ADMIN and
+// can remount the checkout; any process with the host Docker socket; and,
+// in a main checkout, the gate user through the worktree's object store,
+// which the checkout borrows through git's alternates file and whose
+// objects git does not verify when it reads them (createStaticSnapshot).
 //
 // The user then fills golangci-lint's cache with the installed binary
 // (lenny-test lint-cache-fill), in the checkout, because golangci-lint
@@ -916,7 +919,7 @@ const gateContainerScript = `set -e
 if [ -n "${LENNY_TEST_SHARED_TMPDIR:-}" ]; then find "$LENNY_TEST_SHARED_TMPDIR" -mindepth 1 -delete; fi
 mkdir -p "$LENNY_TEST_TMPDIR" "$GOTMPDIR" "$GOCACHE" "${GOLANGCI_LINT_CACHE:?}" /go/pkg/mod
 export ` + gateEnvHarness + `=` + gateHarnessPath + `
-resolve='git rev-parse --verify --quiet "HEAD^{commit}"'
+resolve='git rev-parse --verify --quiet "HEAD^{commit}" || { echo "lenny-test gate: HEAD does not name a commit" >&2; exit 1; }'
 build='set -e
 src="$(mktemp -d "$GOTMPDIR/lenny-test-src.XXXXXX")"
 git archive -o "$src.tar" "${` + gateEnvCommit + `:?}"
@@ -949,8 +952,7 @@ prepare_snapshot() {
 lock_snapshot() {
 	chown -R 0:0 "$` + gateEnvSnapshot + `"
 	chmod -R a-w "$` + gateEnvSnapshot + `"
-	git config --system --add safe.directory "$` + gateEnvSnapshot + `"
-	git config --system --add safe.directory "$` + gateEnvSnapshot + `/.git"
+	git -C "$` + gateEnvSnapshot + `" update-index -q --refresh || echo "lenny-test gate: warning: the static tier's snapshot index was not refreshed, so its git reads rehash the tree" >&2
 	mount --bind "$` + gateEnvSnapshot + `" "$` + gateEnvSnapshot + `"
 	mount -o remount,bind,ro "$` + gateEnvSnapshot + `"
 }

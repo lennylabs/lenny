@@ -501,7 +501,7 @@ func TestGateContainerScriptLocksTheLintCacheBeforeTheGate(t *testing.T) {
 		`snapshot='"$` + gateEnvHarness + `" static-snapshot "$` + gateEnvCommit + `" "$` + gateEnvSnapshot + `"'`,
 		`chown -R 0:0 "$` + gateEnvSnapshot + `"`,
 		`chmod -R a-w "$` + gateEnvSnapshot + `"`,
-		`git config --system --add safe.directory "$` + gateEnvSnapshot + `"`,
+		`git -C "$` + gateEnvSnapshot + `" update-index -q --refresh`,
 		`mount -o remount,bind,ro "$` + gateEnvSnapshot + `"`,
 		`sh -c "$fill" || fill_failed`,
 		`export ` + gateEnvHarness + `=` + gateHarnessPath,

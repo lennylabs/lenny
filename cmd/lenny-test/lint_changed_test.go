@@ -1608,3 +1608,36 @@ func containsArg(args []string, prefix string) bool {
 	}
 	return false
 }
+
+// TestLintNamesTheLoweredCountsWhenTheRegisterIsReadOnly checks the run in
+// the merge gate's read-only snapshot (change 0172, decision 14): the
+// register cannot be written, and the run still fails, names every count
+// that fell, and says how to write them from the worktree.
+func TestLintNamesTheLoweredCountsWhenTheRegisterIsReadOnly(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("blocked: root writes a directory whatever its mode")
+	}
+	f := &fakeLint{wholeJSON: lintJSON(t, "pkg/b/b.go:9:unused"), wholeErr: exitError(t, 1)}
+	l := stubLint(t, f, testLintBase, nil)
+	writeTestLintRegister(t, l.root, map[string]int{"pkg/b unused": 3})
+	reg := filepath.Join(l.root, golangciLintRegister)
+	if err := os.Chmod(filepath.Dir(reg), 0o555); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Chmod(reg, 0o444); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(filepath.Dir(reg), 0o755); _ = os.Chmod(reg, 0o644) })
+	status, out := runLintCheck(l)
+	if status != verdictstatus.Fail {
+		t.Fatalf("status %q; want fail (output %q)", status, out)
+	}
+	for _, want := range []string{"pkg/b unused: 1 where the register carried 3", "were not written to", "lenny-test --tier static"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("output lacks %q:\n%s", want, out)
+		}
+	}
+	if got := readTestLintRegister(t, l.root); got["pkg/b unused"] != 3 {
+		t.Errorf("register %v; want it unchanged", got)
+	}
+}

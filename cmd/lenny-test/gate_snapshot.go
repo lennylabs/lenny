@@ -38,7 +38,14 @@ import (
 // every write bit, and bind-mounts it read-only over itself
 // (gateContainerScript). A `--here` run without the container creates its
 // own checkout and removes its write bits, which keeps out an edit by
-// mistake rather than a process of the same user. The harness is
+// mistake rather than a process of the same user, so its verdict is
+// UNVERIFIED (snapshotWritable).
+//
+// The checkout borrows the worktree's objects, and git does not check an
+// object's content against its name when it reads it, so a process that
+// can write the object store of a main checkout can change what a git read
+// in the snapshot returns; the gate user can write it. A linked worktree's
+// object store is mounted read-only in the container. The harness is
 // contributor tooling, so this file carries no specification annotation.
 
 const (
@@ -53,8 +60,10 @@ const (
 	// stays the same from one run of a worktree to the next, so the Go
 	// build cache entries of the static tier's builds, which name the
 	// package directory, and golangci-lint's cache directory, which is
-	// named for the checkout's path (golangciLintCache), are warm after
-	// the first run.
+	// named for the checkout's path (golangciLintCache), are warm from the
+	// second run on. The test tiers build in the worktree, under another
+	// directory, so they do not reuse the static tier's compiles of the
+	// repository's packages.
 	gateSnapshotParent = "/var/lib/lenny-gate/static"
 	// hereSnapshotPrefix names the checkout a `--here` run creates under
 	// the temporary directory when the container gave it none.
@@ -119,6 +128,9 @@ func createStaticSnapshot(ctx context.Context, git gitRunner, root, commit, dir 
 	if err := os.WriteFile(alternates, []byte(filepath.Join(common, "objects")+"\n"), 0o644); err != nil {
 		return fmt.Errorf("point the snapshot at the repository's objects: %w", err)
 	}
+	if err := copyShallowFile(common, dir); err != nil {
+		return err
+	}
 	if err := copyIntegrationRefs(ctx, git, root, dir); err != nil {
 		return err
 	}
@@ -134,6 +146,24 @@ func createStaticSnapshot(ctx context.Context, git gitRunner, root, commit, dir 
 	}
 	if got != commit {
 		return fmt.Errorf("the snapshot's HEAD is %s, not %s", shortCommit(got), shortCommit(commit))
+	}
+	return nil
+}
+
+// copyShallowFile copies the shallow boundary of a shallow clone, the file
+// shallow in its git directory, into the snapshot, so a history walk there
+// stops at the same commits rather than failing on a missing parent. A
+// repository that is not shallow has no such file.
+func copyShallowFile(common, dir string) error {
+	body, err := os.ReadFile(filepath.Join(common, "shallow"))
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("read the shallow boundary of the repository: %w", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".git", "shallow"), body, 0o644); err != nil {
+		return fmt.Errorf("copy the shallow boundary into the snapshot: %w", err)
 	}
 	return nil
 }
@@ -193,11 +223,20 @@ func checkStaticSnapshot(ctx context.Context, git gitRunner, dir, commit string)
 }
 
 // snapshotWritable reports whether the gate's own user can write the
-// snapshot's root directory. The container's snapshot belongs to root,
-// has no write bits, and lies on a read-only bind mount, so the check
-// fails for it whoever runs the gate.
+// snapshot's root directory, or give it back the write bits: access(2)
+// grants the write, or the user owns the directory, as a user owns the
+// snapshot of a `--here` run whose write bits it removed. Root is judged
+// by access(2) alone, which a read-only mount refuses. The container's
+// snapshot belongs to root, has no write bits, and lies on a read-only
+// bind mount, so the check fails for it whoever runs the gate; a gate that
+// runs as root can still remount it, as TESTING.md states.
 func snapshotWritable(dir string) bool {
-	return syscall.Access(dir, 0o2) == nil
+	if syscall.Access(dir, 0o2) == nil {
+		return true
+	}
+	uid, _ := pathOwner(dir)
+	euid := os.Geteuid()
+	return euid != 0 && uid == euid
 }
 
 // setTreeWritable adds or removes the write bits of every file and
@@ -248,7 +287,13 @@ func hereSnapshotPath(root string) string {
 // prepareStaticSnapshot returns the checkout the static tier reads for
 // commit. A checkout the container named in given is checked; otherwise
 // the run creates one at hereSnapshotPath, replacing what an earlier run
-// left there, removes its write bits, and removes it in cleanup.
+// left there, removes its write bits, and removes it in cleanup. It creates
+// the directory itself with os.Mkdir, which refuses a path that exists, so
+// a directory or a symbolic link another user plants at the predictable
+// path between the removal and the creation fails the run rather than
+// receiving the snapshot. Two `--here` runs of the same worktree at the
+// same time remove each other's snapshot, which fails the static tier of
+// the first.
 func prepareStaticSnapshot(ctx context.Context, git gitRunner, root, commit, given string) (staticSnapshot, error) {
 	if given != "" {
 		if err := checkStaticSnapshot(ctx, git, given, commit); err != nil {
@@ -259,6 +304,9 @@ func prepareStaticSnapshot(ctx context.Context, git gitRunner, root, commit, giv
 	dir := hereSnapshotPath(root)
 	if err := removeSnapshot(dir); err != nil {
 		return staticSnapshot{}, err
+	}
+	if err := os.Mkdir(dir, 0o700); err != nil {
+		return staticSnapshot{}, fmt.Errorf("create the snapshot directory %s: %w", dir, err)
 	}
 	if err := createStaticSnapshot(ctx, git, root, commit, dir); err != nil {
 		_ = removeSnapshot(dir)
