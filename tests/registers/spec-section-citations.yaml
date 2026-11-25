@@ -546,7 +546,7 @@ packages:
     - package: pkg/gateway/platformtools/mcp
       count: 124
     - package: pkg/gateway/platformtools/mcptools
-      count: 677
+      count: 679
     - package: pkg/gateway/platformtools/mcptools/internal/genmcpschemas
       count: 1
     - package: pkg/gateway/platformtools/orphancleanup
@@ -610,7 +610,7 @@ packages:
     - package: pkg/idempotency
       count: 7
     - package: pkg/idempotency/idempotencymw
-      count: 54
+      count: 56
     - package: pkg/kms
       count: 31
     - package: pkg/kms/aws
@@ -956,7 +956,7 @@ packages:
     - package: pkg/upload/archive
       count: 15
     - package: pkg/uploadtoken
-      count: 24
+      count: 29
     - package: pkg/webhookdelivery
       count: 1
     - package: pkg/workspacepack
@@ -1232,7 +1232,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 566
+      count: 568
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

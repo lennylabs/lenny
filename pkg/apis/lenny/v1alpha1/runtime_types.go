@@ -185,8 +185,8 @@ type RuntimeSpec struct {
 	// declaratively register schemas hosted at
 	// `https://schemas.lenny.dev/runtime-options/<name>/v1.json` per §26.
 	// The runtime controller stamps it into the gateway registry as a
-	// JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1; §26.9; §26.11 — F-26.9.2 / F-26.10.2 /
-	// F-26.11.2.
+	// JSON `{"$ref": "<url>"}` schema fragment. The field follows §5.1,
+	// §26.9, and §26.11 (F-26.9.2 / F-26.10.2 / F-26.11.2).
 	// +optional
 	// +kubebuilder:validation:Pattern=`^https?://`
 	RuntimeOptionsSchemaRef string `json:"runtimeOptionsSchemaRef,omitempty"`

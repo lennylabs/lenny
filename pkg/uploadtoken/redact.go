@@ -3,6 +3,7 @@
 package uploadtoken
 
 import (
+	"bytes"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -53,14 +54,28 @@ func NewRedactor(ring *KeyRing) *Redactor {
 // under a key of the ring gets a mark only that key reproduces. Any other
 // value with the token's format gets a mark no key reproduces, so the store
 // keeps no token-shaped value it cannot account for. Strip does not check
-// expiry or consumption: an expired or consumed token is still removed.
+// expiry or consumption: an expired or consumed token is still removed. A
+// Redactor with no ring fails closed: it removes every token-shaped value
+// and accounts for none.
+//
+// A reference already in body did not come from this call: it came from
+// the request, such as a reference copied out of a stored record into a
+// session's env, which the create response echoes. Strip gives each such
+// reference the mark no key reproduces before it strips the tokens, so
+// only the references this call writes can be reminted.
 //
 // spec: §11.5 (Idempotency), §7.1 (Normal Flow)
 func (r *Redactor) Strip(body []byte) []byte {
-	if r == nil || r.ring == nil {
-		return body
+	var keys []SigningKey
+	if r != nil && r.ring != nil {
+		keys = r.ring.keys()
 	}
-	keys := r.ring.keys()
+	if bytes.Contains(body, []byte(redactionInfix)) {
+		body = referencePattern.ReplaceAllFunc(body, func(match []byte) []byte {
+			sub := referencePattern.FindSubmatch(match)
+			return []byte(string(sub[1]) + "." + string(sub[2]) + redactionInfix + unmatchedMark)
+		})
+	}
 	return tokenPattern.ReplaceAllFunc(body, func(match []byte) []byte {
 		token := string(match)
 		sub := tokenPattern.FindStringSubmatch(token)
@@ -82,7 +97,9 @@ func (r *Redactor) Strip(body []byte) []byte {
 //
 // spec: §11.5 (Idempotency), §7.1 (Normal Flow)
 func (r *Redactor) Remint(stored []byte) []byte {
-	if r == nil || r.ring == nil {
+	// A body with no reference, the common case on replay, costs one scan
+	// for the infix rather than a regular-expression pass.
+	if r == nil || r.ring == nil || !bytes.Contains(stored, []byte(redactionInfix)) {
 		return stored
 	}
 	keys := r.ring.keys()

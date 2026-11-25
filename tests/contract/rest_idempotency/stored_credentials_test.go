@@ -20,13 +20,11 @@ import (
 )
 
 // spec: §11.5 (Idempotency), §7.1 (Normal Flow)
-// diagnosis: A replayed POST /v1/sessions returned an uploadToken other
-//
-//	than the first response's, or the idempotency record held the token.
-//	The store WithCredentials returns does not strip on Put or remint on
-//	Claim, or its redactor is built over a different signing-key ring
-//	than the issuer; see pkg/uploadtoken/redact.go and
-//	pkg/idempotency/idempotencymw/credentials.go.
+// diagnosis: A replayed POST /v1/sessions returned an uploadToken other than
+// the first response's, or the idempotency record held the token. The store
+// WithCredentials returns does not strip on Put or remint on Claim, or its
+// redactor is built over a different signing-key ring than the issuer; see
+// pkg/uploadtoken/redact.go and pkg/idempotency/idempotencymw/credentials.go.
 func TestReplayedCreateSessionCarriesTheOriginalUploadTokenAndTheRecordHoldsNone(t *testing.T) {
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("contract-secret")})
 	verifier := uploadtoken.NewVerifier(ring, uploadtoken.NewMemoryTracker(), nil)

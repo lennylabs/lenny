@@ -435,6 +435,10 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 // healthy backend instead of seeing IDEMPOTENCY_KEY_IN_FLIGHT.
 // spec: §11.5; F-11.5.2, F-11.5.3, F-11.5.4, F-11.5.10, F-11.5.12.
 func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, hash string, captured *captureWriter) {
+	if credentialNotStored(ctx) {
+		m.skipAndRelease(ctx, idemKey, SkipReasonCredential)
+		return
+	}
 	if NotStored(ctx) {
 		// spec: §11.5 — a TARGET_NOT_READY refusal that §29.3 Forwarding
 		// rule 6 or rule 7 produces is not stored, so a retry with the same

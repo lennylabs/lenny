@@ -169,6 +169,30 @@ func TestRemintRefusesAReferenceForgedFromTheTokenDigest(t *testing.T) {
 	}
 }
 
+// TestRemintRefusesAReferenceCopiedIntoAnotherRequest checks that a
+// reader of the idempotency table who copies a stored reference into the
+// data of a request of its own, which the response echoes, cannot turn the
+// replay of that request into the token.
+//
+// spec: §11.5 (Idempotency), §7.1 (Normal Flow)
+func TestRemintRefusesAReferenceCopiedIntoAnotherRequest(t *testing.T) {
+	f := newRedactFixture(t)
+	victim := f.mint(t, testSessionID)
+	storedVictim := f.redactor.Strip([]byte(victim))
+
+	own := f.mint(t, "1b2c3d4e-0000-4000-8000-000000000001")
+	echo := []byte(`{"id":"1b2c3d4e-0000-4000-8000-000000000001","uploadToken":"` + own +
+		`","env":{"X":"` + string(storedVictim) + `"}}`)
+	stored := f.redactor.Strip(echo)
+	replayed := f.redactor.Remint(stored)
+	if strings.Contains(string(replayed), victim) {
+		t.Fatalf("replay turned a copied reference into the victim's token: %s", replayed)
+	}
+	if !strings.Contains(string(replayed), own) {
+		t.Fatalf("replay lost the response's own token: %s", replayed)
+	}
+}
+
 // TestStripRemovesATokenShapedValueThatVerifiesUnderNoKey checks that a
 // value with the token's format that this ring did not sign is not stored
 // either, and that no replay turns its reference back into a token.
@@ -190,18 +214,15 @@ func TestStripRemovesATokenShapedValueThatVerifiesUnderNoKey(t *testing.T) {
 	}
 }
 
-// TestStripAndRemintLeaveOtherBytesAlone checks the empty body, a body with
-// no token, and a reference whose expiry is not in canonical form.
+// TestStripAndRemintLeaveOtherBytesAlone checks that a body with no token
+// and no reference passes through both, that Remint leaves a reference whose
+// expiry is not in canonical form, and that Strip gives a reference it did
+// not write the mark no key reproduces.
 //
 // spec: §11.5 (Idempotency)
 func TestStripAndRemintLeaveOtherBytesAlone(t *testing.T) {
 	f := newRedactFixture(t)
-	for _, body := range []string{
-		"",
-		`{"id":"abc","state":"ready"}`,
-		testSessionID + ".0100.redacted." + strings.Repeat("a", 64),
-		testSessionID + ".99999999999999999999.redacted." + strings.Repeat("a", 64),
-	} {
+	for _, body := range []string{"", `{"id":"abc","state":"ready"}`} {
 		if got := f.redactor.Strip([]byte(body)); string(got) != body {
 			t.Errorf("Strip(%q) = %q, want unchanged", body, got)
 		}
@@ -209,13 +230,61 @@ func TestStripAndRemintLeaveOtherBytesAlone(t *testing.T) {
 			t.Errorf("Remint(%q) = %q, want unchanged", body, got)
 		}
 	}
-	var nilRedactor *uploadtoken.Redactor
-	tok := f.mint(t, testSessionID)
-	if got := nilRedactor.Strip([]byte(tok)); string(got) != tok {
-		t.Errorf("nil Redactor Strip = %q, want unchanged", got)
+	for _, body := range []string{
+		testSessionID + ".0100.redacted." + strings.Repeat("a", 64),
+		testSessionID + ".99999999999999999999.redacted." + strings.Repeat("a", 64),
+	} {
+		if got := f.redactor.Remint([]byte(body)); string(got) != body {
+			t.Errorf("Remint(%q) = %q, want unchanged", body, got)
+		}
 	}
-	if got := uploadtoken.NewRedactor(nil).Remint([]byte(tok)); string(got) != tok {
-		t.Errorf("Redactor over no ring Remint = %q, want unchanged", got)
+	foreign := testSessionID + ".1767225660.redacted." + strings.Repeat("a", 64)
+	want := testSessionID + ".1767225660.redacted." + strings.Repeat("0", 64)
+	if got := f.redactor.Strip([]byte(foreign)); string(got) != want {
+		t.Errorf("Strip(%q) = %q, want %q", foreign, got, want)
+	}
+}
+
+// TestARedactorWithNoRingFailsClosed checks that a Redactor wired with no
+// ring still removes every token and restores none.
+//
+// spec: §11.5 (Idempotency)
+func TestARedactorWithNoRingFailsClosed(t *testing.T) {
+	f := newRedactFixture(t)
+	tok := f.mint(t, testSessionID)
+	var nilRedactor *uploadtoken.Redactor
+	for name, r := range map[string]*uploadtoken.Redactor{"nil": nilRedactor, "no ring": uploadtoken.NewRedactor(nil)} {
+		stored := r.Strip([]byte(tok))
+		if strings.Contains(string(stored), tok) {
+			t.Errorf("%s: Strip = %q, still holds the token", name, stored)
+		}
+		if got := r.Remint(stored); string(got) != string(stored) {
+			t.Errorf("%s: Remint = %q, want the reference unchanged", name, got)
+		}
+	}
+}
+
+// TestOnlyTheCanonicalSpellingOfATokenVerifies checks that another spelling
+// of a valid token, which would carry another digest and escape both the
+// consumed tracker and the redactor, does not verify.
+//
+// spec: §7.1 (Normal Flow)
+func TestOnlyTheCanonicalSpellingOfATokenVerifies(t *testing.T) {
+	f := newRedactFixture(t)
+	tok := f.mint(t, testSessionID)
+	parts := strings.Split(tok, ".")
+	for name, spelling := range map[string]string{
+		"uppercase hex":  parts[0] + "." + parts[1] + "." + strings.ToUpper(parts[2]),
+		"signed expiry":  parts[0] + ".+" + parts[1] + "." + parts[2],
+		"padded expiry":  parts[0] + ".0" + parts[1] + "." + parts[2],
+		"padded past 19": parts[0] + "." + strings.Repeat("0", 12) + parts[1] + "." + parts[2],
+	} {
+		if _, err := f.verifier.Verify(spelling, testSessionID); !errors.Is(err, uploadtoken.ErrInvalid) {
+			t.Errorf("%s: Verify(%q) = %v, want ErrInvalid", name, spelling, err)
+		}
+	}
+	if _, err := f.verifier.Verify(tok, testSessionID); err != nil {
+		t.Fatalf("canonical token: Verify = %v", err)
 	}
 }
 

@@ -12,9 +12,17 @@ import (
 // to be stored because a forward to the coordinating replica was refused.
 const SkipReasonForwardRefused = "forward_refused"
 
-// gate is the per-request no-store mark. A handler sets it through
-// DoNotStore; the middleware reads it after the inner handler returns.
-type gate struct{ refused atomic.Bool }
+// SkipReasonCredential is the lenny_idempotency_cache_skipped_total reason
+// the middleware records when a handler marked its response as not to be
+// stored because the response carries a credential the store cannot hold.
+const SkipReasonCredential = "credential"
+
+// gate is the per-request no-store mark. A handler sets refused through
+// DoNotStore and credential through DoNotStoreCredential; the middleware
+// reads both after the inner handler returns. The inter-replica forward
+// listener reads refused alone, so a credential mark never reports a
+// forward refusal.
+type gate struct{ refused, credential atomic.Bool }
 
 type gateCtxKey struct{}
 
@@ -39,6 +47,26 @@ func DoNotStore(ctx context.Context) {
 	if g, ok := ctx.Value(gateCtxKey{}).(*gate); ok {
 		g.refused.Store(true)
 	}
+}
+
+// DoNotStoreCredential marks the request's response as not to be stored
+// because it carries a credential that a replay cannot mint again from a
+// redaction reference, so a retry with the same Idempotency-Key runs the
+// operation again and issues a new credential. It does nothing when ctx
+// carries no gate.
+//
+// spec: §11.5 (Idempotency)
+func DoNotStoreCredential(ctx context.Context) {
+	if g, ok := ctx.Value(gateCtxKey{}).(*gate); ok {
+		g.credential.Store(true)
+	}
+}
+
+// credentialNotStored reports whether DoNotStoreCredential was called on
+// ctx's gate.
+func credentialNotStored(ctx context.Context) bool {
+	g, ok := ctx.Value(gateCtxKey{}).(*gate)
+	return ok && g.credential.Load()
 }
 
 // NotStored reports whether DoNotStore was called on ctx's gate. It is
