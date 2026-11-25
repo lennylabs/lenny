@@ -89,7 +89,7 @@ Decisions 19, 23, and 24. The gate's default layout becomes `static-first`, with
 Decision 25. Under `--require-gate`, `lenny-test coverage --diff` refuses a gate run whose `gate.restricted_to` leaves out any of the static, unit, component, and contract tiers, and names the run's tiers in its note. A run that `--tier` did not restrict, a full run with `gate.all` included, records no `gate.restricted_to` and is accepted. Then "Merge gate" in `TESTING.md` drops the limit it states for the check, and `cmd/lenny-test/README.md` states the refusal. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S11 A narrower check before a merge
-- status: Planned
+- status: Building
 - lanes: [code, documentation]
 - depends-on: [0172.S10]
 - closes: []

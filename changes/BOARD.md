@@ -8,10 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 2 |
+| Building | 3 |
 | Ready | 5 |
 | Waiting on decisions | 34 |
-| Blocked | 162 |
+| Blocked | 161 |
 | Landed | 24 |
 | Cancelled | 3 |
 
@@ -56,6 +56,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | :-- | :-- | :-- |
 | [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Building |  |
 | [0172.S10](0172-gate-speed/steps.md#0172s10-the-tiers-of-the-gate-run-that-the-coverage-check-accepts) | The tiers of the gate run that the coverage check accepts | Building |  |
+| [0172.S11](0172-gate-speed/steps.md#0172s11-a-narrower-check-before-a-merge) | A narrower check before a merge | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
@@ -254,7 +255,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
-| [0172.S11](0172-gate-speed/steps.md#0172s11-a-narrower-check-before-a-merge) | A narrower check before a merge | Blocked | 0172.S10 |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Blocked | 0178.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
