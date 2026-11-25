@@ -24,17 +24,21 @@ import (
 // The gate layouts. gateLayoutUnitAlone is decision 5 of change 0172: the
 // static and contract tiers run beside the component and integration
 // tiers, then the unit tier runs alone, then the documentation gates.
-// gateLayoutSerial runs every tier one after another, as the gate did
-// before the change. Decision 7 makes the concurrent layout the default
-// when its validation run is clean. The validation run of 2026-11-24
-// (gate run d47d33b8ed80054999c769e1) recorded two container-start
-// timeouts, so the bound went back to the owner (open decision GS-11) and
-// the default stays serial until the owner settles it; `--layout
-// unit-alone` runs the concurrent layout.
+// gateLayoutStaticFirst is decision 15: the static tier runs in a phase of
+// its own, then the contract tier beside the component and integration
+// tiers, then the unit tier alone, then the documentation gates, so
+// golangci-lint and the static tier's compiles never share the machine
+// with the containers. gateLayoutSerial runs every tier one after another,
+// as the gate did before the change. The validation run of the unit-alone
+// layout on 2026-11-24 (gate run d47d33b8ed80054999c769e1) recorded two
+// container-start timeouts while the static tier ran beside the container
+// lane, so the default stays serial (decision 15) until a clean validation
+// run of the static-first layout makes that layout the default.
 const (
-	gateLayoutUnitAlone = "unit-alone"
-	gateLayoutSerial    = "serial"
-	defaultGateLayout   = gateLayoutSerial
+	gateLayoutUnitAlone   = "unit-alone"
+	gateLayoutStaticFirst = "static-first"
+	gateLayoutSerial      = "serial"
+	defaultGateLayout     = gateLayoutSerial
 )
 
 // gatePhase is one phase of a layout: its lanes run at the same time, and
@@ -47,6 +51,12 @@ type gatePhase [][]string
 var gateLayouts = map[string][]gatePhase{
 	gateLayoutUnitAlone: {
 		{{tierStatic, tierContract}, {tierComponent, tierIntegration}},
+		{{tierUnit}},
+		{{tierDocs}},
+	},
+	gateLayoutStaticFirst: {
+		{{tierStatic}},
+		{{tierContract}, {tierComponent, tierIntegration}},
 		{{tierUnit}},
 		{{tierDocs}},
 	},

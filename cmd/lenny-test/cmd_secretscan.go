@@ -48,8 +48,10 @@ func runSecretScanCommand(args []string, stdout, stderr io.Writer) int {
 	if dir == "" {
 		dir = repoRoot()
 	}
+	// The scan reads the commit HEAD resolved to here, so the commit the
+	// verdict line names is the one the scan read.
 	commit := headCommit(dir)
-	out, err := runSecretScan(dir)
+	out, err := runSecretScanAt(dir, commit)
 	if out != "" {
 		fmt.Fprintln(stdout, strings.TrimRight(out, "\n"))
 	}

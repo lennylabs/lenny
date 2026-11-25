@@ -96,6 +96,8 @@ func main() {
 		os.Exit(runGate(args[1:]))
 	case "lint-cache-fill":
 		os.Exit(runLintCacheFill(args[1:]))
+	case "static-snapshot":
+		os.Exit(runStaticSnapshot(args[1:]))
 	case "secretscan":
 		os.Exit(runSecretScanSubcommand(args[1:]))
 	case "stress":
@@ -147,6 +149,10 @@ Usage:
                                            checkout with the static tier's
                                            whole-tree run (the gate container runs
                                            it before the gate).
+  lenny-test static-snapshot <commit> <dir>
+                                           Make <dir> a checkout of <commit> for the
+                                           gate's static tier (the gate container
+                                           runs it before the gate).
   lenny-test secretscan [--root <dir>]     Run the static tier's secret scan on the
                                            committed tree at HEAD; exit 0 on PASS,
                                            1 on FAIL, 3 on UNVERIFIED.
