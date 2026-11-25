@@ -18,11 +18,11 @@
 - aliases: [RO-A, RO-2, R1, R2, R3, R4, R5, R7, R8, R12, R13, R14, R15, R16, R17, R19, R25]
 - lanes: [specification, code, documentation]
 - depends-on: [0135.S5, 0146.S1, 0122.S1, 0120.S1, 0139.S1 (part), 0141.S2 (part), 0142.S6 (part)]
-- closes: [APICONV-I1]
+- closes: []
 
 The REST additions every adapter needs: R1 to R5, R7, R8, R12 to R17, R19, and R25, R13's download origin, the event stream's rules moved from §15.2 with its close at expiry and revocation, and their tests. It needs MD-E's events, SL's routes, CT-A, and AM-A, so that the message and conversation members exist. It needs the effective capabilities of RP-2 (0139.S1) for R19, the aliases of RT-4's "Discovery" (0141.S2) for R8, and the tool-use approvals of SO-5a (0142.S6) for R4's approval list.
 
-R5's key scope changes `Key` in `pkg/idempotency` from the tenant and the key to the scope R5 states, with a migration of `idempotency_keys`, which §11.5 keys by `(tenant_id, idempotency_key)` today. R4's link-prompt entries of UC-8 land with 0151.S8, which depends on this step and adds them to R4's lists. R19 sends the `Interrupt` RPC, whose check of the coordination generation is open as [CHGWPOD-I10](../../issues/CHGWPOD/CHGWPOD-I10-interrupt-ignores-coordination-generation.md).
+R5's key scope changes `Key` in `pkg/idempotency` from the tenant and the key to the scope R5 states, with a migration of `idempotency_keys`, which §11.5 keys by `(tenant_id, idempotency_key)` today. Step [0178.S1](../0178-idempotency-keys-by-principal/steps.md) of change 0178 scopes the key by the tenant and the subject and closes [APICONV-I1](../../issues/APICONV/APICONV-I1-idempotency-key-scoped-per-tenant-only.md), so R5 adds the audience, the `azp` or `client_id`, the method, the route template, and the path parameters to that scope; whichever of the two steps lands second builds its migration on the other's. R4's link-prompt entries of UC-8 land with 0151.S8, which depends on this step and adds them to R4's lists. R19 sends the `Interrupt` RPC, whose check of the coordination generation is open as [CHGWPOD-I10](../../issues/CHGWPOD/CHGWPOD-I10-interrupt-ignores-coordination-generation.md).
 
 This step goes first because every adapter and every Lenny client depends on it.
 
