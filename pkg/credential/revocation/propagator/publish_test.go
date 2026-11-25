@@ -34,7 +34,7 @@ func TestPublishReachesPeerPropagator_spec_13_3(t *testing.T) {
 	peer := revocation.NewCache()
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	go New(peer, bus).Run(ctx)
+	go New(peer, bus).Run(ctx, nil)
 
 	deadline := time.Now().Add(5 * time.Second)
 	for !peer.IsRevoked("jti-rotated") {

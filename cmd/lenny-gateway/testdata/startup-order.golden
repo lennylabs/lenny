@@ -188,11 +188,8 @@ runGateway:
       w.checkpointSvc.Run
       go freshnessReaper.Run
       w.revCache.Rehydrate
-      go func{w.watchdogCtx.Done, w.revCache.Rehydrate, w.watchdogCtx.Err}
-      defer ticker.Stop
-      w.watchdogCtx.Done
-      w.revCache.Rehydrate
-      w.watchdogCtx.Err
+      go w.revCache.RunRehydration
+      w.revCache.RunRehydration
       go w.runCredentialDenyListRebuild
       w.runCredentialDenyListRebuild
       go func{w.watchdogCtx.Done}

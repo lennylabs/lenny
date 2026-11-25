@@ -74,8 +74,9 @@ func (r *Router) handleRevokeToken(w http.ResponseWriter, req *http.Request) {
 	propagationMode := "postgres_only"
 	if r.revocationCache != nil {
 		// The local cache update keeps this replica's view current;
-		// Postgres remains the authoritative revocation store, so peers
-		// fall back to the issued_tokens.revoked_at check. This admin
+		// Postgres remains the authoritative revocation store, so a peer
+		// that receives no event applies the revocation at its next
+		// revocation-cache rehydration. This admin
 		// HTTP handler does not itself publish to the §12.6 EventBus, so
 		// the §16.7 propagation_mode is recorded as postgres_only. F-16.7.5.
 		r.revocationCache.Revoke(jti)

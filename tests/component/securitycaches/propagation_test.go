@@ -62,8 +62,8 @@ func TestTokenRevocationPropagation(t *testing.T) {
 	busB := pubsub.New(rd.Client)
 	propA := revocationprop.New(cacheA, busA)
 	propB := revocationprop.New(cacheB, busB)
-	go propA.Run(ctx)
-	go propB.Run(ctx)
+	go propA.Run(ctx, nil)
+	go propB.Run(ctx, nil)
 	// Let both subscribe loops attach before publishing; a pub/sub
 	// message published before SUBSCRIBE completes is dropped.
 	time.Sleep(100 * time.Millisecond)
