@@ -169,7 +169,9 @@ Usage:
                        --diff <ref>        coverage (§5, §19). With --diff,
                        [--require-gate]    --require-gate refuses when no
                                            gate run with --cover on HEAD is
-                                           recorded.
+                                           recorded, or when --tier left
+                                           static, unit, component, or
+                                           contract out of that run.
   lenny-test mutation [--pkg <pat>]       Run scripts/mutation.sh and compare
                       [--threshold <f>]   against the per-package threshold.
   lenny-test baseline diff --before <a>   Diff two baseline JSON documents and

@@ -15,6 +15,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"strings"
 
 	"github.com/lennylabs/lenny/cmd/lenny-test/verdictstatus"
 )
@@ -39,6 +40,13 @@ import (
 // PASS recorded. With --require-gate the uncommitted changes do not skip
 // the check: the measured lines are the committed ones, and the profile
 // still has to be the one the latest gate run with --cover on HEAD wrote.
+// With --require-gate that run must also have run every tier of the
+// v1 merge check, static, unit, component, and contract (decision 25): a
+// run that --tier restricted records the tiers it ran as
+// gate.restricted_to, and one whose list leaves out any of the four is
+// refused. A run that --tier did not restrict records no list and ran
+// every tier of the merge gate. The note of an accepted profile names the
+// run's tiers.
 //
 // The check detects a stale or rewritten profile. It is no defense
 // against the branch under test: the profile is written by the branch's
@@ -70,7 +78,17 @@ type coverGateRun struct {
 	dirty bool
 	// verdict is the run's verdict, such as PASS or FAIL.
 	verdict string
+	// restrictedTo lists the tiers a run that --tier restricted ran, as
+	// its verdict's gate.restricted_to records them; nil for a run of
+	// every tier of the merge gate.
+	restrictedTo []string
 }
+
+// requiredGateTiers are the tiers a gate run must have run for
+// `coverage --diff --require-gate` to accept its profile: the tiers of the
+// check before a merge in the v1 merge policy (change 0172, decisions 8
+// and 25).
+var requiredGateTiers = []string{tierStatic, tierUnit, tierComponent, tierContract}
 
 // historyLine is the part of a run history line the coverage check reads.
 type historyLine struct {
@@ -168,14 +186,15 @@ func readCoverVerdict(root, id string) (coverGateRun, bool, error) {
 	var v struct {
 		Verdict string `json:"verdict"`
 		Gate    struct {
-			Dirty              bool   `json:"dirty"`
-			CoverProfileSHA256 string `json:"cover_profile_sha256"`
+			Dirty              bool     `json:"dirty"`
+			CoverProfileSHA256 string   `json:"cover_profile_sha256"`
+			RestrictedTo       []string `json:"restricted_to"`
 		} `json:"gate"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
 		return coverGateRun{}, true, fmt.Errorf("parse the verdict of gate run %s: %w%s", id, err, rerun)
 	}
-	return coverGateRun{runID: id, sha256: v.Gate.CoverProfileSHA256, dirty: v.Gate.Dirty, verdict: v.Verdict}, true, nil
+	return coverGateRun{runID: id, sha256: v.Gate.CoverProfileSHA256, dirty: v.Gate.Dirty, verdict: v.Verdict, restrictedTo: v.Gate.RestrictedTo}, true, nil
 }
 
 // coverRerun is the remedy each refusal of the profile names.
@@ -223,7 +242,42 @@ func checkProfileAgainstGate(root, path string, body []byte, requireGate bool) (
 	if err := refuseGateRun(path, commit, got, run); err != nil {
 		return "", err
 	}
-	return fmt.Sprintf("the profile is the one gate run %s wrote for %s", run.runID, shortCommit(commit)), nil
+	if requireGate {
+		if err := refuseRestrictedRun(commit, run); err != nil {
+			return "", err
+		}
+	}
+	return fmt.Sprintf("the profile is the one gate run %s wrote for %s, which ran %s", run.runID, shortCommit(commit), gateRunTiers(run)), nil
+}
+
+// refuseRestrictedRun returns why run, the latest gate run with --cover on
+// commit, does not stand for the check before a merge under
+// --require-gate: --tier restricted it to tiers that leave out one of
+// requiredGateTiers. A run that --tier did not restrict ran every tier of
+// the merge gate and is accepted.
+func refuseRestrictedRun(commit string, run coverGateRun) error {
+	if run.restrictedTo == nil {
+		return nil
+	}
+	var missing []string
+	for _, tier := range requiredGateTiers {
+		if !contains(run.restrictedTo, tier) {
+			missing = append(missing, tier)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	return fmt.Errorf("--require-gate: gate run %s, the latest with --cover on %s, ran %s, which leaves out %s; the check before a merge needs a run of %s, so %s",
+		run.runID, shortCommit(commit), gateRunTiers(run), strings.Join(missing, ", "), strings.Join(requiredGateTiers, ", "), coverRerun)
+}
+
+// gateRunTiers names the tiers run ran, for a note or a refusal.
+func gateRunTiers(run coverGateRun) string {
+	if run.restrictedTo == nil {
+		return "every tier of the merge gate"
+	}
+	return "the tiers " + strings.Join(run.restrictedTo, ", ")
 }
 
 // refuseGateRun returns why the profile at path, whose SHA-256 is got,
