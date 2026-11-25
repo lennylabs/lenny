@@ -93,18 +93,19 @@ func gateRunner(jobs erasurejob.Store, sessions sessionstore.Store, blobs *gateB
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
 }
 
-// TestErasureWaitsForThePostTerminalRelease_spec_12_8 races a fake seal of a
+// TestErasureWaitsForTheSealReleaseAndPipelineMark races a fake seal of a
 // drained session against erasure runner ticks in randomized interleavings.
-// The seal uploads an object under the session's prefix and then records the
-// release; the runner deletes the user's objects once the gate admits it. No
-// object of the erased user survives a completed job.
+// The seal uploads an object under the session's prefix, records the release,
+// and then records the pipeline mark; the runner deletes the user's objects
+// once the gate admits it. No object of the erased user survives a completed
+// job.
 //
 // spec: 12.8 (Compliance Interfaces), 7.1 (Post-terminal window)
 // diagnosis: a failure means the erasure job deleted the user's stores while
 // a drained session was still in its post-terminal window, so an object its
 // seal uploaded afterwards survived the completed erasure; the release gate
 // is missing, unwired, or not run before DeleteByUser.
-func TestErasureWaitsForThePostTerminalRelease_spec_12_8(t *testing.T) {
+func TestErasureWaitsForTheSealReleaseAndPipelineMark(t *testing.T) {
 	seed := time.Now().UnixNano()
 	t.Logf("seed %d", seed)
 	master := rand.New(rand.NewSource(seed))

@@ -419,7 +419,7 @@ func TestValidateLifecycleTickBudget_spec_12_8(t *testing.T) {
 	}
 }
 
-// TestTenantDeletionPhase2WaitsForThePostTerminalRelease_spec_12_8 pins the
+// TestTenantDeletionPhase2WaitsForTheTerminalPipelinesOfDrainedSessions pins the
 // §12.8 tenant-deletion hold on the terminal pipeline: a pass whose drain
 // verifies but whose tenant still has a session in its post-terminal window,
 // or a session with or without a pod whose pipeline recorded no mark, stays
@@ -430,7 +430,7 @@ func TestValidateLifecycleTickBudget_spec_12_8(t *testing.T) {
 // ErrPipelineBudgetUnset.
 //
 // spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session)
-func TestTenantDeletionPhase2WaitsForThePostTerminalRelease_spec_12_8(t *testing.T) {
+func TestTenantDeletionPhase2WaitsForTheTerminalPipelinesOfDrainedSessions(t *testing.T) {
 	runner, tenants, sessions, _, _ := newDeletionRunner(t)
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	runner.reconciler.Terminator = tenantSessionTerminator{

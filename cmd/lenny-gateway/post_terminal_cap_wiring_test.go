@@ -71,8 +71,8 @@ func TestPostTerminalCapIsTheTerminalPipelineBudget_spec_7_1(t *testing.T) {
 // TestErasureGateBudgetIsTheTerminalContextBudget pins the budget the erasure
 // pipeline gate and the tenant-deletion terminator read (postTerminalCap) to
 // the budget the session server's terminalContext applies to every write of
-// the terminal pipeline, for the session server built from the same flags as
-// buildSessionServer builds it. The gate's budget arm ends the wait only
+// the terminal pipeline, for a session server given the seal window and the
+// release allowance buildSessionServer passes (terminalPipelineFlags). The gate's budget arm ends the wait only
 // because no pipeline write can land after it, so the two values are one.
 //
 // spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session),
@@ -84,9 +84,10 @@ func TestErasureGateBudgetIsTheTerminalContextBudget(t *testing.T) {
 		{"--workspace-seal-max-duration-seconds=0", "--stream-failure-report-timeout=0s"},
 	} {
 		w := flagPostureWiring(t, args...)
+		seal, allowance := terminalPipelineFlags(w.f)
 		srv := sessionserver.New(memstore.New(), sessionserver.Options{
-			WorkspaceSealMaxDuration:   time.Duration(*w.f.workspaceSealMaxDurationSeconds) * time.Second,
-			StreamFailureReportTimeout: *w.f.streamFailureReportTimeout,
+			WorkspaceSealMaxDuration:   seal,
+			StreamFailureReportTimeout: allowance,
 		})
 		if got := srv.TerminalPipelineBudget(); got != w.postTerminalCap {
 			t.Errorf("flags %v: session server budget %v, erasure gate budget %v; want one value", args, got, w.postTerminalCap)

@@ -102,11 +102,11 @@ func (w *gatewayWiring) buildSessionServer(
 	evalRLPerTenantPerMin := core.sessionServer.EvalPerTenantPerMinute
 	defaultIsolationProfile := core.sessionServer.DefaultIsolationProfile
 	devMode := f.devMode
+	sealWindow, releaseAllowance := terminalPipelineFlags(f)
 	multiTenant := f.multiTenant
 	tenancyMode := f.tenancyMode
 	persistDeriveFailureRows := core.sessionServer.PersistDeriveFailureRows
 	sessionArtifactRetentionSeconds := core.sessionServer.ArtifactRetentionSeconds
-	workspaceSealMaxDurationSeconds := f.workspaceSealMaxDurationSeconds
 	retryMaxRetries := f.retryMaxRetries
 	maxResumePendingSeconds := f.maxResumePendingSeconds
 	envVarBlocklistCSV := core.sessionServer.EnvVarBlocklist
@@ -360,11 +360,11 @@ func (w *gatewayWiring) buildSessionServer(
 		// §7.1 — default artifact retention window.
 		DefaultRetention: time.Duration(*sessionArtifactRetentionSeconds) * time.Second,
 		// §7.1 — seal-and-export retry window + outcome histogram.
-		WorkspaceSealMaxDuration:     time.Duration(*workspaceSealMaxDurationSeconds) * time.Second,
+		WorkspaceSealMaxDuration:     sealWindow,
 		ObserveWorkspaceSealDuration: gwMetrics.ObserveWorkspaceSealDuration,
 		// §28.5.1 — the CH-ATTACH stream-failure report's bound beyond the
 		// seal window.
-		StreamFailureReportTimeout: *f.streamFailureReportTimeout,
+		StreamFailureReportTimeout: releaseAllowance,
 		// §12.3 — the bound on every primary session-row read a one-shot
 		// decision makes.
 		PrimaryReadTimeout: *f.sessionPrimaryReadTimeout,
@@ -477,6 +477,15 @@ func (w *gatewayWiring) buildSessionServer(
 	w.platformToolsMetrics = ptMetrics
 	attachToolRoutes(srv, w.apiRoutes, w.sessions, w.interactions, w.toolApprovalWaits, auditAppender, ptMetrics.tools)
 	return srv
+}
+
+// terminalPipelineFlags returns the seal window and the release allowance the
+// session server takes from f, whose sum, after the server's fallbacks, is the
+// terminal pipeline budget its terminalContext applies. The test that pins
+// the erasure gate's budget to that budget builds the server from the same
+// values.
+func terminalPipelineFlags(f *gatewayFlags) (sealWindow, releaseAllowance time.Duration) {
+	return time.Duration(*f.workspaceSealMaxDurationSeconds) * time.Second, *f.streamFailureReportTimeout
 }
 
 // sessionAgeCap returns the resolver of a row's effective maxSessionAge cap.

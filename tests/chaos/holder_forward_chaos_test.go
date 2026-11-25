@@ -386,7 +386,7 @@ func (e *lostFanOutErasure) requireCompleted(t *testing.T) {
 // its post-terminal window, or never deleted them after the peer released
 // the binding or the window cap passed. Check the store_deleting release gate
 // in pkg/storage/erasurejob/runner_phases.go, admin.TerminalPipelinesPending in
-// pkg/gateway/externalapi/admin/drain.go, and the release marker the peer's
+// pkg/gateway/api/admin/drain.go, and the release marker the peer's
 // terminal binding release records.
 func TestLostBindReleaseFanOutHoldsErasureUntilReleaseOrWindowCap_spec_28_5_7(t *testing.T) {
 	t.Run("the peer releases the binding", func(t *testing.T) {

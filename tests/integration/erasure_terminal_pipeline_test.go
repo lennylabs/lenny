@@ -34,8 +34,7 @@ const (
 // still append its session.completed event with the raw user id: the gateway
 // does not write the pipeline mark (sessions.terminal_pipeline_done_at,
 // migration 0204) after the billing step, or the erasure job's
-// store_deleting gate does not wait on it for sessions with and without a
-// pod. A raw row found only after the budget wait means the pipeline wrote
+// store_deleting gate does not wait on it for a session without a pod. A raw row found only after the budget wait means the pipeline wrote
 // after the job completed.
 func TestErasureLeavesNoRawUserIDInTheBillingEventsOfDrainedSessions(t *testing.T) {
 	t.Parallel()
@@ -70,8 +69,9 @@ func TestErasureLeavesNoRawUserIDInTheBillingEventsOfDrainedSessions(t *testing.
 		}
 		return sid
 	}
-	// A started session and a session that was created but never started,
-	// so the drain covers a session with and without a running pod.
+	// A started session and a session that was created but never started.
+	// The dev-mode gateway assigns no pod to either, which is the case the
+	// release gate before the pipeline mark never held.
 	aliceRunning := create(alice, "/v1/sessions/start")
 	aliceCreated := create(alice, "/v1/sessions")
 	create(bob, "/v1/sessions/start")
@@ -80,7 +80,9 @@ func TestErasureLeavesNoRawUserIDInTheBillingEventsOfDrainedSessions(t *testing.
 		if err := pg.Pool.QueryRow(t.Context(), `SELECT pod_assignment FROM sessions WHERE id = $1::uuid`, sid).Scan(&pod); err != nil {
 			t.Fatalf("read session %s: %v", sid, err)
 		}
-		t.Logf("session %s pod_assignment=%q", sid, pod)
+		if pod != "" {
+			t.Fatalf("precondition: session %s names pod %q; the test covers sessions without a pod", sid, pod)
+		}
 	}
 	rawRows := func(user string) int {
 		return dbCountErasure(t, pg, `SELECT COUNT(*) FROM billing_events WHERE tenant_id = 'acme' AND user_id = $1`, user)

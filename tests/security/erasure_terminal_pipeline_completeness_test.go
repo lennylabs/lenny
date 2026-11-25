@@ -8,8 +8,7 @@
 // runs the real detached terminal pipeline, whose session.completed billing
 // append is delayed, and the erasure job's verification read is delayed as
 // well, which reproduces the interleaving of issue ERASE-I1. The job must
-// complete with no billing event and no session row of the store it verifies
-// still carrying the erased user's raw id.
+// complete with no billing event still carrying the erased user's raw id.
 //
 // spec: §12.8 (Lifecycle fence and drain), §12.8 (Compliance Interfaces),
 // §7.1 (Pipeline-pending session).
