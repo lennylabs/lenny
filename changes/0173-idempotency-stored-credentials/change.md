@@ -72,7 +72,7 @@ Both operate on raw bytes, so they reach a token wherever the body carries it: a
 
 ### SC-2 The stores
 
-`idempotencymw.Options` gains a `Credentials` field of the interface type `idempotencymw.CredentialRedactor`, with `Strip` and `Remint`. `maybePersist` stores the stripped body, and the replay branch of `ServeHTTP` writes the reminted body. `mcp.IdempotencyConfig` gains the same field, and `dispatchIdempotent` strips the serialized `ToolResult` before `Put` and remints the stored body before it decodes it on replay. `cmd/lenny-gateway/httpsurface.go` passes one `uploadtoken.Redactor` over the gateway's ring to both. With no redactor configured, the stores keep the body as written, which serves tests that wire the middleware alone.
+`idempotencymw.WithCredentials` wraps an `idempotencymw.Store` with a redactor of the interface type `idempotencymw.CredentialRedactor`, which has `Strip` and `Remint`. The wrapped store's `Put` stores the stripped response body, and its `Get` and `Claim` return a stored record's body reminted, so the replay branch of the REST middleware and the replay path of the MCP hook's `dispatchIdempotent` both receive the original body. `cmd/lenny-gateway/httpsurface.go` wraps the one store that the middleware and the MCP hook share with an `uploadtoken.Redactor` over the gateway's ring. The redaction sits at the store boundary rather than in the middleware and the MCP hook, so the MCP package receives no upload-token value, which the gateway wiring lint refuses for the platform tools seam.
 
 ### SC-3 Classification
 
@@ -95,8 +95,7 @@ Both operate on raw bytes, so they reach a token wherever the body carries it: a
 - `spec/11_policy-and-controls.md`: §11.5, **Stored credentials.**
 - `spec/12_storage-architecture.md`: §12.9, the default data-type mappings gain idempotency records.
 - `pkg/uploadtoken`: the redactor.
-- `pkg/idempotency/idempotencymw`: `CredentialRedactor` and the `Credentials` option.
-- `pkg/gateway/platformtools/mcp`: the `Credentials` field of `IdempotencyConfig`.
+- `pkg/idempotency/idempotencymw`: `CredentialRedactor` and `WithCredentials`.
 - `cmd/lenny-gateway`: the wiring.
 - `tests/registers/spec-section-citations.yaml`: the section-citation counts of the packages whose annotations change.
 
@@ -108,7 +107,7 @@ Both operate on raw bytes, so they reach a token wherever the body carries it: a
 ## Tests
 
 - Unit, `pkg/uploadtoken`: a stripped body holds no token and remints to the original bytes; a token inside JSON-encoded text is handled; a token signed by an overlap key remints under that key; a reference whose key left the ring stays a reference; a reference forged from a token's digest is not reminted; a token-shaped value that verifies under no key is stripped and not reminted; strip and remint run concurrently with key rotation. Cites §7.1 (Normal Flow) and §11.5 (Idempotency).
-- Unit, `pkg/idempotency/idempotencymw`: the middleware stores the stripped body and replays the reminted body; with no redactor it stores the body as written. Cites §11.5 (Idempotency).
-- Unit, `pkg/gateway/platformtools/mcp`: `dispatchIdempotent` stores the stripped tool result and replays the reminted one. Cites §11.5 (Idempotency).
+- Unit, `pkg/idempotency/idempotencymw`: the middleware over the wrapped store stores the stripped body and replays the reminted body; with no redactor the store is unchanged; a pending claim, an absent record, `Release`, and the inner store's errors pass through. Cites §11.5 (Idempotency).
+- Unit, `pkg/gateway/platformtools/mcp`: `dispatchIdempotent` over the wrapped store stores the stripped tool result and replays the reminted one. Cites §11.5 (Idempotency).
 - Component, `tests/component/stores`: through the middleware and the Postgres store, the `response_body` column of a create response holds no upload token, and the replay returns the original body. Cites §11.5 (Idempotency) and §12.9 (Data Classification).
 - Contract, `tests/contract/rest_idempotency`: a replayed `POST /v1/sessions` returns the original `uploadToken`, and the in-memory record holds none. Cites §11.5 (Idempotency).
