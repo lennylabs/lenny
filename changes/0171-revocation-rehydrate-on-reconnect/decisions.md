@@ -2,7 +2,10 @@
 
 ## Open decisions
 
-None.
+- **RH-3. A chart value for the reconnect spacing.** Decision 3 makes the spacing overridable by a gateway flag, and 0171.S2 adds `--revocation-reconnect-spacing` with the environment variable `LENNY_REVOCATION_RECONNECT_SPACING`. The gateway Deployment in `charts/lenny/templates/gateway-deployment.yaml` renders neither, and the chart has no hook for extra gateway arguments or environment variables, so an install from the chart runs with the 5-second default. The review of 0171.S2 (general finding 7) raised it.
+  - (a) Add the chart value `auth.revocationReconnectSpacing`, default `5s`, rendered as `--revocation-reconnect-spacing` on the gateway, with its schema entry, the embedded manifests regenerated, and the security guide naming the value, in a step of this change.
+  - (b) Keep the flag only, and state in the security guide that an install from the chart keeps the 5-second default.
+  - Recommendation: (a). The other tunables of the token rules, such as `auth.tokenRevocationTimeoutMs`, are chart values, and an operator who runs the chart has no other way to set the flag.
 
 ## Decisions
 

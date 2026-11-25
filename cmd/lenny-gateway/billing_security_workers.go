@@ -138,12 +138,12 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers(checkpointerFlags *checkp
 	// credential. Running both would double-deliver onto one deny list
 	// for no gain, so only the superset subscriber runs.
 	//
-	// The §13.3 revocation subscriber fires revTrigger when its
-	// subscription is re-established, so the revocation-cache rehydration
-	// below rereads the issued-token index at once instead of at its next
-	// tick: every revocation published while the subscription was down was
-	// lost. With no Postgres no loop reads the trigger, and Fire stays a
-	// non-blocking no-op.
+	// The §13.3 revocation subscriber fires revTrigger each time Redis
+	// confirms its subscription, at startup and after each reconnect, so
+	// the revocation-cache rehydration below rereads the issued-token index
+	// then instead of at its next tick: every revocation published while no
+	// subscription was confirmed was lost. With no Postgres no loop reads
+	// the trigger, and Fire stays a non-blocking no-op.
 	revTrigger := revocation.NewTrigger()
 	if w.securityBus != nil {
 		go w.revProp.Run(w.watchdogCtx, revTrigger.Fire)
@@ -202,9 +202,10 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers(checkpointerFlags *checkp
 
 	// ----- §13.3 revocation-cache rehydration -----
 	// Loads revoked-token jtis from the issued-token index at startup,
-	// every 30 seconds, and at once when revTrigger fires on a
-	// revocation-subscription reconnect, so a revocation survives a
-	// restart and reaches a replica that missed its pub/sub event. It
+	// every 30 seconds, and when revTrigger fires on a confirmation of the
+	// revocation subscription, no sooner than --revocation-reconnect-spacing
+	// after the previous such read, so a revocation survives a restart and
+	// reaches a replica that missed its pub/sub event. It
 	// lists tombstoned tenants too: every revoked row inside the trailing
 	// hour must be loaded, a deleted tenant's kept rows included.
 	if w.pgPool != nil {
@@ -213,7 +214,7 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers(checkpointerFlags *checkp
 		if err := w.revCache.Rehydrate(context.Background(), lister, issued); err != nil {
 			log.Printf("lenny-gateway: initial revocation rehydration failed: %v", err)
 		}
-		go w.revCache.RunRehydration(w.watchdogCtx, 30*time.Second, revTrigger, lister, issued, func(err error) {
+		go w.revCache.RunRehydration(w.watchdogCtx, 30*time.Second, *f.revocationReconnectSpacing, revTrigger, lister, issued, func(err error) {
 			log.Printf("lenny-gateway: revocation rehydration failed: %v", err)
 		})
 	}

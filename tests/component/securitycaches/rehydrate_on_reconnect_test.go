@@ -54,9 +54,10 @@ func (acmeOnly) ListTenants(context.Context) ([]string, error) { return []string
 // revoked a token, did not apply the revocation within 15 s of the
 // connection coming back, although its periodic rehydration is an hour
 // away. pkg/storage/pubsub must report the re-established subscription
-// (OnReconnect), pkg/credential/revocation/propagator must pass it to the
+// (OnSubscribed), pkg/credential/revocation/propagator must pass it to the
 // rehydration callback, and revocation.Cache.RunRehydration must reread
-// the index when the trigger fires. A failure before the cut means the
+// the index when the trigger fires, no later than the reconnect spacing
+// after its previous requested read. A failure before the cut means the
 // two replicas never shared the channel.
 func TestTokenRevocationMissedDuringARedisLinkLossIsAppliedOnReconnect(t *testing.T) {
 	t.Parallel()
@@ -72,7 +73,7 @@ func TestTokenRevocationMissedDuringARedisLinkLossIsAppliedOnReconnect(t *testin
 	cacheB := revocation.NewCache()
 	trigger := revocation.NewTrigger()
 	go revocationprop.New(cacheB, pubsub.New(clientB)).Run(ctx, trigger.Fire)
-	go cacheB.RunRehydration(ctx, time.Hour, trigger, acmeOnly{}, index, func(err error) {
+	go cacheB.RunRehydration(ctx, time.Hour, revocation.DefaultReconnectSpacing, trigger, acmeOnly{}, index, func(err error) {
 		t.Logf("replica B rehydration failed: %v", err)
 	})
 
@@ -97,4 +98,47 @@ func TestTokenRevocationMissedDuringARedisLinkLossIsAppliedOnReconnect(t *testin
 	waitFor(t, 15*time.Second, "replica B to apply jti-missed after its subscription reconnected", func() bool {
 		return cacheB.IsRevoked("jti-missed")
 	})
+}
+
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
+// diagnosis: replica B, which started while its Redis link was cut and
+// rehydrated before replica A revoked a token, did not apply the
+// revocation within 15 s of the link coming back, although its periodic
+// rehydration is an hour away. pkg/storage/pubsub must call OnSubscribed
+// on the first subscription confirmation as well as on later ones, and
+// revocation.Cache.RunRehydration must start the first requested read
+// without waiting for the reconnect spacing.
+func TestTokenRevocationMissedBeforeTheFirstSubscriptionIsAppliedWhenItIsConfirmed(t *testing.T) {
+	t.Parallel()
+	rd := containers.StartRedis(t, containers.RedisOptions{})
+	linkB := tcpfault.Start(t, rd.Addr)
+	linkB.Cut()
+	clientB := redis.NewClient(&redis.Options{Addr: linkB.Addr()})
+	t.Cleanup(func() { _ = clientB.Close() })
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+
+	index := &revokedIndex{}
+	cacheB := revocation.NewCache()
+	if err := cacheB.Rehydrate(ctx, acmeOnly{}, index); err != nil {
+		t.Fatalf("replica B startup rehydration: %v", err)
+	}
+	trigger := revocation.NewTrigger()
+	go revocationprop.New(cacheB, pubsub.New(clientB)).Run(ctx, trigger.Fire)
+	go cacheB.RunRehydration(ctx, time.Hour, revocation.DefaultReconnectSpacing, trigger, acmeOnly{}, index, func(err error) {
+		t.Logf("replica B rehydration failed: %v", err)
+	})
+
+	index.add("jti-missed")
+	revocationprop.New(revocation.NewCache(), pubsub.New(rd.Client)).Revoke("jti-missed")
+	time.Sleep(500 * time.Millisecond)
+	if cacheB.IsRevoked("jti-missed") {
+		t.Fatal("replica B applied jti-missed while its Redis link was cut")
+	}
+	linkB.Restore(t)
+	start := time.Now()
+	waitFor(t, 15*time.Second, "replica B to apply jti-missed on its first subscription confirmation", func() bool {
+		return cacheB.IsRevoked("jti-missed")
+	})
+	t.Logf("replica B applied jti-missed %s after its Redis link came up", time.Since(start).Round(time.Millisecond))
 }

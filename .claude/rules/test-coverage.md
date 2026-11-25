@@ -133,7 +133,7 @@ The release gate's weekly run on `main` includes a mutation run (`lenny-test mut
 -->
 
 3. Iterate with `lenny-test run --changed`, then with `--tier` naming each reached tier that needs infrastructure when the change needs it to be confident, then commit, merge `main` into the branch, and run `lenny-test gate --tier static,unit,component,contract --cover` on the committed head; fix the code until it passes. During the v1 program the merge gate also runs with every tier on `main` after the merge.
-4. Run `lenny-test coverage --diff main --threshold 0.80 --require-gate`, which reads the profile the gate run of item 3 wrote and refuses when no such run on the head is recorded or when that run did not pass, and raise coverage of changed lines to the target.
+4. Run `lenny-test coverage --diff main --threshold 0.80 --require-gate`, which reads the profile the gate run of item 3 wrote and refuses when no such run on the head is recorded, when that run did not pass, or when that run left out any of the static, unit, component, and contract tiers, and raise coverage of changed lines to the target.
 5. Add the `// spec:` annotation to every test that verifies a requirement and the `// diagnosis:` comment to the tests of the component tier and the tiers after it.
 
 ## Environment preflight

@@ -8,7 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 7 |
+| Building | 2 |
+| Ready | 5 |
 | Waiting on decisions | 34 |
 | Blocked | 161 |
 | Landed | 24 |
@@ -53,11 +54,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Building |  |
+| [0172.S10](0172-gate-speed/steps.md#0172s10-the-tiers-of-the-gate-run-that-the-coverage-check-accepts) | The tiers of the gate run that the coverage check accepts | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
-| [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Ready |  |
-| [0172.S10](0172-gate-speed/steps.md#0172s10-the-tiers-of-the-gate-run-that-the-coverage-check-accepts) | The tiers of the gate run that the coverage check accepts | Ready |  |
 | [0176.S1](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s1-the-pipeline-mark-and-the-erasure-wait) | The pipeline mark and the erasure wait | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
@@ -313,7 +314,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
-| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 2 | 0 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 2 | 1 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 10 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `Decided` | 0 of 1 | 0 |

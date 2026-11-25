@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1518
+      count: 1519
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -304,9 +304,9 @@ packages:
     - package: pkg/credential/impersonation/impersonationtest
       count: 1
     - package: pkg/credential/revocation
-      count: 16
+      count: 26
     - package: pkg/credential/revocation/propagator
-      count: 5
+      count: 6
     - package: pkg/credential/usercreds
       count: 14
     - package: pkg/ctl
@@ -900,7 +900,7 @@ packages:
     - package: pkg/storage/pgtenant
       count: 24
     - package: pkg/storage/pubsub
-      count: 3
+      count: 4
     - package: pkg/storage/rediskeys
       count: 3
     - package: pkg/storage/redistopology
@@ -992,7 +992,7 @@ packages:
     - package: sdks/runtime/go/runtime
       count: 129
     - package: tests/chaos
-      count: 343
+      count: 345
     - package: tests/component/admission
       count: 20
     - package: tests/component/auditintegrity
@@ -1060,7 +1060,7 @@ packages:
     - package: tests/component/secretprobe
       count: 2
     - package: tests/component/securitycaches
-      count: 4
+      count: 5
     - package: tests/component/slotrelease
       count: 25
     - package: tests/component/storagequota

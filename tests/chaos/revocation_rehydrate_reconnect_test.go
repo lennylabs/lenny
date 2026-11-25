@@ -53,12 +53,26 @@ func (revChaosTenants) ListTenants(context.Context) ([]string, error) {
 // startBillingAndSecurityWorkers wires them, behind the production auth
 // middleware. Its periodic rehydration is an hour away, so a revocation it
 // applies within the test arrives over pub/sub or through the rehydration
-// a reconnect triggers. offset shifts the clock its staleness gate reads.
+// a subscription confirmation triggers, spaced by the gateway's default
+// reconnect spacing. offset shifts the clock its staleness gate and the
+// spacing read; reads counts its reads of issued_tokens.
 type revChaosReplica struct {
 	prop      *revocationprop.Propagator
 	srv       *httptest.Server
 	offset    atomic.Int64
 	rehydErrs atomic.Int32
+	reads     atomic.Int32
+}
+
+// countedSource counts the reads of issued_tokens that one replica makes.
+type countedSource struct {
+	src   revocation.Source
+	reads *atomic.Int32
+}
+
+func (c countedSource) ListRevoked(ctx context.Context, tenantID string) ([]issuedtokenstore.IssuedToken, error) {
+	c.reads.Add(1)
+	return c.src.ListRevoked(ctx, tenantID)
 }
 
 // startRevChaosReplica starts a replica over the Redis client and the
@@ -69,14 +83,14 @@ func startRevChaosReplica(t *testing.T, ctx context.Context, rd redis.UniversalC
 	cache := revocation.NewCache(revocation.WithClock(func() time.Time {
 		return time.Now().Add(time.Duration(r.offset.Load()))
 	}))
-	store := issuedtokenstore.New(pool)
+	store := countedSource{src: issuedtokenstore.New(pool), reads: &r.reads}
 	if err := cache.Rehydrate(ctx, revChaosTenants{}, store); err != nil {
 		t.Fatalf("startup rehydration: %v", err)
 	}
 	r.prop = revocationprop.New(cache, pubsub.New(rd))
 	trigger := revocation.NewTrigger()
 	go r.prop.Run(ctx, trigger.Fire)
-	go cache.RunRehydration(ctx, time.Hour, trigger, revChaosTenants{}, store, func(err error) {
+	go cache.RunRehydration(ctx, time.Hour, revocation.DefaultReconnectSpacing, trigger, revChaosTenants{}, store, func(err error) {
 		r.rehydErrs.Add(1)
 		t.Logf("replica rehydration failed: %v", err)
 	})
@@ -308,4 +322,85 @@ func TestReplicaWhoseRehydrationKeepsFailingRefusesValidationAfterTheStalenessWi
 		code, _ := b.call(t, bearer)
 		return code == http.StatusOK
 	})
+}
+
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
+// diagnosis: replica B started while its Redis link was cut, so its
+// subscription was not confirmed when replica A revoked a token, and B
+// kept admitting the token after its Redis came up, although its periodic
+// rehydration is an hour away. B's revocation subscriber did not report
+// the first subscription confirmation, or the rehydration loop held the
+// first requested read. A 401 from B while its Redis is down means the
+// event reached it some other way and the case did not exercise the
+// first confirmation.
+func TestRevocationMissedBeforeTheFirstSubscriptionIsRefusedOnceItIsConfirmed(t *testing.T) {
+	e := startRevChaosEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	redisB, linkB := proxiedRedis(t, e.rd.Addr)
+	linkB.Cut()
+	a := startRevChaosReplica(t, ctx, e.rd.Client, e.pg.Pool, e.signer)
+	b := startRevChaosReplica(t, ctx, redisB, e.pg.Pool, e.signer)
+
+	bearer := e.mint(t, "jti-revoked-before-first-subscription")
+	b.awaitStatus(t, "replica B before the revocation", bearer, http.StatusOK, 10*time.Second)
+	e.revoke(t, a, "jti-revoked-before-first-subscription")
+	time.Sleep(time.Second)
+	if code, _ := b.call(t, bearer); code != http.StatusOK {
+		t.Fatalf("replica B answered %d while its Redis was unreachable, want 200: the event reached it without a subscription", code)
+	}
+
+	linkB.Restore(t)
+	took := b.awaitStatus(t, "replica B once its Redis came up", bearer, http.StatusUnauthorized, 15*time.Second)
+	t.Logf("replica B refused the token %s after its Redis came up", took.Round(time.Millisecond))
+	if code, errCode := b.call(t, bearer); code != http.StatusUnauthorized || errCode != "TOKEN_REVOKED" {
+		t.Errorf("replica B answered %d %s, want 401 TOKEN_REVOKED", code, errCode)
+	}
+}
+
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
+// diagnosis: while replica B's Redis link flapped every 300 ms, B read
+// issued_tokens more often than once per reconnect spacing, or did not
+// refuse a token revoked during the flapping within the spacing and a
+// margin after the link settled. The rehydration loop did not hold a
+// subscription confirmation that came inside the spacing, or dropped the
+// held request instead of running it once the spacing had passed.
+func TestAFlappingRedisLinkCostsAtMostOneReadPerReconnectSpacing(t *testing.T) {
+	e := startRevChaosEnv(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	redisB, linkB := proxiedRedis(t, e.rd.Addr)
+	a := startRevChaosReplica(t, ctx, e.rd.Client, e.pg.Pool, e.signer)
+	b := startRevChaosReplica(t, ctx, redisB, e.pg.Pool, e.signer)
+
+	probe := e.mint(t, "jti-flap-probe")
+	e.revoke(t, a, "jti-flap-probe")
+	b.awaitStatus(t, "replica B with the probe over a live subscription", probe, http.StatusUnauthorized, 10*time.Second)
+
+	bearer := e.mint(t, "jti-revoked-while-flapping")
+	before := b.reads.Load()
+	start := time.Now()
+	flapFor := 3 * revocation.DefaultReconnectSpacing
+	revoked := false
+	for time.Since(start) < flapFor {
+		linkB.Cut()
+		if !revoked && time.Since(start) > flapFor/2 {
+			e.revoke(t, a, "jti-revoked-while-flapping")
+			revoked = true
+		}
+		time.Sleep(150 * time.Millisecond)
+		linkB.Restore(t)
+		time.Sleep(150 * time.Millisecond)
+	}
+	elapsed := time.Since(start)
+	reads := b.reads.Load() - before
+	// One requested read may start at the beginning of the window, then at
+	// most one per spacing, and one held request may run just after it.
+	limit := int32(elapsed/revocation.DefaultReconnectSpacing) + 2
+	t.Logf("replica B read issued_tokens %d times in %s of flapping", reads, elapsed.Round(time.Millisecond))
+	if reads > limit {
+		t.Errorf("replica B read issued_tokens %d times in %s of flapping, want at most %d", reads, elapsed.Round(time.Millisecond), limit)
+	}
+	took := b.awaitStatus(t, "replica B after the flapping", bearer, http.StatusUnauthorized, revocation.DefaultReconnectSpacing+10*time.Second)
+	t.Logf("replica B refused the token %s after the flapping ended", took.Round(time.Millisecond))
 }

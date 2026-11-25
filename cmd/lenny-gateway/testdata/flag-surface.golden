@@ -525,6 +525,8 @@ Usage of lenny-gateway:
     	Redis URL (redis://host:port/db). When set, circuit-breaker state is held in Redis so operator safety blocks survive a restart and stay consistent across replicas. When empty, an in-memory breaker store is used. Mutually exclusive with --redis-sentinel-addrs.
   -retry-max-retries int
     	§7.3 default retryPolicy.maxRetries: the automatic-retry budget the §4.8 RetryPolicyEvaluator (PostRoute, priority 600) enforces. A session whose retryCount has reached this cap is rejected at routing (it is in awaiting_client_action and requires an explicit client resume). Defaults to the §7.3 example value of 2. Override via LENNY_RETRY_MAX_RETRIES. (default 2)
+  -revocation-reconnect-spacing duration
+    	§13.3 reconnect spacing: the minimum interval between the starts of two revocation-cache rehydrations that confirmations of the replica's Redis revocation subscription trigger, at startup and after each reconnect. A confirmation inside the spacing waits until it has passed, so a flapping Redis connection costs at most one Postgres read per replica per spacing, while the 30-second periodic rehydration keeps its schedule. Zero or a negative value starts every such rehydration at once. Default 5s. Override via LENNY_REVOCATION_RECONNECT_SPACING. (default 5s)
   -runtime-bin string
     	path to a Basic-level runtime binary. When set, the gateway dispatches messages to a child process speaking the §28.5.3 adapter protocol instead of the in-process echo executor. §17.4 Source-Mode override; defaults to LENNY_AGENT_BINARY.
   -sa-token-audience string
