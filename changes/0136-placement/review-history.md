@@ -78,3 +78,7 @@ Second pass, 2026-11-19, requests from other changes. Seven requests: already do
 ## Revision 16 (2026-11-23)
 
 - Trigger: change 0166. Revision 16 carries out the row for 0136 in "DP-7 What each change takes on" of [`0166-delegation-primitives`](../0166-delegation-primitives/change.md#dp-7-what-each-change-takes-on), revision 7, which states that 0136 takes on no rule: a child is created with `kind: delegate`, so its parent's placement requirements apply. The edits rename only. `minIsolationProfile` is carried as the session grant's isolation floor in place of the delegation lease (0166 "DP-1", decision 35), the `kind: delegate` item under "Where they apply" names `session.create`, the §8.3 specification item notes that the sentence moves with the parent link when 0166 rewrites §8, and "Labels from other designs" gains 0166.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 17 records the owner's answers of 2026-11-20: O12 as (a) by question PR-A16 (D25), and O13 as (a) by question PR-A8 (D26), which 0142's decision 40 and 0150's O14 record as well. Both move to "Settled open decisions O12 and O13". `change.md` does not yet apply D25 and D26 in PM-4, and the next revision brings it in line. It was revision 16 on `main`. The merge of `main` into the branch of change 0166 on 2026-11-24 renumbered it, because that branch had used revision 16 and later revisions for its own edits.

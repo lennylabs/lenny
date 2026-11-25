@@ -47,9 +47,11 @@ type Cache struct {
 	reads     int
 	sinceRead map[string]struct{}
 
-	// lastSuccess is the instant the most recent Rehydrate completed
-	// against Postgres. The §13.3 fail-closed validation gate keys on its
-	// age. A zero value means no rehydration has ever succeeded.
+	// lastSuccess is the instant the most recent successful Rehydrate
+	// began its read of Postgres, so the set reflects Postgres at least as
+	// of that instant. The §13.3 fail-closed validation gate keys on its
+	// age, which a slow read therefore never understates. A zero value
+	// means no rehydration has ever succeeded.
 	lastSuccess  time.Time
 	maxStaleness time.Duration
 	clock        func() time.Time
@@ -135,7 +137,7 @@ func (c *Cache) Len() int {
 // revocation); §25.4 (The lenny-ops Service: Authentication, revocation
 // set rule 1).
 func (c *Cache) Rehydrate(ctx context.Context, tenants TenantLister, src Source) error {
-	c.beginRead()
+	started := c.beginRead()
 	fresh, err := readRevoked(ctx, tenants, src)
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -144,24 +146,29 @@ func (c *Cache) Rehydrate(ctx context.Context, tenants TenantLister, src Source)
 			fresh[jti] = struct{}{}
 		}
 		c.revoked = fresh
-		// Record the successful read so the §13.3 validation gate
-		// knows the in-memory set reflects Postgres as of this instant.
-		c.lastSuccess = c.clock()
+		// Record when the successful read began: the set reflects
+		// Postgres at least as of that instant. An overlapping read that
+		// began earlier and finishes later does not move it back.
+		if started.After(c.lastSuccess) {
+			c.lastSuccess = started
+		}
 	}
 	c.endReadLocked()
 	return err
 }
 
-// beginRead registers an in-flight read. The first concurrent read
-// starts a fresh sinceRead set; overlapping reads share it, which keeps
-// at least every jti revoked after each of them began.
-func (c *Cache) beginRead() {
+// beginRead registers an in-flight read and returns the instant it
+// began. The first concurrent read starts a fresh sinceRead set;
+// overlapping reads share it, which keeps at least every jti revoked
+// after each of them began.
+func (c *Cache) beginRead() time.Time {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.reads == 0 {
 		c.sinceRead = map[string]struct{}{}
 	}
 	c.reads++
+	return c.clock()
 }
 
 // endReadLocked unregisters an in-flight read. The caller holds c.mu.

@@ -72,13 +72,13 @@ func TestTokenServiceRecordsBeforeIssue(t *testing.T) {
 		Subject:  "alice@acme.com",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:read sessions:write",
+		Scope:    "tools:sessions:read tools:sessions:write",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -105,8 +105,8 @@ func TestTokenServiceRecordsBeforeIssue(t *testing.T) {
 	if got.Audience != "lenny-gateway" {
 		t.Errorf("recorded audience %q, want lenny-gateway", got.Audience)
 	}
-	if !slices.Equal(got.Scope, []string{"sessions:read"}) {
-		t.Errorf("recorded scope %v, want the narrowed [sessions:read]", got.Scope)
+	if !slices.Equal(got.Scope, []string{"tools:sessions:read"}) {
+		t.Errorf("recorded scope %v, want the narrowed [tools:sessions:read]", got.Scope)
 	}
 	wantHash := sha256.Sum256([]byte(tok))
 	if !bytes.Equal(got.TokenHash, wantHash[:]) {
@@ -130,13 +130,13 @@ func TestTokenServiceRefusesOnRecordFailure(t *testing.T) {
 		Subject:  "alice@acme.com",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:read",
+		Scope:    "tools:sessions:read",
 	})
 	resp, body := exchange(t, ts, subject, tokenservice.Request{
 		GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 		SubjectToken:     subject,
 		SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-		Scope:            "sessions:read",
+		Scope:            "tools:sessions:read",
 		Audience:         "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusInternalServerError {

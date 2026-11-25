@@ -1,6 +1,6 @@
 # LLM credential removal and access through a gateway
 
-Status: `Draft`, revision 25, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 26, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 The folder keeps its name, `0133-llm-upstreams-and-cost-budgets`, so that links into it keep resolving. Decision 23 sets the title. The change does two jobs: it removes Lenny's LLM credential machinery and its proxy ("LU-4"), and it states how the mechanisms that `0124-connector-removal`, `0127-egress-and-git`, and `0170-budgets` own combine into LLM access through an operator's gateway, with the reference integrations, the gateway guide, and the checks owed. Each rule of that path is stated once, in its owner, and this change cites it. Revision 20 replaces the metering proxy design of revisions 1 to 19 under decision 22, which the owner settled on 2026-11-24. `review-history.md` records the earlier revisions, and the decisions they rest on stay in `decisions.md`, marked where decision 22 supersedes them.
 

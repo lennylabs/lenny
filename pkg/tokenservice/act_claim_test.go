@@ -21,10 +21,11 @@ import (
 // The Token Service stamps the RFC 8693 `act` claim on the token it mints
 // for an exchange that carries an actor_token, naming the actor's sub,
 // tenant_id, session_id, and delegation_depth, and the child is an
-// a2a_delegation token at the actor's depth + 1. Every exchange without an
-// actor_token (self-rotation, scope narrowing, credential-lease issuance,
-// and an exchange of an a2a_delegation subject) mints a payload with no
-// `act` key. F-13.3.23.
+// a2a_delegation token at the actor's depth + 1. An exchange without an
+// actor_token copies the subject's `act` claim: an exchange of an
+// a2a_delegation subject keeps its delegator, and self-rotation, scope
+// narrowing, and credential-lease issuance of a subject without `act` mint
+// a payload with no `act` key. F-13.3.23.
 func TestMintedTokenCarriesActOnlyWithActorToken_spec_13_3(t *testing.T) {
 	signer := jwt.NewHMACSigner("dev-1", []byte("dev-secret"))
 	alice := mintToken(t, signer, lineageClaims("alice@acme.com", "alice-1", auth.TokenUserBearer))
@@ -48,36 +49,37 @@ func TestMintedTokenCarriesActOnlyWithActorToken_spec_13_3(t *testing.T) {
 	}{
 		{
 			name: "delegation mint with a distinct actor", caller: bob,
-			req:       Request{SubjectToken: alice, ActorToken: bob, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:       Request{SubjectToken: alice, ActorToken: bob, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantAct:   &jwt.ActorClaim{Subject: "bob@acme.com", TenantID: "acme", SessionID: "sess_bob", DelegationDepth: 1},
 			wantTyp:   auth.TokenA2ADelegation,
 			wantDepth: 2,
 		},
 		{
 			name: "delegation mint whose actor is the subject", caller: alice,
-			req:       Request{SubjectToken: alice, ActorToken: alice, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:       Request{SubjectToken: alice, ActorToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantAct:   &jwt.ActorClaim{Subject: "alice@acme.com", TenantID: "acme", DelegationDepth: 0},
 			wantTyp:   auth.TokenA2ADelegation,
 			wantDepth: 1,
 		},
 		{
 			name: "self rotation", caller: alice,
-			req:     Request{SubjectToken: alice, Scope: "sessions:read sessions:write", Audience: "lenny-gateway"},
+			req:     Request{SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway"},
 			wantTyp: auth.TokenUserBearer,
 		},
 		{
 			name: "scope narrowing", caller: bob,
-			req:     Request{SubjectToken: alice, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:     Request{SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantTyp: auth.TokenUserBearer,
 		},
 		{
 			name: "credential lease issuance", caller: bob,
-			req:     Request{SubjectToken: capability, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:     Request{SubjectToken: capability, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
 			wantTyp: auth.TokenSessionCapability,
 		},
 		{
 			name: "exchange of an a2a_delegation subject without an actor", caller: alice,
-			req:       Request{SubjectToken: child, Scope: "sessions:read", Audience: "lenny-gateway"},
+			req:       Request{SubjectToken: child, Scope: "tools:sessions:read", Audience: "lenny-gateway"},
+			wantAct:   &jwt.ActorClaim{Subject: "bob@acme.com", TenantID: "acme", SessionID: "sess_bob", DelegationDepth: 1},
 			wantTyp:   auth.TokenA2ADelegation,
 			wantDepth: 2,
 		},

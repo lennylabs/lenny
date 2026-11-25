@@ -75,7 +75,7 @@ func (h *lineageHarness) userToken(t *testing.T, tenant, sub, jti string) string
 	now := time.Now()
 	tok, err := h.signer.Sign(jwt.Claims{
 		Subject: sub, TenantID: tenant, JWTID: jti, Typ: auth.TokenUserBearer,
-		Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read tools:sessions:write", Audience: []string{"lenny-gateway"},
 		IssuedAt: now.Unix(), Expiry: now.Add(time.Hour).Unix(),
 	})
 	if err != nil {
@@ -132,30 +132,33 @@ func TestRecursiveRevocationReachesExternalDelegationChildren_spec_13_3(t *testi
 	alice := h.userToken(t, tenant, "alice@acme.com", "alice-root-"+tenant)
 	bob := h.userToken(t, tenant, "bob@acme.com", "bob-root-"+tenant)
 
-	// The parent is a scope narrowing of alice's bearer, so it has a row.
+	// The parent is a scope narrowing of alice's bearer, so it has a row and
+	// leaves alice's bearer live. A request at the bearer's own scope would
+	// be a self rotation, which revokes the bearer it replaces.
 	parent, parentJTI := h.mint(t, alice, tokenservice.Request{
-		SubjectToken: alice, Scope: "sessions:read sessions:write", Audience: "lenny-gateway",
+		SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	// The child carries bob's identity and names the parent as its actor.
 	child, childJTI := h.mint(t, parent, tokenservice.Request{
-		SubjectToken: bob, ActorToken: parent, Scope: "sessions:read", Audience: "lenny-gateway",
+		SubjectToken: bob, ActorToken: parent, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	_, grandchildJTI := h.mint(t, child, tokenservice.Request{
-		SubjectToken: bob, ActorToken: child, Scope: "sessions:read", Audience: "lenny-gateway",
+		SubjectToken: bob, ActorToken: child, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	// An unrelated tree: a second narrowing of alice and its own child.
 	other, otherJTI := h.mint(t, alice, tokenservice.Request{
-		SubjectToken: alice, Scope: "sessions:read", Audience: "lenny-gateway",
+		SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	_, otherChildJTI := h.mint(t, other, tokenservice.Request{
-		SubjectToken: alice, ActorToken: other, Scope: "sessions:read", Audience: "lenny-gateway",
+		SubjectToken: alice, ActorToken: other, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 
+	// A narrowing names its subject as the parent and records no act_sub.
 	wantLineage := map[string][2]string{
-		parentJTI:     {"", ""},
+		parentJTI:     {"", "alice-root-" + tenant},
 		childJTI:      {"alice@acme.com", parentJTI},
 		grandchildJTI: {"bob@acme.com", childJTI},
-		otherJTI:      {"", ""},
+		otherJTI:      {"", "alice-root-" + tenant},
 		otherChildJTI: {"alice@acme.com", otherJTI},
 	}
 	for jti, want := range wantLineage {
@@ -246,10 +249,75 @@ func TestRecursiveRevocationReachesExternalDelegationChildren_spec_13_3(t *testi
 		}
 	}
 
-	// The revoked child can no longer act as the parent of a new child.
-	if code, body := h.post(t, alice, tokenservice.Request{
-		SubjectToken: bob, ActorToken: child, Scope: "sessions:read", Audience: "lenny-gateway",
-	}); code != http.StatusBadRequest || body["error"] != "invalid_grant" {
-		t.Errorf("mint with the revoked child as actor: status %d body %v, want 400 invalid_grant", code, body)
+	// The revoked child can no longer act as the parent of a new child. The
+	// child authenticates the call, so the actor is the caller's token.
+	if code, body := h.post(t, child, tokenservice.Request{
+		SubjectToken: bob, ActorToken: child, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	}); code != http.StatusBadRequest || body["error"] != "invalid_grant" || body["error_description"] != "actor_token_revoked" {
+		t.Errorf("mint with the revoked child as actor: status %d body %v, want 400 invalid_grant actor_token_revoked", code, body)
+	}
+}
+
+// spec: §13.3 (Credential Flow), §12.2 (Storage Roles)
+// diagnosis: a token derived from a subject by scope narrowing, or by an
+// exchange from another caller, stayed live after the subject's recursive
+// revocation, which means issuedRecord in pkg/tokenservice/tokenservice.go
+// no longer records the subject_token's jti as parent_jti for an exchange
+// without an actor_token. A revoked unrelated token means the cascade
+// escaped the subject's subtree.
+func TestRecursiveRevocationReachesTokensDerivedFromTheSubject(t *testing.T) {
+	t.Parallel()
+	h := startLineageHarness(t)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, h.pg)
+
+	alice := h.userToken(t, tenant, "alice@acme.com", "alice-root-"+tenant)
+	bob := h.userToken(t, tenant, "bob@acme.com", "bob-root-"+tenant)
+
+	// root is an exchanged token, so it has a row the revocation names.
+	root, rootJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read tools:sessions:write", Audience: "lenny-gateway",
+	})
+	_, narrowedJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: root, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	})
+	// bob is another caller, so he must narrow the subject's scope.
+	_, bobsJTI := h.mint(t, bob, tokenservice.Request{
+		SubjectToken: root, Scope: "tools:sessions:write", Audience: "lenny-gateway",
+	})
+	_, unrelatedJTI := h.mint(t, alice, tokenservice.Request{
+		SubjectToken: alice, Scope: "tools:sessions:read", Audience: "lenny-gateway",
+	})
+
+	for _, jti := range []string{narrowedJTI, bobsJTI} {
+		row, err := h.store.Get(ctx, tenant, jti)
+		if err != nil {
+			t.Fatalf("Get %s: %v", jti, err)
+		}
+		if row.ParentJTI != rootJTI || row.ActSubject != "" {
+			t.Errorf("row %s act_sub=%q parent_jti=%q, want empty / %s", jti, row.ActSubject, row.ParentJTI, rootJTI)
+		}
+	}
+
+	code, body := h.post(t, alice, tokenservice.Request{
+		SubjectToken: root, RequestedTokenType: lineageRevokedType,
+	})
+	if code != http.StatusOK || body["revoked_count"] != float64(3) {
+		t.Fatalf("revocation request: status %d body %v, want 200 with revoked_count 3", code, body)
+	}
+	wantRevoked := map[string]string{
+		rootJTI:      "explicit_revoke",
+		narrowedJTI:  "cascade_from_parent",
+		bobsJTI:      "cascade_from_parent",
+		unrelatedJTI: "",
+	}
+	for jti, reason := range wantRevoked {
+		row, err := h.store.Get(ctx, tenant, jti)
+		if err != nil {
+			t.Fatalf("Get %s: %v", jti, err)
+		}
+		if row.Revoked() != (reason != "") || row.RevokedReason != reason {
+			t.Errorf("row %s revoked=%v reason=%q, want revoked=%v reason=%q", jti, row.Revoked(), row.RevokedReason, reason != "", reason)
+		}
 	}
 }

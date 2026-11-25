@@ -64,6 +64,7 @@
     - Raised O26, the serving path of the `/identity/` issuer routes, mirroring 0127 decision 79 (0127, 0127-p2-F7); CR-2 **Serving the public routes.** points to it.
     - Raised O27, the step whose edge the `sub` part of CR-2 waits for, mirroring 0143 O9 (0143).
     - Raised O28, the re-pointing of 0124.S3's and 0124.S4's edges on 0146.S1 if it is split, mirroring 0146 SL-Q10 (0146).
+- Revision 15, dated 2026-11-23. It was revision 10 on `main`. The merge of `main` into the branch of change 0166 on 2026-11-24 renumbered it, because that branch had used revisions 10 to 14 for its own edits. Trigger: owner decisions on the M3 readiness decision page. O16 is settled as (a) by question PG-C5 of 2026-11-19 and confirmed by question PR-A1 of 2026-11-20, and O24 is settled as (a) by question PR-A9 of 2026-11-20. Both move to "Owner decisions". `change.md` does not yet apply them: CR-1 **Removed fields (D7).** still names `details.field`, and the next revision brings it in line.
 
 ## Move into changes (2026-11-16)
 

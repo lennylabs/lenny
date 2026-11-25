@@ -64,6 +64,8 @@ var prodTables = []struct{ migration, name string }{
 	{"0038", "credential_leases"},
 	// §12.8 GDPR erasure-job registry.
 	{"0042", "erasure_jobs"},
+	// §13.3 impersonation start records.
+	{"0201", "impersonation_starts"},
 }
 
 // execTenant runs sql inside a transaction that has set
@@ -90,7 +92,15 @@ func execTenant(ctx context.Context, pg *containers.Postgres, tenant, sql string
 //	apply, or did not roll back cleanly. Check that every .up.sql
 //	has a matching .down.sql and that DROP order respects FKs.
 //	A missing idx_issued_tokens_impersonation means migration 0192
-//	did not apply the §12.2 impersonation partial index.
+//	did not apply the §12.2 impersonation partial index, and a
+//	missing idx_issued_tokens_parent means migration 0199 did not
+//	apply the lineage index, and a missing
+//	idx_issued_tokens_impersonator means migration 0200 did not apply
+//	the impersonator-link index. A missing impersonation_starts table
+//	or its idx_impersonation_starts_impersonator index means migration
+//	0201 did not apply, and a missing idx_issued_tokens_act_sub_child
+//	means migration 0202 did not apply the full revoke's delegation
+//	index.
 func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	t.Parallel()
 	dir := prodMigrations(t)
@@ -112,6 +122,16 @@ func TestProdSchemaMigrationRoundTrip(t *testing.T) {
 	mustHaveIndex(t, ctx, pg, "agent_pod_state", "idx_agent_pod_state_pool_state")
 	// 0192 adds the §13.3 impersonation partial index.
 	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonation")
+	// 0199 adds the lineage index the recursive revocation walks.
+	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_parent")
+	// 0200 adds the index the impersonator-link revocation reads.
+	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_impersonator")
+	// 0201 adds the start records the impersonation step reads; R-01
+	// leads their primary key with tenant_id.
+	mustHavePKLeadingColumn(t, ctx, pg, "impersonation_starts", "tenant_id")
+	mustHaveIndex(t, ctx, pg, "impersonation_starts", "idx_impersonation_starts_impersonator")
+	// 0202 adds the index the full revoke's delegation seed reads.
+	mustHaveIndex(t, ctx, pg, "issued_tokens", "idx_issued_tokens_act_sub_child")
 
 	// Rollback removes every object, including the database roles.
 	pg.MigrateDown(t, dir)

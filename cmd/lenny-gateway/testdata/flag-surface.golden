@@ -603,6 +603,8 @@ Usage of lenny-gateway:
     	§11.2 direct-mode token-usage integrity: the cumulative tokens-per-LLM-call ratio below which the gateway raises lenny_gateway_token_usage_anomaly_total{reason="implausibly_small"} for a direct-mode session. §11.2 leaves the numeric value operator-tunable; the default flags a session averaging fewer than one token per call. A non-positive value disables the ratio branch (the zero-token window still fires). Override via LENNY_TOKEN_ANOMALY_IMPLAUSIBLE_RATIO. (default 1)
   -token-anomaly-zero-window int
     	§11.2 direct-mode token-usage integrity: the count of consecutive zero-token direct-mode ReportUsage pulls a session must exceed before the gateway raises lenny_gateway_token_usage_anomaly_total{reason="zero_delta"}. A non-zero pull resets the run. §11.2 fixes the default at greater than 3; a non-positive value falls back to the default so the primary under-reporting signal is never disabled. Override via LENNY_TOKEN_ANOMALY_ZERO_WINDOW. (default 3)
+  -token-revocation-timeout-ms int
+    	§11.4 step 5 and §13.3 auth.tokenRevocationTimeoutMs: the statement timeout of a full revoke's token walk, which holds the tenant's audit advisory lock; a walk that reaches it revokes no token and is reported as partial-failure detail. Default 5000. Override via LENNY_TOKEN_REVOCATION_TIMEOUT_MS. (default 5000)
   -token-service-ca string
     	path to the CA bundle that verifies the Token Service's server certificate on the §4.3 mTLS link.
   -token-service-grpc-addr string

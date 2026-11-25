@@ -1,0 +1,12 @@
+-- §11.4 step 5: the delegations a full revoke reaches.
+--
+-- A full revoke of a user seeds its lineage walk with the user's own rows
+-- and with the child rows whose act_sub is the user and whose parent_jti
+-- is set, which are the a2a_delegation children minted with any token of
+-- the user as actor_token. This partial index keys the second seed. An
+-- impersonation row has parent_jti null and is left out, because rule 6
+-- of §13.3 "Platform-admin impersonation" governs it and
+-- idx_issued_tokens_impersonation (migration 0192) indexes it.
+--
+-- spec: §12.2 (TokenIssuanceStore indexes), §11.4 step 5.
+CREATE INDEX idx_issued_tokens_act_sub_child ON issued_tokens (tenant_id, act_sub) WHERE act_sub IS NOT NULL AND parent_jti IS NOT NULL;

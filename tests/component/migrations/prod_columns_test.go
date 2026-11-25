@@ -675,6 +675,9 @@ var prodMigrationSchema = []struct {
 	// the name the admin API gives its records. The forward check finds
 	// pools; rolling 0198 back leaves no pools table.
 	{migration: "0198", table: "pools", create: true, columns: []string{"name"}},
+	// 0203 adds the §13.3 lineage depth column to issued_tokens, which the
+	// lineage depth cap of step (1a) reads.
+	{migration: "0203", table: "issued_tokens", columns: []string{"depth"}},
 }
 
 // renamedTables maps a table an earlier migration created or altered to

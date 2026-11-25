@@ -86,7 +86,7 @@ func (f *signingFixture) mintCaller(t *testing.T) string {
 		Subject:  "admin@acme.com",
 		TenantID: "acme",
 		Typ:      pkgauth.TokenUserBearer,
-		Scope:    "sessions:read sessions:write",
+		Scope:    "tools:sessions:read tools:sessions:write",
 		Audience: []string{"lenny-gateway"},
 		IssuedAt: now.Unix(),
 		Expiry:   now.Add(time.Hour).Unix(),
@@ -258,7 +258,7 @@ func buildOAuthTokenMint(t *testing.T, f *signingFixture) func(t *testing.T) min
 			GrantType:        "urn:ietf:params:oauth:grant-type:token-exchange",
 			SubjectToken:     caller,
 			SubjectTokenType: "urn:ietf:params:oauth:token-type:jwt",
-			Scope:            "sessions:read",
+			Scope:            "tools:sessions:read",
 			Audience:         "lenny-gateway",
 		})
 		req := httptest.NewRequest(http.MethodPost, "/v1/oauth/token", bytes.NewReader(b))

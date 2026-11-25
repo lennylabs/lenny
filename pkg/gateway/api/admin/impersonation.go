@@ -144,6 +144,8 @@ func (r *Router) handleStartImpersonation(w http.ResponseWriter, req *http.Reque
 		TargetRoles:    targetRoles,
 		CallerTenantID: principal.TenantID,
 		CallerJTI:      principal.JTI,
+		CallerExpiry:   principal.Expiry,
+		CallerScope:    principal.Scopes.Raw,
 	})
 	if errors.Is(err, impersonation.ErrIssuanceRefused) {
 		writeError(w, http.StatusForbidden, "FORBIDDEN",

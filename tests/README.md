@@ -30,6 +30,7 @@ Each tier has its own directory and build tag (see TESTING.md §4 for the canoni
 - `security/` — security controls and adversarial scenarios
 - `conformance/` — runtime adapter conformance
 - `docs/` — documentation tests
+- `formal/` — formal models of design rules, run by hand rather than by a tier; `formal/tokens/README.md` describes the Alloy model of the token rules, `formal/tokenconcurrency/README.md` describes the TLA+ model of the token rules under concurrent requests, and each says how to run it
 
 Unit tests are co-located with the code they cover under `pkg/`. This directory is the index, not the location.
 
@@ -95,4 +96,4 @@ The full list is in `lenny-test --help`.
 
 - `results/latest.json` — most recent verdict (overwritten every run)
 - `results/verdict-<run_id>.json` — rotated history (20 most recent retained)
-- `results/cover.out` — Go coverage profile from `runUnitTier`
+- `results/cover.out` — Go coverage profile that the unit tier of `lenny-test --tier unit` and `lenny-test run --changed` writes. The merge gate's unit run writes none.

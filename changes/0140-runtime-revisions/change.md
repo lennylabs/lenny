@@ -1,6 +1,6 @@
 # Runtime revisions
 
-Status: `Draft`, revision 27, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 28, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 

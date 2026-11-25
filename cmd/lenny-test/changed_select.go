@@ -405,7 +405,7 @@ func (c *changeSelection) addTarget(g *pkgGraph, target string) string {
 		c.addWhole(target)
 		return ""
 	}
-	dir := strings.TrimSuffix(strings.TrimPrefix(target, "./"), "/...")
+	dir := targetDir(target)
 	if g != nil {
 		// A directory the graph does not hold, such as one a row at the
 		// base commit names and the branch removed, selects nothing.
@@ -413,6 +413,27 @@ func (c *changeSelection) addTarget(g *pkgGraph, target string) string {
 	}
 	c.addPackageDir(dir)
 	return ""
+}
+
+// addOwnTests selects one `tests` target of a non-Go input row: the
+// package's own tests read the input, so the package runs in the tier that
+// runs it and none of its dependents is selected (change 0172, GS-1). A
+// directory the graph does not hold selects nothing, as in addTarget, and
+// without a graph the package is selected alone.
+func (c *changeSelection) addOwnTests(g *pkgGraph, target string) {
+	dir := targetDir(target)
+	if g != nil {
+		if _, ok := g.dirToPkg[dir]; !ok {
+			return
+		}
+	}
+	c.addPackageDir(dir)
+}
+
+// targetDir returns the package directory a row target names, without a
+// leading `./` or a trailing `/...`.
+func targetDir(target string) string {
+	return strings.TrimSuffix(strings.TrimPrefix(target, "./"), "/...")
 }
 
 // failSafeTiers are the tiers a selection runs whole when a source it
@@ -472,8 +493,10 @@ type specEdits struct {
 //
 // For each changed path, the owning packages (pkgGraph.ownersOf) are
 // changed, and every row of the non-Go input list whose pattern matches the
-// path adds its targets: a tier name selects the whole tier, and a package
-// directory is changed too (see addTarget). The packages whose code cites an identifier a
+// path adds its targets: a tier name under `runs` selects the whole tier, a
+// package directory under `runs` is changed too (see addTarget), and a
+// package directory under `tests` runs its own tests without its
+// dependents (see addOwnTests). The packages whose code cites an identifier a
 // specification edit changes are changed too. The changed packages and
 // their dependents to opts.rdepsDepth hops are then selected, each in the
 // tier that runs it, and the test functions the specification edits name
@@ -499,8 +522,12 @@ func selectChanged(paths []string, g *pkgGraph, inputs *nonGoInputs, spec specEd
 				roots = append(roots, pkg)
 			}
 		}
+		tests := inputs.testsFor(p)
+		for _, t := range tests {
+			sel.addOwnTests(g, t)
+		}
 		roots = append(roots, owners...)
-		if len(owners) == 0 && len(targets) == 0 && !selectsNothingByDesign(p) {
+		if len(owners) == 0 && len(targets) == 0 && len(tests) == 0 && !selectsNothingByDesign(p) {
 			sel.unowned = append(sel.unowned, p)
 		}
 	}

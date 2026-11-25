@@ -56,6 +56,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/storage/failopen"
+	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
 )
 
@@ -120,6 +121,7 @@ type gatewayFlags struct {
 	quotaFailOpenCumulativeMaxSeconds             *int
 	failOpenStatePath                             *string
 	auditLockAcquireTimeoutMs                     *int
+	tokenRevocationTimeoutMs                      *int
 	auditLockMaxRetries                           *int
 	auditLockRetryBaseMs                          *int
 	globalTokenQuota                              *int64
@@ -594,6 +596,9 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.auditLockAcquireTimeoutMs = flag.Int("audit-lock-acquire-timeout-ms",
 		envInt("LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS", auditstore.DefaultLockConfig().AcquireTimeoutMs),
 		"§11.7 item 3 audit.lock.acquireTimeoutMs: statement_timeout on the per-tenant audit advisory-lock acquisition. Default 5000ms. Override via LENNY_AUDIT_LOCK_ACQUIRE_TIMEOUT_MS.")
+	f.tokenRevocationTimeoutMs = flag.Int("token-revocation-timeout-ms",
+		envInt("LENNY_TOKEN_REVOCATION_TIMEOUT_MS", int(issuedtokenstore.DefaultRevocationTimeout/time.Millisecond)),
+		"§11.4 step 5 and §13.3 auth.tokenRevocationTimeoutMs: the statement timeout of a full revoke's token walk, which holds the tenant's audit advisory lock; a walk that reaches it revokes no token and is reported as partial-failure detail. Default 5000. Override via LENNY_TOKEN_REVOCATION_TIMEOUT_MS.")
 	f.auditLockMaxRetries = flag.Int("audit-lock-max-retries",
 		envInt("LENNY_AUDIT_LOCK_MAX_RETRIES", auditstore.DefaultLockConfig().MaxRetries),
 		"§11.7 item 3 audit.lock.maxRetries: same-replica retries after an audit lock timeout before returning 503 audit_unavailable. Default 3. Override via LENNY_AUDIT_LOCK_MAX_RETRIES.")

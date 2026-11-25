@@ -44,25 +44,25 @@ func TestExchangeWithoutScopeFromANarrowedSubjectIssuesTheSubjectScope(t *testin
 	srv, signer := rotationServer(t, store, &recordingAuditor{}, nil)
 	caller := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-caller",
-		Typ: auth.TokenUserBearer, Scope: "tools:health:read sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:health:read tools:sessions:read",
 	})
 	subject := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-subject",
-		Typ: auth.TokenUserBearer, Scope: "tools:health:read sessions:read",
+		Typ: auth.TokenUserBearer, Scope: "tools:health:read tools:sessions:read",
 	})
 
 	status, out, claims := exchangeWithoutScope(t, srv, signer, caller, subject)
 	if status != http.StatusOK {
 		t.Fatalf("status = %d, want 200", status)
 	}
-	const want = "tools:health:read sessions:read"
+	const want = "tools:health:read tools:sessions:read"
 	if claims.Scope != want {
 		t.Errorf("issued scope claim = %q, want %q", claims.Scope, want)
 	}
 	if out.Scope != want {
 		t.Errorf("response scope = %q, want %q", out.Scope, want)
 	}
-	if len(store.minted) != 1 || !reflect.DeepEqual(store.minted[0].Scope, []string{"tools:health:read", "sessions:read"}) {
+	if len(store.minted) != 1 || !reflect.DeepEqual(store.minted[0].Scope, []string{"tools:health:read", "tools:sessions:read"}) {
 		t.Errorf("issued_tokens row scope = %+v, want the subject scope", store.minted)
 	}
 	if store.gotPrevJTI != "" {

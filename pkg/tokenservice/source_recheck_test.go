@@ -77,7 +77,7 @@ func assertSingleRejectionAudit(t *testing.T, rows []recordedAudit, policyResult
 func recheckClaims(jti string) jwt.Claims {
 	return jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: jti,
-		Typ: auth.TokenUserBearer, Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read tools:sessions:write", Audience: []string{"lenny-gateway"},
 	}
 }
 
@@ -85,7 +85,8 @@ func recheckClaims(jti string) jwt.Claims {
 // (1a) re-read rejects an exchange whose subject or actor token is
 // revoked between the pre-check and the in-lock re-read: the handler
 // returns 400 invalid_grant with the role's reason, discards the signed
-// token, and writes one rejection token.exchanged row.
+// token, and writes one rejection token.exchanged row. The re-read lists
+// the caller token after the subject and the actor.
 func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 	revokedAt := time.Unix(1_700_000_000, 0)
 	cases := []struct {
@@ -100,7 +101,8 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			revokedJTI: "subj-1",
 			wantReason: "subject_token_revoked",
 			wantSources: []issuedtokenstore.SourceToken{
-				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
+				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
 			},
 		},
 		{
@@ -109,8 +111,9 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			withActor:  true,
 			wantReason: "actor_token_revoked",
 			wantSources: []issuedtokenstore.SourceToken{
-				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
-				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1"},
+				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
 			},
 		},
 		{
@@ -119,8 +122,9 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			withActor:  true,
 			wantReason: "subject_token_revoked",
 			wantSources: []issuedtokenstore.SourceToken{
-				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"},
-				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1"},
+				{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceActorToken, JTI: "actor-1", Subject: "alice@acme.com"},
+				{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
 			},
 		},
 	}
@@ -133,7 +137,7 @@ func TestHandlerSourceRevokedAtInLockReRead_spec_13_3(t *testing.T) {
 			caller := mintToken(t, signer, recheckClaims("caller-1"))
 			req := Request{
 				GrantType: grantTypeExchange, SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
-				Scope: "sessions:read", Audience: "lenny-gateway",
+				Scope: "tools:sessions:read", Audience: "lenny-gateway",
 			}
 			if tc.withActor {
 				req.ActorToken = mintToken(t, signer, recheckClaims("actor-1"))
@@ -170,7 +174,7 @@ func TestHandlerSourceRevokedRejectionAuditFailure_spec_13_3(t *testing.T) {
 				GrantType:    grantTypeExchange,
 				SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
 				ActorToken:   mintToken(t, signer, recheckClaims("actor-1")),
-				Scope:        "sessions:read", Audience: "lenny-gateway",
+				Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 			})
 			assertOAuthRejection(t, resp, http.StatusInternalServerError, "token_exchange_failed", tc.wantReason)
 		})
@@ -186,7 +190,7 @@ func TestHandlerLiveSourcesPassReRead_spec_13_3(t *testing.T) {
 	resp := doExchange(t, srv, mintToken(t, signer, recheckClaims("caller-1")), Request{
 		GrantType:    grantTypeExchange,
 		SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
-		Scope:        "sessions:read", Audience: "lenny-gateway",
+		Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status = %d, want 200", resp.StatusCode)
@@ -194,7 +198,10 @@ func TestHandlerLiveSourcesPassReRead_spec_13_3(t *testing.T) {
 	if len(store.records) != 1 {
 		t.Errorf("records = %d, want 1", len(store.records))
 	}
-	want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1"}}
+	want := []issuedtokenstore.SourceToken{
+		{Role: issuedtokenstore.SourceSubjectToken, JTI: "subj-1", Subject: "alice@acme.com"},
+		{Role: issuedtokenstore.SourceCallerToken, JTI: "caller-1", Subject: "alice@acme.com"},
+	}
 	if !reflect.DeepEqual(store.sources, want) {
 		t.Errorf("re-read sources = %+v, want %+v", store.sources, want)
 	}
@@ -251,7 +258,7 @@ func TestHandlerRefusesImpersonationSource_spec_13_3(t *testing.T) {
 				GrantType:    grantTypeExchange,
 				SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
 				ActorToken:   mintToken(t, signer, recheckClaims("actor-1")),
-				Scope:        "sessions:read", Audience: "lenny-gateway",
+				Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 			})
 			assertOAuthRejection(t, resp, http.StatusBadRequest, "invalid_grant", tc.wantReason)
 			if len(store.records) != 0 || len(store.audits) != 0 {
@@ -271,7 +278,7 @@ func TestHandlerImpersonationRejectionAuditFailure_spec_13_3(t *testing.T) {
 	resp := doExchange(t, srv, mintToken(t, signer, recheckClaims("caller-1")), Request{
 		GrantType:    grantTypeExchange,
 		SubjectToken: mintToken(t, signer, recheckClaims("subj-1")),
-		Scope:        "sessions:read", Audience: "lenny-gateway",
+		Scope:        "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	assertOAuthRejection(t, resp, http.StatusInternalServerError, "token_exchange_failed", "subject_token_impersonation")
 }

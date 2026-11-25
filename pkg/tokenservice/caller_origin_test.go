@@ -56,7 +56,7 @@ func signKeySetToken(t *testing.T, signer jwt.Signer, jti, origin string) string
 		Subject:  "alice@acme.com",
 		TenantID: "acme",
 		Typ:      auth.TokenUserBearer,
-		Scope:    "sessions:read sessions:write",
+		Scope:    "tools:sessions:read tools:sessions:write",
 		Audience: []string{"lenny-gateway"},
 		IssuedAt: now.Unix(),
 		Expiry:   now.Add(time.Hour).Unix(),
@@ -85,7 +85,7 @@ func narrowRequest(subject string) Request {
 	return Request{
 		GrantType:    grantTypeExchange,
 		SubjectToken: subject,
-		Scope:        "sessions:read",
+		Scope:        "tools:sessions:read",
 		Audience:     "lenny-gateway",
 	}
 }
@@ -137,29 +137,5 @@ func TestPlaygroundOriginCallerRefusedInvalidClient_spec_13_3(t *testing.T) {
 	}
 	if tok, _ := env["access_token"].(string); tok == "" {
 		t.Errorf("caller without origin received no access_token; body %v", env)
-	}
-}
-
-// spec: 13.3 (Credential Flow) "Client authentication on /v1/oauth/token"
-//
-// The origin check applies to the caller token only. A caller token
-// with no origin claim presenting a playground-origin subject_token
-// receives an access_token, which separates the caller-only refusal from an origin
-// check in the verifier that also authenticates the subject_token.
-func TestPlaygroundOriginSubjectTokenAccepted_spec_13_3(t *testing.T) {
-	srv, signer := keySetServer(t)
-	caller := signKeySetToken(t, signer, "jti-caller", "")
-	subject := signKeySetToken(t, signer, "jti-pg-subject", jwt.OriginPlayground)
-
-	status, env := decodeExchange(t, doExchange(t, srv, caller, narrowRequest(subject)))
-	if status != http.StatusOK {
-		t.Fatalf("status = %d, want 200; body %v", status, env)
-	}
-	tok, _ := env["access_token"].(string)
-	if tok == "" {
-		t.Fatalf("no access_token; body %v", env)
-	}
-	if _, err := srv.verifier.Verify(tok); err != nil {
-		t.Errorf("issued token does not verify against the key set: %v", err)
 	}
 }

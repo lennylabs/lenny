@@ -40,7 +40,6 @@ type Signer interface {
 //
 // spec: §13.3 (Platform-admin impersonation, rules 1, 2, and 3); §12.2.
 type IssuedTokens interface {
-	Get(ctx context.Context, tenantID, jti string) (issuedtokenstore.IssuedToken, error)
 	RecordImpersonation(ctx context.Context, tok issuedtokenstore.IssuedToken, callerTenantID string) error
 	EndImpersonation(ctx context.Context, jti string, at time.Time) (issuedtokenstore.IssuedToken, error)
 	ListActiveImpersonations(ctx context.Context, now time.Time) ([]issuedtokenstore.IssuedToken, error)
@@ -147,27 +146,34 @@ type IssueRequest struct {
 	// minted bearer so the impersonation reflects the user's authority.
 	TargetRoles []auth.Role
 	// CallerTenantID and CallerJTI identify the caller's own bearer. The
-	// caller check reads its issued_tokens row, and the record fence reads
-	// the caller's user row under CallerTenantID.
+	// record's first transaction reads its issued_tokens row and the
+	// caller's user row under CallerTenantID, and the bearer's row records
+	// both as its impersonator link.
 	CallerTenantID string
 	CallerJTI      string
+	// CallerExpiry is the exp of the caller's own bearer, zero when it
+	// carries none. The minted bearer expires no later than it.
+	CallerExpiry time.Time
+	// CallerScope is the raw `scope` claim of the caller's bearer, empty
+	// when the bearer carries none. The minted bearer carries it, so an
+	// impersonation never reaches beyond the caller's own scope.
+	CallerScope string
 }
 
 // Issue establishes an impersonation session in the §13.3 rule 1 order.
-// It first refuses a caller whose own bearer step (1a) of "Write-before-issue
-// ordering" would reject as a subject_token, writing nothing. It then
-// writes admin.impersonation_started, signs the bearer, and records it in
-// issued_tokens under the user-row fence, and returns the bearer only once
-// the record commits. A CMP-058 fail-closed on the started event returns
-// the audit error with no bearer signed. The mint writes no
+// It writes admin.impersonation_started, signs the bearer, and records it
+// in issued_tokens under the user-row fence, and returns the bearer only
+// once the record commits. The record's first transaction reads the
+// caller's own bearer under a share lock and refuses a bearer that step
+// (1a) of "Write-before-issue ordering" would reject as a subject_token,
+// so the refusal follows the started event, as a refusal for an
+// invalidated user does. A CMP-058 fail-closed on the started event
+// returns the audit error with no bearer signed. The mint writes no
 // token.exchanged row.
 //
 // spec: §13.3 (Platform-admin impersonation, rule 1); §16.7; §11.7.
 func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, error) {
 	if err := s.validate(req); err != nil {
-		return Ticket{}, "", err
-	}
-	if err := s.checkCaller(ctx, req.CallerTenantID, req.CallerJTI); err != nil {
 		return Ticket{}, "", err
 	}
 	// The JWT iat and exp are whole Unix seconds, so the issue instant is
@@ -184,8 +190,14 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, 
 		Reason:         req.Reason,
 		TicketRef:      req.TicketRef,
 		Duration:       req.Duration,
+		Scope:          strings.TrimSpace(req.CallerScope),
 		IssuedAt:       now,
-		ExpiresAt:      now.Add(req.Duration),
+		ExpiresAt:      bearerExpiry(now, req.Duration, req.CallerExpiry),
+		CallerTenantID: req.CallerTenantID,
+		CallerJTI:      req.CallerJTI,
+	}
+	if !t.ExpiresAt.After(now) {
+		return Ticket{}, "", fmt.Errorf("%w: the caller's bearer expires at the issue instant", ErrIssuanceRefused)
 	}
 	if err := s.appendStarted(ctx, t); err != nil {
 		return Ticket{}, "", err
@@ -200,6 +212,19 @@ func (s *Service) Issue(ctx context.Context, req IssueRequest) (Ticket, string, 
 	return t, signed, nil
 }
 
+// bearerExpiry returns the exp of an impersonation bearer issued at now:
+// now plus the requested duration, and no later than the caller bearer's
+// exp when the caller's bearer carries one, truncated to whole seconds.
+//
+// spec: §13.3 (Credential Flow) "Platform-admin impersonation." rule 1.
+func bearerExpiry(now time.Time, duration time.Duration, callerExpiry time.Time) time.Time {
+	exp := now.Add(duration)
+	if !callerExpiry.IsZero() && callerExpiry.Before(exp) {
+		exp = callerExpiry.Truncate(time.Second)
+	}
+	return exp
+}
+
 // validate checks the required fields and the duration range.
 func (s *Service) validate(req IssueRequest) error {
 	if req.AdminSub == "" || req.TargetTenantID == "" || req.TargetUserID == "" || req.CallerTenantID == "" {
@@ -207,29 +232,6 @@ func (s *Service) validate(req IssueRequest) error {
 	}
 	if req.Duration < minDuration || req.Duration > s.cfg.MaxDuration {
 		return fmt.Errorf("%w: %s (min %s, max %s)", ErrInvalidDuration, req.Duration, minDuration, s.cfg.MaxDuration)
-	}
-	return nil
-}
-
-// checkCaller reads the caller's bearer row in the caller's tenant and
-// refuses the call when step (1a) would reject it as a subject_token. A
-// bearer with no row, or a caller without a jti, passes.
-//
-// spec: §13.3 (Platform-admin impersonation, rule 1; Write-before-issue
-// ordering, step (1a)).
-func (s *Service) checkCaller(ctx context.Context, tenantID, jti string) error {
-	if jti == "" {
-		return nil
-	}
-	row, err := s.tokens.Get(ctx, tenantID, jti)
-	if errors.Is(err, issuedtokenstore.ErrNotFound) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("impersonation: read caller bearer: %w", err)
-	}
-	if refusal := row.SourceRefusal(issuedtokenstore.SourceSubjectToken); refusal != nil {
-		return fmt.Errorf("%w: %w", ErrIssuanceRefused, refusal)
 	}
 	return nil
 }
@@ -245,8 +247,12 @@ func (s *Service) appendStarted(ctx context.Context, t Ticket) error {
 	return err
 }
 
-// sign mints the target-user bearer whose jti is the session id and whose
-// exp is the started event's time plus the requested duration.
+// sign mints the target-user bearer whose jti is the session id, whose
+// scope claim is the caller's scope claim, and whose exp is Ticket's
+// ExpiresAt, which bearerExpiry computes. An empty Ticket.Scope leaves the
+// claim absent.
+//
+// spec: §13.3 (Credential Flow) "Platform-admin impersonation." rule 1.
 func (s *Service) sign(ctx context.Context, t Ticket, roles []auth.Role) (string, error) {
 	signed, err := s.signer.Sign(ctx, jwt.Claims{
 		Issuer:     s.cfg.Issuer,
@@ -260,6 +266,7 @@ func (s *Service) sign(ctx context.Context, t Ticket, roles []auth.Role) (string
 		CallerType: "human",
 		Roles:      roles,
 		Typ:        auth.TokenUserBearer,
+		Scope:      t.Scope,
 	})
 	if err != nil {
 		return "", fmt.Errorf("impersonation: mint bearer: %w", err)
@@ -268,35 +275,50 @@ func (s *Service) sign(ctx context.Context, t Ticket, roles []auth.Role) (string
 }
 
 // record writes the bearer's impersonation row under the §13.3 rule 1 (c)
-// user-row fence. An invalidated caller or target refuses the issuance.
+// fence. A caller bearer that step (1a) rejects, or an invalidated caller
+// or target user, refuses the issuance.
+//
+// spec: §13.3 (Platform-admin impersonation, rule 1 (c))
 func (s *Service) record(ctx context.Context, t Ticket, signed, callerTenantID string) error {
 	err := s.tokens.RecordImpersonation(ctx, impersonationRow(t, signed, s.cfg.Audience), callerTenantID)
 	if err == nil {
 		return nil
 	}
-	var invalidated *issuedtokenstore.UserInvalidatedError
-	if errors.As(err, &invalidated) {
+	var (
+		invalidated *issuedtokenstore.UserInvalidatedError
+		bearer      *issuedtokenstore.CallerBearerRefusedError
+	)
+	if errors.As(err, &invalidated) || errors.As(err, &bearer) {
 		return fmt.Errorf("%w: %w", ErrIssuanceRefused, err)
 	}
 	return fmt.Errorf("impersonation: record session: %w", err)
 }
 
 // impersonationRow builds the issued_tokens row of a minted bearer: the
-// target's tenant and sub, act_sub set to the admin, and no parent.
+// target's tenant and sub, the bearer's scope, act_sub set to the admin,
+// no parent, and the impersonator link naming the caller's own bearer,
+// which a caller without a jti leaves empty.
 //
 // spec: §13.3 (Platform-admin impersonation, rules 1 (c) and 2).
 func impersonationRow(t Ticket, signed string, audience []string) issuedtokenstore.IssuedToken {
 	sum := sha256.Sum256([]byte(signed))
+	impersonatorTenant := ""
+	if t.CallerJTI != "" {
+		impersonatorTenant = t.CallerTenantID
+	}
 	return issuedtokenstore.IssuedToken{
-		JTI:        t.ID,
-		TenantID:   t.TargetTenantID,
-		Subject:    t.TargetUserID,
-		TokenHash:  sum[:],
-		Audience:   strings.Join(audience, " "),
-		Audiences:  audience,
-		IssuedAt:   t.IssuedAt,
-		ExpiresAt:  t.ExpiresAt,
-		ActSubject: t.AdminSub,
+		ImpersonatorTenantID: impersonatorTenant,
+		ImpersonatorJTI:      t.CallerJTI,
+		JTI:                  t.ID,
+		TenantID:             t.TargetTenantID,
+		Subject:              t.TargetUserID,
+		TokenHash:            sum[:],
+		Scope:                strings.Fields(t.Scope),
+		Audience:             strings.Join(audience, " "),
+		Audiences:            audience,
+		IssuedAt:             t.IssuedAt,
+		ExpiresAt:            t.ExpiresAt,
+		ActSubject:           t.AdminSub,
 	}
 }
 

@@ -165,3 +165,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
     - Applied for 0145 (0145 O17): option (b) of O11 states that its edges close cycles with 0145.S2, 0145.S3, and 0131.S8, which depend on 0118.S4, and that option (a) avoids them.
     - Raised O17 for 0136 (its O16): the 1 KiB bound on `lenny.dev/quota-agent-status`. Recommendation (a), 1 KiB.
 - 2026-11-24. Decision 22 of `0133-llm-upstreams-and-cost-budgets` removes the LLM proxy and the `llm` member of `session_start`; the credentials file at `/run/lenny/credentials.json` leaves with LLM leases as 0133 "LU-4" already stated.
+
+## Owner answers on the M3 readiness decision page (2026-11-23)
+
+Revision 18 records the owner's answers of 2026-11-20. The ordering part of O11 is settled by question PR-A3 (D30): 0118.S4's pod rendering and 0145.S1 share one branch, and 0118.S4's entry in `steps.md` states it. The page's option covers this record's (a) and (b), so the disk-watch part of O11 (page question PR-B6) and its `lenny-store-fill` part (page question PR-B4) stay open. O12 is settled as (a) by question PR-B1 (D31), with the owner's note that the margin below the limit can be smaller than 10% where the volume's use is read directly; it moves to "Settled open decisions of the M3 readiness review". `change.md` does not yet apply D31: PLR-23 still states the checkpoint before the End, and the next revision brings it in line.

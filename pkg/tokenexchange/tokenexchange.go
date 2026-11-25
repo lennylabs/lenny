@@ -6,11 +6,20 @@
 // write-before-issue transaction.
 //
 // Invariants enforced:
-//   - Scope narrowing: issued.scope ⊆ subject.scope (RFC 8693); a
-//     request without scope issues subject.scope
+//   - Scope narrowing: subject.scope grants every requested value
+//     under the scope grammar of pkg/common/scopes (an absent claim and
+//     tools:* grant every value); a request without scope issues
+//     subject.scope
+//   - A caller other than the subject must request a strictly narrower
+//     scope; with an actor_token, the actor must be the caller, a
+//     subject other than the actor must be narrowed strictly, and the
+//     actor's scope must grant the child's scope
+//   - A playground-origin subject or actor is refused
 //   - Tenant match: issued.tenant_id == subject.tenant_id == caller.tenant_id
-//   - delegation_depth: child = parent + 1 (with actor_token);
-//     rotation preserves
+//   - delegation_depth: child = actor + 1 (with actor_token);
+//     other exchanges preserve the subject's
+//   - act: the actor's identity with an actor_token; otherwise copied
+//     from the subject
 //   - caller_type cannot elevate
 //   - audience cannot broaden (cannot add to subject's audiences)
 //   - typ rules: only a2a_delegation child-minting (with actor_token)
@@ -19,14 +28,17 @@
 //   - exp = min(requested_exp, subject.exp, actor.exp, perDialectCap)
 //     with ±1s skew allowance for expiry checks
 //
-// The package is import-free of any JWT library; the gateway maps
+// The package imports no JWT library; the gateway maps
 // k8s.io / jose / jwt-go claim structs into the Token type before
 // calling Validate.
 package tokenexchange
 
 import (
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/common/scopes"
 )
 
 // TokenType is the §10.2 `typ` payload-claim enum. Reproduced here so
@@ -80,7 +92,38 @@ type Token struct {
 	// requested tool not present on the subject) is rejected.
 	AuthorizedTools []string
 	Exp             time.Time
+	// Origin is the token's `origin` claim. OriginPlayground marks a
+	// playground bearer, which Validate refuses as a subject or actor.
+	Origin string
+	// Act is the token's RFC 8693 `act` claim, nil when it carries none.
+	// Validate copies a subject's Act onto a token issued without an
+	// actor_token, so a narrowed or rotated delegation child keeps the
+	// name of its delegator.
+	Act *Actor
 }
+
+// DefaultAudience is the audience an exchange requests when the request
+// names none, and the audience a subject without an aud claim grants.
+//
+// spec: §13.3 (Credential Flow) "RFC 8693 parameter mapping to Lenny
+// claims" (the `audience` row), "Scope narrowing enforcement." rule (c).
+const DefaultAudience = "lenny-gateway"
+
+// SubjectAudience returns the audiences a subject token grants: its aud
+// claim, or DefaultAudience when it carries none, so a token minted
+// without an aud claim keeps the gateway surface it is accepted on.
+//
+// spec: §13.3 (Credential Flow) "Scope narrowing enforcement." rule (c).
+func SubjectAudience(aud []string) []string {
+	if len(aud) == 0 {
+		return []string{DefaultAudience}
+	}
+	return aud
+}
+
+// OriginPlayground is the `origin` claim value of a playground bearer.
+// Reproduced here so this package stays free of the JWT packages.
+const OriginPlayground = "playground"
 
 // IsValid reports whether the token carries the §10.2-required typ
 // and §13.3-required tenant_id.
@@ -141,14 +184,14 @@ type Issued struct {
 	// AuthorizedTools is the §13.3 operability-tool allowlist carried onto
 	// the issued token: the subject's list when the request narrows
 	// nothing, or the requested subset when it does. For a child-minting
-	// exchange (actor_token present) it is intersected with the issued
-	// scope per §13.3 enforcement rule (e).
+	// exchange (actor_token present) it keeps the entries the issued
+	// scope grants (§13.3 enforcement rule (e)).
 	AuthorizedTools []string
 	Exp             time.Time
 	// Act is the §13.3 RFC 8693 `act` claim of the issued token: the
-	// actor token's sub, tenant_id, session_id, and delegation_depth.
-	// Validate sets it when the request carries an actor_token, and only
-	// then; it is nil for rotation, scope narrowing, and lease issuance.
+	// actor token's sub, tenant_id, session_id, and delegation_depth when
+	// the request carries an actor_token, and otherwise a copy of the
+	// subject's `act` claim, nil when the subject carries none.
 	Act *Actor
 }
 
@@ -176,6 +219,46 @@ func actorOf(t *Token) *Actor {
 		SessionID:       t.SessionID,
 		DelegationDepth: t.DelegationDepth,
 	}
+}
+
+// issuedAct returns the `act` claim of the issued token: the actor token's
+// identity on a child-minting exchange, and a copy of the subject's `act`
+// claim on every other exchange, nil when the subject carries none.
+//
+// spec: §13.3 (Credential Flow) "Lenny JWT claim structure" (the `act`
+// row).
+func issuedAct(actor *Token, subjectAct *Actor) *Actor {
+	if actor != nil {
+		return actorOf(actor)
+	}
+	if subjectAct == nil {
+		return nil
+	}
+	cp := *subjectAct
+	return &cp
+}
+
+// checkActorCoversChild refuses a child-minting exchange whose issued scope
+// the actor token's scope does not grant, so a child is never broader than
+// the token that delegates it. An actor with an absent scope claim grants
+// every issued scope. An issued scope with no value carries no restriction,
+// so it is granted only by an actor whose scope grants tools:*. A nil actor
+// (an exchange without an actor_token) is not checked.
+//
+// spec: §13.3 (Credential Flow) "Client authentication on
+// /v1/oauth/token."
+func checkActorCoversChild(actor *Token, issuedScope []string) error {
+	if actor == nil || len(actor.Scope) == 0 {
+		return nil
+	}
+	required := issuedScope
+	if len(required) == 0 {
+		required = []string{scopes.AllTools}
+	}
+	if grantsAll(actor.Scope, required) {
+		return nil
+	}
+	return &ExchangeError{Code: "invalid_scope", Reason: "scope_exceeds_actor"}
 }
 
 // SkewAllowance is the §13.3 ±1s server-side skew on expiry checks.
@@ -220,14 +303,25 @@ func Validate(r Request) (Issued, error) {
 		}
 	}
 
+	if err := refusePlaygroundSources(r.Subject, r.Actor); err != nil {
+		return Issued{}, err
+	}
+
 	issuedScope, err := resolveIssuedScope(r.Requested.Scope, r.Subject.Scope)
 	if err != nil {
 		return Issued{}, err
 	}
+	if err := checkCallerIdentity(r); err != nil {
+		return Issued{}, err
+	}
+	if err := checkActorCoversChild(r.Actor, issuedScope); err != nil {
+		return Issued{}, err
+	}
 
 	// §13.3 audience: cannot broaden — every requested audience MUST
-	// already appear in the subject's audience list.
-	if !isSubset(r.Requested.Audience, r.Subject.Audience) {
+	// already appear in the subject's audience list, a subject without
+	// an aud claim counting as DefaultAudience.
+	if !isSubset(r.Requested.Audience, SubjectAudience(r.Subject.Audience)) {
 		return Issued{}, &ExchangeError{Code: "invalid_request", Reason: "audience_broadened"}
 	}
 
@@ -236,9 +330,9 @@ func Validate(r Request) (Issued, error) {
 	// allowlist that names a tool the subject did not hold is a broadening
 	// attempt and is rejected; an empty requested allowlist preserves the
 	// subject's. For a child-minting exchange (actor_token present) the
-	// resulting allowlist is intersected with the issued scope, so a child
-	// whose scope dropped an operability tool cannot retain authorization
-	// for it.
+	// resulting allowlist keeps only the entries the issued scope grants,
+	// so a child whose scope dropped an operability tool cannot retain
+	// authorization for it, and a child with an absent scope keeps them all.
 	if !isSubset(r.Requested.AuthorizedTools, r.Subject.AuthorizedTools) {
 		return Issued{}, &ExchangeError{Code: "invalid_request", Reason: "authorized_tools_broadened"}
 	}
@@ -247,7 +341,7 @@ func Validate(r Request) (Issued, error) {
 		authorizedTools = r.Requested.AuthorizedTools
 	}
 	if r.Actor != nil && len(authorizedTools) > 0 {
-		authorizedTools = intersect(authorizedTools, issuedScope)
+		authorizedTools = grantedEntries(authorizedTools, issuedScope)
 	}
 
 	// §13.3 caller_type: cannot elevate.
@@ -307,28 +401,151 @@ func Validate(r Request) (Issued, error) {
 		AuthorizedTools: authorizedTools,
 		Typ:             issuedTyp,
 		Exp:             exp,
-		// spec: §13.3 "Lenny JWT claim structure" — `act` is "Set when
-		// `actor_token` is present".
-		Act: actorOf(r.Actor),
+		Act:             issuedAct(r.Actor, r.Subject.Act),
 	}, nil
 }
 
-// resolveIssuedScope returns the scope an exchange issues: the requested
-// scope when the request names one and every value is in the subject's
-// scope, and the subject's scope when the request names none. An empty
-// issued scope becomes an empty claim, which carries no restriction, so
-// the default keeps the issued token no broader than its subject. The
-// result is a copy and shares no backing array with the request.
+// resolveIssuedScope returns the scope an exchange issues: the subject's
+// scope when the request names none, and the requested scope when the
+// subject's scope grants every requested value. An empty issued scope
+// becomes an empty claim, which carries no restriction, so the default
+// keeps the issued token no broader than its subject. The result is a
+// copy and shares no backing array with the request.
 //
 // spec: §13.3 (Credential Flow) "Scope narrowing enforcement."
 func resolveIssuedScope(requested, subject []string) ([]string, error) {
 	if len(requested) == 0 {
 		return append([]string(nil), subject...), nil
 	}
-	if !isSubset(requested, subject) {
+	if !grantsAll(subject, requested) {
 		return nil, &ExchangeError{Code: "invalid_scope", Reason: "scope_not_subset"}
 	}
 	return append([]string(nil), requested...), nil
+}
+
+// grantsAll reports whether the granted scope values permit every
+// requested value. Each requested value must parse as a canonical scope,
+// and the granted values are read as one claim, so an empty granted list
+// (an absent claim) and tools:* permit every canonical value and
+// tools:<domain>:* permits every action of its domain. A granted list
+// that does not parse permits nothing, which fails closed. An empty
+// requested list is permitted.
+//
+// spec: §13.3 (Credential Flow) "Scope narrowing enforcement."
+func grantsAll(granted, requested []string) bool {
+	set, err := scopes.Parse(strings.Join(granted, " "))
+	if err != nil {
+		return false
+	}
+	for _, v := range requested {
+		if _, err := scopes.ParseScope(v); err != nil {
+			return false
+		}
+		if !set.Matches(v) {
+			return false
+		}
+	}
+	return true
+}
+
+// strictlyNarrower reports whether the requested scope is strictly
+// narrower than the subject's: the subject grants every requested value,
+// and the requested values do not grant every value of the subject. An
+// absent subject claim counts as tools:*. A tools:* value is compared as
+// the domain wildcard of every domain, so a request that lists every
+// tools:<domain>:* value grants what tools:* grants and is not narrower.
+// An empty request is never strictly narrower.
+//
+// spec: §13.3 (Credential Flow) "Client authentication on
+// /v1/oauth/token."
+func strictlyNarrower(requested, subject []string) bool {
+	if len(requested) == 0 || !grantsAll(subject, requested) {
+		return false
+	}
+	effective := subject
+	if len(effective) == 0 {
+		effective = []string{scopes.AllTools}
+	}
+	return !grantsAll(requested, expandAllTools(effective))
+}
+
+// expandAllTools replaces each tools:* value with the domain wildcard of
+// every domain in the closed taxonomy, so a grant check against the result
+// asks whether every domain is fully granted.
+func expandAllTools(values []string) []string {
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		if v != scopes.AllTools {
+			out = append(out, v)
+			continue
+		}
+		for domain := range scopes.Domains {
+			out = append(out, "tools:"+domain+":"+scopes.Wildcard)
+		}
+	}
+	return out
+}
+
+// checkCallerIdentity refuses an exchange whose caller is not the
+// subject's principal unless the request names a strictly narrower
+// scope. The caller differs when its sub differs from the subject's, or
+// when both tokens carry a caller_type and the two differ; an upstream
+// IdP caller token carries none. A child-minting exchange (actor_token
+// present) takes checkChildMintIdentity instead.
+//
+// spec: §13.3 (Credential Flow) "Client authentication on
+// /v1/oauth/token."
+func checkCallerIdentity(r Request) error {
+	if r.Actor != nil {
+		return checkChildMintIdentity(r)
+	}
+	sameSub := r.Caller.Subject == r.Subject.Subject
+	sameType := r.Caller.CallerType == "" || r.Subject.CallerType == "" || r.Caller.CallerType == r.Subject.CallerType
+	if sameSub && sameType {
+		return nil
+	}
+	if strictlyNarrower(r.Requested.Scope, r.Subject.Scope) {
+		return nil
+	}
+	return &ExchangeError{Code: "invalid_scope", Reason: "scope_not_narrowed"}
+}
+
+// checkChildMintIdentity applies the caller-identity rule of a
+// child-minting exchange: the actor's sub must equal the caller's, and a
+// subject whose sub differs from the actor's must be narrowed strictly,
+// so a holder of someone else's token can neither borrow their actor
+// token nor mint a child of their token at its full reach. A child minted
+// for the actor's own principal is unaffected.
+//
+// spec: §13.3 (Credential Flow) "Client authentication on
+// /v1/oauth/token."
+func checkChildMintIdentity(r Request) error {
+	if r.Actor.Subject != r.Caller.Subject {
+		return &ExchangeError{Code: "invalid_grant", Reason: "actor_token_not_caller"}
+	}
+	if r.Subject.Subject == r.Actor.Subject {
+		return nil
+	}
+	if strictlyNarrower(r.Requested.Scope, r.Subject.Scope) {
+		return nil
+	}
+	return &ExchangeError{Code: "invalid_scope", Reason: "scope_not_narrowed"}
+}
+
+// refusePlaygroundSources refuses a playground-origin subject or actor
+// token, so no token derived from a playground bearer outlives the
+// playground's revocation and session caps.
+//
+// spec: §13.3 (Credential Flow) "Client authentication on
+// /v1/oauth/token."
+func refusePlaygroundSources(subject Token, actor *Token) error {
+	if subject.Origin == OriginPlayground {
+		return &ExchangeError{Code: "invalid_grant", Reason: "subject_token_playground"}
+	}
+	if actor != nil && actor.Origin == OriginPlayground {
+		return &ExchangeError{Code: "invalid_grant", Reason: "actor_token_playground"}
+	}
+	return nil
 }
 
 // isExpired implements the §13.3 ±1s skew: a token is expired iff
@@ -358,21 +575,21 @@ func isSubset(candidate, universe []string) bool {
 	return true
 }
 
-// intersect returns the entries of a that also appear in b, preserving a's
-// order. It backs the §13.3 child-minting authorized_tools narrowing
-// (allowlist ∩ issued scope).
-func intersect(a, b []string) []string {
-	if len(a) == 0 || len(b) == 0 {
+// grantedEntries returns the allowlist entries the issued scope grants,
+// preserving their order. An empty issued scope grants every entry, so a
+// child whose issued scope is absent keeps the whole allowlist; an issued
+// scope that does not parse grants none.
+//
+// spec: §13.3 (Credential Flow) "Scope narrowing enforcement."
+func grantedEntries(allowlist, issuedScope []string) []string {
+	set, err := scopes.Parse(strings.Join(issuedScope, " "))
+	if err != nil {
 		return nil
 	}
-	set := make(map[string]struct{}, len(b))
-	for _, s := range b {
-		set[s] = struct{}{}
-	}
 	var out []string
-	for _, s := range a {
-		if _, ok := set[s]; ok {
-			out = append(out, s)
+	for _, tool := range allowlist {
+		if set.Matches(tool) {
+			out = append(out, tool)
 		}
 	}
 	return out

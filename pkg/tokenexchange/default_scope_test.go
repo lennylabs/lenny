@@ -33,8 +33,8 @@ func TestValidateIssuesTheSubjectScopeWhenTheRequestNamesNone(t *testing.T) {
 	}{
 		{
 			name:    "narrowed subject without requested scope issues the subject scope",
-			subject: []string{"tools:health:read", "sessions:read"},
-			want:    []string{"tools:health:read", "sessions:read"},
+			subject: []string{"tools:health:read", "tools:sessions:read"},
+			want:    []string{"tools:health:read", "tools:sessions:read"},
 		},
 		{
 			name:      "empty requested scope list issues the subject scope",
@@ -49,15 +49,15 @@ func TestValidateIssuesTheSubjectScopeWhenTheRequestNamesNone(t *testing.T) {
 		},
 		{
 			name:      "explicit subset is issued unchanged",
-			subject:   []string{"tools:health:read", "sessions:read"},
-			requested: []string{"sessions:read"},
-			want:      []string{"sessions:read"},
+			subject:   []string{"tools:health:read", "tools:sessions:read"},
+			requested: []string{"tools:sessions:read"},
+			want:      []string{"tools:sessions:read"},
 		},
 		{
 			name:      "explicit scope equal to the subject is issued unchanged",
-			subject:   []string{"tools:health:read", "sessions:read"},
-			requested: []string{"sessions:read", "tools:health:read"},
-			want:      []string{"sessions:read", "tools:health:read"},
+			subject:   []string{"tools:health:read", "tools:sessions:read"},
+			requested: []string{"tools:sessions:read", "tools:health:read"},
+			want:      []string{"tools:sessions:read", "tools:health:read"},
 		},
 	}
 	for _, tc := range cases {
@@ -99,7 +99,7 @@ func TestValidateRefusesARequestedScopeOutsideTheSubject(t *testing.T) {
 // implementation rather than of a requirement, so the test carries no
 // specification annotation.
 func TestValidateDefaultScopeIsACopyOfTheSubjectScope(t *testing.T) {
-	subjectScope := []string{"tools:health:read", "sessions:read"}
+	subjectScope := []string{"tools:health:read", "tools:sessions:read"}
 	got, err := exchangeScope(t, subjectScope, nil)
 	if err != nil {
 		t.Fatalf("exchange should succeed, got %v", err)
@@ -117,6 +117,7 @@ func TestValidateChildMintWithoutScopeIntersectsAuthorizedToolsWithTheSubjectSco
 	subject.AuthorizedTools = []string{"tools:health:read", "tools:pool:write"}
 	actor := validSubject()
 	actor.DelegationDepth = 1
+	actor.Scope = subject.Scope
 	got, err := Validate(Request{
 		Subject:      subject,
 		Actor:        &actor,

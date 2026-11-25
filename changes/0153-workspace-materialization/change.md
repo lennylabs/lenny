@@ -1,6 +1,6 @@
 # Workspace materialization
 
-Status: `Draft`, revision 17, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 18, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 

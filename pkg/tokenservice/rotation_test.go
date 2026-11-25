@@ -103,14 +103,14 @@ func TestHandlerRotationRevokesPreviousToken_spec_16_7_5(t *testing.T) {
 	// caller.jti == subject.jti.
 	claims := jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	}
 	tok := mintToken(t, signer, claims)
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType:    grantTypeExchange,
 		SubjectToken: tok,
-		Scope:        "sessions:read",
+		Scope:        "tools:sessions:read",
 		Audience:     "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
@@ -154,12 +154,12 @@ func TestHandlerRotationEventBusMode_spec_16_7_5(t *testing.T) {
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -180,12 +180,12 @@ func TestHandlerScopeNarrowSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T) {
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read sessions:write", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read tools:sessions:write", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -210,12 +210,12 @@ func TestHandlerCrossAudienceSelfExchangeIsNotRotation_spec_16_7_5(t *testing.T)
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway", "llm-proxy"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway", "llm-proxy"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "llm-proxy",
+		Scope: "tools:sessions:read", Audience: "llm-proxy",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -237,12 +237,12 @@ func TestHandlerDelegationMintIsNotRotation_spec_16_7_5(t *testing.T) {
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		ActorToken: tok, Scope: "sessions:read", Audience: "lenny-gateway",
+		ActorToken: tok, Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200; body indicates delegation mint should succeed", resp.StatusCode)
@@ -265,12 +265,12 @@ func TestHandlerRotationPreviousAbsentEmitsNoRevoked_spec_16_7_5(t *testing.T) {
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)
@@ -278,7 +278,7 @@ func TestHandlerRotationPreviousAbsentEmitsNoRevoked_spec_16_7_5(t *testing.T) {
 	if store.gotPrevJTI != "tok-1" {
 		t.Errorf("rotation path should still run; gotPrevJTI=%q", store.gotPrevJTI)
 	}
-	want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "tok-1"}}
+	want := []issuedtokenstore.SourceToken{{Role: issuedtokenstore.SourceSubjectToken, JTI: "tok-1", Subject: "alice@acme.com"}}
 	if !reflect.DeepEqual(store.sources, want) {
 		t.Errorf("rotation re-read sources = %+v, want %+v", store.sources, want)
 	}
@@ -300,12 +300,12 @@ func TestHandlerRetriedRotationRejectedSubjectTokenRevoked_spec_13_3(t *testing.
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	assertOAuthRejection(t, resp, http.StatusBadRequest, "invalid_grant", "subject_token_revoked")
 	if len(store.minted) != 0 {
@@ -328,12 +328,12 @@ func TestHandlerRotationOnInMemoryStoreMintsWithoutRevoke_spec_16_7_5(t *testing
 
 	tok := mintToken(t, signer, jwt.Claims{
 		Subject: "alice@acme.com", TenantID: "acme", JWTID: "tok-1",
-		Typ: auth.TokenUserBearer, Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Typ: auth.TokenUserBearer, Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 	})
 
 	resp := doExchange(t, srv, tok, Request{
 		GrantType: grantTypeExchange, SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("status=%d, want 200", resp.StatusCode)

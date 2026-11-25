@@ -22,6 +22,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
+
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/auth"
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
@@ -42,6 +44,7 @@ type sourceRevokedHarness struct {
 	signer *jwt.HMACSigner
 	store  *issuedtokenstore.Store
 	tenant string
+	pool   *pgxpool.Pool
 }
 
 func newSourceRevokedHarness(t *testing.T) *sourceRevokedHarness {
@@ -75,7 +78,7 @@ func newSourceRevokedHarness(t *testing.T) *sourceRevokedHarness {
 	if err != nil {
 		t.Fatalf("NewServer: %v", err)
 	}
-	return &sourceRevokedHarness{srv: srv, signer: signer, store: store, tenant: tenant}
+	return &sourceRevokedHarness{srv: srv, signer: signer, store: store, tenant: tenant, pool: pg.Pool}
 }
 
 // record signs claims for jti and records the token as issued, so the
@@ -85,7 +88,7 @@ func (h *sourceRevokedHarness) record(t *testing.T, jti string, typ auth.TokenTy
 	now := time.Now().UTC()
 	claims := jwt.Claims{
 		Subject: "alice@acme.com", TenantID: h.tenant, JWTID: jti, Typ: typ,
-		Scope: "sessions:read", Audience: []string{"lenny-gateway"},
+		Scope: "tools:sessions:read", Audience: []string{"lenny-gateway"},
 		IssuedAt: now.Add(-time.Minute).Unix(), Expiry: now.Add(time.Hour).Unix(),
 		DelegationDepth: depth,
 	}
@@ -98,7 +101,7 @@ func (h *sourceRevokedHarness) record(t *testing.T, jti string, typ auth.TokenTy
 	}
 	if err := h.store.Record(context.Background(), issuedtokenstore.IssuedToken{
 		JTI: jti, TenantID: h.tenant, Subject: claims.Subject, TokenHash: []byte(jti),
-		Scope: []string{"sessions:read"}, Audiences: []string{"lenny-gateway"},
+		Scope: []string{"tools:sessions:read"}, Audiences: []string{"lenny-gateway"},
 		IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}); err != nil {
 		t.Fatalf("Record %s: %v", jti, err)
@@ -127,7 +130,7 @@ func (h *sourceRevokedHarness) rotateAway(t *testing.T, tok string) {
 	t.Helper()
 	code, body := h.exchange(t, tok, tokenservice.Request{
 		GrantType: "urn:ietf:params:oauth:grant-type:token-exchange", SubjectToken: tok,
-		Scope: "sessions:read", Audience: "lenny-gateway",
+		Scope: "tools:sessions:read", Audience: "lenny-gateway",
 	})
 	if code != http.StatusOK {
 		t.Fatalf("rotation status = %d, want 200 (body %v)", code, body)
@@ -161,7 +164,7 @@ func TestTokenServiceRefusesRevokedSubjectAndActor_spec_13_3(t *testing.T) {
 			caller := h.record(t, "caller-1", auth.TokenUserBearer, 0)
 			req := tokenservice.Request{
 				GrantType: "urn:ietf:params:oauth:grant-type:token-exchange",
-				Scope:     "sessions:read", Audience: "lenny-gateway",
+				Scope:     "tools:sessions:read", Audience: "lenny-gateway",
 			}
 			if tc.asActor {
 				req.SubjectToken = h.record(t, "subject-1", auth.TokenUserBearer, 0)

@@ -1,6 +1,6 @@
 # Connector removal
 
-Status: `Draft`, revision 14, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 15, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 

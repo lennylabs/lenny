@@ -17,7 +17,7 @@ func validSubject() Token {
 		SessionID:       "sess_root",
 		CallerType:      CallerHuman,
 		DelegationDepth: 0,
-		Scope:           []string{"sessions:read", "tools:sessions:write"},
+		Scope:           []string{"tools:sessions:read", "tools:sessions:write"},
 		Audience:        []string{"lenny-gateway"},
 		Typ:             TypeUserBearer,
 		Exp:             now.Add(time.Hour),
@@ -31,7 +31,7 @@ func TestValidateRotationHappyPath(t *testing.T) {
 		Subject: subject,
 		Caller:  subject,
 		Requested: Token{
-			Scope:    []string{"sessions:read"}, // narrower
+			Scope:    []string{"tools:sessions:read"}, // narrower
 			Audience: []string{"lenny-gateway"},
 		},
 		RequestedExp: now.Add(30 * time.Minute),
@@ -59,7 +59,7 @@ func TestValidateRejectsCrossTenantCaller(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       caller,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -75,7 +75,7 @@ func TestValidateRejectsCrossTenantIssued(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{TenantID: "globex", Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{TenantID: "globex", Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -91,7 +91,7 @@ func TestValidateRejectsScopeBroadening(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read", "tools:admin:write"}, Audience: []string{"lenny-gateway"}}, // tools:admin:write not in subject
+		Requested:    Token{Scope: []string{"tools:sessions:read", "tools:admin:write"}, Audience: []string{"lenny-gateway"}}, // tools:admin:write not in subject
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -107,7 +107,7 @@ func TestValidateRejectsAudienceBroadening(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway", "lenny-ops"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway", "lenny-ops"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -124,7 +124,7 @@ func TestValidateRejectsCallerTypeElevation(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{CallerType: CallerHuman, Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{CallerType: CallerHuman, Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -141,7 +141,7 @@ func TestValidateRejectsExpiredSubject(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -158,7 +158,7 @@ func TestValidateSkewAllowsBoundaryExpiry(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -189,7 +189,7 @@ func TestValidateChildMintingProducesA2ADelegation(t *testing.T) {
 		Actor:   &actor,
 		Caller:  subject,
 		Requested: Token{
-			Scope:    []string{"sessions:read"},
+			Scope:    []string{"tools:sessions:read"},
 			Audience: []string{"lenny-gateway"},
 		},
 		RequestedExp: now.Add(time.Minute),
@@ -216,7 +216,7 @@ func TestValidateRejectsExpiredActor(t *testing.T) {
 		Subject:      subject,
 		Actor:        &actor,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -233,7 +233,7 @@ func TestValidateRejectsTypMutationOnRotation(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Typ: TypeServiceToken, Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Typ: TypeServiceToken, Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})
@@ -251,7 +251,7 @@ func TestValidateExpRespectsPerDialectCap(t *testing.T) {
 	got, err := Validate(Request{
 		Subject:       subject,
 		Caller:        subject,
-		Requested:     Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:     Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp:  now.Add(time.Hour), // requested 1h
 		PerDialectCap: 5 * time.Minute,    // cap = 5min
 		Now:           now,
@@ -273,7 +273,7 @@ func TestValidateExpTruncatesToWholeSeconds(t *testing.T) {
 	got, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: requested,
 		Now:          now,
 	})
@@ -291,7 +291,7 @@ func TestValidateRejectsExpInPast(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       subject,
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(-time.Minute),
 		Now:          now,
 	})
@@ -308,7 +308,7 @@ func TestValidateRejectsInvalidSubject(t *testing.T) {
 	_, err := Validate(Request{
 		Subject:      subject,
 		Caller:       validSubject(),
-		Requested:    Token{Scope: []string{"sessions:read"}, Audience: []string{"lenny-gateway"}},
+		Requested:    Token{Scope: []string{"tools:sessions:read"}, Audience: []string{"lenny-gateway"}},
 		RequestedExp: now.Add(time.Minute),
 		Now:          now,
 	})

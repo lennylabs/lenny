@@ -9,6 +9,7 @@ import (
 	"errors"
 	"reflect"
 	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -142,9 +143,10 @@ func issueReq() impersonation.IssueRequest {
 }
 
 // TestIssue_RecordsImpersonationRowAfterStartedAndSign_spec_13_3 covers
-// the rule 1 happy path: the caller check reads the caller's bearer in the
-// caller's tenant, then the started event, the sign, and the record run in
-// that order, and the recorded row carries the session jti, the target,
+// the rule 1 happy path: the started event, the sign, and the record run in
+// that order, the record carries the caller's tenant and the caller
+// bearer's jti for the check of its first transaction, and the recorded
+// row carries the session jti, the target,
 // act_sub set to the admin, no parent, the bearer hash, and the exp the
 // started event's time fixes.
 //
@@ -162,15 +164,12 @@ func TestIssue_RecordsImpersonationRowAfterStartedAndSign_spec_13_3(t *testing.T
 	if bearer != "signed-token" || h.signer.calls != 1 {
 		t.Fatalf("expected one mint, got bearer=%q calls=%d", bearer, h.signer.calls)
 	}
-	wantOrder := []string{impersonationtest.CallGet, callAppendStarted, callSign, impersonationtest.CallRecord}
+	wantOrder := []string{callAppendStarted, callSign, impersonationtest.CallRecord}
 	if got := h.log.Entries(); !reflect.DeepEqual(got, wantOrder) {
 		t.Fatalf("call order = %v, want %v", got, wantOrder)
 	}
-	if got := h.tokens.Gets(); len(got) != 1 || got[0] != [2]string{"platform", "caller-jti"} {
-		t.Fatalf("caller check read %v, want the caller's tenant and jti", got)
-	}
 	recs := h.tokens.Records()
-	if len(recs) != 1 || recs[0].CallerTenantID != "platform" {
+	if len(recs) != 1 || recs[0].CallerTenantID != "platform" || recs[0].Token.ImpersonatorJTI != "caller-jti" {
 		t.Fatalf("RecordImpersonation calls = %+v, want one with the caller's tenant", recs)
 	}
 	row := recs[0].Token
@@ -275,9 +274,11 @@ func TestIssue_FailureStopsLaterSteps_spec_13_3(t *testing.T) {
 }
 
 // TestIssue_CallerCheckRefusesImpersonationOrRevokedCaller_spec_13_3 covers
-// the rule 1 caller check: a caller bearer that step (1a) would reject as a
-// subject_token is refused before any audit write, sign, or record, while
-// a caller with no row or no jti passes and a read error aborts.
+// the rule 1 (c) caller check, which the record's first transaction runs: a
+// caller bearer that step (1a) would reject as a subject_token refuses the
+// issuance after the started event and the sign, records no row, and
+// returns no bearer, while a caller with no row or no jti passes and a
+// record error aborts.
 //
 // spec: 13.3 (Credential Flow: Platform-admin impersonation; Write-before-issue ordering)
 func TestIssue_CallerCheckRefusesImpersonationOrRevokedCaller_spec_13_3(t *testing.T) {
@@ -286,7 +287,7 @@ func TestIssue_CallerCheckRefusesImpersonationOrRevokedCaller_spec_13_3(t *testi
 	cases := []struct {
 		name       string
 		row        *issuedtokenstore.IssuedToken
-		getErr     error
+		recordErr  error
 		callerJTI  string
 		wantRefuse bool
 		wantErr    bool
@@ -295,7 +296,7 @@ func TestIssue_CallerCheckRefusesImpersonationOrRevokedCaller_spec_13_3(t *testi
 		{name: "revoked caller bearer", row: &revokedRow, callerJTI: "caller-jti", wantRefuse: true},
 		{name: "caller bearer without a row", callerJTI: "caller-jti"},
 		{name: "caller without a jti", callerJTI: ""},
-		{name: "read error", getErr: errors.New("postgres down"), callerJTI: "caller-jti", wantErr: true},
+		{name: "record error", recordErr: errors.New("postgres down"), callerJTI: "caller-jti", wantErr: true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -303,25 +304,25 @@ func TestIssue_CallerCheckRefusesImpersonationOrRevokedCaller_spec_13_3(t *testi
 			if tc.row != nil {
 				h.tokens.Put(*tc.row)
 			}
-			h.tokens.GetErr = tc.getErr
+			h.tokens.RecordErr = tc.recordErr
 			req := issueReq()
 			req.CallerJTI = tc.callerJTI
-			_, bearer, err := h.svc.Issue(context.Background(), req)
+			ticket, bearer, err := h.svc.Issue(context.Background(), req)
 			if tc.wantRefuse != errors.Is(err, impersonation.ErrIssuanceRefused) {
 				t.Fatalf("err = %v, want refusal=%v", err, tc.wantRefuse)
 			}
+			var bearerErr *issuedtokenstore.CallerBearerRefusedError
+			if tc.wantRefuse && !errors.As(err, &bearerErr) {
+				t.Fatalf("err = %v, want a CallerBearerRefusedError", err)
+			}
 			if tc.wantRefuse || tc.wantErr {
-				if err == nil || bearer != "" || len(h.app.rows) != 0 || h.signer.calls != 0 || len(h.tokens.Records()) != 0 {
-					t.Fatalf("a refused or failed caller check must write nothing: err=%v appends=%d signs=%d records=%d",
-						err, len(h.app.rows), h.signer.calls, len(h.tokens.Records()))
+				if _, recorded := h.tokens.Row(ticket.ID); err == nil || bearer != "" || recorded {
+					t.Fatalf("a refused or failed record must return no bearer and leave no row: err=%v bearer=%q", err, bearer)
 				}
 				return
 			}
 			if err != nil || bearer == "" {
 				t.Fatalf("got bearer=%q err=%v, want issuance", bearer, err)
-			}
-			if tc.callerJTI == "" && len(h.tokens.Gets()) != 0 {
-				t.Fatalf("a caller without a jti must not be read")
 			}
 		})
 	}
@@ -589,4 +590,38 @@ func TestNew_PanicsOnMissingCollaborator_spec_13_3(t *testing.T) {
 	}()
 	impersonation.New(nil, &impersonationtest.RevocationCache{}, &impersonationtest.CrossTenantReads{}, &fakeAppender{}, &fakeSigner{},
 		impersonation.Config{NewID: func() string { return "x" }})
+}
+
+// TestIssueBearerCarriesTheCallerScope pins the bearer's scope claim to the
+// caller's: a caller narrowed to tools:impersonation:write mints a bearer
+// whose scope claim and recorded row carry that scope, and a caller
+// without a scope claim mints a bearer without one.
+//
+// spec: §13.3 (Credential Flow)
+func TestIssueBearerCarriesTheCallerScope(t *testing.T) {
+	cases := []struct {
+		name, callerScope, wantClaim string
+		wantRow                      []string
+	}{
+		{"narrowed caller", "tools:impersonation:write tools:me:read", "tools:impersonation:write tools:me:read", []string{"tools:impersonation:write", "tools:me:read"}},
+		{"caller without a scope claim", "", "", nil},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			h := newHarness(t, fixedClock(t0), time.Hour)
+			req := issueReq()
+			req.CallerScope = c.callerScope
+			ticket, _, err := h.svc.Issue(context.Background(), req)
+			if err != nil {
+				t.Fatalf("Issue: %v", err)
+			}
+			if h.signer.claims.Scope != c.wantClaim || ticket.Scope != c.wantClaim {
+				t.Errorf("bearer scope = %q, ticket scope = %q, want %q", h.signer.claims.Scope, ticket.Scope, c.wantClaim)
+			}
+			recs := h.tokens.Records()
+			if len(recs) != 1 || strings.Join(recs[0].Token.Scope, " ") != strings.Join(c.wantRow, " ") {
+				t.Errorf("recorded rows = %+v, want one with scope %v", recs, c.wantRow)
+			}
+		})
+	}
 }

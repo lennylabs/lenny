@@ -116,6 +116,8 @@ var ledgerMigrationsTS = []string{
 	"0057_tenant_guard_pooler_mode.up.sql",
 	"0058_issued_tokens_dialect_cap.up.sql",
 	"0173_billing_audit_ddl_role_and_sequences.up.sql",
+	"0200_issued_tokens_impersonator.up.sql",
+	"0203_issued_tokens_depth.up.sql",
 }
 
 // applyLedgerMigrationsTS applies the curated ledgerMigrationsTS set in order so
@@ -185,7 +187,7 @@ func TestStandaloneTokenServiceResolvesGatewayProvisionedAuditSequence_spec_13_3
 	now := time.Now().UTC()
 	tok := issuedtokenstore.IssuedToken{
 		JTI: "jti-ts-1", TenantID: tenant, Subject: "alice@acme.com",
-		TokenHash: []byte("h"), Scope: []string{"sessions:read"},
+		TokenHash: []byte("h"), Scope: []string{"tools:sessions:read"},
 		Audience: "lenny-gateway", IssuedAt: now, ExpiresAt: now.Add(time.Hour),
 	}
 	row, err := store.RecordWithAudit(ctx, tok, nil, string(auditcatalog.EventTokenExchanged),

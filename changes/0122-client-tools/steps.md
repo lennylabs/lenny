@@ -8,7 +8,7 @@
 - Whether the OpenAI Responses API carries `tools` across `previous_response_id`, which decides whether clients already resend tools as T1 requires.
 - The Open Responses specification's `function_call_output` item and `parallel_tool_calls`, which the specification page does not define, and whether Open Responses clients accept the `response.function_call_arguments.done` event it does not name.
 - Whether the OpenAI TypeScript SDK and the Anthropic SDKs accept one delta carrying a whole call, as `openai-python` does.
-- A stream form for a custom tool call on Chat Completions, whose publication would let the refusal of O10 be lifted. The streaming reference and the `openai-python` chunk type read on 2026-11-09 define none.
+- A stream form for a custom tool call on Chat Completions, whose publication would let the refusal of O10 be lifted. The streaming reference and the `openai-python` chunk type read on 2026-11-09 define none. Under O24, `openai-node`'s `custom` delta type (v7.62.0) is the signal to watch, and the provider SDK probe P6 of the M3 readiness validation plan records what the live API emits.
 - Whether an OpenAI `allowed_tools` list may name a custom tool, and in what entry form. The references read on 2026-11-09 type `tools` as a list of tool definitions and show function entries alone.
 - Whether `parallel_tool_calls: false` limits custom tool calls as it limits function calls. The function calling guide covers function tools alone.
 - Whether Open Responses clients send `custom` tools or `allowed_tools` with a `mode`, which the Open Responses specification does not define.

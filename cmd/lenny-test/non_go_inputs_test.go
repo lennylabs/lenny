@@ -99,13 +99,13 @@ func TestNonGoInputProblemsNameEachDeadRow(t *testing.T) {
 		{Paths: []string{"docs/**"}, Runs: []string{"docs"}},
 		{Paths: []string{"./docs/**"}, Runs: []string{"docs"}, Reason: "bad pattern"},
 	}}
-	problems := nonGoInputProblems(n, tracked, isPackage)
+	problems := nonGoInputProblems(n, tracked, pkgDirs{isPackage: isPackage, hasTests: isPackage})
 	joined := strings.Join(problems, "\n")
 	for _, want := range []string{
 		`row 2: pattern "compose/**" matches no tracked file`,
 		`row 3: target "tests/component/gone" is not a Go package directory`,
 		`row 4: target "nightly" is not a tier name`,
-		"row 5 needs paths, runs, and a reason",
+		"row 5 needs paths, a target under runs or tests, and a reason",
 		`row 6: pattern "./docs/**" is not a repo-relative path`,
 	} {
 		if !strings.Contains(joined, want) {
@@ -122,5 +122,90 @@ func TestNonGoInputProblemsNameEachDeadRow(t *testing.T) {
 func TestCommittedNonGoInputListValidates(t *testing.T) {
 	if res := validateNonGoInputsFile(repoRoot()); !res.ok {
 		t.Fatalf("%s: %s", res.name, res.detail)
+	}
+}
+
+// TestParseNonGoInputsReadsTheTestsField pins that a row may list package
+// directories under `tests`, with or without `runs`.
+func TestParseNonGoInputsReadsTheTestsField(t *testing.T) {
+	body := "kind: non-go-inputs\nversion: 1\ninputs:\n  - paths: [a/**]\n    tests: [pkg/x]\n    reason: r\n"
+	n, err := parseNonGoInputs([]byte(body))
+	if err != nil || len(n.Inputs) != 1 || !reflect.DeepEqual(n.Inputs[0].Tests, []string{"pkg/x"}) || n.Inputs[0].Runs != nil {
+		t.Fatalf("parse = %+v, %v", n, err)
+	}
+}
+
+// TestTestsForUnionsMatchingRowsApartFromRuns pins that testsFor returns
+// the `tests` targets of every matching row once, in row order, and that
+// targetsFor leaves them out.
+func TestTestsForUnionsMatchingRowsApartFromRuns(t *testing.T) {
+	n := &nonGoInputs{Inputs: []nonGoInput{
+		{Paths: []string{"spec/**"}, Runs: []string{"docs"}, Tests: []string{"pkg/a", "pkg/b"}},
+		{Paths: []string{"spec/**"}, Tests: []string{"pkg/b", "pkg/c"}},
+		{Paths: []string{"charts/**"}, Tests: []string{"pkg/d"}},
+	}}
+	if got := n.testsFor("spec/x.md"); !reflect.DeepEqual(got, []string{"pkg/a", "pkg/b", "pkg/c"}) {
+		t.Errorf("tests = %v", got)
+	}
+	if got := n.targetsFor("spec/x.md"); !reflect.DeepEqual(got, []string{"docs"}) {
+		t.Errorf("runs targets = %v; want docs alone", got)
+	}
+	var none *nonGoInputs
+	if got := none.testsFor("spec/x.md"); got != nil {
+		t.Errorf("a nil list matched %v", got)
+	}
+}
+
+// TestNonGoInputProblemsRefuseMalformedTestsTargets pins the validate check
+// of the `tests` form: a tier name, a pattern, a path that is not a clean
+// repo-relative directory, a directory that holds no Go package, a
+// package with no test file, a target listed twice, and a directory the
+// row also lists under `runs` in any spelling each fail, and a row whose
+// only targets are under `tests` passes.
+func TestNonGoInputProblemsRefuseMalformedTestsTargets(t *testing.T) {
+	tracked := []string{"spec/a.md"}
+	isPackage := func(dir string) bool { return dir == "pkg/x" || dir == "pkg/y" || dir == "pkg/helper" }
+	hasTests := func(dir string) bool { return dir == "pkg/x" || dir == "pkg/y" }
+	row := func(runs, tests []string) nonGoInput {
+		return nonGoInput{Paths: []string{"spec/**"}, Runs: runs, Tests: tests, Reason: "reads it"}
+	}
+	n := &nonGoInputs{Inputs: []nonGoInput{
+		row(nil, []string{"pkg/x"}),
+		row(nil, []string{tierDocs}),
+		row(nil, []string{"pkg/x/..."}),
+		row(nil, []string{"./pkg/x"}),
+		row(nil, []string{"/pkg/x"}),
+		row(nil, []string{"../pkg/x"}),
+		row(nil, []string{"pkg/x/"}),
+		row(nil, []string{"pkg/*"}),
+		row(nil, []string{"pkg/gone"}),
+		row([]string{"pkg/y"}, []string{"pkg/y"}),
+		row(nil, []string{""}),
+		row(nil, []string{"pkg/helper"}),
+		row(nil, []string{"pkg/x", "pkg/x"}),
+		row([]string{"./pkg/y/..."}, []string{"pkg/y"}),
+	}}
+	joined := strings.Join(nonGoInputProblems(n, tracked, pkgDirs{isPackage: isPackage, hasTests: hasTests}), "\n")
+	for _, want := range []string{
+		`row 2: tests target "docs" is a tier name; list a tier under runs`,
+		`row 3: tests target "pkg/x/..." is not a clean repo-relative package directory`,
+		`row 4: tests target "./pkg/x" is not a clean repo-relative package directory`,
+		`row 5: tests target "/pkg/x" is not a clean repo-relative package directory`,
+		`row 6: tests target "../pkg/x" is not a clean repo-relative package directory`,
+		`row 7: tests target "pkg/x/" is not a clean repo-relative package directory`,
+		`row 8: tests target "pkg/*" is not a clean repo-relative package directory`,
+		`row 9: tests target "pkg/gone" is not a Go package directory`,
+		`row 10: target "pkg/y" is under both runs and tests`,
+		`row 11: tests target "" is not a clean repo-relative package directory`,
+		`row 12: tests target "pkg/helper" holds no test file, so it selects no test`,
+		`row 13: tests target "pkg/x" is listed twice`,
+		`row 14: target "pkg/y" is under both runs and tests`,
+	} {
+		if !strings.Contains(joined, want) {
+			t.Errorf("problems lack %q:\n%s", want, joined)
+		}
+	}
+	if strings.Contains(joined, "row 1:") || strings.Contains(joined, "row 1 ") {
+		t.Errorf("a row whose only target is under tests was reported:\n%s", joined)
 	}
 }

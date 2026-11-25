@@ -24,7 +24,7 @@ import (
 // altered, or a value outside the subject's scope was accepted. Inspect
 // tokenexchange.Validate and its scope resolution.
 func TestExchangeScopeDefaultsToTheSubjectAndNarrowsOnlyBySubset(t *testing.T) {
-	const subjectScope = "tools:health:read sessions:read"
+	const subjectScope = "tools:health:read tools:sessions:read"
 	cases := []struct {
 		name       string
 		scope      string
@@ -33,8 +33,8 @@ func TestExchangeScopeDefaultsToTheSubjectAndNarrowsOnlyBySubset(t *testing.T) {
 		wantScope  string
 	}{
 		{name: "empty scope value", scope: "", wantStatus: http.StatusOK, wantScope: subjectScope},
-		{name: "subset", scope: "sessions:read", wantStatus: http.StatusOK, wantScope: "sessions:read"},
-		{name: "value outside the subject", scope: "sessions:read tools:pool:write", wantStatus: http.StatusBadRequest, wantError: "invalid_scope"},
+		{name: "subset", scope: "tools:sessions:read", wantStatus: http.StatusOK, wantScope: "tools:sessions:read"},
+		{name: "value outside the subject", scope: "tools:sessions:read tools:pool:write", wantStatus: http.StatusBadRequest, wantError: "invalid_scope"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
