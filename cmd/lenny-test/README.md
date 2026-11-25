@@ -51,8 +51,8 @@ lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotatio
 lenny-test gate
 lenny-test gate --here      # the gate's tiers in this environment; UNVERIFIED outside the gate image
 lenny-test gate --tier static,unit,component,contract --cover   # the check before a code branch merges (v1 merge policy); then:
-lenny-test coverage --diff main --threshold 0.80                 # reads the profile that `--cover` wrote, and refuses a profile that the latest `--cover` gate run on `HEAD` did not write (TESTING.md "Restricted runs and coverage")
-lenny-test gate --layout static-first              # static alone, then contract beside component and integration, then unit, then the documentation gates (default serial: every tier one after another)
+lenny-test coverage --diff main --threshold 0.80 --require-gate  # reads the profile that `--cover` wrote, refuses when no `--cover` gate run on `HEAD` is recorded, and refuses a profile that the latest such run did not write or that a run whose verdict is not PASS wrote (TESTING.md "Restricted runs and coverage")
+lenny-test gate --layout serial                     # every tier one after another, the way back from the default static-first layout (static alone, then contract beside component and integration, then unit, then the documentation gates)
 lenny-test gate --layout unit-alone                 # static and contract beside component and integration, then unit, then the documentation gates
 lenny-test gate --layout static-first --go-test-p component=2,integration=2  # the go test -p of a tier while it runs beside another lane
 lenny-test gate --gocache-cap-gb 50   # empty the build cache volume first when it holds more than 50 GB (default 30, LENNY_GATE_GOCACHE_CAP_GB; 0 turns the check off)
@@ -103,7 +103,7 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `cmd_run.go` | Default run command: parses selectors, resolves into tier plan, executes |
 | `cmd_gate.go` | `gate` subcommand: builds the gate image from `tests/gate/Dockerfile`, runs the merge gate in it, and writes `tests/results/gate-<run>.json` |
 | `run_container.go` | `run --container`: the `run` selection inside the gate image, with the gate's container setup and the worktree owner's user |
-| `gate_lanes.go` | The gate's layouts (`--layout static-first`, `unit-alone`, or `serial`): the phases and lanes its tiers run in, and the `go test -p` of a tier that runs beside another lane (`--go-test-p`) |
+| `gate_lanes.go` | The gate's layouts (`--layout static-first`, the default, `unit-alone`, or `serial`): the phases and lanes its tiers run in, and the `go test -p` of a tier that runs beside another lane (`--go-test-p`) |
 | `gate_snapshot.go` | The static tier's snapshot: the read-only checkout of the commit the gate resolved `HEAD` to, which the static tier's checks read, and `lenny-test static-snapshot`, which the gate container runs to make it |
 | `gate_gocache.go` | The size cap of the gate's build cache volume `lenny-gate-gocache`: measured with `du -sk` before the gate container starts and emptied with `go clean -cache` when it holds more than `--gocache-cap-gb` (default 30 GB, `LENNY_GATE_GOCACHE_CAP_GB`, 0 turns the check off) and no running container has it mounted |
 | `cmd_validate.go` | `validate` and `validate-diagnosis` subcommands |
@@ -115,7 +115,7 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `cmd_run_resolve.go` | `--changed`, `--spec`, and `--pkg` resolution into a tier plan |
 | `spec_index.go` | The specification model: the annotation index, the identifier registry, the successor stubs of the numbered files, and the issue records, and the resolution of an identifier, a page code, or `§N.M` to its tests |
 | `cmd_coverage_spec.go`, `cmd_coverage_spec_text.go` | `coverage --spec`: the coverage view and its text rendering |
-| `gate_cover_hash.go` | The SHA-256 of the profile a gate run with `--cover` writes, and the check by which `coverage --diff` refuses a profile that the latest `--cover` gate run on `HEAD` did not write |
+| `gate_cover_hash.go` | The SHA-256 of the profile a gate run with `--cover` writes, and the check by which `coverage --diff` refuses a profile that the latest `--cover` gate run on `HEAD` did not write or that a gate run whose verdict is not `PASS` wrote, and, with `--require-gate`, refuses when no `--cover` gate run on `HEAD` is recorded |
 | `gotest_json.go` | `go test -json` parsing, and the `spec_sections` of each failure from the annotation index |
 | `changed_select.go` | `--changed` and `--pkg` selection: the import graph loaded with every tier's build tag, the owning packages of a changed path, their dependents, and each selected package's tier |
 | `spec_edit_select.go` | The tests a specification edit selects: the numbered headings a hunk touches, and the changed identifiers of the new tree with the code that cites them |
