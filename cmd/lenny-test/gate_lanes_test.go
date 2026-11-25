@@ -94,8 +94,9 @@ func runLaneGate(g gateRunner, layout string, goTestP map[string]int) *verdict {
 // TestGateLayoutsHoldEveryTierOnce checks that each layout runs every
 // tier the gate can run exactly once, that the unit-alone layout is the
 // one decision 5 of change 0172 chose, that the static-first layout is
-// the one decision 15 chose, and that the default stays serial until the
-// static-first layout's validation run is clean (decision 15).
+// the one decision 15 chose, that static-first is the default (decision
+// 19), and that the serial layout, the way back of decision 7, still
+// parses.
 func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
 	want := append(append([]string{tierStatic}, gateChangedTiers...), tierDocs)
 	for name, phases := range gateLayouts {
@@ -133,8 +134,11 @@ func TestGateLayoutsHoldEveryTierOnce(t *testing.T) {
 	if !reflect.DeepEqual(gateLayouts[gateLayoutStaticFirst], staticFirst) {
 		t.Errorf("static-first = %v; want %v", gateLayouts[gateLayoutStaticFirst], staticFirst)
 	}
-	if defaultGateLayout != gateLayoutSerial {
-		t.Errorf("default layout %s; want serial until the validation run of the static-first layout is clean (decision 15)", defaultGateLayout)
+	if defaultGateLayout != gateLayoutStaticFirst {
+		t.Errorf("default layout %s; want static-first (decision 19)", defaultGateLayout)
+	}
+	if _, err := parseGateLayout(gateLayoutSerial); err != nil {
+		t.Errorf("parseGateLayout(serial), the way back of decision 7: %v", err)
 	}
 }
 
@@ -162,8 +166,8 @@ func barrier(l *laneLog, timeout time.Duration) *bool {
 	return &timedOut
 }
 
-// TestGateLanesRunAtTheSameTimeAndEachInOrder checks the default layout:
-// the static tier and the component tier run at the same time, each lane
+// TestGateLanesRunAtTheSameTimeAndEachInOrder checks the unit-alone
+// layout: the static tier and the component tier run at the same time, each lane
 // runs its tiers in order, the unit tier starts after the first phase's
 // lanes have both ended, and the documentation gates run last.
 func TestGateLanesRunAtTheSameTimeAndEachInOrder(t *testing.T) {

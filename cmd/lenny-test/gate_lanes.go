@@ -32,13 +32,20 @@ import (
 // as the gate did before the change. The validation run of the unit-alone
 // layout on 2026-11-24 (gate run d47d33b8ed80054999c769e1) recorded two
 // container-start timeouts while the static tier ran beside the container
-// lane, so the default stays serial (decision 15) until a clean validation
-// run of the static-first layout makes that layout the default.
+// lane, so the default stayed serial (decision 15). The validation run of
+// the static-first layout (gate run 40f5968e0e96924efb1c59a3) recorded no
+// container-start timeout and one contract test failure that a rerun on
+// the same commit did not reproduce, which decision 19 counts as a load
+// failure, so static-first is the default. The serial layout is the way
+// back that decision 7 names: when a container-start timeout, or that
+// contract test's failure, recurs in two of the next few gate runs on
+// main, those runs pass --layout serial and the layout returns to the
+// owner.
 const (
 	gateLayoutUnitAlone   = "unit-alone"
 	gateLayoutStaticFirst = "static-first"
 	gateLayoutSerial      = "serial"
-	defaultGateLayout     = gateLayoutSerial
+	defaultGateLayout     = gateLayoutStaticFirst
 )
 
 // gatePhase is one phase of a layout: its lanes run at the same time, and
