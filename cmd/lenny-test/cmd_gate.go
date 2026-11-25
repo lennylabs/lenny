@@ -1355,8 +1355,10 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		v.recordTier(tierStatic, verdictstatus.Fail, 0, layoutErr.Error())
 	}
 	plans := g.resolvePlans(v, o, compare)
+	coverReady := o.cover
 	if o.cover {
 		if err := prepareCoverProfile(o.coverProfile, plans); err != nil {
+			coverReady = false
 			// The unit tier does not run, so its result cannot overwrite
 			// the failure, and coverage --diff finds no fresh profile.
 			delete(plans, tierUnit)
@@ -1394,7 +1396,13 @@ func (g gateRunner) run(o gateOptions) *verdict {
 		}
 	})
 	v.Gate.WallTimeMS = time.Since(start).Milliseconds()
-	if o.cover {
+	// A run whose earlier profile could not be removed records no profile
+	// and no hash, because the file is the earlier run's. The hash is taken
+	// after the last phase rather than when the unit tier ends, so another
+	// command that rewrites the profile while the later tiers run, such as
+	// a `run --changed` on the host, has its profile recorded as the gate's;
+	// coverage --diff then reads the profile it hashed.
+	if coverReady {
 		if err := finishCoverProfile(o.coverProfile); err != nil {
 			v.recordTier(tierUnit, verdictstatus.Fail, 0, err.Error())
 		}

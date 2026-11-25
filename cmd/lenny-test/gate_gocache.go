@@ -190,6 +190,16 @@ func capGateGoCache(ctx context.Context, run gateCommandRunner, imageRef string,
 	return false
 }
 
+// gateCacheCapKnob names the setting of the build cache volume's cap for
+// the command label names: the gate's flag, or the variable `lenny-test
+// run --container` reads.
+func gateCacheCapKnob(label string) string {
+	if label == "lenny-test gate" {
+		return "--gocache-cap-gb"
+	}
+	return gateEnvGoCacheCap
+}
+
 // emptyGateGoCacheOverCap empties the build cache volume, which holds kb
 // KiB, when that is more than capGB gigabytes. It first lists the
 // containers that have the volume mounted, and defers the cleanup while
@@ -214,6 +224,6 @@ func emptyGateGoCacheOverCap(ctx context.Context, run gateCommandRunner, imageRe
 		fmt.Fprintf(logw, "%s: warning: the build cache volume %s holds %s, over the %d GB cap, and emptying it failed: %v\n", label, gateBuildVolume, size, capGB, err)
 		return false
 	}
-	fmt.Fprintf(logw, "%s: the build cache volume %s held %s, over the %d GB cap; emptied it, so this run compiles from cold\n", label, gateBuildVolume, size, capGB)
+	fmt.Fprintf(logw, "%s: the build cache volume %s held %s, over the %d GB cap (%s); emptied it, so this run compiles from cold\n", label, gateBuildVolume, size, capGB, gateCacheCapKnob(label))
 	return true
 }

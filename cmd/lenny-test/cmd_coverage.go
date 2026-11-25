@@ -85,7 +85,7 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 		profile = filepath.Join(root, coverProfileFile)
 	}
 	if _, err := os.Stat(profile); err != nil {
-		fmt.Fprintf(os.Stderr, "coverage --diff: %v\nRun `lenny-test --tier unit` first to emit %s.\n", err, profile)
+		fmt.Fprintf(os.Stderr, "coverage --diff: %v\nRun `lenny-test gate --tier static,unit,component,contract --cover`, or `lenny-test --tier unit`, first to write %s.\n", err, profile)
 		return 1
 	}
 
@@ -149,6 +149,7 @@ func reportDiffCoverage(ref string, threshold float64, jsonOut bool) int {
 			"total_covered": totalCovered,
 			"rate":          rate,
 			"threshold":     threshold,
+			"gate_check":    note,
 		}, "", "  ")
 		fmt.Println(string(out))
 	} else {
