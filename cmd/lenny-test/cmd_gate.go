@@ -1261,11 +1261,12 @@ func gateChangedPlan(base string, rdepsDepth int, all bool) (resolvedSelector, e
 }
 
 // gateFullRunUnitExcludes are the package directories a full run's unit
-// tier leaves out. tests/docs holds the docs tier's tests, which build
-// without a tag and so fall under the unit tier's `./...`; the gap-record
-// reconciliation tests there fail on main (issue GATE-I9), and a selected
-// run places the package in the docs tier, whose general gates the merge
-// gate runs (change 0172, decision 16).
+// tier leaves out (change 0172, decision 16). tests/docs holds the docs
+// tier's tests, which build without a tag and so fall under the unit
+// tier's `./...`. A selected run places the package in the docs tier, of
+// which the merge gate runs only the general gates (gateDocsFiles); the
+// rest of the package runs at the area gate. Issue GATE-I9 records the
+// gap-record reconciliation tests there that failed in the full run.
 var gateFullRunUnitExcludes = []string{"tests/docs"}
 
 // gateFullRunExcludes sets the unit plan of a full run to leave out

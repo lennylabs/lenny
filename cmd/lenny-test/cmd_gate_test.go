@@ -1329,9 +1329,9 @@ func TestTailLinesKeepsTheLastLines(t *testing.T) {
 }
 
 // TestGateFullRunUnitTierLeavesOutTestsDocs checks the package list a full
-// run's unit tier runs: every package the module lists except tests/docs
-// and the packages below it, and not a package whose name only begins
-// with docs (change 0172, decision 16; issue GATE-I9). The selection
+// run's unit tier runs: every package the module lists except tests/docs,
+// keeping a package below it and a package whose name only begins with
+// docs (change 0172, decision 16; issue GATE-I9). The selection
 // records the tier as whole with tests/docs left out, and the summary says
 // so. A selected run's unit plan leaves nothing out.
 func TestGateFullRunUnitTierLeavesOutTestsDocs(t *testing.T) {
@@ -1362,7 +1362,7 @@ func TestGateFullRunUnitTierLeavesOutTestsDocs(t *testing.T) {
 			pkgs = append(pkgs, a)
 		}
 	}
-	want := []string{moduleImportPath + "/pkg/a", moduleImportPath + "/tests/docsfoo", moduleImportPath + "/tests/static/build"}
+	want := []string{moduleImportPath + "/pkg/a", moduleImportPath + "/tests/docs/sub", moduleImportPath + "/tests/docsfoo", moduleImportPath + "/tests/static/build"}
 	if !reflect.DeepEqual(pkgs, want) {
 		t.Errorf("the unit tier ran %v; want %v", pkgs, want)
 	}
@@ -1401,6 +1401,9 @@ func TestModulePackageListingNamesThisModule(t *testing.T) {
 	if _, err := exec.LookPath("go"); err != nil {
 		t.Skip("blocked: go is not on PATH")
 	}
+	if !contains(moduleListArgs, "-race") || !contains(moduleListArgs, "-e") {
+		t.Errorf("the listing runs go %v; want -race, which the unit tier's go test sets, and -e", moduleListArgs)
+	}
 	t.Chdir(repoRoot())
 	pkgs, err := listModulePackages()
 	if err != nil {
@@ -1409,14 +1412,8 @@ func TestModulePackageListingNamesThisModule(t *testing.T) {
 	if !contains(pkgs, moduleImportPath+"/cmd/lenny-test") || !contains(pkgs, moduleImportPath+"/tests/docs") {
 		t.Errorf("the listing of %d packages lacks cmd/lenny-test or tests/docs", len(pkgs))
 	}
-	docs := 0
-	for _, p := range pkgs {
-		if p == moduleImportPath+"/tests/docs" || strings.HasPrefix(p, moduleImportPath+"/tests/docs/") {
-			docs++
-		}
-	}
 	kept := excludePackages(pkgs, gateFullRunUnitExcludes)
-	if contains(kept, moduleImportPath+"/tests/docs") || len(kept) != len(pkgs)-docs {
-		t.Errorf("the exclusion kept tests/docs or removed another package: %d of %d kept, %d under tests/docs", len(kept), len(pkgs), docs)
+	if contains(kept, moduleImportPath+"/tests/docs") || len(kept) != len(pkgs)-1 {
+		t.Errorf("the exclusion kept tests/docs or removed another package: %d of %d kept", len(kept), len(pkgs))
 	}
 }
