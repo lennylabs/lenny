@@ -1,6 +1,6 @@
 # Revocation cache rehydration on event-bus reconnect
 
-Status: `In progress`, revision 1, 2026-11-24.
+Status: `In progress`, revision 2, 2026-11-24.
 
 ## Problem
 
@@ -24,6 +24,7 @@ The change covers:
 
 - §13.3 **Authoritative durability for revocation.** and **Token rotation and revocation — no grace period.**, which state the cache, the rehydration on reconnect, the 30-second periodic rehydration, and the 90-second staleness gate, and drop the per-request Postgres read.
 - The `TokenRevocationPropagationLag` row of §16.5, whose text says that peer replicas "are falling back to the Postgres check".
+- The `propagation_mode` field of the `token.revoked` event in §16.7, whose text says that peer replicas "will fall back to the Postgres check".
 - `pkg/storage/pubsub`, which gains a reconnect signal, `pkg/credential/revocation/propagator`, which triggers a rehydration on it, and the gateway wiring in `cmd/lenny-gateway`.
 - `pkg/alerting/rules` (the alert's description) and the generated `docs/alerting/rules.yaml`.
 
@@ -70,7 +71,7 @@ The state on `main` at `104cdf4fa`:
 
 ### RR-2 Rehydration on reconnect
 
-`propagator.Run` accepts the rehydration as a callback, and passes it to `Bus.Subscribe` as the reconnect callback. The gateway wires a callback that signals the rehydration loop of `billing_security_workers.go` through a buffered channel of one, so a reconnect runs one rehydration at once and a burst of reconnects runs at most one extra. The loop rehydrates on the tick or on the signal, whichever comes first. A failed rehydration is logged as a failed tick is, and leaves the staleness clock where the last success set it.
+`propagator.Run` accepts the rehydration as a callback, and passes it to `Bus.Subscribe` as the reconnect callback. The gateway wires a callback that signals the rehydration loop through a buffered channel of one (`revocation.Trigger`), so a reconnect runs one rehydration at once and a burst of reconnects runs at most one extra. The loop is `revocation.Cache.RunRehydration` in `pkg/credential/revocation`, which `billing_security_workers.go` starts, so the component and chaos tests drive the same loop. The loop rehydrates on the tick or on the signal, whichever comes first, and gives each read a deadline of one interval. A failed rehydration is logged as a failed tick is, and leaves the staleness clock where the last success set it. The staleness clock counts from the instant a successful read began, so a slow read does not extend the 90-second window.
 
 ### RR-3 The bound in §13.3
 
@@ -85,7 +86,7 @@ The state on `main` at `104cdf4fa`:
 ## Specification and non-specification changes
 
 - `spec/13_security-model.md`, §13.3: **Authoritative durability for revocation.** and **Token rotation and revocation — no grace period.**
-- `spec/16_observability.md`, §16.5: the `TokenRevocationPropagationLag` row.
+- `spec/16_observability.md`, §16.5: the `TokenRevocationPropagationLag` row; §16.7: the `propagation_mode` field of `token.revoked`.
 - `pkg/storage/pubsub`: the reconnect callback of `Subscribe`.
 - `pkg/credential/revocation/propagator`: `Run` with the rehydration callback, and the package comment.
 - `cmd/lenny-gateway`: the rehydration loop's signal channel and the wiring of `revProp.Run`.
@@ -98,7 +99,7 @@ The state on `main` at `104cdf4fa`:
 
 ## Tests
 
-- Unit: `pkg/storage/pubsub` (the callback runs on a second subscription confirmation and not on the first; a nil bus never calls it), against a Redis the test restarts or a fake that delivers `*redis.Subscription` values; `pkg/credential/revocation/propagator` (a reconnect calls the rehydration callback); `cmd/lenny-gateway` (the signal runs one rehydration before the next tick, and a burst of signals runs at most one extra).
+- Unit: `pkg/storage/pubsub` (the callback runs on a second subscription confirmation and not on the first; a nil bus never calls it), against a Redis the test restarts or a fake that delivers `*redis.Subscription` values; `pkg/credential/revocation/propagator` (a reconnect calls the rehydration callback); `pkg/credential/revocation` (the signal runs one rehydration before the next tick, a burst of signals runs at most one extra, a failed read keeps the staleness clock, and the clock counts from the read's start).
 - Component: a replica whose Redis connection drops while a peer publishes a revocation rejects the revoked token after the subscription reconnects, without waiting for the periodic tick.
 - Chaos: `tests/chaos` (a Redis restart during a revocation: the replica that missed the event rejects the token after it reconnects, and a replica whose rehydration keeps failing answers `503 token_validation_unavailable` after 90 seconds).
 - Security: a revoked token is refused on every replica within the bound §13.3 states.

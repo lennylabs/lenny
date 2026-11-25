@@ -290,5 +290,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
-| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 0 of 1 | 0 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 0 of 1 | 2 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 5 of 6 | 1 |
