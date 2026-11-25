@@ -1,6 +1,6 @@
 # Idempotency keys scoped by principal
 
-Status: `Draft`, revision 1, 2026-11-25.
+Status: `Draft`, revision 2, 2026-11-25.
 
 ## Problem
 
@@ -16,16 +16,18 @@ The gateway keys each stored idempotent response by tenant and key alone, so a s
 
 The body hash guards against a different request with the same key (`422 IDEMPOTENCY_KEY_REUSED`), and it does not guard against the same request from a different user. A request body for `POST /v1/sessions` names a runtime and options that two users of one tenant can send identically, and a client library that derives keys deterministically makes a collision likely. The review of 0173 found the gap.
 
-The owner settled the remedy as decision 1: keys are scoped by principal, the tenant together with the user, through a small change to §11.5 and the store.
+The owner settled the remedy as decision 1: keys are scoped by principal, the tenant together with the user, through a small change to §11.5 and the store. [APICONV-I1](../../issues/APICONV/APICONV-I1-idempotency-key-scoped-per-tenant-only.md) records the gap.
+
+User erasure does not delete the user's idempotency records ([ERASE-I2](../../issues/ERASE/ERASE-I2-user-erasure-leaves-idempotency-records.md)). The [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces) table **Storage backends in erasure scope:** has no row for them, `canonicalRank` in `pkg/storage/erasure/order.go` names no idempotency store, and the records hold stored responses for 24 hours, which [§12.9](../../spec/12_storage-architecture.md#129-data-classification) classifies as T3, Confidential. A record names no user today, so it cannot be found by user. The subject this change adds makes the deletion possible, and the owner directed that it be added as the next step (decision 2).
 
 ## Scope
 
-The change covers the idempotency records of the §11.5 critical operations on the REST `Idempotency-Key` path and the MCP `idempotencyKey` path: the store's key, the table's primary key, the principal the middleware and the MCP hook resolve, and §11.5.
+The change covers the idempotency records of the §11.5 critical operations on the REST `Idempotency-Key` path and the MCP `idempotencyKey` path: the store's key, the table's primary key, the principal the middleware and the MCP hook resolve, and §11.5. It also covers the deletion of a user's records by user erasure, in §12.8 and in the erasure job.
 
 It leaves out:
 
 - The `lenny-ops` idempotency records of [§25.4](../../spec/25_agent-operability.md#254-the-lenny-ops-service) (`ops_idempotency_keys`, `pkg/ops/opsidem`).
-- Deleting a user's idempotency records during user erasure. The subject column makes a `DeleteByUser` possible, and the records expire after 24 hours today; adding them to the §12.8 deletion sequence is a separate question.
+- The rest of the scope that R5 of [0138](../0138-rest-only-client-api/change.md) states: the effective audience, the token's `azp` or `client_id`, the method, the route template, and the path parameters. Step 0138.S1 adds them to the key that this change lands.
 - The metrics of the middleware, which keep the tenant as their only identity label.
 
 ## Terms
@@ -67,9 +69,17 @@ A new migration deletes every row of `idempotency_keys`, adds `subject TEXT NOT 
 
 §11.5 **Mechanism.** states that the table is keyed by `(tenant_id, subject, idempotency_key)`, that the subject is the authenticated principal's subject, which is the session owner of [§10.2](../../spec/10_gateway-internals.md#102-authentication), and that the same key string from different principals is treated independently, within a tenant and across tenants. It states the refusal of a key with no subject.
 
+### IP-5 Erasure of a user's records
+
+§12.8 **Storage backends in erasure scope:** gains a row for idempotency records in Postgres, whose erased data is the user's records, found by `(tenant_id, subject)` with the subject equal to the erased user's id. The **`DeleteByUser` dependency-ordered deletion sequence** gains a step that deletes them. The records hold no foreign key to any other store and no store refers to them, so the step's position is free; it runs before `SessionStore`, with the other stores that hold data about the user's sessions.
+
+The Postgres store gains `DeleteByUser(ctx, tenantID, subject)`, and `MemoryStore` the same method. The erasure wiring in `cmd/lenny-gateway` registers an eraser under a new `canonicalRank` name in `pkg/storage/erasure/order.go`. The validators refuse a name that a path neither wires nor exempts, so tenant deletion Phase 4 wires the same store to delete the tenant's records by `tenant_id`, which §12.8 Phase 4 states in the same edit. The 24-hour garbage-collection sweep stays, and the eraser removes a user's records before the sweep reaches them.
+
+The §12.9 row for idempotency records is unchanged: the records stay T3, and the erasure deadline of T3 data applies to them.
+
 ## Worked example
 
-`alice` and `bob`, two users of tenant `acme`, each send `POST /v1/sessions` with `Idempotency-Key: k1` and the same body. Today `bob` receives the 201 response stored for `alice`, with her session id and her upload token. After this change, `alice`'s request is filed under `(acme, alice, k1)` and `bob`'s under `(acme, bob, k1)`, so `bob`'s request creates his own session. When `alice` retries with `k1`, she receives her stored response.
+`alice` and `bob`, two users of tenant `acme`, each send `POST /v1/sessions` with `Idempotency-Key: k1` and the same body. Today `bob` receives the 201 response stored for `alice`, with her session id and her upload token. After this change, `alice`'s request is filed under `(acme, alice, k1)` and `bob`'s under `(acme, bob, k1)`, so `bob`'s request creates his own session. When `alice` retries with `k1`, she receives her stored response. An hour later a tenant admin erases `alice`. The erasure job deletes every record filed under `(acme, alice, ...)`, including `k1`, and leaves `bob`'s record in place.
 
 ## Limits, and alternatives rejected
 
@@ -79,16 +89,19 @@ A new migration deletes every row of `idempotency_keys`, adds `subject TEXT NOT 
 ## Specification and non-specification changes
 
 - `spec/11_policy-and-controls.md`: §11.5, **Mechanism.**
+- `spec/12_storage-architecture.md`: §12.8, **Storage backends in erasure scope:**, the **`DeleteByUser` dependency-ordered deletion sequence**, and tenant deletion Phase 4 (IP-5).
 - `migrations/`: a new migration for `idempotency_keys`.
 - `pkg/idempotency`: `Key.Subject` and its validation.
 - `pkg/idempotency/idempotencymw` and `pkg/idempotency/idempotencymw/pgstore`: the store interface, the stores, the credential wrapper, and the resolver.
 - `pkg/gateway/platformtools/mcp`: `IdempotencyConfig` and `dispatchIdempotent`.
-- `cmd/lenny-gateway`: the resolver wiring in `httpsurface.go`.
+- `pkg/storage/erasure`: the new store name in `canonicalRank`.
+- `cmd/lenny-gateway`: the resolver wiring in `httpsurface.go`, and the user and tenant erasers in the erasure wiring.
 
 ## Documentation
 
 - `docs/api/rest.md` (client developer): the idempotency section states that a key is scoped to the calling user within the tenant, and that a key sent with no authenticated subject is refused.
 - `docs/api/mcp.md` (client developer): the same for `idempotencyKey`.
+- `docs/operator-guide/security.md` (operator): the GDPR erasure section states that user erasure deletes the user's idempotency records.
 
 ## Tests
 
@@ -99,3 +112,6 @@ A new migration deletes every row of `idempotency_keys`, adds `subject TEXT NOT 
 - Contract, `tests/contract/rest_idempotency`: `bob`'s `POST /v1/sessions` with `alice`'s key and body creates a second session. Cites §11.5 (Idempotency).
 - Load_local: concurrent claims of one key by two subjects both succeed, and concurrent claims by one subject collapse to one execution, under `-race`. Cites §11.5 (Idempotency).
 - Security, `tests/security`: a user of the same tenant who replays another user's key and body receives neither that user's session id nor an upload token. Cites §11.5 (Idempotency).
+- Unit, `pkg/idempotency/idempotencymw` and its Postgres store: `DeleteByUser` removes every record of one subject in one tenant and leaves the records of other subjects and other tenants. Cites §12.8 (Compliance Interfaces).
+- Unit, `pkg/storage/erasure`: the user and tenant erasure orders both wire the idempotency store, and the order validators accept them. Cites §12.8 (Compliance Interfaces).
+- Integration, `tests/integration`: a real user erasure on the compose stack, after the erased user and another user of the tenant each stored a response, leaves no record of the erased user and keeps the other user's. The erasure completeness check, `TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8`, covers the new store. Cites §12.8 (Compliance Interfaces).
