@@ -1,6 +1,6 @@
 # Connector removal
 
-Status: `Draft`, revision 12, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 13, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -392,6 +392,7 @@ The `/identity/` path is reserved on the gateway's ingress, as `/oidc/` is for f
   - **Token.** It is the same token, with the same `typ`, claims, key set, and mint index entry, and the claim `mint` records the path: `egress` for an assertion that `netagent` attached and `client` for one the owner minted. `binding` is absent from an owner-minted assertion.
   - **Lifetime.** `lifetimeSeconds` defaults to 300 and may be set up to `budgets.external.maxClientTokenLifetimeSeconds` (default 86400), because a service may report work that runs longer than an egress call. The mint index keeps the entry for `budgets.external.maxReportDelaySeconds` after its `exp`, as for any mint.
   - **Rate and audit.** A caller mints at most `tokenService.attributionAssertion.clientMintsPerMinute` (default 60) assertions per session per minute, refused beyond with `429 QUOTA_EXCEEDED`. Each mint is the audit event `attribution_token.minted` with the session, the caller, the audience, the lifetime, and the `jti`.
+  - **Ended sessions.** No assertion is minted for a session that has ended. The owner's route answers `409 TARGET_TERMINAL`, and the Token Service refuses an egress mint because the session's pod binding has ended (D23). An assertion minted before the end stays valid as proof until its `exp`, and 0170 "BG-12" **Ended sessions.** counts late charges that cite it.
   - **Pods.** An owner-minted assertion never passes through a pod, so the residual on reused pods below does not apply to it. Whoever holds it can have charges for the session counted at its audience within its validity, so the owner hands it only to that service.
 - **Hosts bound to one tenant (D20).** A host that a tenant's attribution binding or a tenant reporter of 0170 lists belongs to that tenant. A tenant binding or a tenant reporter that names a host that another tenant's binding or reporter already lists, or a host of a platform or pool binding or of a platform reporter, is refused with `400 VALIDATION_ERROR` naming the host. A platform host serves every tenant. The gateway guide states that a gateway run by a tenant checks that the `tenant` claim names its own tenant, because under the `deployment` key set every tenant's assertions verify against the same key.
 - **Pods.** **Pods (D11).** does not apply to it, except on a fallback pool, where `netagent` cannot attribute a connection to one session and the session is refused with `422 IDENTITY_ASSERTION_UNSUPPORTED_POD`. A session that holds an attribution binding runs on a recycled pod, on a pod with several slots that attribute, and on a pod that has served a session.

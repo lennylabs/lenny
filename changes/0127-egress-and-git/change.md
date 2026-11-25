@@ -1,6 +1,6 @@
 # Egress and git access for agent pods
 
-Status: `Draft`, revision 98, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 99, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -863,7 +863,7 @@ A session names its `onRequest` bindings and, for a minted token, can narrow the
 
 **Binding suspension [design].** The gateway may suspend one session's attribution bindings, and lift the suspension, through the pod binding API, under 0133 "LU-5" and [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges). The pod binding API carries the suspension with its cause: a budget whose §8.6 extension is pending, a budget whose exhaustion is final, or another cause such as a quarantine of [`0128-forensics-evidence-preservation`](../0128-forensics-evidence-preservation/change.md), with the budget and the limit for the first two. On a suspension `netagent` drops the session's cached assertions for those bindings, attaches none, and answers the session's requests to the bindings' hosts itself, without forwarding them (decision 85):
 
-- While an extension is pending, `429` with `Retry-After: 5`, which provider SDKs retry **[external]**.
+- While an extension is pending, `429` with a fixed `Retry-After: 5`, which provider SDKs retry **[external]**. An extension that a person approves can take longer than the SDK's retries, and the turn then fails and the session continues on its next turn after the grant (decision 85).
 - Once the exhaustion is final, `403` with a JSON body naming the budget and the limit, in the details of `BUDGET_EXHAUSTED` of [`0170-budgets`, "BG-6"](../0170-budgets/change.md#bg-6-enforcement).
 - For another cause, `403` with no detail, so a quarantine gives the tenant no signal, as 0128's decision 6 requires.
 
