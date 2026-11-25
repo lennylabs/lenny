@@ -8,6 +8,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
+| Building | 2 |
 | Ready | 4 |
 | Waiting on decisions | 32 |
 | Blocked | 149 |
@@ -53,6 +54,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0173.S1](0173-idempotency-stored-credentials/steps.md#0173s1-stored-idempotency-responses-hold-no-upload-token) | Stored idempotency responses hold no upload token | Building |  |
+| [0174.S1](0174-openai-assistants-removal/steps.md#0174s1-remove-openai-assistants) | Remove openai-assistants | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
@@ -294,3 +297,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 1 | 2 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 9 | 1 |
+| [0173](0173-idempotency-stored-credentials/change.md) | Credentials in stored idempotency responses | `In progress` | 0 of 1 | 0 |
+| [0174](0174-openai-assistants-removal/change.md) | Removal of the openai-assistants reference runtime | `In progress` | 0 of 1 | 0 |
