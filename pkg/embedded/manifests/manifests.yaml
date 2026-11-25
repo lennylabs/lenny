@@ -5534,41 +5534,6 @@ spec:
 apiVersion: lenny.dev/v1alpha1
 kind: Runtime
 metadata:
-  name: openai-assistants
-  labels:
-    helm.sh/chart: lenny-0.1.0
-    app.kubernetes.io/name: lenny
-    app.kubernetes.io/instance: lenny
-    app.kubernetes.io/managed-by: Helm
-    app.kubernetes.io/version: "0.1.0"
-    lenny.dev/reference-runtime: "true"
-spec:
-  type: agent
-  image: ghcr.io/lennylabs/runtime-openai-assistants@sha256:0000000000000000000000000000000000000000000000000000000000000000
-  command:
-    - /usr/local/bin/lenny-openai-assistants-adapter
-  integrationLevel: full
-  executionMode: session
-  isolationProfile: sandboxed
-  supportedProviders:
-    - openai_direct
-    - azure_openai
-  capabilities:
-    injection:
-      modes:
-      - immediate
-      supported: true
-    interaction: multi_turn
-  runtimeOptionsSchemaRef: "https://schemas.lenny.dev/runtime-options/openai-assistants/v1.json"
-  credentialCapabilities:
-    hotRotation: true
-    proxyDialect:
-    - openai
----
-# Source: lenny/templates/reference-runtimes.yaml
-apiVersion: lenny.dev/v1alpha1
-kind: Runtime
-metadata:
   name: crewai
   labels:
     helm.sh/chart: lenny-0.1.0

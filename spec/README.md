@@ -302,7 +302,6 @@ The numbered files hold the content of every page that is not yet written. Their
   - [26.7 `chat`](26_reference-runtime-catalog.md#267-chat)
   - [26.8 `langgraph`](26_reference-runtime-catalog.md#268-langgraph)
   - [26.9 `mastra`](26_reference-runtime-catalog.md#269-mastra)
-  - [26.10 `openai-assistants`](26_reference-runtime-catalog.md#2610-openai-assistants)
   - [26.11 `crewai`](26_reference-runtime-catalog.md#2611-crewai)
   - [26.12 Adding a new reference runtime](26_reference-runtime-catalog.md#2612-adding-a-new-reference-runtime)
 - [27. Web Playground](27_web-playground.md)

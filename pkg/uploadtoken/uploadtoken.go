@@ -328,7 +328,7 @@ func NewVerifier(ring *KeyRing, tracker ConsumedTracker, clock func() time.Time)
 
 // Verify checks token against sessionID and the current clock.
 func (v *Verifier) Verify(token, sessionID string) (ParsedToken, error) {
-	parsed, key, err := parseAndVerifyHMAC(token, v.ring)
+	parsed, key, err := parseAndVerifyHMAC(token, v.ring.keys())
 	if err != nil {
 		return ParsedToken{}, err
 	}
@@ -367,9 +367,16 @@ func (v *Verifier) ConsumeDigest(digest string, expiry time.Time) error {
 	return v.tracker.MarkConsumed(digest, expiry)
 }
 
-// parseAndVerifyHMAC tries every key in ring (active first, then
-// overlap) and returns the parsed token + matching key on success.
-func parseAndVerifyHMAC(token string, ring *KeyRing) (ParsedToken, SigningKey, error) {
+// parseAndVerifyHMAC tries every key of keys, a snapshot of a ring with the
+// active key first, and returns the parsed token + matching key on success.
+// Only the canonical spelling the Issuer writes verifies: a decimal expiry
+// with no sign or leading zero, and lowercase hex. Another spelling of the
+// same HMAC would carry another digest, so it would escape the consumed
+// tracker, which is keyed by digest, and the idempotency redactor, which
+// matches the canonical form.
+//
+// spec: §7.1 (Normal Flow)
+func parseAndVerifyHMAC(token string, keys []SigningKey) (ParsedToken, SigningKey, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 || parts[0] == "" || parts[1] == "" || parts[2] == "" {
 		return ParsedToken{}, SigningKey{}, ErrInvalid
@@ -382,7 +389,10 @@ func parseAndVerifyHMAC(token string, ring *KeyRing) (ParsedToken, SigningKey, e
 	if err != nil {
 		return ParsedToken{}, SigningKey{}, ErrInvalid
 	}
-	for _, k := range ring.keys() {
+	if strconv.FormatInt(expiryUnix, 10) != parts[1] || hex.EncodeToString(sigBytes) != parts[2] {
+		return ParsedToken{}, SigningKey{}, ErrInvalid
+	}
+	for _, k := range keys {
 		want := computeHMAC(k.Secret, parts[0], expiryUnix)
 		if hmac.Equal(want, sigBytes) {
 			return ParsedToken{

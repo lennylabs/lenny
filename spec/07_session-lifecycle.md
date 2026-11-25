@@ -65,6 +65,7 @@
 - **Session scope binding:** The embedded `session_id` is validated on every upload and finalize request. Tokens from a different session are rejected with `403 UPLOAD_TOKEN_MISMATCH`.
 - **Single-use invalidation:** The token is invalidated immediately upon successful `FinalizeWorkspace`. Any subsequent attempt to use the same token returns `410 UPLOAD_TOKEN_CONSUMED`. This prevents replay of a captured token after workspace finalization.
 - **Cryptographic protection:** The HMAC prevents forgery of arbitrary `(session_id, expiry)` pairs. Signing keys are rotated on a deployer-configurable schedule (default: 24 hours); the gateway keeps the previous key valid during a short overlap window (default: 5 minutes) to avoid rejecting tokens issued just before rotation.
+- **Persistence:** The gateway never stores the token. The session row holds the token's SHA-256 digest, and an idempotency record that stores the creating response holds a redaction reference in the token's place, from which a replay restores the token ([§11.5](11_policy-and-controls.md#115-idempotency)).
 
 Clients MUST treat `uploadToken` as a secret credential: it MUST NOT be logged, embedded in URLs, or included in client-side error reports.
 

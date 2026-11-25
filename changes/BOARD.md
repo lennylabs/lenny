@@ -8,6 +8,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
+| Building | 2 |
 | Ready | 4 |
 | Waiting on decisions | 33 |
 | Blocked | 149 |
@@ -53,6 +54,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0173.S1](0173-idempotency-stored-credentials/steps.md#0173s1-stored-idempotency-responses-hold-no-upload-token) | Stored idempotency responses hold no upload token | Building |  |
+| [0174.S1](0174-openai-assistants-removal/steps.md#0174s1-remove-openai-assistants) | Remove openai-assistants | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
@@ -279,7 +282,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0138](0138-rest-only-client-api/change.md) | REST-only client API | `Draft` | 0 of 6 | 16 |
 | [0139](0139-runtime-protocol/change.md) | Runtime protocol | `Draft` | 0 of 3 | 23 |
 | [0140](0140-runtime-revisions/change.md) | Runtime revisions | `Draft` | 0 of 3 | 15 |
-| [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 0 |
+| [0141](0141-runtime-routing/change.md) | Runtime routing | `Draft` | 0 of 4 | 3 |
 | [0142](0142-security-oversight/change.md) | Security oversight for customers and the operator | `Draft` | 0 of 9 | 9 |
 | [0143](0143-service-account-credentials/change.md) | Service account credentials | `Draft` | 0 of 4 | 7 |
 | [0144](0144-session-derive/change.md) | Session derive | `Draft` | 0 of 1 | 5 |
@@ -290,9 +293,11 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149](0149-tenant-scoping-identity/change.md) | Tenant scoping and identity | `Draft` | 0 of 11 | 11 |
 | [0150](0150-tenant-security-settings/change.md) | Tenant security settings | `Draft` | 0 of 4 | 14 |
 | [0151](0151-user-credential-delivery/change.md) | User credential delivery | `Draft` | 0 of 8 | 7 |
-| [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
+| [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 8 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 1 | 2 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 9 | 1 |
+| [0173](0173-idempotency-stored-credentials/change.md) | Credentials in stored idempotency responses | `In progress` | 0 of 1 | 2 |
+| [0174](0174-openai-assistants-removal/change.md) | Removal of the openai-assistants reference runtime | `In progress` | 0 of 1 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |

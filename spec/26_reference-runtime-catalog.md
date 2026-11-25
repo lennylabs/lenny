@@ -22,7 +22,6 @@ This appendix catalogs the **reference runtimes** shipped by the Lenny project a
 | `chat`             | General-purpose | Full     | "Talk to an LLM" with no tools; demonstrates the minimum useful runtime          |
 | `langgraph`        | Framework       | Full     | LangGraph graph-based agents (Python)                                            |
 | `mastra`           | Framework       | Full     | Mastra agent framework (TypeScript)                                              |
-| `openai-assistants`| Framework       | Full     | OpenAI Assistants API-compatible runtime                                         |
 | `crewai`           | Framework       | Full     | CrewAI multi-agent framework with delegation wired to Lenny's `lenny/delegate_task` |
 
 All reference runtimes are **`type: agent`** ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)). No reference runtime is `type: mcp` — MCP servers are deployed via the MCP connector mechanism ([§9.3](09_mcp-integration.md#93-connector-definition-and-oauthoidc)), not as reference runtimes.
@@ -415,35 +414,6 @@ Mastra (TypeScript) agent framework runtime.
 **Bootstrap:** on `message`, adapter calls `agent.stream(message)`; maps Mastra tool calls to Lenny's `tool_call` envelope; returns the final assistant message as `response`.
 
 **Delegation:** Mastra agents may call `lenny/delegate_task`; the adapter registers it as a Mastra tool at agent initialization time.
-
----
-
-### 26.10 `openai-assistants`
-
-Runtime that adapts the OpenAI Assistants API shape to Lenny's session lifecycle. Existing Assistants API users can move to Lenny by registering their assistant ID as a `runtimeOptions` value.
-
-**Repository:** `github.com/lennylabs/runtime-openai-assistants`
-**Image:** `ghcr.io/lennylabs/runtime-openai-assistants:<release>`
-**Conformance level:** Full
-**Runtime `type`:** `agent`
-
-**Key characteristics:**
-
-- `integrationLevel: full` ([§5.1](05_runtime-registry-and-pool-model.md#51-runtime)).
-- `isolationProfile: sandboxed`.
-- `capabilities.interaction: multi_turn`; `injection: { supported: true, modes: [immediate] }`.
-- `runtimeOptionsSchema` updates the existing §14 `openai-agents` schema: `assistantId` (required), `model` (optional override), `temperature`, `responseFormat`, `parallelToolCalls`. The schema name in §14 is renamed from `openai-agents` to `openai-assistants` for consistency — see §14 diff (task #3).
-- `supportedProviders: [openai_direct, azure_openai]`.
-- `credentialCapabilities.proxyDialect: [openai]`.
-
-**Workspace conventions:**
-
-- Assistants API manages its own file store; file uploads from the client are forwarded to OpenAI via the Files API using the pool's provider identity. Sealed Lenny artifacts at session end include any files produced by the assistant.
-- No `/workspace/slots/{sessionId}/current/` usage — the runtime is stateless relative to local filesystem.
-
-**Bootstrap:** on session start, adapter creates a `Thread` on OpenAI with the assistant ID from `runtimeOptions`; on each `message`, adapter appends to the thread and starts a `Run`; streams the run's deltas as Lenny `response` parts; maps Assistants tool calls (including `code_interpreter`, `file_search`) to Lenny `tool_call` envelopes.
-
-**Note on `code_interpreter`.** OpenAI's hosted code interpreter runs outside Lenny's sandbox. Operators concerned about code execution isolation should disable `code_interpreter` in their assistant configuration on OpenAI's side. Lenny does not proxy or intercept code interpreter invocations; they execute inside OpenAI's infrastructure.
 
 ---
 

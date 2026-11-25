@@ -160,7 +160,6 @@ The tables below are written by hand and record the state of each surface when b
 | `cursor-cli` | Not started | Cursor agent CLI under gVisor. |
 | `langgraph` | Not started | LangGraph graph-based agents (Python). |
 | `mastra` | Not started | Mastra framework (TypeScript). |
-| `openai-assistants` | Not started | OpenAI Assistants-compatible runtime. |
 | `crewai` | Not started | CrewAI with delegation wired to `lenny/delegate_task`. |
 
 ### SDKs and CLI

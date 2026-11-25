@@ -267,3 +267,7 @@ Change 0113 shortened the status line of `change.md` to the status, revision, da
     - Already done: 0120 (client-api-sessions-C2, withdrawn in the first pass) and 0146 for "MD-22" **Recovery**, which already gives the resend to 0146.S2 through the seam operation 0135.S5 adds (client-api-sessions-C16).
     - Raised O24: how a part over the 4 MiB result bound reaches a parent's runtime, matching O17 of 0139.
     - Raised O25: which 0146 steps 0135.S1 and 0135.S5 bind to if 0146.S1 is split, matching SL-Q10 of 0146.
+
+## Removal of openai-assistants (2026-11-25)
+
+- [0174](../0174-openai-assistants-removal/change.md) removes the `openai-assistants` reference runtime (decision 12 of program v1), so "Validation owed" drops the OpenAI Assistants API from the mid-run input item. The design text that names the runtime is left for the next revision of this change.

@@ -180,7 +180,7 @@ var knownTiers = map[string]bool{"tier1": true, "tier2": true, "tier3": true}
 var knownReferenceRuntimes = map[string]bool{
 	"claude-code": true, "gemini-cli": true, "codex": true,
 	"cursor-cli": true, "chat": true, "langgraph": true,
-	"mastra": true, "openai-assistants": true, "crewai": true,
+	"mastra": true, "crewai": true,
 }
 
 // referenceRuntimeNames returns the §26 catalog names, sorted, for the

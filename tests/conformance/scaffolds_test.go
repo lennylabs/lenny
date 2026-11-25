@@ -408,15 +408,14 @@ func TestReferenceCatalogNightly(t *testing.T) {
 		t.Fatalf("read reference catalog: %v", err)
 	}
 	wantNames := map[string]compliance.Level{
-		"claude-code":       compliance.LevelFull,
-		"gemini-cli":        compliance.LevelFull,
-		"codex":             compliance.LevelFull,
-		"cursor-cli":        compliance.LevelFull,
-		"chat":              compliance.LevelFull,
-		"langgraph":         compliance.LevelFull,
-		"mastra":            compliance.LevelFull,
-		"openai-assistants": compliance.LevelFull,
-		"crewai":            compliance.LevelFull,
+		"claude-code": compliance.LevelFull,
+		"gemini-cli":  compliance.LevelFull,
+		"codex":       compliance.LevelFull,
+		"cursor-cli":  compliance.LevelFull,
+		"chat":        compliance.LevelFull,
+		"langgraph":   compliance.LevelFull,
+		"mastra":      compliance.LevelFull,
+		"crewai":      compliance.LevelFull,
 	}
 	got := map[string]compliance.Level{}
 	for _, r := range catalog {

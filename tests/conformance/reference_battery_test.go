@@ -6,7 +6,7 @@
 // deployment path the §26.1 reference-runtime nightly run depends on:
 // `lenny-compliance --image <ref> --level <level>`, documented at
 // TESTING.md §12.10 ("lenny-compliance --image ghcr.io/example/my-runtime:1.0
-// --level full --json"). The nine reference-runtime images ship from
+// --level full --json"). The reference-runtime images ship from
 // github.com/lennylabs/runtime-templates outside this repository; they
 // are not published to a registry reachable from the in-process test
 // runner (TestReferenceCatalogNightly documents that dependency and
@@ -30,7 +30,7 @@ import (
 // spec: 12.10 ("lenny-compliance --image ghcr.io/example/my-runtime:1.0 --level full --json")
 // diagnosis: this test fails when the container-image deployment path
 // the reference-runtime nightly run relies on is broken, so every
-// image-deployed runtime — including all nine §26 reference runtimes —
+// image-deployed runtime — including every §26 reference runtime —
 // would silently never run the conformance battery in CI.
 func TestImageDeploymentConformance(t *testing.T) {
 	requireDocker(t)
@@ -49,7 +49,7 @@ func TestImageDeploymentConformance(t *testing.T) {
 
 // requireDocker skips the test when docker is not installed or its
 // daemon is not reachable — a genuine external-dependency skip, not a
-// stand-in for the missing nine reference-runtime images.
+// stand-in for the missing reference-runtime images.
 func requireDocker(t *testing.T) {
 	t.Helper()
 	if _, err := exec.LookPath("docker"); err != nil {

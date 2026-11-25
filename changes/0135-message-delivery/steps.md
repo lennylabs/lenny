@@ -6,7 +6,7 @@
 - Whether the Python Agent SDK documents `priority`, which the Python pages did not state.
 - A steering interface for `cursor-agent` run headless.
 - Whether Gemini CLI's model steering leaves its experimental status, and how a hint travels with `functionResponse` parts in a headless run.
-- Mid-run input in Mastra, the OpenAI Assistants API, and CrewAI.
+- Mid-run input in Mastra and CrewAI.
 - Whether OpenAI's Responses API states an adjacency rule for function call outputs, which the investigation found only for Chat Completions through a third-party error page.
 - Export throughput of a single multi-gigabyte file on runc, gVisor, and Kata, which the checkpoint benchmarks measured for workspaces of many files and not for one large file.
 - The name of the task status-message field under MCP `2026-07-28` with Tasks.

@@ -1587,7 +1587,7 @@ func runConformanceTier(subsets []string) (string, string, *tierResult) {
 	// reference-catalog runtimes whose package is present on disk.
 	referenceCatalog := []string{
 		"claude-code", "gemini-cli", "codex", "cursor-cli", "chat",
-		"langgraph", "mastra", "openai-assistants", "crewai",
+		"langgraph", "mastra", "crewai",
 	}
 	expandReferenceCatalog := func() []string {
 		built := []string{}

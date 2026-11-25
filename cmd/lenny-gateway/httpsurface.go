@@ -69,6 +69,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/tenancy/environmentstore"
 	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 	"github.com/lennylabs/lenny/pkg/tokensvcproxy"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 func (w *gatewayWiring) buildHTTPSurface(
@@ -703,6 +704,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 	if w.pgPool != nil {
 		idemStore = idempgstore.New(w.pgPool)
 	}
+	// A stored response holds no uploadToken (§11.5, Idempotency). The
+	// store strips the tokens through a redactor over the gateway's
+	// signing-key ring and restores them on replay, for the REST and the
+	// MCP paths alike.
+	idemStore = idempotencymw.WithCredentials(idemStore, uploadtoken.NewRedactor(w.ring))
 	// spec: §11.5 — when an MCP client supplies idempotencyKey
 	// inside a tool's arguments (lenny/create_session,
 	// lenny/delegate_task), the MCP server runs the call through the

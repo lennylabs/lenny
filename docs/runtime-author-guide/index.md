@@ -128,7 +128,6 @@ Lenny ships first-party `type: agent` runtimes you can read, fork, or register a
 | `chat` | General-purpose | (see its repository) | Talks to an LLM with no tools; the reference for a custom non-coding runtime. |
 | `langgraph` | Framework adapter | Full | Runs LangGraph graph-based agents (Python) under Lenny. |
 | `mastra` | Framework adapter | Full | Runs the Mastra agent framework (TypeScript) under Lenny. |
-| `openai-assistants` | Framework adapter | Full | Adapts the OpenAI Assistants API to Lenny's session lifecycle. OpenAI's hosted `code_interpreter` runs in OpenAI's infrastructure, outside Lenny's sandbox. |
 | `crewai` | Framework adapter | Full | Runs the CrewAI multi-agent framework, with its delegation wired to `lenny/delegate_task`. |
 
 The coding-agent runtimes are near-identical CLI wrappers: same workspace layout, same pre-installed toolchains, same sandbox profile. They differ only in the image, the LLM credential, and the command the container runs. If you're wrapping a CLI, start there.
