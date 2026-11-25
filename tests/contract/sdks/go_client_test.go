@@ -456,6 +456,22 @@ func (d *disconnector) dropFirstConnection() {
 	}
 }
 
+// waitForFirstConnection blocks until the first events connection is
+// being served, so that dropFirstConnection severs a live connection
+// rather than finding none. A probe in another process, such as a
+// Python interpreter on a loaded host, can take longer to connect than
+// any fixed pause, so the test polls for the connection instead.
+func (d *disconnector) waitForFirstConnection(t *testing.T, name string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for d.connectionCount() == 0 {
+		if time.Now().After(deadline) {
+			t.Fatalf("%s: the SDK opened no events connection within %s", name, timeout)
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+}
+
 // connectionCount returns the number of events connections served.
 func (d *disconnector) connectionCount() int {
 	d.mu.Lock()
