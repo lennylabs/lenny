@@ -221,17 +221,6 @@ var referenceRuntimes = []ReferenceRuntime{
 		Labels:           referenceLabels("mastra-ai/mastra"),
 	},
 	{
-		// spec: §26.10 operator warning — OpenAI's hosted code interpreter
-		// runs outside Lenny's sandbox; operators concerned about code
-		// execution isolation should disable code_interpreter in their
-		// assistant configuration on OpenAI's side.
-		Name:             "openai-assistants",
-		Image:            "ghcr.io/lennylabs/runtime-openai-assistants:1.0.0" + placeholderDigest,
-		IntegrationLevel: "full",
-		Description:      "OpenAI Assistants API-compatible runtime; OpenAI's code_interpreter runs outside Lenny's sandbox (see §26.10).",
-		Labels:           referenceLabels("openai/openai-python"),
-	},
-	{
 		Name:             "crewai",
 		Image:            "ghcr.io/lennylabs/runtime-crewai:1.0.0" + placeholderDigest,
 		IntegrationLevel: "full",

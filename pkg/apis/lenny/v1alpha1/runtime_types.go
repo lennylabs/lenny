@@ -167,13 +167,14 @@ type RuntimeSpec struct {
 
 	// Capabilities is the §5.1 capabilities block on a runtime: the
 	// runtime's interaction model and its mid-session injection support.
-	// §26 reference runtimes (mastra, openai-assistants, crewai, …)
+	// §26 reference runtimes (mastra, crewai, …)
 	// declare these so the registered Runtime CRD advertises the
 	// §15.4.6 conformance battery the runtime actually implements; the
 	// runtime controller mirrors them into the gateway registry's
 	// RuntimeCapabilities at reconciliation time so §7.2 path-4 (queued
 	// injection) is gated on the runtime's declared injection.modes.
-	// spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 / F-26.11.2.
+	// The block follows §5.1, §26.9, and §26.11 (F-26.9.2 / F-26.10.2 /
+	// F-26.11.2).
 	// +optional
 	Capabilities *RuntimeCapabilitiesCRD `json:"capabilities,omitempty"`
 
@@ -184,7 +185,7 @@ type RuntimeSpec struct {
 	// declaratively register schemas hosted at
 	// `https://schemas.lenny.dev/runtime-options/<name>/v1.json` per §26.
 	// The runtime controller stamps it into the gateway registry as a
-	// JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1; §26.9; §26.10; §26.11 — F-26.9.2 / F-26.10.2 /
+	// JSON `{"$ref": "<url>"}` schema fragment. spec: §5.1; §26.9; §26.11 — F-26.9.2 / F-26.10.2 /
 	// F-26.11.2.
 	// +optional
 	// +kubebuilder:validation:Pattern=`^https?://`

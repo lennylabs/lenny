@@ -144,7 +144,7 @@ packages:
     - package: pkg/api/v1/session
       count: 65
     - package: pkg/apis/lenny/v1alpha1
-      count: 39
+      count: 35
     - package: pkg/audit
       count: 47
     - package: pkg/audit/adminaudit
@@ -270,7 +270,7 @@ packages:
     - package: pkg/controller/ratelimit
       count: 1
     - package: pkg/controller/runtime
-      count: 42
+      count: 34
     - package: pkg/controller/ssaretry
       count: 10
     - package: pkg/controller/statusdedup
@@ -342,7 +342,7 @@ packages:
     - package: pkg/embedded/manifests
       count: 6
     - package: pkg/embedded/stack
-      count: 343
+      count: 342
     - package: pkg/environment/environmentmw
       count: 2
     - package: pkg/events

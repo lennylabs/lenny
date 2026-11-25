@@ -41,15 +41,14 @@ const (
 	// drives them via ConfigureWorkspace / DemoteSDK.
 	RuntimePreConnectEcho = "preconnect-echo"
 
-	RuntimeClaudeCode       = "claude-code"
-	RuntimeGeminiCLI        = "gemini-cli"
-	RuntimeCodex            = "codex"
-	RuntimeCursorCLI        = "cursor-cli"
-	RuntimeChat             = "chat"
-	RuntimeLangGraph        = "langgraph"
-	RuntimeMastra           = "mastra"
-	RuntimeOpenAIAssistants = "openai-assistants"
-	RuntimeCrewAI           = "crewai"
+	RuntimeClaudeCode = "claude-code"
+	RuntimeGeminiCLI  = "gemini-cli"
+	RuntimeCodex      = "codex"
+	RuntimeCursorCLI  = "cursor-cli"
+	RuntimeChat       = "chat"
+	RuntimeLangGraph  = "langgraph"
+	RuntimeMastra     = "mastra"
+	RuntimeCrewAI     = "crewai"
 )
 
 // Pool names — §17 reference fixtures.
