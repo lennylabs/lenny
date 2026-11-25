@@ -79,7 +79,7 @@ The §12.9 row for idempotency records is unchanged: the records stay T3, and th
 
 ## Worked example
 
-`alice` and `bob`, two users of tenant `acme`, each send `POST /v1/sessions` with `Idempotency-Key: k1` and the same body. Today `bob` receives the 201 response stored for `alice`, with her session id and her upload token. After this change, `alice`'s request is filed under `(acme, alice, k1)` and `bob`'s under `(acme, bob, k1)`, so `bob`'s request creates his own session. When `alice` retries with `k1`, she receives her stored response. An hour later a tenant admin erases `alice`. The erasure job deletes every record filed under `(acme, alice, ...)`, including `k1`, and leaves `bob`'s record in place.
+`alice` and `bob`, two users of tenant `acme`, each send `POST /v1/sessions` with `Idempotency-Key: k1` and the same body. Today `bob` receives the 201 response stored for `alice`, with alice's session id and her upload token. After this change, `alice`'s request is filed under `(acme, alice, k1)` and `bob`'s under `(acme, bob, k1)`, so `bob`'s request creates his own session. When `alice` retries with `k1`, she receives her stored response. An hour later a tenant admin erases `alice`. The erasure job deletes every record filed under `(acme, alice, ...)`, including `k1`, and leaves `bob`'s record in place.
 
 ## Limits, and alternatives rejected
 
