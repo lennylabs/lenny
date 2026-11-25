@@ -93,7 +93,7 @@ func TestCoverageDiffRequireGateAcceptsARunOfEveryMergeCheckTier(t *testing.T) {
 		{[]string{"static", "unit", "component", "contract"}, "the tiers static, unit, component, contract"},
 		{[]string{"contract", "component", "unit", "static"}, "the tiers contract, component, unit, static"},
 		{[]string{"static", "unit", "component", "contract", "integration", "docs"}, "the tiers static, unit, component, contract, integration, docs"},
-		{nil, "every tier of the merge gate"},
+		{nil, "every tier of the merge gate its selection reached, with no --tier restriction"},
 	}
 	for _, tc := range cases {
 		writeTieredCoverRun(t, r.root, "t2", head, hash, tc.tiers)

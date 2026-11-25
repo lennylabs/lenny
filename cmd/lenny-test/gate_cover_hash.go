@@ -272,10 +272,12 @@ func refuseRestrictedRun(commit string, run coverGateRun) error {
 		run.runID, shortCommit(commit), gateRunTiers(run), strings.Join(missing, ", "), strings.Join(requiredGateTiers, ", "), coverRerun)
 }
 
-// gateRunTiers names the tiers run ran, for a note or a refusal.
+// gateRunTiers names the tiers run ran, for a note or a refusal. A run
+// that --tier did not restrict ran the tiers of the merge gate its
+// selection reached, and the verdict records the others as not selected.
 func gateRunTiers(run coverGateRun) string {
 	if run.restrictedTo == nil {
-		return "every tier of the merge gate"
+		return "every tier of the merge gate its selection reached, with no --tier restriction"
 	}
 	return "the tiers " + strings.Join(run.restrictedTo, ", ")
 }
