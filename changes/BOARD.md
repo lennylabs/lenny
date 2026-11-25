@@ -8,11 +8,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 5 |
+| Building | 1 |
 | Ready | 4 |
 | Waiting on decisions | 32 |
 | Blocked | 149 |
-| Landed | 19 |
+| Landed | 23 |
 | Cancelled | 1 |
 
 ## Program v1
@@ -54,10 +54,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Building |  |
-| [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Building |  |
-| [0172.S7](0172-gate-speed/steps.md#0172s7-the-full-runs-unit-tier-and-two-selection-rows) | The full run's unit tier and two selection rows | Building |  |
-| [0172.S8](0172-gate-speed/steps.md#0172s8-the-coverage-profiles-hash-and-the-container-messages) | The coverage profile's hash and the container messages | Building |  |
 | [0172.S9](0172-gate-speed/steps.md#0172s9-the-static-first-default-and-the-coverage-checks-gate-run) | The static-first default and the coverage check's gate run | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
@@ -244,11 +240,15 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0153.S8](0153-workspace-materialization/steps.md#0153s8-warm-up-checkout) | Warm-up checkout | Blocked | 0153.S4, 0153.S9, 0118.S2, 0127.S5, 0140.S1, 0131.S4 |
 | [0153.S9](0153-workspace-materialization/steps.md#0153s9-lenny-store-fill) | lenny-store-fill | Blocked | 0118.S4, 0127.S5 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
+| [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
 | [0172.S1](0172-gate-speed/steps.md#0172s1-selection-width-and-the-verdicts-selection-record) | Selection width and the verdict's selection record | Landed |  |
 | [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Landed |  |
 | [0172.S3](0172-gate-speed/steps.md#0172s3-no-coverage-profile-in-the-gates-unit-run) | No coverage profile in the gate's unit run | Landed |  |
 | [0172.S4](0172-gate-speed/steps.md#0172s4-the-gates-tier-and-coverage-options-and-the-check-before-a-merge) | The gate's tier and coverage options, and the check before a merge | Landed |  |
 | [0172.S5](0172-gate-speed/steps.md#0172s5-lenny-test-run-in-the-gate-container) | `lenny-test run` in the gate container | Landed |  |
+| [0172.S6](0172-gate-speed/steps.md#0172s6-the-static-tier-reads-a-snapshot) | The static tier reads a snapshot | Landed |  |
+| [0172.S7](0172-gate-speed/steps.md#0172s7-the-full-runs-unit-tier-and-two-selection-rows) | The full run's unit tier and two selection rows | Landed |  |
+| [0172.S8](0172-gate-speed/steps.md#0172s8-the-coverage-profiles-hash-and-the-container-messages) | The coverage profile's hash and the container messages | Landed |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 
 ## Changes
@@ -293,5 +293,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0152](0152-user-git-identity/change.md) | User-scoped repository access and pull request authoring | `Draft` | 0 of 4 | 0 |
 | [0153](0153-workspace-materialization/change.md) | Workspace materialization | `Draft` | 0 of 9 | 33 |
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
-| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 0 of 1 | 2 |
-| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 5 of 9 | 0 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 1 | 2 |
+| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 8 of 9 | 1 |

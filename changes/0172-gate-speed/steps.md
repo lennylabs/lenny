@@ -49,7 +49,7 @@ Decisions 8 and 9. `--tier` and `--cover` on `lenny-test gate`, their record in 
 Decision 10. `--container` on `lenny-test run`, reusing the gate's container setup, with unit tests on the arguments it builds, and the repository fix for the `go vet` failure on macOS hosts. Then the developer loop in `.claude/rules/test-coverage.md` ("How to run"), `TESTING.md`, and `cmd/lenny-test/README.md`. It depends on 0172.S4 because both edit the gate's container setup and the same pages. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S6 The static tier reads a snapshot
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0172.S2]
 - closes: []
@@ -57,7 +57,7 @@ Decision 10. `--container` on `lenny-test run`, reusing the gate's container set
 Decision 14. The gate resolves `HEAD` once and passes the commit to the secret scan and the static tier's git reads, and the static tier's checks that read the working tree run on an export of that commit that the gate user cannot write, so a test in a concurrent lane cannot change what the static tier reads. It also adds the layout of decision 15, which runs the static tier in a phase of its own ahead of the lanes of decision 5, and makes it the default when its validation run under "Validation owed" is clean. Then "Merge gate" in `TESTING.md`. It is built after 0172.S1 to 0172.S5 merge. The diff touches `cmd/lenny-test/`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S7 The full run's unit tier and two selection rows
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0172.S6]
 - closes: []
@@ -65,7 +65,7 @@ Decision 14. The gate resolves `HEAD` once and passes the commit to the secret s
 Decisions 16 and 17. The unit tier of a `--all` run leaves out `tests/docs`, with a test of the package list it runs; issue GATE-I9 records the failing gap-record tests. The row of `.github/workflows/release.yml` in `tests/non-go-inputs.yaml` runs `tests/security`, and the runbooks row names the chaos, security, and load_kind tiers. Then "Merge gate" in `TESTING.md`. The diff touches `cmd/lenny-test/` and `tests/non-go-inputs.yaml`, so it is reviewed with the `review` skill before it merges.
 
 ### 0172.S8 The coverage profile's hash and the container messages
-- status: Building
+- status: Landed
 - lanes: [code, documentation]
 - depends-on: [0172.S7]
 - closes: []
