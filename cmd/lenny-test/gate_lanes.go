@@ -39,8 +39,8 @@ import (
 // failure, so static-first is the default. The serial layout is the way
 // back that decision 7 names: when a container-start timeout, or that
 // contract test's failure, recurs in two of the next few gate runs on
-// main, those runs pass --layout serial and the layout returns to the
-// owner.
+// main, the gate runs on main that follow pass --layout serial until the
+// owner decides the layout.
 const (
 	gateLayoutUnitAlone   = "unit-alone"
 	gateLayoutStaticFirst = "static-first"

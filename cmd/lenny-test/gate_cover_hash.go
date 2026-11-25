@@ -245,10 +245,17 @@ func refuseGateRun(path, commit, got string, run coverGateRun) error {
 
 // notPassedError is the refusal of the profile of a gate run whose
 // verdict is not PASS (change 0172, decision 24): a run that failed, or
-// that could not verify its tiers, does not stand behind its profile.
+// that could not verify its tiers, does not stand behind its profile. The
+// remedy it names depends on the verdict: an UNVERIFIED run has no failing
+// test to fix, and its verdict's gate.unverified list names the reason,
+// such as a tree with uncommitted changes or a run outside the gate image.
 func notPassedError(path, runID, commit, verdict string) error {
-	if verdict == "" {
+	remedy := "fix the failure and " + coverRerun
+	switch verdict {
+	case "":
 		verdict = "missing"
+	case verdictstatus.VerdictUnverified:
+		remedy = "its gate.unverified list names why; commit any uncommitted changes, run the gate in its container rather than with --here, and " + coverRerun
 	}
-	return fmt.Errorf("the profile %s comes from gate run %s on %s, whose verdict is %s rather than PASS; fix the failure and %s", path, runID, shortCommit(commit), verdict, coverRerun)
+	return fmt.Errorf("the profile %s comes from gate run %s on %s, whose verdict is %s rather than PASS; %s", path, runID, shortCommit(commit), verdict, remedy)
 }

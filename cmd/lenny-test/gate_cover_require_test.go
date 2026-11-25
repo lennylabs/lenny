@@ -61,6 +61,15 @@ func TestCoverageDiffRequireGateRefusesWithoutARecordedCoverRun(t *testing.T) {
 	if _, err := checkProfileAgainstGate(r.root, profile, rewritten, true); err == nil || !strings.Contains(err.Error(), "gate run p1") {
 		t.Errorf("a rewritten profile with the flag: %v; want a refusal naming gate run p1", err)
 	}
+
+	writeCoverHistory(t, r.root, []historyLine{{RunID: "o2", Verdict: "PASS", TriggerMode: "gate", GitRevision: "0000000", Cover: true, CoverProfileSHA256: profileHash(written)}}, nil)
+	if _, err := checkProfileAgainstGate(r.root, profile, written, true); err == nil || !strings.Contains(err.Error(), "a gate run on 0000000") {
+		t.Errorf("with the flag, the profile of a run on another commit: %v; want a refusal naming that commit", err)
+	}
+	writeCoverHistory(t, r.root, []historyLine{{RunID: "m1", Verdict: "PASS", TriggerMode: "gate", GitRevision: head, Cover: true}}, map[string]string{"m1": "-"})
+	if _, err := checkProfileAgainstGate(r.root, profile, written, true); err == nil || !strings.Contains(err.Error(), "verdict of gate run m1") {
+		t.Errorf("with the flag, a run on HEAD whose verdict file is gone: %v; want a refusal", err)
+	}
 }
 
 // TestCoverageDiffRequireGateChecksTheProfileOnADirtyTree checks that
@@ -103,6 +112,7 @@ func TestCoverageDiffRefusesTheProfileOfAGateRunThatDidNotPass(t *testing.T) {
 	written := []byte("mode: atomic\nexample.com/m/a.go:1.1,2.2 1 1\n")
 	hash := profileHash(written)
 
+	remedies := map[string]string{"FAIL": "fix the failure", "UNVERIFIED": "gate.unverified", "": "fix the failure"}
 	for _, verdict := range []string{"FAIL", "UNVERIFIED", ""} {
 		writeCoverHistory(t, r.root, []historyLine{{RunID: "f1", Verdict: verdict, TriggerMode: "gate", GitRevision: head, Cover: true, CoverProfileSHA256: hash}}, nil)
 		writeCoverVerdict(t, r.root, "f1", verdict, hash)
@@ -112,8 +122,8 @@ func TestCoverageDiffRefusesTheProfileOfAGateRunThatDidNotPass(t *testing.T) {
 		}
 		for _, require := range []bool{false, true} {
 			_, err := checkProfileAgainstGate(r.root, profile, written, require)
-			if err == nil || !strings.Contains(err.Error(), "gate run f1") || !strings.Contains(err.Error(), "verdict is "+want+" rather than PASS") {
-				t.Errorf("verdict %q, --require-gate %v: %v; want a refusal naming the run and its verdict", verdict, require, err)
+			if err == nil || !strings.Contains(err.Error(), "gate run f1") || !strings.Contains(err.Error(), "verdict is "+want+" rather than PASS") || !strings.Contains(err.Error(), remedies[verdict]) {
+				t.Errorf("verdict %q, --require-gate %v: %v; want a refusal naming the run, its verdict, and %q", verdict, require, err, remedies[verdict])
 			}
 		}
 	}
