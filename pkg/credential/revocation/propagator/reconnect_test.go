@@ -71,13 +71,13 @@ func awaitLive(t *testing.T, from *Propagator, to *revocation.Cache, probe strin
 	})
 }
 
-// TestRunCallsRehydrateWhenTheSubscriptionReconnects pins that Run hands
-// its rehydration callback to the subscription as the reconnect callback:
-// the first subscription does not call it, and each re-established
-// subscription calls it once.
+// TestRunCallsRehydrateOnEverySubscriptionConfirmation pins that Run
+// hands its rehydration callback to the subscription as the confirmation
+// callback: the first subscription calls it once, and each re-established
+// subscription calls it once more.
 //
 // spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
-func TestRunCallsRehydrateWhenTheSubscriptionReconnects(t *testing.T) {
+func TestRunCallsRehydrateOnEverySubscriptionConfirmation(t *testing.T) {
 	mr := miniredis.RunT(t)
 	client := redis.NewClient(&redis.Options{Addr: mr.Addr()})
 	t.Cleanup(func() { _ = client.Close() })
@@ -90,15 +90,15 @@ func TestRunCallsRehydrateWhenTheSubscriptionReconnects(t *testing.T) {
 	go New(local, bus).Run(ctx, func() { rehydrations.Add(1) })
 
 	awaitLive(t, New(revocation.NewCache(), bus), local, "jti-probe")
-	if n := rehydrations.Load(); n != 0 {
-		t.Fatalf("rehydrate ran %d times on the first subscription, want 0", n)
+	if n := rehydrations.Load(); n != 1 {
+		t.Fatalf("rehydrate ran %d times on the first subscription, want 1", n)
 	}
 	mr.Close()
 	if err := mr.Restart(); err != nil {
 		t.Fatalf("restart miniredis: %v", err)
 	}
 	eventually(t, 10*time.Second, "rehydrate after the reconnect", func() bool {
-		return rehydrations.Load() == 1
+		return rehydrations.Load() == 2
 	})
 }
 
@@ -122,7 +122,7 @@ func TestReplicaAppliesARevocationMissedDuringTheOutageOnReconnect(t *testing.T)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	go New(cacheB, pubsub.New(clientB)).Run(ctx, trigger.Fire)
-	go cacheB.RunRehydration(ctx, time.Hour, trigger, oneTenant{}, index, nil)
+	go cacheB.RunRehydration(ctx, time.Hour, 0, trigger, oneTenant{}, index, nil)
 
 	awaitLive(t, replicaA, cacheB, "jti-probe")
 
@@ -136,6 +136,46 @@ func TestReplicaAppliesARevocationMissedDuringTheOutageOnReconnect(t *testing.T)
 		t.Fatalf("restart miniredis: %v", err)
 	}
 	eventually(t, 10*time.Second, "replica B to apply jti-missed after the reconnect", func() bool {
+		return cacheB.IsRevoked("jti-missed")
+	})
+}
+
+// TestReplicaAppliesARevocationMissedBeforeItsFirstSubscriptionIsConfirmed
+// pins the startup case: replica B rehydrates at startup while Redis is
+// unreachable, replica A then records a revocation that B cannot receive
+// over pub/sub, and B applies it when Redis first confirms its
+// subscription, through the rehydration that confirmation triggers, long
+// before its hour-long periodic tick.
+//
+// spec: §13.3 (Credential Flow) "Authoritative durability for revocation"
+func TestReplicaAppliesARevocationMissedBeforeItsFirstSubscriptionIsConfirmed(t *testing.T) {
+	mr := miniredis.RunT(t)
+	clientA := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	clientB := redis.NewClient(&redis.Options{Addr: mr.Addr()})
+	t.Cleanup(func() { _ = clientA.Close(); _ = clientB.Close() })
+	mr.Close()
+
+	index := &durableIndex{}
+	cacheB := revocation.NewCache()
+	if err := cacheB.Rehydrate(context.Background(), oneTenant{}, index); err != nil {
+		t.Fatalf("replica B startup rehydration: %v", err)
+	}
+	trigger := revocation.NewTrigger()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go New(cacheB, pubsub.New(clientB)).Run(ctx, trigger.Fire)
+	go cacheB.RunRehydration(ctx, time.Hour, revocation.DefaultReconnectSpacing, trigger, oneTenant{}, index, nil)
+
+	index.add("jti-missed")
+	New(revocation.NewCache(), pubsub.New(clientA)).Revoke("jti-missed")
+	time.Sleep(200 * time.Millisecond)
+	if cacheB.IsRevoked("jti-missed") {
+		t.Fatal("replica B applied jti-missed before Redis was reachable")
+	}
+	if err := mr.Restart(); err != nil {
+		t.Fatalf("restart miniredis: %v", err)
+	}
+	eventually(t, 10*time.Second, "replica B to apply jti-missed on its first subscription confirmation", func() bool {
 		return cacheB.IsRevoked("jti-missed")
 	})
 }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/credential/revocation"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 	"github.com/lennylabs/lenny/tests/testinfra/gateway"
 	"github.com/lennylabs/lenny/tests/testinfra/schematest"
@@ -167,12 +168,16 @@ func TestRevokedBearerIsRefusedOnEveryReplicaWithinTheRevocationBound(t *testing
 		// restore, which would apply the revocation without the reconnect.
 		// The attempt is repeated with a fresh bearer until B still admits
 		// the bearer when its link comes back, so the refusal measured
-		// after the restore is the reconnect's.
+		// after the restore is the reconnect's. The link stays down for the
+		// reconnect spacing, so the rehydration the reconnect triggers is
+		// not held by the one an earlier reconnect triggered.
 		for attempt, subject := range []string{"dave@acme.com", "erin@acme.com", "frank@acme.com"} {
 			tok, id := r.bearer(t, subject)
 			r.linkB.Cut()
+			cut := time.Now()
 			r.revoke(t, id)
 			awaitRefused(t, "replica A", r.a, tok, revBoundPropagation)
+			time.Sleep(time.Until(cut.Add(revocation.DefaultReconnectSpacing)))
 			code, _ := spoofCall(t, http.MethodGet, r.b.BaseURL()+"/v1/admin/me", tok, nil, nil)
 			r.linkB.Restore(t)
 			if code == http.StatusUnauthorized {

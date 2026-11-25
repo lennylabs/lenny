@@ -40,6 +40,9 @@ var requiredFlags = []struct {
 	// spec: §4.9 Credential Storage Topology. The admin credential-pool
 	// handlers parse every secretRef against the credentials namespace.
 	{"lenny-gateway", "credentials-namespace"},
+	// spec: §13.3 Authoritative durability for revocation. The reconnect
+	// spacing of the revocation-cache rehydration is operator-tunable.
+	{"lenny-gateway", "revocation-reconnect-spacing"},
 	// spec: §4.9 Token Service secret resolution. Every gateway credential
 	// read is one get through the Token Service's Kubernetes client.
 	{"lenny-token-service", "cluster-qps"},

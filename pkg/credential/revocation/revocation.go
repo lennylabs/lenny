@@ -55,13 +55,19 @@ type Cache struct {
 	lastSuccess  time.Time
 	maxStaleness time.Duration
 	clock        func() time.Time
+	// after returns a channel that delivers once d has passed. It times
+	// the wait of a rehydration request held by the reconnect spacing
+	// (RunRehydration); tests replace it to drive the wait from a fake
+	// clock.
+	after func(d time.Duration) <-chan time.Time
 }
 
 // Option configures a Cache at construction.
 type Option func(*Cache)
 
-// WithClock overrides the wall clock the staleness gate reads. Tests
-// inject a controllable clock; production leaves it at time.Now.
+// WithClock overrides the wall clock the staleness gate and the
+// reconnect spacing of RunRehydration read. Tests inject a controllable
+// clock; production leaves it at time.Now.
 func WithClock(fn func() time.Time) Option {
 	return func(c *Cache) { c.clock = fn }
 }
@@ -82,6 +88,7 @@ func NewCache(opts ...Option) *Cache {
 		revoked:      map[string]struct{}{},
 		maxStaleness: defaultMaxStaleness,
 		clock:        time.Now,
+		after:        time.After,
 	}
 	for _, o := range opts {
 		o(c)
