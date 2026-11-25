@@ -721,7 +721,19 @@ func runStaticTierAt(root, base, rev string) (string, string, *tierResult) {
 	if _, err := exec.LookPath("go"); err != nil {
 		return verdictstatus.Skipped, "go not on PATH", nil
 	}
+	outcomes := runStaticChecks(staticChecks(root, base, rev))
+	status, msg := reduceStaticOutcomes(outcomes)
+	return status, msg, staticTierResult(outcomes)
+}
 
+// staticSelfFn locates the running lenny-test, which two checks of the
+// static tier run again. Tests replace it with a stand-in.
+var staticSelfFn = os.Executable
+
+// staticChecks returns the static tier's check table for the checkout at
+// root: every check runs its command there, with base for the
+// changed-line lint and rev for the secret scan (runStaticTierAt).
+func staticChecks(root, base, rev string) []staticCheck {
 	checks := []staticCheck{
 		{name: "go vet ./...", run: func() (string, error) {
 			cmd := exec.Command("go", "vet", "./...")
@@ -970,7 +982,7 @@ func runStaticTierAt(root, base, rev string) (string, string, *tierResult) {
 			// _test.go file and confirms each test function carries
 			// the §17.2 annotation (or is a scaffold whose t.Skip
 			// already names the spec section).
-			self, err := os.Executable()
+			self, err := staticSelfFn()
 			if err != nil {
 				return "", fmt.Errorf("locate self: %w", err)
 			}
@@ -982,7 +994,7 @@ func runStaticTierAt(root, base, rev string) (string, string, *tierResult) {
 		{name: "lenny-test validate", run: func() (string, error) {
 			// The selection and register files parse and resolve, and
 			// every component-and-up test carries a spec annotation.
-			self, err := os.Executable()
+			self, err := staticSelfFn()
 			if err != nil {
 				return "", fmt.Errorf("locate self: %w", err)
 			}
@@ -993,10 +1005,7 @@ func runStaticTierAt(root, base, rev string) (string, string, *tierResult) {
 		}},
 	}
 
-	checks = append(checks, staticPackageChecks(root)...)
-	outcomes := runStaticChecks(checks)
-	status, msg := reduceStaticOutcomes(outcomes)
-	return status, msg, staticTierResult(outcomes)
+	return append(checks, staticPackageChecks(root)...)
 }
 
 // bashScript runs a static-tier shell script with bash in the checkout at
