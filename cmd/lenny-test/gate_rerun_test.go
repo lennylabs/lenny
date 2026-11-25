@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -76,9 +77,16 @@ func TestGoTestJSONRecordsPackagesThatFailedOutsideATest(t *testing.T) {
 		`{"Action":"fail","Package":"` + m + `d"}`,
 		`FAIL	` + m + `e [build failed]`,
 		`{"Action":"output","Package":"` + m + `f","Output":"FAIL\t` + m + `f [setup failed]\n"}`,
+		`{"Action":"run","Package":"` + m + `g","Test":"TestA"}`,
+		`{"Action":"fail","Package":"` + m + `g","Test":"TestA"}`,
+		`{"Action":"run","Package":"` + m + `g","Test":"TestExits"}`,
+		`{"Action":"output","Package":"` + m + `g","Output":"FAIL\t` + m + `g\t0.01s\n"}`,
+		`{"Action":"fail","Package":"` + m + `g"}`,
 	}, "\n")
 	r := parseGoTestJSON([]byte(stdout), nil)
-	want := []string{m + "c", m + "d", m + "e", m + "f"}
+	// g failed a test, and another test started and never ended, as when
+	// it calls os.Exit: the tests after it did not run.
+	want := []string{m + "c", m + "d", m + "e", m + "f", m + "g"}
 	if !reflect.DeepEqual(r.PackageFailures, want) {
 		t.Errorf("package failures = %v, want %v", r.PackageFailures, want)
 	}
@@ -86,7 +94,7 @@ func TestGoTestJSONRecordsPackagesThatFailedOutsideATest(t *testing.T) {
 		t.Errorf("passed = %v, want only a's TestOK", r.passed)
 	}
 	st, detail, _ := tierOutcome("unit", r, nil)
-	if st != verdictstatus.Fail || !strings.Contains(detail, "4 package(s) failed outside a test") {
+	if st != verdictstatus.Fail || !strings.Contains(detail, "5 package(s) failed outside a test") {
 		t.Errorf("tierOutcome = %s, %q; want a failure naming the packages", st, detail)
 	}
 	clean := parseGoTestJSON([]byte(`{"Action":"fail","Package":"`+m+`x"}`), nil)
@@ -96,7 +104,7 @@ func TestGoTestJSONRecordsPackagesThatFailedOutsideATest(t *testing.T) {
 	merged := &tierResult{}
 	mergeTierResult(merged, r)
 	mergeTierResult(merged, clean)
-	if len(merged.PackageFailures) != 5 || !merged.passed[passedKey(m+"a", "TestOK")] {
+	if len(merged.PackageFailures) != 6 || !merged.passed[passedKey(m+"a", "TestOK")] {
 		t.Errorf("merged result = %v, %v", merged.PackageFailures, merged.passed)
 	}
 }
@@ -409,9 +417,9 @@ func TestRerunFailedMergesTheUnitCoverage(t *testing.T) {
 	g.state = func() (string, bool) { return "c1", false }
 	var profiles []string
 	g.exec[tierUnit] = func(p tierPlan) (string, string, *tierResult) {
-		profiles = append(profiles, p.byNameProfile)
-		if p.byNameProfile != "" {
-			if err := os.WriteFile(p.byNameProfile, []byte("mode: atomic\nm/a.go:1.1,2.2 1 2\nm/b.go:1.1,2.2 1 1\n"), 0o644); err != nil {
+		profiles = append(profiles, p.rerunProfile)
+		if p.rerunProfile != "" {
+			if err := os.WriteFile(p.rerunProfile, []byte("mode: atomic\nm/a.go:1.1,2.2 1 2\nm/b.go:1.1,2.2 1 1\n"), 0o644); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -581,5 +589,83 @@ func TestTheRerunScriptSkipsTheStaticTiersPreparation(t *testing.T) {
 		if !strings.Contains(gateRerunScript, kept) {
 			t.Errorf("the rerun script lacks %q", kept)
 		}
+	}
+}
+
+// TestARerunUnitPlanWritesItsProfileByNameAndWhole pins that the unit
+// invocation of a rerun plan writes the rerun's profile both when it runs
+// the failed tests by name and when a -run pattern past its bound runs
+// their packages whole, and that a plan without a rerun profile writes none.
+func TestARerunUnitPlanWritesItsProfileByNameAndWhole(t *testing.T) {
+	long := make([]string, 0, 1200)
+	for i := 0; i < 1200; i++ {
+		long = append(long, fmt.Sprintf("TestAVeryLongNameThatFillsThePatternNumber%05d", i))
+	}
+	for _, tc := range []struct {
+		name  string
+		funcs []string
+	}{
+		{"by name", []string{"TestA"}},
+		{"whole past the pattern bound", long},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			calls := recordGoTest(t)
+			p := tierPlan{name: tierUnit, pkgs: []string{}, funcs: map[string][]string{"./pkg/a": tc.funcs}, noCoverage: true, rerunProfile: "/tmp/rerun.out"}
+			runUnitTier(p)
+			if len(*calls) != 1 || !contains((*calls)[0], "-coverprofile=/tmp/rerun.out") {
+				t.Errorf("%d call(s); want one invocation writing the rerun profile: %v", len(*calls), *calls)
+			}
+			calls = recordGoTest(t)
+			p.rerunProfile = ""
+			runUnitTier(p)
+			for _, c := range *calls {
+				for _, a := range c {
+					if strings.HasPrefix(a, "-coverprofile") {
+						t.Errorf("a plan without a rerun profile wrote one: %v", c)
+					}
+				}
+			}
+		})
+	}
+}
+
+// TestAnUnverifiedRerunLeavesTheOriginalProfile pins that a rerun whose
+// tests passed but whose verdict cannot stand for the commit, here one
+// outside the gate image, does not merge into the original profile, so a
+// later rerun still finds the original's hash.
+func TestAnUnverifiedRerunLeavesTheOriginalProfile(t *testing.T) {
+	root := t.TempDir()
+	profile := filepath.Join(root, coverProfileFile)
+	base := []byte("mode: atomic\nm/a.go:1.1,2.2 1 0\n")
+	if err := os.MkdirAll(filepath.Dir(profile), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(profile, base, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	orig := originalRun("o1", "c1", bytesSHA256(base))
+	orig.Tiers[tierComponent] = tierStat{Status: verdictstatus.Pass}
+	orig.Tiers[tierUnit] = tierStat{Status: verdictstatus.Fail, Failed: 1, Detail: "1 failure(s)", Failures: []failureEntry{{Test: "TestA", Package: moduleImportPath + "/pkg/a"}}}
+	plans, tests, err := rerunPlans(orig)
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := stubGateRunner()
+	g.state = func() (string, bool) { return "c1", false }
+	g.exec[tierUnit] = func(p tierPlan) (string, string, *tierResult) {
+		if p.rerunProfile != "" {
+			if err := os.WriteFile(p.rerunProfile, []byte("mode: atomic\nm/a.go:1.1,2.2 1 3\n"), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return verdictstatus.Pass, "", &tierResult{Total: 1, Passed: 1, passed: map[string]bool{passedKey(moduleImportPath+"/pkg/a", "TestA"): true}}
+	}
+	o := rerunOptions{root: root, count: 1, environment: "host", environmentErr: errors.New("LENNY_GATE_IMAGE is not set")}
+	v := g.rerunFailed(rerunJob{orig: orig, plans: plans, tests: tests, profile: profile}, o)
+	if v.Verdict != verdictstatus.VerdictUnverified {
+		t.Fatalf("verdict %s, want UNVERIFIED", v.Verdict)
+	}
+	if got, _ := os.ReadFile(profile); string(got) != string(base) || v.Gate.CoverProfileSHA256 != bytesSHA256(base) {
+		t.Errorf("an UNVERIFIED rerun rewrote the profile: %q, hash %s", got, v.Gate.CoverProfileSHA256)
 	}
 }

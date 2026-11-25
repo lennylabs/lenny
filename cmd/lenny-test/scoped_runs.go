@@ -139,7 +139,7 @@ func packageFailuresNote(r *tierResult) string {
 	if len(r.PackageFailures) == 0 {
 		return ""
 	}
-	return fmt.Sprintf("; %d package(s) failed outside a test (a build or setup failure, a failure with no failed test, or a panic or timeout that ended the test binary): %s", len(r.PackageFailures), strings.Join(r.PackageFailures, ", "))
+	return fmt.Sprintf("; %d package(s) failed outside a test (a build or setup failure, a failure with no failed test, or a test binary that exited, panicked, or timed out before its tests ended): %s", len(r.PackageFailures), strings.Join(r.PackageFailures, ", "))
 }
 
 // runScopedTier runs a scoped plan of a tagged tier with the tier's flags.

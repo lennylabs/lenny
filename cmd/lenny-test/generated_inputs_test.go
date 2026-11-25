@@ -75,6 +75,11 @@ func TestAGeneratedRowNarrowsOnlyOnceTheBaseCarriesIt(t *testing.T) {
 	if _, ok := merged[tierE2EKind]; ok {
 		t.Errorf("a generated row the base carries did not narrow the selection: %v", tierNamesOf(merged))
 	}
+	// A base list that is absent or unreadable narrows nothing.
+	unread := planOf(selectChanged([]string{"charts/lenny/files/rules.yaml"}, fixtureGraph(), generatedFixtureInputs().union(nil), specEdits{}, selectOpts{rdepsDepth: fullRdepsDepth}))
+	if _, ok := unread[tierE2EKind]; !ok {
+		t.Errorf("a generated row narrowed the selection with no base list: %v", tierNamesOf(unread))
+	}
 }
 
 // TestGeneratedRowProblemsRefuseRowsThatCannotStandForTheirFiles pins the
@@ -183,7 +188,7 @@ func TestCommittedGeneratedRowsSelectTheirChecks(t *testing.T) {
 	}{
 		{"charts/lenny/files/alerting-rules.yaml", []string{tierStatic, tierComponent, tierDocs}, []string{"tests/component/observability"}, nil},
 		{"docs/alerting/rules.yaml", []string{tierStatic, tierComponent, tierDocs}, []string{"tests/component/observability"}, nil},
-		{"pkg/embedded/manifests/manifests.yaml", []string{tierStatic, tierUnit, tierDocs}, nil, []string{"pkg/embedded/manifests"}},
+		{"pkg/embedded/manifests/manifests.yaml", []string{tierStatic, tierUnit, tierComponent, tierDocs}, []string{"tests/component/controllers", "tests/component/embedded"}, []string{"pkg/embedded/manifests", "pkg/embedded/stack"}},
 		{"tests/registers/spec-section-citations.yaml", []string{tierStatic}, nil, nil},
 		{"tests/registers/line-citations.yaml", []string{tierStatic}, nil, nil},
 		{"tests/registers/golangci-lint-findings.yaml", []string{tierStatic}, nil, nil},

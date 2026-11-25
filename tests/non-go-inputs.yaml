@@ -267,11 +267,16 @@ inputs:
       - docs
     tests:
       - pkg/embedded/manifests
+      - pkg/embedded/stack
+      - tests/component/embedded
+      - tests/component/controllers
     reason: >-
       `make generate` renders the chart under the development profile into
       this file. The documentation tier's sync check compares it with a fresh
-      render, and the embedding package's own tests decode it. A change to the
-      chart selects the chart's readers through the chart's own row.
+      render, the embedding package's own tests decode it, the tests of the
+      stack package, which applies it, read its Secrets and mounts, and the
+      embedded bring-up and the controllers' embedded apply tests apply it
+      through the stack package.
   - paths: ["cmd/lenny-test/**"]
     runs:
       - docs

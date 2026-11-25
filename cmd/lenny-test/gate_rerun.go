@@ -43,8 +43,9 @@ import (
 //   - Every tier that did not pass is the unit, component, contract, or
 //     integration tier, with status fail, a failure entry for each failed
 //     test, and no package that failed outside a test: a build or setup
-//     failure, a test binary that failed with no failed test, or a panic or
-//     test timeout that ended the binary and left the tests after it unrun.
+//     failure, a test binary that failed with no failed test, or a test
+//     binary that exited, panicked, or timed out while a test ran, which
+//     left the tests after it unrun.
 //   - A failure of the static tier or the documentation gates is not
 //     rerun. Their checks read the commit, so a rerun cannot change them.
 //
@@ -337,7 +338,7 @@ func rerunTierPlan(id, name string, t tierStat) (tierPlan, []gateRerunTest, erro
 	case t.Status != verdictstatus.Fail:
 		return tierPlan{}, nil, fmt.Errorf("the %s tier of gate run %s is %s (%s); only a tier that failed on its tests can be rerun", name, id, t.Status, firstLine(t.Reason+t.Detail))
 	case len(t.PackageFailures) > 0:
-		return tierPlan{}, nil, fmt.Errorf("the %s tier of gate run %s has packages that failed outside a test (%s): a build or setup failure, a failure with no failed test, or a panic or timeout that ended the test binary before its other tests ran; run `lenny-test gate` again", name, id, strings.Join(t.PackageFailures, ", "))
+		return tierPlan{}, nil, fmt.Errorf("the %s tier of gate run %s has packages that failed outside a test (%s): a build or setup failure, a failure with no failed test, or a test binary that exited, panicked, or timed out before its tests ended, leaving later tests unrun; run `lenny-test gate` again", name, id, strings.Join(t.PackageFailures, ", "))
 	case len(t.Failures) == 0 || t.Failed != len(t.Failures):
 		return tierPlan{}, nil, fmt.Errorf("the %s tier of gate run %s failed with %d failed test(s) and %d failure record(s) (%s); a rerun needs a record of each failed test", name, id, t.Failed, len(t.Failures), firstLine(t.Detail))
 	}
@@ -417,6 +418,16 @@ func (g gateRunner) rerunFailed(job rerunJob, o rerunOptions) *verdict {
 	}
 	v.Gate.WallTimeMS = time.Since(start).Milliseconds()
 	v.Gate.RerunOf.Tests = tests
+	if o.commit != "" && head != o.commit {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("HEAD was %s when the rerun started, and the container resolved it to %s; run the rerun again", shortCommit(head), shortCommit(o.commit)))
+	}
+	if head2, dirty2 := g.state(); head2 != head || dirty2 != dirty {
+		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("HEAD or the tree changed while the tests ran (HEAD %s to %s, uncommitted changes %t to %t); run the rerun again", shortCommit(head), shortCommit(head2), dirty, dirty2))
+	}
+	withholdGatePass(v, dirty, o.environmentErr, nil)
+	// The merge rewrites the profile, so it runs only for a verdict that
+	// is still PASS after every check: a rerun that fails or cannot stand
+	// for the commit leaves the original profile for the next rerun.
 	if partial != "" && v.Verdict == verdictstatus.VerdictPass {
 		sum, err := mergeRerunCoverage(job.profile, partial, og.CoverProfileSHA256, o.root)
 		if err != nil {
@@ -425,13 +436,6 @@ func (g gateRunner) rerunFailed(job rerunJob, o rerunOptions) *verdict {
 			v.Gate.CoverProfileSHA256 = sum
 		}
 	}
-	if o.commit != "" && head != o.commit {
-		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("HEAD was %s when the rerun started, and the container resolved it to %s; run the rerun again", shortCommit(head), shortCommit(o.commit)))
-	}
-	if head2, dirty2 := g.state(); head2 != head || dirty2 != dirty {
-		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("HEAD or the tree changed while the tests ran (HEAD %s to %s, uncommitted changes %t to %t); run the rerun again", shortCommit(head), shortCommit(head2), dirty, dirty2))
-	}
-	withholdGatePass(v, dirty, o.environmentErr, nil)
 	return v
 }
 
@@ -460,7 +464,7 @@ func (g gateRunner) rerunTier(v *verdict, origID string, p tierPlan, count int, 
 	for i := 1; i <= count; i++ {
 		run := p
 		if i == 1 {
-			run.byNameProfile = profile
+			run.rerunProfile = profile
 		}
 		st, msg, res := exec(run)
 		if st == verdictstatus.Skipped {

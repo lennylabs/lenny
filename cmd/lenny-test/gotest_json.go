@@ -43,8 +43,9 @@ type tierResult struct {
 	// PackageFailures lists the packages that failed in a way no failed
 	// test accounts for: a package whose build or setup failed, a test
 	// binary that failed with no failed test (a TestMain exit, a race
-	// reported after the tests), and a test binary that a panic or a test
-	// timeout ended, which leaves the tests after it unrun. `lenny-test gate
+	// reported after the tests), and a test binary that exited, panicked,
+	// or timed out while a test ran, which leaves that test without an end
+	// event and the tests after it unrun. `lenny-test gate
 	// --rerun-failed` refuses a run whose tier lists any (change 0172,
 	// decision 26).
 	PackageFailures []string
@@ -94,6 +95,11 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 	type acc struct {
 		output  strings.Builder
 		elapsed float64
+		// started and ended record a run event and a pass, fail, or skip
+		// event, so a test that started and never ended, because the
+		// binary exited under it, marks its package as one whose later
+		// tests did not run.
+		started, ended bool
 	}
 	tests := map[key]*acc{}
 	pkgFailed := map[string]bool{}
@@ -144,6 +150,12 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 			tests[k] = a
 		}
 		switch ev.Action {
+		case "run":
+			a.started = true
+		case "pass", "fail", "skip":
+			a.ended = true
+		}
+		switch ev.Action {
 		case "output":
 			a.output.WriteString(ev.Output)
 		case "pass":
@@ -169,6 +181,11 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 	for pkg := range pkgFailed {
 		if !testFailed[pkg] {
 			broken[pkg] = true
+		}
+	}
+	for k, a := range tests {
+		if a.started && !a.ended {
+			broken[k.pkg] = true
 		}
 	}
 	result.PackageFailures = sortedKeys(broken)

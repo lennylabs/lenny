@@ -40,10 +40,13 @@ type nonGoInputs struct {
 	Kind    string       `yaml:"kind"`
 	Version int          `yaml:"version"`
 	Inputs  []nonGoInput `yaml:"inputs"`
-	// base is the list at the diff's base commit that union merged in, or
-	// nil. A generated row narrows a path's selection only when the base
-	// list also carries a generated row for the path (generated).
-	base *nonGoInputs
+	// unioned reports a list that union merged with the base's list, and
+	// base is that list, or nil when the base had none or it could not be
+	// read. A generated row of a merged list narrows a path's selection
+	// only when the base list also carries a generated row for the path
+	// (generated).
+	unioned bool
+	base    *nonGoInputs
 }
 
 // nonGoInput is one row: path patterns, the targets that read the paths,
@@ -110,10 +113,11 @@ func (n *nonGoInputs) union(other *nonGoInputs) *nonGoInputs {
 	if n == nil {
 		return other
 	}
-	if other == nil {
-		return n
-	}
 	out := *n
+	out.unioned = true
+	if other == nil {
+		return &out
+	}
 	out.Inputs = append(append([]nonGoInput{}, n.Inputs...), other.Inputs...)
 	out.base = other
 	return &out
@@ -136,16 +140,17 @@ func (n *nonGoInputs) testsFor(p string) []string {
 // generated reports whether a generated row matches the changed path, so
 // the selection reads only the generated rows for it (see nonGoInput's
 // Generated field). A list that union merged with the base's list narrows
-// the path only when the base's list also carries a generated row for it:
-// the union keeps a branch that narrows a row running what the row named
-// before, and a generated row that the branch adds narrows the selection
-// of the branches after it merges, not its own. A nil list matches
-// nothing.
+// the path only when the base's list also carries a generated row for it,
+// and a merged list whose base list was absent or unreadable narrows
+// nothing: the union keeps a branch that narrows a row running what the
+// row named before, so a generated row that a branch adds narrows the
+// selection of the branches after it merges and leaves its own as it was.
+// A nil list matches nothing.
 func (n *nonGoInputs) generated(p string) bool {
 	if n == nil || !n.matchesGenerated(p) {
 		return false
 	}
-	return n.base == nil || n.base.matchesGenerated(p)
+	return !n.unioned || (n.base != nil && n.base.matchesGenerated(p))
 }
 
 // matchesGenerated reports whether a generated row of the list matches the

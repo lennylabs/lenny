@@ -254,8 +254,13 @@ func TestBaseRowsJoinTheBranchRowsAndDeadTargetsSelectNothing(t *testing.T) {
 		t.Errorf("a target the graph does not hold must select nothing; unit = %v", plan[tierUnit].pkgs)
 	}
 	var none *nonGoInputs
-	if none.union(nil) != nil || none.union(base) != base || base.union(nil) != base {
+	if none.union(nil) != nil || none.union(base) != base {
 		t.Errorf("a union with a nil list must return the other list")
+	}
+	// A union with no base list keeps the branch's rows and records that
+	// it was merged, so its generated rows narrow nothing.
+	if got := base.union(nil); !reflect.DeepEqual(got.Inputs, base.Inputs) || !got.unioned || got.base != nil {
+		t.Errorf("a union with no base list = %+v", got)
 	}
 }
 
