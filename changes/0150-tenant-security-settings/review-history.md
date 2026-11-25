@@ -65,4 +65,4 @@ Revision 12 records the owner's answers of 2026-11-20. Two questions of the desk
 
 ## Placement of D14 (2026-11-25)
 
-D14 placed the idempotency edit in the step to be named when the proposed upload-token change was created. That change was never created, so [0173](../0173-idempotency-stored-credentials/change.md) carries the edit, records the answer to DV-6 as its decision 1, and builds it in 0173.S1. The "Applied in" column of D14 names that step. The answer itself is unchanged.
+D14 placed the idempotency edit in the step to be named when the proposed upload-token change was created. That change was never created, so [0173](../0173-idempotency-stored-credentials/change.md) carries the edit, records the answer to DV-6 as its decision 1, and builds it in 0173.S1. The "Applied in" column of D14 names that step. The answer itself is unchanged. 0173 adds idempotency records to the §12.9 default data-type mappings as T3, Confidential, in Postgres, and the next revision of this change carries that row into the inventory of data types that "TSS-8" names enforcement points for.

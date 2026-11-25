@@ -1,6 +1,6 @@
 # Removal of the openai-assistants reference runtime
 
-Status: `In progress`, revision 1, 2026-11-25.
+Status: `In progress`, revision 2, 2026-11-25.
 
 ## Problem
 
@@ -15,7 +15,7 @@ The change removes `openai-assistants` from every carrier that states the curren
 - The tests: the chart's reference-runtimes test, the embedded catalog test, the conformance catalog test, the test fixture constant, the runtime list of `cmd/lenny-test`, and the subset groups of `tests/groups.subsets.yaml`.
 - The documentation and the root-level records: the client guide, the runtime author guide, the status page, the comparisons page, the `lenny up` walkthrough, the documentation index, `README.md`, and `TESTING.md`.
 
-It leaves out the records that keep the words they were written with: `changes/archive/`, `proposals/`, the audit records `BUILD-GAPS.md` and `TEST-GAPS.md`, and `testdata/` directories. Other changes that are not finished and that name the runtime in their design text, 0118, 0122, 0135, and 0137, are left as written: under "Reading the program" of [v1](../programs/v1.md), an edit a member change states for a removed runtime has no successor and is moot.
+It leaves out the records that keep the words they were written with: `changes/archive/`, `proposals/`, the audit records `BUILD-GAPS.md` and `TEST-GAPS.md`, and `testdata/` directories. Members of program [v1](../programs/v1.md) that are not finished name the runtime in their design text: 0118, 0122, 0135, and 0137. Their text is left for each change's next revision, because an edit they state for the runtime has nothing to act on once this change removes it. 0135's "Validation owed" drops the OpenAI Assistants API from its mid-run input item, with an entry in its review history, because that list states work still owed.
 
 ## Requirements
 
