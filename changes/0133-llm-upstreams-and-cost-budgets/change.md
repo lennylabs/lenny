@@ -1,6 +1,6 @@
 # LLM credential removal and access through a gateway
 
-Status: `Draft`, revision 24, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 25, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 The folder keeps its name, `0133-llm-upstreams-and-cost-budgets`, so that links into it keep resolving. Decision 23 sets the title. The change does two jobs: it removes Lenny's LLM credential machinery and its proxy ("LU-4"), and it states how the mechanisms that `0124-connector-removal`, `0127-egress-and-git`, and `0170-budgets` own combine into LLM access through an operator's gateway, with the reference integrations, the gateway guide, and the checks owed. Each rule of that path is stated once, in its owner, and this change cites it. Revision 20 replaces the metering proxy design of revisions 1 to 19 under decision 22, which the owner settled on 2026-11-24. `review-history.md` records the earlier revisions, and the decisions they rest on stay in `decisions.md`, marked where decision 22 supersedes them.
 
@@ -37,7 +37,7 @@ What only Lenny can do is tell an operator's LLM gateway which tenant, user, ses
 
 - The `llm` meter and the unit `llmCredits` of `0170-budgets` give way to the `externalCost` meter, counted in the deployment's currency ("LU-3", and 0170's decisions 57 and 67).
 - The token limits of [§11.2](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) and `maxTokenBudget` of [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease) become limits on the `externalCost` meter in the budget objects of `0170-budgets`.
-- The §8.6 extension starts when charges exhaust a limit of a session budget or a carve, and a call refused meanwhile is retried by the runtime ("LU-5").
+- The §8.6 extension starts when charges exhaust a limit of a session budget or a cap, and a call refused meanwhile is retried by the runtime ("LU-5").
 - `CredentialPool` serves VCS providers alone.
 
 **Removed:**
@@ -82,7 +82,7 @@ What only Lenny can do is tell an operator's LLM gateway which tenant, user, ses
 | `netagent` | The per-pod network agent of [`0127-egress-and-git`](../0127-egress-and-git/change.md) that terminates TLS for bound hosts and attaches credentials the agent process never sees. |
 | Credential binding | The egress design's object that names a secret source, the hosts it serves, and a `delivery` mode ([`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings)). |
 | Identity assertion | The CR-2 token `lenny-identity+jwt`, which names the session's user to an operator service and which D11 of 0124 restricts to pods that no other session used. |
-| Budget object, carve, and session budget | The records of [`0170-budgets`](../0170-budgets/change.md). |
+| Budget object, cap, and session budget | The records of [`0170-budgets`](../0170-budgets/change.md). |
 | Lease extension | The [§8.6](../../spec/08_recursive-delegation.md#86-lease-extension) operation that raises a session's budget in `auto` mode or after a person approves an elicitation. |
 | Egress halt | The halt of a slot's egress when its suspension cannot take hold ([`0124-connector-removal`, "CR-4 Egress halt at suspension"](../0124-connector-removal/change.md#cr-4-egress-halt-at-suspension)). |
 | `llm_request_started` and `llm_request_completed` | The runtime frames by which a runtime reports a model call it sends, the second optionally with `inputTokens` and `outputTokens` ([§28.5.3](../../spec/28_communication-channels.md#2853-intra-pod)). |
@@ -125,7 +125,7 @@ Lenny stops brokering LLM credentials and stops proxying model calls. An operato
 
 **Removal (LU-4).** The proxy, the LLM credential pools, the leases, direct mode, and the machinery around them leave the specification and the tree. VCS pools stay.
 
-**Enforcement (LU-5).** Budgets on `externalCost` are best effort. When a limit is exhausted, Lenny suspends the session's attribution bindings, and `netagent` answers the session's next call to the gateway itself: `429` with `Retry-After` while an extension is pending, and `403` naming the budget once the exhaustion is final. `onExhausted.running` suspends or ends a running session as for any meter, and a session budget or a carve starts the §8.6 extension.
+**Enforcement (LU-5).** Budgets on `externalCost` are best effort. When a limit is exhausted, Lenny suspends the session's attribution bindings, and `netagent` answers the session's next call to the gateway itself: `429` with `Retry-After` while an extension is pending, and `403` naming the budget once the exhaustion is final. `onExhausted.running` suspends or ends a running session as for any meter, and a session budget or a cap starts the §8.6 extension.
 
 **Usage (LU-6).** A charge may carry the call's token counts in a neutral schema, which usage events show. A runtime's own reports stay displayed and read by no budget.
 
@@ -193,7 +193,7 @@ Lenny stops brokering LLM credentials and stops proxying model calls. An operato
 | F-4.9.34, F-4.9.38, F-4.9.40, F-4.9.41 | Open, Medium | Lease release retry, the user-credential availability check, lease-store errors, and the deny-list key. Obsolete under LU-B for the LLM half. F-4.9.41 is re-checked for VCS pools. |
 | F-4.9.46, F-4.9.47 | Open, Medium | The inert `provider` values and the `/v1/credentials` wire names. Resolved by OD-10 and UC-1. |
 | F-4.7.31, F-11.4.10 | Open | The rotation in-flight gate and the lease set `full_revoke` revokes. Obsolete for LLM leases. |
-| F-8.3.9 | Open, Medium | No `FINAL_USAGE_REPORT` ends the usage quiescence wait. 0166.S2 closes it with the carve, and LU-B removes `FINAL_USAGE_REPORT`. |
+| F-8.3.9 | Open, Medium | No `FINAL_USAGE_REPORT` ends the usage quiescence wait. 0166.S2 closes it with the count of a tree at its root, which leaves nothing to return when a child ends, and LU-B removes `FINAL_USAGE_REPORT`. |
 | F-11.2.34 | Open, Medium | Budget termination lost to a crash, because the enforcer counts in process memory. LU-B removes the in-process enforcer, and 0170.S1 closes the finding with budget counters in Redis. |
 | F-4.9.29 | Open, Medium | No adapter code fills `llm.headers`. Obsolete under LU-B, which removes the `llm` member. |
 | F-8.6.6 | Closed | Proposal 0023 placed the §8.6 trigger in the proxy at settlement. LU-B moves it to the exhaustion of a limit by charges. |
@@ -235,7 +235,7 @@ The gateway prices each call with its own prices and reports one charge per call
 
 **Two ways to enforce (decision 26).** A deployer chooses between two setups, and may use both:
 
-- **Charges with Lenny's budgets.** The gateway reports a charge per call, and Lenny's budgets on `externalCost` count them, with carves, extensions, thresholds, and the `onExhausted` actions of 0170. This is the precise setup, and it needs a reporter.
+- **Charges with Lenny's budgets.** The gateway reports a charge per call, and Lenny's budgets on `externalCost` count them, with caps on children, extensions, thresholds, and the `onExhausted` actions of 0170. This is the precise setup, and it needs a reporter.
 - **External enforcement.** The gateway enforces its own limits, such as LiteLLM's team budgets, and reports no charge. When a session hits one, the gateway's reporter sends a limit notice ("BG-12" **Limit notices.**), or the runtime sends the `external_limit` frame of [`0139-runtime-protocol`, "RP-9"](../0139-runtime-protocol/change.md#rp-9-external-limits). Either suspends the session as a budget suspension does, and only its client resumes it ([`0146-session-lifecycle`](../0146-session-lifecycle/change.md#sl-4-tree-suspension), L39). This is the simple setup, and it needs no charge reporting.
 
 ### LU-4 Removal
@@ -274,7 +274,7 @@ The following leave the specification and the tree **[design]**. "Specification 
 
 ### LU-5 Enforcement
 
-Enforcement on the `externalCost` meter is best effort **[design]**. When charges exhaust a limit, [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges) **Exhaustion** suspends the session's attribution bindings, and `netagent` answers the session's next call to the gateway as [`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.** states: `429` with `Retry-After` while a §8.6 extension of a session budget or a carve is pending, and `403` naming the budget once the exhaustion is final. `onExhausted.running` and admission act as 0170 "BG-6" states. Calls already in flight at the gateway are not cancelled, and LUR-6 bounds the overshoot.
+Enforcement on the `externalCost` meter is best effort **[design]**. A charge counts in the session budget of the session's tree, kept at its root, in the cap of every capped session on the session's path to the root, and in the shared budgets of its set ([`0170-budgets`, "BG-8"](../0170-budgets/change.md#bg-8-tree-counters-and-caps)). When charges exhaust a limit, [`0170-budgets`, "BG-12"](../0170-budgets/change.md#bg-12-external-charges) **Exhaustion** suspends the session's attribution bindings, and `netagent` answers the session's next call to the gateway as [`0127-egress-and-git`, "Credential bindings"](../0127-egress-and-git/change.md#credential-bindings) **Binding suspension.** states: `429` with `Retry-After` while a §8.6 extension of a session budget or a cap is pending, and `403` naming the budget once the exhaustion is final. `onExhausted.running` and admission act as 0170 "BG-6" states. Calls already in flight at the gateway are not cancelled, and LUR-6 bounds the overshoot.
 
 ### LU-6 Usage reporting
 
@@ -343,7 +343,7 @@ The following edits locate their targets by heading. Subsections of §4.9 named 
 | [§5.1 Runtime](../../spec/05_runtime-registry-and-pool-model.md#51-runtime) and [§5.2](../../spec/05_runtime-registry-and-pool-model.md#52-pool-configuration-and-execution-modes) | Remove `supportedProviders` and `credentialCapabilities` with no replacement field, and the slot's credential lease and credentials file. |
 | [§6.1](../../spec/06_warm-pod-model.md#61-what-a-pre-warmed-pod-looks-like), [§6.2](../../spec/06_warm-pod-model.md#62-pod-state-machine), [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow), and [§7.3](../../spec/07_session-lifecycle.md#73-retry-and-resume) | Remove the per-session credential lease lifecycle and the pre-claim check. |
 | [§8.1](../../spec/08_recursive-delegation.md#81-design-philosophy), [§8.2](../../spec/08_recursive-delegation.md#82-delegation-mechanism), [§8.3](../../spec/08_recursive-delegation.md#83-delegation-policy-and-lease), [§8.8](../../spec/08_recursive-delegation.md#taskrecord), and [§8.10](../../spec/08_recursive-delegation.md#810-delegation-tree-recovery) | Remove `credentialPropagation`, the credential pre-check, `ReportUsage`, and `FINAL_USAGE_REPORT`. Token budgets are limits on the `externalCost` meter under `0170-budgets`. |
-| [§8.6 Lease Extension](../../spec/08_recursive-delegation.md#86-lease-extension) | The trigger is the exhaustion by charges of a limit of a session budget or a carve. The extension holds no call, and a granted extension lifts the binding suspension. |
+| [§8.6 Lease Extension](../../spec/08_recursive-delegation.md#86-lease-extension) | The trigger is the exhaustion by charges of a limit of a session budget or a cap. The extension holds no call, and a granted extension lifts the binding suspension. |
 | [§10.2 Authentication](../../spec/10_gateway-internals.md#102-authentication) | Remove credential lease bearers. |
 | [§11.2](../../spec/11_policy-and-controls.md#112-budgets-and-quotas) and [§11.2.1](../../spec/11_policy-and-controls.md#1121-billing-event-stream) | The "Token limits" row gives way to budgets on the `externalCost` meter of `0170-budgets`. `token_usage.checkpoint` loses its LLM token counts, and charges reach billing as `0121-billing-resource-attribution` states. |
 | [§11.3](../../spec/11_policy-and-controls.md#113-timeouts-and-cancellation) and [§11.4](../../spec/11_policy-and-controls.md#114-user-invalidation) | Remove the credential lease TTL and expiry warnings. |

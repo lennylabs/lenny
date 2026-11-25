@@ -1,6 +1,6 @@
 # Delegation availability
 
-Status: `Draft`, revision 17, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 18, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -178,7 +178,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
         │ no room ──> 403 DELEGATION_DISABLED (disabledBy: session) or DELEGATION_DEPTH_EXCEEDED
         ▼
  0166's caveats: PreRoute chain (kind: delegate), post-chain point (policy cap, isolation floor,
- remaining depth, binding and egress subsets, environment), carved budget
+ remaining depth, binding and egress subsets, environment), budget caps
 ```
 
 "Limits" states what the change costs: a runtime keeps a stale list until its next turn, or longer if it ignores the notice, a list change costs the runtime a provider prompt-cache write, a platform Helm change reaches running processes only after a gateway restart, a session created while delegation was unavailable holds no grant after a level widens (O18), and a pod that can reach the gateway's public API with a client credential can still create a root session.
@@ -251,7 +251,7 @@ The rest of this section states each part in the design's terms, which "Terms" a
 | Runtime | `allowDelegation` | `platform-admin` on a platform runtime. `tenant-admin` on a tenant-derived runtime, under "Derived runtimes" below. | Unset, `true`, or `false`. |
 | Session | `delegationLease.maxDepth` at creation, and an explicit `maxChildrenTotal: 0` in the `limits` of the parent's `session.create` | Client, and the parent session | Under "Session level" in DA-2 and under DA-6. |
 
-**Tenant delegation settings.** The route `PUT /v1/admin/tenants/{id}/delegation` also carries the tenant's `policyRef`, a `DelegationPolicy` applied to every session in the tenant, `sessionBudget`, the tenant's level of `gateway.delegation.sessionBudget` (0166 decision 52), and `ceilings`, a maximum for each numeric resource caveat other than the carved budget, whose ceilings are the session budget settings of [`0170-budgets`, "BG-2"](../0170-budgets/change.md#bg-2-session-budgets), which [`0166-delegation-primitives`, "DP-1"](../0166-delegation-primitives/change.md#dp-1-session-grant) reads as root grant inputs (0166 decision 26). This change owns the route, its storage, its `If-Match`, and its audit, and 0166 owns how `policyRef` and `ceilings` enter the resolution of each caveat. `allowByDefault` decides availability, and `policyRef` and `ceilings` never do: a policy that admits no runtime leaves a session that may delegate with no target it can reach, as "Alternatives rejected" states. The form of the route is open decision O10, and 0166's tenant delegation settings wait on it.
+**Tenant delegation settings.** The route `PUT /v1/admin/tenants/{id}/delegation` also carries the tenant's `policyRef`, a `DelegationPolicy` applied to every session in the tenant, `sessionBudget`, the tenant's level of `gateway.delegation.sessionBudget` (0166 decision 52), and `ceilings`, a maximum for each numeric resource caveat other than the budget cap, whose ceilings are the session budget settings of [`0170-budgets`, "BG-2"](../0170-budgets/change.md#bg-2-session-budgets), which [`0166-delegation-primitives`, "DP-1"](../0166-delegation-primitives/change.md#dp-1-session-grant) reads as root grant inputs (0166 decision 26). This change owns the route, its storage, its `If-Match`, and its audit, and 0166 owns how `policyRef` and `ceilings` enter the resolution of each caveat. `allowByDefault` decides availability, and `policyRef` and `ceilings` never do: a policy that admits no runtime leaves a session that may delegate with no target it can reach, as "Alternatives rejected" states. The form of the route is open decision O10, and 0166's tenant delegation settings wait on it.
 
 **Environment.** `allowDelegation: false` on an environment makes delegation unavailable for every session whose environment it is, whatever the runtime, the tenant runtime entry, or the tenant default say (0166 decision 50). It accepts only `false`, and a write of `true` is refused as a widening, as the tenant runtime entry's is, because an environment narrows its tenant and never widens it. Clearing the field removes the narrowing. It is everyday policy of the tenant's administrators: setting and clearing it each apply in the write's transaction, with no delay, as the tenant default does (0166 decision 51). A security team that needs a forbid that a `tenant-admin` cannot lift uses the delegation guardrail, which is tenant-wide like every member of the security record. A session's environment is the one TS-3 records on its row, so a child that crossed into another environment under a sharing path reads the target environment's value.
 
