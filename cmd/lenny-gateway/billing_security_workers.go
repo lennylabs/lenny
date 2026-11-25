@@ -9,6 +9,7 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/billing/billingretention"
 	"github.com/lennylabs/lenny/pkg/clockinject"
+	"github.com/lennylabs/lenny/pkg/credential/revocation"
 	"github.com/lennylabs/lenny/pkg/gateway/core/checkpoint/checkpointer"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
@@ -136,8 +137,16 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers(checkpointerFlags *checkp
 	// drops the renewal worker's tracked leases for a revoked
 	// credential. Running both would double-deliver onto one deny list
 	// for no gain, so only the superset subscriber runs.
+	//
+	// The §13.3 revocation subscriber fires revTrigger when its
+	// subscription is re-established, so the revocation-cache rehydration
+	// below rereads the issued-token index at once instead of at its next
+	// tick: every revocation published while the subscription was down was
+	// lost. With no Postgres no loop reads the trigger, and Fire stays a
+	// non-blocking no-op.
+	revTrigger := revocation.NewTrigger()
 	if w.securityBus != nil {
-		go w.revProp.Run(w.watchdogCtx)
+		go w.revProp.Run(w.watchdogCtx, revTrigger.Fire)
 		go w.mtlsDenyProp.Run(w.watchdogCtx)
 		go w.credRenewalProp.Run(w.watchdogCtx)
 		// §11.4 step 2: apply a peer replica's full_revoke binding-release
@@ -192,31 +201,21 @@ func (w *gatewayWiring) startBillingAndSecurityWorkers(checkpointerFlags *checkp
 	go freshnessReaper.Run(w.watchdogCtx)
 
 	// ----- §13.3 revocation-cache rehydration -----
-	// Loads revoked-token jtis from the issued-token index so a
-	// revocation survives a restart and propagates across replicas. It
+	// Loads revoked-token jtis from the issued-token index at startup,
+	// every 30 seconds, and at once when revTrigger fires on a
+	// revocation-subscription reconnect, so a revocation survives a
+	// restart and reaches a replica that missed its pub/sub event. It
 	// lists tombstoned tenants too: every revoked row inside the trailing
 	// hour must be loaded, a deleted tenant's kept rows included.
-	// spec: §13.3 (Credential Flow: Authoritative durability for revocation).
 	if w.pgPool != nil {
 		issued := issuedtokenstore.New(w.pgPool)
 		lister := allTenantsLister{w.tenants}
 		if err := w.revCache.Rehydrate(context.Background(), lister, issued); err != nil {
 			log.Printf("lenny-gateway: initial revocation rehydration failed: %v", err)
 		}
-		go func() {
-			ticker := time.NewTicker(30 * time.Second)
-			defer ticker.Stop()
-			for {
-				select {
-				case <-w.watchdogCtx.Done():
-					return
-				case <-ticker.C:
-					if err := w.revCache.Rehydrate(context.Background(), lister, issued); err != nil && w.watchdogCtx.Err() == nil {
-						log.Printf("lenny-gateway: revocation rehydration failed: %v", err)
-					}
-				}
-			}
-		}()
+		go w.revCache.RunRehydration(w.watchdogCtx, 30*time.Second, revTrigger, lister, issued, func(err error) {
+			log.Printf("lenny-gateway: revocation rehydration failed: %v", err)
+		})
 	}
 
 	// ----- §4.9 credential deny-list startup rebuild -----
