@@ -10,7 +10,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | --: |
 | Ready | 7 |
 | Waiting on decisions | 34 |
-| Blocked | 160 |
+| Blocked | 161 |
 | Landed | 24 |
 | Cancelled | 3 |
 
@@ -91,7 +91,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft`; a part waits on 0150.S1 |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
 | [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Waiting on decisions | 0175 is `Draft` |
-| [0177.S1](0177-shared-upload-token-keys/steps.md#0177s1-shared-signing-keys-and-consumed-state) | Shared signing keys and consumed state | Waiting on decisions | 0177 is `Draft` |
+| [0177.S1](0177-shared-upload-token-keys/steps.md#0177s1-shared-signing-keys-consumed-state-and-receipt-signing) | Shared signing keys, consumed state, and receipt signing | Waiting on decisions | 0177 is `Draft` |
 | [0178.S1](0178-idempotency-keys-by-principal/steps.md#0178s1-records-scoped-by-principal) | Records scoped by principal | Waiting on decisions | 0178 is `Draft` |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Blocked | 0119.S1, 0119.S2, 0131.S9 |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
@@ -253,6 +253,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
+| [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Blocked | 0178.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
 | [0172.S1](0172-gate-speed/steps.md#0172s1-selection-width-and-the-verdicts-selection-record) | Selection width and the verdict's selection record | Landed |  |
@@ -316,5 +317,5 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 10 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `Decided` | 0 of 1 | 0 |
-| [0177](0177-shared-upload-token-keys/change.md) | A shared upload-token key ring and consumed-token tracker | `Draft` | 0 of 1 | 2 |
-| [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `Draft` | 0 of 1 | 1 |
+| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Draft` | 0 of 1 | 3 |
+| [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `Draft` | 0 of 2 | 1 |
