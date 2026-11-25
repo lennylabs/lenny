@@ -1,6 +1,6 @@
 # Billing resource attribution
 
-Status: `Draft`, revision 26, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 27, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 ## Problem
 

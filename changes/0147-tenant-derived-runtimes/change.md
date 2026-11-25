@@ -1,6 +1,6 @@
 # Tenant-derived runtimes
 
-Status: `Draft`, revision 86, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 87, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 ## Problem
 
@@ -428,7 +428,7 @@ A base outside the list cannot be derived from, and "Base changes" states what e
 
 ### Fields
 
-§5.1 **Derived Runtime** defines what each field does, and this table states only what a tenant may set and why. Some reasons depend on what a field does: `llmFormats` names the LLM API formats the runtime speaks to Lenny's LLM proxy, which replaces `supportedProviders` and `credentialCapabilities` under [`0133-llm-upstreams-and-cost-budgets`](../0133-llm-upstreams-and-cost-budgets/change.md), `agentInterface` is the description discovery shows other agents and the A2A adapter builds its agent cards from, `publishedMetadata` holds documents the gateway publishes for the runtime at a visibility of `public`, `internal`, or `tenant`, and `sharedAssets` lists files the adapter places on warm pods before any session, read-only at `/lenny/assets`, and the repositories whose stores `lenny-store-fill` fills on the pod's store volume, which every slot reads at `/lenny/git-stores`. Each row follows §5.1 **Normative Merge Algorithm**. Rows marked "not in §5.1" appear in `Merge` or the payload and are absent from the table (DF-12). "Narrow" means the value is checked against the base at write and evaluated against the live base at resolve, as "Base changes" states.
+§5.1 **Derived Runtime** defines what each field does, and this table states only what a tenant may set and why. Some reasons depend on what a field does: `agentInterface` is the description discovery shows other agents and the A2A adapter builds its agent cards from, `publishedMetadata` holds documents the gateway publishes for the runtime at a visibility of `public`, `internal`, or `tenant`, and `sharedAssets` lists files the adapter places on warm pods before any session, read-only at `/lenny/assets`, and the repositories whose stores `lenny-store-fill` fills on the pod's store volume, which every slot reads at `/lenny/git-stores`. Each row follows §5.1 **Normative Merge Algorithm**. Rows marked "not in §5.1" appear in `Merge` or the payload and are absent from the table (DF-12). "Narrow" means the value is checked against the base at write and evaluated against the live base at resolve, as "Base changes" states.
 
 | Field | Merge rule | Tenant | Rule and reason |
 | :-- | :-- | :-- | :-- |

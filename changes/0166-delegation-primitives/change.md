@@ -1,6 +1,6 @@
 # Delegation as session primitives
 
-Status: `Decided`, revision 17, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Decided`, revision 18, 2026-11-24. Programs: [v1](../programs/v1.md).
 
 Each factual claim about behaviour carries one of these tags where the source matters:
 
@@ -160,7 +160,7 @@ A mechanism that every session uses, such as child events, client tools, recover
 | DPR-10 | A root session's policy cap is the intersection of every policy that the platform, the tenant, the session's environment, the runtime, and the client name. Each numeric caveat is the client's value when it sets one, and otherwise the first default that is set among the runtime's default lease, the environment's, the tenant's, and the platform's, at most the smallest ceiling that the platform, the tenant, the environment, and the runtime set ("Resolution" in "DP-1", decisions 40 and 49). No ceiling of `maxDepth`, `maxChildrenTotal`, or `maxParallelChildren` is 0, and a session with no depth left holds no grant (decision 50). |
 | DPR-11 | The gateway records the creation of each grant with its resolved caveats and the level each came from, the creation of each child with the parent's grant, the policy version that admitted the target, and the client name of the connection that sent the call, and each leave with its actor, its mode, and the former parent. |
 | DPR-12 | A later change that adds a child event kind, a member of an operation's result or of a child's record, or a way for a child to join a parent other than `session.create`, leaves an extension written against this change working: the reference extension ignores what it does not know, and the gateway delivers an event kind that needs the parent to act, or a child created by another path, only to a runtime that declares it. |
-| DPR-16 | A session leaves its parent only by `session.transfer` or `session.release`, only while the grant that governs the call is present and the security record does not forbid delegation, only as far as that grant's `leave` allows, only at a depth no greater than `leaveMaxDepth`, where the depth is the session's depth in its original tree, which its lineage records and a release does not reset, for the released session and for every session created under it afterwards, and only while its tree has made fewer leaves than `maxLeaves`. A transferred session stays counted in its tree's `maxTreeSize` and in the reach of the root's cascade and `terminate-tree`, a released session keeps its security caveats and falls under the tenant's session quotas, and after either the former parent has no operation on the session; the root's client changes a transferred session's budget, as 0170 decision 52 states. The grant that governs a call of the parent is the parent's, and the grant that governs a call of the root's client through the REST route is the root's. |
+| DPR-16 | A session leaves its parent only by `session.transfer` or `session.release`, only while the grant that governs the call is present and the security record does not forbid delegation, only as far as that grant's `leave` allows, only at a depth no greater than `leaveMaxDepth`, where the depth is the session's depth in its original tree, which its lineage records and a release does not reset, for the released session and for every session created under it afterwards, and only while its tree has made fewer leaves than `maxLeaves`. A transferred session stays counted in its tree's `maxTreeSize` and in the reach of the root's cascade and `terminate-tree`, a released session keeps its security caveats and falls under the tenant's session quotas, and after either the former parent has no operation on the session; the root's client changes a transferred session's caps, as 0170 decisions 52 and 70 state. The grant that governs a call of the parent is the parent's, and the grant that governs a call of the root's client through the REST route is the root's. |
 | DPR-18 | A parent's tools reach a child only when `gateway.delegation.parentTools.enabled`, the security record, `offerTools`, the child's revision, and the call all allow them, never across environments, and a fenced child receives none unless its `session.create` sets `offerTools: allow` (decisions 23, 31, 37, and 41). |
 | DPR-20 | Every session carries a content caveat resolved from the platform, the tenant, the environment, and the runtime, the strictest value winning, narrowed for a child and never widened, and every file that moves between two sessions passes the sender's content caveat on export and the receiver's on import, whichever operation carries it (decision 45). |
 | DPR-21 | A session's `labels` are its root client's, unchanged at every depth, and no parent writes them. A parent's tags reach its child and the read operations, and billing, budgets, and routing never read them (decision 44). |
@@ -305,13 +305,13 @@ A leave carries these rules (decision 33):
 
 ### DP-3 Budget caps
 
-Every session of a delegation tree charges the session budget of the tree's root, and a child's creation sets a cap on the child for each limit key of that budget, which bounds what the child's subtree consumes or holds and sets nothing aside, as 0170 "BG-8" states **[design]**. The budget objects, the count at the root, and the mechanics of caps are 0170's (decisions 12 and 57, "DP-7"). `limits.budget` on `session.create` and the budget part of `session.set_limits` name amounts by the limit keys of the tree's session budget, and a key that `limits.budget` leaves out takes `defaultDelegationFraction` of what the parent's own bound has left, as 0170 "BG-8" states (0170 decisions 16 to 18 and 70). This change keeps DPR-4 and the operations that set a cap.
+Every session of a delegation tree charges the session budget of the tree's root, and a child's creation sets a cap on the child for each limit key of that budget, which bounds what the child's subtree consumes or holds and sets nothing aside, as 0170 "BG-8" states **[design]**. The budget objects, the count at the root, and the mechanics of caps are 0170's (decisions 12 and 57, "DP-7"). `limits.budget` on `session.create` and the budget part of `session.set_limits` name amounts by the limit keys of the tree's session budget, and a key that `limits.budget` leaves out takes `defaultDelegationFraction` of what the parent's own bound has left, as 0170 "BG-8" states (0170 decisions 18 and 70). This change keeps DPR-4 and the operations that set a cap.
 
 **Moving budget within a tree.** `session.set_limits` raises or lowers a live child's cap within the parent's own bound, and moves an amount of any other resource caveat between a parent and a live child: a raise draws on the parent's unused amount, and a cut returns the child's unused amount to the parent. A parent lowers the caps of idle helpers it keeps open for follow-up work, and raises the cap of a child that needs more than its estimate without restarting it. A cap sets nothing aside, so lowering one frees no amount for the parent: every session of the tree shares what the root's session budget has left.
 
 **A child's age.** `perChildMaxAge` is SL-10's timer. This change adds two things to it (decision 13): `session.set_limits` raises a live child's age, at most to what the caller's own grant allows, and the `ended` event of an expiry follows the parent's `wakeOn`, so a parent that leaves the kind `expired` out of it sleeps through expiries while failures still wake it (decision 25).
 
-**Lease extension.** §8.6 stays for the resource caveats, under 0170 "BG-6" **Lease extension** and 0133 "LU-5". An extension that needs a person goes to the root's client, so a parent session never approves its own child's extension, and an extension never raises a security caveat. When a child's cap refuses a charge, its parent may raise the cap with `session.set_limits` while the extension is pending (0170 "BG-6").
+**Lease extension.** §8.6 stays for the resource caveats, under 0170 "BG-6" **Lease extension** and 0133 "LU-5". An extension that needs a person goes to the root's client, so a parent session never approves its own child's extension, and an extension never raises a security caveat. A granted extension raises a cap at most to its holder's parent's current bound and never raises an ancestor's cap, so §8.6's ceiling that a child's extension cannot exceed what its parent was granted stays under every `extensionApproval` mode (decision 59, 0170 decision 76). When a child's cap refuses a charge, its parent may raise the cap with `session.set_limits` while the extension is pending (0170 "BG-6").
 
 **Parallelism.** A child counts toward its parent's `maxParallelChildren` in every state that SL-10 "Caps" of 0146 counts toward a tenant's caps, which "A parent's parallelism" in SL-10 lists, and in `blocked`, which the caps do not count, because a blocked child holds its place in the parent's work.
 
@@ -518,13 +518,15 @@ POST /v1/sessions
   "runtime": "claude-code",
   "labels": { "project": "checkout" },
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 4, "maxParallelChildren": 2 },
-  "budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 40.00 } } }
+  "budget": { "limits": {
+    "models": { "meters": ["externalCost"], "amount": 40.00 },
+    "pods":   { "meters": ["computeUnits"], "amount": 8 } } }
 }
 ```
 
 **What happens.**
 
-1. The gateway resolves the root grant inputs of DP-1: availability (`allowDelegation: true` on the runtime), the policy cap (`coding-helpers`, intersected with any tenant or environment policy), and the client's values lowered to any ceiling. It creates the grant with depth 1, 4 children, 2 in parallel, a session budget of 400,000 LLM credits, the isolation floor `sandboxed`, and the session's environment, and writes `delegation.grant_created`.
+1. The gateway resolves the root grant inputs of DP-1: availability (`allowDelegation: true` on the runtime), the policy cap (`coding-helpers`, intersected with any tenant or environment policy), and the client's values lowered to any ceiling. It creates the grant with depth 1, 4 children, 2 in parallel, a session budget with `models` at 40 EUR on `externalCost` and `pods` at 8 compute-unit-hours, which meets the required limits of `requiredToDelegate`, the isolation floor `sandboxed`, and the session's environment, and writes `delegation.grant_created`.
 2. `session_start` carries `availability.delegation: true`. The bridge lists `start_session`, `discover_agents`, and, once a child exists, the tools that manage children and answer their questions.
 3. The model calls `start_session` with `target: "code-reviewer"`, a task, and `runtimeOptions: { "model": "haiku" }`. The bridge exports `review/**` and calls `session.create`. The gateway checks the grant, admits `code-reviewer` because its label matches `coding-helpers`, validates the options against the revision's schema, checks that its pool is at least `sandboxed`, caps the child at `defaultDelegationFraction` of what the root's session budget has left on each key, and creates the child with `parentSessionId` set to the root and the root's label `project: checkout`, which no parent changes. The child's remaining depth is 0, so its grant allows no child.
 4. The reviewer is unsure which base branch to compare against and calls `ask_question`. The root's bridge receives a `question` child event and shows it to the model, which answers with `answer_question`. The bridge calls `questions.answer`, and the reviewer continues.
@@ -582,7 +584,7 @@ class Audit:
                     target="dir-auditor",
                     task=[{"type": "text", "inline": f"Audit {d}/ and write report.md."}],
                     files=[{"glob": f"{d}/**", "destPrefix": "/"}],
-                    limits={"maxChildrenTotal": 0, "budget": {"models": 50000}},
+                    limits={"maxChildrenTotal": 0, "budget": {"models": 5.00}},
                     questions="forward",               # this program answers no questions
                     tags={"dir": d},
                     idempotency_key=f"{d}#{attempts[d]}",
@@ -610,14 +612,16 @@ POST /v1/sessions
 {
   "runtime": "repo-audit",
   "delegationLease": { "maxDepth": 1, "maxChildrenTotal": 60, "maxParallelChildren": 8 },
-  "budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 300.00 } } }
+  "budget": { "limits": {
+    "models": { "meters": ["externalCost"], "amount": 300.00 },
+    "pods":   { "meters": ["computeUnits"], "amount": 120 } } }
 }
 ```
 
 **What happens.**
 
-1. Each `sessions.create` is a `session.create` on the platform tool server. The gateway applies the grant to each call: the 61st child is refused because the child count is spent, a ninth child that is `running` or `idle` is refused because the parallelism is spent, and a child whose request asks for more than the credits left is refused. `limits.maxChildrenTotal: 0` gives each auditor no room to delegate. The program waits with `events.wait`, so the default `wakeOn` suits it: an auditor's progress updates open no turn in the parent.
-2. A `dir-auditor` is a `multi_turn` runtime, so it ends its turn with its answer and stays `idle`. The program imports the report and closes the child, which frees its parallelism and returns its unused budget.
+1. Each `sessions.create` is a `session.create` on the platform tool server. The gateway applies the grant to each call: the 61st child is refused because the child count is spent, a ninth child that is `running` or `idle` is refused because the parallelism is spent, and a child whose `limits.budget` names more than the root's amount on a key is refused with `400 VALIDATION_ERROR`. Each auditor is capped at 5 EUR on `models` and, on `pods`, at `defaultDelegationFraction` of what the root's `pods` limit has left; the caps set nothing aside, and every auditor charges the root's session budget, so the run stops near 300 EUR whatever the caps add up to. `limits.maxChildrenTotal: 0` gives each auditor no room to delegate. The program waits with `events.wait`, so the default `wakeOn` suits it: an auditor's progress updates open no turn in the parent.
+2. A `dir-auditor` is a `multi_turn` runtime, so it ends its turn with its answer and stays `idle`. The program imports the report and closes the child, which frees its parallelism. Nothing returns to the root, because the child's cap set nothing aside, and what the child spent stays counted in the root's session budget.
 3. The node that runs the parent fails. The parent restores on a new pod, receives SL-3's resume message, and runs `on_message` again. `sessions.list()` returns every child with its `dir` tag, so the program counts attempts, finds the children still running, and skips the directories whose reports exist. A `sessions.create` that the old process sent and the gateway committed before the failure is repeated with the same idempotency key and returns the same child.
 4. The retry, the in-flight limit of 8, and the merge are the author's code. Under built-in delegation today, the same program would call `lenny/delegate_task` and `lenny/await_children`, would have no idempotency key, and would get the gateway's cycle detection and `perChildRetryBudget`, which this runtime does not need.
 
@@ -696,7 +700,7 @@ The wrapper turns off the reference tool set and adds the team's server:
 }
 ```
 
-**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 150.00 } } }`.
+**Client.** `POST /v1/sessions` with `"runtime": "acme-planner"` and `"delegationLease": { "maxDepth": 3 }` and `"budget": { "limits": { "models": { "meters": ["externalCost"], "amount": 150.00 }, "pods": { "meters": ["computeUnits"], "amount": 40 } } }`.
 
 **What happens.**
 
@@ -778,7 +782,9 @@ PUT /v1/admin/tenants/acme/delegation
 ```http
 PUT /v1/admin/tenants/acme/session-budget
 {
-  "ceilings": { "models": { "meters": ["externalCost"], "amount": 200.00 } }
+  "ceilings": {
+    "models": { "meters": ["externalCost"], "amount": 200.00 },
+    "pods":   { "meters": ["computeUnits"], "amount": 50 } }
 }
 ```
 
@@ -811,7 +817,7 @@ The record's single writer and its weakening delay govern the rules, so a stolen
 
 **What happens.**
 
-1. The gateway resolves the root grant. The policy cap is the intersection of the runtime's `coding-helpers` (Example 1), the tenant's `acme-approved`, and the environment's `acme-readers`, so a child must carry all three policies' labels. The child count is the client's 10 lowered to the environment's ceiling of 4. The depth, parallelism, and budget take the runtime's defaults, lowered to the tenant's ceilings. `delegation.grant_created` records each value and the level it came from.
+1. The gateway resolves the root grant. The policy cap is the intersection of the runtime's `coding-helpers` (Example 1), the tenant's `acme-approved`, and the environment's `acme-readers`, so a child must carry all three policies' labels. The child count is the client's 10 lowered to the environment's ceiling of 4. The depth, parallelism, and budget take the runtime's defaults, lowered to the tenant's ceilings; the tenant's ceilings on `models` and `pods` stay in the session budget at their amounts where no default names them, so the session budget holds the `externalCost` and compute limits that `requiredToDelegate` needs. `delegation.grant_created` records each value and the level it came from.
 2. The contractor's agent starts a read-only reviewer, which the cap admits. An attempt to start a helper that writes to repositories is refused at `session.create`, because `acme-readers` does not admit it. A fifth child is refused because the child count is spent.
 3. A session of the same runtime in another environment of the tenant may start any approved helper, up to 20 children. Its `session.create` of a helper labelled `access: write` waits under SO-5a until a `security-approver` answers, or SO-5a's timeout denies it, and a `session.set_limits` that raises a child's cap past 50 EUR waits the same way.
 4. The tenant administrator narrows `acme-approved` during a review. The next `session.create` of every session in the tenant reads the new policy, and running children are not affected.

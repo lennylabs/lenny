@@ -10,7 +10,7 @@
 
 ## Steps
 
-The owner settled every decision of `decisions.md` on 2026-11-22, 2026-11-23, and 2026-11-24, decisions 1 to 58. Under decision 35 the rules that "DP-7" lists belong to other changes, and they become steps of those changes when the owner turns to them. Each step below depends on those steps where it needs them. 0126 is not cancelled: 0126.S1 is cut back to deciding whether a session holds a grant (decision 39), and 0166.S1 depends on it. 0166.S2 also depends on 0170.S1 of [`0170-budgets`](../0170-budgets/change.md), which adds budget objects.
+The owner settled every decision of `decisions.md` on 2026-11-22, 2026-11-23, and 2026-11-24, decisions 1 to 59. Under decision 35 the rules that "DP-7" lists belong to other changes, and they become steps of those changes when the owner turns to them. Each step below depends on those steps where it needs them. 0126 is not cancelled: 0126.S1 is cut back to deciding whether a session holds a grant (decision 39), and 0166.S1 depends on it. 0166.S2 also depends on 0170.S1 of [`0170-budgets`](../0170-budgets/change.md), which adds budget objects.
 
 ### 0166.S1 Session grant and parent link
 - status: Planned
