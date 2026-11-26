@@ -23,6 +23,21 @@ const (
 	AliasJWTVerify = "platform:jwt-verify"
 )
 
+// The reserved aliases that name the §12.8 redaction receipt signing
+// keys. The deployment maps each to a provider key reference through
+// --kms-alias, as for the JWT aliases.
+//
+// spec: §12.8 (Compliance Interfaces)
+const (
+	// AliasAuditSigning names the ES256 key that signs every redaction
+	// receipt.
+	AliasAuditSigning = "platform:audit-signing"
+
+	// AliasAuditVerify names the optional key that verifies receipts and
+	// never signs: the previous receipt key after a rotation.
+	AliasAuditVerify = "platform:audit-verify"
+)
+
 // DigestSize is the byte length of the SHA-256 digest Sign accepts.
 const DigestSize = sha256.Size
 
@@ -37,6 +52,16 @@ const p256CoordSize = SignatureSize / 2
 // signing aliases.
 func IsJWTAlias(alias string) bool {
 	return alias == AliasJWTSigning || alias == AliasJWTVerify
+}
+
+// IsSigningAlias reports whether alias names an asymmetric signing key:
+// one of the §10.2 JWT aliases or one of the §12.8 receipt aliases. Each
+// such alias maps to an immutable key-version reference, and the local
+// provider derives its ES256 key from that reference.
+//
+// spec: §10.2 (Authentication), §12.8 (Compliance Interfaces)
+func IsSigningAlias(alias string) bool {
+	return IsJWTAlias(alias) || alias == AliasAuditSigning || alias == AliasAuditVerify
 }
 
 // CheckDigest returns ErrInvalidDigest unless digest is 32 bytes long.

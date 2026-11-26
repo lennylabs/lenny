@@ -4,67 +4,223 @@ package deadletterredaction
 
 import (
 	"context"
+	"crypto/ecdsa"
+	"encoding/json"
+	"errors"
+	"path/filepath"
 	"testing"
+	"time"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/kms"
 )
 
-// The HMAC signer produces a deterministic, non-empty signature and
-// reports its key id. spec: §12.8.
-func TestHMACReceiptSigner_deterministic(t *testing.T) {
-	t.Parallel()
-	signer := NewHMACReceiptSigner("boot", []byte("0123456789abcdef0123456789abcdef"))
-	sig1, keyID, err := signer.Sign(context.Background(), []byte("receipt-tuple"))
-	if err != nil {
-		t.Fatalf("Sign: %v", err)
-	}
-	if keyID != "boot" {
-		t.Errorf("keyID = %q, want boot", keyID)
-	}
-	if len(sig1) == 0 {
-		t.Fatal("signature is empty; the missing-receipt detector would page on it")
-	}
-	sig2, _, _ := signer.Sign(context.Background(), []byte("receipt-tuple"))
-	if string(sig1) != string(sig2) {
-		t.Error("signature is not deterministic over identical input")
-	}
-	other, _, _ := signer.Sign(context.Background(), []byte("different"))
-	if string(sig1) == string(other) {
-		t.Error("distinct messages produced identical signatures")
-	}
-}
-
-// An empty-key signer refuses to sign rather than emitting an empty
-// signature a verifier would treat as a missing receipt.
-func TestHMACReceiptSigner_noKey(t *testing.T) {
-	t.Parallel()
-	if _, _, err := NewHMACReceiptSigner("boot", nil).Sign(context.Background(), []byte("x")); err == nil {
-		t.Fatal("expected error signing with no key")
-	}
-}
-
-// The KMS-backed constructor unwraps a signing key through the §4 KMS
-// provider and signs with it. spec: §12.8.
-func TestNewKMSReceiptSigner_localProvider(t *testing.T) {
-	t.Parallel()
-	provider, err := kms.NewLocalRandom()
+// sharedLocal returns a local provider over the master key at keyFile with
+// the receipt alias mapping refs, as one gateway replica resolves it.
+func sharedLocal(t *testing.T, keyFile string, refs map[string]string) kms.Provider {
+	t.Helper()
+	local, err := kms.NewLocalFromKeyFile(keyFile)
 	if err != nil {
 		t.Fatalf("local kms: %v", err)
 	}
-	signer, err := NewKMSReceiptSigner(context.Background(), provider, "platform:audit-redaction-signing", "boot")
-	if err != nil {
-		t.Fatalf("NewKMSReceiptSigner: %v", err)
+	for alias, ref := range refs {
+		local.SetSigningReference(alias, ref)
 	}
-	sig, keyID, err := signer.Sign(context.Background(), []byte("tuple"))
-	if err != nil || len(sig) == 0 || keyID != "boot" {
-		t.Fatalf("Sign = (%d bytes, %q, %v), want non-empty/boot/nil", len(sig), keyID, err)
+	return local
+}
+
+// newMasterKeyFile writes a fresh local master key and returns its path.
+func newMasterKeyFile(t *testing.T) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "master.key")
+	if _, err := kms.NewLocalFromKeyFile(path); err != nil {
+		t.Fatalf("create master key: %v", err)
+	}
+	return path
+}
+
+// signedFixtureReceipt signs a receipt through svc's signer exactly as the
+// redaction does, and returns it with the signature and key identifier.
+func signedFixtureReceipt(t *testing.T, svc *Service) audit.RedactionReceipt {
+	t.Helper()
+	at := audit.ReceiptTimestamp(time.Date(2026, 11, 26, 10, 0, 0, 987654321, time.UTC))
+	r := audit.RedactionReceipt{
+		ReceiptID: "00000000-0000-4000-8000-0000000000a1", AuditEventID: "00000000-0000-4000-8000-000000000001",
+		TenantID: "acme", RedactedSeq: 7, OriginalHash: "0a0b", NewHash: "0c0d",
+		ErasureJobID: "00000000-0000-4000-8000-0000000000b1", LegalBasis: svc.legalBasis,
+		RedactorIdentity: svc.redactor, Timestamp: at,
+	}
+	sig, keyID, err := svc.signReceipt(context.Background(), r.ReceiptID, r.AuditEventID, r.TenantID,
+		r.RedactedSeq, r.OriginalHash, r.NewHash, r.ErasureJobID, at)
+	if err != nil {
+		t.Fatalf("signReceipt: %v", err)
+	}
+	r.Signature, r.KeyID = sig, keyID
+	return r
+}
+
+// TestReceiptSignedOnOneReplicaVerifiesOnAnother pins that a receipt one
+// gateway process signs verifies in a second process that shares only the
+// KMS: each loads its own signer and key set, and neither holds a secret
+// of the other.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestReceiptSignedOnOneReplicaVerifiesOnAnother(t *testing.T) {
+	keyFile := newMasterKeyFile(t)
+	refs := map[string]string{kms.AliasAuditSigning: "audit-key-v1"}
+	_, signerA, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, refs), refs)
+	if err != nil {
+		t.Fatalf("replica A: %v", err)
+	}
+	keysB, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, refs), refs)
+	if err != nil {
+		t.Fatalf("replica B: %v", err)
+	}
+	r := signedFixtureReceipt(t, newSvc(&fakeStore{}, &fakeEmitter{}, signerA))
+	if r.KeyID != "audit-key-v1" {
+		t.Errorf("signature_kms_key_id = %q, want the mapped reference audit-key-v1", r.KeyID)
+	}
+	if len(r.Signature) != 64 {
+		t.Errorf("signature is %d bytes, want the 64-byte r||s encoding", len(r.Signature))
+	}
+	if err := keysB.VerifyReceipt(r); err != nil {
+		t.Fatalf("replica B rejected replica A's receipt: %v", err)
+	}
+	// A process over another master key holds other keys and trusts none
+	// of replica A's receipts.
+	other := newMasterKeyFile(t)
+	keysC, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, other, refs), refs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keysC.VerifyReceipt(r); !errors.Is(err, audit.ErrReceiptSignature) {
+		t.Errorf("a key set over another KMS verified the receipt: %v", err)
 	}
 }
 
-// A nil provider is rejected.
-func TestNewKMSReceiptSigner_nilProvider(t *testing.T) {
-	t.Parallel()
-	if _, err := NewKMSReceiptSigner(context.Background(), nil, "alias", "boot"); err == nil {
-		t.Fatal("expected error for nil provider")
+// TestReceiptSignedBeforeARotationVerifiesAfterIt pins the rotation: once
+// platform:audit-signing maps to a new key version and platform:audit-verify
+// to the previous one, receipts signed before the rotation still verify,
+// new receipts carry the new key identifier, and a key set that lost the
+// previous mapping no longer trusts the old receipts.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestReceiptSignedBeforeARotationVerifiesAfterIt(t *testing.T) {
+	keyFile := newMasterKeyFile(t)
+	before := map[string]string{kms.AliasAuditSigning: "audit-key-v1"}
+	_, signerV1, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, before), before)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := signedFixtureReceipt(t, newSvc(&fakeStore{}, &fakeEmitter{}, signerV1))
+
+	after := map[string]string{kms.AliasAuditSigning: "audit-key-v2", kms.AliasAuditVerify: "audit-key-v1"}
+	keys, signerV2, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, after), after)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.VerifyReceipt(old); err != nil {
+		t.Fatalf("receipt signed before the rotation: %v", err)
+	}
+	fresh := signedFixtureReceipt(t, newSvc(&fakeStore{}, &fakeEmitter{}, signerV2))
+	if fresh.KeyID != "audit-key-v2" {
+		t.Errorf("new receipt key id = %q, want audit-key-v2", fresh.KeyID)
+	}
+	if err := keys.VerifyReceipt(fresh); err != nil {
+		t.Fatalf("receipt signed after the rotation: %v", err)
+	}
+	if got := len(keys.Keys()); got != 2 {
+		t.Errorf("trusted keys = %d, want 2", got)
+	}
+	dropped := map[string]string{kms.AliasAuditSigning: "audit-key-v2"}
+	keysDropped, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, dropped), dropped)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keysDropped.VerifyReceipt(old); !errors.Is(err, audit.ErrReceiptKeyUnknown) {
+		t.Errorf("old receipt with no verify alias: %v, want ErrReceiptKeyUnknown", err)
+	}
+}
+
+// TestUnmappedReceiptAliasUsesItsNameUnderTheLocalProvider pins the
+// development posture: with no --kms-alias entry the local provider derives
+// the key from the alias name, which is the key identifier receipts carry.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestUnmappedReceiptAliasUsesItsNameUnderTheLocalProvider(t *testing.T) {
+	provider, err := kms.NewLocalRandom()
+	if err != nil {
+		t.Fatal(err)
+	}
+	keys, signer, err := LoadReceiptSigning(context.Background(), provider, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if signer.KeyID() != kms.AliasAuditSigning {
+		t.Errorf("key id = %q, want %q", signer.KeyID(), kms.AliasAuditSigning)
+	}
+	r := signedFixtureReceipt(t, newSvc(&fakeStore{}, &fakeEmitter{}, signer))
+	if err := keys.VerifyReceipt(r); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// failingProvider is a KMS whose Sign and PublicKey fail.
+type failingProvider struct {
+	kms.Provider
+	err error
+}
+
+func (f failingProvider) Sign(context.Context, string, []byte) ([]byte, error) { return nil, f.err }
+
+func (f failingProvider) PublicKey(context.Context, string) (*ecdsa.PublicKey, error) {
+	return nil, f.err
+}
+
+// TestReceiptSigningFailsClosedWhenTheKMSFails pins that a KMS failure
+// stops the loader at startup and fails the redaction step, so no row is
+// rewritten under an unsigned receipt.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestReceiptSigningFailsClosedWhenTheKMSFails(t *testing.T) {
+	down := failingProvider{err: kms.ErrThrottled}
+	if _, _, err := LoadReceiptSigning(context.Background(), down, nil); !errors.Is(err, kms.ErrThrottled) {
+		t.Errorf("LoadReceiptSigning = %v, want the KMS error", err)
+	}
+	if _, _, err := LoadReceiptSigning(context.Background(), nil, nil); err == nil {
+		t.Error("nil provider accepted")
+	}
+	signer, err := NewKMSReceiptSigner(down, kms.AliasAuditSigning, "audit-key-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := &fakeStore{rows: []audit.Row{{
+		ID: "00000000-0000-4000-8000-000000000001", Seq: 1, TenantID: "acme",
+		EventType: "session.created", Payload: json.RawMessage(`{"user_id":"alice@acme.com"}`),
+	}}}
+	n, err := newSvc(store, &fakeEmitter{}, signer).RedactForUser(context.Background(), "acme", "alice@acme.com")
+	if !errors.Is(err, kms.ErrThrottled) || n != 0 {
+		t.Errorf("RedactForUser = (%d, %v), want (0, the KMS error)", n, err)
+	}
+	if len(store.redacted) != 0 {
+		t.Errorf("a row was rewritten without a signed receipt: %v", store.redacted)
+	}
+}
+
+// TestNewKMSReceiptSignerRefusesAnIncompleteConfiguration covers the
+// constructor guards. It verifies no requirement.
+func TestNewKMSReceiptSignerRefusesAnIncompleteConfiguration(t *testing.T) {
+	provider, err := kms.NewLocalRandom()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := NewKMSReceiptSigner(nil, kms.AliasAuditSigning, "k"); err == nil {
+		t.Error("nil provider accepted")
+	}
+	if _, err := NewKMSReceiptSigner(provider, "", "k"); err == nil {
+		t.Error("empty alias accepted")
+	}
+	if _, err := NewKMSReceiptSigner(provider, kms.AliasAuditSigning, ""); err == nil {
+		t.Error("empty key id accepted")
 	}
 }

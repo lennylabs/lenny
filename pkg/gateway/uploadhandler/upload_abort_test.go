@@ -221,12 +221,12 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 		t.Fatalf("finalize: status %d, want 200; body=%s", finRR.Code, finRR.Body.String())
 	}
 
-	// Now attempt /upload — the pre-Put precondition check fires
-	// before the abort registry; the spec-mandated channel-closure
-	// surfaces as the precondition error.
+	// Now attempt /upload. The finalize's ready write recorded the token
+	// consumed on the row, so the token check refuses the upload before
+	// the precondition check and the abort registry are reached.
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
-	if rr.Code != http.StatusConflict {
-		t.Errorf("post-finalize /upload: status %d, want 409; body=%s", rr.Code, rr.Body.String())
+	if rr.Code != http.StatusGone || !strings.Contains(rr.Body.String(), "UPLOAD_TOKEN_CONSUMED") {
+		t.Errorf("post-finalize /upload: status %d, want 410 UPLOAD_TOKEN_CONSUMED; body=%s", rr.Code, rr.Body.String())
 	}
 }
 

@@ -287,8 +287,9 @@ func TestFinalizeAdmitsIssuedTokenThenRefusesItsReuse_spec_7_4(t *testing.T) {
 	if got := finalizeErrorCode(t, rr); got != "UPLOAD_TOKEN_CONSUMED" {
 		t.Errorf("code = %q, want UPLOAD_TOKEN_CONSUMED", got)
 	}
-	// The one further read is the §10.2 ownership check.
-	if f.store.gets.Load() != gets+1 || f.store.updates.Load() != updates {
+	// The further reads are the §10.2 ownership check and the read of the
+	// consumed mark the ready write recorded on the row.
+	if f.store.gets.Load() != gets+2 || f.store.updates.Load() != updates {
 		t.Errorf("refused finalize passed the token check: gets %d->%d, updates %d->%d",
 			gets, f.store.gets.Load(), updates, f.store.updates.Load())
 	}

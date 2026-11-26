@@ -140,7 +140,10 @@ func (w *gatewayWiring) runServers() {
 			OnGrantDrift:              w.gwMetrics.IncAuditGrantDrift,
 			OnChainState:              w.gwMetrics.IncAuditChainIntegrity,
 			OnRedactionReceiptMissing: w.gwMetrics.AddAuditRedactionReceiptMissing,
-			Logf:                      func(format string, args ...any) { log.Printf("lenny-gateway: "+format, args...) },
+			// A receipt whose signature does not verify under a
+			// trusted receipt key counts as missing.
+			ReceiptVerifier: w.receiptKeys,
+			Logf:            func(format string, args ...any) { log.Printf("lenny-gateway: "+format, args...) },
 			Shutdown: func(string) {
 				if proc, perr := os.FindProcess(os.Getpid()); perr == nil {
 					_ = proc.Signal(syscall.SIGTERM)

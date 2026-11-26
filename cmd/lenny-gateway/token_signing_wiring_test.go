@@ -13,6 +13,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+	"github.com/lennylabs/lenny/pkg/signingkeys"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // tokenSigningFlags returns the flags buildTokenSigningStores reads, on
@@ -24,17 +26,21 @@ func tokenSigningFlags(masterKeyFile, hmacKeyFile, issuer, audiences string) *ga
 	tenantClaim := "tenant_id"
 	noIssuer, noClient := "", ""
 	refresh, refetch, timeout := jwt.DefaultOIDCKeyRefreshInterval, jwt.DefaultOIDCMinRefetchInterval, jwt.DefaultOIDCFetchTimeout
+	keyRefresh, keyLead, keyRotation := signingkeys.DefaultRefreshInterval, signingkeys.DefaultPublishLead, uploadtoken.DefaultRotationInterval
 	return &gatewayFlags{
-		devMode:                    &devMode,
-		oidcIssuerURL:              &noIssuer,
-		oidcClientID:               &noClient,
-		oidcJWKSRefreshInterval:    &refresh,
-		oidcJWKSMinRefetchInterval: &refetch,
-		oidcFetchTimeout:           &timeout,
-		tenantIDClaim:              &tenantClaim,
-		bearerTrustHMACKeyFile:     &hmacKeyFile,
-		bearerExpectedIssuer:       &issuer,
-		bearerExpectedAudiences:    &audiences,
+		signingKeyRefreshInterval:      &keyRefresh,
+		signingKeyPublishLead:          &keyLead,
+		uploadTokenKeyRotationInterval: &keyRotation,
+		devMode:                        &devMode,
+		oidcIssuerURL:                  &noIssuer,
+		oidcClientID:                   &noClient,
+		oidcJWKSRefreshInterval:        &refresh,
+		oidcJWKSMinRefetchInterval:     &refetch,
+		oidcFetchTimeout:               &timeout,
+		tenantIDClaim:                  &tenantClaim,
+		bearerTrustHMACKeyFile:         &hmacKeyFile,
+		bearerExpectedIssuer:           &issuer,
+		bearerExpectedAudiences:        &audiences,
 		kmsOpts: &providerflags.Options{
 			Provider:      providerflags.ProviderLocal,
 			MasterKeyFile: masterKeyFile,

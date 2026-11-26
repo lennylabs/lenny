@@ -592,6 +592,18 @@ storage:
 
 A leader-elected gateway goroutine continuously probes the T4 envelope-encryption KMS key at `storage.t4KmsProbeInterval` and publishes `lenny_t4_kms_probe_last_success_timestamp` / `lenny_t4_kms_probe_result_total{outcome}`. The `T4KmsKeyUnusable` Critical alert fires when `time() - last_success > 2 * t4KmsProbeInterval`, and T4 writes fail closed until the KMS key recovers. Values below the 60s minimum are rejected at startup.
 
+### Upload-token signing keys
+
+Every gateway replica signs and verifies upload tokens with the same keys, which the gateway stores encrypted in the Postgres table `platform_signing_keys` and rotates there. The rotation runs on three gateway settings. The chart does not set them, so the defaults apply unless the gateway container's arguments or environment set them.
+
+| Flag | Environment variable | Default | Meaning |
+|:--|:--|:--|:--|
+| `--signing-key-refresh-interval` | `LENNY_SIGNING_KEY_REFRESH_INTERVAL` | `30s` | How often a replica reloads the keys, writes the next key when the active key is due for rotation, and deletes keys past their verification time. |
+| `--signing-key-publish-lead` | `LENNY_SIGNING_KEY_PUBLISH_LEAD` | `2m` | How far ahead of its activation a replica writes the next key, so every replica has loaded it before any replica signs with it. It must be longer than the refresh interval, and the gateway does not start when it is not. |
+| `--upload-token-key-rotation-interval` | `LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL` | `24h` | How long a key signs before the next key replaces it. A replaced key keeps verifying for five minutes after the next key becomes active. |
+
+A replica whose reload has failed for longer than five minutes stops issuing upload tokens, so session creation on it answers `503 SESSION_CREATION_FAILED` until a reload succeeds, while it keeps accepting the tokens it can verify. On a cloud KMS provider, map the alias `platform:upload-token-signing` in `kms.aliases` to a symmetric encryption key; the gateway does not start when it cannot wrap or unwrap a key under that alias. [Security](security.md) describes the keys and the KMS grants.
+
 ### Quota fail-open controls
 
 ```yaml

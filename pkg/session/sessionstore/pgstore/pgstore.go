@@ -170,7 +170,8 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	state_entered_at,
 	COALESCE(input_wait_id, ''),
 	expiry_warned_cap_seconds,
-	terminal_pipeline_done_at`
+	terminal_pipeline_done_at,
+	upload_token_consumed_at`
 
 // Create persists a fresh session row. root_session_id defaults to the
 // session's own id when the caller did not stamp one (a standalone
@@ -643,7 +644,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		state_entered_at = $59,
 		input_wait_id = NULLIF($60, ''),
 		expiry_warned_cap_seconds = $61,
-		terminal_pipeline_done_at = $62
+		terminal_pipeline_done_at = $62,
+		upload_token_consumed_at = COALESCE(upload_token_consumed_at, $63)
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	// spec: §12.3 (Write durability categories during failover) — the
@@ -669,8 +671,15 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		prevCoordGen := sess.CoordinationGeneration
 		prevRetryCount := sess.RetryCount
 		prevLastSeq := sess.LastSeq
+		prevConsumed := sess.UploadTokenConsumedAt
 		if err := mutate(&sess); err != nil {
 			return err
+		}
+		// The uploadToken consumed mark (§7.1) is set
+		// once; updateSQL's COALESCE keeps the stored value, and this
+		// keeps the returned row in step with it.
+		if !prevConsumed.IsZero() {
+			sess.UploadTokenConsumedAt = prevConsumed
 		}
 		// spec: §4.2 — recovery_generation,
 		// coordination_generation, and retry_count are monotonically
@@ -789,6 +798,10 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// $62 — §7.1 pipeline mark MarkTerminalPipelineDone sets; a
 			// zero time keeps SQL NULL.
 			pgtenant.NullTime(sess.TerminalPipelineDoneAt),
+			// $63 — §7.1 upload_token_consumed_at. COALESCE keeps the
+			// first value, so a write never clears or moves a consumed
+			// mark; a zero time keeps SQL NULL.
+			pgtenant.NullTime(sess.UploadTokenConsumedAt),
 		); err != nil {
 			return err
 		}
@@ -1677,9 +1690,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		legalHoldSetAt *time.Time
 		// §6.2 idle-timer anchor from migration 0159.
 		// Nullable (NULL until the first qualifying agent event). F-11.3.7.
-		lastAgentActivityAt *time.Time
-		podReleasedAt       *time.Time
-		pipelineDoneAt      *time.Time
+		lastAgentActivityAt   *time.Time
+		podReleasedAt         *time.Time
+		pipelineDoneAt        *time.Time
+		uploadTokenConsumedAt *time.Time
 	)
 	if err := row.Scan(
 		&s.ID, &s.TenantID, &s.UserID, &state, &s.RuntimeRef, &s.PoolRef,
@@ -1775,8 +1789,14 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §7.1 — terminal_pipeline_done_at from migration 0204. NULL until
 		// the pipeline mark is recorded.
 		&pipelineDoneAt,
+		// §7.1 — upload_token_consumed_at from migration 0205. NULL until
+		// FinalizeWorkspace consumes the uploadToken.
+		&uploadTokenConsumedAt,
 	); err != nil {
 		return sessionstore.Session{}, err
+	}
+	if uploadTokenConsumedAt != nil {
+		s.UploadTokenConsumedAt = uploadTokenConsumedAt.UTC()
 	}
 	if podReleasedAt != nil {
 		s.PodReleasedAt = *podReleasedAt

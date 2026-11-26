@@ -379,10 +379,11 @@ var classifications = map[string]classification{
 	"admin.validate_external_adapter": {categoryMutation, dryRunNone},
 
 	// Audit administration (§25.12 admin-API): event lookup, republish,
-	// retranslate, partition drop.
+	// retranslate, partition drop, and the redaction receipt public keys.
 	"admin.drop_audit_partition":    {categoryDestructive, dryRunNone},
 	"admin.get_audit_event":         {categoryObservation, dryRunNone},
 	"admin.list_audit_events":       {categoryObservation, dryRunNone},
+	"admin.list_audit_receipt_keys": {categoryObservation, dryRunNone},
 	"admin.republish_audit_event":   {categoryMutation, dryRunNone},
 	"admin.retranslate_audit_event": {categoryMutation, dryRunNone},
 	"admin.summarize_audit_events":  {categoryObservation, dryRunNone},

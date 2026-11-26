@@ -63,7 +63,9 @@ func (f *fakeCore) WriteWorkspace(_ context.Context, _ string, files []seam.Work
 	return f.written, f.writeErr
 }
 
-func (f *fakeCore) VerifyUploadToken(context.Context, string, string) error { return f.tokenErr }
+func (f *fakeCore) VerifyUploadToken(context.Context, string, string, string) error {
+	return f.tokenErr
+}
 
 func (f *fakeCore) ReserveStorage(context.Context, string, int64) (seam.StorageReservation, error) {
 	return f.reserve, f.quotaErr
@@ -251,7 +253,9 @@ func TestCloseUploadsClosesTheSessionsUploadChannel(t *testing.T) {
 }
 
 // TestUploadMapsEachTokenRefusalToItsEnvelope checks the envelope of each
-// upload token refusal the core reports.
+// upload token refusal the core reports, and that a failure to read the
+// token's consumed state, which matches no refusal, fails the upload closed
+// with a server error.
 //
 // spec: GWSEAM-VerifyUploadToken; §7.1.
 func TestUploadMapsEachTokenRefusalToItsEnvelope(t *testing.T) {
@@ -264,6 +268,7 @@ func TestUploadMapsEachTokenRefusalToItsEnvelope(t *testing.T) {
 		{seam.ErrUploadTokenMismatch, http.StatusForbidden, "UPLOAD_TOKEN_MISMATCH"},
 		{seam.ErrUploadTokenConsumed, http.StatusGone, "UPLOAD_TOKEN_CONSUMED"},
 		{seam.ErrUploadTokenInvalid, http.StatusUnauthorized, "UPLOAD_TOKEN_INVALID"},
+		{errors.New("read upload token state: store unreachable"), http.StatusInternalServerError, "INTERNAL_ERROR"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.code, func(t *testing.T) {

@@ -34,6 +34,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/admission/direct_mode_isolation"
 	"github.com/lennylabs/lenny/pkg/api/errorclassify"
 	"github.com/lennylabs/lenny/pkg/api/pagination"
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/adminaudit"
 	"github.com/lennylabs/lenny/pkg/audit/deploymentconfigstore"
 	"github.com/lennylabs/lenny/pkg/audit/jwtaudit"
@@ -132,6 +133,11 @@ type Router struct {
 	capOverrides runtimecapoverride.Store
 	auditLog     AuditLog
 	auditPruner  AuditPartitionDropper
+	// receiptKeys holds the redaction receipt signing keys a chain
+	// verifier trusts. It verifies receipts in the audit-events chain
+	// walk and is served by GET /v1/admin/audit-receipt-keys. Nil
+	// trusts no receipt and serves an empty list.
+	receiptKeys  *audit.ReceiptKeySet
 	auditMetrics AuditQueryMetrics
 	// auditScatter / scatterCache / scatterCacheEnabled back the §25.9 platform-admin cross-tenant audit scatter-gather and
 	// its Redis result cache. A nil auditScatter leaves the platform-admin

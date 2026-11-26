@@ -979,6 +979,25 @@ A user has at most one erasure job in progress. The legal-hold preflight runs on
 
 ---
 
+## Redaction receipt keys
+
+### GET /v1/admin/audit-receipt-keys
+{: .d-inline-block }
+platform-admin, tenant-admin
+{: .label .label-red }
+
+List the public keys that verify redaction receipt signatures. An erasure job writes one signed redaction receipt for each audit row it rewrites in place, and an external audit verifier checks each receipt against these keys before it accepts the rewritten row as an authorized redaction. The list holds one entry for each key that the `platform:audit-signing` or `platform:audit-verify` KMS alias names, sorted by key identifier.
+
+| Field | Type | Description |
+|:------|:-----|:------------|
+| `keys[].keyId` | string | The KMS key identifier, which a receipt records in `signature_kms_key_id` |
+| `keys[].alg` | string | The signature algorithm, `ES256` |
+| `keys[].jwk` | object | The P-256 public key as a JSON Web Key, with `kty` `EC`, `crv` `P-256`, `x`, `y`, `kid` equal to `keyId`, `alg` `ES256`, and `use` `sig` |
+
+[Audit (OCSF wire format)](../operator-guide/audit-ocsf.md#verifying-redaction-receipts) describes how a verifier checks a receipt with these keys.
+
+---
+
 ## Bootstrap
 
 ### POST /v1/admin/bootstrap

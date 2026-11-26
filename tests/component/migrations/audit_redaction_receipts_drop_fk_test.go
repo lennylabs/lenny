@@ -16,21 +16,20 @@ package migrations_test
 
 import (
 	"context"
-	"crypto/hmac"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgconn"
 
+	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/audit/jcs"
 	"github.com/lennylabs/lenny/pkg/common/seqname"
 	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/receiptkeys"
 )
 
 // receiptFKPriorVersion is the schema version immediately below the
@@ -41,9 +40,26 @@ const receiptFKPriorVersion = 187
 // on audit_redaction_receipts.audit_event_id in migration 0160.
 const receiptFKName = "audit_redaction_receipts_audit_event_id_fkey"
 
-// receiptSigningKey is the HMAC key the test's redaction service signs
-// receipts with; the verification below recomputes the MAC under it.
-var receiptSigningKey = []byte("0123456789abcdef0123456789abcdef")
+// receiptSigning holds the receipt signer the test's redaction service
+// signs with and the key set the verification below checks receipts
+// against. It is loaded once per test binary over a random local KMS key.
+var receiptSigning struct {
+	once   sync.Once
+	keys   *audit.ReceiptKeySet
+	signer *deadletterredaction.KMSReceiptSigner
+}
+
+// loadReceiptSigning returns the shared receipt key set and signer.
+func loadReceiptSigning(t *testing.T) (*audit.ReceiptKeySet, *deadletterredaction.KMSReceiptSigner) {
+	t.Helper()
+	receiptSigning.once.Do(func() {
+		receiptSigning.keys, receiptSigning.signer = receiptkeys.Load(t, "", nil)
+	})
+	if receiptSigning.keys == nil {
+		t.Fatal("receipt signing keys did not load")
+	}
+	return receiptSigning.keys, receiptSigning.signer
+}
 
 // Audit timestamps: oldAt predates the retention cutoff, recentAt does not.
 var (
@@ -131,10 +147,11 @@ func redactAliceDeadLetters(t *testing.T, ctx context.Context, pg *containers.Po
 		 WHERE tenant_id = 'acme' AND sequence_number IN (1, 2)`); err != nil {
 		t.Fatalf("mark alice's rows dead_lettered: %v", err)
 	}
+	_, signer := loadReceiptSigning(t)
 	svc := deadletterredaction.New(deadletterredaction.Config{
 		Store:  store,
 		Emit:   store,
-		Signer: deadletterredaction.NewHMACReceiptSigner("boot", receiptSigningKey),
+		Signer: signer,
 		Clock:  func() time.Time { return receiptRecentAt },
 	})
 	n, err := svc.RedactForUser(ctx, "acme", "alice@acme.com")
@@ -235,66 +252,27 @@ func countAuditRows(t *testing.T, ctx context.Context, pg *containers.Postgres, 
 	return n
 }
 
-// assertReceiptsVerify reads every receipt of tenant acme and recomputes
-// its HMAC over the JCS serialization of the signed tuple, so a receipt
-// whose audit_event_id or any other signed column changed fails here.
+// assertReceiptsVerify reads every receipt of tenant acme through the
+// audit store and verifies its ES256 signature over the stored tuple, so a
+// receipt whose audit_event_id or any other signed column changed fails
+// here.
 func assertReceiptsVerify(t *testing.T, ctx context.Context, pg *containers.Postgres, want int) {
 	t.Helper()
-	rows, err := pg.Pool.Query(ctx, `
-		SELECT receipt_id::text, audit_event_id::text, tenant_id, sequence_number,
-		       original_hash, new_hash, erasure_job_id::text, legal_basis,
-		       redactor_identity, "timestamp", signature
-		FROM audit_redaction_receipts WHERE tenant_id = 'acme'`)
+	keys, _ := loadReceiptSigning(t)
+	receipts, err := auditstore.New(pg.Router(t)).Receipts(ctx, "acme")
 	if err != nil {
 		t.Fatalf("read receipts: %v", err)
 	}
-	defer rows.Close()
-	got := 0
-	for rows.Next() {
-		var (
-			receiptID, eventID, tenant, jobID, basis, redactor string
-			seq                                                int64
-			origHash, newHash, sig                             []byte
-			at                                                 time.Time
-		)
-		if err := rows.Scan(&receiptID, &eventID, &tenant, &seq, &origHash, &newHash,
-			&jobID, &basis, &redactor, &at, &sig); err != nil {
-			t.Fatalf("scan receipt: %v", err)
+	for seq, rcpt := range receipts {
+		if rcpt.AuditEventID == "" {
+			t.Errorf("receipt %s lost its audit_event_id", rcpt.ReceiptID)
 		}
-		got++
-		if eventID == "" {
-			t.Errorf("receipt %s lost its audit_event_id", receiptID)
-		}
-		tuple, err := json.Marshal(map[string]any{
-			"receipt_id":        receiptID,
-			"audit_event_id":    eventID,
-			"tenant_id":         tenant,
-			"sequence_number":   uint64(seq),
-			"original_hash":     hex.EncodeToString(origHash),
-			"new_hash":          hex.EncodeToString(newHash),
-			"erasure_job_id":    jobID,
-			"legal_basis":       basis,
-			"redactor_identity": redactor,
-			"timestamp":         at.UTC().Format(time.RFC3339Nano),
-		})
-		if err != nil {
-			t.Fatalf("marshal receipt tuple: %v", err)
-		}
-		canon, err := jcs.Canonicalize(tuple)
-		if err != nil {
-			t.Fatalf("canonicalize receipt tuple: %v", err)
-		}
-		mac := hmac.New(sha256.New, receiptSigningKey)
-		mac.Write(canon)
-		if !hmac.Equal(mac.Sum(nil), sig) {
-			t.Errorf("receipt %s (seq %d) signature does not verify over the stored tuple", receiptID, seq)
+		if err := keys.VerifyReceipt(rcpt); err != nil {
+			t.Errorf("receipt %s (seq %d) signature does not verify over the stored tuple: %v", rcpt.ReceiptID, seq, err)
 		}
 	}
-	if err := rows.Err(); err != nil {
-		t.Fatalf("iterate receipts: %v", err)
-	}
-	if got != want {
-		t.Errorf("acme holds %d receipts, want %d", got, want)
+	if len(receipts) != want {
+		t.Errorf("acme holds %d receipts, want %d", len(receipts), want)
 	}
 }
 
