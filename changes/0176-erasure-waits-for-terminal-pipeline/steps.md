@@ -7,7 +7,7 @@ None.
 ## Steps
 
 ### 0176.S1 The pipeline mark and the erasure wait
-- status: Building
+- status: Landed
 - lanes: [specification, code, documentation]
 - depends-on: []
 - closes: [ERASE-I1]

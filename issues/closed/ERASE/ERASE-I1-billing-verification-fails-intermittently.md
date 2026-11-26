@@ -1,10 +1,12 @@
 ---
 id: ERASE-I1
-status: planned
+status: closed
 kind: defect
 severity: high
 requirements: []
 change: 0176.S1
+closed: fixed
+closed-by: 0176.S1
 ---
 
 # The erasure job's billing verification fails intermittently, because a drained session's terminal billing event lands after pseudonymization
