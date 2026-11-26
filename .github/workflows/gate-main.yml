@@ -2,20 +2,28 @@
 #
 # The merge gate on `main` (change 0172, decision 27). Each push to `main`
 # runs `lenny-test gate` in the gate container against a base: the commit
-# of the latest successful run of this workflow on `main`. The gate selects
-# what every merge since that commit reaches, so the pushes that land while
-# a run is in progress, and a pending run that a newer push replaces, are
-# covered by the next run. The scheduled weekly run, and a dispatch with
-# `full`, is a full run (`lenny-test gate --all`), as decision 2 states.
+# of the latest successful run of this workflow on `main`, a selected run
+# or a full run. The gate selects what every merge since that commit
+# reaches, so the pushes that land while a run is in progress, and a
+# pending run that a newer push replaces, are covered by the next run. The
+# scheduled weekly run, and a dispatch with `full`, is a full run
+# (`lenny-test gate --all`), as decision 2 states.
 #
-# A branch merges only when the latest finished run of this workflow on
-# `main` passed, or its failure has been fixed or reverted
-# (.claude/rules/git-workflow.md, "The gate on `main`"). The repository is
-# public, so the standard GitHub-hosted runner (4 vCPUs, 16 GB) carries no
-# minute charge. The workflow runs repository code, needs no secret, and
+# Selected runs and full runs queue in separate concurrency groups
+# (decision 29), so a full run can run beside a selected run on its own
+# runner, and the run's title names its kind. A branch merges only when
+# the latest finished selected run and the latest finished full run of
+# this workflow on `main` passed, or their failures have been fixed or
+# reverted (.claude/rules/git-workflow.md, "The gate on `main`"). The
+# repository is public, so the standard GitHub-hosted runner (4 vCPUs,
+# 16 GB) carries no minute charge. The workflow runs repository code, needs no secret, and
 # reads the run list with the job's own token.
 
 name: gate-main
+# The title names the run's kind, which the merge check of
+# .claude/rules/git-workflow.md reads from `gh run list` (displayTitle).
+# The concurrency group and the gate step test the same condition.
+run-name: ${{ (github.event_name == 'schedule' || inputs.full == true) && 'Full run of the gate on main' || 'Selected run of the gate on main' }}
 
 on:
   push:
@@ -38,13 +46,16 @@ permissions:
   contents: read
   actions: read
 
-# One group for main. A run in progress is never cancelled; GitHub keeps at
-# most one pending run and cancels an older pending run when a newer push
-# replaces it, and the newer run's base still covers the replaced push. A
-# pending full run is cancelled the same way; dispatch a full run by hand
-# when the week's scheduled run did not finish.
+# Two groups for main (decision 29): selected runs in `gate-main`, and full
+# runs, the scheduled run and a dispatch with `full`, in `gate-main-full`.
+# A run in progress is never cancelled. GitHub keeps at most one pending
+# run in each group and cancels an older pending run of the group when a
+# newer one replaces it: a push replaces a pending selected run, whose
+# pushes the newer run's base still covers, and only another full run
+# replaces a pending full run. A full run therefore waits only for a full
+# run in progress, and a selected run runs beside it on another runner.
 concurrency:
-  group: gate-main
+  group: ${{ (github.event_name == 'schedule' || inputs.full == true) && 'gate-main-full' || 'gate-main' }}
   cancel-in-progress: false
 
 env:
@@ -125,7 +136,7 @@ jobs:
       - name: Run the gate
         id: gate
         env:
-          FULL: ${{ github.event_name == 'schedule' || inputs.full == true }}
+          FULL: ${{ (github.event_name == 'schedule' || inputs.full == true) }}
         run: |
           set -euo pipefail
           args=(gate --layout "$GATE_LAYOUT")
@@ -162,7 +173,7 @@ jobs:
 
       - name: Upload the verdict and the log
         if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9  # v7.0.2, runs on Node.js 24
         with:
           name: gate-main-${{ github.run_id }}-${{ github.run_attempt }}
           path: |

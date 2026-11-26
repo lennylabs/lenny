@@ -191,6 +191,15 @@ type Auth struct {
 	// TokenRevocationTimeoutMs is the §13.3 and §11.4 statement timeout
 	// of a recursive revocation's cascade and a full revoke's token walk.
 	TokenRevocationTimeoutMs int `json:"tokenRevocationTimeoutMs,omitempty" min:"1" desc:"§13.3 and §11.4 statement timeout, in milliseconds, of a recursive revocation's cascade and a full revoke's token walk. At least 1."`
+	// RevocationReconnectSpacing is the §13.3 reconnect spacing of the
+	// gateway's revocation-cache rehydration, which the chart renders as
+	// lenny-gateway --revocation-reconnect-spacing. The pattern accepts a
+	// non-negative duration in the form Go's time.ParseDuration reads with
+	// ASCII units, and the string "0", so a value the flag would refuse,
+	// such as a number without a unit, fails at install time rather than at
+	// gateway startup. A YAML number, 0 included, is refused by the string
+	// type.
+	RevocationReconnectSpacing string `json:"revocationReconnectSpacing,omitempty" pattern:"^(0|(([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|ms|s|m|h))+)$" desc:"§13.3 reconnect spacing: the minimum interval between the starts of two revocation-cache rehydrations that the gateway's EventBus subscription confirmations trigger, as a duration such as 5s. Renders lenny-gateway --revocation-reconnect-spacing. 0s starts each such rehydration at once."`
 }
 
 // KMS models the §10.2 / §17.8.2 KMS values the schema constrains. The
