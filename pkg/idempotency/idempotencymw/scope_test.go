@@ -278,6 +278,66 @@ func TestTheMemoryStoreRefusesAKeyWithNoSubject(t *testing.T) {
 	}
 }
 
+// TestTheMemoryStoreDeletesOneUsersRecordsUnderEverySession checks that
+// DeleteByUser removes every record of one subject in one tenant, under
+// every bound session, and leaves the records of other subjects and other
+// tenants; that DeleteByTenant removes one tenant's records; and that both
+// refuse an empty scope.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestTheMemoryStoreDeletesOneUsersRecordsUnderEverySession(t *testing.T) {
+	ctx := context.Background()
+	store := NewMemoryStore()
+	alice := aliceKey("k1")
+	aliceS1 := idempotency.Key{TenantID: "acme", Subject: "alice", SessionID: "s1", Value: "k1"}
+	aliceS2 := idempotency.Key{TenantID: "acme", Subject: "alice", SessionID: "s2", Value: "k2"}
+	bob := idempotency.Key{TenantID: "acme", Subject: "bob", Value: "k1"}
+	globexAlice := idempotency.Key{TenantID: "globex", Subject: "alice", Value: "k1"}
+	for _, k := range []idempotency.Key{alice, aliceS1, aliceS2, bob, globexAlice} {
+		if err := store.Put(ctx, idempotency.Record{Key: k, BodyHash: "h", Response: idempotency.Response{StatusCode: 201}}); err != nil {
+			t.Fatalf("Put(%+v): %v", k, err)
+		}
+	}
+
+	n, err := store.DeleteByUser(ctx, "acme", "alice")
+	if err != nil || n != 3 {
+		t.Fatalf("DeleteByUser = %d, %v; want 3, nil", n, err)
+	}
+	for _, gone := range []idempotency.Key{alice, aliceS1, aliceS2} {
+		if _, found, _ := store.Get(ctx, gone); found {
+			t.Errorf("%+v survived DeleteByUser", gone)
+		}
+	}
+	for _, kept := range []idempotency.Key{bob, globexAlice} {
+		if _, found, _ := store.Get(ctx, kept); !found {
+			t.Errorf("DeleteByUser removed %+v", kept)
+		}
+	}
+	if n, err := store.DeleteByUser(ctx, "acme", "alice"); err != nil || n != 0 {
+		t.Errorf("second DeleteByUser = %d, %v; want 0, nil", n, err)
+	}
+
+	if n, err := store.DeleteByTenant(ctx, "acme"); err != nil || n != 1 {
+		t.Errorf("DeleteByTenant = %d, %v; want 1, nil", n, err)
+	}
+	if _, found, _ := store.Get(ctx, globexAlice); !found {
+		t.Error("DeleteByTenant(acme) removed globex's record")
+	}
+
+	if _, err := store.DeleteByUser(ctx, "acme", ""); err == nil {
+		t.Error("DeleteByUser with no subject succeeded, want an error")
+	}
+	if _, err := store.DeleteByUser(ctx, "", "alice"); err == nil {
+		t.Error("DeleteByUser with no tenant succeeded, want an error")
+	}
+	if _, err := store.DeleteByTenant(ctx, ""); err == nil {
+		t.Error("DeleteByTenant with no tenant succeeded, want an error")
+	}
+	if _, found, _ := store.Get(ctx, globexAlice); !found {
+		t.Error("a refused deletion removed a record")
+	}
+}
+
 // passthroughRedactor is a CredentialRedactor that changes nothing.
 type passthroughRedactor struct{}
 

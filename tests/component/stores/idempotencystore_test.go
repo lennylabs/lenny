@@ -275,3 +275,64 @@ func TestThePostgresIdempotencyStoreKeysRecordsByTenantSubjectSessionAndKey(t *t
 		t.Errorf("Claim with no subject: err = %v, want ErrSubjectRequired", err)
 	}
 }
+
+// spec: §12.8 (Compliance Interfaces)
+// diagnosis: the Postgres idempotency store's DeleteByUser left a record
+// of the erased subject under some session_id, deleted a record of another
+// subject or another tenant, or DeleteByTenant crossed tenants. User
+// erasure and tenant deletion Phase 4 call these through the gateway's
+// idempotency_records erasers; a surviving row is personal data the
+// erasure receipt claims is gone.
+func TestThePostgresIdempotencyStoreDeletesByUserAndByTenant(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := idempgstore.New(pg.Pool)
+	ctx := context.Background()
+	acme := freshTenant(t, ctx, pg)
+	globex := freshTenant(t, ctx, pg)
+	now := time.Now().UTC()
+
+	aliceKeys := []idempotency.Key{
+		aliceRecord(acme, "k1"),
+		{TenantID: acme, Subject: "alice", SessionID: "s1", Value: "k1"},
+		{TenantID: acme, Subject: "alice", SessionID: "s2", Value: "child-1"},
+	}
+	bob := idempotency.Key{TenantID: acme, Subject: "bob", Value: "k1"}
+	globexAlice := aliceRecord(globex, "k1")
+	for _, k := range append(append([]idempotency.Key{}, aliceKeys...), bob, globexAlice) {
+		if err := store.Put(ctx, idempotency.Record{Key: k, BodyHash: "h", Response: idempotency.Response{StatusCode: 201}, StoredAt: now}); err != nil {
+			t.Fatalf("Put(%+v): %v", k, err)
+		}
+	}
+
+	n, err := store.DeleteByUser(ctx, acme, "alice")
+	if err != nil || n != len(aliceKeys) {
+		t.Fatalf("DeleteByUser = %d, %v; want %d, nil", n, err, len(aliceKeys))
+	}
+	for _, k := range aliceKeys {
+		if _, found, _ := store.Get(ctx, k); found {
+			t.Errorf("%+v survived DeleteByUser", k)
+		}
+	}
+	for _, k := range []idempotency.Key{bob, globexAlice} {
+		if _, found, _ := store.Get(ctx, k); !found {
+			t.Errorf("DeleteByUser removed %+v", k)
+		}
+	}
+	if n, err := store.DeleteByUser(ctx, acme, "alice"); err != nil || n != 0 {
+		t.Errorf("second DeleteByUser = %d, %v; want 0, nil", n, err)
+	}
+	if _, err := store.DeleteByUser(ctx, acme, ""); err == nil {
+		t.Error("DeleteByUser with no subject succeeded, want an error")
+	}
+
+	if n, err := store.DeleteByTenant(ctx, acme); err != nil || n != 1 {
+		t.Errorf("DeleteByTenant(acme) = %d, %v; want 1, nil", n, err)
+	}
+	if _, found, _ := store.Get(ctx, globexAlice); !found {
+		t.Error("DeleteByTenant(acme) removed globex's record")
+	}
+	if _, err := store.DeleteByTenant(ctx, ""); err == nil {
+		t.Error("DeleteByTenant with no tenant succeeded, want an error")
+	}
+}

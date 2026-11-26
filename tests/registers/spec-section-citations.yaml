@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1521
+      count: 1526
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -610,7 +610,9 @@ packages:
     - package: pkg/idempotency
       count: 11
     - package: pkg/idempotency/idempotencymw
-      count: 62
+      count: 65
+    - package: pkg/idempotency/idempotencymw/pgstore
+      count: 2
     - package: pkg/kms
       count: 31
     - package: pkg/kms/aws
@@ -874,7 +876,7 @@ packages:
     - package: pkg/storage/deadletterredaction
       count: 6
     - package: pkg/storage/erasure
-      count: 32
+      count: 33
     - package: pkg/storage/erasurejob
       count: 108
     - package: pkg/storage/erasurejob/pgstore
@@ -1066,7 +1068,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 323
+      count: 324
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties

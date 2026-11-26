@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -147,6 +148,45 @@ func (m *MemoryStore) Release(_ context.Context, key idempotency.Key) error {
 	defer m.mu.Unlock()
 	delete(m.records, key)
 	return nil
+}
+
+// DeleteByUser deletes every record of one user in one tenant, under every
+// bound session, and returns the number deleted. User erasure runs it as
+// its idempotency-records step.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (m *MemoryStore) DeleteByUser(_ context.Context, tenantID, subject string) (int, error) {
+	if tenantID == "" || subject == "" {
+		return 0, errors.New("idempotency: DeleteByUser needs a tenant and a subject")
+	}
+	return m.deleteWhere(func(k idempotency.Key) bool {
+		return k.TenantID == tenantID && k.Subject == subject
+	}), nil
+}
+
+// DeleteByTenant deletes every record of one tenant and returns the number
+// deleted. Tenant deletion Phase 4 runs it as its idempotency-records step.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (m *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("idempotency: DeleteByTenant needs a tenant")
+	}
+	return m.deleteWhere(func(k idempotency.Key) bool { return k.TenantID == tenantID }), nil
+}
+
+// deleteWhere deletes the records whose key matches and returns the count.
+func (m *MemoryStore) deleteWhere(match func(idempotency.Key) bool) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k := range m.records {
+		if match(k) {
+			delete(m.records, k)
+			n++
+		}
+	}
+	return n
 }
 
 // HeaderName is the §11.5 HTTP header that carries the idempotency

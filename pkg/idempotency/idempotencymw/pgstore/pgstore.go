@@ -259,6 +259,50 @@ func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.
 	return reclaimed, err
 }
 
+// DeleteByUser deletes every record of one user in one tenant: the rows
+// whose subject is the user, under every bound session. User erasure runs
+// it as its idempotency-records step. The DELETE names tenant_id so it
+// never spans tenants. It returns the number of rows deleted.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (s *Store) DeleteByUser(ctx context.Context, tenantID, subject string) (int, error) {
+	if tenantID == "" || subject == "" {
+		return 0, fmt.Errorf("idempotencystore: DeleteByUser needs a tenant and a subject")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx,
+			`DELETE FROM idempotency_keys WHERE tenant_id = $1 AND subject = $2`, tenantID, subject)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	return int(deleted), err
+}
+
+// DeleteByTenant deletes every record of one tenant. Tenant deletion
+// Phase 4 runs it as its idempotency-records step. It returns the number
+// of rows deleted.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (s *Store) DeleteByTenant(ctx context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, fmt.Errorf("idempotencystore: DeleteByTenant needs a tenant")
+	}
+	var deleted int64
+	err := pgtenant.InTx(ctx, s.pool, tenantID, func(tx pgx.Tx) error {
+		tag, err := tx.Exec(ctx, `DELETE FROM idempotency_keys WHERE tenant_id = $1`, tenantID)
+		if err != nil {
+			return err
+		}
+		deleted = tag.RowsAffected()
+		return nil
+	})
+	return int(deleted), err
+}
+
 // scanRecord reads one row in selectList order into a Record.
 func scanRecord(row pgx.Row) (idempotency.Record, error) {
 	var (

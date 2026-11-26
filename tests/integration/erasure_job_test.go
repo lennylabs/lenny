@@ -341,6 +341,13 @@ func erasureAdminDo(t *testing.T, base, method, path, roles string, body any) (i
 // session it creates is owned by user (§10.2 Session ownership).
 func erasureDoAs(t *testing.T, base, method, path, user, roles string, body any) (int, map[string]any) {
 	t.Helper()
+	return erasureDoWith(t, base, method, path, user, roles, nil, body)
+}
+
+// erasureDoWith is erasureDoAs with extra request headers, such as an
+// Idempotency-Key.
+func erasureDoWith(t *testing.T, base, method, path, user, roles string, headers map[string]string, body any) (int, map[string]any) {
+	t.Helper()
 	var reader io.Reader
 	if body != nil {
 		b, err := json.Marshal(body)
@@ -358,6 +365,9 @@ func erasureDoAs(t *testing.T, base, method, path, user, roles string, body any)
 	req.Header.Set("X-Lenny-User-ID", user)
 	if roles != "" {
 		req.Header.Set("X-Lenny-Roles", roles)
+	}
+	for k, v := range headers {
+		req.Header.Set(k, v)
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
@@ -627,6 +637,14 @@ var eraseTwinUserTables = []struct{ name, insert, count string }{
 		insert: `INSERT INTO credentials (tenant_id, ref, user_id, provider) VALUES ($1, 'cred-' || $2, $2, 'anthropic_direct')`,
 		count:  `SELECT COUNT(*) FROM credentials WHERE tenant_id = $1 AND user_id = $2`,
 	},
+	{
+		// A record filed under a bound session, which the user eraser
+		// deletes along with the user's records under no session.
+		name: "idempotency_keys",
+		insert: `INSERT INTO idempotency_keys (tenant_id, subject, session_id, idempotency_key, body_hash, response_status)
+			VALUES ($1, $2, 'seed-session', 'seed-key', 'h', 201)`,
+		count: `SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id = $1 AND subject = $2 AND idempotency_key = 'seed-key'`,
+	},
 }
 
 // seedEraseTwin writes one row per store for the user and their session.
@@ -665,9 +683,11 @@ func eraseTwinCounts(t *testing.T, pg *containers.Postgres, user, sid string) ma
 
 // spec: 12.8 (Compliance Interfaces: DeleteByUser dependency-ordered deletion sequence), 12.8 (Compliance Interfaces: Storage backends in erasure scope), 10.1.8, 4.9
 // diagnosis: user erasure through the gateway binary left a checkpoint
-// row, a coordination-mirror row, a connector refresh token, or a
-// registered credential of the erased user, or deleted one of another
-// user's, or a replica restarted after the erasure did not come back up.
+// row, a coordination-mirror row, a connector refresh token, a
+// registered credential, or an idempotency record of the erased user, or
+// deleted one of another user's, or a replica restarted after the erasure
+// did not come back up. A failure before the erasure means the gateway did
+// not file the users' idempotent creates under their subjects.
 // Each store is one the user path wires, so a surviving row means
 // its eraser is not wired, and a missing bob row means an eraser ignores
 // its scope. The restarted replica rebuilds the credential deny list from
@@ -703,11 +723,12 @@ func TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("bootstrap: status %d", code)
 	}
+	// Each user creates a session with the same Idempotency-Key and body,
+	// so the gateway stores one idempotency record per user.
 	start := func(user string) string {
 		t.Helper()
-		code, created := erasureDoAs(t, base, http.MethodPost, "/v1/sessions/start", user, "", map[string]any{
-			"runtimeRef": "echo",
-		})
+		code, created := erasureDoWith(t, base, http.MethodPost, "/v1/sessions/start", user, "",
+			map[string]string{"Idempotency-Key": "create-1"}, map[string]any{"runtimeRef": "echo"})
 		sid, _ := created["id"].(string)
 		if code != http.StatusCreated || sid == "" {
 			t.Fatalf("create session for %s: %d (%v)", user, code, created)
@@ -715,11 +736,27 @@ func TestErasureDeletesTheUsersRowsInEveryWiredStore_spec_12_8(t *testing.T) {
 		return sid
 	}
 	aliceSID, bobSID := start(alice), start(bob)
+	if aliceSID == bobSID {
+		t.Fatalf("bob's create with alice's key replayed her session %s", aliceSID)
+	}
+	const storedRecords = `SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id = $1 AND subject = $2 AND idempotency_key = 'create-1'`
+	for _, user := range []string{alice, bob} {
+		if n := dbCountErasure(t, pg, storedRecords, "acme", user); n != 1 {
+			t.Fatalf("%s has %d stored idempotency records for create-1 before the erasure, want 1", user, n)
+		}
+	}
 	seedEraseTwin(t, pg, alice, aliceSID)
 	seedEraseTwin(t, pg, bob, bobSID)
 
 	jobID := eraseUser(t, base, alice)
 	awaitErasureCompleted(t, base, jobID, 15*time.Second)
+
+	if n := dbCountErasure(t, pg, `SELECT COUNT(*) FROM idempotency_keys WHERE tenant_id = $1 AND subject = $2`, "acme", alice); n != 0 {
+		t.Errorf("idempotency_keys: %d records of the erased user survived, want 0", n)
+	}
+	if n := dbCountErasure(t, pg, storedRecords, "acme", bob); n != 1 {
+		t.Errorf("idempotency_keys: bob has %d records for create-1 after alice's erasure, want 1", n)
+	}
 
 	for store, n := range eraseTwinCounts(t, pg, alice, aliceSID) {
 		if n != 0 {

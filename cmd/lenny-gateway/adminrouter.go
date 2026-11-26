@@ -1060,6 +1060,8 @@ func (w *gatewayWiring) buildUserErasers(
 		memory,
 		erasure.FromCounting("interactions", w.interactions),
 		erasure.Eraser{Name: "audit", DeleteByUser: audit},
+		// The user's idempotency records, under every bound session.
+		w.idempotencyUserEraser(),
 		// SessionStore, the FK parent, after every child store.
 		erasure.FromCounting("sessions", w.sessions),
 		// TokenStore: connector refresh tokens, then registered user

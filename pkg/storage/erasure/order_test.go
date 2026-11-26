@@ -177,7 +177,7 @@ func TestCanonicalRankNameSet_spec_12_8(t *testing.T) {
 		"artifacts", "audit", "billing", "billing_buffer", "checkpoint_manifests",
 		"checkpoint_meta", "checkpoint_retention", "coordination_mirror", "credential_pool",
 		"custom_roles", "delegation_budget", "eval_results", "eviction_state",
-		"experiment_sticky", "interactions", "issued_tokens", "leases", "memory",
+		"experiment_sticky", "idempotency_records", "interactions", "issued_tokens", "leases", "memory",
 		"pool_tenant_access", "quota", "redis_caches", "runtime_tenant_access",
 		"semantic_cache", "session_dlq_archive", "session_message_queues",
 		"session_tree_archive", "sessions", "tenant_config", "tenant_definitions", "tokens",
@@ -270,5 +270,42 @@ func TestCanonicalOrderSessionsAfterChildren_spec_12_8(t *testing.T) {
 		if idx[after] <= idx["sessions"] {
 			t.Errorf("%q must follow sessions in the canonical order", after)
 		}
+	}
+}
+
+// TestBothErasurePathsMustWireTheIdempotencyRecords checks that the
+// idempotency records are ranked before SessionStore, exempt on neither
+// path, and that the validators accept the gateway wiring on both paths
+// and refuse it when either path leaves the records out.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestBothErasurePathsMustWireTheIdempotencyRecords(t *testing.T) {
+	const name = "idempotency_records"
+	if rank, ok := canonicalRank[name]; !ok || rank >= canonicalRank["sessions"] {
+		t.Fatalf("rank of %s = %d (ranked %v), want a rank before sessions (%d)", name, rank, ok, canonicalRank["sessions"])
+	}
+	if _, ok := userExempt[name]; ok {
+		t.Errorf("user erasure exempts %s", name)
+	}
+	if _, ok := tenantExempt[name]; ok {
+		t.Errorf("tenant deletion exempts %s", name)
+	}
+	if err := ValidateOrder(GatewayUserWiringConfig()); err != nil {
+		t.Errorf("user wiring rejected: %v", err)
+	}
+	if err := ValidateTenantOrder(GatewayTenantPhase4Names()); err != nil {
+		t.Errorf("tenant wiring rejected: %v", err)
+	}
+	if err := ValidateOrder(withoutUserEntry(name)); err == nil || !strings.Contains(err.Error(), name) {
+		t.Errorf("user wiring without %s: err = %v, want a refusal naming it", name, err)
+	}
+	var tenant []string
+	for _, n := range GatewayTenantPhase4Names() {
+		if n != name {
+			tenant = append(tenant, n)
+		}
+	}
+	if err := ValidateTenantOrder(tenant); err == nil || !strings.Contains(err.Error(), name) {
+		t.Errorf("tenant wiring without %s: err = %v, want a refusal naming it", name, err)
 	}
 }
