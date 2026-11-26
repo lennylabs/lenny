@@ -37,18 +37,38 @@ type Policy struct {
 }
 
 // UploadTokenPolicy returns the upload-token purpose's policy with the
-// given rotation interval and overlap window.
+// given rotation interval, overlap window, and token lifetime
+// (maxCreatedStateTimeoutSeconds). A replaced key verifies for
+// UploadTokenVerificationTime of the overlap window and the token
+// lifetime, so the verification time follows both configured values.
 //
 // spec: §7.1 (Normal Flow)
-func UploadTokenPolicy(rotation, overlap time.Duration) Policy {
+func UploadTokenPolicy(rotation, overlap, tokenLifetime time.Duration) Policy {
 	return Policy{
 		Purpose:          PurposeUploadToken,
 		Algorithm:        AlgorithmHMACSHA256,
 		KEKAlias:         AliasUploadTokenSigning,
 		SecretSize:       hmacSecretSize,
 		RotationInterval: rotation,
-		VerifyFor:        overlap,
+		VerifyFor:        UploadTokenVerificationTime(overlap, tokenLifetime),
 	}
+}
+
+// UploadTokenVerificationTime returns how long a replaced upload-token key
+// keeps verifying after the next key becomes active: overlap +
+// max(overlap, tokenLifetime), 10 minutes at the defaults of 5 minutes
+// each. The first term is the ring's stale bound (Options.StaleAfter),
+// which for upload tokens is the overlap window.
+//
+// The worst case is a replica whose last reload came just before a peer
+// published the next key: it can mint with the replaced key until the next
+// key's activation plus the stale bound, and that token expires one token
+// lifetime later, which is still inside the verification time. A token
+// lifetime longer than the overlap window therefore needs no refusal.
+//
+// spec: §7.1 (Normal Flow)
+func UploadTokenVerificationTime(overlap, tokenLifetime time.Duration) time.Duration {
+	return overlap + max(overlap, tokenLifetime)
 }
 
 // validate reports a policy that cannot drive a Ring.

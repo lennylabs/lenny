@@ -69,11 +69,15 @@ const (
 	overlap  = 5 * time.Minute
 	refresh  = 30 * time.Second
 	lead     = 2 * time.Minute
+	tokenTTL = 5 * time.Minute
+	// verifyFor is how long a replaced key verifies at these settings: the
+	// stale bound (overlap) plus the longer of overlap and tokenTTL.
+	verifyFor = overlap + tokenTTL
 )
 
 func openRing(t *testing.T, store signingkeys.Store, clock *fakeClock) *signingkeys.Ring {
 	t.Helper()
-	ring, err := signingkeys.Open(context.Background(), signingkeys.UploadTokenPolicy(rotation, overlap), store, &xorSealer{},
+	ring, err := signingkeys.Open(context.Background(), signingkeys.UploadTokenPolicy(rotation, overlap, tokenTTL), store, &xorSealer{},
 		signingkeys.Options{RefreshInterval: refresh, PublishLead: lead, StaleAfter: overlap, Clock: clock.Now})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
@@ -161,8 +165,8 @@ func TestOpenRacingOnAnEmptyStoreProducesOneKey(t *testing.T) {
 // across two replicas: when the active key is due, a refresh writes the
 // next key one publish lead ahead; both replicas load it and verify with it
 // while they still sign with the old key; once it is active both sign with
-// it; the old key verifies for the overlap window after that and is then
-// left out and deleted by the sweep.
+// it; the old key verifies for verifyFor after that, and is then left out
+// and deleted by the sweep.
 //
 // spec: §7.1 (Normal Flow)
 func TestRotationPublishesTheNextKeyAheadOfItsActivation(t *testing.T) {
@@ -191,8 +195,8 @@ func TestRotationPublishesTheNextKeyAheadOfItsActivation(t *testing.T) {
 	if !next.ActiveFrom.Equal(clock.Now().Add(lead)) || next.RotationSlot != 2 {
 		t.Errorf("next key active from %s at slot %d, want %s at slot 2", next.ActiveFrom, next.RotationSlot, clock.Now().Add(lead))
 	}
-	if !recs[0].RetireAfter.Equal(next.ActiveFrom) || !recs[0].DeleteAfter.Equal(next.ActiveFrom.Add(overlap)) {
-		t.Errorf("retired key = retire %s delete %s, want %s and %s", recs[0].RetireAfter, recs[0].DeleteAfter, next.ActiveFrom, next.ActiveFrom.Add(overlap))
+	if !recs[0].RetireAfter.Equal(next.ActiveFrom) || !recs[0].DeleteAfter.Equal(next.ActiveFrom.Add(verifyFor)) {
+		t.Errorf("retired key = retire %s delete %s, want %s and %s", recs[0].RetireAfter, recs[0].DeleteAfter, next.ActiveFrom, next.ActiveFrom.Add(verifyFor))
 	}
 	for name, r := range map[string]*signingkeys.Ring{"a": a, "b": b} {
 		k, err := r.SigningKey()
@@ -218,13 +222,13 @@ func TestRotationPublishesTheNextKeyAheadOfItsActivation(t *testing.T) {
 		}
 	}
 
-	clock.Advance(overlap - time.Second)
+	clock.Advance(verifyFor - time.Second)
 	if got := keyIDs(a.VerificationKeys()); len(got) != 2 {
-		t.Errorf("verification keys inside the overlap window = %v, want both", got)
+		t.Errorf("verification keys inside the verification time = %v, want both", got)
 	}
 	clock.Advance(time.Second)
 	if got := keyIDs(a.VerificationKeys()); len(got) != 1 || got[0] != next.KeyID {
-		t.Errorf("verification keys after the overlap window = %v, want the next key alone", got)
+		t.Errorf("verification keys after the verification time = %v, want the next key alone", got)
 	}
 	refreshAll(t, a)
 	all, _ := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
@@ -371,7 +375,7 @@ func TestARingThatCannotRefreshStopsSigningAfterTheOverlapWindow(t *testing.T) {
 func TestOpenRefusesWhatItCannotLoad(t *testing.T) {
 	ctx := context.Background()
 	clock := newClock()
-	policy := signingkeys.UploadTokenPolicy(rotation, overlap)
+	policy := signingkeys.UploadTokenPolicy(rotation, overlap, tokenTTL)
 	opts := signingkeys.Options{RefreshInterval: refresh, PublishLead: lead, StaleAfter: overlap, Clock: clock.Now}
 
 	down := &failingStore{Store: signingkeys.NewMemoryStore(), down: true}
@@ -437,7 +441,7 @@ func TestAKeyOfOnePurposeNeverServesAnother(t *testing.T) {
 	store := signingkeys.NewMemoryStore()
 	clock := newClock()
 	upload := openRing(t, store, clock)
-	other := signingkeys.UploadTokenPolicy(rotation, overlap)
+	other := signingkeys.UploadTokenPolicy(rotation, overlap, tokenTTL)
 	other.Purpose = "other"
 	otherRing, err := signingkeys.Open(context.Background(), other, store, &xorSealer{},
 		signingkeys.Options{PublishLead: lead, StaleAfter: overlap, Clock: clock.Now})
@@ -468,7 +472,7 @@ func TestReloadUnwrapsOnlyNewKeys(t *testing.T) {
 	store := signingkeys.NewMemoryStore()
 	clock := newClock()
 	sealer := &xorSealer{}
-	r, err := signingkeys.Open(context.Background(), signingkeys.UploadTokenPolicy(rotation, overlap), store, sealer,
+	r, err := signingkeys.Open(context.Background(), signingkeys.UploadTokenPolicy(rotation, overlap, tokenTTL), store, sealer,
 		signingkeys.Options{RefreshInterval: refresh, PublishLead: lead, StaleAfter: overlap, Clock: clock.Now})
 	if err != nil {
 		t.Fatal(err)
@@ -489,7 +493,7 @@ func TestReloadUnwrapsOnlyNewKeys(t *testing.T) {
 // requirement states, so it carries no specification annotation.
 func TestRunRefreshesUntilTheContextEnds(t *testing.T) {
 	store := &countingStore{Store: signingkeys.NewMemoryStore(), listed: make(chan struct{}, 16)}
-	r, err := signingkeys.Open(context.Background(), signingkeys.UploadTokenPolicy(rotation, overlap), store, &xorSealer{},
+	r, err := signingkeys.Open(context.Background(), signingkeys.UploadTokenPolicy(rotation, overlap, tokenTTL), store, &xorSealer{},
 		signingkeys.Options{RefreshInterval: time.Millisecond, PublishLead: time.Second, StaleAfter: overlap})
 	if err != nil {
 		t.Fatal(err)

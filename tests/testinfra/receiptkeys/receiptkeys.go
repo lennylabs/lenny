@@ -19,8 +19,10 @@ import (
 // whose local KMS runs over the master key at keyFile, with the receipt
 // alias mapping refs. A nil refs leaves the aliases unmapped, as a process
 // started without --kms-alias does. An empty keyFile uses a random master
-// key private to the call.
-func Load(t testing.TB, keyFile string, refs map[string]string) (*audit.ReceiptKeySet, *deadletterredaction.KMSReceiptSigner) {
+// key private to the call. retired lists the key identifiers of retired
+// receipt keys the key set also trusts, as --audit-retired-receipt-key-ids
+// does.
+func Load(t testing.TB, keyFile string, refs map[string]string, retired ...string) (*audit.ReceiptKeySet, *deadletterredaction.KMSReceiptSigner) {
 	t.Helper()
 	var (
 		local *kms.Local
@@ -37,7 +39,7 @@ func Load(t testing.TB, keyFile string, refs map[string]string) (*audit.ReceiptK
 	for alias, ref := range refs {
 		local.SetSigningReference(alias, ref)
 	}
-	keys, signer, err := deadletterredaction.LoadReceiptSigning(context.Background(), local, refs)
+	keys, signer, err := deadletterredaction.LoadReceiptSigning(context.Background(), local, refs, retired)
 	if err != nil {
 		t.Fatalf("receiptkeys: load receipt signing: %v", err)
 	}

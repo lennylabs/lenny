@@ -63,7 +63,7 @@ func TestUploadTokenKeysNeverLeakAndRetiredKeysStopVerifying(t *testing.T) {
 	}
 	clock := &keysClock{now: time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)}
 	ring, err := signingkeys.Open(ctx,
-		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow),
+		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow, uploadtoken.DefaultTTL),
 		store, sealer, signingkeys.Options{StaleAfter: uploadtoken.DefaultOverlapWindow, Clock: clock.Now})
 	if err != nil {
 		t.Fatal(err)
@@ -90,8 +90,8 @@ func TestUploadTokenKeysNeverLeakAndRetiredKeysStopVerifying(t *testing.T) {
 	}
 
 	// A token whose own expiry is far away stops verifying once its key has
-	// left the ring: rotation, then the overlap window after the next key
-	// becomes active.
+	// left the ring: rotation, then the replaced key's verification time
+	// after the next key becomes active.
 	old, err := issuer.Issue("sess-2", 48*time.Hour)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +100,7 @@ func TestUploadTokenKeysNeverLeakAndRetiredKeysStopVerifying(t *testing.T) {
 	if err := ring.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(signingkeys.DefaultPublishLead + uploadtoken.DefaultOverlapWindow)
+	clock.Advance(signingkeys.DefaultPublishLead + signingkeys.UploadTokenVerificationTime(uploadtoken.DefaultOverlapWindow, uploadtoken.DefaultTTL))
 	if err := ring.Refresh(ctx); err != nil {
 		t.Fatal(err)
 	}

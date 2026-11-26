@@ -142,6 +142,17 @@ type Provider interface {
 	// It returns ErrNotP256 when the key is not an ECDSA P-256 key and
 	// ErrUnknownKEK for an alias with no key.
 	PublicKey(ctx context.Context, alias string) (*ecdsa.PublicKey, error)
+
+	// PublicKeyByID returns the P-256 public key of the key version that
+	// keyID names, whether or not an alias maps to it. keyID is a provider
+	// key reference in the form --kms-alias takes: an AWS key ID or key ARN,
+	// a GCP CryptoKeyVersion resource name, an Azure `<name>@<version>`, or,
+	// on the local provider, the reference string the key derives from. A
+	// verifier reads the key of a retired §12.8 receipt key this way, after
+	// no alias names it any longer. It returns ErrNotP256 when the key is
+	// not an ECDSA P-256 key and ErrUnknownKEK when the provider has no such
+	// key.
+	PublicKeyByID(ctx context.Context, keyID string) (*ecdsa.PublicKey, error)
 }
 
 // DEKSize is the byte length of a data-encryption-key. AES-256-GCM

@@ -2,7 +2,18 @@
 
 ## Open decisions
 
-None.
+- **O7. Where the fix for AUDIT-I6 is built.** Building step 0177.S2 found that a row appended after a redacted tail row links to the tail's post-redaction hash ([AUDIT-I6](../../issues/AUDIT/AUDIT-I6-row-appended-after-a-redacted-tail-links-to-its-post-redaction-hash.md)): when an erasure redacts a tenant's newest audit row, the erasure's own `gdpr.erasure_deadletter_redacted` event links to the redacted content, and every later chain verification reports the tenant's chain `broken`. The defect predates this change, and the fix is in the append path of `pkg/audit/auditstore`, which reads the tail's receipt to link to its `original_hash`. Options:
+  - (a) A new step 0177.S3 in this change, since the change rebuilt the receipt check that the defect undermines, with a component test that redacts a tenant's newest row and verifies the chain.
+  - (b) A separate change for the audit append path, outside 0177.
+  - (c) Fold the fix into step 0177.S2 before it merges.
+
+  Recommendation: (a). The fix is small and belongs to the receipt-verified chain this change completes, and a separate step keeps 0177.S2 to decisions 7, 8, and 9.
+- **O8. A cap on the expiry an upload token carries, and retiring a key early (UPLOAD-I6, raised by the security review of 0177.S2, 2026-11-26).** The verifier refuses a token only once the clock passes the expiry the token itself carries ([UPLOAD-I6](../../issues/UPLOAD/UPLOAD-I6-verifier-accepts-any-expiry-the-token-carries.md)), so a holder of a leaked signing key mints tokens for any session that verify on every replica until the key's row is deleted, up to a rotation interval plus the verification time, and no documented way retires a suspected key early. Options:
+  - (a) §7.1 requires the verifier to refuse a token whose expiry lies further ahead than the token lifetime plus a clock-skew allowance, and the documentation, or a `lenny-ctl` command, states how to retire a key early by deleting its row and writing the next key.
+  - (b) The expiry cap alone, with no early retirement.
+  - (c) No change, with the limit documented.
+
+  Recommendation: (a), so a forged token gains nothing beyond the key's own verification time and an operator can respond to a suspected leak.
 
 ## Decisions
 

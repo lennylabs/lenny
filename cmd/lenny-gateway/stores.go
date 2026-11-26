@@ -74,7 +74,7 @@ func (w *gatewayWiring) buildStores(sessionEventFlags *sessionevents.Flags, core
 	w.buildBillingPipeline(w.billing, w.pgPool, w.redisClient, w.concernRedis, w.tenants, w.replica)
 	// spec: §4.1 / §7.1 — build the uploadToken, KMS, and signing/verification
 	// surfaces. Records them on the accumulator.
-	w.buildTokenSigningStores(w.tenants)
+	w.buildTokenSigningStores(w.tenants, uploadTokenLifetime(*core.watchdog.MaxCreatedStateSeconds))
 	w.buildExecutorAndCredentials()
 	w.buildPodLifecycle(checkpointRetention, core)
 	w.buildSessionMessaging(sessionEventFlags, core.sessionInbox)

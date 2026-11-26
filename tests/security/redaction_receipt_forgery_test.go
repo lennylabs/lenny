@@ -191,3 +191,92 @@ func TestForgedRedactionReceiptLeavesTheRowBrokenAndPages(t *testing.T) {
 		})
 	}
 }
+
+// TestARedactedRowRewrittenAgainAfterItsReceiptReadsBrokenAndPages pins
+// that a receipt authorizes only the content it was signed for: a writer
+// with the erasure grant that rewrites an already-redacted row's payload,
+// whether to other content that keeps the redaction marker or back to the
+// row's original content, and leaves the genuine receipt in place, leaves
+// the row broken in the chain verifier and counts it missing in the
+// periodic receipt scan, which pages AuditRedactionReceiptMissing.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging), §16.5
+// (Alerting Rules and SLOs)
+// diagnosis: a redacted audit row whose payload was rewritten after its
+// receipt was signed still reads redacted_gdpr or verified, so a writer
+// with the lenny_erasure grant can plant content in a redacted row or undo
+// an erasure; the chain verifier or the periodic scan does not compare the
+// row's recomputed content hash with the receipt's signed new_hash, or does
+// not read a row that has a receipt but lost the redaction marker.
+func TestARedactedRowRewrittenAgainAfterItsReceiptReadsBrokenAndPages(t *testing.T) {
+	pg := containers.StartPostgres(t, containers.PostgresOptions{MigrationsDir: filepath.Join(schematest.RepoRoot(t), "migrations")})
+	ctx := context.Background()
+	keys, signer := receiptkeys.Load(t, "", nil)
+	store := auditstore.New(pg.Router(t), auditstore.WithReceiptVerifier(keys))
+	seedRedactedRow(t, ctx, pg, store, signer)
+	if vr, err := store.Verify(ctx, receiptForgeryTenant); err != nil || vr.Integrity != audit.ChainRedactedGDPR {
+		t.Fatalf("genuine redaction: chain = %+v, %v; want redacted_gdpr", vr, err)
+	}
+	var genuine string
+	if err := pg.Pool.QueryRow(ctx, `SELECT payload::text FROM audit_log WHERE tenant_id = $1 AND sequence_number = 1`,
+		receiptForgeryTenant).Scan(&genuine); err != nil {
+		t.Fatal(err)
+	}
+	for _, rewrite := range []struct{ name, payload string }{
+		{"other content that keeps the redaction marker", `{"redacted": true, "event_type": "session.created", "note": "planted after the receipt"}`},
+		{"the original content", `{"user_id":"alice@acme.com","note":"secret"}`},
+	} {
+		t.Run(rewrite.name, func(t *testing.T) {
+			rewriteAuditPayload(t, ctx, pg, rewrite.payload)
+			defer rewriteAuditPayload(t, ctx, pg, genuine)
+			vr, err := store.Verify(ctx, receiptForgeryTenant)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if vr.Integrity != audit.ChainBroken || vr.BreakSeq != 1 {
+				t.Errorf("chain = %q at %d (%s), want broken at 1", vr.Integrity, vr.BreakSeq, vr.Detail)
+			}
+			var paged []string
+			p := &integrity.PeriodicCheck{
+				DB: pg.Pool, CtrlDB: pg.Pool,
+				Cfg:             integrity.PeriodicConfig{ChainSampleN: 1000},
+				ReceiptVerifier: keys,
+				OnRedactionReceiptMissing: func(tenantID string, n int) {
+					for i := 0; i < n; i++ {
+						paged = append(paged, tenantID)
+					}
+				},
+			}
+			p.CheckOnce(ctx)
+			if len(paged) != 1 || paged[0] != receiptForgeryTenant {
+				t.Errorf("receipt-missing signal = %v, want one for %s", paged, receiptForgeryTenant)
+			}
+		})
+	}
+}
+
+// rewriteAuditPayload rewrites the payload of the test tenant's first audit
+// row under erasure mode, as a writer holding the lenny_erasure grant can.
+func rewriteAuditPayload(t *testing.T, ctx context.Context, pg *containers.Postgres, payload string) {
+	t.Helper()
+	tx, err := pg.Pool.Begin(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+	for _, stmt := range []string{
+		"SELECT set_config('app.current_tenant', '" + receiptForgeryTenant + "', true)",
+		"SET LOCAL lenny.erasure_mode = 'true'",
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
+	}
+	if _, err := tx.Exec(ctx, `UPDATE audit_log SET payload = $2::jsonb, payload_canonical_json = $2::jsonb
+		WHERE tenant_id = $1 AND sequence_number = 1`, receiptForgeryTenant, payload); err != nil {
+		t.Fatalf("rewrite the redacted row: %v", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		t.Fatal(err)
+	}
+}

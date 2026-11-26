@@ -38,7 +38,7 @@ func uploadReplica(t *testing.T, sessions sessionstore.Store, keys signingkeys.S
 		t.Fatal(err)
 	}
 	ring, err := signingkeys.Open(context.Background(),
-		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow),
+		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow, uploadtoken.DefaultTTL),
 		keys, sealer, signingkeys.Options{StaleAfter: uploadtoken.DefaultOverlapWindow})
 	if err != nil {
 		t.Fatal(err)

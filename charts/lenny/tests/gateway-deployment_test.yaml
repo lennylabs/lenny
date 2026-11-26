@@ -2419,6 +2419,33 @@ tests:
             name: LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES
             value: "1000"
 
+  # spec: §12.8 — audit.retiredReceiptKeyIds renders as the comma-separated
+  # LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS only when the list is not empty.
+  - it: wires LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS from an audit.retiredReceiptKeyIds list
+    set:
+      audit.retiredReceiptKeyIds:
+        - arn:aws:kms:us-east-1:111122223333:key/0000aaaa-12ab-34cd-56ef-1234567890ab
+        - arn:aws:kms:us-east-1:111122223333:key/1111bbbb-12ab-34cd-56ef-1234567890ab
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS
+            value: "arn:aws:kms:us-east-1:111122223333:key/0000aaaa-12ab-34cd-56ef-1234567890ab,arn:aws:kms:us-east-1:111122223333:key/1111bbbb-12ab-34cd-56ef-1234567890ab"
+  - it: omits LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS when audit.retiredReceiptKeyIds is empty
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS
+          any: true
+
   - it: wires LENNY_AUDIT_STARTUP_CHAIN_CHECK_ENTRIES from an audit.startupChainCheckEntries override
     set:
       audit.startupChainCheckEntries: 5000

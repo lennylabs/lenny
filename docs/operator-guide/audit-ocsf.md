@@ -67,12 +67,15 @@ A GDPR erasure rewrites the payload of a dead-lettered audit row in place, which
 
 A receipt is a row of the `audit_redaction_receipts` table, located by the redacted row's `tenant_id` and `sequence_number`. Its signed fields are `receipt_id`, `audit_event_id`, `tenant_id`, `sequence_number`, `original_hash`, `new_hash`, `erasure_job_id`, `legal_basis`, `redactor_identity`, and `timestamp`. The `signature` column holds the signature, and `signature_kms_key_id` names the KMS key version that produced it.
 
-An external verifier checks a receipt in four steps:
+A receipt binds the row's content before and after the redaction: `original_hash` is the row's content hash before the rewrite, which the next row's `prev_hash` carries, and `new_hash` is the content hash of the redacted row. A row matches its receipt only while its current content hash equals `new_hash`, so a redacted row whose payload was rewritten again after the redaction is `broken` even when its receipt's signature verifies. A row that has a receipt is checked this way even when its payload no longer carries the redaction marker, such as a row written back to its pre-redaction content.
 
-1. Fetch the trusted public keys from `GET /v1/admin/audit-receipt-keys`, which requires the `platform-admin` or `tenant-admin` role. The response lists one entry per trusted key, each with its `keyId`, the algorithm `ES256`, and the public key as a JSON Web Key (`jwk`) whose `kid` equals the `keyId`.
+An external verifier checks a receipt as follows:
+
+1. Fetch the trusted public keys from `GET /v1/admin/audit-receipt-keys`, which requires the `platform-admin` or `tenant-admin` role. The response lists one entry per trusted key, each with its `keyId`, the algorithm `ES256`, and the public key as a JSON Web Key (`jwk`) whose `kid` equals the `keyId`. The trusted keys are the keys the `platform:audit-signing` and `platform:audit-verify` aliases name and the retired receipt keys that `audit.retiredReceiptKeyIds` lists.
 2. Select the key whose `keyId` equals the receipt's `signature_kms_key_id`. A receipt whose key identifier matches no listed key does not verify.
 3. Build the signed bytes: a JSON object of the ten signed fields, serialized with the RFC 8785 JSON Canonicalization Scheme. In that object, `original_hash` and `new_hash` are lowercase hexadecimal strings, `sequence_number` is a number, the identifiers are strings, and `timestamp` is an RFC 3339 UTC string with at most six fractional digits and no trailing zeros, such as `2026-11-26T09:00:00.123456Z`.
 4. Verify the signature as ES256 over the SHA-256 digest of those bytes. The signature is 64 bytes: the big-endian `r` followed by the big-endian `s`, each 32 bytes.
+5. Recompute the redacted row's content hash from its current columns, as for any row of the chain, and confirm that it equals the receipt's `new_hash`, and that `original_hash` equals the `prev_hash` of the row that follows it.
 
 ```json
 {

@@ -51,7 +51,7 @@ func uploadTokenReplica(t *testing.T, pg *containers.Postgres, blobs blobstore.S
 		t.Fatal(err)
 	}
 	ring, err := signingkeys.Open(context.Background(),
-		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow),
+		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow, uploadtoken.DefaultTTL),
 		keyStore, sealer, signingkeys.Options{StaleAfter: uploadtoken.DefaultOverlapWindow})
 	if err != nil {
 		t.Fatalf("open the signing-key ring: %v", err)

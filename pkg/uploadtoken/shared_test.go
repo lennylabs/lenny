@@ -25,12 +25,20 @@ type sharedReplica struct {
 
 func newSharedReplica(t *testing.T, store signingkeys.Store, provider kms.Provider, clock func() time.Time) sharedReplica {
 	t.Helper()
+	return newSharedReplicaWithLifetime(t, store, provider, clock, uploadtoken.DefaultTTL)
+}
+
+// newSharedReplicaWithLifetime builds a replica whose configured token
+// lifetime (maxCreatedStateTimeoutSeconds) is lifetime, with the default
+// rotation interval, overlap window, refresh interval, and publish lead.
+func newSharedReplicaWithLifetime(t *testing.T, store signingkeys.Store, provider kms.Provider, clock func() time.Time, lifetime time.Duration) sharedReplica {
+	t.Helper()
 	sealer, err := signingkeys.NewEnvelopeSealer(provider, signingkeys.AliasUploadTokenSigning)
 	if err != nil {
 		t.Fatal(err)
 	}
 	ring, err := signingkeys.Open(context.Background(),
-		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow),
+		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow, lifetime),
 		store, sealer, signingkeys.Options{StaleAfter: uploadtoken.DefaultOverlapWindow, Clock: clock})
 	if err != nil {
 		t.Fatal(err)

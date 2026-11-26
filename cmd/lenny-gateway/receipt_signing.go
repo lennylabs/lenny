@@ -6,6 +6,7 @@ import (
 	"context"
 	"log"
 
+	"github.com/lennylabs/lenny/pkg/kms/providerflags"
 	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 )
 
@@ -13,21 +14,29 @@ import (
 // keys a chain verifier trusts from the KMS provider that
 // buildTokenSigningStores resolved, and records both on the accumulator.
 // The signer signs inside the KMS under platform:audit-signing; the key set
-// holds the public keys of platform:audit-signing and the optional
-// platform:audit-verify. A process that cannot load them does not start,
-// as for the JWT key set. The audit store's chain verification, the
-// periodic integrity check, the audit-events chain walk, and the receipt
-// key route read the key set; the erasure job's dead-letter redaction
-// signs with the signer.
+// holds the public keys of platform:audit-signing, the optional
+// platform:audit-verify, and each retired receipt key that
+// --audit-retired-receipt-key-ids lists. A process that cannot load them,
+// or whose list names a key reference that does not pin one key version,
+// does not start, as for the JWT key set. The audit store's chain
+// verification, the periodic integrity check, the audit-events chain walk,
+// and the receipt key route read the key set; the erasure job's dead-letter
+// redaction signs with the signer.
 //
 // spec: §12.8 (Compliance Interfaces)
 func (w *gatewayWiring) buildReceiptSigning() {
-	keys, signer, err := deadletterredaction.LoadReceiptSigning(context.Background(), w.kmsProvider, w.f.kmsOpts.AliasToKey)
+	retired := splitCSV(*w.f.auditRetiredReceiptKeyIDs)
+	for _, ref := range retired {
+		if err := providerflags.ValidateSigningReference(w.f.kmsOpts.Provider, ref); err != nil {
+			log.Fatalf("lenny-gateway: --audit-retired-receipt-key-ids: %v", err)
+		}
+	}
+	keys, signer, err := deadletterredaction.LoadReceiptSigning(context.Background(), w.kmsProvider, w.f.kmsOpts.AliasToKey, retired)
 	if err != nil {
 		log.Fatalf("lenny-gateway: §12.8 redaction receipt signing keys: %v", err)
 	}
-	log.Printf("lenny-gateway: §12.8 redaction receipt signing key %s loaded (%d trusted key(s))",
-		signer.KeyID(), len(keys.Keys()))
+	log.Printf("lenny-gateway: §12.8 redaction receipt signing key %s loaded (%d trusted key(s), %d retired)",
+		signer.KeyID(), len(keys.Keys()), len(retired))
 	if w.f.kmsOpts.EphemeralKEK() {
 		// The local provider without a master key file derives the receipt
 		// key from a per-process random seed under the same key id, so a

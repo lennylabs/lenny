@@ -125,6 +125,23 @@ func ReceiptSigningInput(r RedactionReceipt) ([]byte, error) {
 	return canon, nil
 }
 
+// ReceiptMatchesRow reports whether rcpt is bound to the redacted row: it
+// names the row's id and sequence number, its original_hash is the row's
+// preserved pre-redaction hash (row.Hash), and its new_hash is content, the
+// row's content hash recomputed from its current columns (ComputeHash). A
+// receipt whose new_hash differs authorizes other content than the row
+// holds, as after a second rewrite of a redacted row, so the row does not
+// match. The chain verifier runs this check; the periodic receipt scan,
+// which does not read the successor's prev_hash, checks the same new_hash
+// binding without original_hash. Neither the tenant nor the signature is
+// checked here.
+//
+// spec: §12.8 (Compliance Interfaces)
+func ReceiptMatchesRow(rcpt RedactionReceipt, row Row, content string) bool {
+	return rcpt.AuditEventID == row.ID && rcpt.RedactedSeq == row.Seq &&
+		rcpt.OriginalHash == row.Hash && rcpt.NewHash == content
+}
+
 // ReceiptVerifier checks a receipt's signature. A chain verifier with no
 // ReceiptVerifier trusts no receipt.
 type ReceiptVerifier interface {

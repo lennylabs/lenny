@@ -54,6 +54,26 @@ func validateSigningReferences(provider string, aliasToKey map[string]string) er
 	return nil
 }
 
+// ValidateSigningReference rejects ref, a key identifier the deployment
+// names outside --kms-alias, such as a retired receipt key the gateway
+// setting audit.retiredReceiptKeyIds lists, when it is empty or, on a cloud
+// provider, can be repointed at different key material. A listed AWS alias
+// name would trust whatever key the alias points at later, so it is
+// refused as a signing alias's reference is. The local provider derives
+// the key from the reference string itself, so any non-empty reference
+// passes there.
+//
+// spec: §12.8 (Compliance Interfaces)
+func ValidateSigningReference(provider, ref string) error {
+	if ref == "" {
+		return fmt.Errorf("%w: empty key reference", ErrRepointableSigningReference)
+	}
+	if provider == ProviderLocal || immutableReference(provider, ref) {
+		return nil
+	}
+	return fmt.Errorf("%w: --kms-provider=%s key reference %q", ErrRepointableSigningReference, provider, ref)
+}
+
 // immutableReference reports whether ref pins one key version on the
 // named provider.
 func immutableReference(provider, ref string) bool {

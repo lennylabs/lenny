@@ -158,7 +158,7 @@ func TestAWSServerArgsMapTheGatewayStartupReceiptKey(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve aws provider from Args: %v", err)
 	}
-	if _, _, err := deadletterredaction.LoadReceiptSigning(context.Background(), p, aliases); err != nil {
+	if _, _, err := deadletterredaction.LoadReceiptSigning(context.Background(), p, aliases, nil); err != nil {
 		t.Fatalf("load the redaction receipt key the gateway loads at startup: %v", err)
 	}
 }

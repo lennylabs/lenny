@@ -81,6 +81,26 @@ func (l *Local) PublicKey(ctx context.Context, alias string) (*ecdsa.PublicKey, 
 	return &key.PublicKey, nil
 }
 
+// PublicKeyByID returns the P-256 public key derived for the key reference
+// keyID, the key an alias mapped to keyID signs with. A process over the
+// same seed derives the same key, so a reference that no alias names any
+// longer keeps its public key.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (l *Local) PublicKeyByID(ctx context.Context, keyID string) (*ecdsa.PublicKey, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, fmt.Errorf("kms: local public key: %w", err)
+	}
+	if keyID == "" {
+		return nil, fmt.Errorf("%w: empty key identifier", ErrUnknownKEK)
+	}
+	key, err := l.keyForReference(keyID)
+	if err != nil {
+		return nil, err
+	}
+	return &key.PublicKey, nil
+}
+
 // signingReference returns the reference alias maps to, or the alias
 // name itself when the deployment left it unmapped.
 func (l *Local) signingReference(alias string) string {
@@ -95,7 +115,11 @@ func (l *Local) signingReference(alias string) string {
 // signingKey returns the cached key for alias's reference, deriving it
 // on first use.
 func (l *Local) signingKey(alias string) (*ecdsa.PrivateKey, error) {
-	ref := l.signingReference(alias)
+	return l.keyForReference(l.signingReference(alias))
+}
+
+// keyForReference returns the cached key for ref, deriving it on first use.
+func (l *Local) keyForReference(ref string) (*ecdsa.PrivateKey, error) {
 	l.signingMu.RLock()
 	key, ok := l.signingKeys[ref]
 	l.signingMu.RUnlock()

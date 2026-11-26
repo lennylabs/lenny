@@ -986,7 +986,7 @@ A user has at most one erasure job in progress. The legal-hold preflight runs on
 platform-admin, tenant-admin
 {: .label .label-red }
 
-List the public keys that verify redaction receipt signatures. An erasure job writes one signed redaction receipt for each audit row it rewrites in place, and an external audit verifier checks each receipt against these keys before it accepts the rewritten row as an authorized redaction. The list holds one entry for each key that the `platform:audit-signing` or `platform:audit-verify` KMS alias names, sorted by key identifier.
+List the public keys that verify redaction receipt signatures. An erasure job writes one signed redaction receipt for each audit row it rewrites in place, and an external audit verifier checks each receipt against these keys before it accepts the rewritten row as an authorized redaction. The list holds one entry for each key that the `platform:audit-signing` or `platform:audit-verify` KMS alias names and for each retired receipt key that the `audit.retiredReceiptKeyIds` setting lists, sorted by key identifier.
 
 | Field | Type | Description |
 |:------|:-----|:------------|

@@ -13,6 +13,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/playground"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
 
@@ -39,7 +40,7 @@ func TestBuildPlaygroundOIDCWiresTheDiscoveredExchanger_spec_27_3_1(t *testing.T
 		f.oidcIssuerURL = &issuer
 		f.oidcClientID = &client
 		w := &gatewayWiring{f: f}
-		w.buildTokenSigningStores(nil)
+		w.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 		return w
 	}
 

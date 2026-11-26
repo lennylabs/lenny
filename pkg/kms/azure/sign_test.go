@@ -29,6 +29,8 @@ type signFake struct {
 	jwk    *azkeys.JSONWebKey
 	calls  int
 	lastIn azkeys.SignParameters
+	// getName and getVersion are the key of the last GetKey request.
+	getName, getVersion string
 }
 
 func (f *fakeKMS) Sign(ctx context.Context, _, _ string, params azkeys.SignParameters, _ *azkeys.SignOptions) (azkeys.SignResponse, error) {
@@ -54,7 +56,8 @@ func newSignProvider(f *fakeKMS) *Provider {
 // signKeyClient overrides GetKey with the signing fake's JWK.
 type signKeyClient struct{ *fakeKMS }
 
-func (c signKeyClient) GetKey(ctx context.Context, _, _ string, _ *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error) {
+func (c signKeyClient) GetKey(ctx context.Context, name, version string, _ *azkeys.GetKeyOptions) (azkeys.GetKeyResponse, error) {
+	c.signing.getName, c.signing.getVersion = name, version
 	if err := ctx.Err(); err != nil {
 		return azkeys.GetKeyResponse{}, err
 	}
@@ -227,5 +230,35 @@ func TestAzureSignRealClientMakesOneRequestOnThrottle_spec_10_2(t *testing.T) {
 	}
 	if got := n.Load(); got != 1 {
 		t.Fatalf("Sign made %d provider sign requests, want exactly 1", got)
+	}
+}
+
+// TestAzurePublicKeyByIDReadsTheNamedVersionWithoutAnAlias pins the lookup
+// of a retired receipt key: a `<name>@<version>` identifier, which no alias
+// maps, reads that key version, the key type is still checked, and an
+// identifier without both a name and a version is refused before any
+// request, because a key name alone names whichever version is current.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestAzurePublicKeyByIDReadsTheNamedVersionWithoutAnAlias(t *testing.T) {
+	key := kmstest.NewP256Key(t)
+	f := newFakeKMS()
+	f.signing.jwk = ecJWK(t, &key.PublicKey, azkeys.KeyTypeEC, azkeys.CurveNameP256)
+	pub, err := newSignProvider(f).PublicKeyByID(context.Background(), "audit-signing@0123abcd")
+	if err != nil || !pub.Equal(&key.PublicKey) {
+		t.Fatalf("PublicKeyByID: pub=%v err=%v", pub, err)
+	}
+	if f.signing.getName != "audit-signing" || f.signing.getVersion != "0123abcd" {
+		t.Errorf("GetKey = %q@%q, want audit-signing@0123abcd", f.signing.getName, f.signing.getVersion)
+	}
+	f.signing.jwk = ecJWK(t, &key.PublicKey, azkeys.KeyTypeEC, azkeys.CurveNameP384)
+	if _, err := newSignProvider(f).PublicKeyByID(context.Background(), "audit-signing@0123abcd"); !errors.Is(err, kms.ErrNotP256) {
+		t.Errorf("P-384 key err=%v, want ErrNotP256", err)
+	}
+	for _, bad := range []string{"", "audit-signing", "audit-signing@", "@0123abcd"} {
+		f.signing.getName = ""
+		if _, err := newSignProvider(f).PublicKeyByID(context.Background(), bad); !errors.Is(err, kms.ErrUnknownKEK) || f.signing.getName != "" {
+			t.Errorf("identifier %q err=%v request=%q, want ErrUnknownKEK and no request", bad, err, f.signing.getName)
+		}
 	}
 }
