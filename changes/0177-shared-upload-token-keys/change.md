@@ -1,6 +1,6 @@
 # Shared signing keys for upload tokens and redaction receipts
 
-Status: `In progress`, revision 5, 2026-11-26.
+Status: `In progress`, revision 6, 2026-11-26.
 
 ## Problem
 
@@ -52,7 +52,7 @@ It leaves out:
 
 ## High-level design
 
-All replicas read their upload-token signing keys from one shared table in Postgres (decision 3). The table is keyed by purpose, each purpose under its own policy, and it holds the `upload-token` purpose. Each key is stored encrypted under a KMS key and is decrypted only in memory. A new key is written ahead of its use, with the instant from which replicas sign with it, so every replica has loaded it by the time any replica signs with it. A retired key keeps verifying for the five-minute overlap of §7.1.
+All replicas read their upload-token signing keys from one shared table in Postgres (decision 3). The table is keyed by purpose, each purpose under its own policy, and it holds the `upload-token` purpose. Each key is stored encrypted under a KMS key and is decrypted only in memory. A new key is written ahead of its use, with the instant from which replicas sign with it, so every replica has loaded it by the time any replica signs with it. A retired key keeps verifying for the stale bound plus the longer of the §7.1 overlap window and the token lifetime, ten minutes at the defaults (decision 7).
 
 The upload-token purpose also needs a consumed state. It is recorded on the session row, which already stores the token's digest, with a conditional write, so a second consume on any replica sees the first.
 
@@ -116,7 +116,7 @@ A package for the store, separate from `pkg/uploadtoken`, loads, refreshes, rota
 
 | Purpose | Algorithm | KEK alias | Rotation interval | Retired key verifies for | Row deleted |
 | :-- | :-- | :-- | :-- | :-- | :-- |
-| `upload-token` | HMAC-SHA256 | `platform:upload-token-signing` | 24 hours (§7.1, deployer-configurable) | 5 minutes (§7.1 overlap) | After the overlap |
+| `upload-token` | HMAC-SHA256 | `platform:upload-token-signing` | 24 hours (§7.1, deployer-configurable) | The stale bound (the §7.1 overlap window) plus the longer of the overlap window and `maxCreatedStateTimeoutSeconds`, 10 minutes at the defaults (decision 7) | After that verification time |
 
 At start, a replica loads every key of each purpose it serves whose `delete_after` is in the future, unwraps each secret it can still sign or verify with, and refuses to start when it cannot, as it does for the JWT key set. When a purpose has no key, the replica inserts the first one. A refresh loop reloads the rings on a fixed interval. When a purpose's active key is older than its rotation interval, a replica inserts the next key with `active_from` set one publish lead ahead; a unique constraint on the purpose and the rotation slot makes concurrent inserts from several replicas produce one key. Each replica signs with the newest key whose `active_from` has passed, and verifies with every loaded key of the same purpose. A key's `retire_after` is the next key's `active_from`, its `delete_after` is `retire_after` plus its purpose's verification time, and a sweep deletes rows after `delete_after`.
 
@@ -146,11 +146,11 @@ The erasure job signs each receipt with `kms.Provider.Sign` under a platform asy
 
 Decision 5 names the options not chosen: an HMAC key under a `redaction-receipt` purpose of the shared store, which has no public key and would remove external verification from §12.8, and an ES256 key pair under such a purpose, whose private key would be wrapped under the KEK and used in gateway memory.
 
-The chain verifier in `pkg/audit/chain.go` and `pkg/audit/auditstore` verifies each receipt's signature against the public key its `signature_kms_key_id` names, and a receipt that does not verify leaves the row `broken` and increments `lenny_audit_redaction_receipt_missing_total`. The admin API serves the public keys that step 14 says external verifiers fetch; no section of §15 defines that route today, so the step defines it.
+The chain verifier in `pkg/audit/chain.go` and `pkg/audit/auditstore` verifies each receipt's signature against the public key its `signature_kms_key_id` names, and a receipt that does not verify leaves the row `broken` and increments `lenny_audit_redaction_receipt_missing_total`. The trusted keys are the keys `platform:audit-signing` and the optional `platform:audit-verify` name, and the retired receipt keys the gateway setting `audit.retiredReceiptKeyIds` lists, each read through `kms.Provider.PublicKeyByID` (decision 9). The chain verifier and the periodic receipt scan also require the redacted row's recomputed content hash to equal the receipt's `new_hash`, for every row that has a receipt, so a redacted row rewritten again after its receipt is signed, including one written back to its pre-redaction content, reads `broken` (decision 8). A row is redacted at most once, so no chained receipt is needed (step 0177.S2). The admin API serves the public keys that step 14 says external verifiers fetch; no section of §15 defines that route today, so the step defines it.
 
 ## Worked example
 
-`alice` creates session `s1` through replica `gw-1`, which signs the token with key `k7`, loaded by both replicas at start. Her first upload reaches `gw-2`, which verifies the HMAC with `k7` and admits it. Her `FinalizeWorkspace` reaches `gw-1`, which moves the row to `ready` and sets `upload_token_consumed_at` in the same write. A retry of the upload reaches `gw-2`, which reads the row, finds the column set, and answers `410 UPLOAD_TOKEN_CONSUMED`. Twenty-four hours after `k7` became active, `gw-2` inserts `k8` with `active_from` one publish lead ahead; `gw-1` loads it on its next refresh, and both sign with `k8` once `active_from` passes. `k7` verifies until five minutes after that, and the sweep then deletes it.
+`alice` creates session `s1` through replica `gw-1`, which signs the token with key `k7`, loaded by both replicas at start. Her first upload reaches `gw-2`, which verifies the HMAC with `k7` and admits it. Her `FinalizeWorkspace` reaches `gw-1`, which moves the row to `ready` and sets `upload_token_consumed_at` in the same write. A retry of the upload reaches `gw-2`, which reads the row, finds the column set, and answers `410 UPLOAD_TOKEN_CONSUMED`. Twenty-four hours after `k7` became active, `gw-2` inserts `k8` with `active_from` one publish lead ahead; `gw-1` loads it on its next refresh, and both sign with `k8` once `active_from` passes. `k7` verifies until ten minutes after that, and the sweep then deletes it.
 
 Later, the erasure job for `bob` runs on `gw-2` and redacts a dead-lettered audit row, signing its receipt inside the KMS under the audit signing alias, whose current key version is `r3`, and recording `r3` on the receipt. `gw-2` restarts. The next chain verification runs on `gw-1`, reads the KMS public key for `r3`, verifies the receipt, and reports the row `redacted_gdpr`.
 
@@ -186,7 +186,10 @@ The change lands before any milestone whose tests run more than one gateway repl
 - `docs/operator-guide/security.md` (operator): the upload-token signing keys are shared across replicas, encrypted under a KMS key, and rotated with a publish lead; the receipt key is held in the KMS and signs there; how long a prior version of the receipt key has to stay in the KMS; the flags that set the refresh interval and the publish lead.
 - `docs/operator-guide/configuration.md` (operator): the new flags with their defaults.
 - `docs/operator-guide/audit-ocsf.md` (operator): how an external verifier reads the receipt public key and checks a receipt.
-- `docs/runbooks/audit-redaction-receipt-missing.md` (operator): a receipt whose signature does not verify fires the alert, as a missing receipt does.
+- `docs/runbooks/audit-redaction-receipt-missing.md` (operator): a receipt whose signature does not verify fires the alert, as a missing receipt does; so do a receipt under a key outside the trusted set and a row whose content no longer matches its receipt's `new_hash`, and a key a rotation dropped is restored by listing it in `audit.retiredReceiptKeyIds`.
+- `docs/operator-guide/security.md`, `docs/operator-guide/configuration.md`, and `docs/reference/configuration.md` (operator), step 0177.S2: the verification time of a replaced upload-token key and how `--max-created-state-timeout-seconds` lengthens it; the setting `audit.retiredReceiptKeyIds` (`--audit-retired-receipt-key-ids`, `LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS`, default empty), the key forms it accepts, the startup refusal when a listed key cannot be read or does not name one key version, `GetPublicKey` on each listed key, and keeping a listed key for `audit.gdprRetentionDays`; the `new_hash` check.
+- `docs/operator-guide/audit-ocsf.md` (operator), step 0177.S2: an external verifier checks the receipt's `new_hash` against the row, and the trusted keys include the listed retired keys.
+- `docs/reference/metrics.md` and `docs/api/admin.md` (operator), step 0177.S2: the conditions the receipt-missing counter counts, and the retired keys in the receipt key route.
 - `docs/api/admin.md` (operator): the public-key route.
 - No reader-facing behavior changes: UPLOAD. A client's token behaves as §7.1 already states, on every replica.
 

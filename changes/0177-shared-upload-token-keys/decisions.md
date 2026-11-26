@@ -2,7 +2,12 @@
 
 ## Open decisions
 
-None.
+- **O7. Where the fix for AUDIT-I6 is built.** Building step 0177.S2 found that a row appended after a redacted tail row links to the tail's post-redaction hash ([AUDIT-I6](../../issues/AUDIT/AUDIT-I6-row-appended-after-a-redacted-tail-links-to-its-post-redaction-hash.md)): when an erasure redacts a tenant's newest audit row, the erasure's own `gdpr.erasure_deadletter_redacted` event links to the redacted content, and every later chain verification reports the tenant's chain `broken`. The defect predates this change, and the fix is in the append path of `pkg/audit/auditstore`, which reads the tail's receipt to link to its `original_hash`. Options:
+  - (a) A new step 0177.S3 in this change, since the change rebuilt the receipt check that the defect undermines, with a component test that redacts a tenant's newest row and verifies the chain.
+  - (b) A separate change for the audit append path, outside 0177.
+  - (c) Fold the fix into step 0177.S2 before it merges.
+
+  Recommendation: (a). The fix is small and belongs to the receipt-verified chain this change completes, and a separate step keeps 0177.S2 to decisions 7, 8, and 9.
 
 ## Decisions
 
