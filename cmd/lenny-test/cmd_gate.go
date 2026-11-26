@@ -1902,5 +1902,8 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 			fmt.Fprintf(w, "    NOTE %s\n", note)
 		}
 	}
+	if v.Gate != nil {
+		printRerunFilingReminder(w, v.RunID, v.Gate.RerunOf)
+	}
 	fmt.Fprintf(w, "  verdict:     %s\n", path)
 }

@@ -669,3 +669,40 @@ func TestAnUnverifiedRerunLeavesTheOriginalProfile(t *testing.T) {
 		t.Errorf("an UNVERIFIED rerun rewrote the profile: %q, hash %s", got, v.Gate.CoverProfileSHA256)
 	}
 }
+
+// TestRerunSummaryAsksToFileEachTestThatPassed pins the filing reminder of
+// a --rerun-failed summary (change 0172, decision 30): a line for each
+// rerun test that passed in at least one run, naming the test, the
+// original run, and the rerun, and none for a test that failed in every
+// run or for a run that is not a rerun.
+func TestRerunSummaryAsksToFileEachTestThatPassed(t *testing.T) {
+	v := &verdict{RunID: "r1", Tiers: map[string]tierStat{}, Gate: &gateRecord{RerunOf: &gateRerun{
+		RunID: "o1", Count: 3,
+		Tests: []gateRerunTest{
+			{Tier: tierComponent, Package: rerunPkg, Test: "TestPropagation", Runs: 3, Passed: 3},
+			{Tier: tierComponent, Package: rerunPkg, Test: "TestSometimes", Runs: 2, Passed: 1},
+			{Tier: tierUnit, Package: moduleImportPath + "/pkg/a", Test: "TestAlways", Runs: 1, Passed: 0},
+		},
+	}}}
+	var b strings.Builder
+	printGateSummary(&b, v, "x")
+	out := b.String()
+	for _, want := range []string{
+		"file:        " + rerunPkg + "::TestPropagation failed in gate run o1 and passed 3 of 3 run(s) in rerun r1; file an issue under the test's area code naming the test and both runs",
+		rerunPkg + "::TestSometimes failed in gate run o1 and passed 1 of 2 run(s) in rerun r1",
+		rerunFilingRule,
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("summary lacks %q:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "TestAlways") {
+		t.Errorf("summary asks to file a test that failed in every run:\n%s", out)
+	}
+	b.Reset()
+	v.Gate.RerunOf = nil
+	printGateSummary(&b, v, "x")
+	if strings.Contains(b.String(), "file:") {
+		t.Errorf("summary of a run that is not a rerun asks to file an issue:\n%s", b.String())
+	}
+}
