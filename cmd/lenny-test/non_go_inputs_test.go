@@ -221,13 +221,13 @@ func TestCommittedRowsSelectTheTiersThatReadTheRunbooksAndTheReleaseWorkflow(t *
 	if err != nil {
 		t.Fatal(err)
 	}
-	runbook := selectChanged([]string{"docs/runbooks/index.md"}, nil, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth})
+	runbook := selectChanged([]string{"docs/runbooks/index.md"}, nil, inputs, specEdits{}, selectOpts{rdepsDepth: fullRdepsDepth})
 	for _, tier := range []string{tierE2EKind, tierChaos, tierSecurity, tierLoadKind, tierIntegration} {
 		if s := runbook.scopes[tier]; s == nil || !s.whole {
 			t.Errorf("a runbook edit does not select the %s tier whole: %+v", tier, s)
 		}
 	}
-	release := selectChanged([]string{".github/workflows/release.yml"}, nil, inputs, specEdits{}, selectOpts{rdepsDepth: defaultRdepsDepth})
+	release := selectChanged([]string{".github/workflows/release.yml"}, nil, inputs, specEdits{}, selectOpts{rdepsDepth: fullRdepsDepth})
 	if s := release.scopes[tierSecurity]; s == nil || !s.whole {
 		t.Errorf("a release workflow edit does not select the security tier: %+v", s)
 	}

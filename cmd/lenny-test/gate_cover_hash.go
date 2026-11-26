@@ -40,6 +40,10 @@ import (
 // PASS recorded. With --require-gate the uncommitted changes do not skip
 // the check: the measured lines are the committed ones, and the profile
 // still has to be the one the latest gate run with --cover on HEAD wrote.
+// A run of `lenny-test gate --rerun-failed` stands for the run whose
+// failed tests it reran when that run is a gate run on the same commit, on
+// a clean tree, with the profile hash and the tier restriction the rerun
+// records (checkRerunOrigin, change 0172, decision 26).
 // With --require-gate that run must also have run every tier of the
 // v1 merge check, static, unit, component, and contract (decision 25): a
 // run that --tier restricted records the tiers it ran as
@@ -82,6 +86,10 @@ type coverGateRun struct {
 	// its verdict's gate.restricted_to records them; nil for a run of
 	// every tier of the merge gate.
 	restrictedTo []string
+	// rerunOf names the gate run a `--rerun-failed` run reran, and
+	// rerunOfSHA256 the profile hash that run recorded; both are "" for
+	// a run that is not a rerun.
+	rerunOf, rerunOfSHA256 string
 }
 
 // requiredGateTiers are the tiers a gate run must have run for
@@ -98,6 +106,8 @@ type historyLine struct {
 	GitRevision        string `json:"git_revision"`
 	Cover              bool   `json:"cover"`
 	CoverProfileSHA256 string `json:"cover_profile_sha256,omitempty"`
+	// RerunOf names the gate run a `--rerun-failed` run reran.
+	RerunOf string `json:"rerun_of,omitempty"`
 }
 
 // coverRun names a gate run with --cover that recorded a profile hash: its
@@ -189,12 +199,75 @@ func readCoverVerdict(root, id string) (coverGateRun, bool, error) {
 			Dirty              bool     `json:"dirty"`
 			CoverProfileSHA256 string   `json:"cover_profile_sha256"`
 			RestrictedTo       []string `json:"restricted_to"`
+			RerunOf            *struct {
+				RunID              string `json:"run_id"`
+				CoverProfileSHA256 string `json:"cover_profile_sha256"`
+			} `json:"rerun_of"`
 		} `json:"gate"`
 	}
 	if err := json.Unmarshal(body, &v); err != nil {
 		return coverGateRun{}, true, fmt.Errorf("parse the verdict of gate run %s: %w%s", id, err, rerun)
 	}
-	return coverGateRun{runID: id, sha256: v.Gate.CoverProfileSHA256, dirty: v.Gate.Dirty, verdict: v.Verdict, restrictedTo: v.Gate.RestrictedTo}, true, nil
+	run := coverGateRun{runID: id, sha256: v.Gate.CoverProfileSHA256, dirty: v.Gate.Dirty, verdict: v.Verdict, restrictedTo: v.Gate.RestrictedTo}
+	if r := v.Gate.RerunOf; r != nil {
+		run.rerunOf, run.rerunOfSHA256 = r.RunID, r.CoverProfileSHA256
+		if run.rerunOf == "" {
+			run.rerunOf = "(none named)"
+		}
+	}
+	return run, true, nil
+}
+
+// checkRerunOrigin returns why a `--rerun-failed` run, the latest gate run
+// with --cover on commit, does not stand for that commit, or nil when it
+// does (change 0172, decision 26). The run it reran must be a gate run on
+// the same commit, on a clean tree, that is not itself a rerun, that
+// recorded the profile hash the rerun names, and that ran the tiers the
+// rerun records, so a rerun cannot carry another commit's profile or a
+// wider tier restriction than the run whose tests ran.
+func checkRerunOrigin(root, commit string, run coverGateRun) error {
+	refuse := func(why string) error {
+		return fmt.Errorf("gate run %s, the latest with --cover on %s, reran the failed tests of gate run %s, which %s; %s", run.runID, shortCommit(commit), run.rerunOf, why, coverRerun)
+	}
+	if !runIDPattern.MatchString(run.rerunOf) {
+		return refuse("is not a run identifier")
+	}
+	body, err := os.ReadFile(filepath.Join(root, gateResultsDir, "gate-"+run.rerunOf+".json"))
+	if err != nil {
+		return refuse(fmt.Sprintf("has no readable verdict (%v)", err))
+	}
+	var orig verdict
+	if err := json.Unmarshal(body, &orig); err != nil || orig.Gate == nil {
+		return refuse("has no gate verdict that parses")
+	}
+	og := orig.Gate
+	switch {
+	case orig.Trigger.GitRevision != commit:
+		return refuse("ran on " + shortCommit(orig.Trigger.GitRevision))
+	case og.Dirty:
+		return refuse("ran on a tree with uncommitted changes")
+	case og.RerunOf != nil:
+		return refuse("is itself a rerun")
+	case !og.Cover || og.CoverProfileSHA256 == "" || og.CoverProfileSHA256 != run.rerunOfSHA256:
+		return refuse("did not record the profile hash the rerun names")
+	case !sameTiers(og.RestrictedTo, run.restrictedTo):
+		return refuse("ran " + gateRunTiers(coverGateRun{restrictedTo: og.RestrictedTo}) + ", not the tiers the rerun records")
+	}
+	return nil
+}
+
+// sameTiers reports whether two tier restrictions name the same tiers; nil
+// (every tier) equals only nil.
+func sameTiers(a, b []string) bool {
+	if (a == nil) != (b == nil) || len(a) != len(b) {
+		return false
+	}
+	for _, t := range a {
+		if !contains(b, t) {
+			return false
+		}
+	}
+	return true
 }
 
 // coverRerun is the remedy each refusal of the profile names.
@@ -242,12 +315,21 @@ func checkProfileAgainstGate(root, path string, body []byte, requireGate bool) (
 	if err := refuseGateRun(path, commit, got, run); err != nil {
 		return "", err
 	}
+	if run.rerunOf != "" {
+		if err := checkRerunOrigin(root, commit, run); err != nil {
+			return "", err
+		}
+	}
 	if requireGate {
 		if err := refuseRestrictedRun(commit, run); err != nil {
 			return "", err
 		}
 	}
-	return fmt.Sprintf("the profile is the one gate run %s wrote for %s, which ran %s", run.runID, shortCommit(commit), gateRunTiers(run)), nil
+	note := fmt.Sprintf("the profile is the one gate run %s wrote for %s, which ran %s", run.runID, shortCommit(commit), gateRunTiers(run))
+	if run.rerunOf != "" {
+		note = fmt.Sprintf("the profile is the one gate run %s recorded for %s, a rerun of the failed tests of gate run %s, which ran %s", run.runID, shortCommit(commit), run.rerunOf, gateRunTiers(run))
+	}
+	return note, nil
 }
 
 // refuseRestrictedRun returns why run, the latest gate run with --cover on

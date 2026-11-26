@@ -63,6 +63,9 @@ type tierStat struct {
 	Cached     int            `json:"cached,omitempty"`
 	Detail     string         `json:"detail,omitempty"`
 	Failures   []failureEntry `json:"failures,omitempty"`
+	// PackageFailures lists the packages of the tier that failed in a way
+	// no failed test accounts for (tierResult.PackageFailures).
+	PackageFailures []string `json:"package_failures,omitempty"`
 }
 
 // failureEntry captures one failed test with the §7 structure: a
@@ -204,6 +207,9 @@ func (v *verdict) recordTierWithResult(name, status string, dur time.Duration, d
 	t.Skipped = r.Skipped
 	if len(r.Failures) > 0 {
 		t.Failures = r.Failures
+	}
+	if len(r.PackageFailures) > 0 {
+		t.PackageFailures = r.PackageFailures
 	}
 	v.Tiers[name] = t
 	// Promote per-failure spec sections to the verdict-level
@@ -506,6 +512,9 @@ func appendHistory(path string, v *verdict) error {
 		}
 		if v.Gate.CoverProfileSHA256 != "" {
 			rec["cover_profile_sha256"] = v.Gate.CoverProfileSHA256
+		}
+		if v.Gate.RerunOf != nil {
+			rec["rerun_of"] = v.Gate.RerunOf.RunID
 		}
 	}
 	line, err := json.Marshal(rec)

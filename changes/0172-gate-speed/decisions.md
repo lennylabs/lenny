@@ -2,7 +2,21 @@
 
 ## Open decisions
 
-None.
+- **GS-22. How often a rerun runs a failed test, and whether it can be repeated.** `lenny-test gate --rerun-failed` (0172.S11) accepts any `--rerun-count` of 1 or more, and after a rerun that fails it can be run again on the same original run, because it reruns the latest gate run on the commit that is not itself a rerun. `lenny-test coverage --diff --require-gate` does not read the count. A test that fails about half the time therefore reaches a `PASS` after about two single-run attempts, while decision 26 says the tests rerun "a few times". The merge-gate review of 0172.S11 raised it (general and security reviewers). The rules state that a failure in a test the branch adds or changes is fixed rather than rerun; the code does not check it.
+  - (a) `coverage --diff --require-gate` refuses a rerun whose `gate.rerun_of.count` is below 3, the default, and `--rerun-failed` refuses when an earlier rerun of the same original run failed, so a failed rerun is followed by a new gate run. The rule about tests the branch touches stays in the rules alone.
+  - (b) (a), and `--rerun-failed` also refuses a failed test in a package the branch changes.
+  - (c) Keep it as built, with the rule text alone.
+  - Recommendation: (a). It bounds the chance that a failing test passes to that of three passes in a row, and a branch's own flaky test still reaches the owner through the merge record. (b) would have refused the evidence case of decision 26: run `e16818ce8507b5fcd52e7008` failed in `tests/component/securitycaches`, a package that branch changed by adding a test.
+- **GS-23. A pending full run that a push replaces.** The gate-main workflow runs every run in one concurrency group, `gate-main`, as decision 27 states. GitHub keeps one pending run per group and cancels an older pending run when a newer one queues, so a scheduled weekly full run, or a full run dispatched before a milestone, that waits behind a run in progress is cancelled by the next push, and the selected run that replaces it does not run `--all`. 0172.S11 states in the rules that a full run is then dispatched by hand. The merge-gate review raised it.
+  - (a) Run full runs in a second group, `gate-main-full`, so a full run waits only for another full run and runs beside a push run on its own runner.
+  - (b) Keep one group, with the full run dispatched by hand when the scheduled one was cancelled (as built).
+  - (c) Keep one group, and have a selected run add `--all` when no full run succeeded in the last seven days.
+  - Recommendation: (a). The two runs use separate runners, and a full run's success becomes the base of later push runs as any successful run does.
+- **GS-24. A record of a test that a rerun passes.** A test that fails in a gate run and passes in its `--rerun-failed` run fails and passes on the same commit, which rule 4 of the merge policy in `.claude/rules/test-coverage.md` calls flaky. No rule asks for a record beyond the merge commit message, so the same flaky test can be rerun at every merge without anyone fixing it. The merge-gate review raised it.
+  - (a) A merge that relied on a rerun files an issue under the test's area code naming the test and both runs, or adds the runs to the open issue for that test.
+  - (b) The test enters the quarantine in `tests/flake-budget.yaml` under rule 4.
+  - (c) The merge commit message alone (as built).
+  - Recommendation: (a). An issue keeps the test running and visible; the quarantine has a cap and skips the test.
 
 ## Decisions
 

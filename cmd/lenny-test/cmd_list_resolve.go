@@ -154,7 +154,7 @@ func testsForSpecIn(m *specModel, queries []string) ([]string, error) {
 // testsForPkg resolves package directories through the import graph, as
 // `run --pkg` does, and lists what the selection runs (see planEntries).
 func testsForPkg(pkgs string) []string {
-	plan, _ := resolvePkgsPlan(splitNonEmpty(pkgs), selectOpts{rdepsDepth: defaultRdepsDepth})
+	plan, _ := resolvePkgsPlan(splitNonEmpty(pkgs), selectOpts{rdepsDepth: premergeRdepsDepth})
 	return planEntries(plan)
 }
 

@@ -61,7 +61,7 @@ func stubGateRunner() gateRunner {
 }
 
 func runStubGate(g gateRunner) *verdict {
-	return g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+	return g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test"})
 }
 
 func TestGatePassesWhenEveryTierPasses(t *testing.T) {
@@ -98,12 +98,12 @@ func TestGatePassesItsBaseToTheStaticTier(t *testing.T) {
 		gotPlan = base
 		return plan(base, depth, all)
 	}
-	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test"})
 	if gotStatic != "def456" || gotPlan != "def456" {
 		t.Errorf("static tier got %q and plan %q; want the resolved merge base def456", gotStatic, gotPlan)
 	}
 	g.bases = func(string) gateBases { return gateBases{usedErr: errors.New("bad revision")} }
-	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+	g.run(gateOptions{root: ".", base: "release-1", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test"})
 	if gotStatic != "release-1" || gotPlan != "release-1" {
 		t.Errorf("an unresolved base: static tier got %q and plan %q; want release-1", gotStatic, gotPlan)
 	}
@@ -810,7 +810,7 @@ func TestGateAllSelectsEveryTierUpToIntegrationInFull(t *testing.T) {
 		gotAll = all
 		return resolvedSelector{}, nil
 	}
-	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, all: true, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, all: true, environment: "lenny-gate:test"})
 	if !gotAll || v.Gate == nil || !v.Gate.All || !strings.HasSuffix(v.Command, " --all") {
 		t.Errorf("--all did not reach the plan or the verdict: plan all %v, gate %+v, command %q", gotAll, v.Gate, v.Command)
 	}
@@ -940,7 +940,7 @@ func TestGateEnvironmentRecognizesOnlyTheGateImage(t *testing.T) {
 }
 
 func TestGateOutsideTheGateImageIsUnverifiedWithTheReason(t *testing.T) {
-	v := stubGateRunner().run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environment: "host linux/amd64", environmentErr: errors.New("LENNY_GATE_IMAGE is not set")})
+	v := stubGateRunner().run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, environment: "host linux/amd64", environmentErr: errors.New("LENNY_GATE_IMAGE is not set")})
 	if v.Verdict != verdictstatus.VerdictUnverified {
 		t.Fatalf("verdict %q; want %q outside the gate image", v.Verdict, verdictstatus.VerdictUnverified)
 	}
@@ -968,7 +968,7 @@ func TestGateWithABaseOtherThanTheIntegrationMergeBaseIsUnverified(t *testing.T)
 	} {
 		g := stubGateRunner()
 		g.bases = func(string) gateBases { return tc.bases }
-		v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"})
+		v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test"})
 		if v.Verdict != verdictstatus.VerdictUnverified {
 			t.Errorf("%s: verdict %q; want %q", name, v.Verdict, verdictstatus.VerdictUnverified)
 		}
@@ -978,7 +978,7 @@ func TestGateWithABaseOtherThanTheIntegrationMergeBaseIsUnverified(t *testing.T)
 		g.static = func(string, string, string) (string, string, *tierResult) {
 			return verdictstatus.Fail, "lint", &tierResult{Total: 1, Failed: 1}
 		}
-		if v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test"}); v.Verdict != verdictstatus.VerdictFail {
+		if v := g.run(gateOptions{root: ".", base: "f1..HEAD", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test"}); v.Verdict != verdictstatus.VerdictFail {
 			t.Errorf("%s: a failing gate's verdict %q; want %q", name, v.Verdict, verdictstatus.VerdictFail)
 		}
 	}
@@ -1095,7 +1095,7 @@ func TestGateFailureStaysFailOnADirtyTreeOutsideTheImage(t *testing.T) {
 	g.static = func(string, string, string) (string, string, *tierResult) {
 		return verdictstatus.Fail, "vet", &tierResult{Total: 1, Failed: 1}
 	}
-	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environmentErr: errors.New("outside")})
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, environmentErr: errors.New("outside")})
 	if v.Verdict != verdictstatus.VerdictFail {
 		t.Fatalf("verdict %q; want FAIL to outrank the unverified reasons", v.Verdict)
 	}

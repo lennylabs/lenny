@@ -23,7 +23,7 @@ func TestGateTierRestrictsTheRunToTheNamedTiers(t *testing.T) {
 	l := &laneLog{}
 	g := laneRunner(l, nil, nil)
 	tiers := []string{tierStatic, tierUnit, tierComponent, tierContract}
-	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, tiers: tiers, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, tiers: tiers, environment: "lenny-gate:test"})
 	v.finalize()
 	for _, tier := range tiers {
 		if l.index("end "+tier) < 0 {
@@ -114,7 +114,7 @@ func TestGateCoverWritesTheProfileCoverageDiffReads(t *testing.T) {
 		}
 		return unit(p)
 	}
-	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: defaultRdepsDepth, cover: true, coverProfile: profile, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: fullRdepsDepth, cover: true, coverProfile: profile, environment: "lenny-gate:test"})
 	if l.plans[tierUnit].noCoverage {
 		t.Error("the unit tier of a --cover run writes no profile")
 	}
@@ -152,11 +152,11 @@ func TestGateCoverWithoutAUnitTierWritesAnEmptyProfile(t *testing.T) {
 	g := laneRunner(&laneLog{}, nil, nil)
 	g.plan = func(string, int, bool) (resolvedSelector, error) { return resolvedSelector{}, nil }
 
-	g.run(gateOptions{root: root, base: "main", rdepsDepth: defaultRdepsDepth, coverProfile: profile, environment: "lenny-gate:test"})
+	g.run(gateOptions{root: root, base: "main", rdepsDepth: fullRdepsDepth, coverProfile: profile, environment: "lenny-gate:test"})
 	if body, _ := os.ReadFile(profile); string(body) != "stale" {
 		t.Errorf("a run without --cover changed the profile to %q", body)
 	}
-	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: defaultRdepsDepth, cover: true, coverProfile: profile, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: fullRdepsDepth, cover: true, coverProfile: profile, environment: "lenny-gate:test"})
 	if body, _ := os.ReadFile(profile); string(body) != "mode: atomic\n" {
 		t.Errorf("profile = %q; want one that covers nothing", body)
 	}
@@ -174,7 +174,7 @@ func TestGateCoverFailsWhenTheProfileCannotBeReadied(t *testing.T) {
 		t.Fatal(err)
 	}
 	g := laneRunner(&laneLog{}, nil, nil)
-	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, cover: true, coverProfile: dir, environment: "lenny-gate:test"})
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, cover: true, coverProfile: dir, environment: "lenny-gate:test"})
 	if v.Verdict != verdictstatus.VerdictFail || !strings.Contains(v.Tiers[tierUnit].Detail+v.Tiers[tierUnit].Reason, "remove the earlier coverage profile") {
 		t.Errorf("verdict %s unit %+v", v.Verdict, v.Tiers[tierUnit])
 	}

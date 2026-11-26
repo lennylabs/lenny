@@ -11,9 +11,10 @@ import (
 )
 
 // resolveChangedPlan resolves the working-tree diff with the default
-// selection options. The pr-fast group resolves through it.
+// selection options of `run --changed`, whose dependent depth is
+// premergeRdepsDepth. The pr-fast group resolves through it.
 func resolveChangedPlan() []tierPlan {
-	plan, _ := resolveChangedPlanFn("", selectOpts{rdepsDepth: defaultRdepsDepth})
+	plan, _ := resolveChangedPlanFn("", selectOpts{rdepsDepth: premergeRdepsDepth})
 	return plan
 }
 

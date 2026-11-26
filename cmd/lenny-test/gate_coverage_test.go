@@ -44,7 +44,7 @@ func assertNoCoverage(t *testing.T, call []string) {
 func TestGateUnitTierRunsWithRaceAndWithoutCoverage(t *testing.T) {
 	t.Setenv("LENNY_COVER_PROFILE", filepath.Join(t.TempDir(), "cover.out"))
 
-	all, err := gateChangedPlan("no-such-ref", defaultRdepsDepth, true)
+	all, err := gateChangedPlan("no-such-ref", fullRdepsDepth, true)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestGateUnitTierRunsWithRaceAndWithoutCoverage(t *testing.T) {
 	}
 
 	useChangedPlan(t, changedFixturePlan(), nil)
-	changed, err := gateChangedPlan("main", defaultRdepsDepth, false)
+	changed, err := gateChangedPlan("main", fullRdepsDepth, false)
 	if err != nil {
 		t.Fatal(err)
 	}
