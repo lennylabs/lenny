@@ -496,19 +496,20 @@ tenants:
 
 When a tenant sets `workspaceTier: T4`, the platform applies Restricted-tier controls to all workspace files, snapshots, and session transcripts. T4 requires dedicated node pools for per-tenant key isolation. The setting is inherited by all environments under the tenant unless explicitly overridden to a **stricter** (never looser) tier.
 
-Idempotency records, the responses the gateway keeps for 24 hours so that a client retry with the same `Idempotency-Key` returns the first response, are T3 Confidential data in Postgres. A stored response holds no `uploadToken`: the gateway stores a reference in the token's place and signs the token again on replay, so a reader of the `idempotency_keys` table obtains no upload credential.
+Idempotency records, the responses the gateway keeps for 24 hours so that a client retry with the same `Idempotency-Key` returns the first response, are T3 Confidential data in Postgres. The gateway files each record under the tenant and the user that sent the request, so [GDPR erasure](#gdpr-erasure) finds and deletes a user's records. A stored response holds no `uploadToken`: the gateway stores a reference in the token's place and signs the token again on replay, so a reader of the `idempotency_keys` table obtains no upload credential.
 
 ---
 
 ## GDPR Erasure
 
-Lenny implements a 19-step `DeleteByUser` sequence that covers all storage layers in dependency order, ensuring complete data removal across Postgres, Redis, MinIO, and KMS.
+Lenny implements a `DeleteByUser` sequence that covers all storage layers in dependency order, ensuring complete data removal across Postgres, Redis, MinIO, and KMS.
 
 ### Erasure Process
 
 - **Processing restriction (Article 18):** Before full deletion, a `processing_restricted` flag can be set on a user, blocking all new session creation while the erasure job runs.
 - **Session drain:** Before any data is deleted, the erasure job force-terminates the user's running sessions. When it cannot terminate them, the job fails and the processing restriction stays set.
 - **Erasure SLA:** 72 hours for T3 data, 1 hour for T4 data.
+- **Idempotency records:** The erasure job deletes every idempotency record the user stored, including the records stored through a credential bound to one of the user's sessions, before it deletes the user's sessions. The records of other users in the tenant stay in place. Tenant deletion deletes all of the tenant's idempotency records.
 - **Billing pseudonymization:** Configurable per-tenant via `billingErasurePolicy`:
   - `default` -- billing events are pseudonymized using a per-tenant `erasure_salt` (salt is deleted immediately after pseudonymization for GDPR Recital 26 compliance)
   - `exempt` -- billing events retained as-is for financial reconciliation (no pseudonymization occurs)

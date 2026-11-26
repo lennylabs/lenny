@@ -110,7 +110,7 @@ Each primitive below has a canonical configuration surface on the [Security](sec
 | **Data classification (T1–T4)** | 4-tier scheme driving encryption, retention, residency, and node-pool isolation. | [Security — Data Classification](security#data-classification) |
 | **Isolation profiles** | `standard` (runc, dev only) / `sandboxed` (gVisor, default) / `microvm` (Kata). | [Namespace and Isolation](namespace-and-isolation) |
 | **Isolation monotonicity** | Delegation cannot weaken isolation. Blocked at the gateway. | [Namespace and Isolation](namespace-and-isolation) |
-| **GDPR erasure** | 19-step `DeleteByUser` across Postgres, Redis, MinIO, KMS; cryptographic receipt. | [Security — GDPR Erasure](security#gdpr-erasure) |
+| **GDPR erasure** | Dependency-ordered `DeleteByUser` across Postgres, Redis, MinIO, KMS; cryptographic receipt. | [Security — GDPR Erasure](security#gdpr-erasure) |
 | **Compliance profiles** | `soc2`, `fedramp`, `hipaa`, `none` — apply pre-bundled control bundles. | [Security — Compliance Profiles](security#compliance-profiles) |
 | **SSRF mitigations (callbacks)** | URL validation, DNS pinning, private-IP rejection, isolated worker, optional allowlist. | [Spec §14 — callbackUrl](https://github.com/lennylabs/lenny/blob/main/spec/14_workspace-plan-schema.md) |
 | **Input validation and size caps** | Every gateway-facing endpoint enforces schema validation, payload caps, and rate limits. | [Wire Format](../client-guide/wire-format) |
@@ -202,7 +202,7 @@ PCI DSS primarily applies to systems that **store, process, or transmit cardhold
 | Article | Obligation | Lenny primitives |
 |:--------|:-----------|:-----------------|
 | 5(1)(f) | Integrity and confidentiality | Encryption in transit and at rest; default-deny |
-| 17 | Right to erasure | `DeleteByUser` 19-step sequence; cryptographic receipt |
+| 17 | Right to erasure | Dependency-ordered `DeleteByUser` sequence; cryptographic receipt |
 | 18 | Right to restriction | `processing_restricted` flag |
 | 25 | Data protection by design and by default | Secure-by-default configuration; T4 dedicated isolation |
 | 30 | Records of processing activities | OCSF audit stream |
