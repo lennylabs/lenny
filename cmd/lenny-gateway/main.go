@@ -104,6 +104,10 @@ func runGateway(f *gatewayFlags, parts *partFlags) {
 	// stays a synchronous call in runServers (gated on sqliteDB, before
 	// sqliteDB.Close), matching the original timing exactly. F-17.4.2.
 	w.buildStores(parts.sessionEvents, parts.core)
+	// §12.8 redaction receipt signer and trusted receipt keys, loaded from
+	// the KMS provider buildStores resolved and read by the audit pipeline,
+	// the admin router, and the periodic integrity check.
+	w.buildReceiptSigning()
 	// §10.3 NET-072 CH-HOLDERFORWARD client and listener TLS, built before
 	// the session server that takes the client.
 	w.buildHolderForwardTransport()

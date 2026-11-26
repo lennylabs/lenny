@@ -44,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/session/sessionlogstore"
+	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
 
@@ -227,6 +228,12 @@ type gatewayWiringFields struct {
 	auditValidator    *auditscope.Validator
 	auditOpsStore     *auditstore.Store
 	siemHealthChecker health.Checker
+
+	// §12.8 redaction receipt signing outputs. buildReceiptSigning records
+	// the receipt keys a chain verifier trusts and the KMS signer the
+	// erasure job's dead-letter redaction signs with.
+	receiptKeys   *audit.ReceiptKeySet
+	receiptSigner *deadletterredaction.KMSReceiptSigner
 
 	// §10.6 / §25.3 / §4.9 / §10.2 / §8.8 auxiliary-store outputs.
 	// buildAuxStores selects the in-memory or Postgres backend for the
