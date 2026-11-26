@@ -317,6 +317,7 @@ Lenny uses a Key Management Service (KMS) to wrap and unwrap data-encryption key
 | `audit.retentionPreset` | string | `soc2` | Audit retention preset. Options: `soc2` (365d), `fedramp-high` (1095d), `hipaa` (2190d), `nis2-dora` (1825d), `custom`. | Valid preset name. |
 | `audit.retentionDays` | int | 365 | Custom retention days. Used when `retentionPreset: custom`. | Must be > 0. |
 | `audit.gdprRetentionDays` | int | 2555 | Retention for GDPR erasure receipt rows. Hard minimum floor. | Must be >= 2555. |
+| `audit.retiredReceiptKeyIds` | list of strings | `[]` | KMS key identifiers of retired redaction receipt signing keys that the chain verifiers keep trusting after neither `platform:audit-signing` nor `platform:audit-verify` names them. Keep each listed key in the KMS and in the list for `audit.gdprRetentionDays`. | Each entry names one key version on a cloud provider; the gateway does not start when it cannot read a listed key from the KMS. |
 | `audit.siem.endpoint` | string | -- | External SIEM endpoint for audit event forwarding. Required for regulated `complianceProfile` tenants. | Valid URL when set. |
 | `audit.siem.maxDeliveryLagSeconds` | int | 30 | Maximum acceptable SIEM delivery lag before alerting. | Must be > 0. |
 | `audit.pgaudit.enabled` | bool | `false` | Enable pgaudit for regulated tenants. Required when `complianceProfile` is `hipaa` or `fedramp`. | -- |
