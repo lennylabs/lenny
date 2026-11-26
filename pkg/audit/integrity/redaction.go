@@ -33,7 +33,11 @@ type RedactionReceiptResult struct {
 // CheckRedactionReceipts finds audit_log rows that the §12.8 step-14
 // OCSF dead-letter PII redaction rewrote in place (their payload carries
 // the `{"redacted": true, ...}` marker) and that have no signature-verifying
-// RedactionReceipt at the matching (tenant_id, sequence_number). Only the
+// RedactionReceipt at the matching (tenant_id, sequence_number). It also
+// reads every row that has a receipt, so a row restored to content that
+// drops the marker counts as missing its receipt: its content hash no
+// longer equals the receipt's new_hash. A receipt whose row was deleted is
+// not read. Only the
 // receipt tells an authorized GDPR redaction apart from a rewrite of the
 // payload by someone else, so a redaction-marked row without a verifying
 // receipt is a compliance incident.
@@ -44,15 +48,15 @@ type RedactionReceiptResult struct {
 // or when verifier does not verify its signature: an unsigned receipt, a
 // key identifier outside the trusted set, and a signature that does not
 // cover the stored tuple all count. The new_hash match catches a redacted
-// row whose payload was rewritten again after its receipt was signed. A
-// nil verifier trusts no receipt, so every redaction-marked row counts.
-// The chain walk and the
+// row whose payload was rewritten again after its receipt was signed, and
+// a nil verifier trusts no receipt, so every row the scan reads counts. The
+// chain walk and the
 // match of the receipt's original_hash against the redacted row's
 // preserved pre-redaction hash are performed by external verifiers and by
 // the audit chain verifier, which read the successor row's prev_hash.
 //
-// The scan reads only redaction-marked rows and their receipts, so it does
-// not walk the full ledger. A query error (for example, the
+// The scan reads only redaction-marked rows, rows that have a receipt, and
+// their receipts, so it does not walk the full ledger. A query error (for example, the
 // audit_redaction_receipts relation not yet existing on a partially-
 // migrated deployment) is returned to the caller, which treats it as a
 // non-fatal skipped cycle rather than drift.
@@ -74,7 +78,7 @@ func CheckRedactionReceipts(ctx context.Context, db Querier, verifier audit.Rece
 		LEFT JOIN audit_redaction_receipts r
 			ON r.tenant_id = a.tenant_id
 			AND r.sequence_number = a.sequence_number
-		WHERE (a.payload->>'redacted') = 'true'`)
+		WHERE (a.payload->>'redacted') = 'true' OR r.receipt_id IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("integrity: scan redacted rows and receipts: %w", err)
 	}

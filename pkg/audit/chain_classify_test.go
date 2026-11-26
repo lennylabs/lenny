@@ -273,8 +273,10 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 				return rows
 			},
 			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2}},
-			want:     want{1: ChainVerified, 2: ChainVerified, 3: ChainBroken},
-			broken:   1,
+			// Row 2 has a receipt, so it is classified as a redaction:
+			// the fixture signs its receipt over the re-sealed hash.
+			want:   want{1: ChainVerified, 2: ChainRedactedGDPR, 3: ChainBroken},
+			broken: 1,
 		},
 		{
 			name: "cross-tenant row is broken",

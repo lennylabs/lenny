@@ -220,6 +220,21 @@ func (w *gatewayWiring) openUploadTokenKeyRing(provider kms.Provider, ephemeralK
 	return ring
 }
 
+// uploadTokenLifetime returns the lifetime an issued upload token carries
+// for --max-created-state-timeout-seconds: the configured seconds, or
+// uploadtoken.DefaultTTL when the value is not positive, as the session
+// server's issuer applies it. The ring derives a replaced key's
+// verification time from this value, so it must be the lifetime tokens
+// actually carry.
+//
+// spec: §7.1 (Normal Flow)
+func uploadTokenLifetime(maxCreatedStateSeconds int) time.Duration {
+	if maxCreatedStateSeconds <= 0 {
+		return uploadtoken.DefaultTTL
+	}
+	return time.Duration(maxCreatedStateSeconds) * time.Second
+}
+
 // kmsBreakerObserver routes the §10.2 JWTSigner breaker
 // transitions and signing failures onto gatewaymetrics so the §16.5
 // KMSSigningUnavailable alert reads them. The metrics pointer is wired

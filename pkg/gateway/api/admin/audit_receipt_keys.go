@@ -56,7 +56,8 @@ func (r *Router) registerReceiptKeyRoutes(mux *http.ServeMux) {
 
 // handleListReceiptKeys serves the public keys that verify RedactionReceipt
 // signatures, one entry per key the platform:audit-signing and
-// platform:audit-verify aliases name, sorted by key identifier. The JWK's
+// platform:audit-verify aliases name or audit.retiredReceiptKeyIds lists,
+// sorted by key identifier. The JWK's
 // kid is the same KMS key identifier, so an external verifier selects the
 // key a receipt names by its signature_kms_key_id. A router with no key set
 // serves an empty list, under which no receipt verifies.

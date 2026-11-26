@@ -311,26 +311,9 @@ func (c *Chain) Verify() VerifyResult {
 		// content-hash recomputation (its payload was rewritten in
 		// place, but Hash was preserved as the pre-redaction value).
 		// A valid signed receipt reclassifies the break as lawful.
-		thisRedacted := false
-		want := computeHash(row)
-		if want != row.Hash {
-			if row.Redacted {
-				if c.receiptedRedaction(row, want) {
-					thisRedacted = true
-				} else {
-					return VerifyResult{
-						Integrity: ChainBroken,
-						BreakSeq:  row.Seq,
-						Detail:    fmt.Sprintf("row %d redacted without a valid receipt", row.Seq),
-					}
-				}
-			} else {
-				return VerifyResult{
-					Integrity: ChainBroken,
-					BreakSeq:  row.Seq,
-					Detail:    fmt.Sprintf("row %d content hash mismatch", row.Seq),
-				}
-			}
+		thisRedacted, detail := c.contentCheck(row)
+		if detail != "" {
+			return VerifyResult{Integrity: ChainBroken, BreakSeq: row.Seq, Detail: detail}
 		}
 		// Link check. The genesis row links to the sentinel; every
 		// other row links to its predecessor's stored Hash. The check
@@ -419,12 +402,9 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 	// Content-hash check. A redacted row legitimately fails the
 	// recomputation (its payload was rewritten in place while Hash was
 	// preserved); a valid signed receipt reclassifies the break as lawful.
-	thisRedacted := false
-	if content := computeHash(row); content != row.Hash {
-		if !c.receiptedRedaction(row, content) {
-			return ChainBroken
-		}
-		thisRedacted = true
+	thisRedacted, detail := c.contentCheck(row)
+	if detail != "" {
+		return ChainBroken
 	}
 	// Link check. The genesis row links to the sentinel; every other row
 	// links to its predecessor's stored Hash, including a predecessor that
@@ -461,6 +441,34 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 		return ChainRedactedGDPR
 	}
 	return ChainVerified
+}
+
+// contentCheck runs the content-hash check of one row. It reports whether
+// the row is a lawful GDPR redaction, and, when the row breaks the chain,
+// why. A row whose recomputed content hash differs from its Hash must be a
+// receipted redaction. A row that has a receipt must be one too, whatever
+// its hash: a receipt marks its row as redacted, so a row restored to its
+// pre-redaction content, which hashes to its preserved hash again, or one
+// that lost the redaction marker, does not pass as an unredacted row. The
+// caller holds c.mu.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
+func (c *Chain) contentCheck(row Row) (bool, string) {
+	content := computeHash(row)
+	_, receipted := c.receipts[row.Seq]
+	if content == row.Hash && !receipted {
+		return false, ""
+	}
+	switch {
+	case c.receiptedRedaction(row, content):
+		return true, ""
+	case receipted && !row.Redacted:
+		return false, fmt.Sprintf("row %d has a redaction receipt but does not carry the redaction", row.Seq)
+	case row.Redacted:
+		return false, fmt.Sprintf("row %d redacted without a valid receipt", row.Seq)
+	default:
+		return false, fmt.Sprintf("row %d content hash mismatch", row.Seq)
+	}
 }
 
 // receiptedRedaction reports whether row is a GDPR redaction carrying a

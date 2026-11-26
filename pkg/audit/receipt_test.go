@@ -267,6 +267,34 @@ func TestARedactedRowRewrittenAgainAfterItsReceiptReadsBroken(t *testing.T) {
 	}
 }
 
+// TestARedactedRowRestoredToItsOriginalContentReadsBroken pins that a
+// receipt marks its row as redacted: a row whose payload is written back to
+// its pre-redaction content, so its content hash equals its preserved hash
+// again and its successor still links, reads broken rather than verified,
+// in the chain walk and in the per-row classification.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
+func TestARedactedRowRestoredToItsOriginalContentReadsBroken(t *testing.T) {
+	t.Parallel()
+	c, row := redactedChain(t)
+	original := row.Payload
+	redacted := json.RawMessage(`{"redacted":true,"event_type":"e1"}`)
+	c.WithReceiptVerifier(receiptTestKeySet(t))
+	if err := c.Redact(1, redacted, lawfulReceipt(t, row, redacted)); err != nil {
+		t.Fatal(err)
+	}
+	c.mu.Lock()
+	c.rows[0].Payload = original
+	c.rows[0].Redacted = false
+	c.mu.Unlock()
+	if got := c.Verify(); got.Integrity != ChainBroken || got.BreakSeq != 1 {
+		t.Errorf("restored: Verify = %q at %d (%s), want broken at 1", got.Integrity, got.BreakSeq, got.Detail)
+	}
+	if got := c.VerifyRows()[1]; got != ChainBroken {
+		t.Errorf("restored: VerifyRows[1] = %q, want broken", got)
+	}
+}
+
 // TestReceiptMatchesRowChecksEachBinding covers each binding of a receipt to
 // its redacted row: the row id, the sequence number, the preserved
 // pre-redaction hash, and the recomputed post-redaction content hash.

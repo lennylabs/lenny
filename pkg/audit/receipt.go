@@ -131,8 +131,10 @@ func ReceiptSigningInput(r RedactionReceipt) ([]byte, error) {
 // row's content hash recomputed from its current columns (ComputeHash). A
 // receipt whose new_hash differs authorizes other content than the row
 // holds, as after a second rewrite of a redacted row, so the row does not
-// match. The chain verifier and the periodic receipt scan share this check;
-// neither the tenant nor the signature is checked here.
+// match. The chain verifier runs this check; the periodic receipt scan,
+// which does not read the successor's prev_hash, checks the same new_hash
+// binding without original_hash. Neither the tenant nor the signature is
+// checked here.
 //
 // spec: §12.8 (Compliance Interfaces)
 func ReceiptMatchesRow(rcpt RedactionReceipt, row Row, content string) bool {

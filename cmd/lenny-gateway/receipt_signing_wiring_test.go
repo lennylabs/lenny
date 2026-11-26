@@ -5,9 +5,11 @@ package main
 import (
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // TestBuildReceiptSigningTrustsTheRetiredKeysTheSettingLists drives the
@@ -46,5 +48,26 @@ func TestBuildReceiptSigningTrustsTheRetiredKeysTheSettingLists(t *testing.T) {
 	}
 	if got := build(""); len(got) != 1 || got[0] != "audit-key-v3" {
 		t.Errorf("trusted keys with no retired key listed = %v, want audit-key-v3 alone", got)
+	}
+}
+
+// TestTheUploadTokenKeyRingSeesTheLifetimeTokensCarry checks the value the
+// gateway passes to the upload-token ring for a replaced key's
+// verification time: the configured --max-created-state-timeout-seconds,
+// and the issuer's default lifetime when the setting is not positive, so a
+// non-positive setting cannot shorten the verification time below the
+// lifetime tokens carry.
+//
+// spec: §7.1 (Normal Flow)
+func TestTheUploadTokenKeyRingSeesTheLifetimeTokensCarry(t *testing.T) {
+	for seconds, want := range map[int]time.Duration{
+		900: 15 * time.Minute,
+		300: 5 * time.Minute,
+		0:   uploadtoken.DefaultTTL,
+		-1:  uploadtoken.DefaultTTL,
+	} {
+		if got := uploadTokenLifetime(seconds); got != want {
+			t.Errorf("uploadTokenLifetime(%d) = %s, want %s", seconds, got, want)
+		}
 	}
 }

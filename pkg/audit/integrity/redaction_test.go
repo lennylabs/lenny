@@ -118,8 +118,9 @@ func TestCheckRedactionReceiptsClean(t *testing.T) {
 // redaction-marked row counts as missing when it has no receipt, when its
 // receipt is unsigned, signed under an untrusted key, altered after
 // signing, or bound to another row, and when the row was rewritten again
-// after its receipt was signed, so its content hash differs from the
-// receipt's new_hash; a row whose receipt verifies does not count. Results are per tenant and sorted by tenant.
+// after its receipt was signed or restored to content without the marker,
+// so its content hash differs from the receipt's new_hash; a row whose
+// receipt verifies does not count. Results are per tenant and sorted by tenant.
 //
 // spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
 func TestCheckRedactionReceiptsCountsEveryReceiptThatDoesNotVerify(t *testing.T) {
@@ -138,6 +139,11 @@ func TestCheckRedactionReceiptsCountsEveryReceiptThatDoesNotVerify(t *testing.T)
 	rewritten := row("globex", "row-7", 7)
 	rewrittenReceipt := f.signed(t, rewritten)
 	rewritten.Payload = []byte(`{"redacted":true,"event_type":"session.created","planted":"bob@acme.com"}`)
+	// A row restored to content without the redaction marker, which the
+	// scan reads because it has a receipt.
+	restored := row("globex", "row-8", 8)
+	restoredReceipt := f.signed(t, restored)
+	restored.Payload = []byte(`{"user_id":"alice@acme.com"}`)
 	q := &scriptQuerier{redaction: [][]any{
 		scanRow(row("acme", "row-1", 1), good),
 		scanRow(row("acme", "row-2", 2), audit.RedactionReceipt{}),
@@ -146,12 +152,13 @@ func TestCheckRedactionReceiptsCountsEveryReceiptThatDoesNotVerify(t *testing.T)
 		scanRow(row("globex", "row-5", 5), untrusted),
 		scanRow(row("globex", "row-6", 6), otherRow),
 		scanRow(rewritten, rewrittenReceipt),
+		scanRow(restored, restoredReceipt),
 	}}
 	got, err := CheckRedactionReceipts(context.Background(), q, f.keys)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []RedactionReceiptResult{{TenantID: "acme", Missing: 1}, {TenantID: "globex", Missing: 5}}
+	want := []RedactionReceiptResult{{TenantID: "acme", Missing: 1}, {TenantID: "globex", Missing: 6}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("CheckRedactionReceipts = %+v, want %+v", got, want)
 	}
