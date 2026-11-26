@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Building | 1 |
 | Ready | 6 |
 | Waiting on decisions | 32 |
-| Blocked | 162 |
+| Blocked | 164 |
 | Landed | 30 |
 | Cancelled | 3 |
 
@@ -254,6 +254,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
 | [0177.S2](0177-shared-upload-token-keys/steps.md#0177s2-the-receipt-key-set-the-verification-time-of-replaced-keys-and-the-check-against-new_hash) | The receipt key set, the verification time of replaced keys, and the check against new_hash | Blocked | 0177.S1 |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Blocked | 0178.S1 |
+| [0179.S1](0179-upload-token-model/steps.md#0179s1-model-of-the-upload-token-keys-and-consumed-state) | Model of the upload-token keys and consumed state | Blocked | 0177.S2 |
+| [0180.S1](0180-audit-chain-model/steps.md#0180s1-model-of-the-audit-chain-and-redaction-receipts) | Model of the audit chain and redaction receipts | Blocked | 0177.S2 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
 | [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Landed |  |
@@ -321,7 +323,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `Implemented` | 3 of 3 | 0 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 12 of 12 | 1 |
-| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
+| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 3 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 1 of 2 | 1 |
-| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 0 of 2 | 1 |
+| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 0 of 2 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `Decided` | 0 of 2 | 0 |
+| [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `Draft` | 0 of 1 | 2 |
+| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `Draft` | 0 of 1 | 2 |
