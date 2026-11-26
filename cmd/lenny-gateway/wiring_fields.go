@@ -44,6 +44,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/runtime/runtimestore"
 	"github.com/lennylabs/lenny/pkg/session/interactionstore"
 	"github.com/lennylabs/lenny/pkg/session/sessionlogstore"
+	"github.com/lennylabs/lenny/pkg/signingkeys"
 	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/pkg/storerouter"
 	"github.com/lennylabs/lenny/pkg/tenancy/userstore"
@@ -408,9 +409,8 @@ type gatewayWiringFields struct {
 	tenants                   tenantstore.Store
 	tokenServiceSubsystem     *subsystem.Subsystem
 	transcripts               transcriptstore.Store
-	uploadRotator             *uploadtoken.Rotator
+	uploadKeyRing             *signingkeys.Ring
 	uploadSubsystem           *subsystem.Subsystem
-	uploadTracker             *uploadtoken.MemoryTracker
 	wd                        *watchdog.Watchdog
 	billingTier               *redisstream.Tier
 	// billingStream is the billing pipeline's Tier 1 stream (the Redis
@@ -500,7 +500,7 @@ type gatewayWiringFields struct {
 	rateLimiter       ratelimit.Counter
 	readPool          *pgxpool.Pool
 	recycleBoundary   *recycle.RecycleBoundaryCoordinator
-	ring              *uploadtoken.KeyRing
+	uploadKeys        uploadtoken.Keys
 	runtimes          runtimestore.Store
 	saTokenVerifier   leasecontrol.TokenVerifier
 	saUserVerifier    serviceidentity.SATokenAuthenticator
