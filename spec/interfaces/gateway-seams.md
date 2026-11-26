@@ -838,7 +838,7 @@ method: Go method
 path: seam.UploadTokens
 returns: [ErrUploadTokenInvalid, ErrUploadTokenExpired, ErrUploadTokenMismatch, ErrUploadTokenConsumed]
 requirements: [GW-R1]
-summary: Verifies the upload token a client presents for a session, and reports a token that is absent or invalid, expired, issued for another session, or already consumed.
+summary: Verifies the upload token a client presents for a session in the request's tenant, and reports a token that is absent or invalid, expired, issued for another session, or already consumed, which the session's record marks; a failure to read that mark is returned as an error that matches none of the token refusals.
 ```
 
 <a id="gwseam-reservestorage"></a>

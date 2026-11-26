@@ -14,9 +14,11 @@ import (
 	"time"
 )
 
-// Defaults of the gateway settings that drive a Ring. The specification
-// fixes neither value; the gateway flags --signing-key-refresh-interval and
-// --signing-key-publish-lead override them.
+// Defaults of the gateway settings that drive a Ring, as the upload-token
+// properties state them. The gateway flags --signing-key-refresh-interval
+// and --signing-key-publish-lead override them.
+//
+// spec: §7.1 (Normal Flow)
 const (
 	// DefaultRefreshInterval is how often a replica reloads its keys.
 	DefaultRefreshInterval = 30 * time.Second
@@ -92,7 +94,9 @@ type Ring struct {
 // Open builds the Ring of policy's purpose over store and loads its keys.
 // When the purpose has no key, Open writes the first one, active at once:
 // no running replica can be signing with another key of the purpose, since
-// any running replica would have found that key in the store. Open fails
+// any running replica would have found that key in the store. Its
+// activation instant is backdated by the publish lead, so a replica whose
+// clock runs behind the writer's still finds it active when it opens. Open fails
 // when the store cannot be read, when a key cannot be unwrapped, or when
 // the publish lead is not longer than the refresh interval; the gateway
 // does not start on any of them.
@@ -125,7 +129,7 @@ func Open(ctx context.Context, policy Policy, store Store, sealer Sealer, opts O
 		return nil, fmt.Errorf("signingkeys: load %q keys: %w", policy.Purpose, err)
 	}
 	if len(recs) == 0 {
-		if err := r.writeKey(ctx, 1, now); err != nil {
+		if err := r.writeKey(ctx, 1, now.Add(-r.lead)); err != nil {
 			return nil, err
 		}
 	}
@@ -238,7 +242,7 @@ func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
 		if !reloaded {
 			return nil
 		}
-		return r.writeKey(ctx, 1, now)
+		return r.writeKey(ctx, 1, now.Add(-r.lead))
 	}
 	if newest.ActiveFrom.After(now) || now.Before(newest.ActiveFrom.Add(r.policy.RotationInterval)) {
 		return nil

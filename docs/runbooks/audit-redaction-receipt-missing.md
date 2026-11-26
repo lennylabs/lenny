@@ -67,7 +67,7 @@ Read the receipt's `signature_kms_key_id` from the `audit_redaction_receipts` ta
 
 ## Remediation
 
-1. **A key rotation dropped the receipt's key.** Map `platform:audit-verify` to the key identifier the receipt records, as the [Security guide](../operator-guide/security.md#redaction-receipt-signing-key) describes, and roll the gateway. Confirm that the key version still exists in the KMS. Once the key is trusted again, the next integrity cycle stops counting the row.
+1. **A key rotation dropped the receipt's key.** Map `platform:audit-verify` to the key identifier the receipt records, as the [Security guide](../operator-guide/security.md#redaction-receipt-signing-key) describes, and roll the gateway. The gateway trusts one verify key, so remapping `platform:audit-verify` stops trusting the key it named before, and the receipts that key signed then count as missing. Confirm that the key version still exists in the KMS. Once the key is trusted again, the next integrity cycle stops counting the row.
 2. **No receipt exists, or the signature does not verify under a trusted key.** Treat the row as a potential tamper. Keep the row and the receipt row in place, notify security and compliance, and follow [audit-chain-gap](./audit-chain-gap.md) for the broader chain-integrity investigation. Find the erasure job that should have produced the receipt through `GET /v1/admin/erasure-jobs/{jobId}`; a receipt is written only by the erasure job, so a rewritten row with no matching erasure job did not come from Lenny.
 
 ## Verification

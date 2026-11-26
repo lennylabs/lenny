@@ -8,6 +8,17 @@
   - (c) Any identifier naming another version of the key `platform:audit-signing` names (GCP and Azure key versions). AWS asymmetric keys have no versions, so a rotation on AWS would still need (a) or (b).
 
   Recommendation: (b), because receipts outlive more than one rotation and (b) keeps the trusted set explicit. The branch builds (a), which needs no new setting, and records it in the digest's "Defaults applied"; (b) adds the setting and the lookup on top of it.
+- **O5. The stale bound and the verification time against the token lifetime (raised by the review of 0177.S1, 2026-11-26).** Decision 4 stops minting once a replica's last reload is older than the overlap window (5 minutes), and a replaced key verifies for the same overlap window after the next key becomes active. A replica whose last reload was at t0 keeps signing with the old key until t0 + 5 minutes when a peer publishes the next key just after t0; the peers delete the old key at t0 + 2 minutes (the publish lead) + 5 minutes, and the tokens the stale replica minted are valid until t0 + 10 minutes, so for about three minutes the peers refuse tokens that have not expired with `401 UPLOAD_TOKEN_INVALID`. The same holds on healthy replicas when the token lifetime (`maxCreatedStateTimeoutSeconds`) is set above the overlap window. Options:
+  - (a) Keep decision 4 as built: the stale bound and the verification time are both the overlap window, and the refusal window above is accepted.
+  - (b) Lengthen the verification time of a replaced key to the overlap window plus the stale bound (10 minutes at the defaults), so every token a replica can mint verifies on its peers until it expires, and refuse to start when the token lifetime exceeds the overlap window.
+  - (c) Shorten the stale bound to the overlap window minus the publish lead (3 minutes at the defaults), with a startup check that the publish lead is shorter than the overlap window.
+
+  Recommendation: (b), because it keeps decision 4's bound and closes the window by keeping a retired key a few minutes longer, which costs nothing a token holder can use after expiry. The branch builds (a).
+- **O6. Whether a chain verifier checks a redacted row's content against the receipt's `new_hash` (raised by the review of 0177.S1, 2026-11-26).** The verifiers accept a redacted row whose receipt signature verifies and whose `original_hash` matches, and do not compare the row's current content hash with the signed `new_hash`. A writer with the `lenny_erasure` grant on the payload columns, or a database administrator, can rewrite an already-redacted row again to any payload that keeps the redaction marker, and the row still reads `redacted_gdpr`. §12.8 step 14 says `new_hash` is recorded for provenance and is not consulted for link continuity. Options:
+  - (a) The chain verifier and the periodic receipt scan also require the row's recomputed content hash to equal the receipt's `new_hash`, and §12.8 states it.
+  - (b) Keep the receipt check as built, and record that a second rewrite of a redacted row is outside what the receipt detects.
+
+  Recommendation: (a). The branch builds (b), and issue AUDIT-I5 tracks the gap.
 
 ## Decisions
 

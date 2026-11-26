@@ -173,7 +173,9 @@ func TestRotationPublishesTheNextKeyAheadOfItsActivation(t *testing.T) {
 	b := openRing(t, store, clock)
 	first, _ := a.SigningKey()
 
-	clock.Advance(rotation - time.Second)
+	// The first key is backdated by the publish lead, so it is due one lead
+	// early.
+	clock.Advance(rotation - lead - time.Second)
 	refreshAll(t, a, b)
 	if recs, _ := store.List(ctx, signingkeys.PurposeUploadToken, clock.Now()); len(recs) != 1 {
 		t.Fatalf("a key was written before the rotation interval elapsed: %d keys", len(recs))

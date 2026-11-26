@@ -935,15 +935,16 @@ kms:
   # key (§12.8): platform:audit-signing names the P-256 key the erasure job
   # signs every redaction receipt with, and the gateway does not start on a
   # cloud provider without it; platform:audit-verify is optional and names
-  # the previous receipt key after a rotation. On a cloud provider the
-  # gateway also needs platform:upload-token-signing, a symmetric
-  # encryption key that wraps the shared upload-token signing keys (§7.1);
-  # it does not start without it. On a cloud provider each of
+  # the previous receipt key after a rotation. On a cloud provider each of
   # the four must name an immutable key version: an AWS key ID or key ARN,
   # a GCP CryptoKeyVersion name ending in /cryptoKeyVersions/<n>, or an
   # Azure key with a non-empty @<version> suffix. A process refuses to start
   # when one of them names a repointable reference (an AWS alias, a GCP
   # CryptoKey without a version, or an Azure key without a version).
+  # On a cloud provider the gateway also needs platform:upload-token-signing,
+  # a symmetric encryption key that wraps the shared upload-token signing
+  # keys (§7.1); it does not start without it. Like the other KEK aliases
+  # it may name a repointable reference such as an AWS alias.
   # Example: platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab,
   # platform:audit-signing=arn:aws:kms:us-east-1:111122223333:key/5678abcd-12ab-34cd-56ef-1234567890ab,
   # platform:upload-token-signing=alias/lenny/upload-token-signing,
