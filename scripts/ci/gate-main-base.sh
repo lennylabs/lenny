@@ -6,14 +6,19 @@
 # change 0172, decision 27) and writes it to $GITHUB_OUTPUT as `base`, with
 # `source` naming where it came from.
 #
-# The default base is the head commit of the latest run of the workflow on
-# main whose conclusion is `success`, whose event is `push`, `schedule`, or
-# `workflow_dispatch`, and whose head commit is an ancestor of HEAD. The
-# conclusion filter keeps a cancelled, skipped, or failed run from becoming
-# the base. The event filter keeps a pull_request run, which runs a fork's
-# copy of the workflow on a fork branch that may also be named main, out of
-# it. The ancestor check passes over a commit that a rewrite of main left
-# behind and moves on to an earlier run. Before the workflow has such a
+# The default base is the latest head commit, in the history of HEAD,
+# among the runs of the workflow on main whose conclusion is `success`
+# and whose event is `push`, `schedule`, or `workflow_dispatch`: a
+# selected run or a full run, whichever concurrency group it ran in
+# (change 0172, decision 29). The conclusion filter keeps a cancelled,
+# skipped, or failed run from becoming the base. The event filter keeps a
+# pull_request run, which runs a fork's copy of the workflow on a fork
+# branch that may also be named main, out of it. The ancestor check passes
+# over a commit that a rewrite of main left behind. Among the heads that
+# remain, the base is the one every other is an ancestor of, rather than
+# the head of the run created last: a selected run and a full run run at
+# the same time and finish in either order, so the order of the run list
+# is not the order of their heads on main. Before the workflow has such a
 # run, the default base is $GATE_FALLBACK_BASE, the commit of the latest
 # PASS of the local gate on main.
 #
@@ -47,12 +52,16 @@ heads="$(gh run list --repo "${GITHUB_REPOSITORY:?}" --workflow "$workflow" --br
 base=""
 source=""
 for sha in $heads; do
-	if is_ancestor "$sha"; then
+	if ! is_ancestor "$sha"; then
+		echo "gate-main-base: $sha, the head of a successful run, is not an ancestor of HEAD; passing over it" >&2
+		continue
+	fi
+	# The heads of runs on main lie on one line of its history, so of two
+	# heads one is an ancestor of the other; keep the later one.
+	if [ -z "$base" ] || is_ancestor "$base" "$sha"; then
 		base="$sha"
 		source="the latest successful run of $workflow on main"
-		break
 	fi
-	echo "gate-main-base: $sha, the head of a successful run, is not an ancestor of HEAD; trying an earlier run" >&2
 done
 if [ -z "$base" ]; then
 	base="$fallback"
