@@ -15,10 +15,11 @@
 # pull_request run, which runs a fork's copy of the workflow on a fork
 # branch that may also be named main, out of it. The ancestor check passes
 # over a commit that a rewrite of main left behind. Among the heads that
-# remain, the base is the one every other is an ancestor of, rather than
-# the head of the run created last: a selected run and a full run run at
-# the same time and finish in either order, so the order of the run list
-# is not the order of their heads on main. Before the workflow has such a
+# remain, the base is the one every other is an ancestor of, so the choice
+# does not depend on the order of the run list: `gh run list` orders runs
+# by creation, and a run created earlier can carry a later head, such as a
+# re-run of an older run that succeeds after a newer one. Before the
+# workflow has such a
 # run, the default base is $GATE_FALLBACK_BASE, the commit of the latest
 # PASS of the local gate on main.
 #

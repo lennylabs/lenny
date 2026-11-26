@@ -15,9 +15,8 @@
 # the latest finished selected run and the latest finished full run of
 # this workflow on `main` passed, or their failures have been fixed or
 # reverted (.claude/rules/git-workflow.md, "The gate on `main`"). The
-# repository is
-# public, so the standard GitHub-hosted runner (4 vCPUs, 16 GB) carries no
-# minute charge. The workflow runs repository code, needs no secret, and
+# repository is public, so the standard GitHub-hosted runner (4 vCPUs,
+# 16 GB) carries no minute charge. The workflow runs repository code, needs no secret, and
 # reads the run list with the job's own token.
 
 name: gate-main
