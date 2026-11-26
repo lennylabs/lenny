@@ -15,7 +15,7 @@ requirements: []
 ## Evidence
 
 - `pkg/signingkeys/ring.go`, `reload`: a row with another algorithm or a secret that does not unwrap fails the whole reload, which leaves the snapshot and the reload instant unchanged.
-- `migrations/0204_platform_signing_keys.up.sql`: `GRANT SELECT, INSERT, UPDATE, DELETE ON platform_signing_keys TO lenny_app`.
+- `migrations/0205_platform_signing_keys.up.sql`: `GRANT SELECT, INSERT, UPDATE, DELETE ON platform_signing_keys TO lenny_app`.
 - Found by the security review of step 0177.S1 on 2026-11-26. The same review led the step to write a new first key when a reload finds the table empty.
 
 ## Gap

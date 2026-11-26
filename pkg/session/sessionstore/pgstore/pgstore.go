@@ -170,6 +170,7 @@ const selectList = `id::text, tenant_id, user_id, state, runtime_ref, pool_ref,
 	state_entered_at,
 	COALESCE(input_wait_id, ''),
 	expiry_warned_cap_seconds,
+	terminal_pipeline_done_at,
 	upload_token_consumed_at`
 
 // Create persists a fresh session row. root_session_id defaults to the
@@ -296,7 +297,8 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		pod_released_at,
 		state_entered_at,
 		input_wait_id,
-		expiry_warned_cap_seconds
+		expiry_warned_cap_seconds,
+		terminal_pipeline_done_at
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -350,7 +352,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		-- §7.2 input_wait_id; an empty string persists as NULL.
 		NULLIF($62, ''),
 		-- §11.3 expiry_warned_cap_seconds; zero for a new row.
-		$63
+		$63,
+		-- §7.1 terminal_pipeline_done_at; NULL until the pipeline mark.
+		$64
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -476,7 +480,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 			sess.InputWaitID,
 			// $63 — §11.3 expiry_warned_cap_seconds, the deadline the
 			// expiry-warning sweep claimed a warning for; zero for a new row.
-			sess.ExpiryWarnedCapSeconds)
+			sess.ExpiryWarnedCapSeconds,
+			// $64 — §7.1 pipeline mark; a zero time persists as NULL.
+			pgtenant.NullTime(sess.TerminalPipelineDoneAt))
 		if err != nil {
 			return err
 		}
@@ -638,7 +644,8 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 		state_entered_at = $59,
 		input_wait_id = NULLIF($60, ''),
 		expiry_warned_cap_seconds = $61,
-		upload_token_consumed_at = COALESCE(upload_token_consumed_at, $62)
+		terminal_pipeline_done_at = $62,
+		upload_token_consumed_at = COALESCE(upload_token_consumed_at, $63)
 	WHERE id = $1::uuid AND tenant_id = $2`
 
 	// spec: §12.3 (Write durability categories during failover) — the
@@ -788,7 +795,10 @@ func (s *Store) Update(ctx context.Context, tenantID, id string, mutate func(*se
 			// $61 — §11.3 expiry_warned_cap_seconds, the deadline the
 			// expiry-warning sweep claimed its warning for; zero until then.
 			sess.ExpiryWarnedCapSeconds,
-			// $62 — §7.1 upload_token_consumed_at. COALESCE keeps the
+			// $62 — §7.1 pipeline mark MarkTerminalPipelineDone sets; a
+			// zero time keeps SQL NULL.
+			pgtenant.NullTime(sess.TerminalPipelineDoneAt),
+			// $63 — §7.1 upload_token_consumed_at. COALESCE keeps the
 			// first value, so a write never clears or moves a consumed
 			// mark; a zero time keeps SQL NULL.
 			pgtenant.NullTime(sess.UploadTokenConsumedAt),
@@ -1682,6 +1692,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// Nullable (NULL until the first qualifying agent event). F-11.3.7.
 		lastAgentActivityAt   *time.Time
 		podReleasedAt         *time.Time
+		pipelineDoneAt        *time.Time
 		uploadTokenConsumedAt *time.Time
 	)
 	if err := row.Scan(
@@ -1775,7 +1786,10 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §11.3 — expiry_warned_cap_seconds from migration 0196, the
 		// deadline the session_expiring_soon warning was claimed for.
 		&s.ExpiryWarnedCapSeconds,
-		// §7.1 — upload_token_consumed_at from migration 0204. NULL until
+		// §7.1 — terminal_pipeline_done_at from migration 0204. NULL until
+		// the pipeline mark is recorded.
+		&pipelineDoneAt,
+		// §7.1 — upload_token_consumed_at from migration 0205. NULL until
 		// FinalizeWorkspace consumes the uploadToken.
 		&uploadTokenConsumedAt,
 	); err != nil {
@@ -1786,6 +1800,9 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 	}
 	if podReleasedAt != nil {
 		s.PodReleasedAt = *podReleasedAt
+	}
+	if pipelineDoneAt != nil {
+		s.TerminalPipelineDoneAt = *pipelineDoneAt
 	}
 	if legalHoldSetAt != nil {
 		s.LegalHoldSetAt = *legalHoldSetAt

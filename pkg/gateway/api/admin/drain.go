@@ -156,37 +156,43 @@ func verifyDrained(ctx context.Context, l DrainLister, tenantID string, filter s
 	return nil
 }
 
-// ErrReleaseCapUnset is returned by ReleasePending when it is given no
-// positive post-terminal cap. It lists nothing, so an unwired cap fails
-// closed: the erasure job waits and tenant deletion pauses rather than
-// delete a session's stores while its terminal pipeline may still write.
-// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window).
-var ErrReleaseCapUnset = errors.New("post-terminal window cap is not set")
+// ErrPipelineBudgetUnset is returned by TerminalPipelinesPending when it is
+// given no positive terminal pipeline budget. It lists nothing, so an unwired
+// budget fails closed: the erasure job waits and tenant deletion pauses rather
+// than delete a session's stores while its terminal pipeline may still write.
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session).
+var ErrPipelineBudgetUnset = errors.New("terminal pipeline budget is not set")
 
-// ReleasePending returns the identifiers of the sessions of one lifecycle
-// scope (the whole tenant when userID is empty, otherwise the sessions
-// userID owns in tenantID) that are in their §7.1 post-terminal window at
-// now under cap: terminal, naming a pod, with no release recorded, and
-// terminated less than cap ago. It lists the scope from the Postgres
-// primary with the filter DrainSessions uses, so a release recorded on the
-// primary is seen. User erasure and tenant deletion call it after their
-// drain and delete no store of the scope while it returns an identifier,
-// because a seal still running would write under a prefix the deletion
-// already cleared. A listing error is returned wrapped; a non-positive cap
-// returns ErrReleaseCapUnset without listing.
+// TerminalPipelinesPending returns the identifiers of the sessions of one
+// lifecycle scope (the whole tenant when userID is empty, otherwise the
+// sessions userID owns in tenantID) that user erasure and tenant deletion
+// wait on at now under the terminal pipeline budget: a session that is
+// pipeline-pending (sessionstore.TerminalPipelinePending), with or without a
+// pod, or in its post-terminal window (sessionstore.InPostTerminalWindow).
 //
-// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window)
-func ReleasePending(ctx context.Context, l DrainLister, tenantID, userID string, now time.Time, cap time.Duration) ([]string, error) {
-	if cap <= 0 {
-		return nil, ErrReleaseCapUnset
+// It lists the scope from the Postgres primary with the filter DrainSessions
+// uses, so a pipeline mark or a release recorded on the primary is seen. User
+// erasure and tenant deletion call it after their drain and delete no store of
+// the scope while it returns an identifier: a pipeline still running writes
+// the session's billing event, quota checkpoint, and session log after the
+// pod release, and a seal still running would write under a prefix the
+// deletion already cleared. Both arms end within one budget of the terminal
+// transition. A listing error is returned wrapped; a non-positive budget
+// returns ErrPipelineBudgetUnset without listing.
+//
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session),
+// §7.1 (Post-terminal window)
+func TerminalPipelinesPending(ctx context.Context, l DrainLister, tenantID, userID string, now time.Time, budget time.Duration) ([]string, error) {
+	if budget <= 0 {
+		return nil, ErrPipelineBudgetUnset
 	}
 	rows, err := l.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID, Primary: true})
 	if err != nil {
-		return nil, fmt.Errorf("list the post-terminal sessions of tenant %s: %w", tenantID, err)
+		return nil, fmt.Errorf("list the terminal sessions of tenant %s: %w", tenantID, err)
 	}
 	var pending []string
 	for _, row := range rows {
-		if sessionstore.InPostTerminalWindow(row, now, cap) {
+		if sessionstore.TerminalPipelinePending(row, now, budget) || sessionstore.InPostTerminalWindow(row, now, budget) {
 			pending = append(pending, row.ID)
 		}
 	}

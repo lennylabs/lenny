@@ -678,9 +678,13 @@ var prodMigrationSchema = []struct {
 	// 0203 adds the §13.3 lineage depth column to issued_tokens, which the
 	// lineage depth cap of step (1a) reads.
 	{migration: "0203", table: "issued_tokens", columns: []string{"depth"}},
-	// 0204 adds the §7.1 single-use record of the uploadToken, which the
+	// 0204 adds sessions.terminal_pipeline_done_at, the §7.1 pipeline mark
+	// that ends the wait of user erasure and tenant deletion on a drained
+	// session's terminal pipeline (§12.8 Lifecycle fence and drain).
+	{migration: "0204", table: "sessions", columns: []string{"terminal_pipeline_done_at"}},
+	// 0205 adds the §7.1 single-use record of the uploadToken, which the
 	// finalize ready write sets and every replica reads on verification.
-	{migration: "0204", table: "sessions", columns: []string{"upload_token_consumed_at"}},
+	{migration: "0205", table: "sessions", columns: []string{"upload_token_consumed_at"}},
 }
 
 // renamedTables maps a table an earlier migration created or altered to

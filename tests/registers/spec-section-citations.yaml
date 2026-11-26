@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1522
+      count: 1524
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -230,7 +230,7 @@ packages:
     - package: pkg/blobstore/s3
       count: 43
     - package: pkg/chart/values
-      count: 23
+      count: 24
     - package: pkg/checkpoint
       count: 3
     - package: pkg/checkpoint/checkpointretention
@@ -352,7 +352,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1319
+      count: 1321
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret
@@ -452,7 +452,7 @@ packages:
     - package: pkg/gateway/core/session/sessioninbox
       count: 73
     - package: pkg/gateway/core/session/sessionserver
-      count: 2983
+      count: 2989
     - package: pkg/gateway/core/session/slotcounter
       count: 125
     - package: pkg/gateway/core/session/slothealth
@@ -856,11 +856,11 @@ packages:
     - package: pkg/session/sessionrow
       count: 48
     - package: pkg/session/sessionstore
-      count: 109
+      count: 113
     - package: pkg/session/sessionstore/memstore
       count: 130
     - package: pkg/session/sessionstore/pgstore
-      count: 126
+      count: 304
     - package: pkg/session/state
       count: 14
     - package: pkg/session/transcriptstore
@@ -870,9 +870,9 @@ packages:
     - package: pkg/sessionrecord
       count: 37
     - package: pkg/signingkeys
-      count: 24
+      count: 26
     - package: pkg/signingkeys/pgstore
-      count: 2
+      count: 3
     - package: pkg/spiffeid
       count: 8
     - package: pkg/storage/deadletterredaction
@@ -1032,7 +1032,7 @@ packages:
     - package: tests/component/lifecycle
       count: 9
     - package: tests/component/migrations
-      count: 86
+      count: 148
     - package: tests/component/observability
       count: 17
     - package: tests/component/opsaudit
@@ -1070,7 +1070,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 327
+      count: 330
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
@@ -1212,13 +1212,13 @@ packages:
     - package: tests/e2e_kind
       count: 236
     - package: tests/integration
-      count: 738
+      count: 744
     - package: tests/load_cloud
       count: 13
     - package: tests/load_kind
       count: 24
     - package: tests/load_local
-      count: 498
+      count: 502
     - package: tests/load_local/directusage_teardown
       count: 2
     - package: tests/load_local/scenarios/extension_episode_fanout
@@ -1236,7 +1236,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 573
+      count: 579
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

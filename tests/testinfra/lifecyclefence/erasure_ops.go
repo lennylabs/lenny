@@ -152,7 +152,7 @@ func (e *Erasure) Runner() *erasurejob.Runner {
 		// The World's sessions run no terminal pipeline, so no drained
 		// session is ever in its post-terminal window and the gate admits
 		// every job. spec: §12.8 (Lifecycle fence and drain).
-		WithReleaseGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
+		WithPipelineGate(func(context.Context, string, string) ([]string, error) { return nil, nil }).
 		WithFailureObserver(func(_, phase string) {
 			e.mu.Lock()
 			e.failures = append(e.failures, phase)

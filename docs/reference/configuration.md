@@ -275,6 +275,14 @@ A rotation or scope-narrowing request that carries no `expires_in` issues a JWT 
 | `tokenExchange.requireActorToken` | bool | `true` | Require `actor_token` on `a2a_delegation` child-token minting. Enforces the parent→child chain of custody. | -- |
 | `tokenExchange.supportedSubjectTokenTypes` | string[] | `["urn:ietf:params:oauth:token-type:access_token", "urn:ietf:params:oauth:token-type:jwt"]` | Accepted `subject_token_type` values. | Subset of IANA-registered token types. |
 
+### Token revocation
+
+Each gateway replica keeps the revoked tokens in memory and reads them again from Postgres every 30 seconds and each time Redis confirms its revocation subscription, at startup and after each reconnect. The reconnect spacing bounds how often a Redis connection that keeps dropping starts such a read. See [Security](../operator-guide/security.md) for how the reads bound the time a replica accepts a revoked token.
+
+| Field | Type | Default | Description | Validation |
+|:------|:-----|:--------|:------------|:-----------|
+| `auth.revocationReconnectSpacing` | string | `5s` | The reconnect spacing: the minimum interval between the starts of two revocation reads that subscription confirmations start on one gateway replica. A confirmation inside the spacing waits until it has passed; the 30-second reads keep their schedule. `0s` starts every such read at once. The chart renders it into the gateway flag `--revocation-reconnect-spacing`. | A non-negative duration with a unit, such as `500ms`, `5s`, or `1m`. |
+
 ---
 
 ### KMS
