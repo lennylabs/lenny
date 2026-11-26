@@ -8,10 +8,10 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
+| Building | 2 |
 | Ready | 6 |
 | Waiting on decisions | 32 |
-| Blocked | 164 |
+| Blocked | 163 |
 | Landed | 30 |
 | Cancelled | 3 |
 
@@ -55,6 +55,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
 | [0177.S1](0177-shared-upload-token-keys/steps.md#0177s1-shared-signing-keys-consumed-state-and-receipt-signing) | Shared signing keys, consumed state, and receipt signing | Building |  |
+| [0177.S2](0177-shared-upload-token-keys/steps.md#0177s2-the-receipt-key-set-the-verification-time-of-replaced-keys-and-the-check-against-new_hash) | The receipt key set, the verification time of replaced keys, and the check against new_hash | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
@@ -252,7 +253,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
-| [0177.S2](0177-shared-upload-token-keys/steps.md#0177s2-the-receipt-key-set-the-verification-time-of-replaced-keys-and-the-check-against-new_hash) | The receipt key set, the verification time of replaced keys, and the check against new_hash | Blocked | 0177.S1 |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Blocked | 0178.S1 |
 | [0179.S1](0179-upload-token-model/steps.md#0179s1-model-of-the-upload-token-keys-and-consumed-state) | Model of the upload-token keys and consumed state | Blocked | 0177.S2 |
 | [0180.S1](0180-audit-chain-model/steps.md#0180s1-model-of-the-audit-chain-and-redaction-receipts) | Model of the audit chain and redaction receipts | Blocked | 0177.S2 |
