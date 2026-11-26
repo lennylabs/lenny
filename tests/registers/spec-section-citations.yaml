@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1519
+      count: 1521
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -544,7 +544,7 @@ packages:
     - package: pkg/gateway/platformtools/leasecontrol/leaseelicit
       count: 13
     - package: pkg/gateway/platformtools/mcp
-      count: 125
+      count: 129
     - package: pkg/gateway/platformtools/mcptools
       count: 679
     - package: pkg/gateway/platformtools/mcptools/internal/genmcpschemas
@@ -610,7 +610,7 @@ packages:
     - package: pkg/idempotency
       count: 11
     - package: pkg/idempotency/idempotencymw
-      count: 55
+      count: 62
     - package: pkg/kms
       count: 31
     - package: pkg/kms/aws
@@ -1028,7 +1028,7 @@ packages:
     - package: tests/component/lifecycle
       count: 9
     - package: tests/component/migrations
-      count: 86
+      count: 87
     - package: tests/component/observability
       count: 17
     - package: tests/component/opsaudit
@@ -1214,7 +1214,7 @@ packages:
     - package: tests/load_kind
       count: 24
     - package: tests/load_local
-      count: 496
+      count: 497
     - package: tests/load_local/directusage_teardown
       count: 2
     - package: tests/load_local/scenarios/extension_episode_fanout
