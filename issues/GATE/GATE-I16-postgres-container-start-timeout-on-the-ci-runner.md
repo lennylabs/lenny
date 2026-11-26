@@ -14,7 +14,7 @@ None: the defect is in the test infrastructure, `tests/testinfra/containers/post
 
 ## Evidence
 
-- Gate-main workflow run `45872051820` (selected run on `main` at `0384658de`, 2026-11-26, gate run `6e7ecf0201404efd760423b3`): seven component tests in `tests/component/auditintegrity` and `tests/component/auditstore` failed at `StartPostgres` with "wait until ready: \"database system is ready to accept connections\" matched 0 times, expected 2 ... context deadline exceeded" after 30 seconds. The tests run in parallel (`t.Parallel`), and each starts its own container. The previous run, `45869562906` at `ff5c50644`, whose code is the same, passed all seven.
+- Gate-main workflow run `45872051820` (selected run on `main` at `0384658de`, 2026-11-26, gate run `6e7ecf0201404efd760423b3`): seven component tests in `tests/component/auditintegrity` and `tests/component/auditstore` failed at `StartPostgres` with "wait until ready: \"database system is ready to accept connections\" matched 0 times, expected 2 ... context deadline exceeded" after 30 seconds. The tests run in parallel (`t.Parallel`), and each starts its own container. The previous run, `45869562906` at `ff5c50644`, whose code is the same, passed all seven. The rerun of `45872051820` (attempt 2) on the same commit passed the whole gate, so the failure is a load failure that a rerun does not reproduce.
 - `StartPostgres` waits at most 30 seconds by default (`opts.StartupTimeout`), where the MinIO and fake GCS containers wait 60 seconds. The workflow's runner has 4 vCPUs.
 
 ## Gap
