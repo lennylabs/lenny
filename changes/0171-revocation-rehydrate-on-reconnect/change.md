@@ -1,6 +1,6 @@
 # Revocation cache rehydration on event-bus reconnect
 
-Status: `In progress`, revision 4, 2026-11-25.
+Status: `In progress`, revision 5, 2026-11-26.
 
 ## Problem
 
@@ -73,7 +73,7 @@ The state on `main` at `104cdf4fa`:
 
 ### RR-2 Rehydration on reconnect
 
-`propagator.Run` accepts the rehydration as a callback, and passes it to `Bus.Subscribe` as the reconnect callback. The gateway wires a callback that signals the rehydration loop through a buffered channel of one (`revocation.Trigger`), so a reconnect runs one rehydration at once and a burst of reconnects runs at most one extra. The loop is `revocation.Cache.RunRehydration` in `pkg/credential/revocation`, which `billing_security_workers.go` starts, so the component and chaos tests drive the same loop. The loop rehydrates on the tick or on the signal, whichever comes first, and gives each read a deadline of one interval. A signal that arrives less than the reconnect spacing after the start of the previous signal-triggered rehydration waits until the spacing has passed, and a tick in the meantime runs as usual (decision 3). The spacing defaults to 5 seconds and is set by a gateway flag; no metric counts the signal-triggered rehydrations. A failed rehydration is logged as a failed tick is, and leaves the staleness clock where the last success set it. The staleness clock counts from the instant a successful read began, so a slow read does not extend the 90-second window.
+`propagator.Run` accepts the rehydration as a callback, and passes it to `Bus.Subscribe` as the reconnect callback. The gateway wires a callback that signals the rehydration loop through a buffered channel of one (`revocation.Trigger`), so a reconnect runs one rehydration at once and a burst of reconnects runs at most one extra. The loop is `revocation.Cache.RunRehydration` in `pkg/credential/revocation`, which `billing_security_workers.go` starts, so the component and chaos tests drive the same loop. The loop rehydrates on the tick or on the signal, whichever comes first, and gives each read a deadline of one interval. A signal that arrives less than the reconnect spacing after the start of the previous signal-triggered rehydration waits until the spacing has passed, and a tick in the meantime runs as usual (decision 3). The spacing defaults to 5 seconds and is set by a gateway flag, which the chart value `auth.revocationReconnectSpacing` renders (decision 4); no metric counts the signal-triggered rehydrations. A failed rehydration is logged as a failed tick is, and leaves the staleness clock where the last success set it. The staleness clock counts from the instant a successful read began, so a slow read does not extend the 90-second window.
 
 ### RR-3 The bound in §13.3
 
@@ -93,12 +93,14 @@ The state on `main` at `104cdf4fa`:
 - `pkg/storage/pubsub`: the reconnect callback of `Subscribe`.
 - `pkg/credential/revocation/propagator`: `Run` with the rehydration callback, and the package comment.
 - `cmd/lenny-gateway`: the rehydration loop's signal channel, the wiring of `revProp.Run`, and the reconnect-spacing flag.
+- `charts/lenny`: the value `auth.revocationReconnectSpacing`, default `5s`, its entry in `values.schema.json`, and its rendering as `--revocation-reconnect-spacing` in `templates/gateway-deployment.yaml`; `pkg/chart/values` and the embedded manifests regenerated (decision 4).
 - `pkg/alerting/rules`: the description of `TokenRevocationPropagationLag`, and `docs/alerting/rules.yaml` regenerated with `make generate`.
 
 ## Documentation
 
 - `docs/alerting/rules.yaml` (operator): regenerated; the alert's description names the rehydration in place of the Postgres check.
-- `docs/operator-guide/security.md` (operator): the bearer-token paragraph states that a replica that misses a revocation event applies it at its next rehydration, within 30 seconds, rehydrates at once when its event-bus subscription is confirmed at start or after a reconnect, no sooner than the reconnect spacing after the previous such rehydration, and refuses validation after 90 seconds without a successful rehydration. It names the flag that sets the reconnect spacing and its 5-second default.
+- `docs/reference/configuration.md` (operator): the security configuration lists the chart value `auth.revocationReconnectSpacing` with its default and the flag it sets.
+- `docs/operator-guide/security.md` (operator): the bearer-token paragraph states that a replica that misses a revocation event applies it at its next rehydration, within 30 seconds, rehydrates at once when its event-bus subscription is confirmed at start or after a reconnect, no sooner than the reconnect spacing after the previous such rehydration, and refuses validation after 90 seconds without a successful rehydration. It names the flag that sets the reconnect spacing, the chart value `auth.revocationReconnectSpacing` that renders it, and its 5-second default.
 
 ## Tests
 
@@ -106,3 +108,4 @@ The state on `main` at `104cdf4fa`:
 - Component: a replica whose Redis connection drops while a peer publishes a revocation rejects the revoked token after the subscription reconnects, without waiting for the periodic tick.
 - Chaos: `tests/chaos` (a Redis restart during a revocation: the replica that missed the event rejects the token after it reconnects, and a replica whose rehydration keeps failing answers `503 token_validation_unavailable` after 90 seconds).
 - Security: a revoked token is refused on every replica within the bound §13.3 states.
+- Chart: `charts/lenny/tests/gateway-deployment_test.yaml` (the gateway renders `--revocation-reconnect-spacing` with the default `5s` and with a value the test sets, and the schema refuses a value that is not a duration).

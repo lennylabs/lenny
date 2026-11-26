@@ -1,6 +1,6 @@
 # Shared signing keys for upload tokens and redaction receipts
 
-Status: `Draft`, revision 2, 2026-11-25.
+Status: `Decided`, revision 3, 2026-11-26.
 
 ## Problem
 
@@ -16,24 +16,24 @@ Two gateway signers create their keys inside each process, so what one replica s
 
 [§10.1](../../spec/10_gateway-internals.md#101-horizontal-scaling) states that gateway replicas are stateless proxies over externalized state, and that a client can reach any replica. Both signers break that rule.
 
-The owner chose to fix the upload-token gap with a change that shares the key ring and the consumed-token tracker, and asked to see the design, with the choice between Redis, Postgres, or both, before it is settled (decision 1). The owner then directed that the receipt signer be fixed in the same change, reusing the mechanism where possible (decision 2). This revision is that design. The store choice is open decision O1, and the key that signs receipts is open decision O3.
+The owner chose to fix the upload-token gap with a change that shares the key ring and the consumed-token tracker, and asked to see the design, with the choice between Redis, Postgres, or both, before it is settled (decision 1). The owner then directed that the receipt signer be fixed in the same change, reusing the mechanism where possible (decision 2). The owner then chose Postgres only for the shared state (decision 3), a replica that stops minting when it cannot refresh its key ring (decision 4), and KMS signing for redaction receipts (decision 5). This revision states that design.
 
 ## Scope
 
 The change covers:
 
-- A shared signing-key store that serves more than one purpose: where the keys live, how they are protected at rest, how they rotate, how long each purpose keeps a key that verifies, and how every replica learns of a new key before any replica signs with it.
+- A shared signing-key store in Postgres, keyed by purpose: where the keys live, how they are protected at rest, how they rotate, how long a retired key keeps verifying, and how every replica learns of a new key before any replica signs with it. The store serves the upload-token purpose only (decision 5).
 - The upload-token purpose: the §7.1 signing keys, and where the consumed state of an upload token lives and how one consume is atomic across replicas.
-- The redaction-receipt purpose: the key that signs §12.8 `RedactionReceipt` rows, its identifier on each receipt, and the chain verifier's check of the signature.
-- The behavior of minting, verifying, consuming, replaying, and signing when the chosen store is unavailable.
-- §7.1 **`uploadToken` format and security properties**, §12.8 step 14 **`RedactionReceipt` schema.**, and the §12 sections for the chosen store.
+- The redaction receipt signer: signing each §12.8 `RedactionReceipt` inside the KMS, the key identifier recorded on each receipt, the lookup of the public key by that identifier, and the chain verifier's check of the signature.
+- The behavior of minting, verifying, consuming, replaying, and signing when Postgres or the KMS is unavailable.
+- §7.1 **`uploadToken` format and security properties**, §12.8 step 14 **`RedactionReceipt` schema.**, §12.3 for the key table, and §12.9 for the classification of the signing keys.
 
 It leaves out:
 
 - The upload-token format, its TTL, the rotation interval, and the overlap window, which keep their §7.1 values.
 - The redaction of 0173, which keeps working once every replica holds every key in the ring.
 - The receipt's fields, its table, its grants, and its retention, which keep their §12.8 text.
-- Signing the §11.7 genesis nonce. Step 14 names the receipt key as the "same key as §11.7 genesis-nonce signing in regulated profiles", but §11.7 describes no such signing and no code signs the nonce. SK-6 states how the parenthetical is corrected under each option of O3.
+- Signing the §11.7 genesis nonce. Step 14 names the receipt key as the "same key as §11.7 genesis-nonce signing in regulated profiles", but §11.7 describes no such signing and no code signs the nonce. SK-6 states how the parenthetical is corrected.
 
 ## Terms
 
@@ -41,7 +41,7 @@ It leaves out:
 | :-- | :-- |
 | Upload token | The `uploadToken` of [§7.1](../../spec/07_session-lifecycle.md#71-normal-flow), `<session_id>.<expiry_unix_seconds>.<hmac_hex>`, an HMAC-SHA256 under a gateway-held signing key. It carries no key identifier, so a verifier tries each key of its ring. |
 | Redaction receipt | The signed `RedactionReceipt` of [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces) step 14, one row of `audit_redaction_receipts` per dead-lettered `audit_log` row that user erasure redacts. Its `signature_kms_key_id` names the key that signed it. |
-| Purpose | The use a signing key serves: `upload-token` or `redaction-receipt`. Each purpose has its own keys and its own policy, and a key of one purpose never signs or verifies for another. |
+| Purpose | The use a signing key serves. Each purpose has its own keys and its own policy, and a key of one purpose never signs or verifies for another. The store holds one purpose, `upload-token`; redaction receipts are signed in the KMS and have no purpose in the store (decision 5). |
 | Purpose policy | For one purpose: the signing algorithm, the KMS alias that protects the key, the rotation interval, the overlap window, and the time a retired key keeps verifying. |
 | Signing-key ring | For one purpose, the active signing key and the earlier keys that still verify (`uploadtoken.KeyRing` for upload tokens today). |
 | Consumed tracker | The record of token digests that `FinalizeWorkspace` invalidated (`uploadtoken.ConsumedTracker`). |
@@ -52,13 +52,15 @@ It leaves out:
 
 ## High-level design
 
-All replicas read their signing keys from one shared store. The store holds the keys of several purposes, each under its own policy, and a replica loads one ring per purpose. Each key is stored encrypted under a KMS key and is decrypted only in memory. A new key is written ahead of its use, with the instant from which replicas sign with it, so every replica has loaded it by the time any replica signs with it. A retired key keeps verifying for as long as its purpose needs: five minutes for an upload token, and as long as the receipts it signed are kept for a redaction receipt.
+All replicas read their upload-token signing keys from one shared table in Postgres (decision 3). The table is keyed by purpose, each purpose under its own policy, and it holds the `upload-token` purpose. Each key is stored encrypted under a KMS key and is decrypted only in memory. A new key is written ahead of its use, with the instant from which replicas sign with it, so every replica has loaded it by the time any replica signs with it. A retired key keeps verifying for the five-minute overlap of §7.1.
 
-The upload-token purpose also needs a consumed state. It is recorded in a shared store with an atomic write, so a second consume on any replica sees the first.
+The upload-token purpose also needs a consumed state. It is recorded on the session row, which already stores the token's digest, with a conditional write, so a second consume on any replica sees the first.
 
-The redaction-receipt purpose either uses the shared store, or signs inside the KMS as §12.8 describes and needs no shared secret at all. That choice is open decision O3, because §12.8 asks for a signature an external verifier checks with a public key, which an HMAC key from the shared store cannot give.
+A replica that cannot refresh its key ring for longer than the overlap window stops minting upload tokens, so session creation on it answers `503`, and it keeps verifying with the ring it holds (decision 4).
 
-The design compares three placements of the shared state: Postgres only, Redis only, and both. The recommendation is Postgres only, with the consumed state on the session row that already stores the token's digest. The detailed design below follows that recommendation, and names what changes under the other options.
+Redaction receipts are signed inside the KMS with an ES256 key through `kms.Provider.Sign`, as §12.8 describes, and need no shared secret (decision 5). The shared store holds no receipt purpose and serves upload tokens only. The fix for the receipt signer ([AUDIT-I2](../../issues/AUDIT/AUDIT-I2-redaction-receipt-signing-key-per-process.md), [AUDIT-I3](../../issues/AUDIT/AUDIT-I3-chain-verifier-accepts-unverified-receipt-signatures.md), and [AUDIT-I4](../../issues/AUDIT/AUDIT-I4-receipt-signing-key-reference-is-undefined.md)) therefore uses the KMS signing path of the §10.2 JWT signer rather than the shared store, as the owner chose.
+
+SK-1 keeps the comparison of the three placements of the shared state that the owner chose from: Postgres only, Redis only, and both.
 
 ## Requirements
 
@@ -88,10 +90,12 @@ What the specification assumes about the two stores:
 
 ### SK-1 Options compared
 
+The owner chose option (i), Postgres only (decision 3). The comparison stays as the record of the choice.
+
 | | (i) Postgres only | (ii) Redis only | (iii) Both: keys in Postgres, consumed set in Redis |
 | :-- | :-- | :-- | :-- |
 | Upload-token signing keys at rest | A platform table, each secret envelope-encrypted under a platform KEK alias, as the `erasure_salt` and the credential leases are. Durable. | A Redis key per signing key, envelope-encrypted under the same alias, as §12.4 requires for sensitive values. Lost with Redis data: every outstanding token stops verifying, and §7.1 does not reissue a token, so a session in `created` cannot be finalized until it expires. | As (i). |
-| Redaction-receipt keys at rest, under O3 (b) or (c) | The same table, under the `redaction-receipt` purpose. Durable for as long as the receipts, which are in Postgres too. | Not viable. A key has to verify receipts for `audit.gdprRetentionDays`, and Redis is not a system of record, so a loss of Redis data would turn every receipt it signed into a `broken` row. The receipt keys would have to sit in Postgres, which splits the mechanism across two stores. | As (i). |
+| Redaction-receipt keys at rest, under the options of decision 5 not chosen | The same table, under the `redaction-receipt` purpose. Durable for as long as the receipts, which are in Postgres too. | Not viable. A key has to verify receipts for `audit.gdprRetentionDays`, and Redis is not a system of record, so a loss of Redis data would turn every receipt it signed into a `broken` row. The receipt keys would have to sit in Postgres, which splits the mechanism across two stores. | As (i). |
 | Rotation and overlap | One replica inserts the next key with an activation instant one publish lead ahead, guarded by a unique constraint on the purpose and the activation slot so only one insert wins. Replicas refresh the ring on a timer. A retired key is deleted when its purpose's verification time ends. | The same protocol with `SET NX` on the slot and a TTL for expiry. Redis pub/sub could announce a new key, and the publish lead still has to cover a lost message. | As (i). |
 | Atomic consume | A conditional update of the session row in the `finalizing` → `ready` write: `upload_token_consumed_at` is set where it is NULL. The row already holds the digest, so no new table is needed. | `SET NX` of the digest with a TTL to the token's expiry, as the OAuth `state` is consumed. | As (ii). |
 | Check on upload | Reads `upload_token_consumed_at` from the session row, which the upload and finalize paths already need for the `created` state check. | One Redis read per upload request and one write per finalize. | One Redis read per upload request and one write per finalize. |
@@ -102,25 +106,23 @@ What the specification assumes about the two stores:
 
 A variant of (iii) with a Redis cache over the Postgres keys adds nothing, because each replica already holds its rings in memory and reads the store only on refresh.
 
-Folding the receipt signer in strengthens (i). Under O3 (b) or (c) the receipt keys sit in Postgres under every option, so only (i) keeps both purposes in one store. Under O3 (a) the receipt key sits in the KMS, and the comparison concerns the upload-token purpose alone, as it did in revision 1.
+Under options (b) and (c) of decision 5, which the owner did not choose, the receipt keys would sit in Postgres under every placement, so only (i) would keep both purposes in one store. Under the chosen option (a) the receipt key sits in the KMS, and the comparison concerns the upload-token purpose alone, as it did in revision 1.
 
-### SK-2 The signing-key store (option (i))
+### SK-2 The signing-key store
 
-A platform-scoped table `platform_signing_keys` holds `purpose`, `key_id`, `algorithm`, the wrapped secret, the public key when the algorithm has one, the KEK alias, `active_from`, `retire_after`, and `delete_after`. The primary key is `(purpose, key_id)`. Each secret is wrapped under its purpose's platform KEK alias through `pkg/kms/envelope`, so the plaintext exists only in the gateway's memory. The table is platform-scoped because neither purpose is tenant-bound at verification time: the upload-token verifier knows the session id and the token, and a receipt is verified across tenants by one verifier.
+A platform-scoped table `platform_signing_keys` holds `purpose`, `key_id`, `algorithm`, the wrapped secret, the public key when the algorithm has one, the KEK alias, `active_from`, `retire_after`, and `delete_after`. The primary key is `(purpose, key_id)`. Each secret is wrapped under its purpose's platform KEK alias through `pkg/kms/envelope`, so the plaintext exists only in the gateway's memory. The table is platform-scoped because an upload token is not tenant-bound at verification time: the verifier knows the session id and the token.
 
-A package for the store, separate from `pkg/uploadtoken`, loads, refreshes, rotates, and sweeps the keys of one purpose under that purpose's policy, and exposes a ring that signs with the active key and verifies with every loaded key. `pkg/uploadtoken` takes its ring from it, and, under O3 (b) or (c), so does the receipt signer.
+A package for the store, separate from `pkg/uploadtoken`, loads, refreshes, rotates, and sweeps the keys of one purpose under that purpose's policy, and exposes a ring that signs with the active key and verifies with every loaded key. `pkg/uploadtoken` takes its ring from it. The receipt signer does not use the store (decision 5).
 
 | Purpose | Algorithm | KEK alias | Rotation interval | Retired key verifies for | Row deleted |
 | :-- | :-- | :-- | :-- | :-- | :-- |
 | `upload-token` | HMAC-SHA256 | `platform:upload-token-signing` | 24 hours (§7.1, deployer-configurable) | 5 minutes (§7.1 overlap) | After the overlap |
-| `redaction-receipt`, under O3 (b) | HMAC-SHA256 | `platform:audit-redaction-signing` | A gateway setting, default 90 days | `audit.gdprRetentionDays` after retirement | After that time |
-| `redaction-receipt`, under O3 (c) | ES256 | `platform:audit-redaction-signing` | A gateway setting, default 90 days | `audit.gdprRetentionDays` after retirement, by its public key | The wrapped private key at retirement; the row with its public key after that time |
 
 At start, a replica loads every key of each purpose it serves whose `delete_after` is in the future, unwraps each secret it can still sign or verify with, and refuses to start when it cannot, as it does for the JWT key set. When a purpose has no key, the replica inserts the first one. A refresh loop reloads the rings on a fixed interval. When a purpose's active key is older than its rotation interval, a replica inserts the next key with `active_from` set one publish lead ahead; a unique constraint on the purpose and the rotation slot makes concurrent inserts from several replicas produce one key. Each replica signs with the newest key whose `active_from` has passed, and verifies with every loaded key of the same purpose. A key's `retire_after` is the next key's `active_from`, its `delete_after` is `retire_after` plus its purpose's verification time, and a sweep deletes rows after `delete_after`.
 
-The refresh interval, the publish lead, and the receipt rotation interval are gateway settings the specification does not fix, so each has a flag and an operator-tunable default. The publish lead is longer than the refresh interval, and the gateway refuses to start when it is not.
+The refresh interval and the publish lead are gateway settings the specification does not fix, so each has a flag and an operator-tunable default. The publish lead is longer than the refresh interval, and the gateway refuses to start when it is not.
 
-### SK-3 The consumed state (option (i))
+### SK-3 The consumed state
 
 The `sessions` table gains `upload_token_consumed_at`. The `finalizing` → `ready` write of `FinalizeWorkspace` sets it in the same update, which is the point at which §7.1 says the token is invalidated. Verification reads the session row and returns `ErrConsumed` when the column is set, on every replica. `uploadtoken.MemoryTracker` stays for tests and the single-replica minimal gateway, and the production wiring uses the session-row check. The build records in the step's digest whether the upload path's existing row read carries the check or a new read is added.
 
@@ -128,36 +130,37 @@ The `sessions` table gains `upload_token_consumed_at`. The `finalizing` → `rea
 
 - Postgres unavailable at start, or the KMS unable to unwrap a key: the replica does not start.
 - Postgres unavailable after start: the replica keeps its loaded rings, keeps signing with each active key, and does not rotate. Upload and finalize fail as they already do without the session row.
-- A refresh that has failed for longer than the upload-token overlap window: the replica stops minting new upload tokens and answers session creation that needs a token with `503`, because it can no longer be sure that its peers hold the key it would sign with. Verification continues with the loaded ring.
-- The receipt purpose has no comparable window, because a receipt is verified long after it is signed. A replica signs receipts with its loaded active key as long as that key has not passed `retire_after`, and the erasure job's redaction step fails, and is retried under §12.8 **Erasure job failure alerting (CMP-026).**, when the replica holds no active receipt key. Under O3 (a), a KMS `Sign` failure fails the step the same way.
+- A refresh that has failed for longer than the upload-token overlap window: the replica stops minting new upload tokens and answers session creation that needs a token with `503`, because it can no longer be sure that its peers hold the key it would sign with. Verification continues with the loaded ring (decision 4).
+- The receipt signer holds no key in the gateway. A KMS `Sign` failure fails the erasure job's redaction step, which is retried under §12.8 **Erasure job failure alerting (CMP-026).**
 - Every refusal fails closed, under `code-best-practices.md`.
 
 ### SK-5 The specification
 
-§7.1 **`uploadToken` format and security properties** states that the signing keys are shared by every replica, stored encrypted under a KMS key, and rotated with a publish lead, and that the consumed state is recorded on the session row. §12.8 step 14 **`RedactionReceipt` schema.** states the receipt key as O3 settles it (SK-6). The §12.3 or §12.4 text for the chosen store gains the table, or the key prefixes under option (ii) or (iii), and §12.9 classifies the signing keys. §10.1 needs no edit, because the change brings both signers under its existing rule.
+§7.1 **`uploadToken` format and security properties** states that the signing keys are shared by every replica, stored encrypted under a KMS key, and rotated with a publish lead, and that the consumed state is recorded on the session row. §12.8 step 14 **`RedactionReceipt` schema.** names the platform audit signing alias in place of the §11.7 parenthetical (SK-6). §12.3 gains the key table, and §12.9 classifies the signing keys. §10.1 needs no edit, because the change brings both signers under its existing rule.
 
 ### SK-6 The redaction receipt signer
 
-Step 14 of §12.8 states that a receipt is "Signed by the platform's KMS-held audit signing key (same key as §11.7 genesis-nonce signing in regulated profiles)", that "External verifiers fetch the public key from the admin API", and that `signature_kms_key_id` is "recorded inline so a later key rotation leaves prior receipts independently verifiable". Three properties follow from that text: the key is held by the KMS, the signature is checked with a public key, and the key that signed a receipt can be named and found after rotation. The shared store of SK-2 with an HMAC key gives only the third. Which key signs receipts is open decision O3, and each option is described here.
+Step 14 of §12.8 states that a receipt is "Signed by the platform's KMS-held audit signing key (same key as §11.7 genesis-nonce signing in regulated profiles)", that "External verifiers fetch the public key from the admin API", and that `signature_kms_key_id` is "recorded inline so a later key rotation leaves prior receipts independently verifiable". Three properties follow from that text: the key is held by the KMS, the signature is checked with a public key, and the key that signed a receipt can be named and found after rotation. The shared store of SK-2 with an HMAC key gives only the third. The owner chose KMS signing, which gives all three (decision 5).
 
-- **(a) KMS signing.** The erasure job signs each receipt with `kms.Provider.Sign` under a platform asymmetric key alias (ES256), through the same remote-signer path as the §10.2 JWT signer, and records the KMS key's identifier, including its version, in `signature_kms_key_id`. A verifier reads the public key for that identifier. `kms.Provider.PublicKey` takes an alias today, so the step adds a lookup of a public key by key identifier, which every provider supports for a prior key version. No secret is stored or shared, the shared store does not hold a receipt purpose, and every replica signs and verifies alike. §12.8 keeps its text, except that the §11.7 parenthetical becomes a named platform audit signing alias, because §11.7 defines no genesis-nonce signing.
-- **(b) The shared store, HMAC.** The receipt signer takes the `redaction-receipt` ring of SK-2 and records the ring's `key_id` in `signature_kms_key_id`. Every replica signs and verifies alike, and old receipts verify while their key's row is kept. An HMAC has no public key, so §12.8 changes: the receipt is verified by the platform's chain verifier alone, an external verifier relies on that verdict, and the HMAC secrets are kept wrapped for `audit.gdprRetentionDays` after retirement.
-- **(c) The shared store, ES256.** The `redaction-receipt` purpose of SK-2 holds ES256 key pairs. The private key is wrapped under the KEK and signs in gateway memory, as the HMAC key does today, and the public key is stored in clear beside it and kept for `audit.gdprRetentionDays` after retirement. External verification holds, through a public key the admin API serves from the table. §12.8 changes "KMS-held" to a key wrapped under a KMS key and signed with in the gateway.
+The erasure job signs each receipt with `kms.Provider.Sign` under a platform asymmetric key alias (ES256), through the same remote-signer path as the §10.2 JWT signer, and records the KMS key's identifier, including its version, in `signature_kms_key_id`. A verifier reads the public key for that identifier. `kms.Provider.PublicKey` takes an alias today, so the step adds a lookup of a public key by key identifier, which every provider supports for a prior key version. No secret is stored or shared, the shared store of SK-2 holds no receipt purpose, and every replica signs and verifies alike. The receipt fix therefore uses the KMS signing path rather than the shared store. §12.8 keeps its text, except that the §11.7 parenthetical becomes a named platform audit signing alias, because §11.7 defines no genesis-nonce signing.
 
-Under every option, the chain verifier in `pkg/audit/chain.go` and `pkg/audit/auditstore` verifies each receipt's signature against the key its `signature_kms_key_id` names, and a receipt that does not verify leaves the row `broken` and increments `lenny_audit_redaction_receipt_missing_total`. Under (a) and (c), the admin API serves the public keys that step 14 says external verifiers fetch; no section of §15 defines that route today, so the step defines it.
+Decision 5 names the options not chosen: an HMAC key under a `redaction-receipt` purpose of the shared store, which has no public key and would remove external verification from §12.8, and an ES256 key pair under such a purpose, whose private key would be wrapped under the KEK and used in gateway memory.
+
+The chain verifier in `pkg/audit/chain.go` and `pkg/audit/auditstore` verifies each receipt's signature against the public key its `signature_kms_key_id` names, and a receipt that does not verify leaves the row `broken` and increments `lenny_audit_redaction_receipt_missing_total`. The admin API serves the public keys that step 14 says external verifiers fetch; no section of §15 defines that route today, so the step defines it.
 
 ## Worked example
 
 `alice` creates session `s1` through replica `gw-1`, which signs the token with key `k7`, loaded by both replicas at start. Her first upload reaches `gw-2`, which verifies the HMAC with `k7` and admits it. Her `FinalizeWorkspace` reaches `gw-1`, which moves the row to `ready` and sets `upload_token_consumed_at` in the same write. A retry of the upload reaches `gw-2`, which reads the row, finds the column set, and answers `410 UPLOAD_TOKEN_CONSUMED`. Twenty-four hours after `k7` became active, `gw-2` inserts `k8` with `active_from` one publish lead ahead; `gw-1` loads it on its next refresh, and both sign with `k8` once `active_from` passes. `k7` verifies until five minutes after that, and the sweep then deletes it.
 
-Later, the erasure job for `bob` runs on `gw-2` and redacts a dead-lettered audit row, signing its receipt with the active receipt key `r3` and recording `r3` on the receipt. `gw-2` restarts. The next chain verification runs on `gw-1`, which holds `r3` under O3 (b), reads its public key under O3 (c), or reads the KMS public key for `r3` under O3 (a), verifies the receipt, and reports the row `redacted_gdpr`.
+Later, the erasure job for `bob` runs on `gw-2` and redacts a dead-lettered audit row, signing its receipt inside the KMS under the audit signing alias, whose current key version is `r3`, and recording `r3` on the receipt. `gw-2` restarts. The next chain verification runs on `gw-1`, reads the KMS public key for `r3`, verifies the receipt, and reports the row `redacted_gdpr`.
 
 ## Limits, and alternatives rejected
 
-- Under option (i), a replica that cannot refresh its rings for longer than the upload-token overlap window stops minting upload tokens, so session creation on that replica fails while the others work.
-- Under O3 (b), no party outside the platform can check a receipt, which removes the external verification §12.8 states. Under O3 (b) and (c), the receipt key is in gateway memory, so a process compromise can take a key that forges receipts until the key's row is deleted, years later. Under O3 (a), a compromise can sign only while it lasts.
+- A replica that cannot refresh its ring for longer than the upload-token overlap window stops minting upload tokens, so session creation on that replica fails with `503` while the others work (decision 4).
+- The receipt's private key never leaves the KMS, so a compromised gateway process can sign receipts only while the compromise lasts. The options of decision 5 not chosen kept the receipt key in gateway memory, where a compromise could take a key that forges receipts until the key's row was deleted, years later, and the HMAC option also removed the external verification §12.8 states.
+- The shared store does not serve redaction receipts, so the receipt fix reuses the KMS signing path of the §10.2 JWT signer rather than the mechanism this change builds for upload tokens, which departs from decision 2's preference as the owner chose in decision 5.
 - Keeping per-replica keys with sticky routing for the upload window was not considered further: §10.1 states that sticky routing is an optimization and that correctness does not depend on it. Sticky routing does not apply to receipts at all.
-- A KMS-held HMAC key with a KMS call per upload-token mint and per verification would keep the key out of the gateway's memory, at the cost of a KMS round trip on every upload request and an upload path that fails whenever the KMS breaker opens. The design does not propose it for upload tokens. Receipts are signed once per redacted row inside an asynchronous erasure job, so a KMS call per receipt, option (a) of O3, does not have that cost.
+- A KMS-held HMAC key with a KMS call per upload-token mint and per verification would keep the key out of the gateway's memory, at the cost of a KMS round trip on every upload request and an upload path that fails whenever the KMS breaker opens. The design does not propose it for upload tokens. Receipts are signed once per redacted row inside an asynchronous erasure job, so a KMS call per receipt, as decision 5 chose, does not have that cost.
 - Persisting the sealed key that `NewKMSReceiptSigner` already produces, one row per process, would let old receipts verify, and it would leave one receipt key per replica start with no rotation policy and no external verification. The design does not propose it.
 
 ## Ordering
@@ -167,30 +170,30 @@ The change lands before any milestone whose tests run more than one gateway repl
 ## Specification and non-specification changes
 
 - `spec/07_session-lifecycle.md`: §7.1, **`uploadToken` format and security properties**.
-- `spec/12_storage-architecture.md`: §12.8 step 14 **`RedactionReceipt` schema.** (SK-6), the section for the chosen store (§12.3 or §12.4), and §12.9 for the signing keys' classification.
-- `spec/15_external-api-surface.md`: the admin route that serves the receipt public keys, under O3 (a) or (c).
-- `migrations/`: `platform_signing_keys` and `sessions.upload_token_consumed_at` under option (i).
+- `spec/12_storage-architecture.md`: §12.8 step 14 **`RedactionReceipt` schema.** (SK-6), §12.3 for `platform_signing_keys`, and §12.9 for the signing keys' classification.
+- `spec/15_external-api-surface.md`: the admin route that serves the receipt public keys.
+- `migrations/`: `platform_signing_keys` and `sessions.upload_token_consumed_at`.
 - A new package for the signing-key store (SK-2), and `pkg/uploadtoken`: a ring that loads from the store and refreshes, and a shared consumed check.
-- `pkg/session/sessionstore` and its Postgres store: the consumed column under option (i).
+- `pkg/session/sessionstore` and its Postgres store: the consumed column.
 - `pkg/gateway/core/session/sessionserver`: the consumed check and the mark in the finalize write.
-- `pkg/storage/deadletterredaction`: the receipt signer of SK-6 in place of `NewKMSReceiptSigner`.
+- `pkg/storage/deadletterredaction`: the KMS receipt signer of SK-6 in place of `NewKMSReceiptSigner`.
 - `pkg/audit` and `pkg/audit/auditstore`: the verification of the receipt signature.
-- `pkg/kms`: a public-key lookup by key identifier, under O3 (a).
-- `cmd/lenny-gateway`: the wiring in `token_signing.go` and `adminrouter.go`, and the refresh, publish-lead, and receipt-rotation flags.
+- `pkg/kms`: a public-key lookup by key identifier.
+- `cmd/lenny-gateway`: the wiring in `token_signing.go` and `adminrouter.go`, and the refresh and publish-lead flags.
 
 ## Documentation
 
-- `docs/operator-guide/security.md` (operator): the upload-token and receipt signing keys are shared across replicas, encrypted under a KMS key or held in the KMS as O3 settles, and rotated with a publish lead; how long a retired receipt key is kept; the flags that set the refresh interval, the publish lead, and the receipt rotation interval.
+- `docs/operator-guide/security.md` (operator): the upload-token signing keys are shared across replicas, encrypted under a KMS key, and rotated with a publish lead; the receipt key is held in the KMS and signs there; how long a prior version of the receipt key has to stay in the KMS; the flags that set the refresh interval and the publish lead.
 - `docs/operator-guide/configuration.md` (operator): the new flags with their defaults.
-- `docs/operator-guide/audit-ocsf.md` (operator): how an external verifier reads the receipt public key and checks a receipt, under O3 (a) or (c), or that only the platform's chain verifier checks receipts, under O3 (b).
+- `docs/operator-guide/audit-ocsf.md` (operator): how an external verifier reads the receipt public key and checks a receipt.
 - `docs/runbooks/audit-redaction-receipt-missing.md` (operator): a receipt whose signature does not verify fires the alert, as a missing receipt does.
-- `docs/api/admin.md` (operator): the public-key route, under O3 (a) or (c).
+- `docs/api/admin.md` (operator): the public-key route.
 - No reader-facing behavior changes: UPLOAD. A client's token behaves as §7.1 already states, on every replica.
 
 ## Tests
 
-- Unit, `pkg/uploadtoken` and the store package: a ring loaded from a fake store signs with the newest active key and verifies with every loaded key; a key whose `active_from` is in the future verifies and does not sign; a key of one purpose does not verify for another; a refresh failure longer than the upload-token overlap stops minting; two replicas racing a rotation produce one key; the sweep keeps a retired receipt key until its `delete_after`. Cites §7.1 (Normal Flow) and §12.8 (Compliance Interfaces).
-- Unit, `pkg/storage/deadletterredaction` and `pkg/audit`: a receipt signed by one signer instance verifies under another instance over the same store or KMS; a receipt signed before a rotation verifies after it; a receipt with a tampered field or an unknown key identifier leaves the row `broken`. Cites §12.8 (Compliance Interfaces).
+- Unit, `pkg/uploadtoken` and the store package: a ring loaded from a fake store signs with the newest active key and verifies with every loaded key; a key whose `active_from` is in the future verifies and does not sign; a key of one purpose does not verify for another; a refresh failure longer than the upload-token overlap stops minting; two replicas racing a rotation produce one key; the sweep deletes a retired upload-token key after its `delete_after`. Cites §7.1 (Normal Flow) and §12.8 (Compliance Interfaces).
+- Unit, `pkg/storage/deadletterredaction` and `pkg/audit`: a receipt signed by one signer instance verifies under another instance over the same KMS; a receipt signed before a rotation verifies after it; a receipt with a tampered field or an unknown key identifier leaves the row `broken`. Cites §12.8 (Compliance Interfaces).
 - Component, `tests/component/stores`: the key table round-trips a wrapped secret under the local KMS provider, the unique constraint holds under concurrent inserts, and the consumed column is set by the finalize write. Cites §7.1 (Normal Flow).
 - Contract: a token minted on one gateway instance verifies on another over the same store, and a token consumed on one is refused with `410 UPLOAD_TOKEN_CONSUMED` on the other. Cites §7.1 (Normal Flow).
 - Load_local: concurrent finalize calls on two instances consume a token once, under `-race`. Cites §7.1 (Normal Flow).
