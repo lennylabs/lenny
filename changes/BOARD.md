@@ -323,4 +323,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 0 of 2 | 1 |
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Decided` | 0 of 1 | 0 |
-| [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 0 of 2 | 0 |
+| [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 0 of 2 | 2 |
