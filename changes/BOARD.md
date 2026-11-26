@@ -8,11 +8,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 5 |
-| Ready | 5 |
+| Building | 4 |
+| Ready | 6 |
 | Waiting on decisions | 32 |
-| Blocked | 161 |
-| Landed | 27 |
+| Blocked | 160 |
+| Landed | 28 |
 | Cancelled | 3 |
 
 ## Program v1
@@ -56,12 +56,12 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | :-- | :-- | :-- |
 | [0171.S3](0171-revocation-rehydrate-on-reconnect/steps.md#0171s3-a-chart-value-for-the-reconnect-spacing) | A chart value for the reconnect spacing | Building |  |
 | [0172.S12](0172-gate-speed/steps.md#0172s12-full-runs-in-their-own-concurrency-group-and-filing-a-test-that-a-rerun-passes) | Full runs in their own concurrency group, and filing a test that a rerun passes | Building |  |
-| [0176.S1](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s1-the-pipeline-mark-and-the-erasure-wait) | The pipeline mark and the erasure wait | Building |  |
 | [0178.S1](0178-idempotency-keys-by-principal/steps.md#0178s1-records-scoped-by-principal) | Records scoped by principal | Building |  |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
+| [0176.S2](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s2-the-budget-margin-and-the-terminal-writers-in-71) | The budget margin and the terminal writers in §7.1 | Ready |  |
 | [0177.S1](0177-shared-upload-token-keys/steps.md#0177s1-shared-signing-keys-consumed-state-and-receipt-signing) | Shared signing keys, consumed state, and receipt signing | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
@@ -255,7 +255,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
-| [0176.S2](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s2-the-budget-margin-and-the-terminal-writers-in-71) | The budget margin and the terminal writers in §7.1 | Blocked | 0176.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
 | [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Landed |  |
@@ -270,6 +269,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0172.S7](0172-gate-speed/steps.md#0172s7-the-full-runs-unit-tier-and-two-selection-rows) | The full run's unit tier and two selection rows | Landed |  |
 | [0172.S8](0172-gate-speed/steps.md#0172s8-the-coverage-profiles-hash-and-the-container-messages) | The coverage profile's hash and the container messages | Landed |  |
 | [0172.S9](0172-gate-speed/steps.md#0172s9-the-static-first-default-and-the-coverage-checks-gate-run) | The static-first default and the coverage check's gate run | Landed |  |
+| [0176.S1](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s1-the-pipeline-mark-and-the-erasure-wait) | The pipeline mark and the erasure wait | Landed |  |
 | [0133.S3](0133-llm-upstreams-and-cost-budgets/steps.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Cancelled |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 | [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Cancelled |  |
@@ -321,6 +321,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 2 of 3 | 0 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 11 of 12 | 1 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
-| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 0 of 2 | 1 |
+| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 1 of 2 | 1 |
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Decided` | 0 of 1 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 0 of 2 | 2 |
