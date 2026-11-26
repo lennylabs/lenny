@@ -154,7 +154,7 @@ func (h *runHarness) newRunner() *erasurejob.Runner {
 			defer h.mu.Unlock()
 			return h.holds, h.holdErr
 		}).
-		WithReleaseGate(func(_ context.Context, tenantID, _ string) ([]string, error) {
+		WithPipelineGate(func(_ context.Context, tenantID, _ string) ([]string, error) {
 			h.record("release:" + tenantID)
 			h.mu.Lock()
 			defer h.mu.Unlock()

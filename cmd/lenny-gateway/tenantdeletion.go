@@ -152,12 +152,14 @@ func tenantEraserFunc(erasers []namedTenantEraser, name string) tenantEraseFunc 
 // next tick.
 //
 // After the drain verifies, it holds the job at Phase 2 while any session
-// of the tenant is in its §7.1 post-terminal window (admin.ReleasePending),
-// because Phase 3 returns the sessions' leases and Phase 3.5 copies their
-// artifacts while a seal may still be writing them.
+// of the tenant is pipeline-pending or in its post-terminal window
+// (admin.TerminalPipelinesPending), because Phase 3 returns the sessions'
+// leases and Phase 3.5 copies their artifacts while a seal may still be
+// writing them, and the later phases delete the stores a terminal pipeline
+// still writes its billing event, quota checkpoint, and session log to.
 //
 // spec: §12.8 (Tenant deletion lifecycle), §12.8 (Lifecycle fence and drain),
-// §7.1 (Post-terminal window).
+// §7.1 (Pipeline-pending session).
 type tenantSessionTerminator struct {
 	sessions admin.DrainLister
 	term     admin.DrainTerminator
@@ -168,8 +170,9 @@ type tenantSessionTerminator struct {
 	// budget bounds each drain. It is the operator-tunable
 	// --lifecycle-tick-budget, which the startup gate requires positive.
 	budget time.Duration
-	// cap is the post-terminal window cap, the terminal pipeline budget.
-	// A non-positive cap fails every pass with admin.ErrReleaseCapUnset.
+	// cap is the terminal pipeline budget, which bounds both the
+	// pipeline-pending rule and the post-terminal window. A non-positive cap
+	// fails every pass with admin.ErrPipelineBudgetUnset.
 	cap time.Duration
 	// clock reads the instant the window is evaluated at.
 	clock func() time.Time
@@ -177,20 +180,20 @@ type tenantSessionTerminator struct {
 
 // TerminateTenantSessions drains every non-terminal session of tenantID
 // and returns the drain's error, then returns an error naming the count of
-// the tenant's sessions still in their post-terminal window, or the
-// release check's own error, so the reconciler pauses the job at Phase 2.
+// the tenant's sessions whose terminal pipeline may still write, or the
+// pipeline check's own error, so the reconciler pauses the job at Phase 2.
 func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, tenantID string) error {
 	tctx, cancel := context.WithTimeout(ctx, t.budget)
 	defer cancel()
 	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, t.pods, tenantID, ""); err != nil {
 		return fmt.Errorf("tenant deletion drain: %w", err)
 	}
-	pending, err := admin.ReleasePending(tctx, t.sessions, tenantID, "", t.clock(), t.cap)
+	pending, err := admin.TerminalPipelinesPending(tctx, t.sessions, tenantID, "", t.clock(), t.cap)
 	if err != nil {
-		return fmt.Errorf("tenant deletion post-terminal release check: %w", err)
+		return fmt.Errorf("tenant deletion terminal pipeline check: %w", err)
 	}
 	if len(pending) > 0 {
-		return fmt.Errorf("tenant deletion waits for %d drained session(s) in the post-terminal window", len(pending))
+		return fmt.Errorf("tenant deletion waits for %d drained session(s) whose terminal pipeline has not ended", len(pending))
 	}
 	return nil
 }

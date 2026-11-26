@@ -128,6 +128,55 @@ func MarkPodReleased(now time.Time) func(*Session) error {
 	}
 }
 
+// TerminalPipelinePending reports whether s is pipeline-pending at now under
+// the terminal pipeline budget: s is terminal, carries a TerminatedAt,
+// records no pipeline mark, and now is before TerminatedAt plus budget.
+//
+// It reads neither PodAssignment nor PodReleasedAt, so a session that never
+// had a pod is pending in the same way as one that had: the pipeline appends
+// its billing event and writes its quota checkpoint after the pod release,
+// and a session without a pod runs those steps too.
+//
+// A non-positive budget reports false, and so does a terminal row with a zero
+// TerminatedAt, for the reasons InPostTerminalWindow states for the same
+// cases. Every write of the pipeline runs under a context whose deadline is
+// TerminatedAt plus the budget, so once the budget has elapsed no step of the
+// pipeline can still write to a store, whether or not the replica wrote the
+// mark. The exception is a billing event whose primary write failed, which the
+// billing failover tiers stage and a flusher inserts later; the erasure job
+// purges the staged events it can reach (issue F-12.8.53 tracks the rest).
+//
+// spec: §7.1 (Pipeline-pending session)
+func TerminalPipelinePending(s Session, now time.Time, budget time.Duration) bool {
+	if budget <= 0 || !session.IsTerminal(s.State) {
+		return false
+	}
+	if s.TerminatedAt.IsZero() || !s.TerminalPipelineDoneAt.IsZero() {
+		return false
+	}
+	return now.Before(s.TerminatedAt.Add(budget))
+}
+
+// MarkTerminalPipelineDone returns the Update mutator that records the
+// pipeline mark: it sets TerminalPipelineDoneAt to now on a terminal row that
+// records no mark yet. On a non-terminal row, or a row that already records a
+// mark, it returns ErrSuperseded and changes nothing, as MarkPodReleased does.
+//
+// The replica that ran the session's terminal pipeline runs it in one Update
+// once the pipeline's last step has returned, whatever the outcome of the
+// steps.
+//
+// spec: §7.1 (Terminal pipeline context)
+func MarkTerminalPipelineDone(now time.Time) func(*Session) error {
+	return func(r *Session) error {
+		if !session.IsTerminal(r.State) || !r.TerminalPipelineDoneAt.IsZero() {
+			return ErrSuperseded
+		}
+		r.TerminalPipelineDoneAt = now
+		return nil
+	}
+}
+
 // RowUpdater is the one store method RecordPodRelease needs.
 type RowUpdater interface {
 	Update(ctx context.Context, tenantID, id string, mutate func(*Session) error) (Session, error)
