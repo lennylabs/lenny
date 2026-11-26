@@ -287,15 +287,20 @@ type Session struct {
 
 	// UploadTokenDigest is the SHA-256 digest of the §7.1 uploadToken
 	// minted at session creation. The gateway records it so the
-	// `finalize` handler can mark the digest consumed in the
-	// single-use ConsumedTracker per §7.1. Empty when no upload token
+	// row identifies the token the session was created with and the
+	// finalize audit row can name it. Empty when no upload token
 	// was issued for this session (a tested-only path).
 	UploadTokenDigest string
 
 	// UploadTokenExpiry is the absolute expiry of the uploadToken
-	// minted at session creation. Recorded alongside the digest so
-	// the consumed-tracker entry can be GC'd after expiry.
+	// minted at session creation.
 	UploadTokenExpiry time.Time
+
+	// UploadTokenConsumedAt is the instant the uploadToken was
+	// invalidated: the finalizing -> ready write of FinalizeWorkspace sets
+	// it, and every replica refuses the token once it is set. Zero while
+	// the token is not consumed. A store write never clears a set value.
+	UploadTokenConsumedAt time.Time
 
 	// LegalHold is the §12.8 legal-hold flag. When true, the artifact
 	// retention GC suspends all rotation for the session and a §12.8

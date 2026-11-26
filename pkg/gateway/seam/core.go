@@ -517,11 +517,14 @@ func (e *WorkspaceWriteError) Unwrap() []error { return []error{ErrWorkspaceWrit
 
 // UploadTokens is served by the session core to the upload handler.
 type UploadTokens interface {
-	// VerifyUploadToken is GWSEAM-VerifyUploadToken. token is the value the
-	// client presented, empty when it presented none. It returns nil, or
-	// one of ErrUploadTokenInvalid, ErrUploadTokenExpired,
-	// ErrUploadTokenMismatch, and ErrUploadTokenConsumed.
-	VerifyUploadToken(ctx context.Context, sessionID, token string) error
+	// VerifyUploadToken is GWSEAM-VerifyUploadToken. tenantID is the
+	// request's tenant, under which the core reads the session's consumed
+	// mark. token is the value the client presented, empty when it
+	// presented none. It returns nil, one of ErrUploadTokenInvalid,
+	// ErrUploadTokenExpired, ErrUploadTokenMismatch, and
+	// ErrUploadTokenConsumed, or another error when the token's state
+	// could not be read.
+	VerifyUploadToken(ctx context.Context, tenantID, sessionID, token string) error
 }
 
 // StorageQuota is served by the session core to the upload handler: the

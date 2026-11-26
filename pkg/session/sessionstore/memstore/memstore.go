@@ -276,6 +276,7 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	prevCoordGen := row.CoordinationGeneration
 	prevRetryCount := row.RetryCount
 	prevLastSeq := row.LastSeq
+	prevConsumed := row.UploadTokenConsumedAt
 	row = cloneRow(row)
 	if err := mutate(&row); err != nil {
 		return sessionstore.Session{}, err
@@ -301,6 +302,11 @@ func (s *Store) Update(_ context.Context, tenantID, id string, mutate func(*sess
 	// F-7.3.3.
 	if row.LastSeq < prevLastSeq {
 		row.LastSeq = prevLastSeq
+	}
+	// The uploadToken consumed mark (§7.1) is set
+	// once and kept, as the pgstore's COALESCE keeps it.
+	if !prevConsumed.IsZero() {
+		row.UploadTokenConsumedAt = prevConsumed
 	}
 	if row.SchemaVersion == 0 {
 		row.SchemaVersion = 1

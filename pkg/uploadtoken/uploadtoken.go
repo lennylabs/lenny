@@ -16,17 +16,21 @@
 //   - Session scope — the embedded `session_id` must equal the
 //     session being uploaded to; mismatches return ErrSessionMismatch
 //     (`403 UPLOAD_TOKEN_MISMATCH`).
-//   - Single-use invalidation — calls to Consume mark a token's
-//     digest as consumed; subsequent Verify against that digest
-//     returns ErrConsumed (`410 UPLOAD_TOKEN_CONSUMED`).
+//   - Single-use invalidation — the production gateway records the
+//     invalidation on the session row and checks it in the session
+//     core, so every replica sees it. A Verifier built with a
+//     ConsumedTracker (the in-memory tracker of the tests) checks the
+//     tracker instead: Consume marks a token's digest consumed, and a
+//     later Verify against that digest returns ErrConsumed
+//     (`410 UPLOAD_TOKEN_CONSUMED`).
 //   - Cryptographic protection — HMAC-SHA256 over the canonical
 //     signing input; signature mismatches return ErrInvalid
 //     (`401 UPLOAD_TOKEN_INVALID`).
-//   - Key rotation — the KeyRing carries one signing key plus zero or
-//     more verification keys still inside the §7.1 overlap window
-//     (default 5 minutes). Verify accepts any key in the ring. The
-//     gateway's Rotator (see rotator.go) drives the 24h rotation
-//     cadence and the overlap-window sweep.
+//   - Key rotation — the Issuer, Verifier, and Redactor read their
+//     keys through the Keys interface. The gateway passes the shared
+//     ring of pkg/signingkeys (NewSharedKeys), whose keys every replica
+//     holds and whose rotation and overlap sweep run across replicas;
+//     the static KeyRing serves the tests.
 //
 // **Secret-credential handling — gateway side.** Per §7.1 the
 // uploadToken is a secret credential: clients MUST NOT log it, embed
@@ -48,10 +52,8 @@
 // friends) preserve this boundary: a verify failure logs the digest
 // and the §15.1 error code, never the raw token bytes.
 //
-// The package is pure: no Redis, no Postgres. The
-// `ConsumedTracker` interface lets production swap in a Redis-backed
-// implementation; the in-memory `NewMemoryTracker()` is sufficient
-// for tests and the minimal gateway.
+// The package holds no store of its own: the shared keys come from
+// pkg/signingkeys, and the consumed state lives on the session row.
 package uploadtoken
 
 import (
@@ -96,7 +98,25 @@ var (
 
 	// ErrConsumed corresponds to `410 UPLOAD_TOKEN_CONSUMED`.
 	ErrConsumed = errors.New("uploadtoken: token already consumed")
+
+	// ErrSigningUnavailable is returned by the Issuer when its keys refuse
+	// to sign: the replica's shared ring has not been refreshed within
+	// the overlap window, or holds no active key. Session creation maps
+	// it to `503 SESSION_CREATION_FAILED`.
+	ErrSigningUnavailable = errors.New("uploadtoken: no signing key may be used")
 )
+
+// Keys is the signing-key source of an Issuer, a Verifier, and a
+// Redactor. Implementations are safe for concurrent use.
+type Keys interface {
+	// SigningKey returns the key a new token is signed with. An error
+	// wraps ErrSigningUnavailable.
+	SigningKey() (SigningKey, error)
+
+	// VerificationKeys returns every key a token may verify under, most
+	// recent first.
+	VerificationKeys() []SigningKey
+}
 
 // SigningKey is one key in the KeyRing. KeyID identifies the key for
 // observability + rotation auditing; Secret carries the HMAC secret
@@ -107,9 +127,10 @@ type SigningKey struct {
 	Secret []byte
 }
 
-// KeyRing holds the active signing key plus zero or more
-// previously-active keys still inside the §7.1 overlap window. The
-// zero KeyRing is not usable; construct with NewKeyRing.
+// KeyRing is a static, in-process Keys: the active signing key plus zero
+// or more previously-active keys the caller rotated out. It serves the
+// tests and a session server built without the gateway's shared ring.
+// The zero KeyRing is not usable; construct with NewKeyRing.
 type KeyRing struct {
 	mu      sync.RWMutex
 	active  SigningKey
@@ -169,9 +190,12 @@ func (r *KeyRing) Expire(expiredKeyIDs ...string) int {
 	return dropped
 }
 
-// keys returns the active key plus every overlap key, in
-// most-recent-first order. Used by Verify to try every candidate.
-func (r *KeyRing) keys() []SigningKey {
+// SigningKey implements Keys: the active key. A static ring always signs.
+func (r *KeyRing) SigningKey() (SigningKey, error) { return r.Active(), nil }
+
+// VerificationKeys implements Keys: the active key plus every overlap
+// key, most recent first.
+func (r *KeyRing) VerificationKeys() []SigningKey {
 	r.mu.RLock()
 	defer r.mu.RUnlock()
 	out := make([]SigningKey, 0, 1+len(r.overlap))
@@ -183,9 +207,9 @@ func (r *KeyRing) keys() []SigningKey {
 }
 
 // ConsumedTracker records which tokens have been single-use
-// invalidated per §7.1. Production wires this to Redis; the
-// in-memory implementation is sufficient for tests and the minimal
-// gateway. Implementations must be goroutine-safe.
+// invalidated. The production gateway builds its Verifier without one,
+// because the consumed state lives on the session row; the in-memory
+// tracker serves the tests. Implementations must be goroutine-safe.
 type ConsumedTracker interface {
 	// MarkConsumed records the supplied digest as consumed. Returns
 	// nil if the digest was newly marked, ErrConsumed if the digest
@@ -246,18 +270,18 @@ func (t *MemoryTracker) Sweep(now time.Time) int {
 // Issuer mints uploadTokens. The zero value is not usable; construct
 // with NewIssuer.
 type Issuer struct {
-	ring  *KeyRing
+	keys  Keys
 	clock func() time.Time
 }
 
-// NewIssuer returns an Issuer that signs with ring's active key. The
-// clock is used for the issuance "now" stamp; pass nil to default to
+// NewIssuer returns an Issuer that signs with the signing key of keys.
+// The clock is used for the issuance "now" stamp; pass nil to default to
 // time.Now.
-func NewIssuer(ring *KeyRing, clock func() time.Time) *Issuer {
+func NewIssuer(keys Keys, clock func() time.Time) *Issuer {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Issuer{ring: ring, clock: clock}
+	return &Issuer{keys: keys, clock: clock}
 }
 
 // Issue mints a new uploadToken for sessionID with the supplied TTL.
@@ -285,9 +309,12 @@ func (i *Issuer) IssueDetailed(sessionID string, ttl time.Duration) (string, Par
 	if ttl <= 0 {
 		ttl = DefaultTTL
 	}
+	active, err := i.keys.SigningKey()
+	if err != nil {
+		return "", ParsedToken{}, err
+	}
 	now := i.clock()
 	expiry := now.Add(ttl).Unix()
-	active := i.ring.Active()
 	signed := sign(active, sessionID, expiry)
 	parsed := ParsedToken{
 		SessionID: sessionID,
@@ -311,24 +338,25 @@ type ParsedToken struct {
 
 // Verifier verifies uploadTokens against a KeyRing and a clock.
 type Verifier struct {
-	ring    *KeyRing
+	keys    Keys
 	tracker ConsumedTracker
 	clock   func() time.Time
 }
 
-// NewVerifier returns a Verifier. Pass a non-nil ConsumedTracker to
-// enable single-use enforcement; pass nil to disable single-use
-// enforcement entirely (the gateway only does so for unit tests).
-func NewVerifier(ring *KeyRing, tracker ConsumedTracker, clock func() time.Time) *Verifier {
+// NewVerifier returns a Verifier over keys. A non-nil ConsumedTracker
+// makes Verify check single use against it. The gateway passes nil,
+// because the session core checks the consumed state on the session row
+// after Verify succeeds.
+func NewVerifier(keys Keys, tracker ConsumedTracker, clock func() time.Time) *Verifier {
 	if clock == nil {
 		clock = func() time.Time { return time.Now().UTC() }
 	}
-	return &Verifier{ring: ring, tracker: tracker, clock: clock}
+	return &Verifier{keys: keys, tracker: tracker, clock: clock}
 }
 
 // Verify checks token against sessionID and the current clock.
 func (v *Verifier) Verify(token, sessionID string) (ParsedToken, error) {
-	parsed, key, err := parseAndVerifyHMAC(token, v.ring.keys())
+	parsed, key, err := parseAndVerifyHMAC(token, v.keys.VerificationKeys())
 	if err != nil {
 		return ParsedToken{}, err
 	}

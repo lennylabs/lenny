@@ -38,15 +38,16 @@ var referencePattern = regexp.MustCompile(`([A-Za-z0-9_-]+)\.([0-9]{1,19})\.reda
 
 // Redactor removes upload tokens from a response before the gateway stores
 // it, and restores them when the stored response is replayed. It reads the
-// signing-key ring the gateway's Issuer and Verifier share, so it sees
-// rotations as they happen. A Redactor is safe for concurrent use.
+// keys the gateway's Issuer and Verifier share, so it sees rotations as
+// they happen, and with the shared ring every replica can restore a token
+// any replica signed. A Redactor is safe for concurrent use.
 type Redactor struct {
-	ring *KeyRing
+	keys Keys
 }
 
-// NewRedactor returns a Redactor over ring.
-func NewRedactor(ring *KeyRing) *Redactor {
-	return &Redactor{ring: ring}
+// NewRedactor returns a Redactor over keys.
+func NewRedactor(keys Keys) *Redactor {
+	return &Redactor{keys: keys}
 }
 
 // Strip returns body with every upload token replaced by a redaction
@@ -67,8 +68,8 @@ func NewRedactor(ring *KeyRing) *Redactor {
 // spec: §11.5 (Idempotency), §7.1 (Normal Flow)
 func (r *Redactor) Strip(body []byte) []byte {
 	var keys []SigningKey
-	if r != nil && r.ring != nil {
-		keys = r.ring.keys()
+	if r != nil && r.keys != nil {
+		keys = r.keys.VerificationKeys()
 	}
 	if bytes.Contains(body, []byte(redactionInfix)) {
 		body = referencePattern.ReplaceAllFunc(body, func(match []byte) []byte {
@@ -99,10 +100,10 @@ func (r *Redactor) Strip(body []byte) []byte {
 func (r *Redactor) Remint(stored []byte) []byte {
 	// A body with no reference, the common case on replay, costs one scan
 	// for the infix rather than a regular-expression pass.
-	if r == nil || r.ring == nil || !bytes.Contains(stored, []byte(redactionInfix)) {
+	if r == nil || r.keys == nil || !bytes.Contains(stored, []byte(redactionInfix)) {
 		return stored
 	}
-	keys := r.ring.keys()
+	keys := r.keys.VerificationKeys()
 	return referencePattern.ReplaceAllFunc(stored, func(match []byte) []byte {
 		sub := referencePattern.FindSubmatch(match)
 		sessionID, expiryText := string(sub[1]), string(sub[2])

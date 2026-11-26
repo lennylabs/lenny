@@ -137,34 +137,107 @@ func TestVerifyUploadTokenMapsEachRefusalToItsSeamError(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := core.VerifyUploadToken(ctx, "sess-a", tok); err != nil {
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", tok); err != nil {
 		t.Fatalf("a valid token: %v", err)
 	}
-	err = core.VerifyUploadToken(ctx, "sess-a", "")
+	err = core.VerifyUploadToken(ctx, "acme", "sess-a", "")
 	if !errors.Is(err, seam.ErrUploadTokenInvalid) || err.Error() != uploadtoken.ErrInvalid.Error() {
 		t.Errorf("no token: %v, want ErrUploadTokenInvalid with the verifier's message", err)
 	}
-	if err := core.VerifyUploadToken(ctx, "sess-a", "garbage"); !errors.Is(err, seam.ErrUploadTokenInvalid) {
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", "garbage"); !errors.Is(err, seam.ErrUploadTokenInvalid) {
 		t.Errorf("malformed token: %v, want ErrUploadTokenInvalid", err)
 	}
-	if err := core.VerifyUploadToken(ctx, "sess-b", tok); !errors.Is(err, seam.ErrUploadTokenMismatch) {
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-b", tok); !errors.Is(err, seam.ErrUploadTokenMismatch) {
 		t.Errorf("another session's token: %v, want ErrUploadTokenMismatch", err)
 	}
 	if err := verifier.ConsumeDigest(parsed.Digest, parsed.Expiry); err != nil {
 		t.Fatal(err)
 	}
-	if err := core.VerifyUploadToken(ctx, "sess-a", tok); !errors.Is(err, seam.ErrUploadTokenConsumed) {
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", tok); !errors.Is(err, seam.ErrUploadTokenConsumed) {
 		t.Errorf("consumed token: %v, want ErrUploadTokenConsumed", err)
 	}
 	fresh, _ := issuer.Issue("sess-a", time.Minute)
 	current = now.Add(2 * time.Minute)
-	if err := core.VerifyUploadToken(ctx, "sess-a", fresh); !errors.Is(err, seam.ErrUploadTokenExpired) {
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", fresh); !errors.Is(err, seam.ErrUploadTokenExpired) {
 		t.Errorf("expired token: %v, want ErrUploadTokenExpired", err)
 	}
 
 	open := sessionserver.New(memstore.New(), sessionserver.Options{}).UploadSeam()
-	if err := open.VerifyUploadToken(ctx, "sess-a", ""); err != nil {
+	if err := open.VerifyUploadToken(ctx, "acme", "sess-a", ""); err != nil {
 		t.Errorf("no verifier: %v, want nil", err)
+	}
+}
+
+// TestVerifyUploadTokenRefusesATokenTheSessionRowMarksConsumed checks that
+// the consumed mark on the session row refuses a token that verifies, with
+// a verifier that holds no consumed tracker of its own, as the gateway
+// builds it. A second server over the same store stands for another
+// replica: it holds no in-process record of the consume, and it refuses
+// the token as well. A row without the mark admits the token, and a token
+// for a session the store does not hold passes to the caller's own lookup.
+//
+// spec: §7.1 (Normal Flow), §7.4 (Upload Safety), GWSEAM-VerifyUploadToken
+func TestVerifyUploadTokenRefusesATokenTheSessionRowMarksConsumed(t *testing.T) {
+	ctx := context.Background()
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
+	issuer := uploadtoken.NewIssuer(ring, nil)
+	store := memstore.New()
+	if err := store.Create(ctx, sessionstore.Session{ID: "sess-a", TenantID: "acme", UserID: "alice", State: session.StateCreated}); err != nil {
+		t.Fatal(err)
+	}
+	tok, _, err := issuer.IssueDetailed("sess-a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replicaA := sessionserver.New(store, sessionserver.Options{UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, nil)}).UploadSeam()
+	replicaB := sessionserver.New(store, sessionserver.Options{UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, nil)}).UploadSeam()
+	if err := replicaB.VerifyUploadToken(ctx, "acme", "sess-a", tok); err != nil {
+		t.Fatalf("unconsumed token: %v, want nil", err)
+	}
+	if _, err := store.Update(ctx, "acme", "sess-a", func(row *sessionstore.Session) error {
+		row.UploadTokenConsumedAt = time.Now().UTC()
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	for name, core := range map[string]*sessionserver.UploadSeam{"replica a": replicaA, "replica b": replicaB} {
+		if err := core.VerifyUploadToken(ctx, "acme", "sess-a", tok); !errors.Is(err, seam.ErrUploadTokenConsumed) {
+			t.Errorf("%s: consumed token: %v, want ErrUploadTokenConsumed", name, err)
+		}
+	}
+	other, _, err := issuer.IssueDetailed("sess-missing", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := replicaA.VerifyUploadToken(ctx, "acme", "sess-missing", other); err != nil {
+		t.Errorf("token of a session the store does not hold: %v, want nil", err)
+	}
+}
+
+// errStoreDown is the read failure of an unreachable session store.
+var errStoreDown = errors.New("store unreachable")
+
+// TestVerifyUploadTokenFailsClosedWhenTheConsumedMarkCannotBeRead checks
+// that a token that verifies is not admitted when the session row cannot
+// be read: the seam returns the read error, which matches no token
+// refusal, so the upload handler answers it as a server error.
+//
+// spec: §7.1 (Normal Flow), GWSEAM-VerifyUploadToken
+func TestVerifyUploadTokenFailsClosedWhenTheConsumedMarkCannotBeRead(t *testing.T) {
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
+	tok, err := uploadtoken.NewIssuer(ring, nil).Issue("sess-a", time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	core := sessionserver.New(failingGetStore{Store: memstore.New(), err: errStoreDown}, sessionserver.Options{UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, nil)}).UploadSeam()
+	err = core.VerifyUploadToken(context.Background(), "acme", "sess-a", tok)
+	if !errors.Is(err, errStoreDown) {
+		t.Fatalf("err = %v, want the read error", err)
+	}
+	for _, kind := range []error{seam.ErrUploadTokenInvalid, seam.ErrUploadTokenExpired, seam.ErrUploadTokenMismatch, seam.ErrUploadTokenConsumed} {
+		if errors.Is(err, kind) {
+			t.Errorf("a read failure matches the token refusal %v", kind)
+		}
 	}
 }
 

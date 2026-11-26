@@ -4,8 +4,8 @@ package sessionserver
 
 import (
 	"errors"
-	"log"
 	"net/http"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/session/sessionstore"
@@ -24,9 +24,18 @@ func transitionFinalizing(row *sessionstore.Session) { row.State = session.State
 // transitionReady: per §15.1, /finalize transitions finalizing → ready
 // once the §7.1 steps 11-13 prepare phase (workspace materialization,
 // setup commands, and credential assignment) has completed; the session
-// then awaits /start.
-// spec: §7.1 steps 11-13, §15.1
-func transitionReady(row *sessionstore.Session) { row.State = session.StateReady }
+// then awaits /start. The same write invalidates the session's
+// uploadToken by recording the instant on the row, so every replica that
+// later verifies the token reads the mark and refuses it; a mark already
+// set is kept.
+// spec: §7.1 steps 11-13, §7.1 (uploadToken format and security
+// properties), §15.1
+func transitionReady(row *sessionstore.Session, now time.Time) {
+	row.State = session.StateReady
+	if row.UploadTokenConsumedAt.IsZero() {
+		row.UploadTokenConsumedAt = now
+	}
+}
 
 // handleFinalize implements POST /v1/sessions/{id}/finalize. After binding
 // the optional §14 WorkspacePlan and transitioning created → finalizing, it
@@ -78,7 +87,8 @@ func transitionReady(row *sessionstore.Session) { row.State = session.StateReady
 // the finalizing watchdog's terminal write and hook release the pod if the row
 // is still `finalizing`.
 //
-// The single-use uploadToken invalidation, upload-channel/limits close,
+// The finalizing → ready write records the single-use uploadToken
+// invalidation on the row. The upload-channel/limits close,
 // SSE status-change, plan-warning publish, and the §16.6 finalize audit
 // row run once the row reaches ready, as before. The minimal gateway (no
 // pod binder) finalizes by the plain created → finalizing → ready
@@ -99,11 +109,12 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	// carries the uploadToken issued at session creation. It is verified
 	// against the path's session id before the handler reads or writes the
 	// row, so a request without a valid token (missing, malformed, signed
-	// under no ring key, expired, bound to another session, or already
-	// consumed by a prior finalize) reads no session state beyond the
-	// §10.2 ownership check that precedes this handler, binds no plan, and
-	// runs no pod work. The check and its error envelope are the ones
-	// admitUpload uses.
+	// under no ring key, expired, or bound to another session) reads no
+	// session state beyond the §10.2 ownership check that precedes this
+	// handler, binds no plan, and runs no pod work. A token that verifies
+	// is then refused when the row carries the consumed mark a prior
+	// finalize recorded, on whichever replica ran it. The check and its
+	// error envelope are the ones admitUpload uses.
 	if err := s.verifyUploadToken(r, id); err != nil {
 		s.writeUploadTokenError(w, err)
 		return
@@ -184,8 +195,6 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 	if prep != nil {
 		s.applyFinalizePrepareResult(r.Context(), tenantID, id, updated.TenantID, updated.ID, prep)
 	}
-	uploadTokenDigest := updated.UploadTokenDigest
-	uploadTokenExpiry := updated.UploadTokenExpiry
 	// spec: §15.1 (finalize row), §6.2 (finalize timeout), §7.2 (terminal
 	// states) — finalizing → ready admits only a row that is still
 	// `finalizing`, so a terminal state another writer committed while the
@@ -194,23 +203,12 @@ func (s *Server) handleFinalize(w http.ResponseWriter, r *http.Request) {
 		if err := finalizingPrecondition(row); err != nil {
 			return err
 		}
-		transitionReady(row)
+		transitionReady(row, s.clock())
 		return nil
 	})
 	if err != nil {
 		s.finalizeReadyWriteFailed(w, r, tenantID, id, err)
 		return
-	}
-	// spec: §7.1 (single-use uploadToken invalidation) — once the upload
-	// window closes, the digest cannot mint another upload. ConsumeDigest
-	// fails only when the digest is already invalidated, so a failure is
-	// logged and the call continues: the session is `ready`, and a token left
-	// unconsumed mints no upload because uploads are admitted only in
-	// `created`.
-	if s.uploadVerifier != nil && uploadTokenDigest != "" {
-		if cerr := s.uploadVerifier.ConsumeDigest(uploadTokenDigest, uploadTokenExpiry); cerr != nil {
-			log.Printf("sessionserver: consume upload token for finalized session %s: %v", id, cerr)
-		}
 	}
 	// §7.4, §11.1: close the upload channel through GWSEAM-CloseUploads.
 	// The upload handler aborts any in-flight /upload stream for this

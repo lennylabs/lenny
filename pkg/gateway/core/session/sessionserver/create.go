@@ -15,6 +15,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/observability/tracing"
 	"github.com/lennylabs/lenny/pkg/sandbox/isolation"
 	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	"github.com/lennylabs/lenny/pkg/workspaceplan"
 )
 
@@ -503,9 +504,10 @@ func (s *Server) mintUploadToken(w http.ResponseWriter, r *http.Request, row *se
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
 		s.rollbackClaim(r.Context(), claim, row.ID)
-		// spec: §16.3 — PERMANENT: a bad session id does not become valid
-		// on retry.
-		tracing.RecordError(span, tracing.CategorizeError(err, tracing.CategoryPermanent))
+		// spec: §16.3 — a bad session id does not become valid on retry
+		// (PERMANENT); a replica whose shared signing keys could not be
+		// refreshed mints again once a refresh succeeds (TRANSIENT).
+		tracing.RecordError(span, tracing.CategorizeError(err, uploadTokenErrorCategory(err)))
 		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
 			"upload token issuance failed: "+err.Error())
 		return "", false
@@ -513,6 +515,18 @@ func (s *Server) mintUploadToken(w http.ResponseWriter, r *http.Request, row *se
 	row.UploadTokenDigest = parsed.Digest
 	row.UploadTokenExpiry = parsed.Expiry
 	return tok, true
+}
+
+// uploadTokenErrorCategory returns the §16.3 error category of a failed
+// uploadToken mint: TRANSIENT when the replica's signing keys refused to
+// sign, which a later key refresh clears, and PERMANENT otherwise.
+//
+// spec: §7.1 (uploadToken format and security properties), §16.3
+func uploadTokenErrorCategory(err error) tracing.ErrorCategory {
+	if errors.Is(err, uploadtoken.ErrSigningUnavailable) {
+		return tracing.CategoryTransient
+	}
+	return tracing.CategoryPermanent
 }
 
 // writeCreateSessionResponse renders the §15.1 201 CreateSessionResponse:
