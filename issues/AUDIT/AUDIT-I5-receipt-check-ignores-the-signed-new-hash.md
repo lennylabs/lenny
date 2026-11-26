@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I5
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0177.S2
 ---
 
 # A redacted audit row can be rewritten again after its receipt is signed, because no verifier compares the row with the receipt's new_hash

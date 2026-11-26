@@ -1,10 +1,12 @@
 ---
 id: GATE-I15
-status: planned
+status: closed
 kind: build-gap
 severity: low
 requirements: []
 change: 0172.S12
+closed: fixed
+closed-by: 0172.S12
 ---
 
 # The gate-main workflow pins an artifact action that targets the deprecated Node.js 20
