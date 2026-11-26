@@ -37,18 +37,41 @@ type Policy struct {
 }
 
 // UploadTokenPolicy returns the upload-token purpose's policy with the
-// given rotation interval and overlap window.
+// given rotation interval, overlap window, and token lifetime
+// (maxCreatedStateTimeoutSeconds). A replaced key verifies for
+// UploadTokenVerificationTime of the overlap window and the token
+// lifetime, so the verification time follows both configured values.
 //
 // spec: §7.1 (Normal Flow)
-func UploadTokenPolicy(rotation, overlap time.Duration) Policy {
+func UploadTokenPolicy(rotation, overlap, tokenLifetime time.Duration) Policy {
 	return Policy{
 		Purpose:          PurposeUploadToken,
 		Algorithm:        AlgorithmHMACSHA256,
 		KEKAlias:         AliasUploadTokenSigning,
 		SecretSize:       hmacSecretSize,
 		RotationInterval: rotation,
-		VerifyFor:        overlap,
+		VerifyFor:        UploadTokenVerificationTime(overlap, tokenLifetime),
 	}
+}
+
+// UploadTokenVerificationTime returns how long a replaced upload-token key
+// keeps verifying after the next key becomes active: the stale bound plus
+// the longer of the overlap window and the token lifetime. The stale bound
+// of an upload-token ring is the overlap window (the ring's
+// Options.StaleAfter), so it is overlap + max(overlap, tokenLifetime),
+// 10 minutes at the defaults of 5 minutes each.
+//
+// A replica whose last successful reload came just before a peer published
+// the next key keeps signing with the replaced key until that reload is as
+// old as the stale bound, which is never later than the next key's
+// activation plus the stale bound, and the token it signs then is valid for
+// the token lifetime. Every token any replica signs with the replaced key
+// therefore expires before the key stops verifying, and a token lifetime
+// longer than the overlap window needs no separate refusal.
+//
+// spec: §7.1 (Normal Flow)
+func UploadTokenVerificationTime(overlap, tokenLifetime time.Duration) time.Duration {
+	return overlap + max(overlap, tokenLifetime)
 }
 
 // validate reports a policy that cannot drive a Ring.

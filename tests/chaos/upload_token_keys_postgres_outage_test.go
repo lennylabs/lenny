@@ -87,7 +87,7 @@ func TestUploadTokenKeysUnderAPostgresOutage(t *testing.T) {
 	}
 	clock := &outageClock{now: time.Now().UTC().Truncate(time.Microsecond)}
 	ring, err := signingkeys.Open(context.Background(),
-		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow),
+		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow, uploadtoken.DefaultTTL),
 		store, sealer, signingkeys.Options{StaleAfter: uploadtoken.DefaultOverlapWindow, Clock: clock.Now})
 	if err != nil {
 		t.Fatalf("Open: %v", err)

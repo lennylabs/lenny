@@ -103,9 +103,9 @@ func TestBuildTokenSigningStoresComposesTheBearerVerifier_spec_10_2(t *testing.T
 	hmacFile := writeGatewayHMACKeyFile(t, "embedded-kid", []byte("embedded-signing-secret-0123456789"))
 
 	a := &gatewayWiring{f: tokenSigningFlags(master, hmacFile, "", "")}
-	a.buildTokenSigningStores(nil)
+	a.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 	b := &gatewayWiring{f: tokenSigningFlags(master, "", "", "")}
-	b.buildTokenSigningStores(nil)
+	b.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 	if a.jwtKeySet == nil || a.jwtSigner == nil || a.bearerVerifier == nil || a.kmsProvider == nil {
 		t.Fatalf("buildTokenSigningStores left the key set, signer, verifier, or provider unset: %+v", a)
 	}
@@ -126,7 +126,7 @@ func TestBuildTokenSigningStoresComposesTheBearerVerifier_spec_10_2(t *testing.T
 	}
 
 	c := &gatewayWiring{f: tokenSigningFlags(master, "", "https://lenny.acme.com", "lenny")}
-	c.buildTokenSigningStores(nil)
+	c.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 	if _, err := c.bearerVerifier.Verify(signedClaims(t, c.jwtSigner, "https://lenny.acme.com", "lenny")); err != nil {
 		t.Errorf("a key-set token with the expected issuer and audience is refused: %v", err)
 	}

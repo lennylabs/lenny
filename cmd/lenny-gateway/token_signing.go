@@ -7,6 +7,7 @@ import (
 	"log"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/gateway/replica/gatewaymetrics"
@@ -23,11 +24,13 @@ import (
 // shared uploadToken signing-key ring, issuer, and verifier; its breaker
 // observer; the §10.2 JWT key set and the shared remote signer; and the
 // §10.2 bearer verifier, recording each on the accumulator. It is an
-// extracted per-concern step of buildStores.
+// extracted per-concern step of buildStores. uploadTokenLifetime is the
+// configured maxCreatedStateTimeoutSeconds, from which the ring derives how
+// long a replaced upload-token key keeps verifying.
 //
 // spec: §4.1 gateway subsystem seams; §7.1 uploadToken; §10.2
 // (Authentication) verifiers and signing topology; §4 KMS provider.
-func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
+func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store, uploadTokenLifetime time.Duration) {
 	f := w.f
 	devMode := f.devMode
 	kmsOpts := f.kmsOpts
@@ -91,7 +94,7 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 	// replica that cannot load the upload-token keys does not start. The
 	// verifier carries no consumed tracker: the session core reads the
 	// consumed mark on the session row.
-	uploadKeyRing := w.openUploadTokenKeyRing(kmsProvider, kmsOpts.EphemeralKEK())
+	uploadKeyRing := w.openUploadTokenKeyRing(kmsProvider, kmsOpts.EphemeralKEK(), uploadTokenLifetime)
 	uploadKeys := uploadtoken.NewSharedKeys(uploadKeyRing)
 	uploadIssuer := uploadtoken.NewIssuer(uploadKeys, nil)
 	uploadVerifier := uploadtoken.NewVerifier(uploadKeys, nil, nil)
@@ -176,10 +179,12 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 // of this one, could unwrap a key it stored, and a stored key would stop
 // every later start. Either way tokens verify only on this process. A
 // ring that cannot be opened, including one whose publish lead is not
-// longer than its refresh interval, stops the process.
+// longer than its refresh interval, stops the process. The stale bound is
+// the overlap window, and a replaced key verifies for the stale bound plus
+// the longer of the overlap window and uploadTokenLifetime.
 //
 // spec: §7.1 (Normal Flow), §12.3 (Postgres HA Requirements)
-func (w *gatewayWiring) openUploadTokenKeyRing(provider kms.Provider, ephemeralKEK bool) *signingkeys.Ring {
+func (w *gatewayWiring) openUploadTokenKeyRing(provider kms.Provider, ephemeralKEK bool, uploadTokenLifetime time.Duration) *signingkeys.Ring {
 	f := w.f
 	var store signingkeys.Store
 	switch {
@@ -200,7 +205,7 @@ func (w *gatewayWiring) openUploadTokenKeyRing(provider kms.Provider, ephemeralK
 	if err != nil {
 		log.Fatalf("lenny-gateway: §7.1 upload-token signing-key sealer: %v", err)
 	}
-	policy := signingkeys.UploadTokenPolicy(*f.uploadTokenKeyRotationInterval, uploadtoken.DefaultOverlapWindow)
+	policy := signingkeys.UploadTokenPolicy(*f.uploadTokenKeyRotationInterval, uploadtoken.DefaultOverlapWindow, uploadTokenLifetime)
 	ring, err := signingkeys.Open(context.Background(), policy, store, sealer, signingkeys.Options{
 		RefreshInterval: *f.signingKeyRefreshInterval,
 		PublishLead:     *f.signingKeyPublishLead,
@@ -209,8 +214,8 @@ func (w *gatewayWiring) openUploadTokenKeyRing(provider kms.Provider, ephemeralK
 	if err != nil {
 		log.Fatalf("lenny-gateway: §7.1 upload-token signing keys: %v", err)
 	}
-	log.Printf("lenny-gateway: §7.1 upload-token signing keys loaded (refresh %s, publish lead %s, rotation %s)",
-		ring.RefreshInterval(), *f.signingKeyPublishLead, *f.uploadTokenKeyRotationInterval)
+	log.Printf("lenny-gateway: §7.1 upload-token signing keys loaded (refresh %s, publish lead %s, rotation %s, replaced key verifies for %s)",
+		ring.RefreshInterval(), *f.signingKeyPublishLead, *f.uploadTokenKeyRotationInterval, policy.VerifyFor)
 	return ring
 }
 

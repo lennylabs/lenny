@@ -32,7 +32,7 @@ func openUploadRing(t *testing.T, store signingkeys.Store, master []byte, clock 
 		t.Fatal(err)
 	}
 	ring, err := signingkeys.Open(context.Background(),
-		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow),
+		signingkeys.UploadTokenPolicy(uploadtoken.DefaultRotationInterval, uploadtoken.DefaultOverlapWindow, uploadtoken.DefaultTTL),
 		store, sealer, signingkeys.Options{StaleAfter: uploadtoken.DefaultOverlapWindow, Clock: clock})
 	if err != nil {
 		t.Fatalf("Open: %v", err)
