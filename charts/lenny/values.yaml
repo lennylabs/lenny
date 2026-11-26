@@ -931,13 +931,18 @@ kms:
   # rotation"). platform:jwt-signing names the P-256 key that signs every
   # Lenny-issued JWT. platform:jwt-verify is optional and names a second
   # P-256 key that verifies and never signs; it is mapped only during a
-  # key rotation. On a cloud provider each must name an immutable key
-  # version: an AWS key ID or key ARN, a GCP CryptoKeyVersion name ending
-  # in /cryptoKeyVersions/<n>, or an Azure key with a non-empty @<version>
-  # suffix. A process refuses to start when either alias names a
-  # repointable reference (an AWS alias, a GCP CryptoKey without a version,
-  # or an Azure key without a version).
+  # key rotation. Two more aliases are reserved for the redaction receipt
+  # key (§12.8): platform:audit-signing names the P-256 key the erasure job
+  # signs every redaction receipt with, and the gateway does not start on a
+  # cloud provider without it; platform:audit-verify is optional and names
+  # the previous receipt key after a rotation. On a cloud provider each of
+  # the four must name an immutable key version: an AWS key ID or key ARN,
+  # a GCP CryptoKeyVersion name ending in /cryptoKeyVersions/<n>, or an
+  # Azure key with a non-empty @<version> suffix. A process refuses to start
+  # when one of them names a repointable reference (an AWS alias, a GCP
+  # CryptoKey without a version, or an Azure key without a version).
   # Example: platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab,
+  # platform:audit-signing=arn:aws:kms:us-east-1:111122223333:key/5678abcd-12ab-34cd-56ef-1234567890ab,
   # platform:credential-leases=alias/lenny/credential-leases,
   # tenant:acme=alias/lenny/tenant-acme.
   aliases: ""
