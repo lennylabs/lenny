@@ -42,6 +42,10 @@ type RedactionReceiptResult struct {
 // signature: an unsigned receipt, a key identifier outside the trusted
 // set, and a signature that does not cover the stored tuple all count. A
 // nil verifier trusts no receipt, so every redaction-marked row counts.
+// The scan checks the signature only. The chain walk and the
+// match of the receipt's original_hash against the redacted row's
+// preserved pre-redaction hash are performed by external verifiers and by
+// the audit chain verifier, which read the successor row's prev_hash.
 //
 // The scan reads only redaction-marked rows and their receipts, so it does
 // not walk the full ledger. A query error (for example, the
