@@ -7,7 +7,7 @@ None.
 ## Steps
 
 ### 0178.S1 Records scoped by principal
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: []
 - closes: [APICONV-I1]
@@ -15,7 +15,7 @@ None.
 No open decision touches the step. §11.5 **Mechanism.**, as IP-4 in `change.md` states (decisions 1 and 3). Then the subject and the session id in `idempotency.Key` and the store interface (IP-1), the resolver for the REST middleware and the MCP hook (IP-2), the migration of `idempotency_keys` (IP-3), and the unit, component, contract, load_local, and security tests. Then the idempotency sections of `docs/api/rest.md` and `docs/api/mcp.md`. The step closes [APICONV-I1](../../issues/APICONV/APICONV-I1-idempotency-key-scoped-per-tenant-only.md), which 0138.S1 closed before this change took it over.
 
 ### 0178.S2 User erasure deletes the user's idempotency records
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: [0178.S1]
 - closes: [ERASE-I2]
