@@ -419,16 +419,18 @@ func TestValidateLifecycleTickBudget_spec_12_8(t *testing.T) {
 	}
 }
 
-// TestTenantDeletionPhase2WaitsForThePostTerminalRelease_spec_12_8 pins the
-// §12.8 tenant-deletion hold on the §7.1 post-terminal window: a pass whose
-// drain verifies but whose tenant still has a session in its window stays at
-// Phase 2 in disabling with BlockedReason set, and the next pass after the
-// release is recorded advances to Phase 3. On the pre-fix terminator the
-// first pass advances at once. With no cap the terminator returns an error
-// wrapping ErrReleaseCapUnset.
+// TestTenantDeletionPhase2WaitsForTheTerminalPipelinesOfDrainedSessions pins the
+// §12.8 tenant-deletion hold on the terminal pipeline: a pass whose drain
+// verifies but whose tenant still has a session in its post-terminal window,
+// or a session with or without a pod whose pipeline recorded no mark, stays
+// at Phase 2 in disabling with BlockedReason set. Recording the release alone
+// keeps the hold, because the pipeline's billing event follows the release,
+// and the next pass after both pipelines record their mark advances to
+// Phase 3. With no budget the terminator returns an error wrapping
+// ErrPipelineBudgetUnset.
 //
-// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window)
-func TestTenantDeletionPhase2WaitsForThePostTerminalRelease_spec_12_8(t *testing.T) {
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session)
+func TestTenantDeletionPhase2WaitsForTheTerminalPipelinesOfDrainedSessions(t *testing.T) {
 	runner, tenants, sessions, _, _ := newDeletionRunner(t)
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	runner.reconciler.Terminator = tenantSessionTerminator{
@@ -445,25 +447,41 @@ func TestTenantDeletionPhase2WaitsForThePostTerminalRelease_spec_12_8(t *testing
 	}); err != nil {
 		t.Fatalf("Create session: %v", err)
 	}
+	if err := sessions.Create(ctx, sessionstore.Session{
+		ID: "sess-podless", TenantID: "acme", UserID: "bob", State: apisession.StateCancelled,
+		TerminatedAt: now.Add(-time.Minute),
+	}); err != nil {
+		t.Fatalf("Create session: %v", err)
+	}
 	drive(ctx, runner, 2)
 	job, _ := runner.reconciler.Jobs.Get(ctx, "acme")
 	if job.Phase != tenantdeletion.PhaseTerminateSessions || job.State != tenantdeletion.TenantDisabling {
 		t.Fatalf("job = %q/%q (%s), want terminate_sessions/disabling", job.Phase, job.State, job.Failure)
 	}
-	if !strings.Contains(job.BlockedReason, "post-terminal window") {
-		t.Errorf("BlockedReason = %q, want the post-terminal wait", job.BlockedReason)
+	if !strings.Contains(job.BlockedReason, "2 drained session(s) whose terminal pipeline has not ended") {
+		t.Errorf("BlockedReason = %q, want the terminal pipeline wait on both sessions", job.BlockedReason)
 	}
 	if err := sessionstore.RecordPodRelease(ctx, sessions, "acme", "sess-sealing", now); err != nil {
 		t.Fatalf("record release: %v", err)
 	}
 	drive(ctx, runner, 1)
 	job, _ = runner.reconciler.Jobs.Get(ctx, "acme")
+	if job.Phase != tenantdeletion.PhaseTerminateSessions {
+		t.Fatalf("phase after the release alone = %q (%s), want terminate_sessions", job.Phase, job.Failure)
+	}
+	for _, id := range []string{"sess-sealing", "sess-podless"} {
+		if _, err := sessions.Update(ctx, "acme", id, sessionstore.MarkTerminalPipelineDone(now)); err != nil {
+			t.Fatalf("mark %s: %v", id, err)
+		}
+	}
+	drive(ctx, runner, 1)
+	job, _ = runner.reconciler.Jobs.Get(ctx, "acme")
 	if job.Phase != tenantdeletion.PhaseRevokeCredentials {
-		t.Errorf("phase after the release = %q (%s), want revoke_credentials", job.Phase, job.Failure)
+		t.Errorf("phase after the pipeline marks = %q (%s), want revoke_credentials", job.Phase, job.Failure)
 	}
 
 	unwired := tenantSessionTerminator{sessions: sessions, term: &sleepyDrainTerminator{}, budget: time.Second, clock: time.Now}
-	if err := unwired.TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrReleaseCapUnset) {
-		t.Errorf("terminator with no cap = %v, want ErrReleaseCapUnset", err)
+	if err := unwired.TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
+		t.Errorf("terminator with no cap = %v, want ErrPipelineBudgetUnset", err)
 	}
 }

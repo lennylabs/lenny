@@ -393,43 +393,52 @@ func assertPrimaryListings(t *testing.T, l *drainLister, userID string, want int
 	}
 }
 
-// TestReleasePendingListsThePostTerminalWindow_spec_12_8 pins the §12.8
+// TestTerminalPipelinesPendingListsTheSessionsErasureWaitsOn pins the
 // store-deletion gate's listing: it is a primary read with the scope's
-// UserID, it returns exactly the rows in their §7.1 post-terminal window, a
-// listing error is returned, and a zero cap returns ErrReleaseCapUnset
-// without listing.
+// UserID; it returns exactly the terminal rows whose pipeline has recorded no
+// mark inside the budget, with or without a pod and whether or not the
+// release is recorded, and the rows still in their post-terminal window,
+// including one whose pipeline recorded its mark on a replica that did not
+// hold the binding; a listing error is returned; and a zero budget returns
+// ErrPipelineBudgetUnset without listing.
 //
-// spec: §12.8 (Compliance Interfaces), §7.1 (Post-terminal window)
-func TestReleasePendingListsThePostTerminalWindow_spec_12_8(t *testing.T) {
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session),
+// §7.1 (Post-terminal window)
+func TestTerminalPipelinesPendingListsTheSessionsErasureWaitsOn(t *testing.T) {
 	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
 	const capD = 5 * time.Minute
 	recent := now.Add(-time.Minute)
 	rows := []sessionstore.Session{
 		{ID: "in-window", State: session.StateFailed, PodAssignment: "p1", TerminatedAt: recent},
-		{ID: "released", State: session.StateCompleted, PodAssignment: "p2", TerminatedAt: recent, PodReleasedAt: recent},
+		{ID: "released-no-mark", State: session.StateCompleted, PodAssignment: "p2", TerminatedAt: recent, PodReleasedAt: recent},
+		{ID: "released-and-marked", State: session.StateCompleted, PodAssignment: "p5", TerminatedAt: recent, PodReleasedAt: recent, TerminalPipelineDoneAt: recent},
+		{ID: "marked-binding-held", State: session.StateCompleted, PodAssignment: "p6", TerminatedAt: recent, TerminalPipelineDoneAt: recent},
 		{ID: "past-cap", State: session.StateCompleted, PodAssignment: "p3", TerminatedAt: now.Add(-capD)},
 		{ID: "no-pod", State: session.StateCompleted, TerminatedAt: recent},
+		{ID: "no-pod-marked", State: session.StateCancelled, TerminatedAt: recent, TerminalPipelineDoneAt: recent},
+		{ID: "no-pod-past-budget", State: session.StateExpired, TerminatedAt: now.Add(-capD)},
+		{ID: "no-terminated-at", State: session.StateCompleted},
 		{ID: "live", State: session.StateRunning, PodAssignment: "p4"},
 	}
 	l := &drainLister{answers: [][]sessionstore.Session{rows}}
-	got, err := admin.ReleasePending(context.Background(), l, "acme", "alice", now, capD)
-	if err != nil || !reflect.DeepEqual(got, []string{"in-window"}) {
-		t.Fatalf("ReleasePending = (%v, %v), want [in-window]", got, err)
+	got, err := admin.TerminalPipelinesPending(context.Background(), l, "acme", "alice", now, capD)
+	if want := []string{"in-window", "released-no-mark", "marked-binding-held", "no-pod"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Fatalf("TerminalPipelinesPending = (%v, %v), want %v", got, err, want)
 	}
 	if want := (sessionstore.ListFilter{UserID: "alice", Primary: true}); len(l.filters) != 1 || !reflect.DeepEqual(l.filters[0], want) || l.tenants[0] != "acme" {
 		t.Errorf("listing = %v %v, want one primary read of acme with %+v", l.tenants, l.filters, want)
 	}
 
 	down := errors.New("primary unreachable")
-	if _, err := admin.ReleasePending(context.Background(), &drainLister{errs: []error{down}}, "acme", "", now, capD); !errors.Is(err, down) {
+	if _, err := admin.TerminalPipelinesPending(context.Background(), &drainLister{errs: []error{down}}, "acme", "", now, capD); !errors.Is(err, down) {
 		t.Errorf("listing error = %v, want it wrapped", err)
 	}
 
 	unwired := &drainLister{answers: [][]sessionstore.Session{rows}}
-	if _, err := admin.ReleasePending(context.Background(), unwired, "acme", "", now, 0); !errors.Is(err, admin.ErrReleaseCapUnset) {
-		t.Errorf("zero cap = %v, want ErrReleaseCapUnset", err)
+	if _, err := admin.TerminalPipelinesPending(context.Background(), unwired, "acme", "", now, 0); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
+		t.Errorf("zero budget = %v, want ErrPipelineBudgetUnset", err)
 	}
 	if len(unwired.filters) != 0 {
-		t.Errorf("zero cap listed %d times, want none", len(unwired.filters))
+		t.Errorf("zero budget listed %d times, want none", len(unwired.filters))
 	}
 }

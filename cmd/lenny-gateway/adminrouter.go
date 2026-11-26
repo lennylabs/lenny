@@ -573,10 +573,9 @@ func (w *gatewayWiring) buildAdminRouter(
 				_, err := admin.DrainSessions(ctx, w.sessions, erasureTerm, userPods, tenantID, userID)
 				return err
 			}).
-			// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal
-			// window) — the store deletions wait until no drained session
-			// of the user is in its post-terminal window.
-			WithReleaseGate(w.erasureReleaseGate()).
+			// The store deletions wait until no drained session of the user
+			// has a terminal pipeline that may still write.
+			WithPipelineGate(w.erasurePipelineGate()).
 			WithHoldCheck(func(ctx context.Context, tenantID, userID string) ([]erasurejob.Hold, error) {
 				held, err := admin.HeldResourcesForUser(ctx, w.sessions, artifactHolds, tenantID, userID)
 				if err != nil {
@@ -1291,25 +1290,27 @@ func sessionIDsAdapter(fn func(ctx context.Context, tenantID, userID string, ses
 //
 // spec: §4.1 gateway subsystem seams; §15.1 REST API; §27.3 middleware.
 
-// erasureReleaseGate returns the §12.8 erasure runner's post-terminal
-// release gate: the identifiers of the user's sessions in their §7.1
-// post-terminal window, listed from the primary over w.sessions on the
-// injected clock with the cap buildStores computed. The gate returns
-// identifiers rather than an admin error, because admin imports erasurejob.
-// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window)
-func (w *gatewayWiring) erasureReleaseGate() func(ctx context.Context, tenantID, userID string) ([]string, error) {
+// erasurePipelineGate returns the §12.8 erasure runner's terminal pipeline
+// gate: the identifiers of the user's sessions that are pipeline-pending or
+// in their post-terminal window (admin.TerminalPipelinesPending), listed from
+// the primary over w.sessions on the injected clock with the terminal
+// pipeline budget buildStores computed, the one the session server's
+// terminalContext applies. The gate returns identifiers rather than an admin
+// error, because admin imports erasurejob.
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session)
+func (w *gatewayWiring) erasurePipelineGate() func(ctx context.Context, tenantID, userID string) ([]string, error) {
 	return func(ctx context.Context, tenantID, userID string) ([]string, error) {
-		return admin.ReleasePending(ctx, w.sessions, tenantID, userID, clockinject.Now(), w.postTerminalCap)
+		return admin.TerminalPipelinesPending(ctx, w.sessions, tenantID, userID, clockinject.Now(), w.postTerminalCap)
 	}
 }
 
 // newTenantSessionTerminator returns the §12.8 Phase 2 session terminator
 // over w.sessions, draining through term under the per-drain budget,
 // publishing the drained sessions on pods (the binding-release fan-out, nil
-// without a pod registry), and holding Phase 2 while a session is in its
-// §7.1 post-terminal window, with the cap buildStores computed and the
-// injected clock.
-// spec: §12.8 (Tenant deletion lifecycle), §7.1 (Post-terminal window),
+// without a pod registry), and holding Phase 2 while a session is
+// pipeline-pending or in its post-terminal window, with the terminal pipeline
+// budget buildStores computed and the injected clock.
+// spec: §12.8 (Tenant deletion lifecycle), §7.1 (Pipeline-pending session),
 // §28.5.7 (Gateway-to-store)
 func (w *gatewayWiring) newTenantSessionTerminator(term admin.DrainTerminator, pods admin.UserPodTerminator, budget time.Duration) tenantSessionTerminator {
 	return tenantSessionTerminator{

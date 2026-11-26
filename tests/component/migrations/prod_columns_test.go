@@ -678,6 +678,10 @@ var prodMigrationSchema = []struct {
 	// 0203 adds the §13.3 lineage depth column to issued_tokens, which the
 	// lineage depth cap of step (1a) reads.
 	{migration: "0203", table: "issued_tokens", columns: []string{"depth"}},
+	// 0204 adds sessions.terminal_pipeline_done_at, the §7.1 pipeline mark
+	// that ends the wait of user erasure and tenant deletion on a drained
+	// session's terminal pipeline (§12.8 Lifecycle fence and drain).
+	{migration: "0204", table: "sessions", columns: []string{"terminal_pipeline_done_at"}},
 	// 0205 scopes the §11.5 idempotency records by principal: the subject
 	// and the bound session join the primary key.
 	{migration: "0205", table: "idempotency_keys", columns: []string{"subject", "session_id"}},

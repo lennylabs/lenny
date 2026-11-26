@@ -63,7 +63,7 @@ runGateway:
     w.buildUserErasers
       w.userCacheErasers
       w.idempotencyUserEraser
-    w.erasureReleaseGate
+    w.erasurePipelineGate
     w.tenants.Get
     defer preflightMu.Unlock
     w.buildTenantErasers

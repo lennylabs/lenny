@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1526
+      count: 1528
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -352,7 +352,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1314
+      count: 1316
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret
@@ -452,7 +452,7 @@ packages:
     - package: pkg/gateway/core/session/sessioninbox
       count: 73
     - package: pkg/gateway/core/session/sessionserver
-      count: 2979
+      count: 2985
     - package: pkg/gateway/core/session/slotcounter
       count: 125
     - package: pkg/gateway/core/session/slothealth
@@ -858,7 +858,7 @@ packages:
     - package: pkg/session/sessionrow
       count: 48
     - package: pkg/session/sessionstore
-      count: 109
+      count: 113
     - package: pkg/session/sessionstore/memstore
       count: 130
     - package: pkg/session/sessionstore/pgstore
@@ -1068,7 +1068,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 324
+      count: 327
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
@@ -1210,13 +1210,13 @@ packages:
     - package: tests/e2e_kind
       count: 236
     - package: tests/integration
-      count: 734
+      count: 740
     - package: tests/load_cloud
       count: 13
     - package: tests/load_kind
       count: 24
     - package: tests/load_local
-      count: 497
+      count: 501
     - package: tests/load_local/directusage_teardown
       count: 2
     - package: tests/load_local/scenarios/extension_episode_fanout
@@ -1234,7 +1234,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 569
+      count: 575
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build
