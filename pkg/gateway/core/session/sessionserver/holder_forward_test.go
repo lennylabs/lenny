@@ -568,7 +568,7 @@ func TestForwardRefusalsAreNotStoredUnderIdempotency_spec_11_5(t *testing.T) {
 		serving.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
 	})
 	store := idempotencymw.NewMemoryStore()
-	wrapped := authmw.Wrap(idempotencymw.Wrap(handler, store, idempotencymw.Options{}), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
+	wrapped := authmw.Wrap(idempotencymw.Wrap(handler, store, ownerIdempotencyOptions()), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-1/resume", bytes.NewReader([]byte("{}")))
 		req.Header.Set("Idempotency-Key", "same-key")
@@ -583,7 +583,7 @@ func TestForwardRefusalsAreNotStoredUnderIdempotency_spec_11_5(t *testing.T) {
 	if n := calls.Load(); n != 2 {
 		t.Errorf("coordinator reached %d times, want 2: a same-key retry after a refusal must run again", n)
 	}
-	if _, ok, _ := store.Get(context.Background(), "acme", "same-key"); ok {
+	if _, ok, _ := store.Get(context.Background(), ownerIdempotencyKey("same-key")); ok {
 		t.Error("the refusal was stored in the idempotency cache")
 	}
 }
@@ -608,7 +608,7 @@ func TestDeliveredForwardIsStoredAndReplayedUnderIdempotency_spec_11_5(t *testin
 		serving.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
 	})
 	store := idempotencymw.NewMemoryStore()
-	wrapped := authmw.Wrap(idempotencymw.Wrap(handler, store, idempotencymw.Options{}), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
+	wrapped := authmw.Wrap(idempotencymw.Wrap(handler, store, ownerIdempotencyOptions()), authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true})
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess-1/resume", bytes.NewReader([]byte("{}")))
 		req.Header.Set("Idempotency-Key", "resume-key")
@@ -622,7 +622,7 @@ func TestDeliveredForwardIsStoredAndReplayedUnderIdempotency_spec_11_5(t *testin
 	if n := calls.Load(); n != 1 {
 		t.Errorf("coordinator reached %d times, want 1: a same-key retry of a delivered forward replays the stored response", n)
 	}
-	if _, ok, _ := store.Get(context.Background(), "acme", "resume-key"); !ok {
+	if _, ok, _ := store.Get(context.Background(), ownerIdempotencyKey("resume-key")); !ok {
 		t.Error("the delivered forward was not stored in the idempotency cache")
 	}
 }
@@ -1042,7 +1042,7 @@ func newServingSurface(s *Server, row sessionstore.Session) *servingSurface {
 		s.forwardToHolder(w, r, row, ForwardKindResume, r.Body)
 	})
 	dev := authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}
-	ss.handler = authmw.Wrap(idempotencymw.Wrap(mux, ss.store, idempotencymw.Options{}), dev)
+	ss.handler = authmw.Wrap(idempotencymw.Wrap(mux, ss.store, ownerIdempotencyOptions()), dev)
 	return ss
 }
 
@@ -1112,7 +1112,7 @@ func TestForwardRefusalsStayOutOfTheIdempotencyCacheOnBothSurfaces_spec_11_5(t *
 				if n := ss.calls.Load(); n != 2 {
 					t.Errorf("helper reached %d times, want 2: a same-key retry after a refusal runs again", n)
 				}
-				if _, ok, _ := ss.store.Get(context.Background(), "acme", "key-"+target.name); ok {
+				if _, ok, _ := ss.store.Get(context.Background(), ownerIdempotencyKey("key-"+target.name)); ok {
 					t.Error("the refusal was stored in the idempotency cache")
 				}
 			})
@@ -1138,7 +1138,7 @@ func TestForwardRefusalsStayOutOfTheIdempotencyCacheOnBothSurfaces_spec_11_5(t *
 		if n := reached.Load(); n != 1 {
 			t.Errorf("coordinator reached %d times, want 1: its own refusal is stored and replayed", n)
 		}
-		if _, ok, _ := ss.store.Get(context.Background(), "acme", "delivered-409"); !ok {
+		if _, ok, _ := ss.store.Get(context.Background(), ownerIdempotencyKey("delivered-409")); !ok {
 			t.Error("the coordinator's own 409 was not stored")
 		}
 	})

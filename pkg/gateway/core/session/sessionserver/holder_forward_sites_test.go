@@ -459,7 +459,7 @@ func TestUndeliveredMessageHoldAnswersEachDLQOutcome_spec_29_3(t *testing.T) {
 func idempotentSite(r *siteRig) (http.Handler, *idempotencymw.MemoryStore) {
 	store := idempotencymw.NewMemoryStore()
 	dev := authmw.Options{AllowDevHeaders: true, DevHeaderNamesTenant: true}
-	return authmw.Wrap(idempotencymw.Wrap(asOwner(r.srv.Handler()), store, idempotencymw.Options{}), dev), store
+	return authmw.Wrap(idempotencymw.Wrap(asOwner(r.srv.Handler()), store, ownerIdempotencyOptions()), dev), store
 }
 
 // keyedResume posts a held-pod resume with an Idempotency-Key through h.
@@ -515,7 +515,7 @@ func TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5(t *tes
 			if n := leases.gets.Load(); n != 2 {
 				t.Errorf("forward reached %d times, want 2: a same-key retry after a refusal runs again", n)
 			}
-			if _, ok, _ := store.Get(context.Background(), "acme", "resume-key"); ok {
+			if _, ok, _ := store.Get(context.Background(), ownerIdempotencyKey("resume-key")); ok {
 				t.Error("the refusal was stored in the idempotency cache")
 			}
 			r.assertNoLocalEffect(t, session.StateSuspended)
@@ -540,7 +540,7 @@ func TestWiredResumeForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5(t *tes
 		if n := reached.Load(); n != 1 {
 			t.Errorf("coordinator reached %d times, want 1: its own refusal is stored and replayed", n)
 		}
-		if _, ok, _ := store.Get(context.Background(), "acme", "delivered-409"); !ok {
+		if _, ok, _ := store.Get(context.Background(), ownerIdempotencyKey("delivered-409")); !ok {
 			t.Error("the coordinator's own 409 was not stored")
 		}
 	})

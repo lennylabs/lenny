@@ -7,6 +7,8 @@ import (
 	"net/http"
 
 	"github.com/lennylabs/lenny/pkg/auth/authmw"
+	"github.com/lennylabs/lenny/pkg/idempotency"
+	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
 
 // testOwner is the subject the tests in this package authenticate as when a
@@ -41,4 +43,26 @@ func asOwner(h http.Handler) http.Handler {
 // spec: §10.2 (Session ownership) rules 1 and 3.
 func ownerCtx(ctx context.Context) context.Context {
 	return authmw.WithPrincipal(ctx, authmw.Principal{Subject: testOwner})
+}
+
+// ownerIdempotencyOptions returns idempotency middleware options whose
+// record scope is the principal the auth middleware attached: its tenant,
+// its subject or testOwner when the dev-header request names no user, and
+// its bound session. The tests mount the middleware inside authmw, as the
+// gateway does.
+func ownerIdempotencyOptions() idempotencymw.Options {
+	return idempotencymw.Options{PrincipalFromRequest: func(r *http.Request) (string, string, string) {
+		p, _ := authmw.FromContext(r.Context())
+		subject := p.Subject
+		if subject == "" {
+			subject = testOwner
+		}
+		return p.TenantID, subject, p.SessionID
+	}}
+}
+
+// ownerIdempotencyKey is the record key testOwner in acme, bound to no
+// session, files value under.
+func ownerIdempotencyKey(value string) idempotency.Key {
+	return idempotency.Key{TenantID: "acme", Subject: testOwner, Value: value}
 }
