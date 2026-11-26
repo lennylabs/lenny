@@ -678,6 +678,9 @@ var prodMigrationSchema = []struct {
 	// 0203 adds the §13.3 lineage depth column to issued_tokens, which the
 	// lineage depth cap of step (1a) reads.
 	{migration: "0203", table: "issued_tokens", columns: []string{"depth"}},
+	// 0205 scopes the §11.5 idempotency records by principal: the subject
+	// and the bound session join the primary key.
+	{migration: "0205", table: "idempotency_keys", columns: []string{"subject", "session_id"}},
 }
 
 // renamedTables maps a table an earlier migration created or altered to
@@ -738,7 +741,9 @@ func TestProdMigrationsRollBackPerStep(t *testing.T) {
 		if err != nil {
 			t.Fatalf("migration number %q: %v", m.migration, err)
 		}
-		pg.MigrateTo(t, dir, uint(n)-1)
+		// The version below n is the highest migration file under it, which is
+		// n-1 unless a number was skipped.
+		pg.MigrateTo(t, dir, migrationVersionBelow(t, dir, uint(n)))
 		if m.create {
 			mustNotHaveTable(t, ctx, pg, m.table)
 			continue

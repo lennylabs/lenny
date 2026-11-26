@@ -36,7 +36,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 	t.Run("put and get round-trip", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		rec := idempotency.Record{
-			Key:      idempotency.Key{TenantID: tenant, Value: "create-session-1"},
+			Key:      idempotency.Key{TenantID: tenant, Subject: "alice", Value: "create-session-1"},
 			BodyHash: idempotency.HashBody([]byte(`{"runtime":"echo"}`)),
 			Response: idempotency.Response{
 				StatusCode: 201,
@@ -51,7 +51,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 		if err := store.Put(ctx, rec); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		got, found, err := store.Get(ctx, tenant, "create-session-1")
+		got, found, err := store.Get(ctx, aliceRecord(tenant, "create-session-1"))
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -83,7 +83,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 
 	t.Run("get reports an unknown key as absent", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		_, found, err := store.Get(ctx, tenant, "never-stored")
+		_, found, err := store.Get(ctx, aliceRecord(tenant, "never-stored"))
 		if err != nil {
 			t.Fatalf("Get: %v", err)
 		}
@@ -94,7 +94,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 
 	t.Run("put replaces the record on key conflict", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
-		key := idempotency.Key{TenantID: tenant, Value: "resume-1"}
+		key := idempotency.Key{TenantID: tenant, Subject: "alice", Value: "resume-1"}
 		first := idempotency.Record{
 			Key: key, BodyHash: "hash-a",
 			Response: idempotency.Response{StatusCode: 200, Body: []byte("first")},
@@ -111,7 +111,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 		if err := store.Put(ctx, second); err != nil {
 			t.Fatalf("Put second: %v", err)
 		}
-		got, found, err := store.Get(ctx, tenant, "resume-1")
+		got, found, err := store.Get(ctx, aliceRecord(tenant, "resume-1"))
 		if err != nil || !found {
 			t.Fatalf("Get: found=%v err=%v", found, err)
 		}
@@ -124,17 +124,17 @@ func TestIdempotencyStoreContract(t *testing.T) {
 		tenantA := freshTenant(t, ctx, pg)
 		tenantB := freshTenant(t, ctx, pg)
 		rec := idempotency.Record{
-			Key:      idempotency.Key{TenantID: tenantA, Value: "shared-key"},
+			Key:      idempotency.Key{TenantID: tenantA, Subject: "alice", Value: "shared-key"},
 			BodyHash: "hash", Response: idempotency.Response{StatusCode: 200},
 			StoredAt: time.Now().UTC(),
 		}
 		if err := store.Put(ctx, rec); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		if _, found, err := store.Get(ctx, tenantB, "shared-key"); err != nil || found {
+		if _, found, err := store.Get(ctx, aliceRecord(tenantB, "shared-key")); err != nil || found {
 			t.Errorf("tenant B must not see tenant A's key: found=%v err=%v", found, err)
 		}
-		if _, found, err := store.Get(ctx, tenantA, "shared-key"); err != nil || !found {
+		if _, found, err := store.Get(ctx, aliceRecord(tenantA, "shared-key")); err != nil || !found {
 			t.Errorf("tenant A must see its own key: found=%v err=%v", found, err)
 		}
 	})
@@ -142,14 +142,14 @@ func TestIdempotencyStoreContract(t *testing.T) {
 	t.Run("a record past the TTL reads as absent", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		rec := idempotency.Record{
-			Key:      idempotency.Key{TenantID: tenant, Value: "stale-key"},
+			Key:      idempotency.Key{TenantID: tenant, Subject: "alice", Value: "stale-key"},
 			BodyHash: "hash", Response: idempotency.Response{StatusCode: 200},
 			StoredAt: time.Now().Add(-idempotency.TTL - time.Hour),
 		}
 		if err := store.Put(ctx, rec); err != nil {
 			t.Fatalf("Put: %v", err)
 		}
-		if _, found, err := store.Get(ctx, tenant, "stale-key"); err != nil || found {
+		if _, found, err := store.Get(ctx, aliceRecord(tenant, "stale-key")); err != nil || found {
 			t.Errorf("an expired record must read as absent: found=%v err=%v", found, err)
 		}
 	})
@@ -157,12 +157,12 @@ func TestIdempotencyStoreContract(t *testing.T) {
 	t.Run("DeleteExpired reclaims only rows past the TTL", func(t *testing.T) {
 		tenant := freshTenant(t, ctx, pg)
 		stale := idempotency.Record{
-			Key:      idempotency.Key{TenantID: tenant, Value: "gc-stale"},
+			Key:      idempotency.Key{TenantID: tenant, Subject: "alice", Value: "gc-stale"},
 			BodyHash: "hash", Response: idempotency.Response{StatusCode: 200},
 			StoredAt: time.Now().Add(-idempotency.TTL - time.Hour),
 		}
 		fresh := idempotency.Record{
-			Key:      idempotency.Key{TenantID: tenant, Value: "gc-fresh"},
+			Key:      idempotency.Key{TenantID: tenant, Subject: "alice", Value: "gc-fresh"},
 			BodyHash: "hash", Response: idempotency.Response{StatusCode: 200},
 			StoredAt: time.Now().UTC(),
 		}
@@ -180,7 +180,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 		if n != 1 {
 			t.Errorf("DeleteExpired reclaimed %d rows, want 1", n)
 		}
-		if _, found, err := store.Get(ctx, tenant, "gc-fresh"); err != nil || !found {
+		if _, found, err := store.Get(ctx, aliceRecord(tenant, "gc-fresh")); err != nil || !found {
 			t.Errorf("the fresh record must survive the sweep: found=%v err=%v", found, err)
 		}
 		again, err := store.DeleteExpired(ctx, tenant, cutoff)
@@ -199,7 +199,7 @@ func TestIdempotencyStoreContract(t *testing.T) {
 			long[i] = 'k'
 		}
 		rec := idempotency.Record{
-			Key:      idempotency.Key{TenantID: tenant, Value: string(long)},
+			Key:      idempotency.Key{TenantID: tenant, Subject: "alice", Value: string(long)},
 			BodyHash: "hash", Response: idempotency.Response{StatusCode: 200},
 			StoredAt: time.Now().UTC(),
 		}
@@ -209,4 +209,69 @@ func TestIdempotencyStoreContract(t *testing.T) {
 			t.Errorf("Put should reject an over-long key with *KeyTooLongError, got %v", err)
 		}
 	})
+}
+
+// aliceRecord is the key alice, bound to no session, files value under in
+// tenant.
+func aliceRecord(tenant, value string) idempotency.Key {
+	return idempotency.Key{TenantID: tenant, Subject: "alice", Value: value}
+}
+
+// spec: §11.5 (Idempotency)
+// diagnosis: the Postgres idempotency store matched a record across
+// subjects or across bound sessions, or refused a claim under a scope that
+// holds no record. Every query of pkg/idempotency/idempotencymw/pgstore
+// must name tenant_id, subject, session_id, and idempotency_key, and the
+// ON CONFLICT target must be the four-column primary key of migration 0205.
+func TestThePostgresIdempotencyStoreKeysRecordsByTenantSubjectSessionAndKey(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	store := idempgstore.New(pg.Pool)
+	ctx := context.Background()
+	tenant := freshTenant(t, ctx, pg)
+	now := time.Now().UTC()
+
+	alice := aliceRecord(tenant, "k1")
+	bob := idempotency.Key{TenantID: tenant, Subject: "bob", Value: "k1"}
+	aliceS1 := idempotency.Key{TenantID: tenant, Subject: "alice", SessionID: "s1", Value: "k1"}
+	aliceS2 := idempotency.Key{TenantID: tenant, Subject: "alice", SessionID: "s2", Value: "k1"}
+
+	for i, key := range []idempotency.Key{alice, bob, aliceS1, aliceS2} {
+		if _, claimed, err := store.Claim(ctx, key, "h", now); err != nil || !claimed {
+			t.Fatalf("Claim(%+v): claimed=%v err=%v, want each scope to claim its own slot", key, claimed, err)
+		}
+		rec := idempotency.Record{Key: key, BodyHash: "h", Response: idempotency.Response{StatusCode: 201 + i}, StoredAt: now}
+		if err := store.Put(ctx, rec); err != nil {
+			t.Fatalf("Put(%+v): %v", key, err)
+		}
+	}
+	for i, key := range []idempotency.Key{alice, bob, aliceS1, aliceS2} {
+		got, found, err := store.Get(ctx, key)
+		if err != nil || !found {
+			t.Fatalf("Get(%+v): found=%v err=%v", key, found, err)
+		}
+		if got.Response.StatusCode != 201+i || got.Key != key {
+			t.Errorf("Get(%+v) = status %d key %+v, want status %d under the same key", key, got.Response.StatusCode, got.Key, 201+i)
+		}
+		existing, claimed, err := store.Claim(ctx, key, "h", now)
+		if err != nil || claimed || existing.Response.StatusCode != 201+i {
+			t.Errorf("re-Claim(%+v) = claimed %v status %d err %v, want its own stored record", key, claimed, existing.Response.StatusCode, err)
+		}
+	}
+
+	if err := store.Release(ctx, aliceS1); err != nil {
+		t.Fatalf("Release: %v", err)
+	}
+	if _, found, _ := store.Get(ctx, aliceS1); found {
+		t.Error("Release left the released record in place")
+	}
+	for _, key := range []idempotency.Key{alice, bob, aliceS2} {
+		if _, found, _ := store.Get(ctx, key); !found {
+			t.Errorf("Release of alice's s1 record removed %+v", key)
+		}
+	}
+
+	if _, _, err := store.Claim(ctx, idempotency.Key{TenantID: tenant, Value: "k2"}, "h", now); !errors.Is(err, idempotency.ErrSubjectRequired) {
+		t.Errorf("Claim with no subject: err = %v, want ErrSubjectRequired", err)
+	}
 }

@@ -714,13 +714,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// lenny/delegate_task), the MCP server runs the call through the
 	// same §11.5 Store with per-tool key namespacing so retries collapse
 	// to one execution. The Tools allow-list keeps the field opt-in per
-	// tool; the TenantFromRequest resolver mirrors the REST middleware's
-	// auth-set header. spec: F-11.5.1, F-11.5.6.
+	// tool; the REST middleware and the MCP hook resolve one record scope
+	// through idempotencyPrincipal. spec: F-11.5.1, F-11.5.6.
 	mcpSrv.SetIdempotency(mcp.IdempotencyConfig{
-		Store: idemStore,
-		TenantFromRequest: func(r *http.Request) string {
-			return r.Header.Get("X-Lenny-Tenant-ID")
-		},
+		Store:                idemStore,
+		PrincipalFromRequest: idempotencyPrincipal,
 		Tools: map[string]bool{
 			"lenny/create_session": true,
 			"lenny/delegate_task":  true,
@@ -728,7 +726,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 		Now: clockinject.Now,
 	})
 	handler = idempotencymw.Wrap(handler, idemStore, idempotencymw.Options{
-		Metrics: gwMetrics,
+		PrincipalFromRequest: idempotencyPrincipal,
+		Metrics:              gwMetrics,
 		// spec: §11.5 — the middleware buffers the request body
 		// to hash and replay it. The default 8 MiB cap covers the
 		// critical-operation payloads and is operator-tunable via the

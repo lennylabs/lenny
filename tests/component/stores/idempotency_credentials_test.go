@@ -50,7 +50,11 @@ func TestPostgresIdempotencyRecordHoldsNoUploadToken(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 		_, _ = w.Write(body)
 	})
-	h := idempotencymw.Wrap(create, idempotencymw.WithCredentials(store, uploadtoken.NewRedactor(ring)), idempotencymw.Options{})
+	h := idempotencymw.Wrap(create, idempotencymw.WithCredentials(store, uploadtoken.NewRedactor(ring)), idempotencymw.Options{
+		PrincipalFromRequest: func(r *http.Request) (string, string, string) {
+			return r.Header.Get("X-Lenny-Tenant-ID"), "alice", ""
+		},
+	})
 
 	call := func() (int, string) {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{"runtimeRef":"echo"}`))
@@ -71,7 +75,7 @@ func TestPostgresIdempotencyRecordHoldsNoUploadToken(t *testing.T) {
 		t.Fatalf("first call: no uploadToken in %s (err %v)", first, err)
 	}
 
-	rec, found, err := store.Get(ctx, tenant, "create-1")
+	rec, found, err := store.Get(ctx, aliceRecord(tenant, "create-1"))
 	if err != nil || !found {
 		t.Fatalf("Get: found=%v err=%v", found, err)
 	}

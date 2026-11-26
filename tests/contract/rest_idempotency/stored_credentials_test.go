@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
 	"github.com/lennylabs/lenny/pkg/uploadtoken"
@@ -34,8 +35,9 @@ func TestReplayedCreateSessionCarriesTheOriginalUploadTokenAndTheRecordHoldsNone
 		UploadTokenVerifier: verifier,
 	})
 	idem := idempotencymw.NewMemoryStore()
-	ts := httptest.NewServer(idempotencymw.Wrap(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice),
-		idempotencymw.WithCredentials(idem, uploadtoken.NewRedactor(ring)), idempotencymw.Options{}))
+	ts := httptest.NewServer(ownerprincipal.Wrap(idempotencymw.Wrap(apifront.Handler(srv),
+		idempotencymw.WithCredentials(idem, uploadtoken.NewRedactor(ring)),
+		idempotencymw.Options{PrincipalFromRequest: ownerprincipal.Scope}), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 
 	body := map[string]any{"runtimeRef": "claude-code"}
@@ -49,7 +51,7 @@ func TestReplayedCreateSessionCarriesTheOriginalUploadTokenAndTheRecordHoldsNone
 		t.Fatalf("first call: id=%q uploadToken=%q, want both set", id, tok)
 	}
 
-	rec, found, err := idem.Get(context.Background(), "acme", "key-token")
+	rec, found, err := idem.Get(context.Background(), idempotency.Key{TenantID: "acme", Subject: ownerprincipal.Alice, Value: "key-token"})
 	if err != nil || !found {
 		t.Fatalf("idempotency record: found=%v err=%v", found, err)
 	}

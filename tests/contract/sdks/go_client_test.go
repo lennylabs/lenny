@@ -136,17 +136,20 @@ func newMCPStartGateway(t *testing.T) *httptest.Server {
 
 // idempotencyWrapped wraps the gateway handler in the §11.5
 // idempotency middleware so a replayed Idempotency-Key returns the
-// cached create response. The tenant is read from the same
-// X-Lenny-Tenant-ID header the gateway uses.
+// cached create response. The record scope is the tenant the
+// X-Lenny-Tenant-ID header names (default when absent) and the subject and
+// bound session of the principal ownerprincipal.Wrap attaches, which the
+// outer layer attaches before the middleware runs.
 func idempotencyWrapped(inner http.Handler) http.Handler {
-	return idempotency.Wrap(inner, idempotency.NewMemoryStore(), idempotency.Options{
-		TenantFromRequest: func(r *http.Request) string {
-			if v := r.Header.Get("X-Lenny-Tenant-ID"); v != "" {
-				return v
+	return ownerprincipal.Wrap(idempotency.Wrap(inner, idempotency.NewMemoryStore(), idempotency.Options{
+		PrincipalFromRequest: func(r *http.Request) (string, string, string) {
+			tenantID, subject, sessionID := ownerprincipal.Scope(r)
+			if tenantID == "" {
+				tenantID = "default"
 			}
-			return "default"
+			return tenantID, subject, sessionID
 		},
-	})
+	}), ownerprincipal.Alice)
 }
 
 // repoRootFromCWD walks up from the working directory to the module

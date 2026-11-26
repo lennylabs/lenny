@@ -82,7 +82,7 @@ func TestPropertyKeyValidateRejectsOverlong(t *testing.T) {
 	rapid.Check(t, func(rt *rapid.T) {
 		n := rapid.IntRange(MaxKeyLength+1, MaxKeyLength*4).Draw(rt, "len")
 		value := string(make([]byte, n))
-		key := Key{TenantID: "acme", Value: value}
+		key := Key{TenantID: "acme", Subject: "alice", Value: value}
 		if err := key.Validate(); err == nil {
 			rt.Errorf("over-length key (%d bytes) was accepted", n)
 		}
