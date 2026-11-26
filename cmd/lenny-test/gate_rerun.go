@@ -11,6 +11,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -172,6 +173,29 @@ func runGateRerun(fs *flag.FlagSet, here bool, count int, rebuild, withSocket bo
 		passArgs: []string{"--rerun-failed", "--rerun-count", strconv.Itoa(count)},
 		hint:     "run `lenny-test gate --rerun-failed --here` on a Linux host with the gate's toolchain",
 	}, rebuild, withSocket, cacheCap)
+}
+
+// rerunFilingRule names the rule that files a test a rerun passes.
+const rerunFilingRule = `.claude/rules/working-practices.md, "Flaky tests"`
+
+// printRerunFilingReminder writes, for a --rerun-failed run, one line per
+// rerun test that passed in at least one of its runs: the test failed in
+// the original run and passed on the same commit, so it is flaky, and the
+// line asks for the issue that records it, naming the test and both runs
+// (change 0172, decision 30). A test that failed in every rerun gets no
+// line, because a failure that repeats is fixed rather than filed. It
+// writes nothing for a run that is not a rerun.
+func printRerunFilingReminder(w io.Writer, runID string, rerun *gateRerun) {
+	if rerun == nil {
+		return
+	}
+	for _, t := range rerun.Tests {
+		if t.Passed == 0 {
+			continue
+		}
+		fmt.Fprintf(w, "  file:        %s::%s failed in gate run %s and passed %d of %d run(s) in rerun %s; file an issue under the test's area code naming the test and both runs, or add the runs to the open issue for that test (%s)\n",
+			t.Package, t.Test, rerun.RunID, t.Passed, t.Runs, runID, rerunFilingRule)
+	}
 }
 
 // gateRerunScript is gateContainerScript without the static tier's

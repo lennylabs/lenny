@@ -138,6 +138,71 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "§10.2: auth.multiTenant=true must be a boolean."
+  # spec: §13.3 (Credential Flow) — the reconnect spacing of the
+  # revocation-cache rehydration is a gateway flag that the chart value
+  # auth.revocationReconnectSpacing renders, with the 5s default, and the
+  # values schema refuses a value that is not a duration.
+  - it: renders --revocation-reconnect-spacing=5s at the chart default
+    documentSelector:
+      path: kind
+      value: Deployment
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --revocation-reconnect-spacing=5s
+  - it: renders --revocation-reconnect-spacing from auth.revocationReconnectSpacing
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      auth.revocationReconnectSpacing: 1m30s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --revocation-reconnect-spacing=1m30s
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --revocation-reconnect-spacing=5s
+  - it: renders --revocation-reconnect-spacing=0s, which starts each confirmation-triggered rehydration at once
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      auth.revocationReconnectSpacing: 0s
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --revocation-reconnect-spacing=0s
+  - it: renders no --revocation-reconnect-spacing for a null auth.revocationReconnectSpacing, so the gateway keeps its default
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      auth.revocationReconnectSpacing: null
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--revocation-reconnect-spacing/)]
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --multi-tenant=false
+  - it: refuses an auth.revocationReconnectSpacing without a unit at schema validation
+    set:
+      auth.revocationReconnectSpacing: "5"
+    asserts:
+      - failedTemplate:
+          errorPattern: "/auth/revocationReconnectSpacing.: .*does not match pattern"
+  - it: refuses a negative auth.revocationReconnectSpacing at schema validation
+    set:
+      auth.revocationReconnectSpacing: -1s
+    asserts:
+      - failedTemplate:
+          errorPattern: "/auth/revocationReconnectSpacing.: .*does not match pattern"
+  - it: refuses a numeric auth.revocationReconnectSpacing at schema validation
+    set:
+      auth.revocationReconnectSpacing: 5
+    asserts:
+      - failedTemplate:
+          errorPattern: "/auth/revocationReconnectSpacing.: got number, want string"
   # spec: §17.6 / F-17.6.7 — the noEnvironmentPolicy platform
   # default is the spec-canonical global.* key; an operator override
   # under global flows through to the gateway flag (it was previously
