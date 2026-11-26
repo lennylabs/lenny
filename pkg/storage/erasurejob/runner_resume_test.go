@@ -115,7 +115,7 @@ func TestRunnerMissingHookFailsJob_spec_12_8(t *testing.T) {
 		{"no hold-check hook", func(r *erasurejob.Runner) { r.WithHoldCheck(nil) }, erasurejob.ErrHoldCheckUnwired},
 		// spec: §12.8 (Lifecycle fence and drain) — a runner with no
 		// post-terminal release gate fails the job before DeleteByUser.
-		{"no release gate", func(r *erasurejob.Runner) { r.WithReleaseGate(nil) }, erasurejob.ErrReleaseGateUnwired},
+		{"no release gate", func(r *erasurejob.Runner) { r.WithPipelineGate(nil) }, erasurejob.ErrPipelineGateUnwired},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			h := newRunHarness(t)
@@ -371,7 +371,7 @@ func TestRunnerInitiatedFailures_spec_12_8(t *testing.T) {
 // store-deletion gate in the erasure runner. A gate that reports a session
 // still in its §7.1 post-terminal window leaves the job in store_deleting
 // with no eraser call, no job write, and no failure observation, and Run
-// returns ErrReleasePending; on the pre-fix runner DeleteByUser runs at
+// returns ErrTerminalPipelinePending; on the pre-fix runner DeleteByUser runs at
 // once. A gate error leaves the job in progress the same way. The next run
 // with an empty gate completes, and a job resumed in store_deleting runs the
 // gate before DeleteByUser.
@@ -384,7 +384,7 @@ func TestRunnerWaitsForThePostTerminalRelease_spec_12_8(t *testing.T) {
 		gateErr error
 		want    error
 	}{
-		{name: "a session in its window", pending: []string{"sess_sealing"}, want: erasurejob.ErrReleasePending},
+		{name: "a session in its window", pending: []string{"sess_sealing"}, want: erasurejob.ErrTerminalPipelinePending},
 		{name: "a gate error", gateErr: errors.New("primary unreachable")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -443,8 +443,8 @@ func TestRunnerResumedInStoreDeletingRunsTheGate_spec_12_8(t *testing.T) {
 	j := h.start("acme", "alice", nil)
 	h.moveTo(j.ID, erasurejob.PhaseStoreDeleting, nil)
 	h.set(func() { h.releasePending = []string{"sess_sealing"} })
-	if err := h.runner.Run(context.Background(), j.ID); !errors.Is(err, erasurejob.ErrReleasePending) {
-		t.Fatalf("Run = %v, want ErrReleasePending", err)
+	if err := h.runner.Run(context.Background(), j.ID); !errors.Is(err, erasurejob.ErrTerminalPipelinePending) {
+		t.Fatalf("Run = %v, want ErrTerminalPipelinePending", err)
 	}
 	if h.count("drain:acme") != 0 || h.count("release:acme") != 1 || h.count("delete:acme") != 0 {
 		t.Errorf("events = %v, want only the release gate", h.order())
@@ -489,8 +489,8 @@ func TestRunPendingLogsAReleaseWaitAtInfo_spec_12_8(t *testing.T) {
 	mu.Lock()
 	out := buf.String()
 	mu.Unlock()
-	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "pod release") {
-		t.Errorf("log = %q, want an Info line naming the release wait", out)
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "terminal pipeline") {
+		t.Errorf("log = %q, want an Info line naming the terminal pipeline wait", out)
 	}
 	if strings.Contains(out, "level=WARN") {
 		t.Errorf("log = %q, want no warning for the release wait", out)

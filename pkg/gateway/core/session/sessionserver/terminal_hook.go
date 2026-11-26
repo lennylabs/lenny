@@ -84,9 +84,11 @@ func (s *Server) BeginTerminal(sessionID string) (end func()) {
 //     the writer's terminal claim.
 //  9. Expire the pending elicitations the session's pod raised.
 //
-// Every step is best-effort and none fails the terminal write. The hook
-// writes no row except failWorkspaceSeal's relabel. It returns the row the
-// later steps saw.
+// Every step is best-effort and none fails the terminal write. The hook body
+// writes no row except failWorkspaceSeal's relabel. For a writer that calls
+// AfterTerminalWrite, the hook is the whole terminal pipeline, so
+// AfterTerminalWrite writes the pipeline mark after the body returns
+// (recordTerminalPipelineDone). It returns the row the later steps saw.
 //
 // Every step runs on the gateway-owned terminal context (terminalContext):
 // ctx detached from the writer's cancellation and bounded by what remains of
@@ -103,7 +105,9 @@ func (s *Server) AfterTerminalWrite(ctx context.Context, fromState session.State
 ) sessionstore.Session {
 	ctx, cancel := s.terminalContext(ctx, sess.TerminatedAt)
 	defer cancel()
-	return s.afterTerminalWrite(ctx, fromState, sess, signals)
+	sess = s.afterTerminalWrite(ctx, fromState, sess, signals)
+	s.recordTerminalPipelineDone(ctx, sess)
+	return sess
 }
 
 // afterTerminalWrite is the body of the post-terminal hook. It runs on the

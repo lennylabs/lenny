@@ -176,18 +176,18 @@ func overriddenHolds(j Job) map[Hold]bool {
 	return out
 }
 
-// runStoreDeleting runs the post-terminal release gate, then DeleteByUser
+// runStoreDeleting runs the terminal pipeline gate, then DeleteByUser
 // and the dead-letter redaction, merging each store's count into Deleted
 // with a per-store maximum so a re-run that deletes nothing never lowers a
 // recorded count. Without a BillingEraser it records the erasers done;
 // otherwise it advances to pseudonymizing.
 //
-// spec: §12.8 (Lifecycle fence and drain), §7.1 (Post-terminal window).
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session).
 func (r *Runner) runStoreDeleting(ctx context.Context, j Job) (Job, error) {
-	if r.releaseGate == nil {
-		return j, r.fail(ctx, j, FailurePhaseStoreDelete, ErrReleaseGateUnwired, nil)
+	if r.pipelineGate == nil {
+		return j, r.fail(ctx, j, FailurePhaseStoreDelete, ErrPipelineGateUnwired, nil)
 	}
-	if err := r.awaitRelease(ctx, j); err != nil {
+	if err := r.awaitTerminalPipelines(ctx, j); err != nil {
 		return j, err
 	}
 	res, eraseErr := r.erase.DeleteByUser(ctx, j.TenantID, j.UserID)
@@ -220,18 +220,19 @@ func (r *Runner) runStoreDeleting(ctx context.Context, j Job) (Job, error) {
 	return r.advance(ctx, j, PhasePseudonymizing, recordRedacted)
 }
 
-// awaitRelease runs the release gate for the job's user. It returns
-// ErrReleasePending, wrapped with the count, while a session is in its
-// post-terminal window, and the gate's error wrapped when the gate fails.
-// Neither writes the job, so the job stays in store_deleting with no
-// failure recorded. spec: §12.8 (Lifecycle fence and drain).
-func (r *Runner) awaitRelease(ctx context.Context, j Job) error {
-	pending, err := r.releaseGate(ctx, j.TenantID, j.UserID)
+// awaitTerminalPipelines runs the terminal pipeline gate for the job's user.
+// It returns ErrTerminalPipelinePending, wrapped with the count, while a
+// session's terminal pipeline may still write, and the gate's error wrapped
+// when the gate fails. Neither writes the job, so the job stays in
+// store_deleting with no failure recorded. spec: §12.8 (Lifecycle fence and
+// drain).
+func (r *Runner) awaitTerminalPipelines(ctx context.Context, j Job) error {
+	pending, err := r.pipelineGate(ctx, j.TenantID, j.UserID)
 	if err != nil {
-		return fmt.Errorf("post-terminal release gate: %w", err)
+		return fmt.Errorf("terminal pipeline gate: %w", err)
 	}
 	if len(pending) > 0 {
-		return fmt.Errorf("%w: %d session(s) in the post-terminal window", ErrReleasePending, len(pending))
+		return fmt.Errorf("%w: %d session(s) whose terminal pipeline has not ended", ErrTerminalPipelinePending, len(pending))
 	}
 	return nil
 }
