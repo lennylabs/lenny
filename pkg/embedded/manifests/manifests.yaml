@@ -4182,7 +4182,9 @@ spec:
             # §13.3 — the reconnect spacing of the revocation-cache
             # rehydration that EventBus subscription confirmations
             # trigger (auth.revocationReconnectSpacing, default 5s; the
-            # values schema refuses a value that is not a duration).
+            # values schema refuses a value that is not a duration). A
+            # null value renders no flag, so the gateway keeps
+            # its own 5s default rather than failing on an empty value.
             - --revocation-reconnect-spacing=5s
             # §10.3 — OIDC issuer + client registration the
             # gateway's token validation trusts. Required platform keys

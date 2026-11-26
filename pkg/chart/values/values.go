@@ -195,10 +195,11 @@ type Auth struct {
 	// gateway's revocation-cache rehydration, which the chart renders as
 	// lenny-gateway --revocation-reconnect-spacing. The pattern accepts a
 	// non-negative duration in the form Go's time.ParseDuration reads with
-	// ASCII units, and 0, so a value the flag would refuse, such as a bare
-	// number, fails at install time rather than at gateway startup. A YAML
-	// number is refused by the string type.
-	RevocationReconnectSpacing string `json:"revocationReconnectSpacing,omitempty" pattern:"^(0|(([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|ms|s|m|h))+)$" desc:"§13.3 reconnect spacing: the minimum interval between the starts of two revocation-cache rehydrations that the gateway's EventBus subscription confirmations trigger, as a duration such as 5s. Renders lenny-gateway --revocation-reconnect-spacing. 0 starts each such rehydration at once."`
+	// ASCII units, and the string "0", so a value the flag would refuse,
+	// such as a number without a unit, fails at install time rather than at
+	// gateway startup. A YAML number, 0 included, is refused by the string
+	// type.
+	RevocationReconnectSpacing string `json:"revocationReconnectSpacing,omitempty" pattern:"^(0|(([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|ms|s|m|h))+)$" desc:"§13.3 reconnect spacing: the minimum interval between the starts of two revocation-cache rehydrations that the gateway's EventBus subscription confirmations trigger, as a duration such as 5s. Renders lenny-gateway --revocation-reconnect-spacing. 0s starts each such rehydration at once."`
 }
 
 // KMS models the §10.2 / §17.8.2 KMS values the schema constrains. The

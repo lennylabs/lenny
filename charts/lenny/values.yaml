@@ -1994,7 +1994,8 @@ auth:
   # inside the spacing waits until it has passed, so a flapping Redis
   # connection costs at most one Postgres read per replica per spacing,
   # while the 30-second periodic rehydration keeps its schedule. A
-  # duration such as 5s; 0 starts every such rehydration at once. The
+  # duration string such as 5s; 0s starts every such rehydration at once,
+  # and a null value leaves the gateway's own 5s default. The
   # chart renders it into --revocation-reconnect-spacing on lenny-gateway.
   revocationReconnectSpacing: 5s
   # oidc names the OIDC issuer the gateway's Bearer-token validation

@@ -37,7 +37,7 @@
           "type": "integer"
         },
         "revocationReconnectSpacing": {
-          "description": "§13.3 reconnect spacing: the minimum interval between the starts of two revocation-cache rehydrations that the gateway's EventBus subscription confirmations trigger, as a duration such as 5s. Renders lenny-gateway --revocation-reconnect-spacing. 0 starts each such rehydration at once.",
+          "description": "§13.3 reconnect spacing: the minimum interval between the starts of two revocation-cache rehydrations that the gateway's EventBus subscription confirmations trigger, as a duration such as 5s. Renders lenny-gateway --revocation-reconnect-spacing. 0s starts each such rehydration at once.",
           "pattern": "^(0|(([0-9]+([.][0-9]*)?|[.][0-9]+)(ns|us|ms|s|m|h))+)$",
           "type": "string"
         },

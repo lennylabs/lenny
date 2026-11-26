@@ -173,6 +173,18 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --revocation-reconnect-spacing=0s
+  - it: renders no --revocation-reconnect-spacing for a null auth.revocationReconnectSpacing, so the gateway keeps its default
+    documentSelector:
+      path: kind
+      value: Deployment
+    set:
+      auth.revocationReconnectSpacing: null
+    asserts:
+      - notExists:
+          path: spec.template.spec.containers[0].args[?(@ =~ /^--revocation-reconnect-spacing/)]
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --multi-tenant=false
   - it: refuses an auth.revocationReconnectSpacing without a unit at schema validation
     set:
       auth.revocationReconnectSpacing: "5"

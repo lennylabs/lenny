@@ -246,8 +246,8 @@ func TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2(t *testing.T) {
 // TestRevocationReconnectSpacingIsADuration pins the schema of
 // auth.revocationReconnectSpacing, which the chart renders as lenny-gateway
 // --revocation-reconnect-spacing: a non-negative duration string passes, and
-// a bare number, a negative or unitless value, and a YAML number, 0 included, are
-// refused at install time rather than at gateway startup.
+// a string without a unit, a negative value, and a YAML number, 0 included,
+// are refused at install time rather than at gateway startup.
 //
 // spec: §13.3 (Credential Flow)
 func TestRevocationReconnectSpacingIsADuration(t *testing.T) {
