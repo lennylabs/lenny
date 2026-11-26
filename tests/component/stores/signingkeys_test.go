@@ -93,25 +93,39 @@ func TestSigningKeyStoreSharesOneWrappedKeyBetweenReplicas(t *testing.T) {
 		t.Errorf("kek_alias = %q, want %q", alias, signingkeys.AliasUploadTokenSigning)
 	}
 
+	// The next key became active ten minutes ago, so the previous key's
+	// verification time ended five minutes ago on every clock.
 	next := signingkeys.Record{
 		Purpose: signingkeys.PurposeUploadToken, KeyID: "next", Algorithm: signingkeys.AlgorithmHMACSHA256,
-		KEKAlias: signingkeys.AliasUploadTokenSigning, WrappedSecret: wrapped, RotationSlot: 2, ActiveFrom: now.Add(time.Minute),
+		KEKAlias: signingkeys.AliasUploadTokenSigning, WrappedSecret: wrapped, RotationSlot: 2, ActiveFrom: now.Add(-10 * time.Minute),
 	}
 	if ok, err := store.Insert(ctx, next, 5*time.Minute); !ok || err != nil {
 		t.Fatalf("Insert next = %v, %v", ok, err)
 	}
-	recs, err := store.List(ctx, signingkeys.PurposeUploadToken, now)
+	recs, err := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
 	if err != nil || len(recs) != 2 {
 		t.Fatalf("List = %d keys, %v; want 2", len(recs), err)
 	}
 	if !recs[0].RetireAfter.Equal(next.ActiveFrom) || !recs[0].DeleteAfter.Equal(next.ActiveFrom.Add(5*time.Minute)) {
 		t.Errorf("previous key retire %s delete %s, want %s and %s", recs[0].RetireAfter, recs[0].DeleteAfter, next.ActiveFrom, next.ActiveFrom.Add(5*time.Minute))
 	}
-	if n, err := store.DeleteExpired(ctx, signingkeys.PurposeUploadToken, next.ActiveFrom.Add(5*time.Minute)); err != nil || n != 1 {
-		t.Errorf("DeleteExpired = %d, %v; want 1", n, err)
+	if live, _ := store.List(ctx, signingkeys.PurposeUploadToken, now); len(live) != 1 {
+		t.Errorf("keys still verifying = %d, want the next key alone", len(live))
 	}
-	if recs, _ := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{}); len(recs) != 1 || recs[0].KeyID != "next" {
-		t.Errorf("keys after the sweep = %+v, want the next key alone", recs)
+	// A caller clock far ahead of the database's deletes only what the
+	// database clock also holds expired.
+	future := signingkeys.Record{
+		Purpose: signingkeys.PurposeUploadToken, KeyID: "future", Algorithm: signingkeys.AlgorithmHMACSHA256,
+		KEKAlias: signingkeys.AliasUploadTokenSigning, WrappedSecret: wrapped, RotationSlot: 3, ActiveFrom: now.Add(time.Hour),
+	}
+	if ok, err := store.Insert(ctx, future, 5*time.Minute); !ok || err != nil {
+		t.Fatalf("Insert future = %v, %v", ok, err)
+	}
+	if n, err := store.DeleteExpired(ctx, signingkeys.PurposeUploadToken, now.Add(24*time.Hour)); err != nil || n != 1 {
+		t.Errorf("DeleteExpired with a fast caller clock = %d, %v; want the one key expired on the database clock", n, err)
+	}
+	if recs, _ := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{}); len(recs) != 2 || recs[0].KeyID != "next" {
+		t.Errorf("keys after the sweep = %+v, want next and future", recs)
 	}
 }
 
