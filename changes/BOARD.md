@@ -8,11 +8,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 3 |
+| Building | 1 |
 | Ready | 6 |
 | Waiting on decisions | 32 |
-| Blocked | 161 |
-| Landed | 28 |
+| Blocked | 162 |
+| Landed | 30 |
 | Cancelled | 3 |
 
 ## Program v1
@@ -54,8 +54,6 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0171.S3](0171-revocation-rehydrate-on-reconnect/steps.md#0171s3-a-chart-value-for-the-reconnect-spacing) | A chart value for the reconnect spacing | Building |  |
-| [0172.S12](0172-gate-speed/steps.md#0172s12-full-runs-in-their-own-concurrency-group-and-filing-a-test-that-a-rerun-passes) | Full runs in their own concurrency group, and filing a test that a rerun passes | Building |  |
 | [0177.S1](0177-shared-upload-token-keys/steps.md#0177s1-shared-signing-keys-consumed-state-and-receipt-signing) | Shared signing keys, consumed state, and receipt signing | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
@@ -254,13 +252,16 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
+| [0177.S2](0177-shared-upload-token-keys/steps.md#0177s2-the-receipt-key-set-the-verification-time-of-replaced-keys-and-the-check-against-new_hash) | The receipt key set, the verification time of replaced keys, and the check against new_hash | Blocked | 0177.S1 |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Blocked | 0178.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
 | [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Landed |  |
+| [0171.S3](0171-revocation-rehydrate-on-reconnect/steps.md#0171s3-a-chart-value-for-the-reconnect-spacing) | A chart value for the reconnect spacing | Landed |  |
 | [0172.S1](0172-gate-speed/steps.md#0172s1-selection-width-and-the-verdicts-selection-record) | Selection width and the verdict's selection record | Landed |  |
 | [0172.S10](0172-gate-speed/steps.md#0172s10-the-tiers-of-the-gate-run-that-the-coverage-check-accepts) | The tiers of the gate run that the coverage check accepts | Landed |  |
 | [0172.S11](0172-gate-speed/steps.md#0172s11-a-narrower-check-before-a-merge) | A narrower check before a merge | Landed |  |
+| [0172.S12](0172-gate-speed/steps.md#0172s12-full-runs-in-their-own-concurrency-group-and-filing-a-test-that-a-rerun-passes) | Full runs in their own concurrency group, and filing a test that a rerun passes | Landed |  |
 | [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Landed |  |
 | [0172.S3](0172-gate-speed/steps.md#0172s3-no-coverage-profile-in-the-gates-unit-run) | No coverage profile in the gate's unit run | Landed |  |
 | [0172.S4](0172-gate-speed/steps.md#0172s4-the-gates-tier-and-coverage-options-and-the-check-before-a-merge) | The gate's tier and coverage options, and the check before a merge | Landed |  |
@@ -318,9 +319,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
-| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 2 of 3 | 0 |
-| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 11 of 12 | 1 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `Implemented` | 3 of 3 | 0 |
+| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 12 of 12 | 1 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 1 of 2 | 1 |
-| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 0 of 1 | 3 |
+| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 0 of 2 | 1 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `Decided` | 0 of 2 | 0 |
