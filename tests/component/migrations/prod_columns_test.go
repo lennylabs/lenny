@@ -678,9 +678,9 @@ var prodMigrationSchema = []struct {
 	// 0203 adds the §13.3 lineage depth column to issued_tokens, which the
 	// lineage depth cap of step (1a) reads.
 	{migration: "0203", table: "issued_tokens", columns: []string{"depth"}},
-	// 0205 adds the §7.1 single-use record of the uploadToken, which the
+	// 0204 adds the §7.1 single-use record of the uploadToken, which the
 	// finalize ready write sets and every replica reads on verification.
-	{migration: "0205", table: "sessions", columns: []string{"upload_token_consumed_at"}},
+	{migration: "0204", table: "sessions", columns: []string{"upload_token_consumed_at"}},
 }
 
 // renamedTables maps a table an earlier migration created or altered to

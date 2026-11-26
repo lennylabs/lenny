@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package pgstore is the Postgres signingkeys.Store over the
-// platform_signing_keys table (migration 0205). The table is platform-
+// platform_signing_keys table (migration 0204). The table is platform-
 // scoped, with no tenant_id column and no RLS, so the store runs plain
 // queries without an app.current_tenant context. The secret column holds
 // only the wrapped form the caller's Sealer produced.

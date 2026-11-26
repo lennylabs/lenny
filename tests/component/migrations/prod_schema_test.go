@@ -67,7 +67,7 @@ var prodTables = []struct{ migration, name string }{
 	// §13.3 impersonation start records.
 	{"0201", "impersonation_starts"},
 	// §7.1 shared upload-token signing keys.
-	{"0205", "platform_signing_keys"},
+	{"0204", "platform_signing_keys"},
 }
 
 // execTenant runs sql inside a transaction that has set

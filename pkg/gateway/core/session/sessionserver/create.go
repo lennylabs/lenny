@@ -504,9 +504,9 @@ func (s *Server) mintUploadToken(w http.ResponseWriter, r *http.Request, row *se
 	tok, parsed, err := s.uploadIssuer.IssueDetailed(row.ID, s.uploadTokenTTL)
 	if err != nil {
 		s.rollbackClaim(r.Context(), claim, row.ID)
-		// spec: §16.3 — a bad session id does not become valid on retry
-		// (PERMANENT); a replica whose shared signing keys could not be
-		// refreshed mints again once a refresh succeeds (TRANSIENT).
+		// The §16.3 category: a bad session id does not become valid on
+		// retry (PERMANENT); a replica whose shared signing keys could not
+		// be refreshed mints again once a refresh succeeds (TRANSIENT).
 		tracing.RecordError(span, tracing.CategorizeError(err, uploadTokenErrorCategory(err)))
 		s.writeSessionCreationFailed(w, "upload_token_issuance_failed",
 			"upload token issuance failed: "+err.Error())

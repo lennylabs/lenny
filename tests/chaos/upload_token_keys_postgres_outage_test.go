@@ -95,7 +95,7 @@ func TestUploadTokenKeysUnderAPostgresOutage(t *testing.T) {
 	keys := uploadtoken.NewSharedKeys(ring)
 	issuer := uploadtoken.NewIssuer(keys, clock.Now)
 	verifier := uploadtoken.NewVerifier(keys, nil, clock.Now)
-	tok, err := issuer.Issue("sess-outage", time.Hour)
+	tok, err := issuer.Issue("sess-outage", 48*time.Hour)
 	if err != nil {
 		t.Fatal(err)
 	}

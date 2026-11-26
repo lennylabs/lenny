@@ -1775,7 +1775,7 @@ func scanSession(row pgx.Row) (sessionstore.Session, error) {
 		// §11.3 — expiry_warned_cap_seconds from migration 0196, the
 		// deadline the session_expiring_soon warning was claimed for.
 		&s.ExpiryWarnedCapSeconds,
-		// §7.1 — upload_token_consumed_at from migration 0205. NULL until
+		// §7.1 — upload_token_consumed_at from migration 0204. NULL until
 		// FinalizeWorkspace consumes the uploadToken.
 		&uploadTokenConsumedAt,
 	); err != nil {

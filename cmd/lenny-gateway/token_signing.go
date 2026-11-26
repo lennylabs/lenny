@@ -83,9 +83,9 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store) {
 		keySet.Len(), keySet.Signing().KeyID)
 
 	// ----- §7.1 uploadToken shared signing keys -----
-	// Every replica signs and verifies upload tokens with the keys of the
-	// upload-token purpose in platform_signing_keys, so a token minted on
-	// one replica verifies on any other. The ring is opened after the KMS
+	// The issuer, the verifier, and the idempotency redactor read the
+	// upload-token purpose's keys in platform_signing_keys, which every
+	// replica loads, so the replicas agree on every token. The ring is opened after the KMS
 	// provider that unwraps the keys and after the JWT key set, so a KMS
 	// that cannot be reached is reported as the key-set load failure, and a
 	// replica that cannot load the upload-token keys does not start. The

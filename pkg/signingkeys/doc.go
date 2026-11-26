@@ -11,12 +11,12 @@
 // start, writes the first key when the purpose has none, and then, on a
 // fixed refresh interval, writes the next key one publish lead ahead of
 // its activation when the active key is due for rotation, deletes the
-// keys whose verification time has passed, and reloads the keys. Because
-// the publish lead is longer than the refresh interval, every replica has
-// loaded a key before any replica signs with it. A unique rotation slot
+// keys whose verification time has passed, and reloads the keys. The
+// publish lead is longer than the refresh interval, so a published key
+// reaches every ring before its activation instant. A unique rotation slot
 // per purpose makes concurrent writers of the next key produce one key.
 //
-// A Ring signs with the newest key whose activation instant has passed
+// A Ring signs with the latest key that has reached its activation instant
 // and verifies with every key it holds. When its last successful reload
 // is older than the stale bound (the upload-token overlap window), it
 // stops handing out a signing key, so a replica that cannot reach the

@@ -83,10 +83,11 @@ func (s *AWSServer) PublicKey() *ecdsa.PublicKey { return &s.key.PublicKey }
 func (s *AWSServer) KeyID() string { return awsKeyID }
 
 // platformKEKAliases are the platform-scoped KEK aliases a gateway seals
-// under: the §4.9 credential-lease KEK of the Postgres lease store. An AWS
-// provider refuses an alias its map does not name, so a gateway started
-// against the server without them exits during startup.
-var platformKEKAliases = []string{"platform:credential-leases"}
+// under: the §4.9 credential-lease KEK of the Postgres lease store and the
+// §7.1 KEK of the shared upload-token signing keys. An AWS provider refuses
+// an alias its map does not name, so a gateway started against the server
+// without them exits during startup.
+var platformKEKAliases = []string{"platform:credential-leases", "platform:upload-token-signing"}
 
 // signingAliases are the asymmetric signing aliases a gateway loads at
 // startup: platform:jwt-signing and the §12.8 redaction receipt key
