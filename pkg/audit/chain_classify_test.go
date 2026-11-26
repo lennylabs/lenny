@@ -298,7 +298,7 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 				// pre-redaction hash under a trusted key.
 				for _, row := range rows {
 					if row.Seq == seq {
-						receipts[seq] = lawfulReceipt(t, row)
+						receipts[seq] = lawfulReceipt(t, row, row.Payload)
 					}
 				}
 			}

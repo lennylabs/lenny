@@ -31,7 +31,7 @@ func redactedChain(t *testing.T) (*Chain, Row) {
 func TestReceiptVerifiesUnderTheTrustedKey(t *testing.T) {
 	t.Parallel()
 	c, row := redactedChain(t)
-	rcpt := lawfulReceipt(t, row)
+	rcpt := lawfulReceipt(t, row, json.RawMessage(`{"redacted":true}`))
 	if err := receiptTestKeySet(t).VerifyReceipt(rcpt); err != nil {
 		t.Fatalf("VerifyReceipt: %v", err)
 	}
@@ -127,12 +127,21 @@ func TestReceiptThatDoesNotVerifyLeavesTheRowBroken(t *testing.T) {
 				return signReceiptWith(t, receiptTestKey(t), testReceiptKeyID, r)
 			},
 		},
+		{
+			name: "a signed new_hash of other redacted content",
+			mutate: func(r RedactionReceipt, row Row) RedactionReceipt {
+				other := row
+				other.Payload = json.RawMessage(`{"redacted":true,"note":"other content"}`)
+				r.NewHash = computeHash(other)
+				return signReceiptWith(t, receiptTestKey(t), testReceiptKeyID, r)
+			},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 			c, row := redactedChain(t)
-			rcpt := tc.mutate(lawfulReceipt(t, row), row)
+			rcpt := tc.mutate(lawfulReceipt(t, row, json.RawMessage(`{"redacted":true}`)), row)
 			var v ReceiptVerifier = receiptTestKeySet(t)
 			if tc.verifier != nil {
 				v = tc.verifier(t)
@@ -224,5 +233,63 @@ func TestReceiptKeySetRefusesAnIncompleteKey(t *testing.T) {
 	}
 	if err := nilSet.VerifyReceipt(RedactionReceipt{Signature: []byte{1}, KeyID: "a"}); !errors.Is(err, ErrReceiptKeyUnknown) {
 		t.Errorf("nil set VerifyReceipt = %v, want ErrReceiptKeyUnknown", err)
+	}
+}
+
+// TestARedactedRowRewrittenAgainAfterItsReceiptReadsBroken pins that a
+// receipt authorizes only the redacted content it was signed for: after a
+// lawful redaction verifies as redacted_gdpr, a second rewrite of the row's
+// payload that keeps the redaction marker leaves the receipt's signed
+// new_hash unequal to the row's content hash, so the row reads broken in
+// the chain walk and in the per-row classification.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
+func TestARedactedRowRewrittenAgainAfterItsReceiptReadsBroken(t *testing.T) {
+	t.Parallel()
+	c, row := redactedChain(t)
+	redacted := json.RawMessage(`{"redacted":true,"event_type":"e1"}`)
+	c.WithReceiptVerifier(receiptTestKeySet(t))
+	if err := c.Redact(1, redacted, lawfulReceipt(t, row, redacted)); err != nil {
+		t.Fatal(err)
+	}
+	if got := c.Verify().Integrity; got != ChainRedactedGDPR {
+		t.Fatalf("lawful redaction: Verify = %q, want redacted_gdpr", got)
+	}
+
+	c.mu.Lock()
+	c.rows[0].Payload = json.RawMessage(`{"redacted":true,"event_type":"e1","planted":"bob@acme.com"}`)
+	c.mu.Unlock()
+	if got := c.Verify(); got.Integrity != ChainBroken || got.BreakSeq != 1 {
+		t.Errorf("rewritten again: Verify = %q at %d (%s), want broken at 1", got.Integrity, got.BreakSeq, got.Detail)
+	}
+	if got := c.VerifyRows()[1]; got != ChainBroken {
+		t.Errorf("rewritten again: VerifyRows[1] = %q, want broken", got)
+	}
+}
+
+// TestReceiptMatchesRowChecksEachBinding covers each binding of a receipt to
+// its redacted row: the row id, the sequence number, the preserved
+// pre-redaction hash, and the recomputed post-redaction content hash.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestReceiptMatchesRowChecksEachBinding(t *testing.T) {
+	t.Parallel()
+	row := Row{ID: "a", Seq: 7, Hash: "0a"}
+	good := RedactionReceipt{AuditEventID: "a", RedactedSeq: 7, OriginalHash: "0a", NewHash: "0b"}
+	if !ReceiptMatchesRow(good, row, "0b") {
+		t.Fatal("a bound receipt does not match")
+	}
+	cases := map[string]func(r *RedactionReceipt){
+		"another row id":        func(r *RedactionReceipt) { r.AuditEventID = "b" },
+		"another sequence":      func(r *RedactionReceipt) { r.RedactedSeq = 8 },
+		"another original hash": func(r *RedactionReceipt) { r.OriginalHash = "0c" },
+		"another new hash":      func(r *RedactionReceipt) { r.NewHash = "0c" },
+	}
+	for name, mutate := range cases {
+		r := good
+		mutate(&r)
+		if ReceiptMatchesRow(r, row, "0b") {
+			t.Errorf("%s: matched", name)
+		}
 	}
 }

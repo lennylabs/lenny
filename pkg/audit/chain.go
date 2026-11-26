@@ -315,7 +315,7 @@ func (c *Chain) Verify() VerifyResult {
 		want := computeHash(row)
 		if want != row.Hash {
 			if row.Redacted {
-				if c.receiptedRedaction(row) {
+				if c.receiptedRedaction(row, want) {
 					thisRedacted = true
 				} else {
 					return VerifyResult{
@@ -420,8 +420,8 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 	// recomputation (its payload was rewritten in place while Hash was
 	// preserved); a valid signed receipt reclassifies the break as lawful.
 	thisRedacted := false
-	if computeHash(row) != row.Hash {
-		if !c.receiptedRedaction(row) {
+	if content := computeHash(row); content != row.Hash {
+		if !c.receiptedRedaction(row, content) {
 			return ChainBroken
 		}
 		thisRedacted = true
@@ -465,19 +465,21 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 
 // receiptedRedaction reports whether row is a GDPR redaction carrying a
 // receipt for this row, in this tenant, whose original hash matches the
-// row's preserved hash and whose signature verifies under a trusted key.
-// It fails closed: with no verifier, an unknown key, a forged signature,
-// or any field changed after signing, the row is not a lawful redaction.
-// The caller holds c.mu.
+// row's preserved hash, whose new hash matches content (the row's content
+// hash recomputed from its current columns), and whose signature verifies
+// under a trusted key. The new-hash match pins the receipt to the redacted
+// content it was signed for, so a redacted row rewritten again after its
+// receipt was signed does not pass. It fails closed: with no verifier, an
+// unknown key, a forged signature, or any field changed after signing, the
+// row is not a lawful redaction. The caller holds c.mu.
 //
 // spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
-func (c *Chain) receiptedRedaction(row Row) bool {
+func (c *Chain) receiptedRedaction(row Row, content string) bool {
 	if !row.Redacted || c.verifier == nil {
 		return false
 	}
 	rcpt, ok := c.receipts[row.Seq]
-	if !ok || rcpt.OriginalHash != row.Hash || rcpt.RedactedSeq != row.Seq ||
-		rcpt.TenantID != c.tenantID || rcpt.AuditEventID != row.ID {
+	if !ok || !ReceiptMatchesRow(rcpt, row, content) || rcpt.TenantID != c.tenantID {
 		return false
 	}
 	return c.verifier.VerifyReceipt(rcpt) == nil

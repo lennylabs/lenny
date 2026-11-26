@@ -5,6 +5,7 @@ package integrity
 import (
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"sort"
 	"time"
@@ -38,14 +39,17 @@ type RedactionReceiptResult struct {
 // receipt is a compliance incident.
 //
 // A receipt counts as missing when the row has none, when the receipt
-// names another audit row or tenant, or when verifier does not verify its
-// signature: an unsigned receipt, a key identifier outside the trusted
-// set, and a signature that does not cover the stored tuple all count. A
+// names another audit row or tenant, when the row's content hash
+// recomputed from its stored columns differs from the receipt's new_hash,
+// or when verifier does not verify its signature: an unsigned receipt, a
+// key identifier outside the trusted set, and a signature that does not
+// cover the stored tuple all count. The new_hash match catches a redacted
+// row whose payload was rewritten again after its receipt was signed. A
 // nil verifier trusts no receipt, so every redaction-marked row counts.
-// The scan checks the signature only. The chain walk and the
-// match of the receipt's original_hash against the redacted row's
-// preserved pre-redaction hash are performed by external verifiers and by
-// the audit chain verifier, which read the successor row's prev_hash.
+// The chain walk and the match of the receipt's original_hash against the
+// redacted row's preserved pre-redaction hash are performed by external
+// verifiers and by the audit chain verifier, which read the successor
+// row's prev_hash.
 //
 // The scan reads only redaction-marked rows and their receipts, so it does
 // not walk the full ledger. A query error (for example, the
@@ -57,7 +61,8 @@ type RedactionReceiptResult struct {
 // (Alerting Rules and SLOs)
 func CheckRedactionReceipts(ctx context.Context, db Querier, verifier audit.ReceiptVerifier) ([]RedactionReceiptResult, error) {
 	rows, err := db.Query(ctx, `
-		SELECT a.tenant_id, a.id::text,
+		SELECT a.tenant_id, a.id::text, a.sequence_number, a.event_type,
+			a.event_schema_version, a.payload, a.created_at, a.prev_hash,
 			COALESCE(r.receipt_id::text, ''), COALESCE(r.audit_event_id::text, ''),
 			COALESCE(r.tenant_id, ''), COALESCE(r.sequence_number, 0),
 			COALESCE(r.original_hash, ''::bytea), COALESCE(r.new_hash, ''::bytea),
@@ -76,11 +81,12 @@ func CheckRedactionReceipts(ctx context.Context, db Querier, verifier audit.Rece
 	defer rows.Close()
 	missing := map[string]int{}
 	for rows.Next() {
-		tenant, rowID, rcpt, err := scanRedactedRow(rows)
+		row, rcpt, err := scanRedactedRow(rows)
 		if err != nil {
 			return nil, err
 		}
-		if !receiptVerifies(verifier, tenant, rowID, rcpt) {
+		tenant := row.TenantID
+		if !receiptVerifies(verifier, row, rcpt) {
 			missing[tenant]++
 		}
 	}
@@ -96,32 +102,45 @@ func CheckRedactionReceipts(ctx context.Context, db Querier, verifier audit.Rece
 }
 
 // scanRedactedRow reads one row of the CheckRedactionReceipts scan: the
-// redacted row's tenant and id, and its receipt, whose ReceiptID is empty
-// when the row has none.
-func scanRedactedRow(rows pgx.Rows) (string, string, audit.RedactionReceipt, error) {
+// redacted audit row with the columns its content hash covers, and its
+// receipt, whose ReceiptID is empty when the row has none.
+func scanRedactedRow(rows pgx.Rows) (audit.Row, audit.RedactionReceipt, error) {
 	var (
-		tenant, rowID     string
+		row               audit.Row
+		rowSeq, seq       int64
+		payload, prevHash []byte
 		r                 audit.RedactionReceipt
-		seq               int64
 		origHash, newHash []byte
 		ts                time.Time
 	)
-	if err := rows.Scan(&tenant, &rowID, &r.ReceiptID, &r.AuditEventID, &r.TenantID, &seq,
+	if err := rows.Scan(&row.TenantID, &row.ID, &rowSeq, &row.EventType,
+		&row.EventSchemaVersion, &payload, &row.Timestamp, &prevHash,
+		&r.ReceiptID, &r.AuditEventID, &r.TenantID, &seq,
 		&origHash, &newHash, &r.ErasureJobID, &r.LegalBasis, &r.RedactorIdentity,
 		&ts, &r.Signature, &r.KeyID); err != nil {
-		return "", "", audit.RedactionReceipt{}, fmt.Errorf("integrity: scan redacted row: %w", err)
+		return audit.Row{}, audit.RedactionReceipt{}, fmt.Errorf("integrity: scan redacted row: %w", err)
 	}
+	row.Seq = uint64(rowSeq)
+	row.Payload = json.RawMessage(payload)
+	row.Timestamp = row.Timestamp.UTC()
+	row.PrevHash = hex.EncodeToString(prevHash)
 	r.RedactedSeq = uint64(seq)
 	r.OriginalHash = hex.EncodeToString(origHash)
 	r.NewHash = hex.EncodeToString(newHash)
 	r.Timestamp = ts.UTC()
-	return tenant, rowID, r, nil
+	return row, r, nil
 }
 
 // receiptVerifies reports whether rcpt is a receipt for the redacted row
-// rowID of tenant whose signature verifier accepts. It fails closed.
-func receiptVerifies(verifier audit.ReceiptVerifier, tenant, rowID string, rcpt audit.RedactionReceipt) bool {
-	if verifier == nil || rcpt.ReceiptID == "" || rcpt.TenantID != tenant || rcpt.AuditEventID != rowID {
+// whose new_hash equals the row's recomputed content hash and whose
+// signature verifier accepts. It fails closed.
+//
+// spec: §12.8 (Compliance Interfaces)
+func receiptVerifies(verifier audit.ReceiptVerifier, row audit.Row, rcpt audit.RedactionReceipt) bool {
+	if verifier == nil || rcpt.ReceiptID == "" || rcpt.TenantID != row.TenantID || rcpt.AuditEventID != row.ID {
+		return false
+	}
+	if rcpt.NewHash != audit.ComputeHash(row) {
 		return false
 	}
 	return verifier.VerifyReceipt(rcpt) == nil

@@ -39,12 +39,13 @@ func mustReceiptKeySet(k *ecdsa.PrivateKey) *audit.ReceiptKeySet {
 	return set
 }
 
-// signedTestReceipt returns a receipt for row, bound to its preserved hash
-// and signed under the test key, as the erasure job writes one.
+// signedTestReceipt returns a receipt for the redacted row, bound to its
+// preserved hash and to its current content hash as new_hash,
+// signed under the test key, as the erasure job writes one.
 func signedTestReceipt(row audit.Row) audit.RedactionReceipt {
 	r := audit.RedactionReceipt{
 		ReceiptID: "00000000-0000-4000-8000-0000000000a1", AuditEventID: row.ID, TenantID: row.TenantID,
-		RedactedSeq: row.Seq, OriginalHash: row.Hash, NewHash: "0b",
+		RedactedSeq: row.Seq, OriginalHash: row.Hash, NewHash: audit.ComputeHash(row),
 		ErasureJobID: "00000000-0000-4000-8000-0000000000b1", LegalBasis: "gdpr_art17",
 		RedactorIdentity: "erasure-job:test", Timestamp: time.Date(2026, 11, 26, 9, 0, 0, 0, time.UTC),
 		KeyID: testReceiptKeyID,

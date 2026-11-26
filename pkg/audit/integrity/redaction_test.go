@@ -36,13 +36,25 @@ func newReceiptFixture(t *testing.T) receiptFixture {
 	return receiptFixture{key: key, keys: keys}
 }
 
-// signed returns a receipt for the row rowID of tenant at seq, signed under
-// the fixture key.
-func (f receiptFixture) signed(t *testing.T, tenant, rowID string, seq uint64) audit.RedactionReceipt {
+// redactedRow returns a redaction-marked audit row of tenant at seq with
+// id rowID, as the scan reads it from audit_log.
+func redactedRow(tenant, rowID string, seq uint64) audit.Row {
+	return audit.Row{
+		ID: rowID, Seq: seq, TenantID: tenant, EventType: "session.created",
+		EventSchemaVersion: audit.DefaultEventSchemaVersion,
+		Payload:            []byte(`{"redacted":true,"event_type":"session.created","error_class":"unknown"}`),
+		Timestamp:          time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC),
+		PrevHash:           "0a0b",
+	}
+}
+
+// signed returns a receipt for row, whose new_hash is the row's content
+// hash, signed under the fixture key.
+func (f receiptFixture) signed(t *testing.T, row audit.Row) audit.RedactionReceipt {
 	t.Helper()
 	r := audit.RedactionReceipt{
-		ReceiptID: "00000000-0000-4000-8000-0000000000a1", AuditEventID: rowID, TenantID: tenant,
-		RedactedSeq: seq, OriginalHash: "0a0b", NewHash: "0c0d",
+		ReceiptID: "00000000-0000-4000-8000-0000000000a1", AuditEventID: row.ID, TenantID: row.TenantID,
+		RedactedSeq: row.Seq, OriginalHash: "0a0c", NewHash: audit.ComputeHash(row),
 		ErasureJobID: "00000000-0000-4000-8000-0000000000b1", LegalBasis: "gdpr_art17",
 		RedactorIdentity: "erasure-job:j", Timestamp: audit.ReceiptTimestamp(time.Now()),
 		KeyID: "audit-key-v1",
@@ -66,9 +78,10 @@ func (f receiptFixture) signed(t *testing.T, tenant, rowID string, seq uint64) a
 // scanRow renders a redacted row and its receipt as the scan returns
 // them; a zero receipt renders as the COALESCE defaults of a row with no
 // receipt.
-func scanRow(tenant, rowID string, r audit.RedactionReceipt) []any {
+func scanRow(row audit.Row, r audit.RedactionReceipt) []any {
 	orig, _ := hex.DecodeString(r.OriginalHash)
 	nh, _ := hex.DecodeString(r.NewHash)
+	prev, _ := hex.DecodeString(row.PrevHash)
 	ts := r.Timestamp
 	if ts.IsZero() {
 		ts = time.Unix(0, 0).UTC()
@@ -78,7 +91,9 @@ func scanRow(tenant, rowID string, r audit.RedactionReceipt) []any {
 		sig = []byte{}
 	}
 	return []any{
-		tenant, rowID, r.ReceiptID, r.AuditEventID, r.TenantID, int64(r.RedactedSeq),
+		row.TenantID, row.ID, int64(row.Seq), row.EventType, row.EventSchemaVersion,
+		[]byte(row.Payload), row.Timestamp, prev,
+		r.ReceiptID, r.AuditEventID, r.TenantID, int64(r.RedactedSeq),
 		orig, nh, r.ErasureJobID, r.LegalBasis, r.RedactorIdentity, ts, sig, r.KeyID,
 	}
 }
@@ -102,33 +117,41 @@ func TestCheckRedactionReceiptsClean(t *testing.T) {
 // TestCheckRedactionReceiptsCountsEveryReceiptThatDoesNotVerify pins that a
 // redaction-marked row counts as missing when it has no receipt, when its
 // receipt is unsigned, signed under an untrusted key, altered after
-// signing, or bound to another row, and that a row whose receipt verifies
-// does not count. Results are per tenant and sorted by tenant.
+// signing, or bound to another row, and when the row was rewritten again
+// after its receipt was signed, so its content hash differs from the
+// receipt's new_hash; a row whose receipt verifies does not count. Results are per tenant and sorted by tenant.
 //
 // spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
 func TestCheckRedactionReceiptsCountsEveryReceiptThatDoesNotVerify(t *testing.T) {
 	f := newReceiptFixture(t)
-	good := f.signed(t, "acme", "row-1", 1)
-	tampered := f.signed(t, "globex", "row-3", 3)
+	row := redactedRow
+	good := f.signed(t, row("acme", "row-1", 1))
+	tampered := f.signed(t, row("globex", "row-3", 3))
 	tampered.LegalBasis = "operator_acknowledged_override"
-	unsigned := f.signed(t, "globex", "row-4", 4)
+	unsigned := f.signed(t, row("globex", "row-4", 4))
 	unsigned.Signature = nil
-	untrusted := f.signed(t, "globex", "row-5", 5)
+	untrusted := f.signed(t, row("globex", "row-5", 5))
 	untrusted.KeyID = "attacker-key"
-	otherRow := f.signed(t, "globex", "row-elsewhere", 6)
+	otherRow := f.signed(t, row("globex", "row-elsewhere", 6))
+	// A row rewritten again after its receipt was signed: the receipt's
+	// signed new_hash is the content hash of the first redaction.
+	rewritten := row("globex", "row-7", 7)
+	rewrittenReceipt := f.signed(t, rewritten)
+	rewritten.Payload = []byte(`{"redacted":true,"event_type":"session.created","planted":"bob@acme.com"}`)
 	q := &scriptQuerier{redaction: [][]any{
-		scanRow("acme", "row-1", good),
-		scanRow("acme", "row-2", audit.RedactionReceipt{}),
-		scanRow("globex", "row-3", tampered),
-		scanRow("globex", "row-4", unsigned),
-		scanRow("globex", "row-5", untrusted),
-		scanRow("globex", "row-6", otherRow),
+		scanRow(row("acme", "row-1", 1), good),
+		scanRow(row("acme", "row-2", 2), audit.RedactionReceipt{}),
+		scanRow(row("globex", "row-3", 3), tampered),
+		scanRow(row("globex", "row-4", 4), unsigned),
+		scanRow(row("globex", "row-5", 5), untrusted),
+		scanRow(row("globex", "row-6", 6), otherRow),
+		scanRow(rewritten, rewrittenReceipt),
 	}}
 	got, err := CheckRedactionReceipts(context.Background(), q, f.keys)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	want := []RedactionReceiptResult{{TenantID: "acme", Missing: 1}, {TenantID: "globex", Missing: 4}}
+	want := []RedactionReceiptResult{{TenantID: "acme", Missing: 1}, {TenantID: "globex", Missing: 5}}
 	if len(got) != len(want) || got[0] != want[0] || got[1] != want[1] {
 		t.Fatalf("CheckRedactionReceipts = %+v, want %+v", got, want)
 	}
@@ -141,7 +164,7 @@ func TestCheckRedactionReceiptsCountsEveryReceiptThatDoesNotVerify(t *testing.T)
 // spec: §12.8 (Compliance Interfaces)
 func TestCheckRedactionReceiptsWithoutAVerifierTrustsNoReceipt(t *testing.T) {
 	f := newReceiptFixture(t)
-	q := &scriptQuerier{redaction: [][]any{scanRow("acme", "row-1", f.signed(t, "acme", "row-1", 1))}}
+	q := &scriptQuerier{redaction: [][]any{scanRow(redactedRow("acme", "row-1", 1), f.signed(t, redactedRow("acme", "row-1", 1)))}}
 	got, err := CheckRedactionReceipts(context.Background(), q, nil)
 	if err != nil {
 		t.Fatal(err)
@@ -175,13 +198,13 @@ func TestCheckRedactionReceiptsQueryError(t *testing.T) {
 // spec: §16.5 (Alerting Rules and SLOs), §12.8 (Compliance Interfaces)
 func TestPeriodicCheckRedactionReceiptMissing(t *testing.T) {
 	f := newReceiptFixture(t)
-	forged := f.signed(t, "acme", "row-1", 1)
+	forged := f.signed(t, redactedRow("acme", "row-1", 1))
 	forged.Signature[0] ^= 0xff
 	var calls []RedactionReceiptResult
 	q := &scriptQuerier{redaction: [][]any{
-		scanRow("acme", "row-1", forged),
-		scanRow("acme", "row-2", audit.RedactionReceipt{}),
-		scanRow("acme", "row-3", f.signed(t, "acme", "row-3", 3)),
+		scanRow(redactedRow("acme", "row-1", 1), forged),
+		scanRow(redactedRow("acme", "row-2", 2), audit.RedactionReceipt{}),
+		scanRow(redactedRow("acme", "row-3", 3), f.signed(t, redactedRow("acme", "row-3", 3))),
 	}}
 	p := &PeriodicCheck{
 		DB:              q,
@@ -207,7 +230,7 @@ func TestPeriodicCheckRedactionReceiptMissing(t *testing.T) {
 func TestPeriodicCheckRedactionReceiptClean(t *testing.T) {
 	f := newReceiptFixture(t)
 	fired := false
-	q := &scriptQuerier{redaction: [][]any{scanRow("acme", "row-1", f.signed(t, "acme", "row-1", 1))}}
+	q := &scriptQuerier{redaction: [][]any{scanRow(redactedRow("acme", "row-1", 1), f.signed(t, redactedRow("acme", "row-1", 1)))}}
 	p := &PeriodicCheck{
 		DB:                        q,
 		CtrlDB:                    q, // co-located topology: one pool serves both

@@ -7,6 +7,7 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -65,16 +66,19 @@ func signReceiptWith(t testing.TB, key *ecdsa.PrivateKey, keyID string, r Redact
 }
 
 // lawfulReceipt returns a receipt for row signed under the shared test
-// key, binding the row's tenant, id, sequence, and preserved hash.
-func lawfulReceipt(t testing.TB, row Row) RedactionReceipt {
+// key, binding the row's tenant, id, sequence, and preserved hash, and the
+// content hash the row has once its payload is redacted.
+func lawfulReceipt(t testing.TB, row Row, redacted json.RawMessage) RedactionReceipt {
 	t.Helper()
+	after := row
+	after.Payload = redacted
 	return signReceiptWith(t, receiptTestKey(t), testReceiptKeyID, RedactionReceipt{
 		ReceiptID:        "00000000-0000-4000-8000-0000000000aa",
 		AuditEventID:     row.ID,
 		TenantID:         row.TenantID,
 		RedactedSeq:      row.Seq,
 		OriginalHash:     row.Hash,
-		NewHash:          "ab",
+		NewHash:          computeHash(after),
 		ErasureJobID:     "00000000-0000-4000-8000-0000000000bb",
 		LegalBasis:       "gdpr_art17",
 		RedactorIdentity: "erasure-job:test",
