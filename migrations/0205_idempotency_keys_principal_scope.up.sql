@@ -8,7 +8,10 @@
 -- policy and the per-row tenant guard do not filter) rather than
 -- backfilling a subject a row never recorded. session_id holds the
 -- empty string for a bearer bound to no session, because a primary-key
--- column cannot be NULL.
+-- column cannot be NULL. subject carries the same empty-string default so
+-- the column addition satisfies the expand-contract rule (no NOT NULL
+-- column without a DEFAULT); the stores refuse a record with an empty
+-- subject, so no row is written under it.
 --
 -- The lenny_tenant_guard trigger, the row-level security policy, and
 -- the (tenant_id, stored_at) index of migration 0082 are unchanged.
@@ -16,7 +19,7 @@
 TRUNCATE idempotency_keys;
 
 ALTER TABLE idempotency_keys
-    ADD COLUMN subject    TEXT NOT NULL,
+    ADD COLUMN subject    TEXT NOT NULL DEFAULT '',
     ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
 
 ALTER TABLE idempotency_keys DROP CONSTRAINT idempotency_keys_pkey;

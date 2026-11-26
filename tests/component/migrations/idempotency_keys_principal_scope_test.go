@@ -68,10 +68,12 @@ func TestTheIdempotencyScopeMigrationEmptiesTheTableAndKeysItByPrincipal(t *test
 	if session != "" {
 		t.Errorf("session_id default = %q, want the empty string", session)
 	}
-	// A record with no subject is refused by the NOT NULL column.
+	// A NULL subject is refused by the NOT NULL column. The column's
+	// empty-string default exists for the expand-contract rule; the stores
+	// refuse an empty subject before they write.
 	if err := execTenant(ctx, pg, "acme",
-		`INSERT INTO idempotency_keys (tenant_id, idempotency_key, body_hash, response_status) VALUES ('acme', 'k2', 'h', 201)`); err == nil {
-		t.Error("a record with no subject was accepted, want a NOT NULL violation")
+		`INSERT INTO idempotency_keys (tenant_id, subject, idempotency_key, body_hash, response_status) VALUES ('acme', NULL, 'k2', 'h', 201)`); err == nil {
+		t.Error("a record with a NULL subject was accepted, want a NOT NULL violation")
 	}
 
 	pg.MigrateTo(t, dir, prior)
