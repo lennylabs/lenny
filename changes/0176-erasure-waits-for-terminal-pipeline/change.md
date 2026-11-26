@@ -4,7 +4,7 @@ Status: `In progress`, revision 2, 2026-11-26.
 
 ## Problem
 
-The user erasure job pseudonymizes the user's billing events and then verifies that neither the erasure salt nor the original user id survives ([§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces)). The verification fails intermittently in the merge gate, and in a run where it passes it can pass with a raw `user_id` still in `billing_events`. Issue [ERASE-I1](../../issues/ERASE/ERASE-I1-billing-verification-fails-intermittently.md) records the evidence: gate runs `5fe88e7f64fb9c324fbd3653` and `f26af57d68d9f604063ec524` failed with `billing erasure verification failed: the erasure salt or the original user id survived pseudonymization`, and the surviving row is the `session.completed` billing event of the session the job drained, carrying the raw `user_id`.
+The user erasure job pseudonymizes the user's billing events and then verifies that neither the erasure salt nor the original user id survives ([§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces)). The verification fails intermittently in the merge gate, and in a run where it passes it can pass with a raw `user_id` still in `billing_events`. Issue [ERASE-I1](../../issues/closed/ERASE/ERASE-I1-billing-verification-fails-intermittently.md) records the evidence: gate runs `5fe88e7f64fb9c324fbd3653` and `f26af57d68d9f604063ec524` failed with `billing erasure verification failed: the erasure salt or the original user id survived pseudonymization`, and the surviving row is the `session.completed` billing event of the session the job drained, carrying the raw `user_id`.
 
 The cause is an ordering gap that the specification states and the code implements:
 
