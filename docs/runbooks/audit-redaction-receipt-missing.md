@@ -64,7 +64,7 @@ Read the receipt's `signature_kms_key_id` from the `audit_redaction_receipts` ta
 
 - **No receipt row exists.** The erasure job rewrote the row without committing a receipt, or the row was rewritten outside an erasure job.
 - **The key identifier is not in the list.** The receipt was signed under a key that neither alias names and `audit.retiredReceiptKeyIds` does not list, such as a key two rotations old that was not added to the list, or under a key the platform never held.
-- **The key identifier is in the list and the signature verifies.** The row's payload was rewritten after the receipt was signed, so the row's content hash no longer equals the receipt's `new_hash`.
+- **The key identifier is in the list and the signature verifies.** The row's payload was rewritten after the receipt was signed, so the row's content hash no longer equals the receipt's `new_hash`. A row written back to its pre-redaction content falls in this case, and its payload no longer carries the redaction marker, so Step 1's filter on the marker does not list it; read `audit_redaction_receipts` for the tenant to find it.
 - **The key identifier is in the list and the signature does not verify.** The signature does not cover the stored receipt, so a signed column was changed after signing or the signature was forged.
 
 ## Remediation
