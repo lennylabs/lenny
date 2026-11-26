@@ -27,6 +27,7 @@ The owner decides, and the records say what was decided. An agent keeps working 
 ## Flaky tests
 
 - A test of the merge gate that fails and then passes on the same commit of `main` is quarantined under rule 4 of `test-coverage.md` without waiting for the owner, and the next status update reports it (owner's answer of 2026-11-19). Confirm the flakiness with repeated runs first, keep the quarantine under its cap, and record the merge-gate review of the `tests/flake-budget.yaml` edit.
+- A test that fails and then passes on the same commit, in a gate run or a `lenny-test gate --rerun-failed` run, on a branch or on `main`, is filed as an issue under the test's area code that names the test and both runs, or the open issue for that test gains the runs. The owner's words are "If a flaky test is detected, it should be filed" (owner's answers to GS-22 and GS-24 on the M3 readiness decision page, 2026-11-26; change 0172, decisions 28 and 30). Filing applies wherever a flaky test is detected. Quarantine applies only to a test of the merge gate proven flaky on `main`, under the rule above, and a quarantined test is filed as well.
 - A failure that comes from the product rather than the test, such as a race the test exposes, is not quarantined. File it as an issue and fix it.
 - A test that waits a fixed time for another process or a subscription is a defect: wait for the event instead.
 
