@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1524
+      count: 1525
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -1002,7 +1002,7 @@ packages:
     - package: tests/component/auditintegrity
       count: 5
     - package: tests/component/auditstore
-      count: 56
+      count: 59
     - package: tests/component/breakers
       count: 3
     - package: tests/component/controllers

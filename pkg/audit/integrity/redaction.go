@@ -46,10 +46,10 @@ type RedactionReceiptResult struct {
 // cover the stored tuple all count. The new_hash match catches a redacted
 // row whose payload was rewritten again after its receipt was signed. A
 // nil verifier trusts no receipt, so every redaction-marked row counts.
-// The chain walk and the match of the receipt's original_hash against the
-// redacted row's preserved pre-redaction hash are performed by external
-// verifiers and by the audit chain verifier, which read the successor
-// row's prev_hash.
+// The chain walk and the
+// match of the receipt's original_hash against the redacted row's
+// preserved pre-redaction hash are performed by external verifiers and by
+// the audit chain verifier, which read the successor row's prev_hash.
 //
 // The scan reads only redaction-marked rows and their receipts, so it does
 // not walk the full ledger. A query error (for example, the
