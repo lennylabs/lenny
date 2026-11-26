@@ -166,6 +166,17 @@ All three cloud providers sign Lenny-issued JWTs with ES256 (ECDSA over P-256 wi
 | LLM provider API keys | Kubernetes Secrets (etcd at-rest encryption) |
 | Redis token cache | Application-level encryption |
 | Credential lease tokens | Short-lived, signed JWTs |
+| Upload-token signing keys | Envelope encryption via KMS under `platform:upload-token-signing` |
+
+### Upload-Token Signing Keys
+
+The upload token that session creation returns is an HMAC-SHA256 token. Every gateway replica signs and verifies upload tokens with the same keys, so an upload or a finalize request is accepted by whichever replica the load balancer sends it to. The keys are rows of the Postgres table `platform_signing_keys`. Each key's secret is envelope-encrypted under the KEK that the alias `platform:upload-token-signing` names, and a replica holds the plaintext secret only in memory. On a cloud KMS provider, map `platform:upload-token-signing` in `kms.aliases` to a symmetric encryption key, and grant the `lenny-gateway` ServiceAccount `Encrypt` and `Decrypt` on it. A replica that cannot read or unwrap the keys at startup does not start.
+
+The gateway rotates the keys without operator action. When the active key has signed for the rotation interval (24 hours by default), one replica writes the next key with an activation instant a publish lead ahead (2 minutes by default). Each replica reloads the keys every refresh interval (30 seconds by default), so every replica holds the next key before any replica signs with it. A replaced key keeps verifying for five minutes after the next key becomes active, and the gateway then deletes it. [Configuration](configuration.md#upload-token-signing-keys) lists the flags that set the three intervals.
+
+A replica that cannot reach Postgres keeps verifying with the keys it holds and does not rotate. When its last successful reload is more than five minutes old, it stops issuing upload tokens, and session creation on that replica answers `503 SESSION_CREATION_FAILED` until a reload succeeds. When `FinalizeWorkspace` succeeds, the gateway records on the session row that the token is used, so every replica refuses a later upload or finalize with that token with `410 UPLOAD_TOKEN_CONSUMED`.
+
+A gateway that runs without Postgres, or with `kms.provider: local` and no `kms.masterKeySecret`, keeps its upload-token keys in memory, because no other process could unwrap them. Its tokens verify only on that process.
 
 ---
 
@@ -396,7 +407,7 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 
 | ServiceAccount | Namespace | Purpose | Key Permissions |
 |---|---|---|---|
-| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write AgentPod CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing`, `platform:jwt-verify`, or `platform:audit-signing` names, and `GetPublicKey` on the key that `platform:audit-verify` names |
+| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write AgentPod CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing`, `platform:jwt-verify`, or `platform:audit-signing` names, `GetPublicKey` on the key that `platform:audit-verify` names, and `Encrypt` and `Decrypt` on the key that `platform:upload-token-signing` names |
 | `lenny-gateway` | `credentials.namespace` | Credential Secret writer | `create`, `update`, `delete`, and `deletecollection` on `secrets`, with no `get`, `list`, `watch`, or `patch` |
 | `lenny-controller` | `lenny-system` | Warm Pool Controller | Full AgentPod CRD management |
 | `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt; namespace-wide `get` on `secrets` in `credentials.namespace`, with no `list` or `watch`; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
