@@ -712,7 +712,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// same §11.5 Store with per-tool key namespacing so retries collapse
 	// to one execution. The Tools allow-list keeps the field opt-in per
 	// tool; the REST middleware and the MCP hook resolve one record scope
-	// through idempotencyPrincipal. spec: F-11.5.1, F-11.5.6.
+	// through idempotencyPrincipal.
 	mcpSrv.SetIdempotency(mcp.IdempotencyConfig{
 		Store:                idemStore,
 		PrincipalFromRequest: idempotencyPrincipal,

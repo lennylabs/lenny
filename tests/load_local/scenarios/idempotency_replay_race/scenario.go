@@ -57,7 +57,7 @@ func (s *Scenario) Setup(ctx context.Context) error {
 	s.body = []byte(`{"sessionId":"acme-alice-1"}`)
 	s.hash = idempotency.HashBody(s.body)
 	s.record = idempotency.Record{
-		Key:      idempotency.Key{TenantID: "acme", Value: "k-1"},
+		Key:      idempotency.Key{TenantID: "acme", Subject: "alice", Value: "k-1"},
 		BodyHash: s.hash,
 		StoredAt: time.Now(),
 		Response: idempotency.Response{
