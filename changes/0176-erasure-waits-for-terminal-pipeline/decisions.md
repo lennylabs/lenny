@@ -10,6 +10,10 @@
 
   Option (c) Keep the behavior, as the qualified §7.1 text states, and leave the exposure to F-12.8.53.
 
+  Option (e), proposed by the owner in chat on 2026-11-26 in reply to EW-2b, with the words "if it doesn't carry much information and it's not used, could we not store the user id with it at all? Just the session id". The `session.completed` event carries no user: `user_id` is written empty, which the column allows (`NOT NULL DEFAULT ''`), and the event keeps the tenant, the session id, the environment, the experiment and variant, and the labels. A consumer that needs the user joins on `session_id` with the session's `session.created` event, whose `user_id` the erasure pseudonymizes. A late append then carries nothing the erasure rewrites, because the pseudonymize path updates `billing_events.user_id` alone (`UPDATE billing_events SET user_id = $3 WHERE tenant_id = $1 AND user_id = $2` in `pkg/billing/billingstore/pgstore/pgstore.go`), so the event is neither dropped nor left with a raw identifier, and §11.2.1 needs no exception to "never dropped". §11.2.1's `user_id` row states that `session.completed` leaves it empty, and the billing documentation states the join. A consumer that filters the billing stream by user no longer receives `session.completed` without the join. The review of EW-2 found that no Lenny code, alert, budget, or invoice total reads the event.
+
+  Recommendation, revised on 2026-11-26: (e). It closes the leak for every overrun, keeps the end marker in the billing stream during incidents, and needs no exception to §11.2.1. The earlier recommendation follows.
+
   Recommendation: (a), scoped to the terminal pipeline, because it closes the case where the erasure has already moved on, and the event it drops belongs to a session whose terminal accounting has already run past its budget. A follow-up change carries the §11.2.1 exception.
 
 ## Decisions
