@@ -230,7 +230,7 @@ packages:
     - package: pkg/blobstore/s3
       count: 43
     - package: pkg/chart/values
-      count: 23
+      count: 24
     - package: pkg/checkpoint
       count: 3
     - package: pkg/checkpoint/checkpointretention

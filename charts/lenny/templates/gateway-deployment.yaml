@@ -522,6 +522,11 @@ spec:
             # A render-time check in this template keeps it equal to
             # tenancy.mode == multi. T-10.2.11.
             - --multi-tenant={{ .Values.auth.multiTenant }}
+            # §13.3 — the reconnect spacing of the revocation-cache
+            # rehydration that EventBus subscription confirmations
+            # trigger (auth.revocationReconnectSpacing, default 5s; the
+            # values schema refuses a value that is not a duration).
+            - --revocation-reconnect-spacing={{ .Values.auth.revocationReconnectSpacing }}
             # §10.3 — OIDC issuer + client registration the
             # gateway's token validation trusts. Required platform keys
             # outside global.devMode; the gateway fails closed at startup

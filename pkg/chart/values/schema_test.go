@@ -243,6 +243,46 @@ func TestRejectsCapabilityTokenTTLOutOfRange_spec_10_2(t *testing.T) {
 	}
 }
 
+// TestRevocationReconnectSpacingIsADuration pins the schema of
+// auth.revocationReconnectSpacing, which the chart renders as lenny-gateway
+// --revocation-reconnect-spacing: a non-negative duration string passes, and
+// a bare number, a negative or unitless value, and a YAML number, 0 included, are
+// refused at install time rather than at gateway startup.
+//
+// spec: §13.3 (Credential Flow)
+func TestRevocationReconnectSpacingIsADuration(t *testing.T) {
+	schema := mustSchema(t)
+	cases := []struct {
+		value string
+		valid bool
+	}{
+		{"5s", true},
+		{`"0"`, true},
+		{"0s", true},
+		{"500ms", true},
+		{"1m30s", true},
+		{"1.5s", true},
+		{"0", false},
+		{"5", false},
+		{`"5"`, false},
+		{"-1s", false},
+		{"5 s", false},
+		{"5sec", false},
+		{`""`, false},
+		{"five", false},
+	}
+	for _, tc := range cases {
+		doc := "auth:\n  multiTenant: false\n  revocationReconnectSpacing: " + tc.value + "\n"
+		err := ValidateYAML(schema, []byte(doc))
+		if tc.valid && err != nil {
+			t.Errorf("revocationReconnectSpacing %s: expected to pass: %v", tc.value, err)
+		}
+		if !tc.valid && err == nil {
+			t.Errorf("revocationReconnectSpacing %s: expected to be rejected", tc.value)
+		}
+	}
+}
+
 // TestKMSSignQuotaPerSecondMinimum_spec_17_8_2 enforces the §17.8.2
 // minimum of 1 on kms.signQuotaPerSecond while leaving the other kms
 // sub-keys free-form. The required-on-cloud rule is a render guard in the

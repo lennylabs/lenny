@@ -1987,6 +1987,16 @@ auth:
   # it into --token-revocation-timeout-ms on lenny-token-service and
   # lenny-gateway.
   tokenRevocationTimeoutMs: 5000
+  # revocationReconnectSpacing is the §13.3 reconnect spacing: the
+  # minimum interval between the starts of two revocation-cache
+  # rehydrations that the gateway's EventBus subscription confirmations
+  # trigger, at startup and after each Redis reconnect. A confirmation
+  # inside the spacing waits until it has passed, so a flapping Redis
+  # connection costs at most one Postgres read per replica per spacing,
+  # while the 30-second periodic rehydration keeps its schedule. A
+  # duration such as 5s; 0 starts every such rehydration at once. The
+  # chart renders it into --revocation-reconnect-spacing on lenny-gateway.
+  revocationReconnectSpacing: 5s
   # oidc names the OIDC issuer the gateway's Bearer-token validation
   # trusts (§10.3). Both keys are required platform
   # configuration outside global.devMode: the gateway refuses to become
