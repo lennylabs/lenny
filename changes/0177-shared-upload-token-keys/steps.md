@@ -7,7 +7,7 @@ None.
 ## Steps
 
 ### 0177.S1 Shared signing keys, consumed state, and receipt signing
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: []
 - closes: [UPLOAD-I1, AUDIT-I2, AUDIT-I3, AUDIT-I4]
