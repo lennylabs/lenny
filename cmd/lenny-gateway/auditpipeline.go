@@ -113,6 +113,9 @@ func (w *gatewayWiring) buildAuditPipeline() {
 			// §12.3: route synchronous audit writes onto the
 			// dedicated sync write pool when one was opened. F-12.3.14.
 			auditstore.WithSyncWritePool(w.auditSyncPool),
+			// Chain verification accepts a redaction receipt only
+			// under a trusted receipt key.
+			auditstore.WithReceiptVerifier(w.receiptKeys),
 			// spec: §11.7 (CMP-058) — route a platform-tenant
 			// audit write that references a non-platform target_tenant_id to
 			// the target tenant's regional platform-Postgres, failing closed

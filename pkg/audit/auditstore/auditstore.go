@@ -118,6 +118,10 @@ type Store struct {
 	// fan-out (max concurrency, per-shard timeout). The zero value
 	// resolves to the storerouter defaults. F-25.9.11.
 	scatterCfg storerouter.ScatterConfig
+	// receiptVerifier checks the signature of each §12.8
+	// RedactionReceipt Verify reads. Nil trusts no receipt, so every
+	// redacted row reads broken (fail closed).
+	receiptVerifier audit.ReceiptVerifier
 }
 
 // batchEnqueuer is the seam the §12.3 batch buffer satisfies. It is an
@@ -157,6 +161,17 @@ func WithSyncWritePool(pool *pgxpool.Pool) Option {
 func WithBatchBuffer(b batchEnqueuer) Option {
 	return func(s *Store) { s.batchBuffer = b }
 }
+
+// WithReceiptVerifier wires the verifier of RedactionReceipt signatures
+// that Verify applies.
+func WithReceiptVerifier(v audit.ReceiptVerifier) Option {
+	return func(s *Store) { s.receiptVerifier = v }
+}
+
+// SetReceiptVerifier wires the verifier of RedactionReceipt signatures
+// after construction, for a composition root that loads the receipt keys
+// after it builds the store.
+func (s *Store) SetReceiptVerifier(v audit.ReceiptVerifier) { s.receiptVerifier = v }
 
 // SetBatchBuffer wires the §12.3 T2 batch buffer after construction.
 // The buffer's flush callback closes over this Store's AppendBatch, so
@@ -335,7 +350,7 @@ func (s *Store) Verify(ctx context.Context, tenantID string) (audit.VerifyResult
 	if err != nil {
 		return audit.VerifyResult{}, err
 	}
-	return audit.ChainFromRows(tenantID, rows, receipts).Verify(), nil
+	return audit.ChainFromRows(tenantID, rows, receipts).WithReceiptVerifier(s.receiptVerifier).Verify(), nil
 }
 
 // Get returns the row at seq for the tenant, or ErrNotFound.

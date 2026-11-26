@@ -977,6 +977,18 @@ func generatedToolset() []Tool {
 			ReadOnly:      true,
 		},
 		{
+			Name:          "admin.list_audit_receipt_keys",
+			Description:   "List the public keys that verify redaction receipt signatures",
+			InputSchema:   mustSchema(`{"properties":{"operationId":{"description":"Optional UUID for multi-step operation correlation.","format":"uuid","type":"string"}},"required":[],"type":"object"}`),
+			Method:        "GET",
+			Path:          "/v1/admin/audit-receipt-keys",
+			Category:      "observation",
+			RequiredRole:  "tenant-admin",
+			Scope:         "tools:audit:read",
+			DryRunSupport: "none",
+			ReadOnly:      true,
+		},
+		{
 			Name:          "admin.list_billing_corrections",
 			Description:   "List billing corrections",
 			InputSchema:   mustSchema(`{"properties":{"operationId":{"description":"Optional UUID for multi-step operation correlation.","format":"uuid","type":"string"}},"required":[],"type":"object"}`),

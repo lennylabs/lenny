@@ -80,24 +80,6 @@ type Row struct {
 	Redacted bool `json:"redacted,omitempty"`
 }
 
-// RedactionReceipt is the §12.8 KMS-signed record attached to a row
-// rewritten by GDPR erasure. The minimal implementation models the
-// signature as an opaque string; production wires KMS.
-type RedactionReceipt struct {
-	// RedactedSeq is the sequence number of the rewritten row.
-	RedactedSeq uint64 `json:"redacted_seq"`
-
-	// OriginalHash is the content hash the row carried before
-	// redaction. The verifier uses it to confirm the receipt
-	// matches the break it observes.
-	OriginalHash string `json:"original_hash"`
-
-	// Signature is the KMS signature over (RedactedSeq,
-	// OriginalHash). The minimal implementation does not verify the
-	// signature cryptographically; production wires KMS.
-	Signature string `json:"signature"`
-}
-
 // CanonicalPayload returns the RFC 8785 JCS canonical form of a row's
 // payload — the value stored in audit_log.payload_canonical_json and
 // fed into the §11.7 hash input. A payload that does not parse as JSON
@@ -187,6 +169,9 @@ type Chain struct {
 	tenantID string
 	rows     []Row
 	receipts map[uint64]RedactionReceipt
+	// verifier checks receipt signatures. A chain with no verifier trusts
+	// no receipt, so every redacted row reads broken.
+	verifier ReceiptVerifier
 }
 
 // NewChain returns an empty Chain scoped to tenantID.
@@ -209,8 +194,17 @@ func ChainFromRows(tenantID string, rows []Row, receipts map[uint64]RedactionRec
 	return &Chain{tenantID: tenantID, rows: rows, receipts: receipts}
 }
 
+// WithReceiptVerifier sets the verifier that checks each redaction
+// receipt's signature and returns c. Without one, the chain trusts no
+// receipt.
+func (c *Chain) WithReceiptVerifier(v ReceiptVerifier) *Chain {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.verifier = v
+	return c
+}
+
 // TenantID returns the chain's tenant scope.
-func (c *Chain) TenantID() string { return c.tenantID }
 
 // Append commits a new row carrying eventType + payload. Returns the
 // committed row. The chain assigns Seq, PrevHash, Hash, and the
@@ -323,8 +317,7 @@ func (c *Chain) Verify() VerifyResult {
 		want := computeHash(row)
 		if want != row.Hash {
 			if row.Redacted {
-				rcpt, ok := c.receipts[row.Seq]
-				if ok && rcpt.OriginalHash == row.Hash && rcpt.Signature != "" {
+				if c.receiptedRedaction(row) {
 					thisRedacted = true
 				} else {
 					return VerifyResult{
@@ -472,15 +465,24 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 	return ChainVerified
 }
 
-// receiptedRedaction reports whether row is a §12.8 GDPR redaction
-// carrying a valid signed receipt that matches its preserved hash. The
-// caller holds c.mu.
+// receiptedRedaction reports whether row is a GDPR redaction carrying a
+// receipt for this row, in this tenant, whose original hash matches the
+// row's preserved hash and whose signature verifies under a trusted key.
+// It fails closed: with no verifier, an unknown key, a forged signature,
+// or any field changed after signing, the row is not a lawful redaction.
+// The caller holds c.mu.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
 func (c *Chain) receiptedRedaction(row Row) bool {
-	if !row.Redacted {
+	if !row.Redacted || c.verifier == nil {
 		return false
 	}
 	rcpt, ok := c.receipts[row.Seq]
-	return ok && rcpt.OriginalHash == row.Hash && rcpt.Signature != ""
+	if !ok || rcpt.OriginalHash != row.Hash || rcpt.RedactedSeq != row.Seq ||
+		rcpt.TenantID != c.tenantID || rcpt.AuditEventID != row.ID {
+		return false
+	}
+	return c.verifier.VerifyReceipt(rcpt) == nil
 }
 
 // ChainSet is a goroutine-safe collection of per-tenant chains. It

@@ -2942,6 +2942,18 @@
         "responses": { "200": { "description": "OK" } }
       }
     },
+    "/v1/admin/audit-receipt-keys": {
+      "get": {
+        "operationId": "getV1AdminAuditReceiptKeys",
+        "summary": "List the public keys that verify redaction receipt signatures",
+        "x-lenny-mcp-tool": "admin.list_audit_receipt_keys",
+        "x-lenny-scope": "tools:audit:read",
+        "x-lenny-required-role": "tenant-admin",
+        "x-lenny-category": "audit",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/v1/admin/audit-events/summary": {
       "get": {
         "operationId": "getV1AdminAuditEventsSummary",

@@ -6,6 +6,8 @@ import (
 	"context"
 	"fmt"
 	"time"
+
+	"github.com/lennylabs/lenny/pkg/audit"
 )
 
 // §11.7 item 2 — the periodic background integrity check
@@ -113,6 +115,10 @@ type PeriodicCheck struct {
 	// non-zero value. F-11.7.15.
 	OnRedactionReceiptMissing func(tenantID string, n int)
 
+	// ReceiptVerifier checks each RedactionReceipt's signature. Nil
+	// trusts no receipt, so every redaction-marked row counts as missing.
+	ReceiptVerifier audit.ReceiptVerifier
+
 	// Logf emits the spec-mandated critical alert log line. Defaults to
 	// a no-op when nil.
 	Logf func(format string, args ...any)
@@ -166,7 +172,7 @@ func (p *PeriodicCheck) CheckOnce(ctx context.Context) bool {
 	// metric the alert pages on. A scan error (for example the
 	// audit_redaction_receipts relation absent on a partial migration) is
 	// logged and treated as no-drift so a flaky query does not hard-fail.
-	orphans, err := CheckRedactionReceipts(ctx, p.DB)
+	orphans, err := CheckRedactionReceipts(ctx, p.DB, p.ReceiptVerifier)
 	if err != nil {
 		p.logf("WARNING: §11.7 item 2 periodic redaction-receipt scan could not run: %v", err)
 		return drift

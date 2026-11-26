@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
+	"github.com/lennylabs/lenny/tests/testinfra/receiptkeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
 )
 
@@ -98,10 +99,12 @@ func TestDeadLetterRedaction_spec_12_8(t *testing.T) {
 		t.Fatalf("dead-lettered for alice = %d rows, want 2 (seq1, seq3)", len(dead))
 	}
 
+	keys, signer := receiptkeys.Load(t, "", nil)
+	store.SetReceiptVerifier(keys)
 	svc := deadletterredaction.New(deadletterredaction.Config{
 		Store:    store,
 		Emit:     store,
-		Signer:   deadletterredaction.NewHMACReceiptSigner("boot", []byte("0123456789abcdef0123456789abcdef")),
+		Signer:   signer,
 		Classify: func(audit.Row) string { return "class_mapping_missing" },
 		Clock:    func() time.Time { return at },
 	})
@@ -151,8 +154,11 @@ func TestDeadLetterRedaction_spec_12_8(t *testing.T) {
 	}
 	for _, seq := range []uint64{1, 3} {
 		rcpt, ok := receipts[seq]
-		if !ok || rcpt.Signature == "" || rcpt.OriginalHash == "" {
+		if !ok || len(rcpt.Signature) == 0 || rcpt.OriginalHash == "" {
 			t.Errorf("seq %d receipt missing or unsigned: %+v", seq, rcpt)
+		}
+		if err := keys.VerifyReceipt(rcpt); err != nil {
+			t.Errorf("seq %d receipt read back from Postgres does not verify: %v", seq, err)
 		}
 	}
 
@@ -161,8 +167,8 @@ func TestDeadLetterRedaction_spec_12_8(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Verify: %v", err)
 	}
-	if vr.Integrity == audit.ChainBroken {
-		t.Fatalf("redacted chain reports broken at seq %d: %s", vr.BreakSeq, vr.Detail)
+	if vr.Integrity != audit.ChainRedactedGDPR {
+		t.Fatalf("redacted chain = %q at seq %d (%s), want redacted_gdpr", vr.Integrity, vr.BreakSeq, vr.Detail)
 	}
 
 	// Idempotent: a re-run finds nothing (redacted rows are excluded by the
