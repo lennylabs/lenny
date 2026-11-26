@@ -220,6 +220,9 @@ func (r *Ring) Refresh(ctx context.Context) error {
 // that is not active yet is a rotation already published, so nothing is
 // written. The write is keyed by the next rotation slot, so when several
 // replicas write at once one write succeeds and the others change nothing.
+// A ring whose last reload found no key at all, because the rows were
+// deleted, writes a first key active at once, as Open does, rather than
+// staying without a signing key until a restart.
 //
 // spec: §7.1 (Normal Flow)
 func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
@@ -229,8 +232,15 @@ func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
 	if have {
 		newest = r.keys[len(r.keys)-1]
 	}
+	reloaded := !r.lastReload.IsZero()
 	r.mu.RUnlock()
-	if !have || newest.ActiveFrom.After(now) || now.Before(newest.ActiveFrom.Add(r.policy.RotationInterval)) {
+	if !have {
+		if !reloaded {
+			return nil
+		}
+		return r.writeKey(ctx, 1, now)
+	}
+	if newest.ActiveFrom.After(now) || now.Before(newest.ActiveFrom.Add(r.policy.RotationInterval)) {
 		return nil
 	}
 	return r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead))

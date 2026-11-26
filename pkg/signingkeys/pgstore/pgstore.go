@@ -122,11 +122,16 @@ func (s *Store) Insert(ctx context.Context, rec signingkeys.Record, verifyFor ti
 	return inserted, nil
 }
 
-// DeleteExpired implements signingkeys.Store.
+// DeleteExpired implements signingkeys.Store. A row is deleted only once
+// its delete_after has passed on both the caller's clock and the database
+// server's clock, so a replica whose clock runs ahead cannot cut the
+// overlap window short for every replica.
+//
+// spec: §7.1 (Normal Flow)
 func (s *Store) DeleteExpired(ctx context.Context, purpose string, now time.Time) (int, error) {
 	tag, err := s.pool.Exec(ctx, `
 		DELETE FROM platform_signing_keys
-		WHERE purpose = $1 AND delete_after IS NOT NULL AND delete_after <= $2`, purpose, now)
+		WHERE purpose = $1 AND delete_after IS NOT NULL AND delete_after <= LEAST($2::timestamptz, now())`, purpose, now)
 	if err != nil {
 		return 0, fmt.Errorf("signingkeys/pgstore: delete expired %q keys: %w", purpose, err)
 	}

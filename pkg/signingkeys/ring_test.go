@@ -593,3 +593,60 @@ func TestMemoryStoreKeepsTheFirstWriterOfASlot(t *testing.T) {
 		t.Error("List returned the stored bytes rather than a copy")
 	}
 }
+
+// swappableStore forwards to a store the test can replace, standing for a
+// table whose rows were deleted out from under the replicas.
+type swappableStore struct {
+	mu    sync.Mutex
+	inner signingkeys.Store
+}
+
+func (s *swappableStore) store() signingkeys.Store {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.inner
+}
+
+func (s *swappableStore) wipe() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.inner = signingkeys.NewMemoryStore()
+}
+
+func (s *swappableStore) List(ctx context.Context, purpose string, now time.Time) ([]signingkeys.Record, error) {
+	return s.store().List(ctx, purpose, now)
+}
+
+func (s *swappableStore) Insert(ctx context.Context, rec signingkeys.Record, verifyFor time.Duration) (bool, error) {
+	return s.store().Insert(ctx, rec, verifyFor)
+}
+
+func (s *swappableStore) DeleteExpired(ctx context.Context, purpose string, now time.Time) (int, error) {
+	return s.store().DeleteExpired(ctx, purpose, now)
+}
+
+// TestARingWhoseKeysWereDeletedWritesANewFirstKey checks that a ring whose
+// reload finds no key, because every row was deleted, writes a new first
+// key on its next refresh and signs again, rather than refusing to sign
+// until a restart.
+//
+// spec: §7.1 (Normal Flow)
+func TestARingWhoseKeysWereDeletedWritesANewFirstKey(t *testing.T) {
+	store := &swappableStore{inner: signingkeys.NewMemoryStore()}
+	clock := newClock()
+	r := openRing(t, store, clock)
+	old, _ := r.SigningKey()
+	store.wipe()
+	refreshAll(t, r)
+	if _, err := r.SigningKey(); !errors.Is(err, signingkeys.ErrNoActiveKey) {
+		t.Fatalf("signing with no key held = %v, want ErrNoActiveKey", err)
+	}
+	refreshAll(t, r)
+	k, err := r.SigningKey()
+	if err != nil {
+		t.Fatalf("signing after the next refresh: %v", err)
+	}
+	if k.KeyID == old.KeyID {
+		t.Errorf("the ring signs with the deleted key %s", k.KeyID)
+	}
+}

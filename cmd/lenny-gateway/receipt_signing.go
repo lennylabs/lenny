@@ -28,6 +28,12 @@ func (w *gatewayWiring) buildReceiptSigning() {
 	}
 	log.Printf("lenny-gateway: §12.8 redaction receipt signing key %s loaded (%d trusted key(s))",
 		signer.KeyID(), len(keys.Keys()))
+	if w.f.kmsOpts.EphemeralKEK() {
+		// The local provider without a master key file derives the receipt
+		// key from a per-process random seed under the same key id, so a
+		// receipt this process signs verifies in this process alone.
+		log.Printf("lenny-gateway: §12.8 redaction receipts are signed with a per-process key (local KMS provider without --kms-master-key-file); a receipt verifies only in the process that signed it")
+	}
 	w.receiptKeys = keys
 	w.receiptSigner = signer
 }

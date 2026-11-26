@@ -204,8 +204,6 @@ func (c *Chain) WithReceiptVerifier(v ReceiptVerifier) *Chain {
 	return c
 }
 
-// TenantID returns the chain's tenant scope.
-
 // Append commits a new row carrying eventType + payload. Returns the
 // committed row. The chain assigns Seq, PrevHash, Hash, and the
 // timestamp (using now).
