@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
@@ -30,14 +31,14 @@ import (
 type IdempotencyConfig struct {
 	// Store is the §11.5 cache. Required for MCP idempotency.
 	Store idempotencymw.Store
-	// PrincipalFromRequest returns the scope of the request's
-	// authenticated principal: its tenant, its subject, and the session
-	// its bearer is bound to (empty for a bearer bound to none). Set it to
-	// the same function the §11.5 HTTP middleware uses, so the REST and
-	// MCP paths file records under one scope. The package receives the
-	// values through this function rather than reading the auth
-	// middleware's principal itself.
-	PrincipalFromRequest func(*http.Request) (tenantID, subject, sessionID string)
+	// Callers resolves the request's authenticated caller through
+	// GWSEAM-RequestCaller. The record scope is the caller's tenant, its
+	// subject, and the session its bearer is bound to (empty for a bearer
+	// bound to none). The gateway wires the same caller resolution the
+	// REST idempotency middleware's resolver reads, so the REST and MCP
+	// paths file records under one scope. A nil Callers resolves no
+	// caller, and every keyed call is refused.
+	Callers seam.CallerIdentity
 	// Tools is the set of tool names whose arguments admit an
 	// idempotencyKey field. Calls to tools outside this set ignore the
 	// field — the contract is opt-in per tool so a stray field on a
@@ -63,8 +64,10 @@ func (c IdempotencyConfig) now() time.Time {
 // spec: §11.5 (Idempotency)
 func (c IdempotencyConfig) scope(r *http.Request) (idempotency.Key, *ToolError) {
 	var tenantID, subject, sessionID string
-	if c.PrincipalFromRequest != nil {
-		tenantID, subject, sessionID = c.PrincipalFromRequest(r)
+	if c.Callers != nil {
+		if caller, ok := c.Callers.RequestCaller(r.Context()); ok {
+			tenantID, subject, sessionID = caller.TenantID, caller.Subject, caller.SessionID
+		}
 	}
 	if tenantID == "" {
 		return idempotency.Key{}, NewToolError("UNAUTHORIZED",

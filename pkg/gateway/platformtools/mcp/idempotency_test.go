@@ -13,17 +13,18 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
 
-// rpcWithTenant POSTs an MCP JSON-RPC request and sets the
-// X-Lenny-Tenant-ID header the idempotency hook expects to resolve.
+// rpcWithTenant POSTs an MCP JSON-RPC request whose caller is alice in
+// tenant, bound to no session; an empty tenant attaches no caller.
 func rpcWithTenant(t *testing.T, h http.Handler, tenant, body string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
 	if tenant != "" {
-		req.Header.Set("X-Lenny-Tenant-ID", tenant)
+		req = withCaller(req, seam.Caller{TenantID: tenant, Subject: "alice"})
 	}
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -43,9 +44,9 @@ func TestMCPIdempotency_ReplaysCachedToolResult_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: `{"sessionId":"sess-1","state":"running"}`}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"abc-123"}}}`
@@ -81,9 +82,9 @@ func TestMCPIdempotency_ToolErrorReleasesPending_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/delegate_task": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/delegate_task": true},
 	})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/delegate_task","arguments":{"parentSessionId":"p","runtimeRef":"echo","idempotencyKey":"k1"}}}`
@@ -116,9 +117,9 @@ func TestMCPIdempotency_ConcurrentRetryInFlight_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "done"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"race-1"}}}`
@@ -151,9 +152,9 @@ func TestMCPIdempotency_DifferentBodyRejected_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "first"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 
 	body1 := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"dup-1"}}}`
@@ -176,9 +177,9 @@ func TestMCPIdempotency_NonAllowlistedToolIgnoresKey_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true}, // send_message NOT in list
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true}, // send_message NOT in list
 	})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/send_message","arguments":{"sessionId":"s","content":"hi","idempotencyKey":"k1"}}}`
@@ -200,9 +201,9 @@ func TestMCPIdempotency_FailsClosedWhenTenantMissing_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: func(*http.Request) (string, string, string) { return "", "alice", "" },
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: fixedCaller{Subject: "alice"},
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"k1"}}}`
 	r := rpcWithTenant(t, s.Handler(), "", body)
@@ -223,9 +224,9 @@ func TestMCPIdempotency_NoKeyFallsThrough_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "ok"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo"}}}`
@@ -249,9 +250,9 @@ func TestMCPIdempotency_KeyNamespacing_spec_11_5(t *testing.T) {
 			return mcp.ToolResult{Content: []mcp.ToolContent{{Type: "text", Text: "mcp-result"}}}, nil
 		})
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                store,
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   store,
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"shared"}}}`
 	_ = rpcWithTenant(t, s.Handler(), "acme", body)

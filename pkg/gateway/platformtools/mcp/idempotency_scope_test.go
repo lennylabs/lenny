@@ -13,28 +13,31 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
 
-// Test request headers that carry the principal scope in this package's
-// idempotency tests. The gateway resolves the scope from the auth
-// middleware's principal; these tests stand in for it with headers.
-const (
-	testSubjectHeader = "X-Test-Subject"
-	testSessionHeader = "X-Test-Session"
-)
+// callerKey is the context key the tests store the request's caller under.
+type callerKey struct{}
 
-// headerPrincipal resolves the tenant from X-Lenny-Tenant-ID, the subject
-// from X-Test-Subject (alice when the header is absent), and the bound
-// session from X-Test-Session.
-func headerPrincipal(r *http.Request) (string, string, string) {
-	subject := r.Header.Get(testSubjectHeader)
-	if subject == "" {
-		subject = "alice"
-	}
-	return r.Header.Get("X-Lenny-Tenant-ID"), subject, r.Header.Get(testSessionHeader)
+// withCaller returns r carrying c as its authenticated caller.
+func withCaller(r *http.Request, c seam.Caller) *http.Request {
+	return r.WithContext(context.WithValue(r.Context(), callerKey{}, c))
 }
+
+// contextCallers is the GWSEAM-RequestCaller double the tests wire: it
+// returns the caller withCaller stored on the context. The gateway wires
+// the API front's caller resolution instead.
+type contextCallers struct{}
+
+func (contextCallers) RequestCaller(ctx context.Context) (seam.Caller, bool) {
+	c, ok := ctx.Value(callerKey{}).(seam.Caller)
+	return c, ok
+}
+
+// headerPrincipal is the caller resolution most tests wire.
+var headerPrincipal = contextCallers{}
 
 // aliceScope is the record key alice in acme, bound to no session, files
 // the stored key value under.
@@ -48,11 +51,7 @@ func rpcAs(t *testing.T, h http.Handler, subject, session, body string) *httptes
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/mcp", bytes.NewReader([]byte(body)))
 	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	req.Header.Set(testSubjectHeader, subject)
-	if session != "" {
-		req.Header.Set(testSessionHeader, session)
-	}
+	req = withCaller(req, seam.Caller{TenantID: "acme", Subject: subject, SessionID: session})
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr
@@ -80,9 +79,9 @@ func TestMCPIdempotencyKeyFromTwoSubjectsDoesNotShareAResult(t *testing.T) {
 	s := mcp.NewServer()
 	calls := countingTool(s, "lenny/create_session")
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"k1"}}}`
 
@@ -110,9 +109,9 @@ func TestMCPDelegateTaskFromTwoSessionsOfOneSubjectDoesNotShareAChildHandle(t *t
 	s := mcp.NewServer()
 	calls := countingTool(s, "lenny/delegate_task")
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/delegate_task": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/delegate_task": true},
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/delegate_task","arguments":{"runtimeRef":"echo","idempotencyKey":"child-1"}}}`
 
@@ -145,9 +144,9 @@ func TestMCPIdempotencyClaimsUnderThePrincipalScope(t *testing.T) {
 	s := mcp.NewServer()
 	countingTool(s, "lenny/delegate_task")
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                store,
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/delegate_task": true},
+		Store:   store,
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/delegate_task": true},
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/delegate_task","arguments":{"idempotencyKey":"child-1"}}}`
 	_ = rpcAs(t, s.Handler(), "alice", "s1", body)
@@ -173,9 +172,9 @@ func TestMCPIdempotencyRefusesAKeyedCallWithNoSubject(t *testing.T) {
 	s := mcp.NewServer()
 	calls := countingTool(s, "lenny/create_session")
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.NewMemoryStore(),
-		PrincipalFromRequest: func(*http.Request) (string, string, string) { return "acme", "", "" },
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.NewMemoryStore(),
+		Callers: fixedCaller{TenantID: "acme"},
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"idempotencyKey":"k1"}}}`
 	r := rpcAs(t, s.Handler(), "", "", body)

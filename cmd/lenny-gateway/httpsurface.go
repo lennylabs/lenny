@@ -711,11 +711,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// lenny/delegate_task), the MCP server runs the call through the
 	// same §11.5 Store with per-tool key namespacing so retries collapse
 	// to one execution. The Tools allow-list keeps the field opt-in per
-	// tool; the REST middleware and the MCP hook resolve one record scope
-	// through idempotencyPrincipal.
+	// tool. The MCP hook resolves the caller through the API front's
+	// caller resolution, which idempotencyPrincipal also reads.
 	mcpSrv.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idemStore,
-		PrincipalFromRequest: idempotencyPrincipal,
+		Store:   idemStore,
+		Callers: pipeline.Callers{},
 		Tools: map[string]bool{
 			"lenny/create_session": true,
 			"lenny/delegate_task":  true,

@@ -45,9 +45,9 @@ func TestMCPIdempotencyStoresNoCredentialAndReplaysIt(t *testing.T) {
 		})
 	store := idempotencymw.NewMemoryStore()
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:                idempotencymw.WithCredentials(store, swapRedactor{}),
-		PrincipalFromRequest: headerPrincipal,
-		Tools:                map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.WithCredentials(store, swapRedactor{}),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"abc-123"}}}`
