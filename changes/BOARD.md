@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Building | 1 |
 | Ready | 8 |
 | Waiting on decisions | 32 |
-| Blocked | 161 |
+| Blocked | 162 |
 | Landed | 27 |
 | Cancelled | 3 |
 
@@ -254,6 +254,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S3](0170-budgets/steps.md#0170s3-compute-budgets) | Compute budgets | Blocked | 0170.S1, 0121.S1, 0121.S2, 0146.S1; a part waits on 0135.S5, 0146.S2 |
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
+| [0176.S2](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s2-the-budget-margin-and-the-terminal-writers-in-71) | The budget margin and the terminal writers in §7.1 | Blocked | 0176.S1 |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Blocked | 0178.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
@@ -320,6 +321,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 2 of 3 | 0 |
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 11 of 12 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
-| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 0 of 1 | 4 |
+| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 0 of 2 | 1 |
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Decided` | 0 of 1 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `Decided` | 0 of 2 | 0 |
