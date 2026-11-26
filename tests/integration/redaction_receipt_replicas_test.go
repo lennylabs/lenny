@@ -74,8 +74,10 @@ func TestRedactionReceiptFromAStoppedReplicaVerifiesOnAnother(t *testing.T) {
 	t.Parallel()
 	gateway.SkipUnlessAvailable(t)
 	pg := sharedDatabase(t)
-	args := []string{"--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn=" + pg.DSN,
-		"--postgres-billing-audit-ddl-dsn=" + pg.DSN, "--tenant-deletion-interval=1s"}
+	args := []string{
+		"--no-environment-policy", "allow-all", "--dev-mode", "--postgres-dsn=" + pg.DSN,
+		"--postgres-billing-audit-ddl-dsn=" + pg.DSN, "--tenant-deletion-interval=1s",
+	}
 	first := gateway.StartWith(t, args...)
 	base := first.BaseURL()
 

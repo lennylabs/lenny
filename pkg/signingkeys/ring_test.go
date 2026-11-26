@@ -380,8 +380,10 @@ func TestOpenRefusesWhatItCannotLoad(t *testing.T) {
 	}
 
 	foreign := signingkeys.NewMemoryStore()
-	if _, err := foreign.Insert(ctx, signingkeys.Record{Purpose: signingkeys.PurposeUploadToken, KeyID: "k", Algorithm: signingkeys.AlgorithmHMACSHA256,
-		KEKAlias: signingkeys.AliasUploadTokenSigning, WrappedSecret: []byte("plaintext"), RotationSlot: 1, ActiveFrom: clock.Now()}, overlap); err != nil {
+	if _, err := foreign.Insert(ctx, signingkeys.Record{
+		Purpose: signingkeys.PurposeUploadToken, KeyID: "k", Algorithm: signingkeys.AlgorithmHMACSHA256,
+		KEKAlias: signingkeys.AliasUploadTokenSigning, WrappedSecret: []byte("plaintext"), RotationSlot: 1, ActiveFrom: clock.Now(),
+	}, overlap); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := signingkeys.Open(ctx, policy, foreign, &xorSealer{}, opts); !errors.Is(err, errNotSealed) {
@@ -390,8 +392,10 @@ func TestOpenRefusesWhatItCannotLoad(t *testing.T) {
 
 	otherAlg := signingkeys.NewMemoryStore()
 	sealed, _ := (&xorSealer{}).Seal(ctx, make([]byte, 32))
-	if _, err := otherAlg.Insert(ctx, signingkeys.Record{Purpose: signingkeys.PurposeUploadToken, KeyID: "k", Algorithm: "ES256",
-		KEKAlias: signingkeys.AliasUploadTokenSigning, WrappedSecret: sealed, RotationSlot: 1, ActiveFrom: clock.Now()}, overlap); err != nil {
+	if _, err := otherAlg.Insert(ctx, signingkeys.Record{
+		Purpose: signingkeys.PurposeUploadToken, KeyID: "k", Algorithm: "ES256",
+		KEKAlias: signingkeys.AliasUploadTokenSigning, WrappedSecret: sealed, RotationSlot: 1, ActiveFrom: clock.Now(),
+	}, overlap); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := signingkeys.Open(ctx, policy, otherAlg, &xorSealer{}, opts); err == nil || !strings.Contains(err.Error(), "algorithm") {

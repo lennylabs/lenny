@@ -549,6 +549,10 @@ Usage of lenny-gateway:
     	§12.3 bound on each session-row read from the Postgres primary that a one-shot decision makes (a route, a skip, or a compare-and-swap's expected value), so a primary partition bounds the read rather than stalling it until the request ends. Operator-tunable; must be positive. Default 5s. Override via LENNY_SESSION_PRIMARY_READ_TIMEOUT. (default 5s)
   -shutdown-timeout duration
     	graceful shutdown timeout (default 5s)
+  -signing-key-publish-lead duration
+    	§7.1 shared signing keys: how far ahead of its activation instant a replica writes the next signing key, so every replica loads it before any replica signs with it. The gateway does not start unless it is longer than --signing-key-refresh-interval. Default 2m. Override via LENNY_SIGNING_KEY_PUBLISH_LEAD. (default 2m0s)
+  -signing-key-refresh-interval duration
+    	§7.1 shared signing keys: how often a replica reloads the keys of platform_signing_keys, writes the next key when the active one is due for rotation, and deletes keys past their verification time. Must be shorter than --signing-key-publish-lead. Default 30s. Override via LENNY_SIGNING_KEY_REFRESH_INTERVAL. (default 30s)
   -single-tenant-redis-topology string
     	§17.8.2 capacityPlanning.singleTenantRedisTopology. Set to "sentinel" to document that a Tier 3 deployment intentionally runs a single-tenant Redis Sentinel topology; this suppresses the RedisClusterRecommended startup warning. Override via LENNY_SINGLE_TENANT_REDIS_TOPOLOGY. F-17.8.7.
   -slo-burn-rate-fast-multiplier float
@@ -629,6 +633,8 @@ Usage of lenny-gateway:
     	§11.1 global (per-replica) concurrent-upload admission cap. Excess in-flight uploads across all sessions are rejected with 429 RATE_LIMITED. Zero disables the global concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_GLOBAL. F-11.1.5.
   -upload-max-concurrent-per-session int
     	§11.1 per-session concurrent-upload admission cap. Excess in-flight uploads against one session are rejected with 429 RATE_LIMITED. Zero disables the per-session concurrency cap. Override via LENNY_UPLOAD_MAX_CONCURRENT_PER_SESSION. F-11.1.5.
+  -upload-token-key-rotation-interval duration
+    	§7.1 uploadToken signing-key rotation interval: how long a key signs before the next key replaces it. Default 24h. Override via LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL. (default 24h0m0s)
   -user-token-quota-per-window int
     	§11.2 per-user LLM-token budget per reset-period window, enforced by the §4.8 QuotaEvaluator at the user scope. Zero disables the per-user token cap. Only active when --redis-url is set.
   -workspace-seal-max-duration-seconds int

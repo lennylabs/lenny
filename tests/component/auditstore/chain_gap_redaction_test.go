@@ -17,8 +17,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
-	"github.com/lennylabs/lenny/tests/testinfra/receiptkeys"
 	"github.com/lennylabs/lenny/tests/testinfra/auditquery"
+	"github.com/lennylabs/lenny/tests/testinfra/receiptkeys"
 )
 
 // spec: 25.9 (Audit Log Query API, Chain gap detection), 11.7 (Audit

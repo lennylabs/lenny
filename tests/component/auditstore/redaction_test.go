@@ -21,8 +21,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
 	"github.com/lennylabs/lenny/pkg/audit/integrity"
 	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
-	"github.com/lennylabs/lenny/tests/testinfra/receiptkeys"
 	"github.com/lennylabs/lenny/tests/testinfra/containers"
+	"github.com/lennylabs/lenny/tests/testinfra/receiptkeys"
 )
 
 // receiptCount returns the number of audit_redaction_receipts rows for

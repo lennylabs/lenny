@@ -194,8 +194,10 @@ func TestReceiptSigningFailsClosedWhenTheKMSFails(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	store := &fakeStore{rows: []audit.Row{{ID: "00000000-0000-4000-8000-000000000001", Seq: 1, TenantID: "acme",
-		EventType: "session.created", Payload: json.RawMessage(`{"user_id":"alice@acme.com"}`)}}}
+	store := &fakeStore{rows: []audit.Row{{
+		ID: "00000000-0000-4000-8000-000000000001", Seq: 1, TenantID: "acme",
+		EventType: "session.created", Payload: json.RawMessage(`{"user_id":"alice@acme.com"}`),
+	}}}
 	n, err := newSvc(store, &fakeEmitter{}, signer).RedactForUser(context.Background(), "acme", "alice@acme.com")
 	if !errors.Is(err, kms.ErrThrottled) || n != 0 {
 		t.Errorf("RedactForUser = (%d, %v), want (0, the KMS error)", n, err)

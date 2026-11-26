@@ -860,7 +860,7 @@ packages:
     - package: pkg/session/sessionstore/memstore
       count: 130
     - package: pkg/session/sessionstore/pgstore
-      count: 304
+      count: 126
     - package: pkg/session/state
       count: 14
     - package: pkg/session/transcriptstore
@@ -1032,7 +1032,7 @@ packages:
     - package: tests/component/lifecycle
       count: 9
     - package: tests/component/migrations
-      count: 148
+      count: 86
     - package: tests/component/observability
       count: 17
     - package: tests/component/opsaudit
