@@ -2,7 +2,12 @@
 
 ## Open decisions
 
-None.
+- **O4. Which receipt signing keys a chain verifier trusts after more than one rotation (raised while building 0177.S1, 2026-11-26).** SK-6 has the verifier read the public key for the identifier a receipt records, and leaves open which identifiers it may read. Reading any identifier the receipt names would let a database writer insert a receipt signed by a KMS key in an account or project the writer controls, so the verifier needs a trusted set. Receipts are kept for `audit.gdprRetentionDays` (default 2555 days), so the set has to outlive several rotations. Options:
+  - (a) The keys that `platform:audit-signing` and an optional `platform:audit-verify` name, as §10.2 does for the JWT signing key. A receipt signed two rotations ago no longer verifies and reads `broken`, unless the operator keeps mapping the old key under `platform:audit-verify`. No new setting.
+  - (b) Option (a) plus a gateway setting listing the KMS key identifiers of retired receipt keys, each read through a new `kms.Provider` lookup of a public key by key identifier (the lookup SK-6 names). Every receipt verifies for as long as its key stays in the KMS and in the list.
+  - (c) Any identifier naming another version of the key `platform:audit-signing` names (GCP and Azure key versions). AWS asymmetric keys have no versions, so a rotation on AWS would still need (a) or (b).
+
+  Recommendation: (b), because receipts outlive more than one rotation and (b) keeps the trusted set explicit. The branch builds (a), which needs no new setting, and records it in the digest's "Defaults applied"; (b) adds the setting and the lookup on top of it.
 
 ## Decisions
 
