@@ -2,7 +2,11 @@
 
 ## Open decisions
 
-None.
+- **GS-25. The merge check over the two concurrency groups, and how a full run's failure counts as fixed.** Decision 27 lets a branch merge when "the latest finished run of the workflow on `main` passed". With decision 29 a selected run and a full run run at the same time and finish in either order, so the latest finished run can be a selected run that passed after a full run failed, and that selected run did not run the tests the full run failed on. 0172.S12 applies a default, pending this decision: the check reads the latest finished selected run and the latest finished full run, told apart by the run's title (`Selected run of the gate on main` or `Full run of the gate on main`, from `run-name`), and both must have passed or have their failure fixed or reverted; a full run's failure counts as fixed when a full run started by hand on a commit with the fix passes, or when a targeted run of the failed tests on that commit passes and the next merge commit message names it. The merge-gate review of 0172.S12 raised it (general findings 1 and 2).
+  - (a) As built: both runs are read, and a full run's failure is fixed by a dispatched full run or by a targeted run named in the merge commit message.
+  - (b) Both runs are read, and only a full run started by hand on a commit with the fix shows a full run's failure fixed.
+  - (c) Only the latest finished run of either kind is read, as decision 27 states, accepting that a selected run that passes can hide a full run's failure until the next merge looks at it.
+  - Recommendation: (a). It keeps a full run's failure blocking merges, and a targeted run of the failed tests confirms a fix in minutes where a full run on the 4-vCPU runner takes over an hour.
 
 ## Decisions
 
