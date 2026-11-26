@@ -68,15 +68,20 @@ func receiptKeyRef(aliasToKey map[string]string, alias string) string {
 }
 
 // LoadReceiptSigning builds the receipt signer and the set of keys a chain
-// verifier trusts: the key platform:audit-signing names, which signs, and
-// the key the optional platform:audit-verify names, which verifies
-// receipts signed before the last rotation. Each key is identified by the
-// reference its alias maps to, which is the value a receipt records in
-// signature_kms_key_id. The public keys are fetched once; a process that
-// cannot load them does not start, as for the JWT key set.
+// verifier trusts: the key platform:audit-signing names, which signs; the
+// key the optional platform:audit-verify names, which verifies receipts
+// signed before the last rotation; and each retired receipt key that
+// retired lists by KMS key identifier (audit.retiredReceiptKeyIds), which
+// verifies receipts signed before earlier rotations. Each key is identified
+// by the reference its alias maps to, or by its listed identifier, which is
+// the value a receipt records in signature_kms_key_id. A retired key's
+// public key is read from the KMS by its identifier, so it verifies for as
+// long as the KMS keeps it, whatever the aliases name. A receipt signed
+// under any other key does not verify. The public keys are fetched once; a
+// process that cannot load one does not start, as for the JWT key set.
 //
 // spec: §12.8 (Compliance Interfaces)
-func LoadReceiptSigning(ctx context.Context, provider kms.Provider, aliasToKey map[string]string) (*audit.ReceiptKeySet, *KMSReceiptSigner, error) {
+func LoadReceiptSigning(ctx context.Context, provider kms.Provider, aliasToKey map[string]string, retired []string) (*audit.ReceiptKeySet, *KMSReceiptSigner, error) {
 	if provider == nil {
 		return nil, nil, errors.New("deadletterredaction: nil kms provider")
 	}
@@ -84,13 +89,20 @@ func LoadReceiptSigning(ctx context.Context, provider kms.Provider, aliasToKey m
 	if aliasToKey[kms.AliasAuditVerify] != "" {
 		aliases = append(aliases, kms.AliasAuditVerify)
 	}
-	keys := make([]audit.ReceiptKey, 0, len(aliases))
+	keys := make([]audit.ReceiptKey, 0, len(aliases)+len(retired))
 	for _, alias := range aliases {
 		pub, err := provider.PublicKey(ctx, alias)
 		if err != nil {
 			return nil, nil, fmt.Errorf("deadletterredaction: load public key of %s: %w", alias, err)
 		}
 		keys = append(keys, audit.ReceiptKey{KeyID: receiptKeyRef(aliasToKey, alias), PublicKey: pub})
+	}
+	for _, keyID := range retired {
+		pub, err := provider.PublicKeyByID(ctx, keyID)
+		if err != nil {
+			return nil, nil, fmt.Errorf("deadletterredaction: load public key of retired receipt key %q: %w", keyID, err)
+		}
+		keys = append(keys, audit.ReceiptKey{KeyID: keyID, PublicKey: pub})
 	}
 	set, err := audit.NewReceiptKeySet(keys...)
 	if err != nil {

@@ -7,7 +7,9 @@ import (
 	"crypto/ecdsa"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -68,11 +70,11 @@ func signedFixtureReceipt(t *testing.T, svc *Service) audit.RedactionReceipt {
 func TestReceiptSignedOnOneReplicaVerifiesOnAnother(t *testing.T) {
 	keyFile := newMasterKeyFile(t)
 	refs := map[string]string{kms.AliasAuditSigning: "audit-key-v1"}
-	_, signerA, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, refs), refs)
+	_, signerA, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, refs), refs, nil)
 	if err != nil {
 		t.Fatalf("replica A: %v", err)
 	}
-	keysB, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, refs), refs)
+	keysB, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, refs), refs, nil)
 	if err != nil {
 		t.Fatalf("replica B: %v", err)
 	}
@@ -89,7 +91,7 @@ func TestReceiptSignedOnOneReplicaVerifiesOnAnother(t *testing.T) {
 	// A process over another master key holds other keys and trusts none
 	// of replica A's receipts.
 	other := newMasterKeyFile(t)
-	keysC, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, other, refs), refs)
+	keysC, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, other, refs), refs, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -108,14 +110,14 @@ func TestReceiptSignedOnOneReplicaVerifiesOnAnother(t *testing.T) {
 func TestReceiptSignedBeforeARotationVerifiesAfterIt(t *testing.T) {
 	keyFile := newMasterKeyFile(t)
 	before := map[string]string{kms.AliasAuditSigning: "audit-key-v1"}
-	_, signerV1, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, before), before)
+	_, signerV1, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, before), before, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	old := signedFixtureReceipt(t, newSvc(&fakeStore{}, &fakeEmitter{}, signerV1))
 
 	after := map[string]string{kms.AliasAuditSigning: "audit-key-v2", kms.AliasAuditVerify: "audit-key-v1"}
-	keys, signerV2, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, after), after)
+	keys, signerV2, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, after), after, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -133,13 +135,90 @@ func TestReceiptSignedBeforeARotationVerifiesAfterIt(t *testing.T) {
 		t.Errorf("trusted keys = %d, want 2", got)
 	}
 	dropped := map[string]string{kms.AliasAuditSigning: "audit-key-v2"}
-	keysDropped, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, dropped), dropped)
+	keysDropped, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, dropped), dropped, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := keysDropped.VerifyReceipt(old); !errors.Is(err, audit.ErrReceiptKeyUnknown) {
 		t.Errorf("old receipt with no verify alias: %v, want ErrReceiptKeyUnknown", err)
 	}
+}
+
+// TestReceiptSignedByARetiredListedKeyVerifiesAfterTwoRotations pins the
+// retired-key list: after two rotations neither alias names the key that
+// signed a receipt, and the receipt verifies while the key's identifier is
+// listed, with the key read from the KMS by its identifier. A receipt under
+// a key that is neither named nor listed does not verify, and the key route
+// lists the retired key with the alias keys.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestReceiptSignedByARetiredListedKeyVerifiesAfterTwoRotations(t *testing.T) {
+	keyFile := newMasterKeyFile(t)
+	v1 := map[string]string{kms.AliasAuditSigning: "audit-key-v1"}
+	_, signerV1, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, v1), v1, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	old := signedFixtureReceipt(t, newSvc(&fakeStore{}, &fakeEmitter{}, signerV1))
+	v4 := map[string]string{kms.AliasAuditSigning: "audit-key-v4"}
+	_, signerV4, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, v4), v4, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	unlisted := signedFixtureReceipt(t, newSvc(&fakeStore{}, &fakeEmitter{}, signerV4))
+
+	// Two rotations later: v3 signs, v2 verifies, and v1 is retired.
+	v3 := map[string]string{kms.AliasAuditSigning: "audit-key-v3", kms.AliasAuditVerify: "audit-key-v2"}
+	unlistedKeys, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, v3), v3, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := unlistedKeys.VerifyReceipt(old); !errors.Is(err, audit.ErrReceiptKeyUnknown) {
+		t.Errorf("receipt of an unlisted retired key: %v, want ErrReceiptKeyUnknown", err)
+	}
+	keys, _, err := LoadReceiptSigning(context.Background(), sharedLocal(t, keyFile, v3), v3, []string{"audit-key-v1"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := keys.VerifyReceipt(old); err != nil {
+		t.Fatalf("receipt of a listed retired key after two rotations: %v", err)
+	}
+	if err := keys.VerifyReceipt(unlisted); !errors.Is(err, audit.ErrReceiptKeyUnknown) {
+		t.Errorf("receipt of a key outside the trusted set: %v, want ErrReceiptKeyUnknown", err)
+	}
+	var ids []string
+	for _, k := range keys.Keys() {
+		ids = append(ids, k.KeyID)
+	}
+	if want := []string{"audit-key-v1", "audit-key-v2", "audit-key-v3"}; strings.Join(ids, ",") != strings.Join(want, ",") {
+		t.Errorf("trusted keys = %v, want %v", ids, want)
+	}
+}
+
+// TestARetiredReceiptKeyTheKMSCannotReadStopsTheLoad pins that a listed
+// retired key whose public key the KMS cannot return stops the loader, so
+// the gateway does not start with a trusted set short of a listed key.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestARetiredReceiptKeyTheKMSCannotReadStopsTheLoad(t *testing.T) {
+	provider, err := kms.NewLocalRandom()
+	if err != nil {
+		t.Fatal(err)
+	}
+	gone := retiredKeyGone{Provider: provider}
+	if _, _, err := LoadReceiptSigning(context.Background(), gone, nil, []string{"audit-key-v0"}); !errors.Is(err, kms.ErrUnknownKEK) {
+		t.Errorf("LoadReceiptSigning with an unreadable retired key = %v, want ErrUnknownKEK", err)
+	}
+	if _, _, err := LoadReceiptSigning(context.Background(), provider, nil, []string{""}); !errors.Is(err, kms.ErrUnknownKEK) {
+		t.Errorf("LoadReceiptSigning with an empty retired key identifier = %v, want ErrUnknownKEK", err)
+	}
+}
+
+// retiredKeyGone is a KMS that no longer holds any key by identifier.
+type retiredKeyGone struct{ kms.Provider }
+
+func (retiredKeyGone) PublicKeyByID(_ context.Context, keyID string) (*ecdsa.PublicKey, error) {
+	return nil, fmt.Errorf("%w: %s", kms.ErrUnknownKEK, keyID)
 }
 
 // TestUnmappedReceiptAliasUsesItsNameUnderTheLocalProvider pins the
@@ -152,7 +231,7 @@ func TestUnmappedReceiptAliasUsesItsNameUnderTheLocalProvider(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	keys, signer, err := LoadReceiptSigning(context.Background(), provider, nil)
+	keys, signer, err := LoadReceiptSigning(context.Background(), provider, nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -184,10 +263,10 @@ func (f failingProvider) PublicKey(context.Context, string) (*ecdsa.PublicKey, e
 // spec: §12.8 (Compliance Interfaces)
 func TestReceiptSigningFailsClosedWhenTheKMSFails(t *testing.T) {
 	down := failingProvider{err: kms.ErrThrottled}
-	if _, _, err := LoadReceiptSigning(context.Background(), down, nil); !errors.Is(err, kms.ErrThrottled) {
+	if _, _, err := LoadReceiptSigning(context.Background(), down, nil, nil); !errors.Is(err, kms.ErrThrottled) {
 		t.Errorf("LoadReceiptSigning = %v, want the KMS error", err)
 	}
-	if _, _, err := LoadReceiptSigning(context.Background(), nil, nil); err == nil {
+	if _, _, err := LoadReceiptSigning(context.Background(), nil, nil, nil); err == nil {
 		t.Error("nil provider accepted")
 	}
 	signer, err := NewKMSReceiptSigner(down, kms.AliasAuditSigning, "audit-key-v1")

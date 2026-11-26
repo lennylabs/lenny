@@ -166,6 +166,7 @@ type gatewayFlags struct {
 	auditStartupChainCheckEntries                 *int
 	auditGrantCheckIntervalSeconds                *int
 	auditHardFailOnDrift                          *bool
+	auditRetiredReceiptKeyIDs                     *string
 	auditScatterCacheEnabled                      *bool
 	auditSIEMEndpoint                             *string
 	auditSIEMSecret                               *string
@@ -733,6 +734,9 @@ func (f *gatewayFlags) registerPolicyFlags() {
 	f.auditHardFailOnDrift = flag.Bool("audit-hard-fail-on-drift",
 		envBool("LENNY_AUDIT_HARD_FAIL_ON_DRIFT", false),
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
+	f.auditRetiredReceiptKeyIDs = flag.String("audit-retired-receipt-key-ids",
+		os.Getenv("LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS"),
+		"§12.8 audit.retiredReceiptKeyIds: comma-separated KMS key identifiers of retired redaction receipt signing keys that the chain verifier and the periodic receipt scan keep trusting after neither platform:audit-signing nor platform:audit-verify names them. Each identifier is the signature_kms_key_id its receipts carry and must name one key version on a cloud provider; the gateway reads each public key from the KMS by its identifier at startup and does not start when it cannot. Keep a retired key in the KMS and in this list for audit.gdprRetentionDays. Default empty. Override via LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS.")
 	f.auditScatterCacheEnabled = flag.Bool("audit-scatter-gather-cache-enabled",
 		envBool("LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED", true),
 		"§25.9 ops.audit.scatterGatherCacheEnabled: cache platform-admin cross-tenant audit scatter-gather results for 5 minutes (keyed by query parameters, bypassed per query with ?fresh=true). Backed by Redis (shared across replicas) when a Redis backend is configured, otherwise in-process (per-replica). Set false to disable the cache so every cross-tenant query reads the shards fresh. Default true. Override via LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED. F-25.9.11.")

@@ -33,6 +33,8 @@ type signFake struct {
 	alg    kmspb.CryptoKeyVersion_CryptoKeyVersionAlgorithm
 	calls  int
 	lastIn *kmspb.AsymmetricSignRequest
+	// pubName is the Name of the last GetPublicKey request.
+	pubName string
 }
 
 func (f *fakeKMS) AsymmetricSign(ctx context.Context, req *kmspb.AsymmetricSignRequest, _ ...gax.CallOption) (*kmspb.AsymmetricSignResponse, error) {
@@ -47,7 +49,8 @@ func (f *fakeKMS) AsymmetricSign(ctx context.Context, req *kmspb.AsymmetricSignR
 	return &kmspb.AsymmetricSignResponse{Signature: f.signing.der}, nil
 }
 
-func (f *fakeKMS) GetPublicKey(ctx context.Context, _ *kmspb.GetPublicKeyRequest, _ ...gax.CallOption) (*kmspb.PublicKey, error) {
+func (f *fakeKMS) GetPublicKey(ctx context.Context, req *kmspb.GetPublicKeyRequest, _ ...gax.CallOption) (*kmspb.PublicKey, error) {
+	f.signing.pubName = req.GetName()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -224,5 +227,34 @@ func TestGCPSignRealClientMapsResourceExhausted_spec_10_2(t *testing.T) {
 	}
 	if got := srv.calls.Load(); got != 1 {
 		t.Fatalf("Sign made %d provider requests, want exactly 1", got)
+	}
+}
+
+// TestGCPPublicKeyByIDReadsTheNamedVersionWithoutAnAlias pins the lookup of
+// a retired receipt key: the request names the CryptoKeyVersion itself,
+// which no alias maps, the algorithm is still checked, and an empty
+// identifier is refused before any request.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestGCPPublicKeyByIDReadsTheNamedVersionWithoutAnAlias(t *testing.T) {
+	key := kmstest.NewP256Key(t)
+	f := newFakeKMS()
+	f.signing.pem = pemOf(kmstest.PKIX(t, &key.PublicKey))
+	f.signing.alg = kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256
+	const retired = "projects/p/locations/global/keyRings/r/cryptoKeys/audit/cryptoKeyVersions/1"
+	pub, err := newSignProvider(f).PublicKeyByID(context.Background(), retired)
+	if err != nil || !pub.Equal(&key.PublicKey) {
+		t.Fatalf("PublicKeyByID: pub=%v err=%v", pub, err)
+	}
+	if f.signing.pubName != retired {
+		t.Errorf("GetPublicKey Name = %q, want %q", f.signing.pubName, retired)
+	}
+	f.signing.alg = kmspb.CryptoKeyVersion_EC_SIGN_P384_SHA384
+	if _, err := newSignProvider(f).PublicKeyByID(context.Background(), retired); !errors.Is(err, kms.ErrNotP256) {
+		t.Errorf("P-384 algorithm err=%v, want ErrNotP256", err)
+	}
+	f.signing.pubName = ""
+	if _, err := newSignProvider(f).PublicKeyByID(context.Background(), ""); !errors.Is(err, kms.ErrUnknownKEK) || f.signing.pubName != "" {
+		t.Errorf("empty identifier err=%v request=%q, want ErrUnknownKEK and no request", err, f.signing.pubName)
 	}
 }

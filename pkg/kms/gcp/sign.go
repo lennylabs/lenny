@@ -55,16 +55,33 @@ func (p *Provider) PublicKey(ctx context.Context, alias string) (*ecdsa.PublicKe
 	if !ok {
 		return nil, fmt.Errorf("%w: alias %q", kms.ErrUnknownKEK, alias)
 	}
+	return p.publicKey(ctx, keyName)
+}
+
+// PublicKeyByID returns the P-256 public key of the CryptoKeyVersion whose
+// full resource name is keyID, without an alias mapping.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (p *Provider) PublicKeyByID(ctx context.Context, keyID string) (*ecdsa.PublicKey, error) {
+	if keyID == "" {
+		return nil, fmt.Errorf("%w: empty key identifier", kms.ErrUnknownKEK)
+	}
+	return p.publicKey(ctx, keyID)
+}
+
+// publicKey fetches and checks the public key of the CryptoKeyVersion
+// keyName.
+func (p *Provider) publicKey(ctx context.Context, keyName string) (*ecdsa.PublicKey, error) {
 	out, err := p.client.GetPublicKey(ctx, &kmspb.GetPublicKeyRequest{Name: keyName})
 	if err != nil {
 		return nil, mapSignError("GetPublicKey", err)
 	}
 	if out.GetAlgorithm() != kmspb.CryptoKeyVersion_EC_SIGN_P256_SHA256 {
-		return nil, fmt.Errorf("%w: alias %q has algorithm %s", kms.ErrNotP256, alias, out.GetAlgorithm())
+		return nil, fmt.Errorf("%w: key %q has algorithm %s", kms.ErrNotP256, keyName, out.GetAlgorithm())
 	}
 	block, _ := pem.Decode([]byte(out.GetPem()))
 	if block == nil {
-		return nil, fmt.Errorf("kms/gcp: GetPublicKey: alias %q returned no PEM block", alias)
+		return nil, fmt.Errorf("kms/gcp: GetPublicKey: key %q returned no PEM block", keyName)
 	}
 	return kms.PublicKeyFromPKIX(block.Bytes)
 }

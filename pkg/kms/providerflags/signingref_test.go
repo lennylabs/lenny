@@ -156,3 +156,37 @@ func TestResolveLocalPassesReceiptAliasReferences(t *testing.T) {
 		t.Fatal("platform:audit-verify on the previous reference derived another key")
 	}
 }
+
+// TestARetiredReceiptKeyReferenceMustPinOneKeyVersion pins the check of the
+// key identifiers audit.retiredReceiptKeyIds lists: on a cloud provider
+// only a reference that names one key version passes, so a listed alias
+// cannot widen the trusted set to whatever key it names later; under the
+// local provider any non-empty reference passes; an empty reference never
+// does.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestARetiredReceiptKeyReferenceMustPinOneKeyVersion(t *testing.T) {
+	cases := []struct {
+		provider, ref string
+		ok            bool
+	}{
+		{ProviderAWS, "alias/lenny-audit", false},
+		{ProviderAWS, "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab", true},
+		{ProviderGCP, "projects/p/locations/global/keyRings/r/cryptoKeys/audit", false},
+		{ProviderGCP, "projects/p/locations/global/keyRings/r/cryptoKeys/audit/cryptoKeyVersions/2", true},
+		{ProviderAzure, "audit", false},
+		{ProviderAzure, "audit@v2", true},
+		{ProviderLocal, "audit-key-v1", true},
+		{ProviderLocal, "", false},
+		{ProviderAWS, "", false},
+	}
+	for _, c := range cases {
+		err := ValidateSigningReference(c.provider, c.ref)
+		if c.ok && err != nil {
+			t.Errorf("%s %q: %v, want accepted", c.provider, c.ref, err)
+		}
+		if !c.ok && !errors.Is(err, ErrRepointableSigningReference) {
+			t.Errorf("%s %q: %v, want ErrRepointableSigningReference", c.provider, c.ref, err)
+		}
+	}
+}
