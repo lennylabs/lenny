@@ -175,3 +175,41 @@ func TestLocalSigningKeyConcurrentFirstUseAgrees_spec_10_2(t *testing.T) {
 		}
 	}
 }
+
+// TestLocalPublicKeyByIDDerivesTheKeyOfAReferenceNoAliasNames pins the
+// lookup of a retired receipt key under the local provider: the key read by
+// a reference equals the key an alias mapped to that reference signed with,
+// on another process over the same seed with no alias mapping it, and an
+// empty identifier or a cancelled context is refused.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestLocalPublicKeyByIDDerivesTheKeyOfAReferenceNoAliasNames(t *testing.T) {
+	signer := newSeededLocal(t, testSeed)
+	signer.SetSigningReference(kms.AliasAuditSigning, "audit-key-v1")
+	want := publicKeyBytes(t, signer, kms.AliasAuditSigning)
+
+	later := newSeededLocal(t, testSeed)
+	later.SetSigningReference(kms.AliasAuditSigning, "audit-key-v3")
+	pub, err := later.PublicKeyByID(context.Background(), "audit-key-v1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := pub.Bytes()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, want) {
+		t.Error("the key read by reference differs from the key the alias signed with")
+	}
+	if bytes.Equal(publicKeyBytes(t, later, kms.AliasAuditSigning), want) {
+		t.Error("the current alias still derives the retired key")
+	}
+	if _, err := later.PublicKeyByID(context.Background(), ""); !errors.Is(err, kms.ErrUnknownKEK) {
+		t.Errorf("empty identifier err=%v, want ErrUnknownKEK", err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	if _, err := later.PublicKeyByID(ctx, "audit-key-v1"); !errors.Is(err, context.Canceled) {
+		t.Errorf("cancelled context err=%v, want context.Canceled", err)
+	}
+}

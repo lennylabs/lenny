@@ -58,6 +58,10 @@ func (f *fakeProvider) PublicKey(context.Context, string) (*ecdsa.PublicKey, err
 	return nil, errProbeFakeNoSigning
 }
 
+func (f *fakeProvider) PublicKeyByID(context.Context, string) (*ecdsa.PublicKey, error) {
+	return nil, errProbeFakeNoSigning
+}
+
 // spec: §12.5 — the ProviderProbeManager backs the
 // admin-time and continuous probe over the gateway's resolved
 // kms.Provider.

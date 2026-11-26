@@ -13,6 +13,8 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/kms"
 	"github.com/lennylabs/lenny/pkg/kms/providerflags"
+	"github.com/lennylabs/lenny/pkg/signingkeys"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // tokenSigningFlags returns the flags buildTokenSigningStores reads, on
@@ -24,17 +26,21 @@ func tokenSigningFlags(masterKeyFile, hmacKeyFile, issuer, audiences string) *ga
 	tenantClaim := "tenant_id"
 	noIssuer, noClient := "", ""
 	refresh, refetch, timeout := jwt.DefaultOIDCKeyRefreshInterval, jwt.DefaultOIDCMinRefetchInterval, jwt.DefaultOIDCFetchTimeout
+	keyRefresh, keyLead, keyRotation := signingkeys.DefaultRefreshInterval, signingkeys.DefaultPublishLead, uploadtoken.DefaultRotationInterval
 	return &gatewayFlags{
-		devMode:                    &devMode,
-		oidcIssuerURL:              &noIssuer,
-		oidcClientID:               &noClient,
-		oidcJWKSRefreshInterval:    &refresh,
-		oidcJWKSMinRefetchInterval: &refetch,
-		oidcFetchTimeout:           &timeout,
-		tenantIDClaim:              &tenantClaim,
-		bearerTrustHMACKeyFile:     &hmacKeyFile,
-		bearerExpectedIssuer:       &issuer,
-		bearerExpectedAudiences:    &audiences,
+		signingKeyRefreshInterval:      &keyRefresh,
+		signingKeyPublishLead:          &keyLead,
+		uploadTokenKeyRotationInterval: &keyRotation,
+		devMode:                        &devMode,
+		oidcIssuerURL:                  &noIssuer,
+		oidcClientID:                   &noClient,
+		oidcJWKSRefreshInterval:        &refresh,
+		oidcJWKSMinRefetchInterval:     &refetch,
+		oidcFetchTimeout:               &timeout,
+		tenantIDClaim:                  &tenantClaim,
+		bearerTrustHMACKeyFile:         &hmacKeyFile,
+		bearerExpectedIssuer:           &issuer,
+		bearerExpectedAudiences:        &audiences,
 		kmsOpts: &providerflags.Options{
 			Provider:      providerflags.ProviderLocal,
 			MasterKeyFile: masterKeyFile,
@@ -97,9 +103,9 @@ func TestBuildTokenSigningStoresComposesTheBearerVerifier_spec_10_2(t *testing.T
 	hmacFile := writeGatewayHMACKeyFile(t, "embedded-kid", []byte("embedded-signing-secret-0123456789"))
 
 	a := &gatewayWiring{f: tokenSigningFlags(master, hmacFile, "", "")}
-	a.buildTokenSigningStores(nil)
+	a.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 	b := &gatewayWiring{f: tokenSigningFlags(master, "", "", "")}
-	b.buildTokenSigningStores(nil)
+	b.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 	if a.jwtKeySet == nil || a.jwtSigner == nil || a.bearerVerifier == nil || a.kmsProvider == nil {
 		t.Fatalf("buildTokenSigningStores left the key set, signer, verifier, or provider unset: %+v", a)
 	}
@@ -120,7 +126,7 @@ func TestBuildTokenSigningStoresComposesTheBearerVerifier_spec_10_2(t *testing.T
 	}
 
 	c := &gatewayWiring{f: tokenSigningFlags(master, "", "https://lenny.acme.com", "lenny")}
-	c.buildTokenSigningStores(nil)
+	c.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 	if _, err := c.bearerVerifier.Verify(signedClaims(t, c.jwtSigner, "https://lenny.acme.com", "lenny")); err != nil {
 		t.Errorf("a key-set token with the expected issuer and audience is refused: %v", err)
 	}

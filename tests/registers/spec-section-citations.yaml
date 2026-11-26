@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1528
+      count: 1534
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -146,7 +146,7 @@ packages:
     - package: pkg/apis/lenny/v1alpha1
       count: 35
     - package: pkg/audit
-      count: 47
+      count: 65
     - package: pkg/audit/adminaudit
       count: 2
     - package: pkg/audit/auditretention
@@ -160,7 +160,7 @@ packages:
     - package: pkg/audit/deploymentconfigstore
       count: 3
     - package: pkg/audit/integrity
-      count: 45
+      count: 52
     - package: pkg/audit/jcs
       count: 4
     - package: pkg/audit/jwtaudit
@@ -352,7 +352,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1316
+      count: 1321
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret
@@ -452,7 +452,7 @@ packages:
     - package: pkg/gateway/core/session/sessioninbox
       count: 73
     - package: pkg/gateway/core/session/sessionserver
-      count: 2985
+      count: 2989
     - package: pkg/gateway/core/session/slotcounter
       count: 125
     - package: pkg/gateway/core/session/slothealth
@@ -614,17 +614,17 @@ packages:
     - package: pkg/idempotency/idempotencymw/pgstore
       count: 2
     - package: pkg/kms
-      count: 31
+      count: 36
     - package: pkg/kms/aws
-      count: 19
+      count: 21
     - package: pkg/kms/azure
-      count: 14
+      count: 16
     - package: pkg/kms/envelope
       count: 10
     - package: pkg/kms/gcp
-      count: 15
+      count: 17
     - package: pkg/kms/providerflags
-      count: 21
+      count: 31
     - package: pkg/kms/rekey
       count: 8
     - package: pkg/legalholdescrow
@@ -871,10 +871,14 @@ packages:
       count: 7
     - package: pkg/sessionrecord
       count: 37
+    - package: pkg/signingkeys
+      count: 28
+    - package: pkg/signingkeys/pgstore
+      count: 3
     - package: pkg/spiffeid
       count: 8
     - package: pkg/storage/deadletterredaction
-      count: 6
+      count: 15
     - package: pkg/storage/erasure
       count: 33
     - package: pkg/storage/erasurejob
@@ -958,7 +962,7 @@ packages:
     - package: pkg/upload/archive
       count: 15
     - package: pkg/uploadtoken
-      count: 29
+      count: 28
     - package: pkg/webhookdelivery
       count: 1
     - package: pkg/workspacepack
@@ -994,13 +998,13 @@ packages:
     - package: sdks/runtime/go/runtime
       count: 129
     - package: tests/chaos
-      count: 345
+      count: 346
     - package: tests/component/admission
       count: 20
     - package: tests/component/auditintegrity
       count: 5
     - package: tests/component/auditstore
-      count: 54
+      count: 59
     - package: tests/component/breakers
       count: 3
     - package: tests/component/controllers
@@ -1068,7 +1072,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 327
+      count: 332
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
@@ -1178,7 +1182,7 @@ packages:
     - package: tests/contract/rest_circuitbreaker
       count: 6
     - package: tests/contract/rest_idempotency
-      count: 9
+      count: 11
     - package: tests/contract/rest_mcp_consistency
       count: 76
     - package: tests/contract/rest_openai_chat
@@ -1210,13 +1214,13 @@ packages:
     - package: tests/e2e_kind
       count: 236
     - package: tests/integration
-      count: 740
+      count: 744
     - package: tests/load_cloud
       count: 13
     - package: tests/load_kind
       count: 24
     - package: tests/load_local
-      count: 501
+      count: 503
     - package: tests/load_local/directusage_teardown
       count: 2
     - package: tests/load_local/scenarios/extension_episode_fanout
@@ -1234,7 +1238,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 575
+      count: 583
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

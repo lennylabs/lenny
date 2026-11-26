@@ -13,13 +13,15 @@ import (
 )
 
 // ErrRepointableSigningReference is returned by Resolve when a cloud
-// provider's platform:jwt-signing or platform:jwt-verify alias maps to a
-// reference that can be repointed at different key material. The key set
-// computes each key's kid once from the startup fetch, so a reference
-// that later names a different key would make every new token fail on
-// every verifier.
+// provider's signing alias (platform:jwt-signing, platform:jwt-verify,
+// platform:audit-signing, or platform:audit-verify) maps to a reference
+// that can be repointed at different key material. The JWT key set
+// computes each key's kid once from the startup fetch, and a redaction
+// receipt records the reference as its signature_kms_key_id, so a
+// reference that later names a different key would make every new token
+// fail on every verifier and every earlier receipt unverifiable.
 var ErrRepointableSigningReference = errors.New(
-	"kms/providerflags: a platform:jwt-* alias must map to an immutable key-version reference",
+	"kms/providerflags: a signing alias must map to an immutable key-version reference",
 )
 
 // gcpKeyVersionName matches a full Cloud KMS CryptoKeyVersion resource
@@ -28,15 +30,17 @@ var gcpKeyVersionName = regexp.MustCompile(
 	`^projects/[^/]+/locations/[^/]+/keyRings/[^/]+/cryptoKeys/[^/]+/cryptoKeyVersions/[0-9]+$`,
 )
 
-// validateSigningReferences rejects a repointable reference on either
-// §10.2 JWT alias. It runs for the cloud providers only; the local
-// provider derives the key from the reference string itself.
+// validateSigningReferences rejects a repointable reference on any
+// signing alias: the §10.2 JWT aliases and the §12.8 receipt aliases. It
+// runs for the cloud providers only; the local provider derives the key
+// from the reference string itself.
 //
-// spec: §10.2 (Authentication) "Production".
+// spec: §10.2 (Authentication) "Production"; §12.8 (Compliance
+// Interfaces).
 func validateSigningReferences(provider string, aliasToKey map[string]string) error {
 	aliases := make([]string, 0, len(aliasToKey))
 	for alias := range aliasToKey {
-		if kms.IsJWTAlias(alias) {
+		if kms.IsSigningAlias(alias) {
 			aliases = append(aliases, alias)
 		}
 	}
@@ -48,6 +52,26 @@ func validateSigningReferences(provider string, aliasToKey map[string]string) er
 		}
 	}
 	return nil
+}
+
+// ValidateSigningReference rejects ref, a key identifier the deployment
+// names outside --kms-alias, such as a retired receipt key the gateway
+// setting audit.retiredReceiptKeyIds lists, when it is empty or, on a cloud
+// provider, can be repointed at different key material. A listed AWS alias
+// name would trust whatever key the alias points at later, so it is
+// refused as a signing alias's reference is. The local provider derives
+// the key from the reference string itself, so any non-empty reference
+// passes there.
+//
+// spec: §12.8 (Compliance Interfaces)
+func ValidateSigningReference(provider, ref string) error {
+	if ref == "" {
+		return fmt.Errorf("%w: empty key reference", ErrRepointableSigningReference)
+	}
+	if provider == ProviderLocal || immutableReference(provider, ref) {
+		return nil
+	}
+	return fmt.Errorf("%w: --kms-provider=%s key reference %q", ErrRepointableSigningReference, provider, ref)
 }
 
 // immutableReference reports whether ref pins one key version on the

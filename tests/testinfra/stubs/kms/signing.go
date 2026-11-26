@@ -130,6 +130,13 @@ func (p *Provider) Sign(ctx context.Context, alias string, digest []byte) ([]byt
 	return pkgkms.SignatureFromASN1(der)
 }
 
+// PublicKeyByID returns the P-256 public key of the key the stub holds
+// under keyID, as it holds a key per alias, minting it on first use. The
+// public-key faults and the alias faults for keyID apply.
+func (p *Provider) PublicKeyByID(ctx context.Context, keyID string) (*ecdsa.PublicKey, error) {
+	return p.PublicKey(ctx, keyID)
+}
+
 // PublicKey returns the P-256 public key of alias's key.
 func (p *Provider) PublicKey(ctx context.Context, alias string) (*ecdsa.PublicKey, error) {
 	if err := ctx.Err(); err != nil {

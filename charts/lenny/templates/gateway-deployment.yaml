@@ -1407,6 +1407,13 @@ spec:
             - name: LENNY_AUDIT_GDPR_RETENTION_DAYS
               value: {{ .Values.audit.gdprRetentionDays | quote }}
             {{- end }}
+            # §12.8 audit.retiredReceiptKeyIds: the retired redaction
+            # receipt keys the chain verifiers keep trusting. Rendered only
+            # when the list is not empty.
+            {{- if and .Values.audit .Values.audit.retiredReceiptKeyIds }}
+            - name: LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS
+              value: {{ join "," .Values.audit.retiredReceiptKeyIds | quote }}
+            {{- end }}
             # §16.4 audit.retentionPreset / audit.retentionDays: the
             # compliance-aware retention bundle and explicit window for
             # non-gdpr audit rows. The resolved window is emitted on the

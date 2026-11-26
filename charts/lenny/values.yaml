@@ -931,13 +931,23 @@ kms:
   # rotation"). platform:jwt-signing names the P-256 key that signs every
   # Lenny-issued JWT. platform:jwt-verify is optional and names a second
   # P-256 key that verifies and never signs; it is mapped only during a
-  # key rotation. On a cloud provider each must name an immutable key
-  # version: an AWS key ID or key ARN, a GCP CryptoKeyVersion name ending
-  # in /cryptoKeyVersions/<n>, or an Azure key with a non-empty @<version>
-  # suffix. A process refuses to start when either alias names a
-  # repointable reference (an AWS alias, a GCP CryptoKey without a version,
-  # or an Azure key without a version).
+  # key rotation. Two more aliases are reserved for the redaction receipt
+  # key (§12.8): platform:audit-signing names the P-256 key the erasure job
+  # signs every redaction receipt with, and the gateway does not start on a
+  # cloud provider without it; platform:audit-verify is optional and names
+  # the previous receipt key after a rotation. On a cloud provider each of
+  # the four must name an immutable key version: an AWS key ID or key ARN,
+  # a GCP CryptoKeyVersion name ending in /cryptoKeyVersions/<n>, or an
+  # Azure key with a non-empty @<version> suffix. A process refuses to start
+  # when one of them names a repointable reference (an AWS alias, a GCP
+  # CryptoKey without a version, or an Azure key without a version).
+  # On a cloud provider the gateway also needs platform:upload-token-signing,
+  # a symmetric encryption key that wraps the shared upload-token signing
+  # keys (§7.1); it does not start without it. Like the other KEK aliases
+  # it may name a repointable reference such as an AWS alias.
   # Example: platform:jwt-signing=arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab,
+  # platform:audit-signing=arn:aws:kms:us-east-1:111122223333:key/5678abcd-12ab-34cd-56ef-1234567890ab,
+  # platform:upload-token-signing=alias/lenny/upload-token-signing,
   # platform:credential-leases=alias/lenny/credential-leases,
   # tenant:acme=alias/lenny/tenant-acme.
   aliases: ""
@@ -1788,6 +1798,16 @@ audit:
   # when any tenant has a regulated complianceProfile (soc2, fedramp,
   # hipaa). F-12.8.16.
   gdprRetentionDays: 2555
+  # §12.8 audit.retiredReceiptKeyIds: the KMS key identifiers of retired
+  # redaction receipt signing keys, which neither platform:audit-signing
+  # nor platform:audit-verify in kms.aliases names any longer. The chain
+  # verifier and the periodic receipt scan keep trusting a receipt signed
+  # by a listed key, reading the public key from the KMS by its
+  # identifier. Each entry is the signature_kms_key_id its receipts carry,
+  # an immutable key-version reference on a cloud provider. The gateway
+  # does not start when it cannot read a listed key. Keep a retired key in
+  # the KMS and in this list for gdprRetentionDays. Default empty.
+  retiredReceiptKeyIds: []
 
 # features gates the optional admission webhooks (§17.2 feature-gated
 # chart inventory). The Phase 3.5 baseline webhooks render

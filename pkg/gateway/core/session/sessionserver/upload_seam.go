@@ -147,16 +147,19 @@ func midSessionPlan(files []seam.WorkspaceFile) (*adapterv1.WorkspacePlan, map[s
 }
 
 // VerifyUploadToken verifies a client's upload token against the session id
-// with the server's verifier. A refusal matches the seam's upload token
-// error for its kind and keeps the verifier's message. With no verifier
-// wired, as in a test or the minimal gateway, every token passes.
+// with the server's verifier, then refuses a token the session's row marks
+// consumed. A refusal matches the seam's upload token error for its kind
+// and keeps the verifier's message. A failure to read the row is returned
+// as it is, matching no token error, so the upload handler answers it as
+// a server error. With no verifier wired, as in a test or the minimal
+// gateway, every token passes.
 //
 // spec: GWSEAM-VerifyUploadToken; §7.1 (uploadToken format and security
 // properties).
-func (u *UploadSeam) VerifyUploadToken(_ context.Context, sessionID, token string) error {
-	err := u.s.verifyUploadTokenValue(token, sessionID)
-	if err == nil {
-		return nil
+func (u *UploadSeam) VerifyUploadToken(ctx context.Context, tenantID, sessionID, token string) error {
+	err := u.s.verifyUploadTokenValue(ctx, tenantID, token, sessionID)
+	if err == nil || !isUploadTokenRefusal(err) {
+		return err
 	}
 	kind := seam.ErrUploadTokenInvalid
 	switch {
@@ -255,29 +258,61 @@ func (u *UploadSeam) AuditUpload(ctx context.Context, ev seam.UploadAuditEvent) 
 }
 
 // verifyUploadToken verifies the `X-Lenny-Upload-Token` header of a request
-// against the session id. It returns nil on success or one of
-// uploadtoken.{ErrInvalid, ErrExpired, ErrSessionMismatch, ErrConsumed}.
+// against the session id in the request's tenant. It returns nil on
+// success, one of uploadtoken.{ErrInvalid, ErrExpired, ErrSessionMismatch,
+// ErrConsumed}, or the error of a failed row read.
 func (s *Server) verifyUploadToken(r *http.Request, sessionID string) error {
-	return s.verifyUploadTokenValue(r.Header.Get("X-Lenny-Upload-Token"), sessionID)
+	return s.verifyUploadTokenValue(r.Context(), s.resolveTenant(r), r.Header.Get("X-Lenny-Upload-Token"), sessionID)
 }
 
-// verifyUploadTokenValue verifies an upload token against the session id. A
-// server with no verifier, as in a test or the minimal gateway, admits
-// every token; production always wires one. An empty token is
-// uploadtoken.ErrInvalid.
-func (s *Server) verifyUploadTokenValue(tok, sessionID string) error {
+// verifyUploadTokenValue verifies an upload token against the session id,
+// then reads the session's row and refuses the token with
+// uploadtoken.ErrConsumed when the row carries the consumed mark. The mark
+// lives on the row, so a token one replica invalidated is refused on every
+// replica. A row that does not exist carries no mark: the caller's own
+// lookup reports the missing session. Any other read failure is returned
+// wrapped, and the caller fails the request closed. A server with no
+// verifier, as in a test or the minimal gateway, admits every token;
+// production always wires one. An empty token is uploadtoken.ErrInvalid.
+//
+// spec: §7.1 (uploadToken format and security properties), §7.4 (Upload
+// Safety)
+func (s *Server) verifyUploadTokenValue(ctx context.Context, tenantID, tok, sessionID string) error {
 	if s.uploadVerifier == nil {
 		return nil
 	}
 	if tok == "" {
 		return uploadtoken.ErrInvalid
 	}
-	_, err := s.uploadVerifier.Verify(tok, sessionID)
-	return err
+	if _, err := s.uploadVerifier.Verify(tok, sessionID); err != nil {
+		return err
+	}
+	row, err := s.store.Get(ctx, tenantID, sessionID)
+	switch {
+	case errors.Is(err, sessionstore.ErrNotFound):
+		return nil
+	case err != nil:
+		return fmt.Errorf("read upload token state of session %s: %w", sessionID, err)
+	case !row.UploadTokenConsumedAt.IsZero():
+		return uploadtoken.ErrConsumed
+	}
+	return nil
 }
 
-// writeUploadTokenError writes the envelope of an upload token refusal.
+// isUploadTokenRefusal reports whether err is one of the verifier's token
+// refusals, as opposed to a failure to read the token's state.
+func isUploadTokenRefusal(err error) bool {
+	return errors.Is(err, uploadtoken.ErrInvalid) || errors.Is(err, uploadtoken.ErrExpired) ||
+		errors.Is(err, uploadtoken.ErrSessionMismatch) || errors.Is(err, uploadtoken.ErrConsumed)
+}
+
+// writeUploadTokenError writes the envelope of an upload token refusal, or
+// 500 INTERNAL_ERROR when the token's state could not be read.
 func (s *Server) writeUploadTokenError(w http.ResponseWriter, err error) {
+	if !isUploadTokenRefusal(err) {
+		s.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
+		return
+	}
 	switch {
 	case errors.Is(err, uploadtoken.ErrExpired):
 		s.writeError(w, http.StatusUnauthorized, "UPLOAD_TOKEN_EXPIRED", "upload token has expired", nil)

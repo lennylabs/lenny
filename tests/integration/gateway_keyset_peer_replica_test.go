@@ -55,7 +55,10 @@ func TestGatewayMintedBearerVerifiesOnPeerReplica_spec_10_2(t *testing.T) {
 	}
 	gwA := gateway.StartWith(t, keySetReplicaArgs(pg.DSN, sharedKey)...)
 	gwB := gateway.StartWith(t, keySetReplicaArgs(pg.DSN, sharedKey)...)
-	gwC := gateway.StartWith(t, keySetReplicaArgs(pg.DSN, otherKey)...)
+	// Replica C runs on a database of its own: a replica whose KMS master
+	// key differs from its peers' cannot unwrap the upload-token signing
+	// keys they share in platform_signing_keys and does not start.
+	gwC := gateway.StartWith(t, keySetReplicaArgs(sharedDatabase(t).DSN, otherKey)...)
 
 	code, raw := deletionAdminDo(t, gwA.BaseURL(), http.MethodPost, "/v1/admin/bootstrap", map[string]any{
 		"tenants": []map[string]any{{"id": "acme", "displayName": "Acme Corp"}},

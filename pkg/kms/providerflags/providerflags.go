@@ -120,17 +120,19 @@ var ErrLocalForbidden = errors.New(
 		"(the in-process random KEK does not survive a restart; pick aws|gcp|azure)",
 )
 
-// resolveLocal builds the local provider and passes it the §10.2 JWT
-// alias entries of the alias map, from which it derives the ES256 key.
+// resolveLocal builds the local provider and passes it the signing alias
+// entries of the alias map (the §10.2 JWT aliases and the §12.8 receipt
+// aliases), from which it derives each ES256 key.
 //
-// spec: §10.2 (Authentication) "Development"; §17.4.
+// spec: §10.2 (Authentication) "Development"; §17.4; §12.8 (Compliance
+// Interfaces).
 func resolveLocal(opts Options) (kms.Provider, error) {
 	local, err := newLocal(opts.MasterKeyFile)
 	if err != nil {
 		return nil, err
 	}
 	for alias, ref := range opts.AliasToKey {
-		if kms.IsJWTAlias(alias) {
+		if kms.IsSigningAlias(alias) {
 			local.SetSigningReference(alias, ref)
 		}
 	}

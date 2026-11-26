@@ -62,12 +62,29 @@ func (p *Provider) PublicKey(ctx context.Context, alias string) (*ecdsa.PublicKe
 	if !ok {
 		return nil, fmt.Errorf("%w: alias %q", kms.ErrUnknownKEK, alias)
 	}
+	return p.publicKey(ctx, keyID)
+}
+
+// PublicKeyByID returns the P-256 public key of the key keyID names, a key
+// ID or key ARN, without an alias mapping. AWS asymmetric keys have no
+// versions, so the key ID names the key material.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (p *Provider) PublicKeyByID(ctx context.Context, keyID string) (*ecdsa.PublicKey, error) {
+	if keyID == "" {
+		return nil, fmt.Errorf("%w: empty key identifier", kms.ErrUnknownKEK)
+	}
+	return p.publicKey(ctx, keyID)
+}
+
+// publicKey fetches and checks the public key of the AWS key keyID.
+func (p *Provider) publicKey(ctx context.Context, keyID string) (*ecdsa.PublicKey, error) {
 	out, err := p.client.GetPublicKey(ctx, &awskms.GetPublicKeyInput{KeyId: awssdk.String(keyID)})
 	if err != nil {
 		return nil, mapSignError("GetPublicKey", err)
 	}
 	if out.KeySpec != types.KeySpecEccNistP256 {
-		return nil, fmt.Errorf("%w: alias %q has key spec %q", kms.ErrNotP256, alias, out.KeySpec)
+		return nil, fmt.Errorf("%w: key %q has key spec %q", kms.ErrNotP256, keyID, out.KeySpec)
 	}
 	return kms.PublicKeyFromPKIX(out.PublicKey)
 }

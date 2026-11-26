@@ -9,8 +9,9 @@ components:
   - audit
   - compliance
 symptoms:
-  - "an audit row classified chainIntegrity=redacted_gdpr has no matching signed RedactionReceipt"
-  - "verification reports a missing or signature-invalid receipt for a redaction window"
+  - "an audit row rewritten by a GDPR erasure has no redaction receipt, or its receipt does not verify"
+  - "a redacted audit row was rewritten again after its receipt was signed"
+  - "the audit-events list reports chainIntegrity=broken on a row whose payload carries the redaction marker"
 tags:
   - audit
   - gdpr
@@ -26,46 +27,55 @@ related:
 
 # audit-redaction-receipt-missing
 
-A GDPR-redacted audit row exists without a corresponding signed RedactionReceipt, so the §11.7 verifier cannot distinguish a legitimate redaction from a tamper.
+An audit row that a GDPR erasure rewrote in place has no redaction receipt whose signature verifies. Without a verifying receipt, the audit chain verifier cannot tell an authorized redaction from a tamper that cleared the row's payload, so it reports the row `broken`.
+
+The erasure job writes one redaction receipt per rewritten row. The receipt is signed inside the KMS with the ES256 key that the `platform:audit-signing` alias names, and it records that key's identifier. The gateway's periodic integrity check counts a row as missing its receipt when the row has no receipt, when the receipt names another row or tenant, when the row's current content hash differs from the receipt's `new_hash`, or when the receipt's signature does not verify under a trusted key. The trusted keys are the keys that `platform:audit-signing` and `platform:audit-verify` name and the retired receipt keys that `audit.retiredReceiptKeyIds` lists. A receipt signed under a key outside that set counts as missing in the same way as an absent one.
 
 ## Trigger
 
-`AuditRedactionReceiptMissing` — `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0`.
+`AuditRedactionReceiptMissing` fires on `increase(lenny_audit_redaction_receipt_missing_total[15m]) > 0`. The metric carries the `tenant_id` label of the affected tenant.
 
 ## Diagnosis
 
-### Step 1 — Identify the affected window
+### Step 1: Identify the affected rows
+
+List the tenant's audit events over the affected window and keep the rows the verifier reports `broken`:
 
 <!-- access: api method=GET path=/v1/admin/audit-events -->
 ```bash
-curl -sS "$LENNY_OPS_URL/v1/admin/audit-events?chain_state=redacted_gdpr&since=24h" \
-  | jq '.events[] | {id, tenant_id, recorded_at, chain_state}'
+curl -sS -H "Authorization: Bearer $LENNY_ADMIN_TOKEN" \
+  "$LENNY_GATEWAY_URL/v1/admin/audit-events?tenantId=<tenant_id>&since=<RFC3339 start>" \
+  | jq '.items[] | select(.unmapped.lenny_chain.integrity == "broken") | {uid: .metadata.uid, time, chain: .unmapped.lenny_chain}'
 ```
 
-Each row names the audit chain (`tenant_id`) and the time window that the redaction covers.
+A row whose payload carries the redaction marker (`"redacted": true`) and whose integrity is `broken` is a redaction without a verifying receipt.
 
-### Step 2 — Look for the receipt
+### Step 2: Compare the receipt's key with the trusted keys
 
-<!-- access: api method=GET path=/v1/admin/redaction-receipts -->
+List the keys the gateway trusts for receipts:
+
+<!-- access: api method=GET path=/v1/admin/audit-receipt-keys -->
 ```bash
-curl -sS "$LENNY_OPS_URL/v1/admin/redaction-receipts?tenant_id=<id>&since=<recorded_at>" \
-  | jq '.receipts[] | {id, signature_valid, window_start, window_end}'
+curl -sS -H "Authorization: Bearer $LENNY_ADMIN_TOKEN" \
+  "$LENNY_GATEWAY_URL/v1/admin/audit-receipt-keys" | jq '.keys[].keyId'
 ```
 
-A `signature_valid: false` or empty list confirms the row is unaccompanied.
+Read the receipt's `signature_kms_key_id` from the `audit_redaction_receipts` table for the row's `tenant_id` and `sequence_number`. The outcome falls into one of these cases:
+
+- **No receipt row exists.** The erasure job rewrote the row without committing a receipt, or the row was rewritten outside an erasure job.
+- **The key identifier is not in the list.** The receipt was signed under a key that neither alias names and `audit.retiredReceiptKeyIds` does not list, such as a key two rotations old that was not added to the list, or under a key the platform never held.
+- **The key identifier is in the list and the signature verifies.** The row's payload was rewritten after the receipt was signed, so the row's content hash no longer equals the receipt's `new_hash`. A row written back to its pre-redaction content falls in this case, and its payload no longer carries the redaction marker, so Step 1's filter on the marker does not list it; read `audit_redaction_receipts` for the tenant to find it.
+- **The key identifier is in the list and the signature does not verify.** The signature does not cover the stored receipt, so a signed column was changed after signing or the signature was forged.
 
 ## Remediation
 
-1. **If the redaction was authorized but the receipt write failed:** locate the original erasure job in `/v1/admin/erasure-jobs` and re-issue the receipt for the same window — the §12.8 ledger preserves enough metadata to re-sign.
-2. **If no erasure job exists for the redaction:** treat the row as a potential tamper. Quarantine the chain (do not delete the row), notify security and compliance, and follow [audit-chain-gap.md](./audit-chain-gap.md) for the broader §11.7 chain-integrity investigation.
-3. After issuing the receipt, re-run `POST /v1/admin/audit/verify` against the chain and confirm `chainIntegrity=redacted_gdpr` resolves with the receipt attached.
+1. **A key rotation dropped the receipt's key.** Add the key identifier the receipt records to `audit.retiredReceiptKeyIds`, as the [Security guide](../operator-guide/security.md#redaction-receipt-signing-key) describes, and roll the gateway. Confirm that the key version still exists in the KMS and that the gateway ServiceAccount holds `GetPublicKey` on it, because the gateway does not start when it cannot read a listed key. Once the key is trusted again, the next integrity cycle stops counting the row.
+2. **No receipt exists, the row was rewritten after its receipt, or the signature does not verify under a trusted key.** Treat the row as a potential tamper. Keep the row and the receipt row in place, notify security and compliance, and follow [audit-chain-gap](./audit-chain-gap.md) for the broader chain-integrity investigation. Find the erasure job that should have produced the receipt through `GET /v1/admin/erasure-jobs/{jobId}`; a receipt is written only by the erasure job, so a rewritten row with no matching erasure job did not come from Lenny.
 
 ## Verification
 
-`lenny_audit_redaction_receipt_missing_total` is non-incrementing and the chain verifier reports no orphaned `redacted_gdpr` rows.
+`lenny_audit_redaction_receipt_missing_total` stops increasing for the tenant, and the audit-events list reports the row `redacted_gdpr` rather than `broken`.
 
 ## Escalation
 
-Page security and compliance for any unaccompanied redaction that was not driven by an authorized erasure job. Page platform engineering when receipt issuance fails repeatedly.
-
-Cross-reference: [§11.7](../../spec/11_policy-and-controls.md#117-audit-logging), [§12.8](../../spec/12_storage-architecture.md#128-compliance-interfaces).
+Page security and compliance for any redaction-marked row that no authorized erasure job produced, and for any receipt whose signature does not verify under a trusted key. Page platform engineering when the erasure job fails to sign receipts repeatedly, which points to the KMS rather than to the audit store.

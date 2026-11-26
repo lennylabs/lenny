@@ -185,26 +185,20 @@ func (s *Store) Receipts(ctx context.Context, tenantID string) (map[uint64]audit
 	out := map[uint64]audit.RedactionReceipt{}
 	err = pgtenant.InTx(ctx, pool, tenantID, func(tx pgx.Tx) error {
 		rows, err := tx.Query(ctx,
-			`SELECT sequence_number, original_hash, signature
+			`SELECT receipt_id::text, audit_event_id::text, tenant_id, sequence_number,
+			        original_hash, new_hash, erasure_job_id::text, legal_basis,
+			        redactor_identity, "timestamp", signature, signature_kms_key_id
 			 FROM audit_redaction_receipts WHERE tenant_id = $1`, tenantID)
 		if err != nil {
 			return err
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var (
-				seq      int64
-				origHash []byte
-				sig      []byte
-			)
-			if err := rows.Scan(&seq, &origHash, &sig); err != nil {
+			r, err := scanReceipt(rows)
+			if err != nil {
 				return err
 			}
-			out[uint64(seq)] = audit.RedactionReceipt{
-				RedactedSeq:  uint64(seq),
-				OriginalHash: hex.EncodeToString(origHash),
-				Signature:    string(sig),
-			}
+			out[r.RedactedSeq] = r
 		}
 		return rows.Err()
 	})
@@ -212,6 +206,34 @@ func (s *Store) Receipts(ctx context.Context, tenantID string) (map[uint64]audit
 		return nil, err
 	}
 	return out, nil
+}
+
+// scanReceipt reads one audit_redaction_receipts row in the column order
+// Receipts selects. The hashes are returned as lowercase hex and the
+// timestamp in UTC, the encodings the receipt's signature covers.
+func scanReceipt(rows pgx.Rows) (audit.RedactionReceipt, error) {
+	var (
+		r                 audit.RedactionReceipt
+		seq               int64
+		origHash, newHash []byte
+		ts                time.Time
+		sig               []byte
+		keyID             *string
+	)
+	if err := rows.Scan(&r.ReceiptID, &r.AuditEventID, &r.TenantID, &seq,
+		&origHash, &newHash, &r.ErasureJobID, &r.LegalBasis,
+		&r.RedactorIdentity, &ts, &sig, &keyID); err != nil {
+		return audit.RedactionReceipt{}, err
+	}
+	r.RedactedSeq = uint64(seq)
+	r.OriginalHash = hex.EncodeToString(origHash)
+	r.NewHash = hex.EncodeToString(newHash)
+	r.Timestamp = ts.UTC()
+	r.Signature = sig
+	if keyID != nil {
+		r.KeyID = *keyID
+	}
+	return r, nil
 }
 
 // applyReceipts rewrites the Hash of each redacted row to the preserved

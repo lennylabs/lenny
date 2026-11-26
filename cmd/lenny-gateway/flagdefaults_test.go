@@ -43,6 +43,12 @@ var requiredFlags = []struct {
 	// spec: §13.3 Authoritative durability for revocation. The reconnect
 	// spacing of the revocation-cache rehydration is operator-tunable.
 	{"lenny-gateway", "revocation-reconnect-spacing"},
+	// spec: §7.1 uploadToken format and security properties. The shared
+	// signing keys' refresh interval, publish lead, and rotation interval
+	// are operator-tunable.
+	{"lenny-gateway", "signing-key-refresh-interval"},
+	{"lenny-gateway", "signing-key-publish-lead"},
+	{"lenny-gateway", "upload-token-key-rotation-interval"},
 	// spec: §4.9 Token Service secret resolution. Every gateway credential
 	// read is one get through the Token Service's Kubernetes client.
 	{"lenny-token-service", "cluster-qps"},

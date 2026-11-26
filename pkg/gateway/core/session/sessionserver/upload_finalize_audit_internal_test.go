@@ -67,7 +67,11 @@ func TestHandleFinalizeEmitsAuditEvent_spec_7_4_17(t *testing.T) {
 	if ev.Detail != parsed.Digest {
 		t.Errorf("Detail = %q, want digest %q", ev.Detail, parsed.Digest)
 	}
-	if !tracker.IsConsumed(parsed.Digest) {
-		t.Errorf("digest should be consumed after finalize")
+	stored, err := store.Get(context.Background(), "default", "sess_fin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.UploadTokenConsumedAt.IsZero() {
+		t.Errorf("the ready write should record the upload token consumed")
 	}
 }

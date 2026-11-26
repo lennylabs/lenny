@@ -177,7 +177,7 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 				rows[1].Redacted = true
 				return rows
 			},
-			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2, Signature: "kms-sig"}},
+			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2}},
 			want:     want{1: ChainVerified, 2: ChainRedactedGDPR, 3: ChainVerified},
 		},
 		{
@@ -201,7 +201,7 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 				rows := redactSeqs(classifyFixture(4), 2)
 				return deleteSeqs(rows, 3)
 			},
-			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2, Signature: "kms-sig"}},
+			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2}},
 			want:     want{1: ChainVerified, 2: ChainRedactedGDPR, 4: ChainBroken},
 			broken:   1,
 		},
@@ -212,8 +212,8 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 				return deleteSeqs(rows, 4)
 			},
 			receipts: map[uint64]RedactionReceipt{
-				2: {RedactedSeq: 2, Signature: "kms-sig"},
-				3: {RedactedSeq: 3, Signature: "kms-sig"},
+				2: {RedactedSeq: 2},
+				3: {RedactedSeq: 3},
 			},
 			want:   want{1: ChainVerified, 2: ChainRedactedGDPR, 3: ChainRedactedGDPR, 5: ChainBroken},
 			broken: 1,
@@ -222,8 +222,8 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 			name: "consecutive receipted redactions keep the chain linked",
 			rows: func() []Row { return redactSeqs(classifyFixture(4), 2, 3) },
 			receipts: map[uint64]RedactionReceipt{
-				2: {RedactedSeq: 2, Signature: "kms-sig"},
-				3: {RedactedSeq: 3, Signature: "kms-sig"},
+				2: {RedactedSeq: 2},
+				3: {RedactedSeq: 3},
 			},
 			want:   want{1: ChainVerified, 2: ChainRedactedGDPR, 3: ChainRedactedGDPR, 4: ChainVerified},
 			verify: ChainRedactedGDPR,
@@ -231,7 +231,7 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 		{
 			name:     "receipted redaction of the genesis row keeps its successor linked",
 			rows:     func() []Row { return redactSeqs(classifyFixture(3), 1) },
-			receipts: map[uint64]RedactionReceipt{1: {RedactedSeq: 1, Signature: "kms-sig"}},
+			receipts: map[uint64]RedactionReceipt{1: {RedactedSeq: 1}},
 			want:     want{1: ChainRedactedGDPR, 2: ChainVerified, 3: ChainVerified},
 			verify:   ChainRedactedGDPR,
 		},
@@ -240,7 +240,7 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 			rows: func() []Row {
 				return deleteSeqs(redactSeqs(classifyFixture(3), 1), 2)
 			},
-			receipts: map[uint64]RedactionReceipt{1: {RedactedSeq: 1, Signature: "kms-sig"}},
+			receipts: map[uint64]RedactionReceipt{1: {RedactedSeq: 1}},
 			want:     want{1: ChainRedactedGDPR, 3: ChainBroken},
 			broken:   1,
 		},
@@ -259,7 +259,7 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 				r.Hash = ComputeHash(r)
 				return append(rows, r)
 			},
-			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2, Signature: "kms-sig"}},
+			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2}},
 			want:     want{1: ChainVerified, 2: ChainRedactedGDPR, 4: ChainGapSuspected},
 			verify:   ChainRedactedGDPR,
 		},
@@ -272,9 +272,11 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 				rows[1].Hash = ComputeHash(rows[1])
 				return rows
 			},
-			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2, Signature: "kms-sig"}},
-			want:     want{1: ChainVerified, 2: ChainVerified, 3: ChainBroken},
-			broken:   1,
+			receipts: map[uint64]RedactionReceipt{2: {RedactedSeq: 2}},
+			// Row 2 has a receipt, so it is classified as a redaction:
+			// the fixture signs its receipt over the re-sealed hash.
+			want:   want{1: ChainVerified, 2: ChainRedactedGDPR, 3: ChainBroken},
+			broken: 1,
 		},
 		{
 			name: "cross-tenant row is broken",
@@ -293,16 +295,17 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 			t.Parallel()
 			rows := tc.rows()
 			receipts := map[uint64]RedactionReceipt{}
-			for seq, r := range tc.receipts {
-				// The receipt binds the row's preserved pre-redaction hash.
+			for seq := range tc.receipts {
+				// The receipt is signed over the row's preserved
+				// pre-redaction hash under a trusted key.
 				for _, row := range rows {
 					if row.Seq == seq {
-						r.OriginalHash = row.Hash
+						receipts[seq] = lawfulReceipt(t, row, row.Payload)
 					}
 				}
-				receipts[seq] = r
 			}
-			got := ChainFromRows("acme", rows, receipts).VerifyRows()
+			keys := receiptTestKeySet(t)
+			got := ChainFromRows("acme", rows, receipts).WithReceiptVerifier(keys).VerifyRows()
 			if len(got) != len(tc.want) {
 				t.Fatalf("classified %d rows, want %d (%v)", len(got), len(tc.want), got)
 			}
@@ -320,7 +323,7 @@ func TestVerifyRowsClassifiesByLinkBeforeSequence(t *testing.T) {
 			}
 			// The collapsed verdict agrees: any per-row break is a broken
 			// chain, and a chain with no break is never reported broken.
-			v := ChainFromRows("acme", rows, receipts).Verify()
+			v := ChainFromRows("acme", rows, receipts).WithReceiptVerifier(keys).Verify()
 			if (tc.broken > 0) != (v.Integrity == ChainBroken) {
 				t.Errorf("Verify = %q (%s), want broken=%v", v.Integrity, v.Detail, tc.broken > 0)
 			}

@@ -9,10 +9,13 @@ runGateway:
     w.buildStoreRouterAndSecurityBus
     w.buildBillingPipeline
     w.buildTokenSigningStores
+      w.openUploadTokenKeyRing
     w.buildExecutorAndCredentials
     w.buildPodLifecycle
       w.runtimeClassOverrides
     w.buildSessionMessaging
+  w.buildReceiptSigning
+    w.f.kmsOpts.EphemeralKEK
   w.buildHolderForwardTransport
   defer func{w.tokenServiceConn.Close}
   w.tokenServiceConn.Close
@@ -112,12 +115,8 @@ runGateway:
     w.apiRoutes.HandleRoute
     go w.wd.Run
     w.wd.Run
-    go w.uploadRotator.Run
-    w.uploadRotator.Run
-    go func{w.watchdogCtx.Done, w.uploadTracker.Sweep}
-    defer tick.Stop
-    w.watchdogCtx.Done
-    w.uploadTracker.Sweep
+    go w.uploadKeyRing.Run
+    w.uploadKeyRing.Run
     go func{w.watchdogCtx.Done}
     defer tick.Stop
     w.watchdogCtx.Done

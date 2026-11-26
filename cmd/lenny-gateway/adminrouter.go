@@ -482,6 +482,10 @@ func (w *gatewayWiring) buildAdminRouter(
 		}))
 	}
 	adminRouter = wireAudit(adminRouter)
+	// The audit-events chain walk verifies receipt signatures with the
+	// trusted receipt keys, and
+	// GET /v1/admin/audit-receipt-keys serves them to external verifiers.
+	adminRouter = adminRouter.WithReceiptKeys(w.receiptKeys)
 	// §25.9 audit-query observability series (query latency, broken /
 	// post-outage-rechain counters, scatter-gather fan-out). F-25.9.13.
 	adminRouter = adminRouter.WithAuditMetrics(gwMetrics)
@@ -654,16 +658,13 @@ func (w *gatewayWiring) buildAdminRouter(
 		// under F-12.2.16. The in-memory audit chain has no dead_lettered rows,
 		// so the redaction is wired only on the durable store.
 		if auditOpsStore != nil && auditValidator != nil {
-			receiptSigner, rerr := deadletterredaction.NewKMSReceiptSigner(
-				context.Background(), w.kmsProvider, "platform:audit-redaction-signing", "boot",
-			)
-			if rerr != nil {
-				log.Fatalf("lenny-gateway: §12.8 redaction receipt signer: %v", rerr)
-			}
+			// Each receipt is signed inside the KMS under
+			// platform:audit-signing by the signer
+			// buildReceiptSigning loaded, so every replica signs alike.
 			redactionSvc := deadletterredaction.New(deadletterredaction.Config{
 				Store:  auditOpsStore,
 				Emit:   auditValidator,
-				Signer: receiptSigner,
+				Signer: w.receiptSigner,
 				// Re-derive the OCSF translation error class the row was
 				// dead-lettered with, so the redacted payload preserves it for
 				// pipeline-failure forensics (§12.8).

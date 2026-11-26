@@ -56,9 +56,11 @@ import (
 	"github.com/lennylabs/lenny/pkg/policy"
 	"github.com/lennylabs/lenny/pkg/quota"
 	"github.com/lennylabs/lenny/pkg/session/sessionstore"
+	"github.com/lennylabs/lenny/pkg/signingkeys"
 	"github.com/lennylabs/lenny/pkg/storage/failopen"
 	"github.com/lennylabs/lenny/pkg/storage/issuedtokenstore"
 	"github.com/lennylabs/lenny/pkg/storage/retentiongc"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // gatewayFlags holds every command-line flag and environment-derived
@@ -124,6 +126,9 @@ type gatewayFlags struct {
 	auditLockAcquireTimeoutMs                     *int
 	tokenRevocationTimeoutMs                      *int
 	revocationReconnectSpacing                    *time.Duration
+	signingKeyRefreshInterval                     *time.Duration
+	signingKeyPublishLead                         *time.Duration
+	uploadTokenKeyRotationInterval                *time.Duration
 	auditLockMaxRetries                           *int
 	auditLockRetryBaseMs                          *int
 	globalTokenQuota                              *int64
@@ -161,6 +166,7 @@ type gatewayFlags struct {
 	auditStartupChainCheckEntries                 *int
 	auditGrantCheckIntervalSeconds                *int
 	auditHardFailOnDrift                          *bool
+	auditRetiredReceiptKeyIDs                     *string
 	auditScatterCacheEnabled                      *bool
 	auditSIEMEndpoint                             *string
 	auditSIEMSecret                               *string
@@ -604,6 +610,15 @@ func (f *gatewayFlags) registerStorageFlags() {
 	f.revocationReconnectSpacing = flag.Duration("revocation-reconnect-spacing",
 		envDuration("LENNY_REVOCATION_RECONNECT_SPACING", revocation.DefaultReconnectSpacing),
 		"§13.3 reconnect spacing: the minimum interval between the starts of two revocation-cache rehydrations that confirmations of the replica's Redis revocation subscription trigger, at startup and after each reconnect. A confirmation inside the spacing waits until it has passed, so a flapping Redis connection costs at most one Postgres read per replica per spacing, while the 30-second periodic rehydration keeps its schedule. Zero or a negative value starts every such rehydration at once. Default 5s. Override via LENNY_REVOCATION_RECONNECT_SPACING.")
+	f.signingKeyRefreshInterval = flag.Duration("signing-key-refresh-interval",
+		envDuration("LENNY_SIGNING_KEY_REFRESH_INTERVAL", signingkeys.DefaultRefreshInterval),
+		"§7.1 shared signing keys: how often a replica reloads the keys of platform_signing_keys, writes the next key when the active one is due for rotation, and deletes keys past their verification time. Must be shorter than --signing-key-publish-lead. Default 30s. Override via LENNY_SIGNING_KEY_REFRESH_INTERVAL.")
+	f.signingKeyPublishLead = flag.Duration("signing-key-publish-lead",
+		envDuration("LENNY_SIGNING_KEY_PUBLISH_LEAD", signingkeys.DefaultPublishLead),
+		"§7.1 shared signing keys: how far ahead of its activation instant a replica writes the next signing key, so every replica loads it before any replica signs with it. The gateway does not start unless it is longer than --signing-key-refresh-interval. Default 2m. Override via LENNY_SIGNING_KEY_PUBLISH_LEAD.")
+	f.uploadTokenKeyRotationInterval = flag.Duration("upload-token-key-rotation-interval",
+		envDuration("LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL", uploadtoken.DefaultRotationInterval),
+		"§7.1 uploadToken signing-key rotation interval: how long a key signs before the next key replaces it. Default 24h. Override via LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL.")
 	f.auditLockMaxRetries = flag.Int("audit-lock-max-retries",
 		envInt("LENNY_AUDIT_LOCK_MAX_RETRIES", auditstore.DefaultLockConfig().MaxRetries),
 		"§11.7 item 3 audit.lock.maxRetries: same-replica retries after an audit lock timeout before returning 503 audit_unavailable. Default 3. Override via LENNY_AUDIT_LOCK_MAX_RETRIES.")
@@ -719,6 +734,9 @@ func (f *gatewayFlags) registerPolicyFlags() {
 	f.auditHardFailOnDrift = flag.Bool("audit-hard-fail-on-drift",
 		envBool("LENNY_AUDIT_HARD_FAIL_ON_DRIFT", false),
 		"§11.7 item 2 audit.hardFailOnDrift: when true, a drift detected by the periodic background integrity check initiates a graceful shutdown (in addition to the critical alert and lenny_audit_grant_drift_total increment). Default false. Override via LENNY_AUDIT_HARD_FAIL_ON_DRIFT. F-11.7.3.")
+	f.auditRetiredReceiptKeyIDs = flag.String("audit-retired-receipt-key-ids",
+		os.Getenv("LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS"),
+		"§12.8 audit.retiredReceiptKeyIds: comma-separated KMS key identifiers of retired redaction receipt signing keys that the chain verifier and the periodic receipt scan keep trusting after neither platform:audit-signing nor platform:audit-verify names them. Each identifier is the signature_kms_key_id its receipts carry and must name one key version on a cloud provider; the gateway reads each public key from the KMS by its identifier at startup and does not start when it cannot. Keep a retired key in the KMS and in this list for audit.gdprRetentionDays. Default empty. Override via LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS.")
 	f.auditScatterCacheEnabled = flag.Bool("audit-scatter-gather-cache-enabled",
 		envBool("LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED", true),
 		"§25.9 ops.audit.scatterGatherCacheEnabled: cache platform-admin cross-tenant audit scatter-gather results for 5 minutes (keyed by query parameters, bypassed per query with ?fresh=true). Backed by Redis (shared across replicas) when a Redis backend is configured, otherwise in-process (per-replica). Set false to disable the cache so every cross-tenant query reads the shards fresh. Default true. Override via LENNY_AUDIT_SCATTER_GATHER_CACHE_ENABLED. F-25.9.11.")

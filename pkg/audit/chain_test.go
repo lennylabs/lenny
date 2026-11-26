@@ -110,9 +110,8 @@ func TestHashChainRedactionIsLawfulNotBroken(t *testing.T) {
 	c.Append("e1", json.RawMessage(`{"pii":"alice@acme.com"}`), ts())
 	c.Append("e2", json.RawMessage(`{"n":2}`), ts())
 
-	err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), RedactionReceipt{
-		Signature: "kms-sig-abc",
-	})
+	c.WithReceiptVerifier(receiptTestKeySet(t))
+	err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), lawfulReceipt(t, c.Rows()[0], json.RawMessage(`{"pii":"[REDACTED]"}`)))
 	if err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
@@ -147,7 +146,7 @@ func TestRedactOutOfRange(t *testing.T) {
 	t.Parallel()
 	c := NewChain("acme")
 	c.Append("e1", json.RawMessage(`{}`), ts())
-	if err := c.Redact(5, json.RawMessage(`{}`), RedactionReceipt{Signature: "s"}); err == nil {
+	if err := c.Redact(5, json.RawMessage(`{}`), RedactionReceipt{}); err == nil {
 		t.Error("Redact out-of-range seq should error")
 	}
 }
@@ -325,7 +324,8 @@ func TestVerifyRowsLawfulRedaction(t *testing.T) {
 	c := NewChain("acme")
 	c.Append("e1", json.RawMessage(`{"pii":"alice@acme.com"}`), ts())
 	c.Append("e2", json.RawMessage(`{"n":2}`), ts())
-	if err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), RedactionReceipt{Signature: "kms-sig"}); err != nil {
+	c.WithReceiptVerifier(receiptTestKeySet(t))
+	if err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), lawfulReceipt(t, c.Rows()[0], json.RawMessage(`{"pii":"[REDACTED]"}`))); err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
 	got := c.VerifyRows()
@@ -350,9 +350,8 @@ func TestVerifyLawfulRedactionReportsRedactedGDPR(t *testing.T) {
 	c.Append("e1", json.RawMessage(`{"pii":"alice@acme.com"}`), ts())
 	c.Append("e2", json.RawMessage(`{"n":2}`), ts())
 
-	if err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), RedactionReceipt{
-		Signature: "kms-sig-abc",
-	}); err != nil {
+	c.WithReceiptVerifier(receiptTestKeySet(t))
+	if err := c.Redact(1, json.RawMessage(`{"pii":"[REDACTED]"}`), lawfulReceipt(t, c.Rows()[0], json.RawMessage(`{"pii":"[REDACTED]"}`))); err != nil {
 		t.Fatalf("Redact: %v", err)
 	}
 	res := c.Verify()

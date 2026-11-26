@@ -705,7 +705,7 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// store strips the tokens through a redactor over the gateway's
 	// signing-key ring and restores them on replay, for the REST and the
 	// MCP paths alike.
-	idemStore = idempotencymw.WithCredentials(idemStore, uploadtoken.NewRedactor(w.ring))
+	idemStore = idempotencymw.WithCredentials(idemStore, uploadtoken.NewRedactor(w.uploadKeys))
 	// spec: §11.5 — when an MCP client supplies idempotencyKey
 	// inside a tool's arguments (lenny/create_session,
 	// lenny/delegate_task), the MCP server runs the call through the

@@ -473,7 +473,7 @@ func (r *Router) handleListAuditEvents(w http.ResponseWriter, req *http.Request)
 	// Per-row §11.7 integrity is computed over the full ordered chain so
 	// link and sequence-gap checks see every row; the filtered page reads
 	// each row's verdict out of this map by sequence number.
-	integrities := audit.ChainFromRows(tenant, rows, r.auditReceipts(req.Context(), tenant)).VerifyRows()
+	integrities := audit.ChainFromRows(tenant, rows, r.auditReceipts(req.Context(), tenant)).WithReceiptVerifier(r.receiptVerifier()).VerifyRows()
 
 	items := make([]json.RawMessage, 0, limit)
 	report := ChainIntegrityReport{}
@@ -578,7 +578,7 @@ func (r *Router) handleGetAuditEvent(w http.ResponseWriter, req *http.Request) {
 	if !ok {
 		return
 	}
-	integrities := audit.ChainFromRows(tenant, rows, r.auditReceipts(req.Context(), tenant)).VerifyRows()
+	integrities := audit.ChainFromRows(tenant, rows, r.auditReceipts(req.Context(), tenant)).WithReceiptVerifier(r.receiptVerifier()).VerifyRows()
 	for _, row := range rows {
 		if row.Seq == seq {
 			integrity := integrities[row.Seq]

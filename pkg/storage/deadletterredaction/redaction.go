@@ -32,7 +32,6 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/audit"
 	"github.com/lennylabs/lenny/pkg/audit/auditstore"
-	"github.com/lennylabs/lenny/pkg/audit/jcs"
 )
 
 // Store is the §12.8 audit-chain surface the redaction drives: it finds
@@ -50,9 +49,9 @@ type Emitter interface {
 }
 
 // Signer produces the detached signature over a RedactionReceipt's
-// canonical tuple, using the KMS-held audit signing key. The signature is
-// the sole provenance token that distinguishes an authorized GDPR
-// redaction from a tamper that merely cleared the payload (§12.8).
+// canonical tuple, using the KMS-held audit signing key, and returns the
+// identifier of the key that signed. *KMSReceiptSigner satisfies it. A
+// chain verifier accepts a redacted row only when this signature verifies.
 type Signer interface {
 	Sign(ctx context.Context, message []byte) (signature []byte, keyID string, err error)
 }
@@ -181,7 +180,9 @@ func (s *Service) redactRow(ctx context.Context, tenantID, erasureJobID string, 
 			errorClass = c
 		}
 	}
-	redactedAt := s.clock().UTC()
+	// The instant is normalized to the timestamptz precision, so the
+	// receipt read back from Postgres serializes to the signed bytes.
+	redactedAt := audit.ReceiptTimestamp(s.clock())
 	newPayload := audit.BuildRedactedPayload(row.EventType, errorClass, redactedAt)
 
 	// The pre-redaction content hash is the row's derived hash; the
@@ -251,25 +252,26 @@ func (s *Service) redactRow(ctx context.Context, tenantID, erasureJobID string, 
 	return nil
 }
 
-// signReceipt signs the RedactionReceipt's canonical tuple. The tuple is
-// JCS-serialized so signer and verifier agree on the signed bytes
-// regardless of key order.
+// signReceipt signs the RedactionReceipt's canonical tuple, the bytes
+// audit.ReceiptSigningInput returns, which every verifier recomputes from
+// the stored receipt.
+//
+// spec: §12.8 (Compliance Interfaces)
 func (s *Service) signReceipt(ctx context.Context, receiptID, auditEventID, tenantID string, seq uint64, originalHash, newHash, erasureJobID string, at time.Time) ([]byte, string, error) {
-	tuple, _ := json.Marshal(map[string]any{
-		"receipt_id":        receiptID,
-		"audit_event_id":    auditEventID,
-		"tenant_id":         tenantID,
-		"sequence_number":   seq,
-		"original_hash":     originalHash,
-		"new_hash":          newHash,
-		"erasure_job_id":    erasureJobID,
-		"legal_basis":       s.legalBasis,
-		"redactor_identity": s.redactor,
-		"timestamp":         at.Format(time.RFC3339Nano),
+	input, err := audit.ReceiptSigningInput(audit.RedactionReceipt{
+		ReceiptID:        receiptID,
+		AuditEventID:     auditEventID,
+		TenantID:         tenantID,
+		RedactedSeq:      seq,
+		OriginalHash:     originalHash,
+		NewHash:          newHash,
+		ErasureJobID:     erasureJobID,
+		LegalBasis:       s.legalBasis,
+		RedactorIdentity: s.redactor,
+		Timestamp:        at,
 	})
-	canon, err := jcs.Canonicalize(tuple)
 	if err != nil {
-		canon = tuple
+		return nil, "", err
 	}
-	return s.signer.Sign(ctx, canon)
+	return s.signer.Sign(ctx, input)
 }

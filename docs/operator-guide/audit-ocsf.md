@@ -57,7 +57,45 @@ Lenny computes the `prev_hash` chain over the **canonical Postgres tuple** (not 
 - Recompute the chain from `unmapped.lenny_chain.prev_hash` combined with the reversible OCSF fields, OR
 - Fetch the raw canonical pre-OCSF tuple via `GET /v1/admin/audit-events/{id}?format=raw-canonical` (requires the `audit:raw-canonical:read` scope).
 
-Chain integrity status is surfaced on every response envelope as `chainIntegrityReport` (`verified`, `broken`, `gap_suspected`, `rechained_post_outage`) plus per-record `unmapped.lenny_chain.integrity`.
+Chain integrity status is surfaced on every response envelope as `chainIntegrityReport` (`verified`, `broken`, `gap_suspected`, `rechained_post_outage`, `redacted_gdpr`) plus per-record `unmapped.lenny_chain.integrity`.
+
+---
+
+## Verifying redaction receipts
+
+A GDPR erasure rewrites the payload of a dead-lettered audit row in place, which breaks that row's content hash. The erasure job writes a redaction receipt for each rewritten row, and the receipt's signature authorizes the break. A verifier accepts a `redacted_gdpr` row only when the row's receipt verifies; a row whose receipt is absent or does not verify is `broken`. The [Security guide](security.md#redaction-receipt-signing-key) describes the receipt signing key and its rotation.
+
+A receipt is a row of the `audit_redaction_receipts` table, located by the redacted row's `tenant_id` and `sequence_number`. Its signed fields are `receipt_id`, `audit_event_id`, `tenant_id`, `sequence_number`, `original_hash`, `new_hash`, `erasure_job_id`, `legal_basis`, `redactor_identity`, and `timestamp`. The `signature` column holds the signature, and `signature_kms_key_id` names the KMS key version that produced it.
+
+A receipt binds the row's content before and after the redaction: `original_hash` is the row's content hash before the rewrite, which the next row's `prev_hash` carries, and `new_hash` is the content hash of the redacted row. A row matches its receipt only while its current content hash equals `new_hash`, so a redacted row whose payload was rewritten again after the redaction is `broken` even when its receipt's signature verifies. A row that has a receipt is checked this way even when its payload no longer carries the redaction marker, such as a row written back to its pre-redaction content.
+
+An external verifier checks a receipt as follows:
+
+1. Fetch the trusted public keys from `GET /v1/admin/audit-receipt-keys`, which requires the `platform-admin` or `tenant-admin` role. The response lists one entry per trusted key, each with its `keyId`, the algorithm `ES256`, and the public key as a JSON Web Key (`jwk`) whose `kid` equals the `keyId`. The trusted keys are the keys the `platform:audit-signing` and `platform:audit-verify` aliases name and the retired receipt keys that `audit.retiredReceiptKeyIds` lists.
+2. Select the key whose `keyId` equals the receipt's `signature_kms_key_id`. A receipt whose key identifier matches no listed key does not verify.
+3. Build the signed bytes: a JSON object of the ten signed fields, serialized with the RFC 8785 JSON Canonicalization Scheme. In that object, `original_hash` and `new_hash` are lowercase hexadecimal strings, `sequence_number` is a number, the identifiers are strings, and `timestamp` is an RFC 3339 UTC string with at most six fractional digits and no trailing zeros, such as `2026-11-26T09:00:00.123456Z`.
+4. Verify the signature as ES256 over the SHA-256 digest of those bytes. The signature is 64 bytes: the big-endian `r` followed by the big-endian `s`, each 32 bytes.
+5. Recompute the redacted row's content hash from its current columns, as for any row of the chain, and confirm that it equals the receipt's `new_hash`, and that `original_hash` equals the `prev_hash` of the row that follows it.
+
+```json
+{
+  "keys": [
+    {
+      "keyId": "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+      "alg": "ES256",
+      "jwk": {
+        "kty": "EC",
+        "crv": "P-256",
+        "x": "<base64url>",
+        "y": "<base64url>",
+        "kid": "arn:aws:kms:us-east-1:111122223333:key/1234abcd-12ab-34cd-56ef-1234567890ab",
+        "alg": "ES256",
+        "use": "sig"
+      }
+    }
+  ]
+}
+```
 
 ---
 

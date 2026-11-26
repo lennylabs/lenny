@@ -312,7 +312,7 @@ func (h *Handler) admitUpload(w http.ResponseWriter, r *http.Request, span trace
 	}
 
 	// §7.1 uploadToken: validate before any body is read.
-	if err := h.verifyUploadToken(r, row.ID); err != nil {
+	if err := h.verifyUploadToken(r, tenantID, row.ID); err != nil {
 		h.writeUploadTokenError(w, err)
 		return seam.Session{}, false
 	}
@@ -795,14 +795,19 @@ func (h *Handler) handleBlob(w http.ResponseWriter, r *http.Request) {
 }
 
 // verifyUploadToken verifies the `X-Lenny-Upload-Token` header against the
-// session id through GWSEAM-VerifyUploadToken. It returns nil on success or
-// one of the seam's upload token errors.
-func (h *Handler) verifyUploadToken(r *http.Request, sessionID string) error {
-	return h.tokens.VerifyUploadToken(r.Context(), sessionID, r.Header.Get("X-Lenny-Upload-Token"))
+// session id in tenantID through GWSEAM-VerifyUploadToken. It returns nil
+// on success, one of the seam's upload token errors, or the error of a
+// failed state read.
+func (h *Handler) verifyUploadToken(r *http.Request, tenantID, sessionID string) error {
+	return h.tokens.VerifyUploadToken(r.Context(), tenantID, sessionID, r.Header.Get("X-Lenny-Upload-Token"))
 }
 
 // writeUploadTokenError writes the envelope of an upload token refusal. An
-// invalid token's message is the verifier's own.
+// invalid token's message is the verifier's own. An error that is no token
+// refusal, a failed read of the token's state, fails the request closed
+// with 500 INTERNAL_ERROR.
+//
+// spec: GWSEAM-VerifyUploadToken
 func (h *Handler) writeUploadTokenError(w http.ResponseWriter, err error) {
 	switch {
 	case errors.Is(err, seam.ErrUploadTokenExpired):
@@ -811,8 +816,10 @@ func (h *Handler) writeUploadTokenError(w http.ResponseWriter, err error) {
 		h.writeError(w, http.StatusForbidden, "UPLOAD_TOKEN_MISMATCH", "upload token does not match session id", nil)
 	case errors.Is(err, seam.ErrUploadTokenConsumed):
 		h.writeError(w, http.StatusGone, "UPLOAD_TOKEN_CONSUMED", "upload token already consumed", nil)
-	default:
+	case errors.Is(err, seam.ErrUploadTokenInvalid):
 		h.writeError(w, http.StatusUnauthorized, "UPLOAD_TOKEN_INVALID", err.Error(), nil)
+	default:
+		h.writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 	}
 }
 

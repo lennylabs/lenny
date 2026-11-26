@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore"
 	"github.com/Azure/azure-sdk-for-go/sdk/azcore/policy"
@@ -59,11 +60,32 @@ func (p *Provider) PublicKey(ctx context.Context, alias string) (*ecdsa.PublicKe
 	if !ok {
 		return nil, fmt.Errorf("%w: alias %q", kms.ErrUnknownKEK, alias)
 	}
+	return p.publicKey(ctx, ref, alias)
+}
+
+// PublicKeyByID returns the P-256 public key of the Key Vault key version
+// keyID names, in the `<name>@<version>` form --kms-alias takes for a
+// signing key, without an alias mapping. An identifier without both a name
+// and a version is refused, because a key name alone names whichever
+// version is current.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (p *Provider) PublicKeyByID(ctx context.Context, keyID string) (*ecdsa.PublicKey, error) {
+	name, version, ok := strings.Cut(keyID, "@")
+	if !ok || name == "" || version == "" {
+		return nil, fmt.Errorf("%w: key identifier %q is not <name>@<version>", kms.ErrUnknownKEK, keyID)
+	}
+	return p.publicKey(ctx, keyRef{name: name, version: version}, keyID)
+}
+
+// publicKey fetches the Key Vault key ref and checks that it is a P-256
+// key; label names it in errors.
+func (p *Provider) publicKey(ctx context.Context, ref keyRef, label string) (*ecdsa.PublicKey, error) {
 	out, err := p.client.GetKey(ctx, ref.name, ref.version, nil)
 	if err != nil {
 		return nil, mapSignError("GetKey", err)
 	}
-	return publicKeyFromJWK(alias, out.Key)
+	return publicKeyFromJWK(label, out.Key)
 }
 
 // publicKeyFromJWK builds a P-256 public key from a Key Vault JSON Web

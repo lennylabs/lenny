@@ -18,6 +18,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/storage/deadletterredaction"
 	"github.com/lennylabs/lenny/pkg/tenancy/tenantstore"
 	"github.com/lennylabs/lenny/tests/testinfra/auditquery"
+	"github.com/lennylabs/lenny/tests/testinfra/receiptkeys"
 )
 
 // spec: 25.9 (Audit Log Query API, Chain gap detection), 11.7 (Audit
@@ -37,11 +38,12 @@ func TestAdminAuditListReportsDeletionAfterRedactionBrokenOverPostgres(t *testin
 	t.Parallel()
 	pg := startPG(t)
 	store := auditstore.New(pg.Router(t))
+	keys, signer := receiptkeys.Load(t, "", nil)
 	sink := &chainGapSink{}
 	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return adminQueryClock },
 		Audit: sink,
-	}).WithAuditLog(store)
+	}).WithAuditLog(store).WithReceiptKeys(keys)
 	ctx := context.Background()
 	seedTenant(t, ctx, pg, "acme")
 
@@ -74,7 +76,7 @@ func TestAdminAuditListReportsDeletionAfterRedactionBrokenOverPostgres(t *testin
 	svc := deadletterredaction.New(deadletterredaction.Config{
 		Store:    store,
 		Emit:     store,
-		Signer:   deadletterredaction.NewHMACReceiptSigner("boot", []byte("0123456789abcdef0123456789abcdef")),
+		Signer:   signer,
 		Classify: func(audit.Row) string { return "class_mapping_missing" },
 		Clock:    func() time.Time { return at },
 	})

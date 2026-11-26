@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/lennylabs/lenny/pkg/auth"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 	oidcstub "github.com/lennylabs/lenny/tests/testinfra/stubs/oidc"
 )
 
@@ -33,7 +34,7 @@ func TestBuildTokenSigningStoresTrustsTheUpstreamIdP_spec_10_2(t *testing.T) {
 		f.oidcIssuerURL = &issuer
 		f.oidcClientID = &clientID
 		w := &gatewayWiring{f: f}
-		w.buildTokenSigningStores(nil)
+		w.buildTokenSigningStores(nil, uploadtoken.DefaultTTL)
 		return w
 	}
 	idpToken := func(aud string) string {

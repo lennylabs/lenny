@@ -682,9 +682,12 @@ var prodMigrationSchema = []struct {
 	// that ends the wait of user erasure and tenant deletion on a drained
 	// session's terminal pipeline (§12.8 Lifecycle fence and drain).
 	{migration: "0204", table: "sessions", columns: []string{"terminal_pipeline_done_at"}},
-	// 0205 scopes the §11.5 idempotency records by principal: the subject
+	// 0205 adds the §7.1 single-use record of the uploadToken, which the
+	// finalize ready write sets and every replica reads on verification.
+	{migration: "0205", table: "sessions", columns: []string{"upload_token_consumed_at"}},
+	// 0206 scopes the §11.5 idempotency records by principal: the subject
 	// and the bound session join the primary key.
-	{migration: "0205", table: "idempotency_keys", columns: []string{"subject", "session_id"}},
+	{migration: "0206", table: "idempotency_keys", columns: []string{"subject", "session_id"}},
 }
 
 // renamedTables maps a table an earlier migration created or altered to

@@ -592,6 +592,31 @@ storage:
 
 A leader-elected gateway goroutine continuously probes the T4 envelope-encryption KMS key at `storage.t4KmsProbeInterval` and publishes `lenny_t4_kms_probe_last_success_timestamp` / `lenny_t4_kms_probe_result_total{outcome}`. The `T4KmsKeyUnusable` Critical alert fires when `time() - last_success > 2 * t4KmsProbeInterval`, and T4 writes fail closed until the KMS key recovers. Values below the 60s minimum are rejected at startup.
 
+### Upload-token signing keys
+
+Every gateway replica signs and verifies upload tokens with the same keys, which the gateway stores encrypted in the Postgres table `platform_signing_keys` and rotates there. The rotation runs on three gateway settings. The chart does not set them, so the defaults apply unless the gateway container's arguments or environment set them.
+
+| Flag | Environment variable | Default | Meaning |
+|:--|:--|:--|:--|
+| `--signing-key-refresh-interval` | `LENNY_SIGNING_KEY_REFRESH_INTERVAL` | `30s` | How often a replica reloads the keys, writes the next key when the active key is due for rotation, and deletes keys past their verification time. |
+| `--signing-key-publish-lead` | `LENNY_SIGNING_KEY_PUBLISH_LEAD` | `2m` | How far ahead of its activation a replica writes the next key, so every replica has loaded it before any replica signs with it. It must be longer than the refresh interval, and the gateway does not start when it is not. |
+| `--upload-token-key-rotation-interval` | `LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL` | `24h` | How long a key signs before the next key replaces it. |
+
+After the next key becomes active, a replaced key keeps verifying for the overlap window (five minutes, which has no setting) plus the longer of the overlap window and the upload-token lifetime, `--max-created-state-timeout-seconds` (`LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS`, default 300 seconds). At the defaults that is ten minutes, and a longer token lifetime lengthens it, so every token a replica signs with the replaced key verifies on every replica until it expires.
+
+A replica whose reload has failed for longer than five minutes stops issuing upload tokens, so session creation on it answers `503 SESSION_CREATION_FAILED` until a reload succeeds, while it keeps accepting the tokens it can verify. On a cloud KMS provider, map the alias `platform:upload-token-signing` in `kms.aliases` to a symmetric encryption key; the gateway does not start when it cannot wrap or unwrap a key under that alias. [Security](security.md) describes the keys and the KMS grants.
+
+### Retired redaction receipt keys
+
+```yaml
+audit:
+  retiredReceiptKeyIds: []              # Default: empty.
+```
+
+`audit.retiredReceiptKeyIds` lists the KMS key identifiers of retired redaction receipt signing keys: keys that signed receipts and that neither `platform:audit-signing` nor `platform:audit-verify` in `kms.aliases` names any longer. The chart renders the list as the gateway's `LENNY_AUDIT_RETIRED_RECEIPT_KEY_IDS` environment variable, which sets `--audit-retired-receipt-key-ids` (a comma-separated list), and omits it when the list is empty. The chain verifier and the periodic receipt scan trust the keys the two aliases name and the listed keys, and a receipt signed by any other key reads `broken`.
+
+Each entry is the `signature_kms_key_id` that receipts carry, in the form of a receipt alias's reference: an AWS key ID or key ARN, a GCP `cryptoKeyVersions/<n>` resource name, or an Azure `<name>@<version>` reference. The gateway reads each listed key's public key from the KMS by its identifier at startup, and it does not start when an identifier does not name one key version or when the KMS cannot return the key. When a rotation moves `platform:audit-verify` off a key, add that key's identifier to the list in the same rollout. Keep each listed key in the KMS, and in the list, for `audit.gdprRetentionDays`. [Security](security.md#redaction-receipt-signing-key) describes the rotation.
+
 ### Quota fail-open controls
 
 ```yaml

@@ -166,6 +166,17 @@ All three cloud providers sign Lenny-issued JWTs with ES256 (ECDSA over P-256 wi
 | LLM provider API keys | Kubernetes Secrets (etcd at-rest encryption) |
 | Redis token cache | Application-level encryption |
 | Credential lease tokens | Short-lived, signed JWTs |
+| Upload-token signing keys | Envelope encryption via KMS under `platform:upload-token-signing` |
+
+### Upload-Token Signing Keys
+
+The upload token that session creation returns is an HMAC-SHA256 token. Every gateway replica signs and verifies upload tokens with the same keys, so an upload or a finalize request is accepted by whichever replica the load balancer sends it to. The keys are rows of the Postgres table `platform_signing_keys`. Each key's secret is envelope-encrypted under the KEK that the alias `platform:upload-token-signing` names, and a replica holds the plaintext secret only in memory. On a cloud KMS provider, map `platform:upload-token-signing` in `kms.aliases` to a symmetric encryption key, and grant the `lenny-gateway` ServiceAccount `Encrypt` and `Decrypt` on it. A replica that cannot read or unwrap the keys at startup does not start.
+
+The gateway rotates the keys without operator action. When the active key has signed for the rotation interval (24 hours by default), one replica writes the next key with an activation instant a publish lead ahead (2 minutes by default). Each replica reloads the keys every refresh interval (30 seconds by default), so every replica holds the next key before any replica signs with it. After the next key becomes active, a replaced key keeps verifying for the overlap window (five minutes) plus the longer of the overlap window and the upload-token lifetime, `--max-created-state-timeout-seconds` (300 seconds by default), and the gateway then deletes it. At the defaults that is ten minutes. A replica that has not reloaded the keys since just before the rotation can sign with the replaced key until its last reload is five minutes old, and the verification time lets the token it signs verify on every replica until the token expires. The same time bounds how long a replaced key stays usable after the rotation: a holder of the key's secret can mint tokens that verify until the gateway deletes the key. The gateway computes the verification time from the configured token lifetime, so raising `--max-created-state-timeout-seconds` lengthens it. [Configuration](configuration.md#upload-token-signing-keys) lists the flags that set the three intervals.
+
+A replica that cannot reach Postgres keeps verifying with the keys it holds and does not rotate. When its last successful reload is more than five minutes old, it stops issuing upload tokens, and session creation on that replica answers `503 SESSION_CREATION_FAILED` until a reload succeeds. When `FinalizeWorkspace` succeeds, the gateway records on the session row that the token is used, so every replica refuses a later upload or finalize with that token with `410 UPLOAD_TOKEN_CONSUMED`.
+
+A gateway that runs without Postgres, or with `kms.provider: local` and no `kms.masterKeySecret`, keeps its upload-token keys in memory, because no other process could unwrap them. Its tokens verify only on that process.
 
 ---
 
@@ -396,7 +407,7 @@ The `DedicatedDNSUnavailable` critical alert fires when all dedicated CoreDNS re
 
 | ServiceAccount | Namespace | Purpose | Key Permissions |
 |---|---|---|---|
-| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write AgentPod CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
+| `lenny-gateway` | `lenny-system` | Gateway replicas | Read/write AgentPod CRDs, read Secrets; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing`, `platform:jwt-verify`, or `platform:audit-signing` names, `GetPublicKey` on the key that `platform:audit-verify` names and on each key that `audit.retiredReceiptKeyIds` lists, and `Encrypt` and `Decrypt` on the key that `platform:upload-token-signing` names |
 | `lenny-gateway` | `credentials.namespace` | Credential Secret writer | `create`, `update`, `delete`, and `deletecollection` on `secrets`, with no `get`, `list`, `watch`, or `patch` |
 | `lenny-controller` | `lenny-system` | Warm Pool Controller | Full AgentPod CRD management |
 | `lenny-token-service` | `lenny-system` | Token Service | KMS decrypt; namespace-wide `get` on `secrets` in `credentials.namespace`, with no `list` or `watch`; KMS `Sign` and `GetPublicKey` on every key that `platform:jwt-signing` or `platform:jwt-verify` names |
@@ -432,6 +443,27 @@ Audit events use a hash chain for tamper detection:
 - Each event references the hash of the previous event (`prev_hash`)
 - Startup chain-continuity check detects gaps
 - `AuditChainGap` alert fires if a broken chain is detected
+
+### Redaction Receipt Signing Key
+
+A GDPR erasure rewrites the payload of a dead-lettered audit row in place and writes a signed redaction receipt for the row. The receipt is the record that tells an authorized redaction apart from a tamper, so the chain verifier reports the rewritten row `redacted_gdpr` only when its receipt's signature verifies, and `broken` otherwise.
+
+The receipt key is an ES256 (ECDSA over P-256 with SHA-256) key held in the KMS. The erasure job sends the digest of each receipt to the KMS `Sign` operation, as the JWT signer does, so the private key never leaves the KMS on a cloud provider and every gateway replica signs with the same key. Each receipt records the identifier of the key that signed it. The KMS key is created with the same key specification as the JWT signing key: `ECC_NIST_P256` on AWS KMS, `EC_SIGN_P256_SHA256` on GCP Cloud KMS, and `ES256` on Azure Key Vault.
+
+Two reserved aliases in `kms.aliases` name the receipt keys:
+
+| Alias | Key | Use |
+|---|---|---|
+| `platform:audit-signing` | The current receipt key | Signs every new receipt and verifies receipts it signed. Required on a cloud provider. |
+| `platform:audit-verify` | The previous receipt key | Verifies receipts signed before the last rotation, and never signs. Optional. |
+
+Each alias maps to an immutable key-version reference, as the JWT aliases do: an AWS key ID or key ARN, a GCP `cryptoKeyVersions/<n>` resource name, or an Azure `<name>@<version>` reference. The reference is the key identifier receipts record, so the gateway refuses to start when a receipt alias maps to an AWS alias name or an unversioned GCP or Azure key. The gateway loads the public keys of both aliases at startup and does not start when it cannot.
+
+To rotate the receipt key, create a new key version, then map `platform:audit-signing` to the new reference and `platform:audit-verify` to the previous reference in one rollout. Receipts signed before the rotation keep verifying through `platform:audit-verify`. Before the next rotation moves `platform:audit-verify` off the previous reference, add that reference to `audit.retiredReceiptKeyIds` in the same rollout. The gateway reads the public key of each listed key identifier from the KMS by the identifier itself at startup, and does not start when it cannot read one or when an identifier does not name one key version, as for the aliases. Receipts signed by a listed key keep verifying after any number of rotations. A listed key also verifies any receipt forged with it, so when a receipt key is rotated because it may have been misused, review the receipts it signed before adding it to the list, and remove the gateway's permission to sign with a retired key where the KMS allows it while keeping `GetPublicKey`. A receipt whose key neither alias names and the list does not hold does not verify, its row reads `broken`, and the `AuditRedactionReceiptMissing` alert fires, so a database writer cannot authorize a redaction with a key of its own. Keep each retired receipt key version enabled in the KMS, and its identifier in `audit.retiredReceiptKeyIds`, for as long as receipts it signed are retained, which is `audit.gdprRetentionDays` (default 2555 days). The gateway ServiceAccount needs `GetPublicKey` on every listed key.
+
+A receipt authorizes only the redacted content it was signed for. The chain verifier and the periodic receipt scan recompute the redacted row's content hash and require it to equal the receipt's signed `new_hash`, so a redacted row whose payload is rewritten again after its receipt was signed reads `broken` and fires `AuditRedactionReceiptMissing`. A row that has a receipt counts as redacted even when its payload no longer carries the redaction marker, so writing a row back to its pre-redaction content is detected in the same way. An erasure redacts a row at most once: the erasure job skips rows that already carry the redaction marker, and the redacted payload names no user, so the erasure of another user the same row named finds nothing left to redact.
+
+External verifiers read the trusted public keys from `GET /v1/admin/audit-receipt-keys`. [Audit (OCSF wire format)](audit-ocsf.md#verifying-redaction-receipts) describes how a verifier checks a receipt.
 
 ### Compliance Profiles
 

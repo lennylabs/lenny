@@ -29,6 +29,8 @@ type signFake struct {
 	keySpec types.KeySpec
 	calls   int
 	lastIn  *awskms.SignInput
+	// pubKeyID is the KeyId of the last GetPublicKey request.
+	pubKeyID string
 }
 
 func (f *fakeKMS) Sign(ctx context.Context, in *awskms.SignInput, _ ...func(*awskms.Options)) (*awskms.SignOutput, error) {
@@ -43,7 +45,8 @@ func (f *fakeKMS) Sign(ctx context.Context, in *awskms.SignInput, _ ...func(*aws
 	return &awskms.SignOutput{Signature: f.signing.der}, nil
 }
 
-func (f *fakeKMS) GetPublicKey(ctx context.Context, _ *awskms.GetPublicKeyInput, _ ...func(*awskms.Options)) (*awskms.GetPublicKeyOutput, error) {
+func (f *fakeKMS) GetPublicKey(ctx context.Context, in *awskms.GetPublicKeyInput, _ ...func(*awskms.Options)) (*awskms.GetPublicKeyOutput, error) {
+	f.signing.pubKeyID = awssdk.ToString(in.KeyId)
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -211,5 +214,34 @@ func TestAWSSignRealClientMakesOneRequestOnThrottle_spec_10_2(t *testing.T) {
 	}
 	if got := n.Load(); got != 1 {
 		t.Fatalf("Sign made %d provider requests, want exactly 1", got)
+	}
+}
+
+// TestAWSPublicKeyByIDReadsTheNamedKeyWithoutAnAlias pins the lookup of a
+// retired receipt key: the request names the key identifier itself, which
+// no alias maps, the key spec is still checked, and an empty identifier is
+// refused before any request.
+//
+// spec: §12.8 (Compliance Interfaces)
+func TestAWSPublicKeyByIDReadsTheNamedKeyWithoutAnAlias(t *testing.T) {
+	key := kmstest.NewP256Key(t)
+	f := newFakeKMS()
+	f.signing.pubDER = kmstest.PKIX(t, &key.PublicKey)
+	f.signing.keySpec = types.KeySpecEccNistP256
+	const retired = "arn:aws:kms:us-east-1:111122223333:key/0000aaaa-12ab-34cd-56ef-1234567890ab"
+	pub, err := newSignProvider(f).PublicKeyByID(context.Background(), retired)
+	if err != nil || !pub.Equal(&key.PublicKey) {
+		t.Fatalf("PublicKeyByID: pub=%v err=%v", pub, err)
+	}
+	if f.signing.pubKeyID != retired {
+		t.Errorf("GetPublicKey KeyId = %q, want %q", f.signing.pubKeyID, retired)
+	}
+	f.signing.keySpec = types.KeySpecEccNistP384
+	if _, err := newSignProvider(f).PublicKeyByID(context.Background(), retired); !errors.Is(err, kms.ErrNotP256) {
+		t.Errorf("P-384 key spec err=%v, want ErrNotP256", err)
+	}
+	f.signing.pubKeyID = ""
+	if _, err := newSignProvider(f).PublicKeyByID(context.Background(), ""); !errors.Is(err, kms.ErrUnknownKEK) || f.signing.pubKeyID != "" {
+		t.Errorf("empty identifier err=%v request=%q, want ErrUnknownKEK and no request", err, f.signing.pubKeyID)
 	}
 }

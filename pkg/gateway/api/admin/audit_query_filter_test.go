@@ -73,7 +73,7 @@ func newCraftedRouter(backend admin.AuditLog, sink admin.AuditSink) *admin.Route
 	return admin.NewRouter(tenantstore.NewMemory(), admin.Options{
 		Clock: func() time.Time { return auditTestClock },
 		Audit: sink,
-	}).WithAuditLog(backend)
+	}).WithAuditLog(backend).WithReceiptKeys(testReceiptKeys)
 }
 
 // craftRow builds a sealed audit row with a valid content hash so the
@@ -552,7 +552,7 @@ func redactedChain(n int, redactSeq uint64) ([]audit.Row, map[uint64]audit.Redac
 	rows[idx].Payload = json.RawMessage(`{"redacted":true}`)
 	rows[idx].Redacted = true
 	return rows, map[uint64]audit.RedactionReceipt{
-		redactSeq: {RedactedSeq: redactSeq, OriginalHash: rows[idx].Hash, Signature: "kms-sig"},
+		redactSeq: signedTestReceipt(rows[idx]),
 	}
 }
 
