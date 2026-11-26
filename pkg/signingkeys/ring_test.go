@@ -165,8 +165,7 @@ func TestOpenRacingOnAnEmptyStoreProducesOneKey(t *testing.T) {
 // across two replicas: when the active key is due, a refresh writes the
 // next key one publish lead ahead; both replicas load it and verify with it
 // while they still sign with the old key; once it is active both sign with
-// it; the old key verifies for the stale bound plus the longer of the
-// overlap window and the token lifetime after that, and is then left out
+// it; the old key verifies for verifyFor after that, and is then left out
 // and deleted by the sweep.
 //
 // spec: §7.1 (Normal Flow)

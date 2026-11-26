@@ -146,7 +146,7 @@ packages:
     - package: pkg/apis/lenny/v1alpha1
       count: 35
     - package: pkg/audit
-      count: 57
+      count: 61
     - package: pkg/audit/adminaudit
       count: 2
     - package: pkg/audit/auditretention
@@ -160,7 +160,7 @@ packages:
     - package: pkg/audit/deploymentconfigstore
       count: 3
     - package: pkg/audit/integrity
-      count: 51
+      count: 52
     - package: pkg/audit/jcs
       count: 4
     - package: pkg/audit/jwtaudit
@@ -612,17 +612,17 @@ packages:
     - package: pkg/idempotency/idempotencymw
       count: 56
     - package: pkg/kms
-      count: 34
+      count: 36
     - package: pkg/kms/aws
-      count: 19
+      count: 21
     - package: pkg/kms/azure
-      count: 14
+      count: 16
     - package: pkg/kms/envelope
       count: 10
     - package: pkg/kms/gcp
-      count: 15
+      count: 17
     - package: pkg/kms/providerflags
-      count: 29
+      count: 31
     - package: pkg/kms/rekey
       count: 8
     - package: pkg/legalholdescrow
@@ -870,13 +870,13 @@ packages:
     - package: pkg/sessionrecord
       count: 37
     - package: pkg/signingkeys
-      count: 26
+      count: 28
     - package: pkg/signingkeys/pgstore
       count: 3
     - package: pkg/spiffeid
       count: 8
     - package: pkg/storage/deadletterredaction
-      count: 13
+      count: 15
     - package: pkg/storage/erasure
       count: 32
     - package: pkg/storage/erasurejob
@@ -960,7 +960,7 @@ packages:
     - package: pkg/upload/archive
       count: 15
     - package: pkg/uploadtoken
-      count: 26
+      count: 28
     - package: pkg/webhookdelivery
       count: 1
     - package: pkg/workspacepack
@@ -1236,7 +1236,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 579
+      count: 582
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

@@ -55,19 +55,16 @@ func UploadTokenPolicy(rotation, overlap, tokenLifetime time.Duration) Policy {
 }
 
 // UploadTokenVerificationTime returns how long a replaced upload-token key
-// keeps verifying after the next key becomes active: the stale bound plus
-// the longer of the overlap window and the token lifetime. The stale bound
-// of an upload-token ring is the overlap window (the ring's
-// Options.StaleAfter), so it is overlap + max(overlap, tokenLifetime),
-// 10 minutes at the defaults of 5 minutes each.
+// keeps verifying after the next key becomes active: overlap +
+// max(overlap, tokenLifetime), 10 minutes at the defaults of 5 minutes
+// each. The first term is the ring's stale bound (Options.StaleAfter),
+// which for upload tokens is the overlap window.
 //
-// A replica whose last successful reload came just before a peer published
-// the next key keeps signing with the replaced key until that reload is as
-// old as the stale bound, which is never later than the next key's
-// activation plus the stale bound, and the token it signs then is valid for
-// the token lifetime. Every token any replica signs with the replaced key
-// therefore expires before the key stops verifying, and a token lifetime
-// longer than the overlap window needs no separate refusal.
+// The worst case is a replica whose last reload came just before a peer
+// published the next key: it can mint with the replaced key until the next
+// key's activation plus the stale bound, and that token expires one token
+// lifetime later, which is still inside the verification time. A token
+// lifetime longer than the overlap window therefore needs no refusal.
 //
 // spec: §7.1 (Normal Flow)
 func UploadTokenVerificationTime(overlap, tokenLifetime time.Duration) time.Duration {

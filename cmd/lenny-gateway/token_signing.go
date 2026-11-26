@@ -179,9 +179,10 @@ func (w *gatewayWiring) buildTokenSigningStores(tenants tenantstore.Store, uploa
 // of this one, could unwrap a key it stored, and a stored key would stop
 // every later start. Either way tokens verify only on this process. A
 // ring that cannot be opened, including one whose publish lead is not
-// longer than its refresh interval, stops the process. The stale bound is
-// the overlap window, and a replaced key verifies for the stale bound plus
-// the longer of the overlap window and uploadTokenLifetime.
+// longer than its refresh interval, stops the process. The ring's stale
+// bound is the overlap window, and its policy derives a replaced key's
+// verification time from the overlap window and uploadTokenLifetime
+// (signingkeys.UploadTokenVerificationTime).
 //
 // spec: §7.1 (Normal Flow), §12.3 (Postgres HA Requirements)
 func (w *gatewayWiring) openUploadTokenKeyRing(provider kms.Provider, ephemeralKEK bool, uploadTokenLifetime time.Duration) *signingkeys.Ring {
