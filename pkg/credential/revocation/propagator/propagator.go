@@ -22,10 +22,11 @@
 // propagator is a drop-in for the auth middleware's read path too.
 //
 // Redis pub/sub is at-most-once. A revocation published while a
-// replica's subscription is down never reaches that replica, so Run takes
-// a rehydration callback and calls it when the subscription is
-// re-established: the replica rereads the issued-token index at once
-// rather than at its next periodic rehydration. A revocation dropped on a
+// replica holds no confirmed subscription never reaches that replica,
+// whether the subscription is down or not yet established at startup, so
+// Run takes a rehydration callback and calls it each time Redis confirms
+// the subscription: the replica rereads the issued-token index as soon as
+// the subscription is up rather than at its next periodic rehydration. A revocation dropped on a
 // connected subscription is reconciled by the next periodic rehydration,
 // so a missed publish degrades propagation latency from sub-second to at
 // most one rehydration interval rather than dropping the revocation.
@@ -118,17 +119,18 @@ func (p *Propagator) Len() int { return p.local.Len() }
 // loops. A Propagator built with a nil Bus has Run block until ctx is
 // cancelled and apply nothing.
 //
-// rehydrate, when non-nil, is called each time the subscription is
-// re-established after a disconnection, because every revocation
-// published while it was down is lost. It runs on the subscribe loop, so
-// it must not block: the gateway passes a non-blocking signal to its
-// rehydration loop. lenny-ops passes nil and keeps its own periodic read.
+// rehydrate, when non-nil, is called each time Redis confirms the
+// subscription, the first confirmation included, because every
+// revocation published while no subscription was confirmed is lost. It
+// runs on the subscribe loop, so it must not block: the gateway passes a
+// non-blocking signal to its rehydration loop, which spaces the reads it
+// starts. lenny-ops passes nil and keeps its own periodic read.
 //
 // spec: §13.3 (Credential Flow) "Authoritative durability for revocation".
 func (p *Propagator) Run(ctx context.Context, rehydrate func()) {
 	var opts []pubsub.SubscribeOption
 	if rehydrate != nil {
-		opts = append(opts, pubsub.OnReconnect(rehydrate))
+		opts = append(opts, pubsub.OnSubscribed(rehydrate))
 	}
 	p.bus.Subscribe(ctx, Channel, func(payload []byte) {
 		p.local.Revoke(string(payload))

@@ -1,0 +1,192 @@
+# SPDX-License-Identifier: MIT
+#
+# The merge gate on `main` (change 0172, decision 27). Each push to `main`
+# runs `lenny-test gate` in the gate container against a base: the commit
+# of the latest successful run of this workflow on `main`. The gate selects
+# what every merge since that commit reaches, so the pushes that land while
+# a run is in progress, and a pending run that a newer push replaces, are
+# covered by the next run. The scheduled weekly run, and a dispatch with
+# `full`, is a full run (`lenny-test gate --all`), as decision 2 states.
+#
+# A branch merges only when the latest finished run of this workflow on
+# `main` passed, or its failure has been fixed or reverted
+# (.claude/rules/git-workflow.md, "The gate on `main`"). The repository is
+# public, so the standard GitHub-hosted runner (4 vCPUs, 16 GB) carries no
+# minute charge. The workflow runs repository code, needs no secret, and
+# reads the run list with the job's own token.
+
+name: gate-main
+
+on:
+  push:
+    branches: [main]
+  schedule:
+    # Mondays 03:00 UTC: the weekly full run.
+    - cron: '0 3 * * 1'
+  workflow_dispatch:
+    inputs:
+      full:
+        description: 'Run the full gate (--all), as before a milestone is reported complete.'
+        type: boolean
+        default: false
+      base:
+        description: 'A commit of main to compare with, at or before the head of the latest successful run of this workflow; it widens the selection.'
+        type: string
+        default: ''
+
+permissions:
+  contents: read
+  actions: read
+
+# One group for main. A run in progress is never cancelled; GitHub keeps at
+# most one pending run and cancels an older pending run when a newer push
+# replaces it, and the newer run's base still covers the replaced push. A
+# pending full run is cancelled the same way; dispatch a full run by hand
+# when the week's scheduled run did not finish.
+concurrency:
+  group: gate-main
+  cancel-in-progress: false
+
+env:
+  # The base before this workflow has a successful run on main: the commit
+  # of the latest PASS of the local gate on main (run
+  # d3dcc8ba00e6fef49bb6eaf5). A base further back selects at least as much.
+  GATE_FALLBACK_BASE: 64d2b7c3aa61db5cde25b2fe2adc8098390dce39
+  # The serial layout runs one tier at a time. The default static-first
+  # layout overlaps the contract, component, and integration tiers, which
+  # start containers and envtest control planes at the same time, and was
+  # sized for a 12-CPU host; on 4 vCPUs the overlap buys little time and
+  # raises the container-start timeouts decision 7 watches for.
+  GATE_LAYOUT: serial
+
+jobs:
+  gate:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
+        with:
+          go-version-file: go.mod
+          cache: false
+
+      - name: Free disk space
+        run: |
+          # The gate image, the Go caches, and the testcontainers images of a
+          # full run need more room than the runner leaves free. Best effort.
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL || true
+          df -h /
+
+      - name: Resolve the base
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+          INPUT_BASE: ${{ inputs.base }}
+        run: scripts/ci/gate-main-base.sh
+
+      - name: Point the local main at the base
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+        run: |
+          set -euo pipefail
+          # A run on main against itself selects nothing, so the gate
+          # compares HEAD with a local main that points at the base.
+          git checkout --quiet --detach HEAD
+          git branch --force main "$BASE"
+          echo "HEAD $(git rev-parse HEAD); main $(git rev-parse main)"
+
+      - name: Restore the Go module cache
+        id: gomod
+        uses: actions/cache/restore@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/gate-cache/gomod.tar
+          key: gate-gomod-${{ hashFiles('go.sum') }}
+          restore-keys: gate-gomod-
+
+      - name: Load the Go module cache into the gate's volume
+        if: steps.gomod.outputs.cache-matched-key != ''
+        run: |
+          set -euo pipefail
+          # The gate keeps the module cache in the named volume
+          # lenny-gate-gomod. The copy runs in the gate image's pinned Go
+          # base image; the gate checks the cache with go mod verify.
+          image="$(sed -n 's/^FROM \(golang:[^ ]*\) AS go$/\1/p' tests/gate/Dockerfile)"
+          docker volume create lenny-gate-gomod
+          docker run --rm -i -v lenny-gate-gomod:/go/pkg/mod "$image" tar -C /go/pkg/mod -xf - < ~/gate-cache/gomod.tar
+
+      - name: Build lenny-test
+        run: go build -o "$RUNNER_TEMP/lenny-test" ./cmd/lenny-test
+
+      - name: Run the gate
+        id: gate
+        env:
+          FULL: ${{ github.event_name == 'schedule' || inputs.full == true }}
+        run: |
+          set -euo pipefail
+          args=(gate --layout "$GATE_LAYOUT")
+          if [ "$FULL" = true ]; then args+=(--all); fi
+          mkdir -p tests/results
+          echo "lenny-test ${args[*]}"
+          set +e
+          "$RUNNER_TEMP/lenny-test" "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/gate.log"
+          code="${PIPESTATUS[0]}"
+          set -e
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          exit "$code"
+
+      - name: Summarize the run
+        if: always()
+        env:
+          BASE: ${{ steps.base.outputs.base }}
+          BASE_SOURCE: ${{ steps.base.outputs.source }}
+        run: |
+          {
+            echo "## Merge gate on main"
+            echo
+            echo "- Commit: \`$GITHUB_SHA\`"
+            echo "- Base: \`$BASE\` ($BASE_SOURCE)"
+            echo
+            echo '```'
+            if [ -f "$RUNNER_TEMP/gate.log" ]; then
+              sed -n '/^lenny-test gate: \(PASS\|FAIL\|UNVERIFIED\|INCONCLUSIVE\)$/,$p' "$RUNNER_TEMP/gate.log"
+            else
+              echo "The gate did not start."
+            fi
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Upload the verdict and the log
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4.6.2
+        with:
+          name: gate-main-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            tests/results/gate-*.json
+            tests/results/history.jsonl
+            ${{ runner.temp }}/gate.log
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: Copy the Go module cache out of the gate's volume
+        id: gomod-copy
+        if: always() && steps.gomod.outputs.cache-hit != 'true'
+        run: |
+          set -euo pipefail
+          image="$(sed -n 's/^FROM \(golang:[^ ]*\) AS go$/\1/p' tests/gate/Dockerfile)"
+          mkdir -p ~/gate-cache
+          if docker volume inspect lenny-gate-gomod >/dev/null 2>&1; then
+            docker run --rm -v lenny-gate-gomod:/go/pkg/mod:ro "$image" tar -C /go/pkg/mod -cf - . > ~/gate-cache/gomod.tar
+            echo "copied=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Save the Go module cache
+        if: always() && steps.gomod-copy.outputs.copied == 'true'
+        uses: actions/cache/save@27d5ce7f107fe9357f9df03efb73ab90386fccae  # v5.0.5
+        with:
+          path: ~/gate-cache/gomod.tar
+          key: gate-gomod-${{ hashFiles('go.sum') }}

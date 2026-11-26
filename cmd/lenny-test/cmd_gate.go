@@ -206,8 +206,9 @@ type gateRecord struct {
 	// unit tier and every test of tiers 2 to 4 rather than the --changed
 	// selection.
 	All bool `json:"all,omitempty"`
-	// RdepsDepth is the dependent depth the selection walked; -1 is the
-	// full closure the merge gate runs.
+	// RdepsDepth is the dependent depth the selection walked: -1 is the
+	// full closure the gate on `main` runs, and 1 the direct importers the
+	// check before a merge runs (premergeRdepsDepth).
 	RdepsDepth int `json:"rdeps_depth"`
 	// Layout names how the tiers ran (gateLayouts), and GoTestP the
 	// `go test -p` each named tier got while it shared its phase with
@@ -238,6 +239,14 @@ type gateRecord struct {
 	// from a full one (All) and sees how much a selected run covered. A
 	// tier the plan did not select is absent.
 	Selection map[string]gateTierSelection `json:"selection,omitempty"`
+	// PackageFailuresRecorded reports a run whose tiers record the
+	// packages that failed outside a test (tierStat.PackageFailures), so
+	// `--rerun-failed` can tell a run whose failures are individual tests
+	// from one whose test binary did not finish (change 0172, decision 26).
+	PackageFailuresRecorded bool `json:"package_failures_recorded,omitempty"`
+	// RerunOf is set on the verdict of `--rerun-failed`: the run whose
+	// failed tests it reran, and each test's runs (gateRerun).
+	RerunOf *gateRerun `json:"rerun_of,omitempty"`
 	// NotRun lists the tiers the gate selected but could not run, with
 	// the reason. A gate with any entry here is not green.
 	NotRun []string `json:"not_run,omitempty"`
@@ -293,12 +302,14 @@ func runGate(args []string) int {
 	here := fs.Bool("here", false, "run the gate in this environment instead of the gate container (the container itself runs the gate this way); outside the gate image the verdict is at best UNVERIFIED")
 	rebuild := fs.Bool("rebuild", false, "rebuild the gate image even when it exists")
 	noSocket := fs.Bool("no-docker-socket", false, "do not give the gate container the host Docker socket; the tiers that need Docker are reported as not run")
-	rdeps := fs.Int("rdeps-depth", defaultRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; -1, the default: the full closure)")
+	rdeps := fs.Int("rdeps-depth", fullRdepsDepth, "how many hops of in-module dependents of a changed package the selection adds (0: the changed packages only; 1: the packages that import them directly, the default with --tier; -1: the full closure, the default without --tier); a depth at or above zero makes the verdict UNVERIFIED unless --tier restricts the run and the depth is at least 1")
 	all := fs.Bool("all", false, "select every package of the unit tier and every test of the component, contract, and integration tiers, whatever the diff against --base")
 	layout := fs.String("layout", defaultGateLayout, "how the tiers run: "+gateLayoutStaticFirst+" runs the static tier alone, then the contract tier beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutUnitAlone+" runs the static and contract tiers beside the component and integration tiers, then the unit tier alone, then the documentation gates; "+gateLayoutSerial+" runs every tier one after another")
 	tiers := fs.String("tier", "", "restrict the run to these tiers of the merge gate, as a comma-separated list such as static,unit,component,contract; the diff selection applies within them, and the verdict records the restriction")
 	cover := fs.Bool("cover", false, "write the unit run's coverage profile to tests/results/cover.out, which `lenny-test coverage --diff` reads (with --here, LENNY_COVER_PROFILE can name another path); without it the gate's unit run writes no profile")
 	goTestP := fs.String("go-test-p", "", "the go test -p of a tier that runs beside another lane, as tier=count pairs such as component=2,integration=2; a tier it does not name keeps the go command's default, and a tier that runs alone in the layout is refused")
+	rerunFailed := fs.Bool("rerun-failed", false, "rerun only the tests that failed in the latest gate run on HEAD, each --rerun-count times, in the gate container, and write a verdict that names that run and carries its selection, tiers, and coverage profile; it refuses a tree with uncommitted changes, a run that did not fail, and a run whose failures are not individual tests of the unit, component, contract, or integration tier")
+	rerunCount := fs.Int("rerun-count", defaultRerunCount, "with --rerun-failed, how many times each failed test runs; every run must pass")
 	capGB := fs.Int("gocache-cap-gb", defaultGateGoCacheCapGB, "empty the build cache volume "+gateBuildVolume+" before the gate container starts when it holds more than this many GB (1 GB is 10^9 bytes) and no running container uses it; 0 turns the check off; without the flag, "+gateEnvGoCacheCap+" sets the cap when it is set; a --here run does not use the volume and skips the check")
 	flagArgs, err := gateCommandArgs(args)
 	if err != nil {
@@ -313,11 +324,18 @@ func runGate(args []string) int {
 		fs.Usage()
 		return 2
 	}
+	if *rerunFailed {
+		capSet := false
+		fs.Visit(func(f *flag.Flag) { capSet = capSet || f.Name == "gocache-cap-gb" })
+		return runGateRerun(fs, *here, *rerunCount, *rebuild, !*noSocket, capSet, *capGB)
+	}
 	if *base == "" {
 		fmt.Fprintln(os.Stderr, "lenny-test gate: --base is empty; the merge gate compares with the merge base of a ref, main by default")
 		return 2
 	}
-	opts, err := gateRunOptions(gateFlagValues{base: *base, rdeps: *rdeps, all: *all, layout: *layout, goTestP: *goTestP, tiers: *tiers, cover: *cover})
+	rdepsSet := false
+	fs.Visit(func(f *flag.Flag) { rdepsSet = rdepsSet || f.Name == "rdeps-depth" })
+	opts, err := gateRunOptions(gateFlagValues{base: *base, rdeps: *rdeps, rdepsSet: rdepsSet, all: *all, layout: *layout, goTestP: *goTestP, tiers: *tiers, cover: *cover})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "lenny-test gate: %v\n", err)
 		return 2
@@ -350,13 +368,16 @@ func runGate(args []string) int {
 // gateFlagValues are the values of the gate's selection, layout, tier,
 // and coverage flags as the command line gives them.
 type gateFlagValues struct {
-	base    string
-	rdeps   int
-	all     bool
-	layout  string
-	goTestP string
-	tiers   string
-	cover   bool
+	base  string
+	rdeps int
+	// rdepsSet reports that the command line named --rdeps-depth; without
+	// it the depth follows --tier (gateRdepsDepth).
+	rdepsSet bool
+	all      bool
+	layout   string
+	goTestP  string
+	tiers    string
+	cover    bool
 }
 
 // gateRunOptions checks the gate's selection, layout, tier, and coverage
@@ -380,7 +401,40 @@ func gateRunOptions(f gateFlagValues) (gateOptions, error) {
 	if err != nil {
 		return gateOptions{}, err
 	}
-	return gateOptions{base: f.base, rdepsDepth: f.rdeps, all: f.all, layout: f.layout, goTestP: p, tiers: tiers, cover: f.cover}, nil
+	return gateOptions{base: f.base, rdepsDepth: gateRdepsDepth(f, tiers), all: f.all, layout: f.layout, goTestP: p, tiers: tiers, cover: f.cover}, nil
+}
+
+// gateRdepsDepth returns the dependent depth of a gate run: the depth
+// --rdeps-depth names, or, without it, premergeRdepsDepth for a run that
+// --tier restricts, which is the check before a merge, and fullRdepsDepth
+// for any other run, which is the gate on `main` (change 0172, decision
+// 26). --all runs every package whatever the depth.
+func gateRdepsDepth(f gateFlagValues, tiers []string) int {
+	switch {
+	case f.rdepsSet:
+		return f.rdeps
+	case tiers != nil && !f.all:
+		return premergeRdepsDepth
+	}
+	return fullRdepsDepth
+}
+
+// gateDepthNarrowed returns why the dependent depth of a run keeps its
+// verdict from PASS, or "" when it does not. A run of every tier walks the
+// full closure, because it is the gate on `main`. A run that --tier
+// restricts is the check before a merge, which walks at least the direct
+// importers of the changed packages. A full run (--all) selects every
+// package whatever the depth.
+func gateDepthNarrowed(o gateOptions) string {
+	switch {
+	case o.all || o.rdepsDepth < 0:
+		return ""
+	case o.tiers == nil:
+		return fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth)
+	case o.rdepsDepth < premergeRdepsDepth:
+		return fmt.Sprintf("--rdeps-depth %d narrowed the selection below the check before a merge, which runs the changed packages and the packages that import them directly (depth %d); run the gate without --rdeps-depth", o.rdepsDepth, premergeRdepsDepth)
+	}
+	return ""
 }
 
 // gatePassArgs returns the flags the host half passes to `lenny-test gate
@@ -1339,6 +1393,7 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 	v.Gate.RestrictedTo = o.tiers
 	v.Gate.Cover = o.cover
+	v.Gate.PackageFailuresRecorded = true
 	// The static tier and the plan compare with the commit resolved here
 	// rather than with the ref, so the commit the verdict records and
 	// checks is the one they read even when the ref moves during the run.
@@ -1419,8 +1474,8 @@ func (g gateRunner) run(o gateOptions) *verdict {
 	}
 
 	v.Gate.RdepsDepth = o.rdepsDepth
-	if o.rdepsDepth >= 0 && !o.all {
-		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("--rdeps-depth %d narrowed the selection to that many hops of dependents, and the merge gate runs the changed packages and every dependent; run the gate without --rdeps-depth", o.rdepsDepth))
+	if why := gateDepthNarrowed(o); why != "" {
+		v.Gate.Unverified = append(v.Gate.Unverified, why)
 	}
 	if o.commit != "" && head != o.commit {
 		v.Gate.Unverified = append(v.Gate.Unverified, fmt.Sprintf("HEAD was %s when the gate started, and the container resolved it to %s before it built lenny-test; run the gate again", shortCommit(head), shortCommit(o.commit)))
@@ -1766,6 +1821,19 @@ func matchOwner(p, root string) {
 	}
 }
 
+// depthPhrase names the dependents a selection of the given depth runs.
+func depthPhrase(depth int) string {
+	switch {
+	case depth < 0:
+		return "the changed packages and every package that depends on them"
+	case depth == 0:
+		return "the changed packages only"
+	case depth == premergeRdepsDepth:
+		return "the changed packages and the packages that import them directly"
+	}
+	return fmt.Sprintf("the changed packages and their dependents to %d hops", depth)
+}
+
 // printGateSummary writes the human summary of a gate run.
 func printGateSummary(w io.Writer, v *verdict, path string) {
 	fmt.Fprintf(w, "\nlenny-test gate: %s\n", v.Verdict)
@@ -1774,7 +1842,7 @@ func printGateSummary(w io.Writer, v *verdict, path string) {
 	if v.Gate != nil {
 		fmt.Fprintf(w, "  base:        %s (merge base %s; with the integration branch %s)\n", v.Gate.Base, v.Gate.MergeBase, v.Gate.IntegrationMergeBase)
 		fmt.Fprintf(w, "  environment: %s\n", v.Gate.Environment)
-		kind := "selected run (the --changed selection against the base)"
+		kind := "selected run (the --changed selection against the base, " + depthPhrase(v.Gate.RdepsDepth) + ")"
 		if v.Gate.All {
 			kind = "full run (--all)"
 		}

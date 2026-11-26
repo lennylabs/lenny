@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -39,7 +40,33 @@ type tierResult struct {
 	Failed   int
 	Skipped  int
 	Failures []failureEntry
-	RawOut   string // tail of stdout/stderr for diagnostics
+	// PackageFailures lists the packages that failed in a way no failed
+	// test accounts for: a package whose build or setup failed, a test
+	// binary that failed with no failed test (a TestMain exit, a race
+	// reported after the tests), and a test binary that exited, panicked,
+	// or timed out while a test ran, which leaves that test without an end
+	// event and the tests after it unrun. `lenny-test gate
+	// --rerun-failed` refuses a run whose tier lists any (change 0172,
+	// decision 26).
+	PackageFailures []string
+	RawOut          string // tail of stdout/stderr for diagnostics
+	// passed holds the tests that passed, keyed by passedKey, so a rerun
+	// can show that each test it named ran and passed.
+	passed map[string]bool
+}
+
+// passedKey keys one test of one package in tierResult.passed.
+func passedKey(pkg, test string) string { return pkg + "\x00" + test }
+
+// buildFailedLine matches the line `go test` prints for a package whose
+// build or setup failed, such as `FAIL\tgithub.com/x/y [build failed]`.
+var buildFailedLine = regexp.MustCompile(`^FAIL\s+(\S+)\s+\[(?:build|setup) failed\]`)
+
+// abortsBinary reports whether a line of a test binary's output shows
+// that the binary ended before its tests did: a panic, which the testing
+// package also prints for a test timeout (`panic: test timed out after`).
+func abortsBinary(line string) bool {
+	return strings.HasPrefix(line, "panic: ")
 }
 
 // runGoTestJSON runs `go test -json <extraArgs...>` and returns the
@@ -68,8 +95,16 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 	type acc struct {
 		output  strings.Builder
 		elapsed float64
+		// started and ended record a run event and a pass, fail, or skip
+		// event, so a test that started and never ended, because the
+		// binary exited under it, marks its package as one whose later
+		// tests did not run.
+		started, ended bool
 	}
 	tests := map[key]*acc{}
+	pkgFailed := map[string]bool{}
+	testFailed := map[string]bool{}
+	broken := map[string]bool{}
 
 	scanner := bufio.NewScanner(bytes.NewReader(stdout))
 	scanner.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
@@ -77,6 +112,9 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 	for scanner.Scan() {
 		line := scanner.Bytes()
 		if len(line) == 0 || line[0] != '{' {
+			if m := buildFailedLine.FindSubmatch(line); m != nil {
+				broken[string(m[1])] = true
+			}
 			nonJSON.Write(line)
 			nonJSON.WriteByte('\n')
 			continue
@@ -87,12 +125,21 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 			nonJSON.WriteByte('\n')
 			continue
 		}
+		if ev.Output != "" && abortsBinary(ev.Output) && ev.Package != "" {
+			broken[ev.Package] = true
+		}
 		if ev.Test == "" {
 			// Package-level events (build errors, package summary).
 			// `go test -json` emits a package-level fail with no Test
 			// name when the build itself fails.
 			if ev.Action == "output" && ev.Output != "" {
 				nonJSON.WriteString(ev.Output)
+				if m := buildFailedLine.FindStringSubmatch(ev.Output); m != nil {
+					broken[m[1]] = true
+				}
+			}
+			if ev.Action == "fail" && ev.Package != "" {
+				pkgFailed[ev.Package] = true
 			}
 			continue
 		}
@@ -103,15 +150,26 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 			tests[k] = a
 		}
 		switch ev.Action {
+		case "run":
+			a.started = true
+		case "pass", "fail", "skip":
+			a.ended = true
+		}
+		switch ev.Action {
 		case "output":
 			a.output.WriteString(ev.Output)
 		case "pass":
 			result.Passed++
 			result.Total++
 			a.elapsed = ev.Elapsed
+			if result.passed == nil {
+				result.passed = map[string]bool{}
+			}
+			result.passed[passedKey(ev.Package, ev.Test)] = true
 		case "fail":
 			result.Failed++
 			result.Total++
+			testFailed[ev.Package] = true
 			a.elapsed = ev.Elapsed
 			result.Failures = append(result.Failures, failureEntryFromAccumulator(ev.Package, ev.Test, a.output.String(), ev.Elapsed))
 		case "skip":
@@ -120,6 +178,17 @@ func parseGoTestJSON(stdout, stderr []byte) *tierResult {
 			a.elapsed = ev.Elapsed
 		}
 	}
+	for pkg := range pkgFailed {
+		if !testFailed[pkg] {
+			broken[pkg] = true
+		}
+	}
+	for k, a := range tests {
+		if a.started && !a.ended {
+			broken[k.pkg] = true
+		}
+	}
+	result.PackageFailures = sortedKeys(broken)
 	// Combine non-JSON stdout with stderr; both go into RawOut.
 	tail := nonJSON.String() + string(stderr)
 	if len(tail) > 16*1024 {

@@ -40,7 +40,8 @@ lenny-test infra status
 lenny-test --group pr --dry-run
 lenny-test --tier component --dry-run
 lenny-test --changed --dry-run
-lenny-test --since main --dry-run                   # branch diff from its merge base; static, unit, component, and contract
+lenny-test --since main --dry-run                   # branch diff from its merge base; static, unit, component, and contract, on the changed packages and the packages that import them directly
+lenny-test --since main --rdeps-depth -1 --dry-run  # the same diff with every dependent, as the gate on main selects
 lenny-test --since main --tier unit --dry-run       # the same diff, unit tier only
 lenny-test --since main --gate merge --dry-run      # the same diff within the merge gate's tiers
 lenny-test run --since main --container             # the same selection inside the gate image, with the gate's container setup (TESTING.md "lenny-test run in the gate container")
@@ -50,8 +51,9 @@ lenny-test --spec POOL-R5,§4.6.1 --dry-run     # tests whose // spec: annotatio
 # The merge gate, in the gate container (TESTING.md "Merge gate")
 lenny-test gate
 lenny-test gate --here      # the gate's tiers in this environment; UNVERIFIED outside the gate image
-lenny-test gate --tier static,unit,component,contract --cover   # the check before a code branch merges (v1 merge policy); then:
-lenny-test coverage --diff main --threshold 0.80 --require-gate  # reads the profile that `--cover` wrote, refuses when no `--cover` gate run on `HEAD` is recorded, and refuses a profile that the latest such run did not write or that a run whose verdict is not PASS wrote (TESTING.md "Restricted runs and coverage")
+lenny-test gate --tier static,unit,component,contract --cover   # the check before a code branch merges (v1 merge policy), on the changed packages and the packages that import them directly; then:
+lenny-test coverage --diff main --threshold 0.80 --require-gate  # reads the profile that `--cover` wrote, refuses when no `--cover` gate run on `HEAD` is recorded or when `--tier` restricted that run to tiers that leave out static, unit, component, or contract, and refuses a profile that the latest such run did not write or that a run whose verdict is not PASS wrote (TESTING.md "Restricted runs and coverage")
+lenny-test gate --rerun-failed                      # rerun the failed tests of the latest gate run on HEAD, 3 times each (--rerun-count), and record a verdict naming that run, which coverage --diff --require-gate accepts when every rerun passed (TESTING.md "Rerunning failed tests")
 lenny-test gate --layout serial                     # every tier one after another; the way back from the default layout, static-first, which runs static alone, then contract beside component and integration, then unit, then the documentation gates
 lenny-test gate --layout unit-alone                 # static and contract beside component and integration, then unit, then the documentation gates
 lenny-test gate --layout static-first --go-test-p component=2,integration=2  # the go test -p of a tier while it runs beside another lane
@@ -115,10 +117,11 @@ Each tier passes a `go test -timeout` budget. `go test` aborts the whole package
 | `cmd_run_resolve.go` | `--changed`, `--spec`, and `--pkg` resolution into a tier plan |
 | `spec_index.go` | The specification model: the annotation index, the identifier registry, the successor stubs of the numbered files, and the issue records, and the resolution of an identifier, a page code, or `§N.M` to its tests |
 | `cmd_coverage_spec.go`, `cmd_coverage_spec_text.go` | `coverage --spec`: the coverage view and its text rendering |
-| `gate_cover_hash.go` | The SHA-256 of the profile a gate run with `--cover` writes, and the check by which `coverage --diff` refuses a profile that the latest `--cover` gate run on `HEAD` did not write or that a gate run whose verdict is not `PASS` wrote, and, with `--require-gate`, refuses when no `--cover` gate run on `HEAD` is recorded |
+| `gate_cover_hash.go` | The SHA-256 of the profile a gate run with `--cover` writes, and the check by which `coverage --diff` refuses a profile that the latest `--cover` gate run on `HEAD` did not write or that a gate run whose verdict is not `PASS` wrote, and, with `--require-gate`, refuses when no `--cover` gate run on `HEAD` is recorded or when that run's `gate.restricted_to` leaves out any of the static, unit, component, and contract tiers; a `--rerun-failed` run stands for the run it reran only when that run is on the same commit with the same hash and tiers |
+| `gate_rerun.go` | `gate --rerun-failed`: the latest gate run on `HEAD`, the refusal of a run whose failures are not individual tests, the rerun of each failed test `--rerun-count` times, the merge of the rerun's unit coverage into the original profile, and the verdict's `gate.rerun_of` |
 | `gotest_json.go` | `go test -json` parsing, and the `spec_sections` of each failure from the annotation index |
 | `changed_select.go` | `--changed` and `--pkg` selection: the import graph loaded with every tier's build tag, the owning packages of a changed path, their dependents, and each selected package's tier |
 | `spec_edit_select.go` | The tests a specification edit selects: the numbered headings a hunk touches, and the changed identifiers of the new tree with the code that cites them |
-| `non_go_inputs.go` | `tests/non-go-inputs.yaml`: the inputs no Go package owns, the tests that read them, and the `validate` check of the file |
+| `non_go_inputs.go` | `tests/non-go-inputs.yaml`: the inputs no Go package owns, the tests that read them, the generated rows whose files select only their own checks, and the `validate` check of the file |
 | `scoped_runs.go` | Running a scoped tier plan: whole packages in one `go test` invocation and functions by name in another |
 | `verdict.go` | JSON verdict writer per TESTING.md §7 |

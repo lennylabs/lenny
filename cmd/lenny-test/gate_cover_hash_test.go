@@ -32,7 +32,7 @@ func TestGateCoverRunRecordsTheProfileHash(t *testing.T) {
 	root := t.TempDir()
 	profile := filepath.Join(root, coverProfileFile)
 	g := stubGateRunner()
-	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test", cover: true, coverProfile: profile, tiers: []string{tierStatic, tierUnit}})
+	v := g.run(gateOptions{root: root, base: "main", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test", cover: true, coverProfile: profile, tiers: []string{tierStatic, tierUnit}})
 	body, err := os.ReadFile(profile)
 	if err != nil {
 		t.Fatal(err)

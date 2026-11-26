@@ -42,7 +42,7 @@ func runRun(args []string) int {
 	changedFlag := fs.Bool("changed", false, "run tests affected by uncommitted changes (working tree diff)")
 	sinceFlag := fs.String("since", "", "diff from the merge base of the given git ref and HEAD (e.g. main, HEAD~5), or an explicit range (A..B, A...B), instead of the working tree")
 	allFlag := fs.Bool("all", false, "with --changed or --pkg, run the unit tier over every package (./...) instead of the packages the selection reaches")
-	rdepsFlag := fs.Int("rdeps-depth", defaultRdepsDepth, "with --changed or --pkg, how many hops of in-module dependents of a changed package the selection adds (0: changed packages only; -1, the default: the full closure)")
+	rdepsFlag := fs.Int("rdeps-depth", premergeRdepsDepth, "with --changed or --pkg, how many hops of in-module dependents of a changed package the selection adds (0: changed packages only; 1, the default: the changed packages and the packages that import them directly, as the check before a merge selects; -1: the full closure, as the gate on main selects)")
 	specFlag := fs.String("spec", "", "comma-separated identifiers, page codes, or numbered sections (§N.M); runs the tests whose // spec: annotations cite them")
 	pkgFlag := fs.String("pkg", "", "comma-separated package directories; runs the tests of the packages at or under them and of their dependents, through the import graph")
 	subsetFlag := fs.String("subset", "", "comma-separated subset names of one tier (requires exactly one --tier)")
@@ -141,7 +141,7 @@ type selector struct {
 	cached      bool
 	noInfra     bool
 	all         bool // run the unit tier over ./... whatever the selection
-	rdepsDepth  int  // importer hops --changed adds; see defaultRdepsDepth
+	rdepsDepth  int  // importer hops --changed adds; see premergeRdepsDepth
 }
 
 func (s selector) valid() bool {
@@ -190,6 +190,16 @@ type tierPlan struct {
 	// phase with another lane when `--go-test-p` names the tier (change
 	// 0172, GS-3); every other run leaves it 0.
 	goTestP int
+	// rerunProfile is the coverage profile a scoped unit plan's go test
+	// invocation writes, or "" for none. `lenny-test gate --rerun-failed`
+	// sets it on the first rerun of failed unit tests, so the lines those
+	// tests reach after the point where they failed join the original
+	// run's profile (change 0172, decision 26). A rerun plan has no whole
+	// packages, so it runs one invocation: its tests by name, or their
+	// packages whole when the -run pattern passes maxRunPatternBytes, and
+	// that invocation writes the profile either way. Every other run
+	// leaves it empty.
+	rerunProfile string
 }
 
 // resolve expands the selector into a concrete plan.
@@ -1281,6 +1291,9 @@ func runUnitTier(p tierPlan) (string, string, *tierResult) {
 	result, runErr := runGoTestTails(tails, func(i int, tail []string) []string {
 		// Only the invocation that runs whole packages writes the
 		// coverage profile; a second invocation would overwrite it.
+		if p.rerunProfile != "" {
+			return withGoTestP(unitTierFlags(p.rerunProfile), p)
+		}
 		if i == 0 && tail[0] != "-run" {
 			return withGoTestP(unitTierFlags(profile), p)
 		}

@@ -30,7 +30,7 @@ func runCoverage(args []string) int {
 	wantGo := fs.Bool("go", false, "report Go coverage from tests/results/cover.out")
 	wantDiff := fs.String("diff", "", "report coverage on lines changed since this git ref (e.g. main, HEAD~5)")
 	threshold := fs.Float64("threshold", 0.0, "fail when coverage is below this fraction (0..1)")
-	requireGate := fs.Bool("require-gate", false, "with --diff, refuse unless a gate run with --cover on HEAD is recorded and wrote the profile; the check before a merge passes it")
+	requireGate := fs.Bool("require-gate", false, "with --diff, refuse unless a gate run with --cover on HEAD is recorded, wrote the profile, and ran the static, unit, component, and contract tiers; the check before a merge passes it")
 	jsonOut := fs.Bool("json", false, "machine-readable output")
 	queries, err := parseInterspersed(fs, args)
 	if err != nil {

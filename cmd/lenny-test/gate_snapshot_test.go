@@ -219,7 +219,7 @@ func TestGateRunsTheStaticTierOnTheSnapshotOfTheResolvedCommit(t *testing.T) {
 		gotDir, gotRev = dir, rev
 		return verdictstatus.Pass, "", &tierResult{Total: 1, Passed: 1}
 	}
-	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test", commit: "abc123", snapshot: "/var/lib/lenny-gate/static/x"})
+	v := g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test", commit: "abc123", snapshot: "/var/lib/lenny-gate/static/x"})
 	if gotCommit != "abc123" || gotGiven != "/var/lib/lenny-gate/static/x" || gotDir != stubSnapshotDir || gotRev != "abc123" {
 		t.Errorf("snapshot(%q, %q), static tier in %q at %q", gotCommit, gotGiven, gotDir, gotRev)
 	}
@@ -227,7 +227,7 @@ func TestGateRunsTheStaticTierOnTheSnapshotOfTheResolvedCommit(t *testing.T) {
 		t.Errorf("verdict %s, snapshot %q, revision %q; want PASS on the snapshot at abc123 (unverified %v)", v.Verdict, v.Gate.StaticSnapshot, v.Trigger.GitRevision, v.Gate.Unverified)
 	}
 
-	v = g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test", commit: "fff999"})
+	v = g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test", commit: "fff999"})
 	if v.Verdict != verdictstatus.VerdictUnverified || !strings.Contains(strings.Join(v.Gate.Unverified, "\n"), "resolved it to fff999") {
 		t.Errorf("a HEAD other than the resolved commit: verdict %s, unverified %v", v.Verdict, v.Gate.Unverified)
 	}
@@ -276,7 +276,7 @@ func TestGateIsUnverifiedWhenItsSnapshotIsWritable(t *testing.T) {
 	if v.Verdict != verdictstatus.VerdictUnverified || !strings.Contains(strings.Join(v.Gate.Unverified, "\n"), "writable by the gate's user") {
 		t.Errorf("a writable snapshot: verdict %s, unverified %v", v.Verdict, v.Gate.Unverified)
 	}
-	g.run(gateOptions{root: ".", base: "main", rdepsDepth: defaultRdepsDepth, environment: "lenny-gate:test", tiers: []string{tierUnit}})
+	g.run(gateOptions{root: ".", base: "main", rdepsDepth: fullRdepsDepth, environment: "lenny-gate:test", tiers: []string{tierUnit}})
 	if calls != 1 {
 		t.Errorf("snapshot made %d time(s); want once, for the run that runs the static tier", calls)
 	}

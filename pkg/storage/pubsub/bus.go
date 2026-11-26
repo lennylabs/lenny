@@ -25,7 +25,7 @@
 // over the subscription's receive channel in a Run-style loop selected
 // against ctx.Done(). Subscribe reads the channel that carries the
 // subscription confirmations as well as the messages, so it can tell a
-// caller that the subscription was re-established (OnReconnect).
+// caller each time Redis confirms the subscription (OnSubscribed).
 package pubsub
 
 import (
@@ -70,20 +70,21 @@ type SubscribeOption func(*subscribeConfig)
 
 // subscribeConfig holds the options of one Subscribe call.
 type subscribeConfig struct {
-	onReconnect func()
+	onSubscribed func()
 }
 
-// OnReconnect sets a callback that Subscribe calls each time Redis
-// confirms the subscription again after the first confirmation. go-redis
-// re-establishes a dropped subscription inside its receive goroutine and
-// resubscribes on the new connection, so a confirmation after the first
-// one means the subscription was down and every message published in
-// the meantime was lost. A cache on top of Bus reconciles that loss by
+// OnSubscribed sets a callback that Subscribe calls each time Redis
+// confirms the subscription: when it is first established, and again
+// each time go-redis re-establishes a dropped connection and resubscribes
+// on the new one. Every message published while no subscription was
+// confirmed is lost: during an outage, and before the first confirmation,
+// which can come long after Subscribe was called when Redis is
+// unreachable at startup. A cache on top of Bus reconciles that loss by
 // rereading its authoritative store in the callback. The callback runs
 // on the loop goroutine, as the handler does, so a callback that may
 // block hands its work off.
-func OnReconnect(fn func()) SubscribeOption {
-	return func(c *subscribeConfig) { c.onReconnect = fn }
+func OnSubscribed(fn func()) SubscribeOption {
+	return func(c *subscribeConfig) { c.onSubscribed = fn }
 }
 
 // Subscribe runs a consume loop on channel, delivering every message
@@ -92,7 +93,7 @@ func OnReconnect(fn func()) SubscribeOption {
 //
 // A nil Bus blocks until ctx is cancelled and delivers nothing, so a
 // caller that always starts a subscribe goroutine does not have to
-// special-case the no-Redis mode; it never calls the OnReconnect
+// special-case the no-Redis mode; it never calls the OnSubscribed
 // callback. The handler runs inline on the loop goroutine; a handler
 // that may block should hand off its own work.
 //
@@ -112,7 +113,6 @@ func (b *Bus) Subscribe(ctx context.Context, channel string, handler func(payloa
 	sub := b.client.Subscribe(ctx, channel)
 	defer func() { _ = sub.Close() }()
 	received := sub.ChannelWithSubscriptions()
-	confirmed := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -125,13 +125,9 @@ func (b *Bus) Subscribe(ctx context.Context, channel string, handler func(payloa
 			case *redis.Message:
 				handler([]byte(m.Payload))
 			case *redis.Subscription:
-				if !isConfirmation(m, channel) {
-					continue
+				if isConfirmation(m, channel) && cfg.onSubscribed != nil {
+					cfg.onSubscribed()
 				}
-				if confirmed && cfg.onReconnect != nil {
-					cfg.onReconnect()
-				}
-				confirmed = true
 			}
 		}
 	}

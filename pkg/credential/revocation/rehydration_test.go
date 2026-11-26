@@ -73,14 +73,21 @@ func awaitRead(t *testing.T, s *countingSource, n int32) {
 	}
 }
 
-// runLoop starts RunRehydration and returns a stop function that cancels
-// it and waits for it to return.
+// runLoop starts RunRehydration with no reconnect spacing and returns a
+// stop function that cancels it and waits for it to return.
 func runLoop(t *testing.T, c *Cache, interval time.Duration, trigger *Trigger, src Source, onError func(error)) func() {
+	t.Helper()
+	return runSpacedLoop(t, c, interval, 0, trigger, src, onError)
+}
+
+// runSpacedLoop starts RunRehydration with the reconnect spacing given and
+// returns a stop function that cancels it and waits for it to return.
+func runSpacedLoop(t *testing.T, c *Cache, interval, spacing time.Duration, trigger *Trigger, src Source, onError func(error)) func() {
 	t.Helper()
 	ctx, cancel := context.WithCancel(context.Background())
 	done := make(chan struct{})
 	go func() {
-		c.RunRehydration(ctx, interval, trigger, fakeLister{"acme"}, src, onError)
+		c.RunRehydration(ctx, interval, spacing, trigger, fakeLister{"acme"}, src, onError)
 		close(done)
 	}()
 	stop := func() {

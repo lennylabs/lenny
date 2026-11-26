@@ -302,7 +302,7 @@ func TestTaggedTestsOutsideTheTierDirectoriesRunInTheirTier(t *testing.T) {
 	if !reflect.DeepEqual(tiers, map[string]string{"cmd/gw/integ_test.go::TestInteg": tierIntegration}) {
 		t.Fatalf("tiers = %v", tiers)
 	}
-	plan := planOf(selectChanged(nil, fixtureGraph(), nil, specEdits{tests: tests, tiers: tiers}, selectOpts{rdepsDepth: defaultRdepsDepth}))
+	plan := planOf(selectChanged(nil, fixtureGraph(), nil, specEdits{tests: tests, tiers: tiers}, selectOpts{rdepsDepth: fullRdepsDepth}))
 	if got := plan[tierIntegration].funcs; !reflect.DeepEqual(got, map[string][]string{"./cmd/gw": {"TestInteg"}}) {
 		t.Errorf("integration by-name = %v", got)
 	}

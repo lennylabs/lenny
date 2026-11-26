@@ -9,10 +9,10 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 1 |
-| Ready | 6 |
+| Ready | 4 |
 | Waiting on decisions | 34 |
 | Blocked | 161 |
-| Landed | 24 |
+| Landed | 27 |
 | Cancelled | 3 |
 
 ## Program v1
@@ -58,8 +58,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
-| [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Ready |  |
-| [0172.S10](0172-gate-speed/steps.md#0172s10-the-tiers-of-the-gate-run-that-the-coverage-check-accepts) | The tiers of the gate run that the coverage check accepts | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -257,7 +255,10 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Blocked | 0178.S1 |
 | [0117.S14](0117-gateway-package-layout/steps.md#0117s14-session-row-package) | Session row package | Landed |  |
 | [0171.S1](0171-revocation-rehydrate-on-reconnect/steps.md#0171s1-rehydration-on-reconnect) | Rehydration on reconnect | Landed |  |
+| [0171.S2](0171-revocation-rehydrate-on-reconnect/steps.md#0171s2-rehydration-on-the-first-confirmation-and-the-reconnect-spacing) | Rehydration on the first confirmation, and the reconnect spacing | Landed |  |
 | [0172.S1](0172-gate-speed/steps.md#0172s1-selection-width-and-the-verdicts-selection-record) | Selection width and the verdict's selection record | Landed |  |
+| [0172.S10](0172-gate-speed/steps.md#0172s10-the-tiers-of-the-gate-run-that-the-coverage-check-accepts) | The tiers of the gate run that the coverage check accepts | Landed |  |
+| [0172.S11](0172-gate-speed/steps.md#0172s11-a-narrower-check-before-a-merge) | A narrower check before a merge | Landed |  |
 | [0172.S2](0172-gate-speed/steps.md#0172s2-concurrent-tiers) | Concurrent tiers | Landed |  |
 | [0172.S3](0172-gate-speed/steps.md#0172s3-no-coverage-profile-in-the-gates-unit-run) | No coverage profile in the gate's unit run | Landed |  |
 | [0172.S4](0172-gate-speed/steps.md#0172s4-the-gates-tier-and-coverage-options-and-the-check-before-a-merge) | The gate's tier and coverage options, and the check before a merge | Landed |  |
@@ -314,8 +315,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
-| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 1 of 2 | 0 |
-| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 9 of 10 | 0 |
+| [0171](0171-revocation-rehydrate-on-reconnect/change.md) | Revocation cache rehydration on event-bus reconnect | `In progress` | 2 of 2 | 1 |
+| [0172](0172-gate-speed/change.md) | Merge gate wall time | `In progress` | 11 of 11 | 3 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 0 of 1 | 4 |
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Draft` | 0 of 1 | 3 |
