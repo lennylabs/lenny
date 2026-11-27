@@ -30,3 +30,7 @@ A component package whose test binary starts its first container while the share
 ## Suggested resolution
 
 When a testcontainers-go release carries pull request 3868, update `go.mod` to it, delete `startContainer`, `genericContainer`, and the stale-reaper matcher from `tests/testinfra/containers`, keep `TestContainerStartsAfterTheSessionReaperStopped` as the check that the release recovers, and close this issue.
+
+## Coverage waiver
+
+The merge of `fix/testcontainers-reaper-removing` relied on a coverage waiver: `lenny-test coverage --diff main --threshold 0.80 --require-gate` on gate rerun `aabbc90ced25cb98ef9b71f5` read 27 of 52 changed lines (51.9 percent), and the 25 uncovered lines are the call sites in the container starters of `tests/testinfra`, which only the component tests reach. The owner waived the floor for those lines on 2026-11-27 with the words "RF-W: waive" (M3 readiness decision page, item RF-W, answered in chat).
