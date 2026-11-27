@@ -163,12 +163,33 @@ func verifyDrained(ctx context.Context, l DrainLister, tenantID string, filter s
 // spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session).
 var ErrPipelineBudgetUnset = errors.New("terminal pipeline budget is not set")
 
+// DefaultPipelineWaitMargin is the default of the pipeline wait margin that
+// user erasure and tenant deletion add to the terminal pipeline budget, the
+// gateway's --terminal-pipeline-wait-margin.
+// spec: §12.8 (Lifecycle fence and drain)
+const DefaultPipelineWaitMargin = 30 * time.Second
+
+// ErrPipelineWaitMarginNegative is returned by TerminalPipelinesPending when
+// it is given a negative pipeline wait margin. A negative margin would end the
+// wait before the budget that bounds the pipeline's writes, so the gate lists
+// nothing and fails closed, as an unset budget does.
+// spec: §12.8 (Lifecycle fence and drain)
+var ErrPipelineWaitMarginNegative = errors.New("terminal pipeline wait margin is negative")
+
 // TerminalPipelinesPending returns the identifiers of the sessions of one
 // lifecycle scope (the whole tenant when userID is empty, otherwise the
 // sessions userID owns in tenantID) that user erasure and tenant deletion
-// wait on at now under the terminal pipeline budget: a session that is
-// pipeline-pending (sessionstore.TerminalPipelinePending), with or without a
-// pod, or in its post-terminal window (sessionstore.InPostTerminalWindow).
+// wait on at now: a session that is pipeline-pending
+// (sessionstore.TerminalPipelinePending), with or without a pod, or in its
+// post-terminal window (sessionstore.InPostTerminalWindow), both read under
+// the terminal pipeline budget plus the pipeline wait margin.
+//
+// The margin covers clock skew between the replica that ran a session's
+// pipeline, whose context deadline is the budget counted on its clock, and
+// the replica that runs this check on its own clock, and a pipeline write
+// that commits just after that deadline. It extends this wait alone: the
+// session store's slot queries, the retention collector, and the pipeline's
+// own context read the budget without it.
 //
 // It lists the scope from the Postgres primary with the filter DrainSessions
 // uses, so a pipeline mark or a release recorded on the primary is seen. User
@@ -176,23 +197,28 @@ var ErrPipelineBudgetUnset = errors.New("terminal pipeline budget is not set")
 // the scope while it returns an identifier: a pipeline still running writes
 // the session's billing event, quota checkpoint, and session log after the
 // pod release, and a seal still running would write under a prefix the
-// deletion already cleared. Both arms end within one budget of the terminal
-// transition. A listing error is returned wrapped; a non-positive budget
-// returns ErrPipelineBudgetUnset without listing.
+// deletion already cleared. Both arms end within one budget plus the margin
+// of the terminal transition. A listing error is returned wrapped; a
+// non-positive budget returns ErrPipelineBudgetUnset and a negative margin
+// returns ErrPipelineWaitMarginNegative, both without listing.
 //
 // spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session),
 // §7.1 (Post-terminal window)
-func TerminalPipelinesPending(ctx context.Context, l DrainLister, tenantID, userID string, now time.Time, budget time.Duration) ([]string, error) {
+func TerminalPipelinesPending(ctx context.Context, l DrainLister, tenantID, userID string, now time.Time, budget, margin time.Duration) ([]string, error) {
 	if budget <= 0 {
 		return nil, ErrPipelineBudgetUnset
+	}
+	if margin < 0 {
+		return nil, ErrPipelineWaitMarginNegative
 	}
 	rows, err := l.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID, Primary: true})
 	if err != nil {
 		return nil, fmt.Errorf("list the terminal sessions of tenant %s: %w", tenantID, err)
 	}
+	wait := budget + margin
 	var pending []string
 	for _, row := range rows {
-		if sessionstore.TerminalPipelinePending(row, now, budget) || sessionstore.InPostTerminalWindow(row, now, budget) {
+		if sessionstore.TerminalPipelinePending(row, now, wait) || sessionstore.InPostTerminalWindow(row, now, wait) {
 			pending = append(pending, row.ID)
 		}
 	}

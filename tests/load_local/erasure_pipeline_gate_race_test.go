@@ -88,7 +88,7 @@ func gateRunner(jobs erasurejob.Store, sessions sessionstore.Store, blobs *gateB
 		WithSessionDrain(func(context.Context, string, string) error { return nil }).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
 		WithPipelineGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
-			return admin.TerminalPipelinesPending(ctx, sessions, tenantID, userID, time.Now(), capD)
+			return admin.TerminalPipelinesPending(ctx, sessions, tenantID, userID, time.Now(), capD, 0)
 		}).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
 }

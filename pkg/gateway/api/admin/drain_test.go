@@ -421,7 +421,7 @@ func TestTerminalPipelinesPendingListsTheSessionsErasureWaitsOn(t *testing.T) {
 		{ID: "live", State: session.StateRunning, PodAssignment: "p4"},
 	}
 	l := &drainLister{answers: [][]sessionstore.Session{rows}}
-	got, err := admin.TerminalPipelinesPending(context.Background(), l, "acme", "alice", now, capD)
+	got, err := admin.TerminalPipelinesPending(context.Background(), l, "acme", "alice", now, capD, 0)
 	if want := []string{"in-window", "released-no-mark", "marked-binding-held", "no-pod"}; err != nil || !reflect.DeepEqual(got, want) {
 		t.Fatalf("TerminalPipelinesPending = (%v, %v), want %v", got, err, want)
 	}
@@ -430,15 +430,61 @@ func TestTerminalPipelinesPendingListsTheSessionsErasureWaitsOn(t *testing.T) {
 	}
 
 	down := errors.New("primary unreachable")
-	if _, err := admin.TerminalPipelinesPending(context.Background(), &drainLister{errs: []error{down}}, "acme", "", now, capD); !errors.Is(err, down) {
+	if _, err := admin.TerminalPipelinesPending(context.Background(), &drainLister{errs: []error{down}}, "acme", "", now, capD, 0); !errors.Is(err, down) {
 		t.Errorf("listing error = %v, want it wrapped", err)
 	}
 
 	unwired := &drainLister{answers: [][]sessionstore.Session{rows}}
-	if _, err := admin.TerminalPipelinesPending(context.Background(), unwired, "acme", "", now, 0); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
+	if _, err := admin.TerminalPipelinesPending(context.Background(), unwired, "acme", "", now, 0, 0); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
 		t.Errorf("zero budget = %v, want ErrPipelineBudgetUnset", err)
 	}
 	if len(unwired.filters) != 0 {
 		t.Errorf("zero budget listed %d times, want none", len(unwired.filters))
+	}
+}
+
+// TestTerminalPipelinesPendingExtendsTheBudgetByTheWaitMargin pins the
+// pipeline wait margin: a terminal row with no pipeline mark, and a marked
+// row still naming an unreleased pod, stay pending past the budget until the
+// budget plus the margin has elapsed, at the boundary of each arm; a marked
+// and released row is not pending; a zero margin waits for the budget alone;
+// a negative margin returns ErrPipelineWaitMarginNegative without listing;
+// and a zero budget with a positive margin still returns
+// ErrPipelineBudgetUnset.
+//
+// spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session)
+func TestTerminalPipelinesPendingExtendsTheBudgetByTheWaitMargin(t *testing.T) {
+	now := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	const budget = 5 * time.Minute
+	const margin = 30 * time.Second
+	marked := now.Add(-budget)
+	rows := []sessionstore.Session{
+		{ID: "no-pod-inside-margin", State: session.StateCompleted, TerminatedAt: now.Add(-budget - margin + time.Nanosecond)},
+		{ID: "no-pod-at-margin-end", State: session.StateCompleted, TerminatedAt: now.Add(-budget - margin)},
+		{ID: "pod-inside-margin", State: session.StateFailed, PodAssignment: "p1", TerminalPipelineDoneAt: marked, TerminatedAt: now.Add(-budget - time.Second)},
+		{ID: "pod-at-margin-end", State: session.StateFailed, PodAssignment: "p2", TerminalPipelineDoneAt: marked, TerminatedAt: now.Add(-budget - margin)},
+		{ID: "marked-and-released", State: session.StateCompleted, PodAssignment: "p3", PodReleasedAt: now.Add(-time.Minute), TerminalPipelineDoneAt: now.Add(-time.Minute), TerminatedAt: now.Add(-2 * time.Minute)},
+	}
+	list := func() *drainLister { return &drainLister{answers: [][]sessionstore.Session{rows}} }
+
+	got, err := admin.TerminalPipelinesPending(context.Background(), list(), "acme", "alice", now, budget, margin)
+	if want := []string{"no-pod-inside-margin", "pod-inside-margin"}; err != nil || !reflect.DeepEqual(got, want) {
+		t.Errorf("with the margin = (%v, %v), want %v", got, err, want)
+	}
+
+	got, err = admin.TerminalPipelinesPending(context.Background(), list(), "acme", "alice", now, budget, 0)
+	if err != nil || len(got) != 0 {
+		t.Errorf("zero margin = (%v, %v), want no session pending past the budget", got, err)
+	}
+
+	negative := list()
+	if _, err := admin.TerminalPipelinesPending(context.Background(), negative, "acme", "", now, budget, -time.Second); !errors.Is(err, admin.ErrPipelineWaitMarginNegative) {
+		t.Errorf("negative margin = %v, want ErrPipelineWaitMarginNegative", err)
+	}
+	if len(negative.filters) != 0 {
+		t.Errorf("negative margin listed %d times, want none", len(negative.filters))
+	}
+	if _, err := admin.TerminalPipelinesPending(context.Background(), list(), "acme", "", now, 0, margin); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
+		t.Errorf("zero budget with a margin = %v, want ErrPipelineBudgetUnset", err)
 	}
 }

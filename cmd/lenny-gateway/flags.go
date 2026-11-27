@@ -198,6 +198,7 @@ type gatewayFlags struct {
 	messagingMaxInboundPerMinute                  *int
 	toolApprovalTimeout                           *time.Duration
 	streamFailureReportTimeout                    *time.Duration
+	terminalPipelineWaitMargin                    *time.Duration
 	sessionPrimaryReadTimeout                     *time.Duration
 	treeArchiveCacheEntries                       *int
 	adapterTLSCert                                *string
@@ -826,6 +827,12 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§7.2 tool-use approval wait: how long a blocked tool_call(approvalRequired) waits for a POST /tool-use/{id}/approve|deny before the gateway treats it as a denial. Zero (default) blocks until the user resolves it or the request context is cancelled. Override via LENNY_TOOL_APPROVAL_TIMEOUT.")
 	f.streamFailureReportTimeout = flag.Duration("stream-failure-report-timeout", envDuration("LENNY_STREAM_FAILURE_REPORT_TIMEOUT", sessionserver.DefaultStreamFailureReportTimeout),
 		"§28.5.1 CH-ATTACH stream-failure report bound: operator-tunable time a runtime_crash report on a failed Attach stream has for the binding release, parent notification, and cascade beyond the workspace seal window (the report's deadline is this value plus the seal window). Default 30s. Override via LENNY_STREAM_FAILURE_REPORT_TIMEOUT.")
+	// The §12.8 pipeline wait margin: user erasure and tenant deletion wait on
+	// a drained session's terminal pipeline for the budget plus this margin,
+	// which covers clock skew between replicas and a pipeline write that
+	// commits just after the budget's deadline. Nothing else reads it.
+	f.terminalPipelineWaitMargin = flag.Duration("terminal-pipeline-wait-margin", envDuration("LENNY_TERMINAL_PIPELINE_WAIT_MARGIN", admin.DefaultPipelineWaitMargin),
+		"§12.8 pipeline wait margin: the time user erasure and tenant deletion add to the terminal pipeline budget (the seal window plus --stream-failure-report-timeout) while they wait for a drained session's terminal pipeline. It covers clock skew between replicas and a pipeline write that commits just after the budget's deadline, and changes no other use of the budget. Must not be negative. Default 30s. Override via LENNY_TERMINAL_PIPELINE_WAIT_MARGIN.")
 	f.sessionPrimaryReadTimeout = flag.Duration("session-primary-read-timeout", envDuration("LENNY_SESSION_PRIMARY_READ_TIMEOUT", sessionstore.DefaultPrimaryReadTimeout),
 		"§12.3 bound on each session-row read from the Postgres primary that a one-shot decision makes (a route, a skip, or a compare-and-swap's expected value), so a primary partition bounds the read rather than stalling it until the request ends. Operator-tunable; must be positive. Default 5s. Override via LENNY_SESSION_PRIMARY_READ_TIMEOUT.")
 	f.treeArchiveCacheEntries = flag.Int("tree-archive-cache-entries", envInt("LENNY_TREE_ARCHIVE_CACHE_ENTRIES", 128),

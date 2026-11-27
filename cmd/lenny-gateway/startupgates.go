@@ -195,6 +195,9 @@ func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags, core *sessionCo
 	if err := validateLifecycleTickBudget(*f.lifecycleTickBudget); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validatePipelineWaitMargin(*f.terminalPipelineWaitMargin); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 	if err := validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -296,6 +299,18 @@ func validateCapabilityTokenTTLFlag(seconds int) error {
 func validateLifecycleTickBudget(d time.Duration) error {
 	if d <= 0 {
 		return fmt.Errorf("--lifecycle-tick-budget must be positive, got %s (§12.8)", d)
+	}
+	return nil
+}
+
+// validatePipelineWaitMargin refuses a negative --terminal-pipeline-wait-margin,
+// which would end the erasure and tenant-deletion wait before the budget that
+// bounds a terminal pipeline's writes. Zero is allowed: the wait is then the
+// budget alone.
+// spec: §12.8 (Lifecycle fence and drain)
+func validatePipelineWaitMargin(d time.Duration) error {
+	if d < 0 {
+		return fmt.Errorf("--terminal-pipeline-wait-margin must not be negative, got %s (§12.8)", d)
 	}
 	return nil
 }
