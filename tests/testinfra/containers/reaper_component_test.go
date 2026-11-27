@@ -34,7 +34,7 @@ const ryukImage = "testcontainers/ryuk:0.13.0"
 // it runs with auto-remove.
 const staleReaperLife = 3 * time.Second
 
-// This test exercises the test harness rather than a requirement, so it
+// This test exercises the test harness, so it verifies no requirement and
 // carries no specification annotation.
 //
 // diagnosis: a container start in a test process failed because the
@@ -130,8 +130,8 @@ func childSessionID(t *testing.T, out string) string {
 // TestReaperChild is the child process of
 // TestContainerStartsAfterTheSessionReaperStopped. Run without
 // LENNY_TEST_REAPER_CHILD, as every run of the package does, it returns at
-// once. It exercises the test harness, so it carries no specification
-// annotation.
+// once. It exercises the test harness, so it verifies no requirement and
+// carries no specification annotation.
 //
 // diagnosis: the child half of TestContainerStartsAfterTheSessionReaperStopped
 // failed; that test's diagnosis applies.
