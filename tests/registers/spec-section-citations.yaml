@@ -352,7 +352,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1336
+      count: 1338
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret
@@ -872,7 +872,7 @@ packages:
     - package: pkg/sessionrecord
       count: 37
     - package: pkg/signingkeys
-      count: 50
+      count: 54
     - package: pkg/signingkeys/pgstore
       count: 3
     - package: pkg/spiffeid
@@ -1072,7 +1072,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 338
+      count: 341
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
@@ -1182,7 +1182,7 @@ packages:
     - package: tests/contract/rest_circuitbreaker
       count: 6
     - package: tests/contract/rest_idempotency
-      count: 17
+      count: 19
     - package: tests/contract/rest_mcp_consistency
       count: 76
     - package: tests/contract/rest_openai_chat

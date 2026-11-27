@@ -688,6 +688,10 @@ var prodMigrationSchema = []struct {
 	// 0206 scopes the §11.5 idempotency records by principal: the subject
 	// and the bound session join the primary key.
 	{migration: "0206", table: "idempotency_keys", columns: []string{"subject", "session_id"}},
+	// 0207 adds platform_signing_keys.forced, the §7.1 record that a forced
+	// rotation wrote the key, which bounds forced rotations to one per
+	// publish lead.
+	{migration: "0207", table: "platform_signing_keys", columns: []string{"forced"}},
 }
 
 // renamedTables maps a table an earlier migration created or altered to

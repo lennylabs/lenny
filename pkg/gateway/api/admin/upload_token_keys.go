@@ -52,8 +52,12 @@ type uploadTokenKeyRotation struct {
 // once, one publish lead ahead of its activation, and emits
 // platform.upload_token_key_rotated. The rotation itself is
 // signingkeys.Ring.RotateNow, which every protocol front can call; this
-// handler maps its outcome to HTTP. A rotation that cannot read or write
-// the key store, wrap the new secret, or win a slot answers 503
+// handler maps its outcome to HTTP. While the newest key is a forced
+// rotation's key that is not active yet, the rotation writes nothing and
+// the handler answers 409 INVALID_STATE_TRANSITION naming that key's
+// keyId and activeFrom, and emits nothing, so at most one forced rotation
+// runs per publish lead. A rotation that cannot read or write the key
+// store, wrap the new secret, or win a slot answers 503
 // SERVICE_UNAVAILABLE with a retry hint and emits nothing. A client that
 // disconnects does not cancel the rotation, so every key written is
 // audited.
@@ -64,6 +68,16 @@ func (r *Router) handleRotateUploadTokenKeys(w http.ResponseWriter, req *http.Re
 	// The rotation is not cut short by a client that disconnects: a key
 	// committed after the cancellation would otherwise go unaudited.
 	rot, err := r.uploadTokenKeys.RotateNow(context.WithoutCancel(req.Context()))
+	var pending *signingkeys.ForcedRotationPendingError
+	if errors.As(err, &pending) {
+		writeError(w, http.StatusConflict, "INVALID_STATE_TRANSITION",
+			"a forced rotation's key is not active yet; a forced rotation is accepted from its activeFrom",
+			map[string]any{
+				"keyId":      pending.Pending.KeyID,
+				"activeFrom": pending.Pending.ActiveFrom.UTC().Format(time.RFC3339Nano),
+			})
+		return
+	}
 	if err != nil {
 		msg := "upload-token key rotation failed: " + err.Error()
 		if errors.Is(err, signingkeys.ErrRotationContended) {

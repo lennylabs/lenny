@@ -7,6 +7,7 @@ package stores_test
 import (
 	"bytes"
 	"context"
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -15,6 +16,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/signingkeys"
 	signingkeyspg "github.com/lennylabs/lenny/pkg/signingkeys/pgstore"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // spec: §7.1 (Normal Flow), §12.3 (Postgres HA Requirements)
@@ -155,5 +157,70 @@ func TestAForcedRotationOverPostgresReachesThePeerBeforeItsActivation(t *testing
 		if err != nil || k.KeyID != rot.KeyID {
 			t.Errorf("replica %s signs with %q, %v; want %s", name, k.KeyID, err, rot.KeyID)
 		}
+	}
+}
+
+// spec: §7.1 (Normal Flow), §12.3 (Postgres HA Requirements), §15.1 (REST
+// API)
+// diagnosis: the Postgres key store lost the forced mark of a key, so a
+// peer replica wrote a second forced key while the first was pending, or a
+// forced rotation was refused while the newest key was a scheduled
+// rotation's pending key. The forced column (migration 0207) is not
+// written by Insert or not read by List, or Ring.RotateNow does not check
+// the newest key's mark and activation instant.
+func TestForcedRotationsOverPostgresAreBoundedToOnePerPublishLead(t *testing.T) {
+	t.Parallel()
+	_, pg := startStore(t)
+	ctx := context.Background()
+	store, err := signingkeyspg.New(pg.Pool)
+	if err != nil {
+		t.Fatal(err)
+	}
+	master := bytes.Repeat([]byte{9}, 32)
+	now := time.Now().UTC().Truncate(time.Microsecond)
+	var mu sync.Mutex
+	clock := func() time.Time {
+		mu.Lock()
+		defer mu.Unlock()
+		return now
+	}
+	advance := func(d time.Duration) {
+		mu.Lock()
+		now = now.Add(d)
+		mu.Unlock()
+	}
+	a := openUploadRing(t, store, master, clock)
+	b := openUploadRing(t, store, master, clock)
+
+	// A scheduled rotation's pending key does not refuse a forced rotation.
+	advance(uploadtoken.DefaultRotationInterval)
+	if err := a.Refresh(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recs, err := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
+	if err != nil || len(recs) != 2 || recs[1].Forced || !recs[1].ActiveFrom.After(clock()) {
+		t.Fatalf("keys after the scheduled rotation = %+v, %v; want a pending key not marked forced", recs, err)
+	}
+	forced, err := b.RotateNow(ctx)
+	if err != nil {
+		t.Fatalf("RotateNow while a scheduled key is pending: %v", err)
+	}
+
+	// The peer reads the forced mark from the table and is refused.
+	advance(signingkeys.DefaultPublishLead - time.Microsecond)
+	_, err = a.RotateNow(ctx)
+	var pending *signingkeys.ForcedRotationPendingError
+	if !errors.As(err, &pending) || pending.Pending.KeyID != forced.KeyID {
+		t.Fatalf("RotateNow on the peer while the forced key is pending = %v, want a refusal naming %s", err, forced.KeyID)
+	}
+	recs, err = store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
+	if err != nil || len(recs) != 3 || !recs[2].Forced || recs[2].KeyID != forced.KeyID {
+		t.Fatalf("keys after the refusal = %+v, %v; want the forced key newest and marked forced", recs, err)
+	}
+
+	advance(time.Microsecond)
+	next, err := a.RotateNow(ctx)
+	if err != nil || next.RotationSlot != forced.RotationSlot+1 {
+		t.Errorf("RotateNow at the forced key's activation instant = %+v, %v; want slot %d", next, err, forced.RotationSlot+1)
 	}
 }

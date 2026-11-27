@@ -42,6 +42,7 @@ var (
 
 // Key is one unwrapped key a Ring holds. Secret is shared with the ring and
 // must not be modified. RetireAfter is zero until a later key replaces it.
+// Forced is true when a forced rotation wrote the key.
 type Key struct {
 	KeyID        string
 	Secret       []byte
@@ -49,6 +50,7 @@ type Key struct {
 	ActiveFrom   time.Time
 	RetireAfter  time.Time
 	DeleteAfter  time.Time
+	Forced       bool
 }
 
 // retiredAt reports whether k has been replaced by now: a key never signs
@@ -72,6 +74,29 @@ const rotateNowAttempts = 3
 // ErrRotationContended is returned by RotateNow when other writers took
 // every slot it tried.
 var ErrRotationContended = errors.New("signingkeys: other writers took every rotation slot the forced rotation tried")
+
+// ErrForcedRotationPending is matched by the error RotateNow returns when
+// the purpose's newest key is a forced rotation's key that is not active
+// yet. The error is a *ForcedRotationPendingError naming that key.
+var ErrForcedRotationPending = errors.New("signingkeys: a forced rotation's key is not active yet")
+
+// ForcedRotationPendingError is the refusal of a forced rotation while
+// the newest key is a forced rotation's key that is not active yet. Pending
+// is that key; a forced rotation is accepted from its ActiveFrom on.
+type ForcedRotationPendingError struct {
+	Pending Rotation
+}
+
+// Error implements error.
+func (e *ForcedRotationPendingError) Error() string {
+	return fmt.Sprintf("signingkeys: the forced rotation's key %s (slot %d) is not active until %s; at most one forced rotation runs per publish lead",
+		e.Pending.KeyID, e.Pending.RotationSlot, e.Pending.ActiveFrom.UTC().Format(time.RFC3339))
+}
+
+// Is reports whether target is ErrForcedRotationPending.
+func (e *ForcedRotationPendingError) Is(target error) bool {
+	return target == ErrForcedRotationPending
+}
 
 // Options configures a Ring. RefreshInterval and PublishLead default to
 // DefaultRefreshInterval and DefaultPublishLead. StaleAfter is required:
@@ -155,7 +180,7 @@ func Open(ctx context.Context, policy Policy, store Store, sealer Sealer, opts O
 		return nil, fmt.Errorf("signingkeys: load %q keys: %w", policy.Purpose, err)
 	}
 	if len(recs) == 0 {
-		if _, _, err := r.writeKey(ctx, 1, now.Add(-r.lead)); err != nil {
+		if _, _, err := r.writeKey(ctx, 1, now.Add(-r.lead), false); err != nil {
 			return nil, err
 		}
 	}
@@ -293,17 +318,17 @@ func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
 		if !reloaded {
 			return nil
 		}
-		_, _, err := r.writeKey(ctx, 1, now.Add(-r.lead))
+		_, _, err := r.writeKey(ctx, 1, now.Add(-r.lead), false)
 		return err
 	}
 	if !newest.RetireAfter.IsZero() {
-		_, _, err := r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead))
+		_, _, err := r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead), false)
 		return err
 	}
 	if newest.ActiveFrom.After(now) || now.Before(newest.ActiveFrom.Add(r.policy.RotationInterval)) {
 		return nil
 	}
-	_, _, err := r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead))
+	_, _, err := r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead), false)
 	return err
 }
 
@@ -313,10 +338,15 @@ func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
 // activation instant is one publish lead ahead, so every replica loads it
 // before any replica signs with it, and the store retires the key before
 // it at that instant. It reloads the keys first, so the slot it writes
-// follows the newest key in the store. When another writer takes that slot
-// first, it reloads and tries the slot after the winner's, up to
-// rotateNowAttempts slots, and then returns ErrRotationContended. It
-// returns the key it wrote.
+// follows the newest key in the store. When the newest key is a forced
+// rotation's key that is not active yet, it writes nothing and returns a
+// *ForcedRotationPendingError, so at most one forced rotation runs per
+// publish lead; a newest key that a scheduled rotation wrote does not
+// refuse it. When another writer takes the slot first, it reloads and
+// tries the slot after the winner's, checking the winner's key the same
+// way, up to rotateNowAttempts slots, and then returns
+// ErrRotationContended. It returns the key it wrote, which the store
+// records as forced.
 //
 // spec: §7.1 (Normal Flow), §15.1 (REST API)
 func (r *Ring) RotateNow(ctx context.Context) (Rotation, error) {
@@ -326,13 +356,23 @@ func (r *Ring) RotateNow(ctx context.Context) (Rotation, error) {
 		if err := r.reload(ctx); err != nil {
 			return Rotation{}, err
 		}
+		now := r.clock()
 		r.mu.RLock()
-		var slot int64 = 1
+		var (
+			slot   int64 = 1
+			newest Key
+		)
 		if n := len(r.keys); n > 0 {
-			slot = r.keys[n-1].RotationSlot + 1
+			newest = r.keys[n-1]
+			slot = newest.RotationSlot + 1
 		}
 		r.mu.RUnlock()
-		rec, inserted, err := r.writeKey(ctx, slot, r.clock().Add(r.lead))
+		if newest.Forced && newest.ActiveFrom.After(now) {
+			return Rotation{}, &ForcedRotationPendingError{Pending: Rotation{
+				KeyID: newest.KeyID, RotationSlot: newest.RotationSlot, ActiveFrom: newest.ActiveFrom,
+			}}
+		}
+		rec, inserted, err := r.writeKey(ctx, slot, now.Add(r.lead), true)
 		if err != nil {
 			return Rotation{}, err
 		}
@@ -351,10 +391,10 @@ func (r *Ring) RotateNow(ctx context.Context) (Rotation, error) {
 }
 
 // writeKey generates a secret, wraps it, and writes it as the purpose's
-// key at slot, active from activeFrom. It returns the record it wrote and
-// whether the write took the slot. Losing the slot to another writer is
-// not an error.
-func (r *Ring) writeKey(ctx context.Context, slot int64, activeFrom time.Time) (Record, bool, error) {
+// key at slot, active from activeFrom, marked forced when a forced
+// rotation writes it. It returns the record it wrote and whether the write
+// took the slot. Losing the slot to another writer is not an error.
+func (r *Ring) writeKey(ctx context.Context, slot int64, activeFrom time.Time, forced bool) (Record, bool, error) {
 	secret := make([]byte, r.policy.SecretSize)
 	if _, err := io.ReadFull(r.rand, secret); err != nil {
 		return Record{}, false, fmt.Errorf("signingkeys: generate %q secret: %w", r.policy.Purpose, err)
@@ -376,6 +416,7 @@ func (r *Ring) writeKey(ctx context.Context, slot int64, activeFrom time.Time) (
 		WrappedSecret: wrapped,
 		RotationSlot:  slot,
 		ActiveFrom:    activeFrom,
+		Forced:        forced,
 	}
 	inserted, err := r.store.Insert(ctx, rec, r.policy.VerifyFor)
 	if err != nil {
@@ -434,6 +475,7 @@ func (r *Ring) reload(ctx context.Context) error {
 			ActiveFrom:   rec.ActiveFrom,
 			RetireAfter:  rec.RetireAfter,
 			DeleteAfter:  rec.DeleteAfter,
+			Forced:       rec.Forced,
 		})
 	}
 	r.mu.Lock()

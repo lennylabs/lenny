@@ -169,3 +169,47 @@ func TestForcedUploadTokenKeyRotationOutlivesADisconnectedClient(t *testing.T) {
 		t.Errorf("status %d, audit events %d; want 200 and one event", rr.Code, len(sink.events))
 	}
 }
+
+// TestForcedUploadTokenKeyRotationWhileAForcedKeyIsPendingAnswers409 pins
+// the bound on forced rotations at the route: when the ring refuses the
+// rotation because the newest key is a forced rotation's key that is not
+// active yet, the route answers 409 INVALID_STATE_TRANSITION, not
+// retryable, with that key's keyId and activeFrom, writes no Retry-After,
+// and emits no audit event.
+//
+// spec: §7.1 (uploadToken format and security properties), §15.1 (REST API)
+func TestForcedUploadTokenKeyRotationWhileAForcedKeyIsPendingAnswers409(t *testing.T) {
+	activeFrom := time.Date(2026, 11, 27, 10, 2, 0, 0, time.UTC)
+	pending := &signingkeys.ForcedRotationPendingError{Pending: signingkeys.Rotation{
+		KeyID: "upload-token-8-0a1b2c3d", RotationSlot: 8, ActiveFrom: activeFrom,
+	}}
+	sink := &capturingAuditSink{}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Audit: sink}).
+		WithUploadTokenKeyRotator(&fakeRotator{err: pending})
+	rr := postRotate(t, router, withAdminPrincipal)
+	if rr.Code != http.StatusConflict {
+		t.Fatalf("status %d: %s; want 409", rr.Code, rr.Body.String())
+	}
+	if ra := rr.Header().Get("Retry-After"); ra != "" {
+		t.Errorf("Retry-After = %q, want none", ra)
+	}
+	var env struct {
+		Error struct {
+			Code      string         `json:"code"`
+			Retryable bool           `json:"retryable"`
+			Details   map[string]any `json:"details"`
+		} `json:"error"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &env); err != nil {
+		t.Fatal(err)
+	}
+	if env.Error.Code != "INVALID_STATE_TRANSITION" || env.Error.Retryable {
+		t.Errorf("error = %+v, want INVALID_STATE_TRANSITION, not retryable", env.Error)
+	}
+	if env.Error.Details["keyId"] != "upload-token-8-0a1b2c3d" || env.Error.Details["activeFrom"] != "2026-11-27T10:02:00Z" {
+		t.Errorf("details = %v, want the pending key's keyId and activeFrom", env.Error.Details)
+	}
+	if len(sink.events) != 0 {
+		t.Errorf("audit events = %+v, want none", sink.events)
+	}
+}

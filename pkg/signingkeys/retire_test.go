@@ -166,14 +166,15 @@ func TestRotateNowWritesTheNextKeyOnePublishLeadAhead(t *testing.T) {
 	}
 }
 
-// TestRotateNowTwiceReplacesAPendingKey pins the second rotation of the
-// incident procedure: a forced rotation while the previous forced rotation
-// is still pending writes the slot after it, the pending key is retired at
-// the new key's activation instant, and the key that was active at the
-// first rotation is retired at the pending key's activation instant.
+// TestASecondForcedRotationAfterTheFirstKeyIsActiveReplacesIt pins the
+// second rotation of the incident procedure on the forced path: once the
+// first forced rotation's key is active, a forced rotation writes the slot
+// after it, the first forced key is retired at the new key's activation
+// instant, and the key that was active at the first rotation is retired at
+// the first forced key's activation instant.
 //
 // spec: §7.1 (Normal Flow), §15.1 (REST API)
-func TestRotateNowTwiceReplacesAPendingKey(t *testing.T) {
+func TestASecondForcedRotationAfterTheFirstKeyIsActiveReplacesIt(t *testing.T) {
 	ctx := context.Background()
 	store := signingkeys.NewMemoryStore()
 	clock := newClock()
@@ -182,10 +183,10 @@ func TestRotateNowTwiceReplacesAPendingKey(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	clock.Advance(time.Second)
+	clock.Advance(lead)
 	second, err := r.RotateNow(ctx)
 	if err != nil {
-		t.Fatal(err)
+		t.Fatalf("RotateNow once the first forced key is active: %v", err)
 	}
 	if second.RotationSlot != first.RotationSlot+1 {
 		t.Fatalf("second rotation at slot %d, want %d", second.RotationSlot, first.RotationSlot+1)
@@ -197,26 +198,115 @@ func TestRotateNowTwiceReplacesAPendingKey(t *testing.T) {
 	if !recs[0].RetireAfter.Equal(first.ActiveFrom) || !recs[1].RetireAfter.Equal(second.ActiveFrom) {
 		t.Errorf("retirements = %s, %s; want %s, %s", recs[0].RetireAfter, recs[1].RetireAfter, first.ActiveFrom, second.ActiveFrom)
 	}
+	if recs[0].Forced || !recs[1].Forced || !recs[2].Forced {
+		t.Errorf("forced marks = %t, %t, %t; want false for the first key and true for both forced keys", recs[0].Forced, recs[1].Forced, recs[2].Forced)
+	}
 	clock.Advance(lead)
 	if k, _ := r.SigningKey(); k.KeyID != second.KeyID {
 		t.Errorf("signing key after both activations = %q, want %q", k.KeyID, second.KeyID)
 	}
 }
 
-// TestConcurrentForcedRotationsEachWriteAKey runs forced rotations on two
-// replicas at once: the slot race is settled by the store, the loser writes
-// the following slot, and every call reports a distinct key.
+// TestAForcedRotationIsRefusedWhileTheNewestKeyIsAPendingForcedKey pins
+// the bound on forced rotations at its boundary: while the newest key is a
+// forced rotation's key whose activation instant has not passed, a forced
+// rotation on any replica writes nothing and reports that key, up to the
+// last instant before its activation; at the activation instant the key is
+// active and a forced rotation writes the next slot.
 //
 // spec: §7.1 (Normal Flow), §15.1 (REST API)
-func TestConcurrentForcedRotationsEachWriteAKey(t *testing.T) {
+func TestAForcedRotationIsRefusedWhileTheNewestKeyIsAPendingForcedKey(t *testing.T) {
+	ctx := context.Background()
+	store := signingkeys.NewMemoryStore()
+	clock := newClock()
+	a := openRing(t, store, clock)
+	b := openRing(t, store, clock)
+	first, err := a.RotateNow(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, step := range []struct {
+		name    string
+		advance time.Duration
+		ring    *signingkeys.Ring
+	}{
+		{"same replica at once", 0, a},
+		{"peer replica, which has not refreshed", time.Second, b},
+		{"last instant before the activation", lead - time.Second - time.Nanosecond, a},
+	} {
+		clock.Advance(step.advance)
+		_, err := step.ring.RotateNow(ctx)
+		var pending *signingkeys.ForcedRotationPendingError
+		if !errors.Is(err, signingkeys.ErrForcedRotationPending) || !errors.As(err, &pending) {
+			t.Fatalf("%s: RotateNow = %v, want ErrForcedRotationPending", step.name, err)
+		}
+		if pending.Pending != first {
+			t.Errorf("%s: refusal names %+v, want the pending forced key %+v", step.name, pending.Pending, first)
+		}
+		if recs, _ := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{}); len(recs) != 2 {
+			t.Fatalf("%s: stored keys = %d, want 2: a refused rotation writes nothing", step.name, len(recs))
+		}
+	}
+	clock.Advance(time.Nanosecond)
+	if !clock.Now().Equal(first.ActiveFrom) {
+		t.Fatalf("clock %s, want the forced key's activation instant %s", clock.Now(), first.ActiveFrom)
+	}
+	next, err := b.RotateNow(ctx)
+	if err != nil {
+		t.Fatalf("RotateNow at the forced key's activation instant: %v", err)
+	}
+	if next.RotationSlot != first.RotationSlot+1 {
+		t.Errorf("rotation at the activation instant wrote slot %d, want %d", next.RotationSlot, first.RotationSlot+1)
+	}
+}
+
+// TestAForcedRotationReplacesAPendingScheduledKey pins that the bound
+// counts only forced keys: while the newest key is a scheduled rotation's
+// key that is not active yet, a forced rotation writes the slot after it,
+// and the scheduled key is retired at the forced key's activation instant.
+//
+// spec: §7.1 (Normal Flow), §15.1 (REST API)
+func TestAForcedRotationReplacesAPendingScheduledKey(t *testing.T) {
+	ctx := context.Background()
+	store := signingkeys.NewMemoryStore()
+	clock := newClock()
+	r := openRing(t, store, clock)
+	clock.Advance(rotation)
+	refreshAll(t, r)
+	recs, _ := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
+	if len(recs) != 2 || recs[1].Forced || !recs[1].ActiveFrom.After(clock.Now()) {
+		t.Fatalf("stored keys after the scheduled rotation = %+v, want a pending scheduled key", recs)
+	}
+	scheduled := recs[1]
+	rot, err := r.RotateNow(ctx)
+	if err != nil {
+		t.Fatalf("RotateNow while a scheduled key is pending: %v", err)
+	}
+	if rot.RotationSlot != scheduled.RotationSlot+1 {
+		t.Errorf("forced rotation wrote slot %d, want %d", rot.RotationSlot, scheduled.RotationSlot+1)
+	}
+	recs, _ = store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
+	if len(recs) != 3 || !recs[1].RetireAfter.Equal(rot.ActiveFrom) || !recs[2].Forced {
+		t.Errorf("stored keys = %+v, want the scheduled key retired at %s and a forced key after it", recs, rot.ActiveFrom)
+	}
+}
+
+// TestConcurrentForcedRotationsWriteOneKey runs forced rotations on two
+// replicas at once: the store settles the slot race, a loser reloads and
+// finds the winner's pending forced key, and so exactly one call writes a
+// key and every other call is refused with ErrForcedRotationPending.
+//
+// spec: §7.1 (Normal Flow), §15.1 (REST API)
+func TestConcurrentForcedRotationsWriteOneKey(t *testing.T) {
 	ctx := context.Background()
 	store := signingkeys.NewMemoryStore()
 	clock := newClock()
 	rings := []*signingkeys.Ring{openRing(t, store, clock), openRing(t, store, clock)}
 	var (
-		wg   sync.WaitGroup
-		mu   sync.Mutex
-		seen = map[string]bool{}
+		wg      sync.WaitGroup
+		mu      sync.Mutex
+		written []string
+		refused int
 	)
 	for i := 0; i < 4; i++ {
 		for _, r := range rings {
@@ -224,31 +314,26 @@ func TestConcurrentForcedRotationsEachWriteAKey(t *testing.T) {
 			go func(r *signingkeys.Ring) {
 				defer wg.Done()
 				rot, err := r.RotateNow(ctx)
-				if errors.Is(err, signingkeys.ErrRotationContended) {
-					return
-				}
-				if err != nil {
-					t.Errorf("RotateNow: %v", err)
-					return
-				}
 				mu.Lock()
 				defer mu.Unlock()
-				if seen[rot.KeyID] {
-					t.Errorf("key %s reported by two rotations", rot.KeyID)
+				switch {
+				case errors.Is(err, signingkeys.ErrForcedRotationPending):
+					refused++
+				case err != nil:
+					t.Errorf("RotateNow: %v", err)
+				default:
+					written = append(written, rot.KeyID)
 				}
-				seen[rot.KeyID] = true
 			}(r)
 		}
 	}
 	wg.Wait()
-	recs, _ := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
-	if len(recs) != len(seen)+1 {
-		t.Errorf("stored keys = %d, want the first key plus the %d reported rotations", len(recs), len(seen))
+	if len(written) != 1 || refused != 7 {
+		t.Errorf("forced rotations wrote %v and %d were refused, want one key and 7 refusals", written, refused)
 	}
-	for i := 1; i < len(recs); i++ {
-		if recs[i].RotationSlot != recs[i-1].RotationSlot+1 {
-			t.Errorf("slots %d and %d are not consecutive", recs[i-1].RotationSlot, recs[i].RotationSlot)
-		}
+	recs, _ := store.List(ctx, signingkeys.PurposeUploadToken, time.Time{})
+	if len(recs) != 2 {
+		t.Errorf("stored keys = %d, want the first key and one forced key", len(recs))
 	}
 }
 

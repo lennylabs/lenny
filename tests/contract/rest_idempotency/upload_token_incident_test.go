@@ -214,3 +214,55 @@ func TestAForcedRotationKeepsEveryLegitimateTokenValid(t *testing.T) {
 		t.Errorf("a token issued after the rotation, on the other replica: %d %s, want 200", code, errCode)
 	}
 }
+
+// spec: §7.1 (uploadToken format and security properties), §15.1 (REST
+// API)
+// diagnosis: a second forced rotation within one publish lead of the
+// first, on another replica, wrote a key or did not answer 409
+// INVALID_STATE_TRANSITION naming the pending forced key, or a call at the
+// pending key's activation instant was refused. Ring.RotateNow does not
+// read the forced mark of the newest key from the shared store, or the
+// route does not map signingkeys.ErrForcedRotationPending.
+func TestASecondForcedRotationWithinThePublishLeadIsRefusedOnEveryReplica(t *testing.T) {
+	clock := &incidentClock{now: time.Now().UTC().Truncate(time.Second)}
+	state := newIncidentState()
+	a := state.clockedReplica(t, clock)
+	b := state.clockedReplica(t, clock)
+	adminServer := func(ring *signingkeys.Ring) *httptest.Server {
+		ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			ctx := authmw.WithPrincipal(r.Context(), authmw.Principal{Subject: "admin@acme.com", TenantID: "platform", Roles: []auth.Role{auth.RolePlatformAdmin}})
+			admin.NewRouter(tenantstore.NewMemory(), admin.Options{}).WithUploadTokenKeyRotator(ring).Handler().ServeHTTP(w, r.WithContext(ctx))
+		}))
+		t.Cleanup(ts.Close)
+		return ts
+	}
+	adminA, adminB := adminServer(a.ring), adminServer(b.ring)
+	rotate := func(ts *httptest.Server) (int, map[string]any) {
+		t.Helper()
+		resp, err := ts.Client().Post(ts.URL+"/v1/admin/upload-token-keys/rotate", "application/json", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		var body map[string]any
+		_ = json.NewDecoder(resp.Body).Decode(&body)
+		return resp.StatusCode, body
+	}
+
+	code, first := rotate(adminB)
+	if code != http.StatusOK {
+		t.Fatalf("first forced rotation: %d %v, want 200", code, first)
+	}
+	clock.Advance(signingkeys.DefaultPublishLead - time.Second)
+	code, refused := rotate(adminA)
+	errBody, _ := refused["error"].(map[string]any)
+	details, _ := errBody["details"].(map[string]any)
+	if code != http.StatusConflict || errBody["code"] != "INVALID_STATE_TRANSITION" || details["keyId"] != first["keyId"] {
+		t.Fatalf("second forced rotation one second before the first key's activation: %d %v, want 409 INVALID_STATE_TRANSITION naming %v", code, refused, first["keyId"])
+	}
+	clock.Advance(time.Second)
+	code, second := rotate(adminA)
+	if code != http.StatusOK || second["rotationSlot"] != first["rotationSlot"].(float64)+1 {
+		t.Errorf("forced rotation at the first key's activation instant: %d %v, want 200 at the next slot", code, second)
+	}
+}

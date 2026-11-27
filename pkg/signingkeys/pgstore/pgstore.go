@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package pgstore is the Postgres signingkeys.Store over the
-// platform_signing_keys table (migration 0205). The table is platform-
+// platform_signing_keys table (migrations 0205 and 0207). The table is platform-
 // scoped, with no tenant_id column and no RLS, so the store runs plain
 // queries without an app.current_tenant context. The secret column holds
 // only the wrapped form the caller's Sealer produced.
@@ -44,7 +44,7 @@ var _ signingkeys.Store = (*Store)(nil)
 func (s *Store) List(ctx context.Context, purpose string, now time.Time) ([]signingkeys.Record, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT purpose, key_id, algorithm, kek_alias, wrapped_secret, public_key,
-		       rotation_slot, active_from, retire_after, delete_after
+		       rotation_slot, active_from, retire_after, delete_after, forced
 		FROM platform_signing_keys
 		WHERE purpose = $1 AND (delete_after IS NULL OR delete_after > $2)
 		ORDER BY rotation_slot`, purpose, now)
@@ -60,7 +60,7 @@ func (s *Store) List(ctx context.Context, purpose string, now time.Time) ([]sign
 		)
 		if err := rows.Scan(&rec.Purpose, &rec.KeyID, &rec.Algorithm, &rec.KEKAlias,
 			&rec.WrappedSecret, &rec.PublicKey, &rec.RotationSlot, &rec.ActiveFrom,
-			&retire, &dele); err != nil {
+			&retire, &dele, &rec.Forced); err != nil {
 			return nil, fmt.Errorf("signingkeys/pgstore: scan %q key: %w", purpose, err)
 		}
 		rec.ActiveFrom = rec.ActiveFrom.UTC()
@@ -94,11 +94,11 @@ func (s *Store) Insert(ctx context.Context, rec signingkeys.Record, verifyFor ti
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO platform_signing_keys
 				(purpose, key_id, algorithm, kek_alias, wrapped_secret, public_key,
-				 rotation_slot, active_from)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				 rotation_slot, active_from, forced)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT ON CONSTRAINT platform_signing_keys_slot_unique DO NOTHING`,
 			rec.Purpose, rec.KeyID, rec.Algorithm, rec.KEKAlias, rec.WrappedSecret,
-			rec.PublicKey, rec.RotationSlot, rec.ActiveFrom)
+			rec.PublicKey, rec.RotationSlot, rec.ActiveFrom, rec.Forced)
 		if err != nil {
 			return err
 		}

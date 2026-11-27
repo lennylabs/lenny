@@ -8,6 +8,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -130,9 +131,11 @@ func TestAHolderOfAKeySecretGainsNoTokenTheGatewayDidNotIssue(t *testing.T) {
 // spec: §7.1 (uploadToken format and security properties)
 // diagnosis: after a forced rotation, a key holder's reproduction of a
 // session's issued token outlived the replaced key's verification time, or
-// the rotation refused a legitimate token before that time ended. The
-// replaced key is not retired at the new key's activation, or it stays in
-// the ring past its verification time.
+// the rotation refused a legitimate token before that time ended, or a
+// second forced rotation within one publish lead of the first was not
+// refused. The replaced key is not retired at the new key's activation, it
+// stays in the ring past its verification time, or Ring.RotateNow does not
+// read the forced mark of the newest key.
 func TestAForcedRotationEndsAnExposedKeyAfterItsVerificationTime(t *testing.T) {
 	ctx := context.Background()
 	g := newKeyHolderGateway(t)
@@ -143,14 +146,21 @@ func TestAForcedRotationEndsAnExposedKeyAfterItsVerificationTime(t *testing.T) {
 	id, _ := created["id"].(string)
 	issued, _ := created["uploadToken"].(string)
 
+	// The incident procedure's two calls run one publish lead apart: a
+	// forced rotation is refused while the previous one's key is pending.
 	for i := 0; i < 2; i++ {
 		if _, err := g.ring.RotateNow(ctx); err != nil {
-			t.Fatalf("RotateNow: %v", err)
+			t.Fatalf("RotateNow %d: %v", i+1, err)
 		}
-	}
-	g.clock.Advance(signingkeys.DefaultPublishLead)
-	if err := g.ring.Refresh(ctx); err != nil {
-		t.Fatal(err)
+		if i == 0 {
+			if _, err := g.ring.RotateNow(ctx); !errors.Is(err, signingkeys.ErrForcedRotationPending) {
+				t.Fatalf("RotateNow while the first forced key is pending = %v, want ErrForcedRotationPending", err)
+			}
+		}
+		g.clock.Advance(signingkeys.DefaultPublishLead)
+		if err := g.ring.Refresh(ctx); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if k, _ := g.ring.SigningKey(); bytes.Equal(k.Secret, g.secret) {
 		t.Fatal("the exposed key still signs after two forced rotations")

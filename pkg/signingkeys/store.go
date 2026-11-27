@@ -12,7 +12,8 @@ import (
 
 // Record is one stored signing key: the row of platform_signing_keys. The
 // secret is held only in its wrapped form. RetireAfter and DeleteAfter are
-// zero while the key is its purpose's newest key.
+// zero while the key is its purpose's newest key. Forced is true when a
+// forced rotation (Ring.RotateNow) wrote the key.
 type Record struct {
 	Purpose       string
 	KeyID         string
@@ -24,6 +25,7 @@ type Record struct {
 	ActiveFrom    time.Time
 	RetireAfter   time.Time
 	DeleteAfter   time.Time
+	Forced        bool
 }
 
 // Store persists the wrapped signing keys of every purpose. A Store is
