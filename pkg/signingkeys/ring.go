@@ -41,14 +41,37 @@ var (
 )
 
 // Key is one unwrapped key a Ring holds. Secret is shared with the ring and
-// must not be modified.
+// must not be modified. RetireAfter is zero until a later key replaces it.
 type Key struct {
 	KeyID        string
 	Secret       []byte
 	RotationSlot int64
 	ActiveFrom   time.Time
+	RetireAfter  time.Time
 	DeleteAfter  time.Time
 }
+
+// retiredAt reports whether k has been replaced by now: a key never signs
+// once its retirement instant has passed, whether or not the row of the
+// key that replaced it still exists.
+func (k Key) retiredAt(now time.Time) bool {
+	return !k.RetireAfter.IsZero() && !now.Before(k.RetireAfter)
+}
+
+// Rotation describes the key a forced rotation wrote.
+type Rotation struct {
+	KeyID        string
+	RotationSlot int64
+	ActiveFrom   time.Time
+}
+
+// rotateNowAttempts bounds how many slots RotateNow tries when other
+// writers take the slot it computed.
+const rotateNowAttempts = 3
+
+// ErrRotationContended is returned by RotateNow when other writers took
+// every slot it tried.
+var ErrRotationContended = errors.New("signingkeys: other writers took every rotation slot the forced rotation tried")
 
 // Options configures a Ring. RefreshInterval and PublishLead default to
 // DefaultRefreshInterval and DefaultPublishLead. StaleAfter is required:
@@ -96,10 +119,13 @@ type Ring struct {
 // no running replica can be signing with another key of the purpose, since
 // any running replica would have found that key in the store. Its
 // activation instant is backdated by the publish lead, so a replica whose
-// clock runs behind the writer's still finds it active when it opens. Open fails
-// when the store cannot be read, when a key cannot be unwrapped, or when
-// the publish lead is not longer than the refresh interval; the gateway
-// does not start on any of them.
+// clock runs behind the writer's still finds it active when it opens. When
+// the newest key is retired because the row of its successor was deleted,
+// Open writes the next key one publish lead ahead and opens a ring that
+// signs nothing until that key is active. Open fails when the store cannot
+// be read, when a key cannot be unwrapped, when no key is active or
+// awaiting activation, or when the publish lead is not longer than the
+// refresh interval; the gateway does not start on any of them.
 //
 // spec: §7.1 (Normal Flow), §12.3 (Postgres HA Requirements)
 func Open(ctx context.Context, policy Policy, store Store, sealer Sealer, opts Options) (*Ring, error) {
@@ -129,17 +155,37 @@ func Open(ctx context.Context, policy Policy, store Store, sealer Sealer, opts O
 		return nil, fmt.Errorf("signingkeys: load %q keys: %w", policy.Purpose, err)
 	}
 	if len(recs) == 0 {
-		if err := r.writeKey(ctx, 1, now.Add(-r.lead)); err != nil {
+		if _, _, err := r.writeKey(ctx, 1, now.Add(-r.lead)); err != nil {
 			return nil, err
 		}
 	}
 	if err := r.reload(ctx); err != nil {
 		return nil, err
 	}
-	if _, err := r.SigningKey(); err != nil {
+	if _, err := r.SigningKey(); errors.Is(err, ErrNoActiveKey) {
+		if err := r.rotateIfDue(ctx, now); err != nil {
+			return nil, err
+		}
+		if err := r.reload(ctx); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := r.SigningKey(); err != nil && !(errors.Is(err, ErrNoActiveKey) && r.awaitingActivation(now)) {
 		return nil, fmt.Errorf("signingkeys: purpose %q: %w", policy.Purpose, err)
 	}
 	return r, nil
+}
+
+// awaitingActivation reports whether a held key becomes active after now.
+func (r *Ring) awaitingActivation(now time.Time) bool {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, k := range r.keys {
+		if k.ActiveFrom.After(now) {
+			return true
+		}
+	}
+	return false
 }
 
 // resolveOptions fills the defaults and checks the publish lead against
@@ -226,7 +272,10 @@ func (r *Ring) Refresh(ctx context.Context) error {
 // replicas write at once one write succeeds and the others change nothing.
 // A ring whose last reload found no key at all, because the rows were
 // deleted, writes a first key active at once, as Open does, rather than
-// staying without a signing key until a restart.
+// staying without a signing key until a restart. A newest key that carries
+// a retirement instant has lost the row of the key that replaced it; the
+// ring writes that slot again one publish lead ahead, as a scheduled
+// rotation does, because the retired key never signs again.
 //
 // spec: §7.1 (Normal Flow)
 func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
@@ -242,30 +291,79 @@ func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
 		if !reloaded {
 			return nil
 		}
-		return r.writeKey(ctx, 1, now.Add(-r.lead))
+		_, _, err := r.writeKey(ctx, 1, now.Add(-r.lead))
+		return err
+	}
+	if !newest.RetireAfter.IsZero() {
+		_, _, err := r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead))
+		return err
 	}
 	if newest.ActiveFrom.After(now) || now.Before(newest.ActiveFrom.Add(r.policy.RotationInterval)) {
 		return nil
 	}
-	return r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead))
+	_, _, err := r.writeKey(ctx, newest.RotationSlot+1, now.Add(r.lead))
+	return err
+}
+
+// RotateNow writes the purpose's next key at once, whatever the age of the
+// active key, through the write a scheduled rotation uses: the key's
+// activation instant is one publish lead ahead, so every replica loads it
+// before any replica signs with it, and the store retires the key before
+// it at that instant. It reloads the keys first, so the slot it writes
+// follows the newest key in the store. When another writer takes that slot
+// first, it reloads and tries the slot after the winner's, up to
+// rotateNowAttempts slots, and then returns ErrRotationContended. It
+// returns the key it wrote.
+//
+// spec: §7.1 (Normal Flow), §15.1 (REST API)
+func (r *Ring) RotateNow(ctx context.Context) (Rotation, error) {
+	r.refreshMu.Lock()
+	defer r.refreshMu.Unlock()
+	for attempt := 0; attempt < rotateNowAttempts; attempt++ {
+		if err := r.reload(ctx); err != nil {
+			return Rotation{}, err
+		}
+		r.mu.RLock()
+		var slot int64 = 1
+		if n := len(r.keys); n > 0 {
+			slot = r.keys[n-1].RotationSlot + 1
+		}
+		r.mu.RUnlock()
+		rec, inserted, err := r.writeKey(ctx, slot, r.clock().Add(r.lead))
+		if err != nil {
+			return Rotation{}, err
+		}
+		if !inserted {
+			continue
+		}
+		if err := r.reload(ctx); err != nil {
+			// The key is written; this replica loads it on its next refresh,
+			// before its activation instant, as every peer does.
+			r.log.Warn("signing-key reload after a forced rotation failed",
+				"purpose", r.policy.Purpose, "key_id", rec.KeyID, "error", err)
+		}
+		return Rotation{KeyID: rec.KeyID, RotationSlot: rec.RotationSlot, ActiveFrom: rec.ActiveFrom}, nil
+	}
+	return Rotation{}, ErrRotationContended
 }
 
 // writeKey generates a secret, wraps it, and writes it as the purpose's
-// key at slot, active from activeFrom. Losing the slot to another writer
-// is not an error.
-func (r *Ring) writeKey(ctx context.Context, slot int64, activeFrom time.Time) error {
+// key at slot, active from activeFrom. It returns the record it wrote and
+// whether the write took the slot. Losing the slot to another writer is
+// not an error.
+func (r *Ring) writeKey(ctx context.Context, slot int64, activeFrom time.Time) (Record, bool, error) {
 	secret := make([]byte, r.policy.SecretSize)
 	if _, err := io.ReadFull(r.rand, secret); err != nil {
-		return fmt.Errorf("signingkeys: generate %q secret: %w", r.policy.Purpose, err)
+		return Record{}, false, fmt.Errorf("signingkeys: generate %q secret: %w", r.policy.Purpose, err)
 	}
 	defer clear(secret)
 	wrapped, err := r.sealer.Seal(ctx, secret)
 	if err != nil {
-		return fmt.Errorf("signingkeys: wrap %q secret: %w", r.policy.Purpose, err)
+		return Record{}, false, fmt.Errorf("signingkeys: wrap %q secret: %w", r.policy.Purpose, err)
 	}
 	keyID, err := r.newKeyID(slot)
 	if err != nil {
-		return err
+		return Record{}, false, err
 	}
 	rec := Record{
 		Purpose:       r.policy.Purpose,
@@ -278,13 +376,14 @@ func (r *Ring) writeKey(ctx context.Context, slot int64, activeFrom time.Time) e
 	}
 	inserted, err := r.store.Insert(ctx, rec, r.policy.VerifyFor)
 	if err != nil {
-		return fmt.Errorf("signingkeys: write %q key at slot %d: %w", r.policy.Purpose, slot, err)
+		return Record{}, false, fmt.Errorf("signingkeys: write %q key at slot %d: %w", r.policy.Purpose, slot, err)
 	}
 	if inserted {
 		r.log.Info("signing key published",
 			"purpose", r.policy.Purpose, "key_id", keyID, "slot", slot, "active_from", activeFrom)
 	}
-	return nil
+	rec.WrappedSecret = nil
+	return rec, inserted, nil
 }
 
 // newKeyID returns "<purpose>-<slot>-<8 hex>".
@@ -330,6 +429,7 @@ func (r *Ring) reload(ctx context.Context) error {
 			Secret:       secret,
 			RotationSlot: rec.RotationSlot,
 			ActiveFrom:   rec.ActiveFrom,
+			RetireAfter:  rec.RetireAfter,
 			DeleteAfter:  rec.DeleteAfter,
 		})
 	}
@@ -340,9 +440,12 @@ func (r *Ring) reload(ctx context.Context) error {
 	return nil
 }
 
-// SigningKey returns the newest key whose activation instant has passed.
-// It returns ErrSigningUnavailable when the last successful reload is older
-// than the stale bound, and ErrNoActiveKey when no key is active.
+// SigningKey returns the newest key whose activation instant has passed
+// and whose retirement instant has not. A retired key is skipped even when
+// the row of the key that replaced it is gone, so deleting the newest row
+// does not make replicas sign with the key it replaced. It returns
+// ErrSigningUnavailable when the last successful reload is older than the
+// stale bound, and ErrNoActiveKey when no key is active.
 //
 // spec: §7.1 (Normal Flow)
 func (r *Ring) SigningKey() (Key, error) {
@@ -353,9 +456,11 @@ func (r *Ring) SigningKey() (Key, error) {
 		return Key{}, ErrSigningUnavailable
 	}
 	for i := len(r.keys) - 1; i >= 0; i-- {
-		if !r.keys[i].ActiveFrom.After(now) {
-			return r.keys[i], nil
+		k := r.keys[i]
+		if k.ActiveFrom.After(now) || k.retiredAt(now) {
+			continue
 		}
+		return k, nil
 	}
 	return Key{}, ErrNoActiveKey
 }
