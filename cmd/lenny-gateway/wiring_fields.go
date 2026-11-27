@@ -395,8 +395,13 @@ type gatewayWiringFields struct {
 	// session terminator read the same value. spec: §7.1 (Post-terminal
 	// window).
 	postTerminalCap time.Duration
-	sessionSrv      *sessionserver.Server
-	storageCounter  storagequota.Counter
+	// pipelineWaitMargin is the lifecycle drain's pipeline wait margin
+	// (--terminal-pipeline-wait-margin). The erasure pipeline gate and the
+	// tenant-deletion session terminator add it to postTerminalCap; no other
+	// reader of the budget does.
+	pipelineWaitMargin time.Duration
+	sessionSrv         *sessionserver.Server
+	storageCounter     storagequota.Counter
 	// storageLiveBytes is the reservation-aware §12.4 LiveBytesSource seam
 	// (live artifact_store bytes plus outstanding checkpoint reservations)
 	// buildRedisAndQuota composes once and every storage-counter consumer

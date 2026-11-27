@@ -1784,6 +1784,9 @@ func (w *Watchdog) AgeCap(ctx context.Context, row sessionstore.Session) time.Du
 // distinguish a pre-running claimed session (created/finalizing/ready) from a
 // maxSessionAge-expired running/resuming one (§4.6).
 //
+// The fallback's session.completed event carries no user id, as §11.2.1
+// states for every session.completed event.
+//
 // spec: §5.2 — concurrent-mode slot release on session end;
 // §11.2.1 — billing; §8.10 — child archive; §4.6 — durable binding.
 func (w *Watchdog) recordCompleted(ctx context.Context, fromState session.State, sess sessionstore.Session) {
@@ -1798,10 +1801,11 @@ func (w *Watchdog) recordCompleted(ctx context.Context, fromState session.State,
 	// spec: §10.6 — watchdog-driven terminal also stamps env.
 	// F-10.6.9. spec: §11.2 — experiment/variant
 	// auto-population on the watchdog-forced terminal event. F-11.2.13.
+	// The event carries no user id, as the terminal pipeline's
+	// session.completed event does not.
 	expID, varID := sess.ExperimentContext.Enrollment()
 	_, _ = w.billing.Append(ctx, billingstore.Event{
 		TenantID:      sess.TenantID,
-		UserID:        sess.UserID,
 		SessionID:     sess.ID,
 		EventType:     billingstore.EventSessionCompleted,
 		EnvironmentID: sess.Environment,

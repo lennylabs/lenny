@@ -73,7 +73,7 @@ func TestSessionStoreRecordsTheTerminalPipelineMark(t *testing.T) {
 
 	pendingIDs := func() []string {
 		t.Helper()
-		ids, err := admin.TerminalPipelinesPending(ctx, store, tenant, "alice", now, 10*time.Minute)
+		ids, err := admin.TerminalPipelinesPending(ctx, store, tenant, "alice", now, 10*time.Minute, 0)
 		if err != nil {
 			t.Fatalf("TerminalPipelinesPending: %v", err)
 		}

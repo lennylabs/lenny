@@ -174,6 +174,9 @@ type tenantSessionTerminator struct {
 	// pipeline-pending rule and the post-terminal window. A non-positive cap
 	// fails every pass with admin.ErrPipelineBudgetUnset.
 	cap time.Duration
+	// margin is the pipeline wait margin the hold adds to cap. A negative
+	// margin fails every pass with admin.ErrPipelineWaitMarginInvalid.
+	margin time.Duration
 	// clock reads the instant the window is evaluated at.
 	clock func() time.Time
 }
@@ -188,7 +191,7 @@ func (t tenantSessionTerminator) TerminateTenantSessions(ctx context.Context, te
 	if _, err := admin.DrainSessions(tctx, t.sessions, t.term, t.pods, tenantID, ""); err != nil {
 		return fmt.Errorf("tenant deletion drain: %w", err)
 	}
-	pending, err := admin.TerminalPipelinesPending(tctx, t.sessions, tenantID, "", t.clock(), t.cap)
+	pending, err := admin.TerminalPipelinesPending(tctx, t.sessions, tenantID, "", t.clock(), t.cap, t.margin)
 	if err != nil {
 		return fmt.Errorf("tenant deletion terminal pipeline check: %w", err)
 	}

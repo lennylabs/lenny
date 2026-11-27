@@ -323,7 +323,7 @@ func startLostFanOutErasure(t *testing.T) *lostFanOutErasure {
 		}).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
 		WithPipelineGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
-			return admin.TerminalPipelinesPending(ctx, h.Store, tenantID, userID, h.Clock.Now(), lifecycleharness.PostTerminalCap)
+			return admin.TerminalPipelinesPending(ctx, h.Store, tenantID, userID, h.Clock.Now(), lifecycleharness.PostTerminalCap, 0)
 		}).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
 	job, err := runner.Start(ctx, lifecycleharness.Tenant, forwardChaosUser, "carol@acme.com", nil)

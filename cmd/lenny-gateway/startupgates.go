@@ -13,6 +13,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/auth/jwt"
 	"github.com/lennylabs/lenny/pkg/clockinject"
 	"github.com/lennylabs/lenny/pkg/delegation/recovery"
+	"github.com/lennylabs/lenny/pkg/gateway/api/admin"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/watchdog"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/elicitationfloor"
@@ -195,6 +196,9 @@ func (w *gatewayWiring) buildStartupGates(probe *tlsprobe.Flags, core *sessionCo
 	if err := validateLifecycleTickBudget(*f.lifecycleTickBudget); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
+	if err := validatePipelineWaitMargin(*f.terminalPipelineWaitMargin, terminalPipelineBudgetInEffect(*f.workspaceSealMaxDurationSeconds, *f.streamFailureReportTimeout)); err != nil {
+		log.Fatalf("lenny-gateway: %v", err)
+	}
 	if err := validateCapabilityTokenTTLFlag(*f.capabilityTokenTTL); err != nil {
 		log.Fatalf("lenny-gateway: %v", err)
 	}
@@ -296,6 +300,19 @@ func validateCapabilityTokenTTLFlag(seconds int) error {
 func validateLifecycleTickBudget(d time.Duration) error {
 	if d <= 0 {
 		return fmt.Errorf("--lifecycle-tick-budget must be positive, got %s (§12.8)", d)
+	}
+	return nil
+}
+
+// validatePipelineWaitMargin refuses a negative --terminal-pipeline-wait-margin,
+// which would end the erasure and tenant-deletion wait before the budget that
+// bounds a terminal pipeline's writes, and a margin so large that the budget
+// plus the margin overflows, which would switch the wait off. Zero is allowed:
+// the wait is then the budget alone.
+// spec: §12.8 (Lifecycle fence and drain)
+func validatePipelineWaitMargin(margin, budget time.Duration) error {
+	if !admin.PipelineWaitMarginValid(budget, margin) {
+		return fmt.Errorf("--terminal-pipeline-wait-margin must not be negative and must not overflow the terminal pipeline budget of %s, got %s (§12.8)", budget, margin)
 	}
 	return nil
 }

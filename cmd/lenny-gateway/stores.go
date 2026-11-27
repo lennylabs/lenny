@@ -105,6 +105,7 @@ func (w *gatewayWiring) buildPersistenceStores() checkpointretention.Store {
 	// spec: §7.1 (Post-terminal window) — the window cap is the terminal
 	// pipeline budget the session server runs with, computed once here.
 	w.postTerminalCap = terminalPipelineBudgetInEffect(*f.workspaceSealMaxDurationSeconds, *f.streamFailureReportTimeout)
+	w.pipelineWaitMargin = *f.terminalPipelineWaitMargin
 
 	// ----- Stores -----
 	// session, transcript, tenant, and runtime state is persisted to
