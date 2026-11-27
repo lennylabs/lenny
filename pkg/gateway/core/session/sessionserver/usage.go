@@ -425,7 +425,14 @@ func (s *Server) terminalSignals(ctx context.Context, sess sessionstore.Session)
 // afterTerminalRelease runs the funnel's steps that follow the post-terminal
 // hook: the session-log close hook, the input-wait forget, the quota
 // checkpoint, and the billing event. The budget forget is a step of the hook
-// body itself (forgetBudgetState). spec: §4.4; §8.8; §11.2; §10.6.
+// body itself (forgetBudgetState).
+//
+// The session.completed billing event carries no user id (sessionCompletedEvent):
+// it can land after user erasure has pseudonymized the user's billing events,
+// and erasure rewrites only the user id, so an event without one is neither
+// dropped nor left with a raw identifier.
+//
+// spec: §4.4; §8.8; §11.2; §10.6; §11.2.1 (Billing Event Stream)
 func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Session) {
 	// §4.4: best-effort session-log close-hook. The hook
 	// persists the session log it is handed as the
@@ -460,23 +467,27 @@ func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Ses
 	if s.billing == nil {
 		return
 	}
-	// spec: §10.6 — environment stamp on terminal-state billing
-	// event. F-10.6.9. spec: §11.2 — experiment/variant
-	// auto-population. F-11.2.13.
+	_, _ = s.billing.Append(ctx, sessionCompletedEvent(sess))
+}
+
+// sessionCompletedEvent builds the session.completed billing event of a
+// terminal session: the tenant, the session id, the environment, the
+// experiment and variant, and the labels, with the user id left empty. A
+// consumer that needs the user joins the event on session_id with the
+// session's session.created event.
+//
+// spec: §11.2.1 (Billing Event Stream), §10.6, §14
+func sessionCompletedEvent(sess sessionstore.Session) billingstore.Event {
 	expID, varID := sess.ExperimentContext.Enrollment()
-	_, _ = s.billing.Append(ctx, billingstore.Event{
+	return billingstore.Event{
 		TenantID:      sess.TenantID,
-		UserID:        sess.UserID,
 		SessionID:     sess.ID,
 		EventType:     billingstore.EventSessionCompleted,
 		EnvironmentID: sess.Environment,
 		ExperimentID:  expID,
 		VariantID:     varID,
-		// spec: §14 — denormalize the session's labels onto the
-		// terminal billing event so the metering stream stays label-
-		// filterable across the session's full lifecycle. F-14.1.13.
-		Labels: cloneMetadata(sess.Labels),
-	})
+		Labels:        cloneMetadata(sess.Labels),
+	}
 }
 
 // isPreRunningClaimState reports whether st is one of the §4.6 pre-running

@@ -68,7 +68,7 @@ func (b delayedVerification) CountUser(ctx context.Context, tenantID, userID str
 // through the session server's detached terminal pipeline, with the
 // pipeline's session.completed append delayed past the start of the
 // pseudonymizing step and the verification read delayed after it. The job
-// completes, both session.completed events exist and carry the pseudonym,
+// completes, both session.completed events exist and carry no user id,
 // and no billing event of the tenant carries the raw user id, either when
 // the job completes or once every pipeline has returned. Another user's
 // events keep their id.
@@ -141,7 +141,7 @@ func TestErasureIsCompleteWhenADrainedSessionsTerminalPipelineIsSlow(t *testing.
 		}).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
 		WithPipelineGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
-			return admin.TerminalPipelinesPending(ctx, sessions, tenantID, userID, time.Now(), srv.TerminalPipelineBudget())
+			return admin.TerminalPipelinesPending(ctx, sessions, tenantID, userID, time.Now(), srv.TerminalPipelineBudget(), 0)
 		}).
 		WithBilling(erasurejob.NewBillingEraser(delayedVerification{Store: billing, delay: 600 * time.Millisecond}, tenants)).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })
@@ -186,12 +186,12 @@ func TestErasureIsCompleteWhenADrainedSessionsTerminalPipelineIsSlow(t *testing.
 	for _, id := range aliceSessions {
 		var n int
 		if err := pg.Pool.QueryRow(ctx,
-			`SELECT COUNT(*) FROM billing_events WHERE tenant_id = $1 AND session_id = $2::uuid AND event_type = 'session.completed' AND user_id <> $3`,
-			tenant, id, alice).Scan(&n); err != nil {
+			`SELECT COUNT(*) FROM billing_events WHERE tenant_id = $1 AND session_id = $2::uuid AND event_type = 'session.completed' AND user_id = ''`,
+			tenant, id).Scan(&n); err != nil {
 			t.Fatalf("count completion events: %v", err)
 		}
 		if n != 1 {
-			t.Errorf("session %s has %d pseudonymized session.completed events, want 1", id, n)
+			t.Errorf("session %s has %d session.completed events with no user id, want 1", id, n)
 		}
 	}
 	if n := rawRows(bob); n != 1 {
