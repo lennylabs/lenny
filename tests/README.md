@@ -32,6 +32,7 @@ Each tier has its own directory and build tag (see TESTING.md §4 for the canoni
 - `docs/` — documentation tests
 - `formal/` — formal models of design rules, run by hand rather than by a tier; `formal/tokens/README.md` describes the Alloy model of the token rules, `formal/tokenconcurrency/README.md` describes the TLA+ model of the token rules under concurrent requests, `formal/uploadtokens/README.md` describes the TLA+ model of the upload-token signing keys and consumed state, and each says how to run it
   - `formal/auditchain/README.md` describes the TLA+ model of the audit hash chain, redaction receipts, and receipt key rotation against each database role, and says how to run it
+  - `formal/sessionlifecycle/README.md` describes the TLA+ model of the session lifecycle state machine of change 0146, with its tree suspension, cascade, and leaves, and says how to run it
 
 Unit tests are co-located with the code they cover under `pkg/`. This directory is the index, not the location.
 
