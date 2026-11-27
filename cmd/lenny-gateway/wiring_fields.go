@@ -395,7 +395,7 @@ type gatewayWiringFields struct {
 	// session terminator read the same value. spec: §7.1 (Post-terminal
 	// window).
 	postTerminalCap time.Duration
-	// pipelineWaitMargin is the §12.8 pipeline wait margin
+	// pipelineWaitMargin is the lifecycle drain's pipeline wait margin
 	// (--terminal-pipeline-wait-margin). The erasure pipeline gate and the
 	// tenant-deletion session terminator add it to postTerminalCap; no other
 	// reader of the budget does.

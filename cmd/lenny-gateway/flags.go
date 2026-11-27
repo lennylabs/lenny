@@ -827,7 +827,7 @@ func (f *gatewayFlags) registerSessionFlags() {
 		"§7.2 tool-use approval wait: how long a blocked tool_call(approvalRequired) waits for a POST /tool-use/{id}/approve|deny before the gateway treats it as a denial. Zero (default) blocks until the user resolves it or the request context is cancelled. Override via LENNY_TOOL_APPROVAL_TIMEOUT.")
 	f.streamFailureReportTimeout = flag.Duration("stream-failure-report-timeout", envDuration("LENNY_STREAM_FAILURE_REPORT_TIMEOUT", sessionserver.DefaultStreamFailureReportTimeout),
 		"§28.5.1 CH-ATTACH stream-failure report bound: operator-tunable time a runtime_crash report on a failed Attach stream has for the binding release, parent notification, and cascade beyond the workspace seal window (the report's deadline is this value plus the seal window). Default 30s. Override via LENNY_STREAM_FAILURE_REPORT_TIMEOUT.")
-	// The §12.8 pipeline wait margin: user erasure and tenant deletion wait on
+	// The pipeline wait margin: user erasure and tenant deletion wait on
 	// a drained session's terminal pipeline for the budget plus this margin,
 	// which covers clock skew between replicas and a pipeline write that
 	// commits just after the budget's deadline. Nothing else reads it.

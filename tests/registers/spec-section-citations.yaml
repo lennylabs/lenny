@@ -452,7 +452,7 @@ packages:
     - package: pkg/gateway/core/session/sessioninbox
       count: 73
     - package: pkg/gateway/core/session/sessionserver
-      count: 2997
+      count: 2995
     - package: pkg/gateway/core/session/slotcounter
       count: 125
     - package: pkg/gateway/core/session/slothealth
@@ -460,7 +460,7 @@ packages:
     - package: pkg/gateway/core/session/slotreaper
       count: 20
     - package: pkg/gateway/core/session/watchdog
-      count: 215
+      count: 216
     - package: pkg/gateway/credentials/credassign
       count: 81
     - package: pkg/gateway/credentials/credfallback

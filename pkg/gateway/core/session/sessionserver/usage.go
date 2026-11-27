@@ -432,7 +432,7 @@ func (s *Server) terminalSignals(ctx context.Context, sess sessionstore.Session)
 // and erasure rewrites only the user id, so an event without one is neither
 // dropped nor left with a raw identifier.
 //
-// spec: §4.4; §8.8; §11.2; §10.6; §11.2.1 (Billing Event Stream)
+// spec: §4.4; §8.8; §11.2
 func (s *Server) afterTerminalRelease(ctx context.Context, sess sessionstore.Session) {
 	// §4.4: best-effort session-log close-hook. The hook
 	// persists the session log it is handed as the
