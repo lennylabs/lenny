@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I10
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0177.S4
 ---
 
 # Deleting a signing-key row by hand makes replicas sign with the replaced key, extends its life, or bypasses the publish lead

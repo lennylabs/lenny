@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I6
-status: open
+status: planned
 kind: spec-defect
 severity: low
 requirements: []
+change: 0177.S4
 ---
 
 # The upload-token verifier accepts any expiry a token carries, so a leaked key mints tokens that verify until the key is deleted

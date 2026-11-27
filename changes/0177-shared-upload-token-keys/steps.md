@@ -29,3 +29,11 @@ Decisions 7, 8, and 9. First the specification: §7.1 **`uploadToken` format and
 - closes: [AUDIT-I6]
 
 Decision 10. §11.7 and §12.8 step 14 state that a row appended after a redacted row links to that row's `original_hash`. Then the append path of `pkg/audit/auditstore` (`scanTail`) reads the tail row's receipt and links to its `original_hash` when the tail is redacted, with unit and component tests that redact a tenant's newest audit row, append the erasure's `gdpr.erasure_deadletter_redacted` event and a later row, and verify the chain, and the security test of the receipt check extended to the tail case. Then `docs/operator-guide/audit-ocsf.md` and the receipt-missing runbook where they describe the chain. The step closes [AUDIT-I6](../../issues/AUDIT/AUDIT-I6-row-appended-after-a-redacted-tail-links-to-its-post-redaction-hash.md).
+
+### 0177.S4 Upload-token key incidents and the digest check
+- status: Planned
+- lanes: [specification, code, documentation]
+- depends-on: [0177.S2]
+- closes: [UPLOAD-I6, UPLOAD-I8, UPLOAD-I9, UPLOAD-I10]
+
+Decision 11. First the specification: §7.1 **`uploadToken` format and security properties** states that the verifier refuses a token whose digest differs from the session row's recorded digest, with the rule for an empty digest; that create-and-start marks the token consumed; that a replaced key is never selected for signing after its retirement; and the admin "rotate now" operation in §15 with its audit event. Then the digest comparison in `verifyUploadTokenValue`, in constant time; the consumed mark in the create-and-start write; `Insert` keeping an earlier `delete_after` and `SigningKey` skipping a retired key in `pkg/signingkeys`; and the admin operation through the normal write path, with unit, component, contract, and security tests (a forged token for a live session is refused, a create-and-start token is refused after start, a forced rotation keeps every legitimate token valid). Then `docs/operator-guide/security.md` (the limit and the incident procedure), `docs/api/admin.md`, and the runbook.
