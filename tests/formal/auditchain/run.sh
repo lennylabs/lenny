@@ -1,7 +1,8 @@
 #!/bin/sh
 # SPDX-License-Identifier: MIT
-# Run the audit chain model with TLC inside a container that has no network
-# and sees only the model and the TLC jar.
+# Run the audit chain model with TLC, on the host's Java by default or
+# inside a container that has no network and sees only the model and the
+# TLC jar.
 #
 # Usage: tests/formal/auditchain/run.sh <path-to-tla2tools.jar> <output-dir> <configuration|all> [property ...]
 #
@@ -18,7 +19,11 @@
 # violated invariant with the behavior that reaches it.
 #
 # TLC_WORKERS sets the TLC worker count (default 8), TLC_HEAP the JVM heap
-# (default 12g). TLC_DETACH=1 starts the container detached under the name
+# (default 12g). The runner uses TLC_JAVA, else $JAVA_HOME/bin/java, else
+# java on the PATH, and stops when that runtime does not start; TLC 1.7.4
+# needs Java 11 or later. TLC_DOCKER=1 runs TLC in the eclipse-temurin:21-jdk
+# container instead, with no network. With TLC_DOCKER=1,
+# TLC_DETACH=1 starts the container detached under the name
 # tlc-auditchain-<configuration> and returns; read the log when it stops.
 set -eu
 
@@ -66,6 +71,16 @@ if [ "$sum" != "$pinned_sha256" ]; then
   exit 1
 fi
 
+if [ "${TLC_DOCKER:-0}" != 1 ]; then
+  java=${TLC_JAVA:-${JAVA_HOME:+$JAVA_HOME/bin/java}}
+  java=${java:-java}
+  if ! "$java" -version >/dev/null 2>&1; then
+    echo "run.sh: no Java runtime starts at $java; set TLC_JAVA or JAVA_HOME, or run with TLC_DOCKER=1" >&2
+    exit 1
+  fi
+  java_version=$("$java" -version 2>&1 | head -n 1)
+fi
+
 name="$config"
 cfg="$out/$name.cfg"
 
@@ -101,6 +116,19 @@ java -XX:+UseParallelGC -Xmx${TLC_HEAP:-12g} -cp /tla/tla2tools.jar tlc2.TLC \
   -metadir /tmp/run/states -config $name.cfg AuditChain.tla \
   > /out/$name.log 2>&1 || true
 tail -n 3 /out/$name.log"
+
+if [ "${TLC_DOCKER:-0}" != 1 ]; then
+  echo "java=$java_version" >> "$out/$name.receipt"
+  work=$(mktemp -d)
+  cp "$here/AuditChain.tla" "$work/"
+  cp "$out/$name.cfg" "$work/$name.cfg"
+  (cd "$work" && "$java" -XX:+UseParallelGC -Xmx${TLC_HEAP:-12g} -cp "$jar_dir/$jar_name" tlc2.TLC \
+    -workers ${TLC_WORKERS:-8} -cleanup -deadlock \
+    -metadir "$work/states" -config "$name.cfg" AuditChain.tla > "$out/$name.log" 2>&1) || true
+  rm -rf "$work"
+  tail -n 3 "$out/$name.log"
+  exit 0
+fi
 
 if [ "${TLC_DETACH:-0}" = 1 ]; then
   exec docker run -d --name "tlc-auditchain-$name" --network none \
