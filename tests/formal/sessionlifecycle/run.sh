@@ -20,8 +20,8 @@
 # verdict: "No error has been found", or the violated invariant or property,
 # or the deadlock, with the behavior that reaches it.
 #
-# TLC_WORKERS sets the TLC worker count (default 2), TLC_HEAP the JVM heap
-# (default 3g). TLC_DETACH=1 starts each container detached under the name
+# TLC_WORKERS sets the TLC worker count (default 8), TLC_HEAP the JVM heap
+# (default 12g). TLC_DETACH=1 starts each container detached under the name
 # tlc-sessionlifecycle-<configuration> and returns; read the log when it stops.
 set -eu
 
@@ -88,7 +88,7 @@ run_one() {
     echo "jar_sha256=$sum"
     echo "configuration=$name"
     echo "checks=${*:-all listed in $name.cfg}"
-    echo "workers=${TLC_WORKERS:-2}"
+    echo "workers=${TLC_WORKERS:-8}"
     echo "started=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
   } > "$out/$name.receipt"
 
@@ -102,8 +102,8 @@ mkdir -p /tmp/run
 cp /model/SessionLifecycle.tla /tmp/run/
 cp /out/$name.cfg /tmp/run/$name.cfg
 cd /tmp/run
-java -XX:+UseParallelGC -Xmx${TLC_HEAP:-3g} -cp /tla/tla2tools.jar tlc2.TLC \
-  -workers ${TLC_WORKERS:-2} -cleanup $deadlock \
+java -XX:+UseParallelGC -Xmx${TLC_HEAP:-12g} -cp /tla/tla2tools.jar tlc2.TLC \
+  -workers ${TLC_WORKERS:-8} -cleanup $deadlock \
   -metadir /tmp/run/states -config $name.cfg SessionLifecycle.tla \
   > /out/$name.log 2>&1 || true
 tail -n 3 /out/$name.log"
