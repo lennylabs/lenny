@@ -260,6 +260,24 @@ func TestAForcedRotationIsRefusedWhileTheNewestKeyIsAPendingForcedKey(t *testing
 	}
 }
 
+// TestForcedRotationPendingErrorNamesThePendingKey pins the refusal's
+// message: it names the pending key, its slot, and the instant from which
+// a forced rotation is accepted, and it matches ErrForcedRotationPending.
+//
+// spec: §15.1 (REST API)
+func TestForcedRotationPendingErrorNamesThePendingKey(t *testing.T) {
+	err := error(&signingkeys.ForcedRotationPendingError{Pending: signingkeys.Rotation{
+		KeyID: "upload-token-8-0a1b2c3d", RotationSlot: 8, ActiveFrom: time.Date(2026, 11, 27, 10, 2, 0, 0, time.UTC),
+	}})
+	want := "signingkeys: the forced rotation's key upload-token-8-0a1b2c3d (slot 8) is not active until 2026-11-27T10:02:00Z; at most one forced rotation runs per publish lead"
+	if err.Error() != want {
+		t.Errorf("Error() = %q, want %q", err.Error(), want)
+	}
+	if !errors.Is(err, signingkeys.ErrForcedRotationPending) || errors.Is(err, signingkeys.ErrRotationContended) {
+		t.Errorf("errors.Is: want a match of ErrForcedRotationPending only")
+	}
+}
+
 // TestAForcedRotationReplacesAPendingScheduledKey pins that the bound
 // counts only forced keys: while the newest key is a scheduled rotation's
 // key that is not active yet, a forced rotation writes the slot after it,
