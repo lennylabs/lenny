@@ -1625,6 +1625,18 @@ func generatedToolset() []Tool {
 			ReadOnly:      false,
 		},
 		{
+			Name:          "admin.rotate_upload_token_keys",
+			Description:   "Rotate the shared upload-token signing keys at once",
+			InputSchema:   mustSchema(`{"properties":{"operationId":{"description":"Optional UUID for multi-step operation correlation.","format":"uuid","type":"string"}},"required":[],"type":"object"}`),
+			Method:        "POST",
+			Path:          "/v1/admin/upload-token-keys/rotate",
+			Category:      "mutation",
+			RequiredRole:  "platform-admin",
+			Scope:         "tools:platform:write",
+			DryRunSupport: "none",
+			ReadOnly:      false,
+		},
+		{
 			Name:          "admin.run_preflight",
 			Description:   "Run outbound infra connectivity and schema-version probes",
 			InputSchema:   mustSchema(`{"properties":{"operationId":{"description":"Optional UUID for multi-step operation correlation.","format":"uuid","type":"string"}},"required":[],"type":"object"}`),

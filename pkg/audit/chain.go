@@ -449,14 +449,18 @@ func (c *Chain) classifyRow(i int, row Row) ChainIntegrity {
 // receipted redaction. A row that has a receipt must be one too, whatever
 // its hash: a receipt marks its row as redacted, so a row restored to its
 // pre-redaction content, which hashes to its preserved hash again, or one
-// that lost the redaction marker, does not pass as an unredacted row. The
-// caller holds c.mu.
+// that lost the redaction marker, does not pass as an unredacted row. A
+// row flagged Redacted must have a verifying receipt whatever its hash, so
+// a tail row rewritten to the redacted form without a receipt, whose Hash
+// is its recomputed content hash because no successor pins its earlier
+// hash, reads broken as a redacted row inside the chain does. The caller
+// holds c.mu.
 //
 // spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
 func (c *Chain) contentCheck(row Row) (bool, string) {
 	content := computeHash(row)
 	_, receipted := c.receipts[row.Seq]
-	if content == row.Hash && !receipted {
+	if content == row.Hash && !receipted && !row.Redacted {
 		return false, ""
 	}
 	switch {

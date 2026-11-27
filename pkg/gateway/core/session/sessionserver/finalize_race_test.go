@@ -25,7 +25,6 @@ import (
 	"reflect"
 	"sync"
 	"testing"
-	"time"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
@@ -203,9 +202,11 @@ type raceOptions struct {
 // assigner, and a hookStore over a memstore.
 type raceFixture struct {
 	h http.Handler
-	// uploadToken is the §7.1 token finalize sends, minted for
-	// raceSessionID when the fixture wires an upload-token verifier.
+	// uploadToken is the §7.1 token finalize sends: the token the create
+	// response returned, when the fixture wires an upload-token issuer and
+	// verifier (issuesToken).
 	uploadToken string
+	issuesToken bool
 	inner       *memstore.Store
 	hooks       *hookStore
 	cluster     client.Client
@@ -266,19 +267,14 @@ func newRaceFixture(t *testing.T, opt raceOptions) *raceFixture {
 		Events:                  bus,
 		LifecycleAuditSink:      audit,
 	}
-	var uploadToken string
 	if opt.uploadToken {
 		ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k1", Secret: []byte("race")})
+		opts.UploadTokenIssuer = uploadtoken.NewIssuer(ring, nil)
 		opts.UploadTokenVerifier = uploadtoken.NewVerifier(ring, nil, nil)
-		tok, err := uploadtoken.NewIssuer(ring, nil).Issue(raceSessionID, time.Hour)
-		if err != nil {
-			t.Fatalf("issue upload token: %v", err)
-		}
-		uploadToken = tok
 	}
 	srv := sessionserver.New(hooks, opts)
 	return &raceFixture{
-		h: asOwner(srv.Handler()), uploadToken: uploadToken, inner: inner, hooks: hooks, cluster: cluster,
+		h: asOwner(srv.Handler()), issuesToken: opt.uploadToken, inner: inner, hooks: hooks, cluster: cluster,
 		assigner: assigner, bus: bus, audit: audit,
 	}
 }
@@ -324,8 +320,16 @@ func (f *raceFixture) create(t *testing.T, plan json.RawMessage) {
 	body, _ := json.Marshal(sessionserver.CreateSessionRequest{
 		RuntimeRef: "echo", WorkspacePlan: plan,
 	})
-	if rr := postSessionStep(t, f.h, "/v1/sessions", body); rr.Code != http.StatusCreated {
+	rr := postSessionStep(t, f.h, "/v1/sessions", body)
+	if rr.Code != http.StatusCreated {
 		t.Fatalf("create: status %d, body=%s", rr.Code, rr.Body.String())
+	}
+	if f.issuesToken {
+		var resp sessionserver.CreateSessionResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &resp); err != nil || resp.UploadToken == "" {
+			t.Fatalf("create returned no upload token: %v, body=%s", err, rr.Body.String())
+		}
+		f.uploadToken = resp.UploadToken
 	}
 	if !f.claimPresent(t) {
 		t.Fatalf("claim-sbx-1 missing after create")

@@ -818,7 +818,13 @@ func (s *Store) SIEMHeldCount(ctx context.Context, tenantID string, cutoff time.
 }
 
 // scanTail reads the highest-sequence row for the tenant. hasTail is
-// false when the chain is empty.
+// false when the chain is empty. When the tail row was redacted in place
+// and has a receipt, its Hash is the receipt's original_hash, the
+// preserved pre-redaction hash, so the row appended after it links as
+// the chain verifier expects. Only a redaction-marked tail costs the
+// extra receipt read.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
 func scanTail(ctx context.Context, tx pgx.Tx, tenantID string) (audit.Row, bool, error) {
 	row := tx.QueryRow(ctx,
 		`SELECT `+selectList+` FROM audit_log WHERE tenant_id = $1
@@ -829,6 +835,13 @@ func scanTail(ctx context.Context, tx pgx.Tx, tenantID string) (audit.Row, bool,
 	}
 	if err != nil {
 		return audit.Row{}, false, err
+	}
+	if audit.IsRedactedPayload(r.Payload) {
+		orig, found, err := tailReceiptHash(ctx, tx, tenantID, r.Seq)
+		if err != nil {
+			return audit.Row{}, false, err
+		}
+		markRedacted(&r, orig, found)
 	}
 	return r, true, nil
 }

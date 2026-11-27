@@ -486,6 +486,11 @@ func (w *gatewayWiring) buildAdminRouter(
 	// trusted receipt keys, and
 	// GET /v1/admin/audit-receipt-keys serves them to external verifiers.
 	adminRouter = adminRouter.WithReceiptKeys(w.receiptKeys)
+	// POST /v1/admin/upload-token-keys/rotate writes the next §7.1
+	// upload-token key through the ring every replica reloads.
+	if w.uploadKeyRing != nil {
+		adminRouter = adminRouter.WithUploadTokenKeyRotator(w.uploadKeyRing)
+	}
 	// §25.9 audit-query observability series (query latency, broken /
 	// post-outage-rechain counters, scatter-gather fan-out). F-25.9.13.
 	adminRouter = adminRouter.WithAuditMetrics(gwMetrics)

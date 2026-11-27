@@ -5,7 +5,10 @@ package uploadhandler_test
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -73,6 +76,21 @@ func seedCreatedSession(t *testing.T, store sessionstore.Store, id, tenant strin
 	}
 }
 
+// recordIssuedToken records tok's digest on the session row, as session
+// creation does for the token it issues, so the gateway accepts tok as the
+// session's issued token. A session the store does not hold is left alone.
+func recordIssuedToken(t *testing.T, store sessionstore.Store, tenant, id, tok string) {
+	t.Helper()
+	sum := sha256.Sum256([]byte(tok))
+	_, err := store.Update(context.Background(), tenant, id, func(row *sessionstore.Session) error {
+		row.UploadTokenDigest = hex.EncodeToString(sum[:])
+		return nil
+	})
+	if err != nil && !errors.Is(err, sessionstore.ErrNotFound) {
+		t.Fatalf("record the issued token: %v", err)
+	}
+}
+
 func uploadRequest(t *testing.T, h http.Handler, id, tenant, token string, body []byte, mime string) *httptest.ResponseRecorder {
 	t.Helper()
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/upload", bytes.NewReader(body))
@@ -92,6 +110,7 @@ func TestUploadHappyPath(t *testing.T) {
 	srv, issuer, _, blobs, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusCreated {
@@ -201,6 +220,7 @@ func TestUploadRejectsWrongState(t *testing.T) {
 		t.Fatalf("seed: %v", err)
 	}
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("data"), "text/plain")
 	if rr.Code != http.StatusConflict {
 		t.Errorf("status: got %d, want 409 (INVALID_STATE_TRANSITION); body=%s", rr.Code, rr.Body.String())
@@ -220,6 +240,7 @@ func TestUploadDefaultsMimeTypeWhenAbsent(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("data"), "")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("status: got %d, want 201", rr.Code)
@@ -312,6 +333,7 @@ func TestUploadRejectsOversizedBody(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	// One byte past the platform cap.
 	body := bytes.Repeat([]byte("x"), int(uploadhandler.UploadMaxBodyBytes)+1)
@@ -334,6 +356,7 @@ func TestUploadAdmitsBodyAtCap(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	body := bytes.Repeat([]byte("x"), int(uploadhandler.UploadMaxBodyBytes))
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, body, "application/octet-stream")
@@ -347,6 +370,7 @@ func TestUploadRoundTripsThroughBlobGet(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("round-trip"), "text/plain")
 	if rr.Code != http.StatusCreated {

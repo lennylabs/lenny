@@ -182,11 +182,11 @@ func TestVerifyUploadTokenRefusesATokenTheSessionRowMarksConsumed(t *testing.T) 
 	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
 	issuer := uploadtoken.NewIssuer(ring, nil)
 	store := memstore.New()
-	if err := store.Create(ctx, sessionstore.Session{ID: "sess-a", TenantID: "acme", UserID: "alice", State: session.StateCreated}); err != nil {
+	tok, parsed, err := issuer.IssueDetailed("sess-a", time.Minute)
+	if err != nil {
 		t.Fatal(err)
 	}
-	tok, _, err := issuer.IssueDetailed("sess-a", time.Minute)
-	if err != nil {
+	if err := store.Create(ctx, sessionstore.Session{ID: "sess-a", TenantID: "acme", UserID: "alice", State: session.StateCreated, UploadTokenDigest: parsed.Digest}); err != nil {
 		t.Fatal(err)
 	}
 	replicaA := sessionserver.New(store, sessionserver.Options{UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, nil)}).UploadSeam()
@@ -211,6 +211,69 @@ func TestVerifyUploadTokenRefusesATokenTheSessionRowMarksConsumed(t *testing.T) 
 	}
 	if err := replicaA.VerifyUploadToken(ctx, "acme", "sess-missing", other); err != nil {
 		t.Errorf("token of a session the store does not hold: %v, want nil", err)
+	}
+}
+
+// TestVerifyUploadTokenAcceptsOnlyTheTokenIssuedAtCreation checks the
+// issued-token binding: a token signed under a ring key for the session
+// but with another expiry, as a holder of the key's secret can sign, is
+// refused as invalid although its signature verifies; a row that records
+// no digest refuses every token; the issued token is admitted; and a
+// forged token for a session whose issued token is consumed is refused as
+// invalid rather than consumed.
+//
+// spec: §7.1 (uploadToken format and security properties), §7.4 (Upload
+// Safety), GWSEAM-VerifyUploadToken
+func TestVerifyUploadTokenAcceptsOnlyTheTokenIssuedAtCreation(t *testing.T) {
+	ctx := context.Background()
+	now := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
+	issuer := uploadtoken.NewIssuer(ring, func() time.Time { return now })
+	issued, parsed, err := issuer.IssueDetailed("sess-a", 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	forged, err := issuer.Issue("sess-a", 24*time.Hour)
+	if err != nil {
+		t.Fatal(err)
+	}
+	store := memstore.New()
+	for _, row := range []sessionstore.Session{
+		{ID: "sess-a", TenantID: "acme", UserID: "alice", State: session.StateCreated, UploadTokenDigest: parsed.Digest},
+		{ID: "sess-none", TenantID: "acme", UserID: "alice", State: session.StateRunning},
+	} {
+		if err := store.Create(ctx, row); err != nil {
+			t.Fatal(err)
+		}
+	}
+	core := sessionserver.New(store, sessionserver.Options{
+		UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, func() time.Time { return now }),
+	}).UploadSeam()
+
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", issued); err != nil {
+		t.Errorf("the issued token: %v, want nil", err)
+	}
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", forged); !errors.Is(err, seam.ErrUploadTokenInvalid) {
+		t.Errorf("a token signed with another expiry: %v, want ErrUploadTokenInvalid", err)
+	}
+	noneTok, err := issuer.Issue("sess-none", 5*time.Minute)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-none", noneTok); !errors.Is(err, seam.ErrUploadTokenInvalid) {
+		t.Errorf("a token for a row that records no digest: %v, want ErrUploadTokenInvalid", err)
+	}
+	if _, err := store.Update(ctx, "acme", "sess-a", func(row *sessionstore.Session) error {
+		row.UploadTokenConsumedAt = now
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", forged); !errors.Is(err, seam.ErrUploadTokenInvalid) {
+		t.Errorf("a forged token after the consume: %v, want ErrUploadTokenInvalid", err)
+	}
+	if err := core.VerifyUploadToken(ctx, "acme", "sess-a", issued); !errors.Is(err, seam.ErrUploadTokenConsumed) {
+		t.Errorf("the issued token after the consume: %v, want ErrUploadTokenConsumed", err)
 	}
 }
 

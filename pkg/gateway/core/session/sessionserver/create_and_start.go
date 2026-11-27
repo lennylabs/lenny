@@ -386,6 +386,17 @@ func (s *Server) buildCreateAndStartRow(w http.ResponseWriter, r *http.Request, 
 	return row, createAndStartBuild{level: level, parsedPlan: parsedPlan, planWarnings: planWarnings}, true
 }
 
+// consumeAtStart marks the upload token of a create-and-start session
+// consumed at the session's creation instant. The session enters running
+// with no upload phase, so the row write that creates it is the point at
+// which its token leaves the upload phase, and every replica then refuses
+// the token with UPLOAD_TOKEN_CONSUMED.
+//
+// spec: §7.1 (uploadToken format and security properties)
+func consumeAtStart(row *sessionstore.Session) {
+	row.UploadTokenConsumedAt = row.CreatedAt
+}
+
 // mintClaimStartPersist runs the §7.1 atomic create-and-start
 // unit: the §7.1 step 8 uploadToken mint, the same-call §7.1
 // Claim → Prepare → Launch sequence on the pod binder, the store INSERT,
@@ -414,6 +425,7 @@ func (s *Server) mintClaimStartPersist(w http.ResponseWriter, r *http.Request, r
 	}
 	row.UploadTokenDigest = parsed.Digest
 	row.UploadTokenExpiry = parsed.Expiry
+	consumeAtStart(row)
 
 	// When the gateway is wired with a pod binder, the §15.1
 	// create-and-start path runs the §7.1 Claim → Prepare → Launch sequence

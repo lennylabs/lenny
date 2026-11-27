@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -240,18 +241,45 @@ func scanReceipt(rows pgx.Rows) (audit.RedactionReceipt, error) {
 // pre-redaction hash the receipt carries, so the chain stays linked and
 // the verifier sees a content-hash break that the receipt explains. A
 // redaction-marked row with no receipt keeps its recomputed (post-rewrite)
-// hash, which the verifier reports `broken` — the missing-receipt incident.
+// hash and the Redacted flag, which the verifier reports `broken` — the
+// missing-receipt incident — whether or not the tenant has other receipts.
 func applyReceipts(rows []audit.Row, receipts map[uint64]audit.RedactionReceipt) {
-	if len(receipts) == 0 {
+	for i := range rows {
+		rcpt, ok := receipts[rows[i].Seq]
+		markRedacted(&rows[i], rcpt.OriginalHash, ok)
+	}
+}
+
+// markRedacted applies one receipt to one row read from audit_log: a row
+// whose payload carries the redaction marker is flagged Redacted, and,
+// when it has a receipt, its Hash becomes the receipt's original_hash,
+// the preserved pre-redaction hash its successors link to. The chain
+// verifier (through applyReceipts) and the append path (through
+// scanTail) both call it, so a row appended after a redacted tail row
+// carries the prev_hash the verifier expects of it.
+func markRedacted(row *audit.Row, originalHash string, receipted bool) {
+	if !audit.IsRedactedPayload(row.Payload) {
 		return
 	}
-	for i := range rows {
-		if !audit.IsRedactedPayload(rows[i].Payload) {
-			continue
-		}
-		rows[i].Redacted = true
-		if rcpt, ok := receipts[rows[i].Seq]; ok && rcpt.OriginalHash != "" {
-			rows[i].Hash = rcpt.OriginalHash
-		}
+	row.Redacted = true
+	if receipted && originalHash != "" {
+		row.Hash = originalHash
 	}
+}
+
+// tailReceiptHash reads the original_hash of the receipt for the row at
+// seq, inside the append transaction tx. found is false when the row has
+// no receipt.
+func tailReceiptHash(ctx context.Context, tx pgx.Tx, tenantID string, seq uint64) (string, bool, error) {
+	var orig []byte
+	err := tx.QueryRow(ctx,
+		`SELECT original_hash FROM audit_redaction_receipts
+		 WHERE tenant_id = $1 AND sequence_number = $2`, tenantID, int64(seq)).Scan(&orig)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("auditstore: read the receipt of tail row %d: %w", seq, err)
+	}
+	return hex.EncodeToString(orig), true, nil
 }
