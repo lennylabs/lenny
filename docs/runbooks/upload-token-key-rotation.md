@@ -44,13 +44,15 @@ The gateway accepts on a session only the token it issued at the session's creat
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl -n lenny-system exec deploy/lenny-gateway -- \
-  psql "$LENNY_POSTGRES_DSN" -c \
+DSN=$(kubectl -n lenny-system get secret lenny-datastore-conn \
+  -o jsonpath='{.data.postgres-dsn}' | base64 -d)
+kubectl -n lenny-system run -it --rm pg-client --image=postgres:16 --restart=Never -- \
+  psql "$DSN" -c \
   "SELECT rotation_slot, key_id, active_from, retire_after, delete_after
      FROM platform_signing_keys WHERE purpose = 'upload-token' ORDER BY rotation_slot"
 ```
 
-Run the query with any Postgres client that reaches the gateway's database; the command above assumes a `psql` binary and the DSN in the pod's environment. The newest row is the active key, or the next key when its `active_from` is in the future. Rows with a `retire_after` are replaced keys that still verify until `delete_after`. Note the newest `rotation_slot`; each rotation adds one.
+The gateway image carries no Postgres client, so the command starts a short-lived client pod with the DSN that the chart's `lenny-datastore-conn` Secret holds. Any Postgres client that reaches the gateway's database runs the same query. The newest row is the active key, or the next key when its `active_from` is in the future. Rows with a `retire_after` are replaced keys that still verify until `delete_after`. Note the newest `rotation_slot`; each rotation adds one.
 
 ## Remediation
 
@@ -68,7 +70,7 @@ for i in 1 2; do
 done
 ```
 
-Each call writes the next key one publish lead ahead and answers with its `keyId`, `rotationSlot`, and `activeFrom`; the second call's `rotationSlot` is one above the first. The second rotation replaces the key that the first published ahead of its activation, which an exposure of the database could also have read. A `503 SERVICE_UNAVAILABLE` answer means the gateway could not reach Postgres or the KMS; resolve that through [postgres-unavailable](postgres-unavailable.html) or [kms-unavailable](kms-unavailable.html) and retry.
+Each call writes the next key one publish lead ahead and answers with its `keyId`, `rotationSlot`, and `activeFrom`; the second call's `rotationSlot` is one above the first. A forced rotation writes after the newest key, including a key that a scheduled rotation published ahead of its activation, and retires that key when its own key becomes active, so the first call already replaces every key written before it. The second call keeps this path the same as the rotation-interval path below, where only the second rotation replaces a key that was pending at the time of the exposure, and it replaces the first call's key in case the access was not yet closed when the first call ran. A `503 SERVICE_UNAVAILABLE` answer means the gateway could not reach Postgres or the KMS; resolve that through [postgres-unavailable](postgres-unavailable.html) or [kms-unavailable](kms-unavailable.html) and retry.
 
 ### Step 3: Without the admin API, roll the gateways with a short rotation interval
 
@@ -79,7 +81,7 @@ kubectl -n lenny-system set env deploy/lenny-gateway LENNY_UPLOAD_TOKEN_KEY_ROTA
 kubectl -n lenny-system set env deploy/lenny-gateway LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL-
 ```
 
-Use this path only when the admin API is unavailable. The chart does not set `--upload-token-key-rotation-interval`, so the environment variable `LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL` sets it, and each `kubectl set env` rolls the gateway. A replica writes the next key when the active key has signed for the interval, so the first rotation follows within one refresh interval of the rollout when the active key is older than five minutes, and the second follows five minutes after the first new key becomes active. Wait until the newest `rotation_slot` from Diagnosis Step 1 is two above the slot you noted, then remove the override.
+Use this path only when the admin API is unavailable. The chart does not set `--upload-token-key-rotation-interval`, so the environment variable `LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL` sets it, and each `kubectl set env` rolls the gateway. A replica writes the next key when the active key has signed for the interval, so the first rotation follows within one refresh interval of the rollout when the active key is older than five minutes, and the second follows five minutes after the first new key becomes active. A key that was pending at the time of the exposure becomes active on this path, and the second rotation replaces it. Wait until the newest `rotation_slot` from Diagnosis Step 1 is two above the slot you noted, then remove the override.
 
 ## Verification
 
@@ -96,13 +98,13 @@ Each forced rotation appears as a `platform.upload_token_key_rotated` event with
 
 <!-- access: kubectl requires=cluster-access -->
 ```bash
-kubectl -n lenny-system exec deploy/lenny-gateway -- \
-  psql "$LENNY_POSTGRES_DSN" -c \
+kubectl -n lenny-system run -it --rm pg-client --image=postgres:16 --restart=Never -- \
+  psql "$DSN" -c \
   "SELECT count(*) FROM platform_signing_keys
      WHERE purpose = 'upload-token' AND rotation_slot <= <noted slot> + 1"
 ```
 
-Replace `<noted slot>` with the slot from Diagnosis Step 1. The count reaches zero when the gateway has deleted every key that was active or published at the time of the exposure, one verification time after the second rotation's key becomes active. Every token those keys signed has then expired. Legitimate sessions keep their tokens throughout, because each replaced key verifies until its tokens expire.
+Replace `<noted slot>` with the slot from Diagnosis Step 1, and set `DSN` as Diagnosis Step 1 does. The count reaches zero when the gateway has deleted every key that was active or published at the time of the exposure, one verification time after the second rotation's key becomes active. Every token those keys signed has then expired. Legitimate sessions keep their tokens throughout, because each replaced key verifies until its tokens expire.
 
 ## Escalation
 

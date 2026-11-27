@@ -1015,7 +1015,7 @@ Every token already issued keeps verifying until it expires, because the replace
 | `rotationSlot` | integer | The key's rotation slot |
 | `activeFrom` | string | The RFC 3339 instant from which replicas sign with the key |
 
-The route emits a `platform.upload_token_key_rotated` audit event carrying `key_id`, `rotation_slot`, and `active_from`. When the gateway cannot read or write `platform_signing_keys`, cannot wrap the new secret under `platform:upload-token-signing`, or loses three rotation slots in a row to other writers, it answers `503 SERVICE_UNAVAILABLE` with `Retry-After` and writes no audit event. The route is absent from a gateway that holds no upload-token key ring.
+The route emits a `platform.upload_token_key_rotated` audit event carrying `key_id`, `rotation_slot`, and `active_from`. When the gateway cannot read or write `platform_signing_keys`, cannot wrap the new secret under `platform:upload-token-signing`, or loses every rotation slot it tries to other writers, it answers `503 SERVICE_UNAVAILABLE` with `Retry-After` and writes no audit event. A client that disconnects does not stop a rotation in progress, so a key the gateway writes is always audited. The route is absent from a gateway that holds no upload-token key ring.
 
 ---
 
