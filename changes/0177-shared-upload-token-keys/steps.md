@@ -23,7 +23,7 @@ Open decisions O4, O5, and O6, raised while the step was built, touch it: the br
 Decisions 7, 8, and 9. First the specification: §7.1 **`uploadToken` format and security properties** states that a replaced key verifies for the stale bound plus the longer of the overlap window and the token lifetime (decision 7), and §12.8 step 14 states the check of a redacted row against the receipt's `new_hash` (decision 8) and the set of receipt keys a verifier trusts, with the setting of retired receipt keys (decision 9). Then `signingkeys.UploadTokenPolicy` and its wiring in `cmd/lenny-gateway/token_signing.go` derive the verification time from the stale bound, the overlap window, and `maxCreatedStateTimeoutSeconds`; the chain verifier and the periodic receipt scan in `pkg/audit/integrity` compare a redacted row's content hash with `new_hash`; the erasure path writes a chained receipt for a second redaction of a row if a row can be redacted twice; and the chain verifier and the periodic receipt scan trust the retired receipt keys the new setting lists, read through the `kms.Provider` lookup by key identifier (decision 9). The tests: a token minted by a replica at its stale bound verifies on a peer until it expires; a token lifetime above the overlap window verifies across a rotation; a redacted row rewritten again reads `broken`; a legitimate second redaction verifies; a receipt signed by a retired key on the list verifies after two rotations; and a receipt signed by a key outside the trusted set reads `broken`. Then `docs/operator-guide/security.md`, `docs/operator-guide/configuration.md`, and `docs/operator-guide/audit-ocsf.md`. The step closes [UPLOAD-I2](../../issues/closed/UPLOAD/UPLOAD-I2-stale-replica-mints-tokens-peers-refuse-before-expiry.md) and [AUDIT-I5](../../issues/closed/AUDIT/AUDIT-I5-receipt-check-ignores-the-signed-new-hash.md).
 
 ### 0177.S3 The append after a redacted tail row
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: [0177.S2]
 - closes: [AUDIT-I6]
@@ -31,7 +31,7 @@ Decisions 7, 8, and 9. First the specification: §7.1 **`uploadToken` format and
 Decision 10. §11.7 and §12.8 step 14 state that a row appended after a redacted row links to that row's `original_hash`. Then the append path of `pkg/audit/auditstore` (`scanTail`) reads the tail row's receipt and links to its `original_hash` when the tail is redacted, with unit and component tests that redact a tenant's newest audit row, append the erasure's `gdpr.erasure_deadletter_redacted` event and a later row, and verify the chain, and the security test of the receipt check extended to the tail case. Then `docs/operator-guide/audit-ocsf.md` and the receipt-missing runbook where they describe the chain. The step closes [AUDIT-I6](../../issues/AUDIT/AUDIT-I6-row-appended-after-a-redacted-tail-links-to-its-post-redaction-hash.md).
 
 ### 0177.S4 Upload-token key incidents and the digest check
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: [0177.S2]
 - closes: [UPLOAD-I6, UPLOAD-I8, UPLOAD-I9, UPLOAD-I10]
