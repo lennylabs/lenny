@@ -15,7 +15,7 @@ requirements: []
 ## Evidence
 
 - Step 0171.S3 adds the chart value `auth.revocationReconnectSpacing`, default `5s`, in `charts/lenny/values.yaml`, `charts/lenny/values.schema.json`, and `charts/lenny/templates/gateway-deployment.yaml`, and names it in `docs/reference/configuration.md` and `docs/operator-guide/security.md` (change 0171, decision 4).
-- The step entry of 0171.S3 in `changes/0171-revocation-rehydrate-on-reconnect/steps.md` edits no specification text, because §13.3 states that a gateway flag sets the spacing and the chart value renders that flag.
+- The step entry of 0171.S3 in `changes/archive/2026-11-26-0171-revocation-rehydrate-on-reconnect/steps.md` edits no specification text, because §13.3 states that a gateway flag sets the spacing and the chart value renders that flag.
 - `spec/17_deployment-topology.md`, the defaults table of §17.8, has no row for the reconnect spacing, and `spec/` names neither `auth.revocationReconnectSpacing` nor `--revocation-reconnect-spacing`.
 
 The general review of 0171.S3 raised it.
