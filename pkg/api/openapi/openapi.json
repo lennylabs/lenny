@@ -3565,7 +3565,11 @@
         "x-lenny-required-role": "platform-admin",
         "x-lenny-category": "security",
         "security": [{ "BearerAuth": [] }],
-        "responses": { "200": { "description": "OK" } }
+        "responses": {
+          "200": { "description": "OK" },
+          "409": { "description": "INVALID_STATE_TRANSITION: the newest key is a forced rotation's key that is not active yet; details.keyId and details.activeFrom name it", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } },
+          "503": { "description": "SERVICE_UNAVAILABLE: the keys cannot be read or written, the new secret cannot be wrapped, or every slot tried was taken", "content": { "application/json": { "schema": { "$ref": "#/components/schemas/Error" } } } }
+        }
       }
     },
     "/v1/admin/users/{user}/rotate-token": {

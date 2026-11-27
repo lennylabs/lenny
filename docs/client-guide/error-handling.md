@@ -55,7 +55,7 @@ All REST API endpoints return errors using a canonical JSON envelope:
 | Code | Category | HTTP | Retryable | Description | Recommended Action |
 |---|---|---|---|---|---|
 | `VALIDATION_ERROR` | `PERMANENT` | 400 | No | Request body or query parameters failed validation | Fix the request body. Check `details.fields` for specific failures. |
-| `INVALID_STATE_TRANSITION` | `PERMANENT` | 409 | No | Operation not valid for current resource state | Check `details.currentState` and `details.allowedStates`. Wait for correct state. |
+| `INVALID_STATE_TRANSITION` | `PERMANENT` | 409 | No | Operation not valid for current resource state | Check `details.currentState` and `details.allowedStates`. Wait for correct state. An admin route can carry its own details instead: `POST /v1/admin/upload-token-keys/rotate` names the pending key in `details.keyId` and the instant from which it accepts a call in `details.activeFrom`. |
 | `RESOURCE_NOT_FOUND` | `PERMANENT` | 404 | No | Resource does not exist or is not visible | Verify the resource ID and your access permissions. |
 | `RESOURCE_ALREADY_EXISTS` | `PERMANENT` | 409 | No | Resource with this identifier already exists | Use a different identifier or update the existing resource. |
 | `RESOURCE_HAS_DEPENDENTS` | `PERMANENT` | 409 | No | Resource cannot be deleted (active dependents) | Check `details.dependents` for blocking references. Remove dependents first. |

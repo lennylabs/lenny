@@ -1005,7 +1005,7 @@ List the public keys that verify redaction receipt signatures. An erasure job wr
 platform-admin
 {: .label .label-red }
 
-Rotate the shared upload-token signing keys at once, whatever the age of the active key. The gateway writes the next key of the `upload-token` purpose to `platform_signing_keys` through the same write as a scheduled rotation, with its activation instant one publish lead ahead (`--signing-key-publish-lead`, default `2m`), so every replica loads the key before any replica signs with it. When another replica takes the same rotation slot first, the gateway reloads the keys and writes the following slot. The request takes no body and does not support `dryRun`.
+Rotate the shared upload-token signing keys at once, whatever the age of the active key. The gateway writes the next key of the `upload-token` purpose to `platform_signing_keys` through the same write as a scheduled rotation, with its activation instant one publish lead ahead (`--signing-key-publish-lead`, default `2m`), so every replica loads the key before any replica signs with it. When another replica takes the same rotation slot first, the gateway reloads the keys and writes the following slot, unless the other replica's key is a forced rotation's key that is not active yet, which the gateway answers with `409` as described below. The request takes no body and does not support `dryRun`.
 
 Every token already issued keeps verifying until it expires, because the replaced key keeps verifying for its verification time after the new key becomes active. A rotation that follows a suspected key exposure is made twice, one publish lead apart, as [Security](../operator-guide/security.md#exposure-of-an-upload-token-key) describes.
 

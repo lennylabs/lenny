@@ -173,8 +173,8 @@ func TestForcedUploadTokenKeyRotationOutlivesADisconnectedClient(t *testing.T) {
 // TestForcedUploadTokenKeyRotationWhileAForcedKeyIsPendingAnswers409 pins
 // the bound on forced rotations at the route: when the ring refuses the
 // rotation because the newest key is a forced rotation's key that is not
-// active yet, the route answers 409 INVALID_STATE_TRANSITION, not
-// retryable, with that key's keyId and activeFrom, writes no Retry-After,
+// active yet, the route answers 409 INVALID_STATE_TRANSITION, which is
+// not retryable, with that key's keyId and activeFrom, writes no Retry-After,
 // and emits no audit event.
 //
 // spec: §7.1 (uploadToken format and security properties), §15.1 (REST API)

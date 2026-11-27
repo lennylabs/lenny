@@ -65,14 +65,14 @@ A rotation helps only after the exposure ends, because a holder of the same acce
 <!-- access: api method=POST path=/v1/admin/upload-token-keys/rotate -->
 ```bash
 curl -sS -X POST "$LENNY_GATEWAY_URL/v1/admin/upload-token-keys/rotate" \
-  -H "Authorization: Bearer $LENNY_ADMIN_TOKEN" | jq '{keyId, rotationSlot, activeFrom}'
+  -H "Authorization: Bearer $LENNY_ADMIN_TOKEN" | jq '.'
 # Wait until the activeFrom of the first answer has passed (one publish lead, 2m by default).
 sleep 120
 curl -sS -X POST "$LENNY_GATEWAY_URL/v1/admin/upload-token-keys/rotate" \
-  -H "Authorization: Bearer $LENNY_ADMIN_TOKEN" | jq '{keyId, rotationSlot, activeFrom}'
+  -H "Authorization: Bearer $LENNY_ADMIN_TOKEN" | jq '.'
 ```
 
-Each call writes the next key one publish lead ahead and answers with its `keyId`, `rotationSlot`, and `activeFrom`; the second call's `rotationSlot` is one above the first. The gateway refuses a forced rotation while the newest key is a forced rotation's key that is not active yet, so make the second call at or after the first answer's `activeFrom`. A call made earlier answers `409 INVALID_STATE_TRANSITION` with `details.keyId` and `details.activeFrom` of the pending key and writes nothing; repeat it after that `activeFrom`. When `--signing-key-publish-lead` is set above `2m`, wait that long instead. A forced rotation writes after the newest key, including a key that a scheduled rotation published ahead of its activation, and retires that key when its own key becomes active, so the first call already replaces every key written before it. The second call keeps this path the same as the rotation-interval path below, where only the second rotation replaces a key that was pending at the time of the exposure, and it replaces the first call's key in case the access was not yet closed when the first call ran. A `503 SERVICE_UNAVAILABLE` answer means the gateway could not reach Postgres or the KMS; resolve that through [postgres-unavailable](postgres-unavailable.html) or [kms-unavailable](kms-unavailable.html) and retry.
+Each accepted call writes the next key one publish lead ahead and answers with its `keyId`, `rotationSlot`, and `activeFrom`, and a refused call answers with an `error` object; the second call's `rotationSlot` is one above the first. The gateway refuses a forced rotation while the newest key is a forced rotation's key that is not active yet, so make the second call at or after the first answer's `activeFrom`. A call made earlier answers `409 INVALID_STATE_TRANSITION` with `details.keyId` and `details.activeFrom` of the pending key and writes nothing; repeat it at or after that `activeFrom`. When the first call already answers `409`, another caller forced a rotation within the last publish lead, possibly before the access was closed: look up the key's `platform.upload_token_key_rotated` event (Verification Step 1) to find the caller, make the first call at that `activeFrom`, and count the two rotations from the first accepted call. When `--signing-key-publish-lead` is set above `2m`, wait that long instead. A forced rotation writes after the newest key, including a key that a scheduled rotation published ahead of its activation, and retires that key when its own key becomes active, so the first call already replaces every key written before it. The second call keeps this path the same as the rotation-interval path below, where only the second rotation replaces a key that was pending at the time of the exposure, and it replaces the first call's key in case the access was not yet closed when the first call ran. A `503 SERVICE_UNAVAILABLE` answer means the gateway could not reach Postgres or the KMS; resolve that through [postgres-unavailable](postgres-unavailable.html) or [kms-unavailable](kms-unavailable.html) and retry.
 
 ### Step 3: Without the admin API, roll the gateways with a short rotation interval
 
@@ -113,6 +113,6 @@ Replace `<noted slot>` with the slot from Diagnosis Step 1, and set `DSN` as Dia
 Escalate to the platform on-call rotation when:
 
 - The rotation route answers `503` after Postgres and the KMS are healthy.
-- The rotation route answers `409 INVALID_STATE_TRANSITION` after the `details.activeFrom` it names has passed.
+- The rotation route answers `409 INVALID_STATE_TRANSITION` after the `details.activeFrom` it names has passed, or names a `details.activeFrom` more than one publish lead in the future, which no forced rotation writes; the newest row of `platform_signing_keys` was then written outside the gateway.
 - The keys of slots at or below the noted slot are still present after `delete_after` plus one refresh interval, which means the gateway's sweep is not running.
 - Uploads fail with `401 UPLOAD_TOKEN_INVALID` for sessions created after the rotation, which means a replica did not load the new key; check each replica's reachability of Postgres.

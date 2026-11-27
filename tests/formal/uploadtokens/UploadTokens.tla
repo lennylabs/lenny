@@ -428,7 +428,7 @@ TypeOK ==
     /\ nextId \in 1..(MaxKeys + 1)
     /\ pc \in [Replicas -> {"down", "up"}]
     /\ fault \in [Replicas -> {"ok"} \cup FaultKinds]
-    /\ \A x \in table : x.id \in KeyIds /\ x.slot \in 1..MaxKeys
+    /\ \A x \in table : x.id \in KeyIds /\ x.slot \in 1..MaxKeys /\ x.forced \in BOOLEAN
 
 TokenLive(s) == row[s] # NoRow /\ now <= row[s].exp
 

@@ -311,7 +311,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `In progress` | 0 of 1 | 19 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 1 of 2 | 8 |
-| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 4 | 0 |
+| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 4 | 1 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 3 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 1 | 3 |
 | [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 1 | 14 |
