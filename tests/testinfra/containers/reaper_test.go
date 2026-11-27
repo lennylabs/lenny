@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/testcontainers/testcontainers-go"
 )
 
 // The tests in this file verify test-harness retry logic, which implements
@@ -130,6 +132,19 @@ func TestStartContainerReturnsTheFirstSuccess(t *testing.T) {
 	}
 	if *calls != 1 {
 		t.Fatalf("start called %d times, want 1", *calls)
+	}
+}
+
+func TestGenericContainerReturnsTheStartError(t *testing.T) {
+	t.Parallel()
+	// testcontainers refuses a reused container without a name before it
+	// reaches Docker, so the test needs no daemon.
+	c, err := genericContainer(testStaleReaperRetry, time.Second, testcontainers.GenericContainerRequest{Reuse: true})
+	if !errors.Is(err, testcontainers.ErrReuseEmptyName) {
+		t.Fatalf("error = %v, want %v", err, testcontainers.ErrReuseEmptyName)
+	}
+	if c != nil {
+		t.Fatalf("container = %v, want nil", c)
 	}
 }
 
