@@ -9,8 +9,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 1 |
-| Ready | 8 |
-| Waiting on decisions | 31 |
+| Ready | 10 |
+| Waiting on decisions | 33 |
 | Blocked | 160 |
 | Landed | 21 |
 | Cancelled | 3 |
@@ -62,6 +62,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177.S3](0177-shared-upload-token-keys/steps.md#0177s3-the-append-after-a-redacted-tail-row) | The append after a redacted tail row | Ready |  |
 | [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Ready |  |
 | [0178.S3](0178-idempotency-keys-by-principal/steps.md#0178s3-the-acting-party-in-the-scope) | The acting party in the scope | Ready |  |
+| [0181.S1](0181-flaky-tests-and-gate-coverage/steps.md#0181s1-the-secret-probe-grant-and-the-stack-tests-ports) | The secret-probe grant and the stack tests' ports | Ready |  |
+| [0181.S4](0181-flaky-tests-and-gate-coverage/steps.md#0181s4-coverage-of-the-component-and-contract-tiers) | Coverage of the component and contract tiers | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -93,6 +95,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0149.S3](0149-tenant-scoping-identity/steps.md#0149s3-session-environment-context) | Session environment context | Waiting on decisions | 0149 is `Draft` |
 | [0149.S4](0149-tenant-scoping-identity/steps.md#0149s4-user-lifecycle-path) | User lifecycle path | Waiting on decisions | 0149 is `Draft`; a part waits on 0150.S1 |
 | [0150.S1](0150-tenant-security-settings/steps.md#0150s1-data-class-renames) | Data class renames | Waiting on decisions | 0150 is `Draft` |
+| [0181.S2](0181-flaky-tests-and-gate-coverage/steps.md#0181s2-the-postgres-start-timeout) | The Postgres start timeout | Waiting on decisions | 0181 is `Draft` |
+| [0181.S3](0181-flaky-tests-and-gate-coverage/steps.md#0181s3-the-embedded-manifest-check-in-the-gate-image) | The embedded-manifest check in the gate image | Waiting on decisions | 0181 is `Draft` |
 | [0118.S1](0118-agent-pod-layout/steps.md#0118s1-removal-of-the-embedded-deployment-model) | Removal of the embedded deployment model | Blocked | 0119.S1, 0119.S2, 0131.S9 |
 | [0118.S2](0118-agent-pod-layout/steps.md#0118s2-removal-of-pre-launched-runtimes) | Removal of pre-launched runtimes | Blocked | 0118.S1 |
 | [0118.S3](0118-agent-pod-layout/steps.md#0118s3-renames-and-acknowledgesharedpod) | Renames and acknowledgeSharedPod | Blocked | 0119.S2 |
@@ -315,3 +319,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 3 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 1 | 3 |
 | [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 1 | 14 |
+| [0181](0181-flaky-tests-and-gate-coverage/change.md) | Flaky test fixes and gate coverage across tiers | `Draft` | 0 of 4 | 9 |

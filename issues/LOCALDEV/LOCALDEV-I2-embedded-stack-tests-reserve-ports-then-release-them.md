@@ -1,9 +1,10 @@
 ---
 id: LOCALDEV-I2
-status: open
+status: planned
 kind: test-gap
 severity: low
 requirements: []
+change: 0181.S1
 ---
 
 # The embedded stack's bring-up tests release the ports they reserve before the stack binds them
