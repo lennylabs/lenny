@@ -48,7 +48,7 @@ curl -sS -H "Authorization: Bearer $LENNY_ADMIN_TOKEN" \
   | jq '.items[] | select(.unmapped.lenny_chain.integrity == "broken") | {uid: .metadata.uid, time, chain: .unmapped.lenny_chain}'
 ```
 
-A row whose payload carries the redaction marker (`"redacted": true`) and whose integrity is `broken` is a redaction without a verifying receipt.
+A row whose payload carries the redaction marker (`"redacted": true`) and whose integrity is `broken` is a redaction without a verifying receipt. The verifier reports such a row `broken` wherever it sits in the chain, including the tenant's newest row, which no later row links to yet. A redaction-marked row with no receipt at all is reported `broken` by the chain verifier and counted by the periodic integrity check even when the tenant has no other receipt.
 
 ### Step 2: Compare the receipt's key with the trusted keys
 
