@@ -5,6 +5,7 @@ package admin_test
 import (
 	"context"
 	"errors"
+	"math"
 	"reflect"
 	"testing"
 	"time"
@@ -448,7 +449,8 @@ func TestTerminalPipelinesPendingListsTheSessionsErasureWaitsOn(t *testing.T) {
 // row still naming an unreleased pod, stay pending past the budget until the
 // budget plus the margin has elapsed, at the boundary of each arm; a marked
 // and released row is not pending; a zero margin waits for the budget alone;
-// a negative margin returns ErrPipelineWaitMarginNegative without listing;
+// a negative margin, and one whose sum with the budget overflows, return
+// ErrPipelineWaitMarginInvalid without listing;
 // and a zero budget with a positive margin still returns
 // ErrPipelineBudgetUnset.
 //
@@ -478,11 +480,18 @@ func TestTerminalPipelinesPendingExtendsTheBudgetByTheWaitMargin(t *testing.T) {
 	}
 
 	negative := list()
-	if _, err := admin.TerminalPipelinesPending(context.Background(), negative, "acme", "", now, budget, -time.Second); !errors.Is(err, admin.ErrPipelineWaitMarginNegative) {
-		t.Errorf("negative margin = %v, want ErrPipelineWaitMarginNegative", err)
+	if _, err := admin.TerminalPipelinesPending(context.Background(), negative, "acme", "", now, budget, -time.Second); !errors.Is(err, admin.ErrPipelineWaitMarginInvalid) {
+		t.Errorf("negative margin = %v, want ErrPipelineWaitMarginInvalid", err)
 	}
 	if len(negative.filters) != 0 {
 		t.Errorf("negative margin listed %d times, want none", len(negative.filters))
+	}
+	overflow := list()
+	if _, err := admin.TerminalPipelinesPending(context.Background(), overflow, "acme", "", now, budget, time.Duration(math.MaxInt64)); !errors.Is(err, admin.ErrPipelineWaitMarginInvalid) {
+		t.Errorf("overflowing margin = %v, want ErrPipelineWaitMarginInvalid", err)
+	}
+	if len(overflow.filters) != 0 {
+		t.Errorf("overflowing margin listed %d times, want none", len(overflow.filters))
 	}
 	if _, err := admin.TerminalPipelinesPending(context.Background(), list(), "acme", "", now, 0, margin); !errors.Is(err, admin.ErrPipelineBudgetUnset) {
 		t.Errorf("zero budget with a margin = %v, want ErrPipelineBudgetUnset", err)

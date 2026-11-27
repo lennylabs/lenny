@@ -5,6 +5,7 @@ package main
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 	"time"
 
@@ -37,17 +38,21 @@ func TestPipelineWaitMarginFlagDefaultsToThirtySecondsAndLeavesTheBudgetAlone(t 
 	}
 }
 
-// TestValidatePipelineWaitMarginRefusesANegativeMargin pins the startup
-// check: a negative --terminal-pipeline-wait-margin is refused, and zero and
-// a positive margin are accepted.
+// TestValidatePipelineWaitMarginRefusesANegativeOrOverflowingMargin pins the
+// startup check: a negative --terminal-pipeline-wait-margin, and one whose sum
+// with the budget overflows, are refused, and zero and a positive margin are
+// accepted.
 //
 // spec: §12.8 (Lifecycle fence and drain)
-func TestValidatePipelineWaitMarginRefusesANegativeMargin(t *testing.T) {
-	if err := validatePipelineWaitMargin(-time.Nanosecond); err == nil {
-		t.Error("validatePipelineWaitMargin(-1ns) = nil, want an error")
+func TestValidatePipelineWaitMarginRefusesANegativeOrOverflowingMargin(t *testing.T) {
+	const budget = 330 * time.Second
+	for _, d := range []time.Duration{-time.Nanosecond, time.Duration(math.MaxInt64)} {
+		if err := validatePipelineWaitMargin(d, budget); err == nil {
+			t.Errorf("validatePipelineWaitMargin(%v) = nil, want an error", d)
+		}
 	}
-	for _, d := range []time.Duration{0, 30 * time.Second} {
-		if err := validatePipelineWaitMargin(d); err != nil {
+	for _, d := range []time.Duration{0, 30 * time.Second, time.Duration(math.MaxInt64) - budget} {
+		if err := validatePipelineWaitMargin(d, budget); err != nil {
 			t.Errorf("validatePipelineWaitMargin(%v) = %v, want nil", d, err)
 		}
 	}
@@ -60,7 +65,7 @@ func TestValidatePipelineWaitMarginRefusesANegativeMargin(t *testing.T) {
 // collector, which reads the budget alone, already collects it; once the
 // budget plus the margin has elapsed neither the gate nor the terminator
 // holds it; and a negative margin fails both closed with
-// ErrPipelineWaitMarginNegative.
+// ErrPipelineWaitMarginInvalid.
 //
 // spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session)
 func TestErasureAndTenantDeletionWaitTheBudgetPlusTheMargin(t *testing.T) {
@@ -98,11 +103,11 @@ func TestErasureAndTenantDeletionWaitTheBudgetPlusTheMargin(t *testing.T) {
 
 	margin := w.pipelineWaitMargin
 	w.pipelineWaitMargin = -time.Second
-	if _, err := w.erasurePipelineGate()(ctx, "acme", "alice@acme.com"); !errors.Is(err, admin.ErrPipelineWaitMarginNegative) {
-		t.Errorf("erasure gate with a negative margin = %v, want ErrPipelineWaitMarginNegative", err)
+	if _, err := w.erasurePipelineGate()(ctx, "acme", "alice@acme.com"); !errors.Is(err, admin.ErrPipelineWaitMarginInvalid) {
+		t.Errorf("erasure gate with a negative margin = %v, want ErrPipelineWaitMarginInvalid", err)
 	}
-	if err := term().TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrPipelineWaitMarginNegative) {
-		t.Errorf("tenant terminator with a negative margin = %v, want ErrPipelineWaitMarginNegative", err)
+	if err := term().TerminateTenantSessions(ctx, "acme"); !errors.Is(err, admin.ErrPipelineWaitMarginInvalid) {
+		t.Errorf("tenant terminator with a negative margin = %v, want ErrPipelineWaitMarginInvalid", err)
 	}
 
 	w.pipelineWaitMargin = margin / 4

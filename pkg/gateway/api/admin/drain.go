@@ -169,12 +169,22 @@ var ErrPipelineBudgetUnset = errors.New("terminal pipeline budget is not set")
 // spec: §12.8 (Lifecycle fence and drain)
 const DefaultPipelineWaitMargin = 30 * time.Second
 
-// ErrPipelineWaitMarginNegative is returned by TerminalPipelinesPending when
-// it is given a negative pipeline wait margin. A negative margin would end the
-// wait before the budget that bounds the pipeline's writes, so the gate lists
+// ErrPipelineWaitMarginInvalid is returned by TerminalPipelinesPending when
+// it is given a negative pipeline wait margin, or one so large that the
+// budget plus the margin overflows. A negative margin would end the wait
+// before the budget that bounds the pipeline's writes, and an overflowed sum
+// is negative, which the predicates read as no wait at all, so the gate lists
 // nothing and fails closed, as an unset budget does.
 // spec: §12.8 (Lifecycle fence and drain)
-var ErrPipelineWaitMarginNegative = errors.New("terminal pipeline wait margin is negative")
+var ErrPipelineWaitMarginInvalid = errors.New("terminal pipeline wait margin is negative or overflows the budget")
+
+// PipelineWaitMarginValid reports whether margin is a pipeline wait margin
+// TerminalPipelinesPending accepts with budget: not negative, and small
+// enough that budget plus margin does not overflow.
+// spec: §12.8 (Lifecycle fence and drain)
+func PipelineWaitMarginValid(budget, margin time.Duration) bool {
+	return margin >= 0 && budget+margin >= budget
+}
 
 // TerminalPipelinesPending returns the identifiers of the sessions of one
 // lifecycle scope (the whole tenant when userID is empty, otherwise the
@@ -199,8 +209,9 @@ var ErrPipelineWaitMarginNegative = errors.New("terminal pipeline wait margin is
 // pod release, and a seal still running would write under a prefix the
 // deletion already cleared. Both arms end within one budget plus the margin
 // of the terminal transition. A listing error is returned wrapped; a
-// non-positive budget returns ErrPipelineBudgetUnset and a negative margin
-// returns ErrPipelineWaitMarginNegative, both without listing.
+// non-positive budget returns ErrPipelineBudgetUnset and an invalid margin
+// (PipelineWaitMarginValid) returns ErrPipelineWaitMarginInvalid, both
+// without listing.
 //
 // spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session),
 // §7.1 (Post-terminal window)
@@ -208,8 +219,8 @@ func TerminalPipelinesPending(ctx context.Context, l DrainLister, tenantID, user
 	if budget <= 0 {
 		return nil, ErrPipelineBudgetUnset
 	}
-	if margin < 0 {
-		return nil, ErrPipelineWaitMarginNegative
+	if !PipelineWaitMarginValid(budget, margin) {
+		return nil, ErrPipelineWaitMarginInvalid
 	}
 	rows, err := l.List(ctx, tenantID, sessionstore.ListFilter{UserID: userID, Primary: true})
 	if err != nil {

@@ -175,7 +175,7 @@ type tenantSessionTerminator struct {
 	// fails every pass with admin.ErrPipelineBudgetUnset.
 	cap time.Duration
 	// margin is the pipeline wait margin the hold adds to cap. A negative
-	// margin fails every pass with admin.ErrPipelineWaitMarginNegative.
+	// margin fails every pass with admin.ErrPipelineWaitMarginInvalid.
 	margin time.Duration
 	// clock reads the instant the window is evaluated at.
 	clock func() time.Time

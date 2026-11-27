@@ -576,7 +576,7 @@ Change these values across a rolling gateway update in a fixed order, because a 
 
 | Gateway flag | Environment variable | Default | Effect |
 |:--|:--|:--|:--|
-| `--terminal-pipeline-wait-margin` | `LENNY_TERMINAL_PIPELINE_WAIT_MARGIN` | `30s` | Time that user erasure and tenant deletion add to the terminal pipeline budget while they wait for the terminal steps of the sessions they drained. It must not be negative, and the gateway does not start with a negative value. `0s` waits for the budget alone. |
+| `--terminal-pipeline-wait-margin` | `LENNY_TERMINAL_PIPELINE_WAIT_MARGIN` | `30s` | Time that user erasure and tenant deletion add to the terminal pipeline budget while they wait for the terminal steps of the sessions they drained. The gateway does not start with a negative value, or with a value so large that its sum with the budget exceeds the largest duration the gateway represents (about 292 years). `0s` waits for the budget alone. |
 
 When a session ends, the gateway that ends it runs the session's terminal steps: the workspace seal, the pod or slot release, the session-log close, the final quota checkpoint, and the final billing event. It records on the session's record when they finish. A [user erasure](security.md#gdpr-erasure) job deletes no data, and a [tenant deletion](multi-tenancy.md) does not leave its session-drain phase, while a session it drained has not recorded the end of its terminal steps, for at most the terminal pipeline budget plus the margin after the session ended. The terminal pipeline budget is the largest `maxWorkspaceSealDurationSeconds` of any pool plus the release allowance (`--stream-failure-report-timeout`, default 30 seconds).
 
