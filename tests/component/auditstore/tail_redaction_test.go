@@ -160,8 +160,13 @@ func TestARedactedTailRowWithoutAReceiptStillReadsBroken(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
-	if _, err := tx.Exec(ctx, "SET LOCAL lenny.erasure_mode = 'true'"); err != nil {
-		t.Fatal(err)
+	for _, stmt := range []string{
+		"SELECT set_config('app.current_tenant', 'acme', true)",
+		"SET LOCAL lenny.erasure_mode = 'true'",
+	} {
+		if _, err := tx.Exec(ctx, stmt); err != nil {
+			t.Fatalf("%s: %v", stmt, err)
+		}
 	}
 	if _, err := tx.Exec(ctx,
 		`UPDATE audit_log SET payload = $2::jsonb, payload_canonical_json = $3::jsonb

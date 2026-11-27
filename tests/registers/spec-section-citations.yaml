@@ -160,7 +160,7 @@ packages:
     - package: pkg/audit/deploymentconfigstore
       count: 3
     - package: pkg/audit/integrity
-      count: 54
+      count: 58
     - package: pkg/audit/jcs
       count: 4
     - package: pkg/audit/jwtaudit

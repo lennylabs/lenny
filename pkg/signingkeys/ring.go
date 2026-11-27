@@ -170,8 +170,10 @@ func Open(ctx context.Context, policy Policy, store Store, sealer Sealer, opts O
 			return nil, err
 		}
 	}
-	if _, err := r.SigningKey(); err != nil && !(errors.Is(err, ErrNoActiveKey) && r.awaitingActivation(now)) {
-		return nil, fmt.Errorf("signingkeys: purpose %q: %w", policy.Purpose, err)
+	if _, err := r.SigningKey(); err != nil {
+		if !errors.Is(err, ErrNoActiveKey) || !r.awaitingActivation(now) {
+			return nil, fmt.Errorf("signingkeys: purpose %q: %w", policy.Purpose, err)
+		}
 	}
 	return r, nil
 }
