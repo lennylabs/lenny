@@ -7,7 +7,11 @@
   - (b) The expiry cap alone, with no early retirement.
   - (c) No change, with the limit documented.
 
-  Recommendation: (a), so a forged token gains nothing beyond the key's own verification time and an operator can respond to a suspected leak.
+  Revised on 2026-11-26 after an adversarial review the owner asked for. The cap of (a) protects against nothing a key holder cannot already do: a token under a key verifies only while the key is in the ring, and while it is the holder can mint a token with a compliant expiry at any moment. A forged token is also bound to one session id, which upload and finalize accept only from a caller with manage access, in the `created` state, before the consumed mark. The cap adds failure modes: clock skew between replicas, which needs a new allowance setting; a change of the token lifetime during a rolling update, where replicas refuse each other's tokens; and the verifier has no session creation time, so it can cap only against the clock. Deleting a row to retire a key early is unsafe: it makes replicas sign with the replaced key again, extends that key's life, or bypasses the publish lead ([UPLOAD-I10](../../issues/UPLOAD/UPLOAD-I10-deleting-a-key-row-revives-or-extends-the-replaced-key.md)). An attacker who can read the plaintext key holds gateway memory, the database credentials, and the KMS grant, so early retirement helps only after that access is closed. Further options:
+  - (d) Drop the cap. Extend the documented limit in `docs/operator-guide/security.md` to say that rotation helps only after the KMS grant and the database access are closed, and document an incident procedure by forced rotation: roll the gateways with a short `--upload-token-key-rotation-interval` until two rotations pass, then restore it. Optionally add an admin "rotate now" operation through the normal write path. Add the check of [UPLOAD-I9](../../issues/UPLOAD/UPLOAD-I9-verifier-does-not-compare-the-token-with-the-recorded-digest.md): the verifier refuses a token whose digest differs from the digest the session row records, which §7.4 already requires and which reduces a forged token to the one issued at creation.
+  - (e) Option (d) without the "rotate now" operation and without the digest check: documentation only.
+
+  Recommendation: (d), with the "rotate now" operation as a small protocol-neutral admin hook. The digest check costs one comparison against a row the verifier already reads.
 
 ## Decisions
 
