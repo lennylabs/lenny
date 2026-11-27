@@ -8,11 +8,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 3 |
-| Ready | 8 |
+| Building | 2 |
+| Ready | 7 |
 | Waiting on decisions | 31 |
 | Blocked | 160 |
-| Landed | 19 |
+| Landed | 21 |
 | Cancelled | 3 |
 
 ## Program v1
@@ -54,13 +54,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Building |  |
 | [0176.S2](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s2-the-budget-margin-and-the-terminal-writers-in-71) | The budget margin and the terminal writers in §7.1 | Building |  |
-| [0179.S1](0179-upload-token-model/steps.md#0179s1-model-of-the-upload-token-keys-and-consumed-state) | Model of the upload-token keys and consumed state | Building |  |
-| [0180.S1](0180-audit-chain-model/steps.md#0180s1-model-of-the-audit-chain-and-redaction-receipts) | Model of the audit chain and redaction receipts | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
-| [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Ready |  |
 | [0177.S3](0177-shared-upload-token-keys/steps.md#0177s3-the-append-after-a-redacted-tail-row) | The append after a redacted tail row | Ready |  |
 | [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Ready |  |
 | [0178.S3](0178-idempotency-keys-by-principal/steps.md#0178s3-the-acting-party-in-the-scope) | The acting party in the scope | Ready |  |
@@ -261,6 +259,8 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177.S2](0177-shared-upload-token-keys/steps.md#0177s2-the-receipt-key-set-the-verification-time-of-replaced-keys-and-the-check-against-new_hash) | The receipt key set, the verification time of replaced keys, and the check against new_hash | Landed |  |
 | [0178.S1](0178-idempotency-keys-by-principal/steps.md#0178s1-records-scoped-by-principal) | Records scoped by principal | Landed |  |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Landed |  |
+| [0179.S1](0179-upload-token-model/steps.md#0179s1-model-of-the-upload-token-keys-and-consumed-state) | Model of the upload-token keys and consumed state | Landed |  |
+| [0180.S1](0180-audit-chain-model/steps.md#0180s1-model-of-the-audit-chain-and-redaction-receipts) | Model of the audit chain and redaction receipts | Landed |  |
 | [0133.S3](0133-llm-upstreams-and-cost-budgets/steps.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Cancelled |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 | [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Cancelled |  |
@@ -309,9 +309,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
-| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Decided` | 0 of 1 | 0 |
+| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `In progress` | 0 of 1 | 19 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 1 of 2 | 8 |
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 4 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 3 | 0 |
-| [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 0 of 1 | 3 |
-| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 0 of 1 | 14 |
+| [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 1 | 3 |
+| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 1 | 14 |

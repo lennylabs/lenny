@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-None.
+Open decisions O4, O5, O7, O8, and O10 of [`0175-session-lifecycle-model`](../0175-session-lifecycle-model/decisions.md#open-decisions) concern rules this change states or keeps: decision 13's child age against SLR-21 of 0146 (O4), the tree terminate route (O5), and the leaves of "Leaving the parent" in DP-2 with DPR-16 (O7, O8, and O10). 0175 holds each with its options and recommendation, and 0146 holds the lifecycle rule each one edits.
 
 
 

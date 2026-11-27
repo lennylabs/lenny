@@ -7,7 +7,7 @@ None beyond the model's own checks.
 ## Steps
 
 ### 0175.S1 Review and model of the session lifecycle
-- status: Planned
+- status: Building
 - lanes: [non-specification]
 - depends-on: []
 
