@@ -1,10 +1,12 @@
 ---
 id: AUDIT-I2
-status: planned
+status: closed
 kind: build-gap
 severity: high
 requirements: []
 change: 0177.S1
+closed: fixed
+closed-by: 0177.S1
 ---
 
 # The redaction receipt signing key is generated per process and discarded, so a receipt signed before a restart or by another replica cannot be verified

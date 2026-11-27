@@ -1,10 +1,12 @@
 ---
 id: UPLOAD-I1
-status: planned
+status: closed
 kind: build-gap
 severity: high
 requirements: []
 change: 0177.S1
+closed: fixed
+closed-by: 0177.S1
 ---
 
 # The upload-token signing keys and the consumed-token record are per gateway replica, so a token works only on the replica that minted it

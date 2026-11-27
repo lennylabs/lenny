@@ -1,6 +1,6 @@
 # A formal model of the session lifecycle
 
-Status: `Draft`, revision 2, 2026-11-26.
+Status: `Draft`, revision 3, 2026-11-26.
 
 ## Problem
 

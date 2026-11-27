@@ -1,10 +1,12 @@
 ---
 id: AUDIT-I4
-status: planned
+status: closed
 kind: spec-defect
 severity: medium
 requirements: []
 change: 0177.S1
+closed: fixed
+closed-by: 0177.S1
 ---
 
 # The redaction receipt's signing key points to a §11.7 key that §11.7 does not define
