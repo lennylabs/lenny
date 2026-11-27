@@ -10,7 +10,7 @@ The model is a design check. No tier of `lenny-test` runs it, and no Go test rea
 | :-- | :-- | :-- |
 | §7.1, `pkg/signingkeys`, `pkg/uploadtoken`, `cmd/lenny-gateway/token_signing.go`, and the session server, with steps 0177.S1 and 0177.S2 | `main` | `256e036b7` |
 | Steps 0177.S3 and 0177.S4 (decision 11 of change 0177: the issued-token binding, the create-and-start consumed mark, a retired key never signs, `Insert` keeps an earlier `retire_after` and `delete_after`, and `Ring.RotateNow`) | `change/0177.S3-S4-audit-tail-and-key-incidents` | `8785d86e9` |
-| Step 0177.S4, decision 13 of change 0177: a forced rotation writes nothing while the newest key is a forced rotation's key that is not active yet, and the `forced` column of `platform_signing_keys` (migration 0207) | `change/0177.S3-S4-audit-tail-and-key-incidents` | the commit that adds `r2_forced.cfg` |
+| Step 0177.S4, decision 13 of change 0177: a forced rotation writes nothing while the newest key is a forced rotation's key that is not active yet, and the `forced` column of `platform_signing_keys` (migration 0207) | `change/0177.S3-S4-audit-tail-and-key-incidents` | `677ea0bd6` |
 
 A change that lands a different version of these rules compares it with the table above and edits the model where they differ.
 
@@ -152,5 +152,25 @@ Step 0179.S1 ran every configuration on 2026-11-27 with TLC `v1.7.4` (`tla2tools
 | U5 | Holds wherever no key row is deleted. |
 | U6 | `StaleReplicaVerifiesHeldKeys` holds. A replica that cannot reload does not verify a token signed with a key published after its last successful reload (R1). |
 | U7 | Holds, also under row deletion. |
+
+### Rerun for decision 13 of change 0177
+
+Step 0177.S4 added the bound on forced rotations (`PendingForced` in `ForcedRotate`), the `forced` mark of each key, the invariant `OneForcedPending`, and `r2_forced.cfg`, and reran every configuration on 2026-11-27 with the same TLC release and jar, 2 workers per run, on the module at `677ea0bd6`. A first run of each configuration with its listed checks found the same violations as before, and `r2_forced`, `r2_rowdelete`, and `r3_consumed` explored the whole state space. Each other configuration was rerun with its listed checks except `ReachableReplicaVerifies`, and `r2_lead_not_longer` also without `HealthyReplicaVerifies`, and each of those runs explored the whole state space and found no error. The `forced` mark separates keys that a scheduled and a forced rotation write at the same slot and instant, so most configurations reach more distinct states than before.
+
+| Configuration | Distinct states | Time | Violated |
+| :-- | --: | --: | :-- |
+| `r2_default` | 4,708,447 | 2 min 7 s | `ReachableReplicaVerifies` (R1) |
+| `r3_default` | 1,137,036 | 49 s | `ReachableReplicaVerifies` (R1) |
+| `r2_longtoken` | 9,427,967 | 4 min 19 s | `ReachableReplicaVerifies` (R1) |
+| `r2_shortlead` | 7,120,722 | 3 min 18 s | `ReachableReplicaVerifies` (R1) |
+| `r3_shortlead` | 11,593,783 | 8 min 45 s | `ReachableReplicaVerifies` (R1) |
+| `r2_restart` | 3,335,300 | 1 min 36 s | `ReachableReplicaVerifies` (R1) |
+| `r2_consumed` | 6,628,834 | 4 min 17 s | `ReachableReplicaVerifies` (R1) |
+| `r3_consumed` | 4,412 | under 1 s | None |
+| `r2_rowdelete` | 5,915,353 | 2 min 3 s | None of the listed checks |
+| `r2_lead_not_longer` | 5,162 | under 1 s | `HealthyReplicaVerifies`, `ReachableReplicaVerifies` (R2, expected) |
+| `r2_forced` | 321,198 | 15 s | None |
+
+U8 (`OneForcedPending`) holds in `r2_forced`, and every other property listed there holds. The results by property above are unchanged. Two scratch checks of `r2_forced` confirmed that the bound is reached: a second forced rotation at the instant of the first writes nothing, and a forced rotation writes after a scheduled key that is not active yet.
 
 Scratch checks of the same module confirmed that the properties are not vacuous: within the bounds, a replica mints with a second key, a stale replica mints after a key's retirement instant, a key's deletion instant passes and the sweep deletes its row, a finalize reaches `ready`, and a second concurrent finalize is refused.
