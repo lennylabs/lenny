@@ -1,6 +1,6 @@
 # Flaky test fixes and gate coverage across tiers
 
-Status: `Draft`, revision 1, 2026-11-27.
+Status: `In progress`, revision 1, 2026-11-27.
 
 ## Problem
 

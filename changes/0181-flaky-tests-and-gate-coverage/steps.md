@@ -7,7 +7,7 @@
 ## Steps
 
 ### 0181.S1 The secret-probe grant and the stack tests' ports
-- status: Planned
+- status: Building
 - ruled-ready: 2026-11-27, the owner approved the build order whose last item is GATE-I14 with the flaky-test fixes; no open decision touches the step
 - lanes: [code]
 - depends-on: []
