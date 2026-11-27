@@ -2,7 +2,15 @@
 
 ## Open decisions
 
-None.
+### O3. A replica whose key reload fails refuses valid tokens with 401 (UPLOAD-I14)
+
+The model's property `ReachableReplicaVerifies` fails in every configuration with a link cut (counterexample R1 in `change.md`). A replica whose reloads fail keeps verifying with the keys it holds, as §7.1 **Key refresh failure** states, but it can still read the session row when only its link to the KMS is cut, or for up to one refresh interval after its link to Postgres returns. A token that a peer signed with a key published after the replica's last successful reload then fails the HMAC check, and the replica answers `401 UPLOAD_TOKEN_INVALID`, which a client does not retry. §7.1 **Shared signing keys** states that a token minted on one replica verifies on any other. The model confirms a bound that a fix can rely on: a replica whose last successful reload is less than one publish lead old holds every key any replica signs with (`RecentReplicaVerifies` holds in every configuration whose publish lead is longer than the refresh interval), so a miss on such a replica is a token no replica issued.
+
+- **(a) Retryable refusal on a stale ring.** When the HMAC check finds no key and the ring's last successful reload is at least one publish lead old, the verifier returns a distinct error that the upload and finalize handlers answer with `503` and `Retry-After`, so the client retries, usually on another replica. A miss on a ring younger than the publish lead keeps the `401`. It adds no read of Postgres or the KMS on the request path. §7.1 **Key refresh failure** states it, with an error code in the §15 catalog.
+- **(b) Option (a) plus a reload on the miss.** The replica also reloads its ring once on such a miss, limited to one reload per refresh interval, and verifies again before answering `503`. A replica that missed one scheduled reload then serves the request itself. An invalid token presented to a stale replica triggers a store read and, for a new key, a KMS unwrap, within the limit.
+- **(c) State the limit.** §7.1 **Key refresh failure** and `docs/operator-guide/security.md` state that a replica whose reloads fail refuses tokens signed with keys published since its last reload with `401 UPLOAD_TOKEN_INVALID`, and the code is unchanged.
+
+Recommendation: (a). It turns the only failure the model finds into a retryable answer, with no added load on the request path and no new path that an invalid token can drive; the scheduled reload already runs every refresh interval, so the extra reload of (b) helps only a replica whose next tick is due anyway. The fix lands in change 0177 or a new change, and its model edit changes `ReachableReplicaVerifies` to require that a miss on a stale ring is answered as retryable.
 
 ## Decisions
 
