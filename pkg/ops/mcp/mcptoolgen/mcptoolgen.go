@@ -356,6 +356,7 @@ var classifications = map[string]classification{
 	"admin.revoke_token":                         {categoryDestructive, dryRunNone},
 	"admin.rotate_erasure_salt":                  {categoryDestructive, dryRunNone},
 	"admin.rotate_token":                         {categoryMutation, dryRunNone},
+	"admin.rotate_upload_token_keys":             {categoryMutation, dryRunNone},
 	"admin.set_legal_hold":                       {categoryDestructive, dryRunNone},
 	"admin.start_impersonation":                  {categoryMutation, dryRunNone},
 

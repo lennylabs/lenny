@@ -3556,6 +3556,18 @@
         "responses": { "204": { "description": "Cleared" } }
       }
     },
+    "/v1/admin/upload-token-keys/rotate": {
+      "post": {
+        "operationId": "postV1AdminUploadTokenKeysRotate",
+        "summary": "Rotate the shared upload-token signing keys at once",
+        "x-lenny-mcp-tool": "admin.rotate_upload_token_keys",
+        "x-lenny-scope": "tools:platform:write",
+        "x-lenny-required-role": "platform-admin",
+        "x-lenny-category": "security",
+        "security": [{ "BearerAuth": [] }],
+        "responses": { "200": { "description": "OK" } }
+      }
+    },
     "/v1/admin/users/{user}/rotate-token": {
       "post": {
         "operationId": "postV1AdminUsersByUserRotateToken",
