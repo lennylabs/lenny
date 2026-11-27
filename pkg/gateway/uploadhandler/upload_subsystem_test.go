@@ -66,6 +66,7 @@ func seedAndMintUploadSubsystem(t *testing.T, store sessionstore.Store, issuer *
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
+	recordIssuedToken(t, store, tenant, id, tok)
 	return tok
 }
 

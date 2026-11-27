@@ -82,8 +82,9 @@ func (b *blockingReader) Read(p []byte) (int, error) {
 // concurrency cap is rejected with 429 RATE_LIMITED while the first is
 // in-flight, then admitted once the first finishes. spec: §11.1.
 func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 1, 0, 0)
+	srv, issuer, store := newUploadLimitServer(t, 1, 0, 0)
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	h := asOwner(apifront.Handler(srv))
 
 	br := &blockingReader{started: make(chan struct{}), release: make(chan struct{}), data: []byte("hello")}
@@ -124,8 +125,9 @@ func TestUploadPerSessionConcurrencyLimit(t *testing.T) {
 // With no upload caps configured the handler admits without bookkeeping.
 // spec: §11.1.
 func TestUploadNoLimitsConfigured(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 0)
+	srv, issuer, store := newUploadLimitServer(t, 0, 0, 0)
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, bytes.Repeat([]byte("x"), 4096), "text/plain")
 	if rr.Code != http.StatusCreated {
 		t.Fatalf("unlimited upload: status %d, want 201; body %s", rr.Code, rr.Body.String())
@@ -136,8 +138,9 @@ func TestUploadNoLimitsConfigured(t *testing.T) {
 // a session past its total once the declared Content-Length is known.
 // spec: §11.1.
 func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
+	srv, issuer, store := newUploadLimitServer(t, 0, 0, 20)
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	h := asOwner(apifront.Handler(srv))
 
 	if rr := uploadRequest(t, h, "sess_upload", "acme", tok, []byte("hello world"), "text/plain"); rr.Code != http.StatusCreated {
@@ -156,8 +159,9 @@ func TestUploadPerSessionSizeCapEarlyReject(t *testing.T) {
 // The cumulative cap admits uploads up to exactly the limit and rejects
 // the first byte past it. spec: §11.1.
 func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 22)
+	srv, issuer, store := newUploadLimitServer(t, 0, 0, 22)
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	h := asOwner(apifront.Handler(srv))
 
 	for i := 0; i < 2; i++ {
@@ -176,8 +180,9 @@ func TestUploadPerSessionSizeCapBoundary(t *testing.T) {
 // the over-cap upload, and does not consume the session's headroom.
 // spec: §11.1.
 func TestUploadPerSessionSizeCapPostHocOnActualBytes(t *testing.T) {
-	srv, issuer, _ := newUploadLimitServer(t, 0, 0, 20)
+	srv, issuer, store := newUploadLimitServer(t, 0, 0, 20)
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	h := asOwner(apifront.Handler(srv))
 
 	// Declare 5 bytes (passes the early check) but stream 30.

@@ -62,6 +62,7 @@ func TestOverStreamRemovesStagedBlob_spec_7_4_14(t *testing.T) {
 	seedCreatedSession(t, store, "sess_upload", "acme")
 
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	big := bytes.Repeat([]byte("x"), 200)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/upload", bytes.NewReader(big))
 	req.Header.Set("X-Lenny-Tenant-ID", "acme")
@@ -115,6 +116,7 @@ func TestUploadAfterFinalizeReturnsChannelClosed_spec_7_4_16(t *testing.T) {
 	// That is the simpler half of F-7.4.16: post-finalize calls to
 	// /upload are rejected. We test that here.
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hi"), "text/plain")
 	if rr.Code != http.StatusConflict {
 		t.Fatalf("/upload after finalize: status %d, want 409; body=%s", rr.Code, rr.Body.String())
@@ -135,6 +137,7 @@ func TestInFlightUploadAbortedByFinalize_spec_7_4_16(t *testing.T) {
 	srv, issuer, _, blobs, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	// blockingBody emits one byte then blocks until released. The
 	// /upload handler is mid-Read on the blocking call when finalize
@@ -210,6 +213,7 @@ func TestUploadRegisteredAfterFinalizeImmediatelyAborts_spec_7_4_16(t *testing.T
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	// Finalize first.
 	finReq := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/finalize", nil)
@@ -272,6 +276,7 @@ func TestUploadOptionalContentHashMatch_spec_7_4_10(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	// The well-known SHA-256 of "hello world".
 	const matching = "b94d27b9934d3e08a52e52d7da7dabfac484efe37a5380ee9088f7ace2efcde9"
@@ -295,6 +300,7 @@ func TestUploadOptionalContentHashMismatch_spec_7_4_10(t *testing.T) {
 	srv, issuer, _, blobs, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/upload",
 		bytes.NewReader([]byte("hello world")))
@@ -326,6 +332,7 @@ func TestUploadOptionalContentHashCaseInsensitive_spec_7_4_10(t *testing.T) {
 	srv, issuer, _, _, store, _ := newUploadServer(t)
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	const upper = "B94D27B9934D3E08A52E52D7DA7DABFAC484EFE37A5380EE9088F7ACE2EFCDE9"
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/sess_upload/upload",
