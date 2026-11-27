@@ -4,6 +4,7 @@ package sessionserver
 
 import (
 	"context"
+	"crypto/subtle"
 	"errors"
 	"fmt"
 	"io"
@@ -266,14 +267,19 @@ func (s *Server) verifyUploadToken(r *http.Request, sessionID string) error {
 }
 
 // verifyUploadTokenValue verifies an upload token against the session id,
-// then reads the session's row and refuses the token with
-// uploadtoken.ErrConsumed when the row carries the consumed mark. The mark
-// lives on the row, so a token one replica invalidated is refused on every
-// replica. A row that does not exist carries no mark: the caller's own
-// lookup reports the missing session. Any other read failure is returned
-// wrapped, and the caller fails the request closed. A server with no
-// verifier, as in a test or the minimal gateway, admits every token;
-// production always wires one. An empty token is uploadtoken.ErrInvalid.
+// then reads the session's row. It refuses the token with
+// uploadtoken.ErrInvalid unless its digest equals the digest the row
+// records for the token issued at creation, compared in constant time, so
+// a token another holder of a signing key's secret signs for the session
+// is refused; a row that records no digest was issued no token and refuses
+// every one. It refuses the issued token with uploadtoken.ErrConsumed when
+// the row carries the consumed mark. Both live on the row, so every
+// replica refuses alike. A row that does not exist carries neither: the
+// caller's own lookup reports the missing session. Any other read failure
+// is returned wrapped, and the caller fails the request closed. A server
+// with no verifier, as in a test or the minimal gateway, admits every
+// token; production always wires one. An empty token is
+// uploadtoken.ErrInvalid.
 //
 // spec: §7.1 (uploadToken format and security properties), §7.4 (Upload
 // Safety)
@@ -284,7 +290,8 @@ func (s *Server) verifyUploadTokenValue(ctx context.Context, tenantID, tok, sess
 	if tok == "" {
 		return uploadtoken.ErrInvalid
 	}
-	if _, err := s.uploadVerifier.Verify(tok, sessionID); err != nil {
+	parsed, err := s.uploadVerifier.Verify(tok, sessionID)
+	if err != nil {
 		return err
 	}
 	row, err := s.store.Get(ctx, tenantID, sessionID)
@@ -293,10 +300,24 @@ func (s *Server) verifyUploadTokenValue(ctx context.Context, tenantID, tok, sess
 		return nil
 	case err != nil:
 		return fmt.Errorf("read upload token state of session %s: %w", sessionID, err)
+	case !isIssuedToken(parsed.Digest, row.UploadTokenDigest):
+		return uploadtoken.ErrInvalid
 	case !row.UploadTokenConsumedAt.IsZero():
 		return uploadtoken.ErrConsumed
 	}
 	return nil
+}
+
+// isIssuedToken reports whether a presented token's digest equals the
+// digest the session row records, in time independent of where the two
+// differ. An empty recorded digest matches nothing.
+//
+// spec: §7.1 (uploadToken format and security properties)
+func isIssuedToken(presented, recorded string) bool {
+	if recorded == "" {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(presented), []byte(recorded)) == 1
 }
 
 // isUploadTokenRefusal reports whether err is one of the verifier's token

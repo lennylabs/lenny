@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -13,8 +14,10 @@ import (
 
 	"github.com/lennylabs/lenny/pkg/api/v1/session"
 	"github.com/lennylabs/lenny/pkg/gateway/core/session/sessionserver"
+	gatewayseam "github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/session/sessionstore"
 	"github.com/lennylabs/lenny/pkg/session/sessionstore/memstore"
+	"github.com/lennylabs/lenny/pkg/uploadtoken"
 )
 
 // spec: §15.1 POST /v1/sessions/start convenience endpoint.
@@ -53,6 +56,60 @@ func TestSessionStartCreatesRunningSession(t *testing.T) {
 	}
 	if row.State != session.StateRunning {
 		t.Errorf("stored state: %q", row.State)
+	}
+}
+
+// TestASessionStartTokenIsConsumedAtCreation checks that create-and-start
+// records its upload token's digest and marks it consumed at the creation
+// instant, in the row write that creates the running session, so the
+// token it returns is refused with UPLOAD_TOKEN_CONSUMED on every replica
+// from the start, while a two-step create's token is not consumed.
+//
+// spec: §7.1 (uploadToken format and security properties), §15.1 (REST
+// API)
+func TestASessionStartTokenIsConsumedAtCreation(t *testing.T) {
+	created := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+	ring := uploadtoken.NewKeyRing(uploadtoken.SigningKey{KeyID: "k", Secret: []byte("s")})
+	clock := func() time.Time { return created }
+	store := memstore.New()
+	ids := []string{"sess_start_tok", "sess_create_tok"}
+	srv := sessionserver.New(store, sessionserver.Options{
+		DevTenantHeader:     true,
+		IDFunc:              func() string { id := ids[0]; ids = ids[1:]; return id },
+		Clock:               clock,
+		UploadTokenIssuer:   uploadtoken.NewIssuer(ring, clock),
+		UploadTokenVerifier: uploadtoken.NewVerifier(ring, nil, clock),
+	})
+	post := func(path string, v any) sessionserver.CreateSessionResponse {
+		t.Helper()
+		body, _ := json.Marshal(v)
+		req := httptest.NewRequest(http.MethodPost, path, bytes.NewReader(body))
+		req.Header.Set("X-Lenny-Tenant-ID", "acme")
+		rr := httptest.NewRecorder()
+		asOwner(srv.Handler()).ServeHTTP(rr, req)
+		if rr.Code != http.StatusCreated {
+			t.Fatalf("%s: status %d, body=%s", path, rr.Code, rr.Body.String())
+		}
+		var resp sessionserver.CreateSessionResponse
+		_ = json.Unmarshal(rr.Body.Bytes(), &resp)
+		return resp
+	}
+	started := post("/v1/sessions/start", sessionserver.CreateAndStartRequest{RuntimeRef: "echo"})
+	twoStep := post("/v1/sessions", sessionserver.CreateSessionRequest{RuntimeRef: "echo"})
+
+	row, err := store.Get(context.Background(), "acme", "sess_start_tok")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !row.UploadTokenConsumedAt.Equal(created) || row.UploadTokenDigest == "" {
+		t.Errorf("create-and-start row: consumed at %s, digest %q; want consumed at %s with a digest", row.UploadTokenConsumedAt, row.UploadTokenDigest, created)
+	}
+	seam := srv.UploadSeam()
+	if err := seam.VerifyUploadToken(context.Background(), "acme", "sess_start_tok", started.UploadToken); !errors.Is(err, gatewayseam.ErrUploadTokenConsumed) {
+		t.Errorf("create-and-start token: %v, want ErrUploadTokenConsumed", err)
+	}
+	if err := seam.VerifyUploadToken(context.Background(), "acme", "sess_create_tok", twoStep.UploadToken); err != nil {
+		t.Errorf("two-step create token: %v, want nil", err)
 	}
 }
 

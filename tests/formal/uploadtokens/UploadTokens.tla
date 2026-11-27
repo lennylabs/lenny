@@ -1,7 +1,8 @@
 ---------------------------- MODULE UploadTokens ----------------------------
 (***************************************************************************)
 (* A model of the upload-token signing keys and the consumed state of     *)
-(* section 7.1, as change 0177 builds them through its decision 11.       *)
+(* section 7.1, as change 0177 builds them through its decisions 11 and   *)
+(* 13.                                                                     *)
 (* Change 0179 builds the model; README.md in this directory maps each    *)
 (* action to the code and states each property in plain words.           *)
 (*                                                                         *)
@@ -54,8 +55,10 @@ KeyIds == 1..MaxKeys
 Earlier(stored, next) ==
     IF stored = NoTime THEN next ELSE IF next < stored THEN next ELSE stored
 
-NewRec(id, slot, act) ==
-    [id |-> id, slot |-> slot, act |-> act, ret |-> NoTime, del |-> NoTime]
+\* forced is the forced column (migration 0207): true when a forced
+\* rotation wrote the key.
+NewRec(id, slot, act, f) ==
+    [id |-> id, slot |-> slot, act |-> act, ret |-> NoTime, del |-> NoTime, forced |-> f]
 
 VARIABLES
     now,
@@ -122,9 +125,10 @@ AwaitingActivation(keys) == \E x \in keys : x.act > now
 (* in the same transaction, retires the key at the slot before it,        *)
 (* keeping an earlier retire_after and delete_after. A taken slot changes *)
 (* nothing. A write past the key budget fails, as a write refused by      *)
-(* Postgres does. W is [res, tbl, nid].                                    *)
+(* Postgres does. f marks a key a forced rotation writes. W is [res, tbl, *)
+(* nid].                                                                   *)
 (***************************************************************************)
-WriteOn(r, tbl, nid, slot, act) ==
+WriteOn(r, tbl, nid, slot, act, f) ==
     LET res == IF ~WriteOK(r) THEN "fail"
                ELSE IF \E x \in tbl : x.slot = slot THEN "conflict"
                ELSE IF nid > MaxKeys THEN "fail"
@@ -134,7 +138,7 @@ WriteOn(r, tbl, nid, slot, act) ==
                                  !.del = Earlier(x.del, act + VerifyFor)]
                   ELSE x
     IN IF res = "inserted"
-       THEN [res |-> res, tbl |-> {upd(x) : x \in tbl} \cup {NewRec(nid, slot, act)},
+       THEN [res |-> res, tbl |-> {upd(x) : x \in tbl} \cup {NewRec(nid, slot, act, f)},
              nid |-> nid + 1]
        ELSE [res |-> res, tbl |-> tbl, nid |-> nid]
 
@@ -149,11 +153,11 @@ NoWrite(tbl, nid) == [res |-> "none", tbl |-> tbl, nid |-> nid]
 (***************************************************************************)
 RotateOn(r, keys, lr, tbl, nid) ==
     IF keys = {} THEN
-        IF lr # NoTime THEN WriteOn(r, tbl, nid, 1, now - Lead) ELSE NoWrite(tbl, nid)
+        IF lr # NoTime THEN WriteOn(r, tbl, nid, 1, now - Lead, FALSE) ELSE NoWrite(tbl, nid)
     ELSE LET n == Newest(keys) IN
-        IF n.ret # NoTime THEN WriteOn(r, tbl, nid, n.slot + 1, now + Lead)
+        IF n.ret # NoTime THEN WriteOn(r, tbl, nid, n.slot + 1, now + Lead, FALSE)
         ELSE IF n.act > now \/ now < n.act + RotInt THEN NoWrite(tbl, nid)
-        ELSE WriteOn(r, tbl, nid, n.slot + 1, now + Lead)
+        ELSE WriteOn(r, tbl, nid, n.slot + 1, now + Lead, FALSE)
 
 \* Store.DeleteExpired as a function of the table.
 SweepOn(r, tbl) == IF ReadOK(r) THEN ListOf(tbl) ELSE tbl
@@ -204,7 +208,7 @@ Start(r) ==
     /\ lastAttempt[r] < now
     /\ lastAttempt' = [lastAttempt EXCEPT ![r] = now]
     /\ LET w1 == IF ReadOK(r) /\ ListOf(table) = {}
-                 THEN WriteOn(r, table, nextId, 1, now - Lead)
+                 THEN WriteOn(r, table, nextId, 1, now - Lead, FALSE)
                  ELSE NoWrite(table, nextId)
            ok1 == ReadOK(r) /\ w1.res # "fail" /\ ReloadOKFor(r, {}, w1.tbl)
            k1 == ListOf(w1.tbl)
@@ -242,11 +246,16 @@ RefreshRing(r) ==
 
 (***************************************************************************)
 (* Ring.RotateNow, behind POST /v1/admin/upload-token-keys/rotate: reload, *)
-(* write the slot after the newest key one publish lead ahead, and reload. *)
-(* refreshMu serializes it with Refresh. A slot another writer takes      *)
-(* between the reload and the write sends the code to the next slot; the  *)
-(* model reaches the same table by ordering that writer's step first.     *)
+(* write the slot after the newest key one publish lead ahead, marked     *)
+(* forced, and reload. While the newest key is a forced key that is not   *)
+(* active yet, the call writes nothing (409 INVALID_STATE_TRANSITION,     *)
+(* decision 13 of change 0177). refreshMu serializes it with Refresh. A   *)
+(* slot another writer takes between the reload and the write sends the   *)
+(* code to the next slot after a check of the winner's key; the model     *)
+(* reaches the same table by ordering that writer's step first.           *)
 (***************************************************************************)
+PendingForced(keys) == keys # {} /\ Newest(keys).forced /\ Newest(keys).act > now
+
 ForcedRotate(r) ==
     /\ Up(r)
     /\ forcedLeft > 0
@@ -254,7 +263,8 @@ ForcedRotate(r) ==
     /\ IF ReloadOKFor(r, ring[r], table)
        THEN LET k0 == ListOf(table)
                 slot == IF k0 = {} THEN 1 ELSE Newest(k0).slot + 1
-                w == WriteOn(r, table, nextId, slot, now + Lead)
+                w == IF PendingForced(k0) THEN NoWrite(table, nextId)
+                     ELSE WriteOn(r, table, nextId, slot, now + Lead, TRUE)
                 ok2 == w.res = "inserted" /\ ReloadOKFor(r, k0, w.tbl)
             IN /\ CommitKeys(w.tbl, w.tbl, w.nid)
                /\ ring' = [ring EXCEPT ![r] = IF ok2 THEN ListOf(w.tbl) ELSE k0]
@@ -418,7 +428,7 @@ TypeOK ==
     /\ nextId \in 1..(MaxKeys + 1)
     /\ pc \in [Replicas -> {"down", "up"}]
     /\ fault \in [Replicas -> {"ok"} \cup FaultKinds]
-    /\ \A x \in table : x.id \in KeyIds /\ x.slot \in 1..MaxKeys
+    /\ \A x \in table : x.id \in KeyIds /\ x.slot \in 1..MaxKeys /\ x.forced \in BOOLEAN
 
 TokenLive(s) == row[s] # NoRow /\ now <= row[s].exp
 
@@ -517,6 +527,10 @@ RetirementOnlyEarlier ==
            /\ (x.del # NoTime => y.del # NoTime /\ y.del <= x.del)]_vars
 
 OneKeyPerSlot == \A x, y \in table : x.slot = y.slot => x = y
+
+\* U8. At most one forced rotation's key in the table is not active yet, so
+\* forced rotations add at most one key row per publish lead.
+OneForcedPending == Cardinality({x \in table : x.forced /\ x.act > now}) <= 1
 
 Symmetry == Permutations(Replicas)
 =============================================================================

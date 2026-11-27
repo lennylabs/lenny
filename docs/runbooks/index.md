@@ -280,6 +280,7 @@ Prefer the alert → runbook map above at page-time; this section exists to brow
 - [jwt-key-rotation](jwt-key-rotation.html)
 - [token-service-outage](token-service-outage.html)
 - [token-store-unavailable](token-store-unavailable.html)
+- [upload-token-key-rotation](upload-token-key-rotation.html)
 
 **Stateful dependencies — Postgres, Redis, object store, DNS, cert-manager**
 - [cert-manager-outage](cert-manager-outage.html)

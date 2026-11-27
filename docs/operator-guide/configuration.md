@@ -613,7 +613,7 @@ Every gateway replica signs and verifies upload tokens with the same keys, which
 | Flag | Environment variable | Default | Meaning |
 |:--|:--|:--|:--|
 | `--signing-key-refresh-interval` | `LENNY_SIGNING_KEY_REFRESH_INTERVAL` | `30s` | How often a replica reloads the keys, writes the next key when the active key is due for rotation, and deletes keys past their verification time. |
-| `--signing-key-publish-lead` | `LENNY_SIGNING_KEY_PUBLISH_LEAD` | `2m` | How far ahead of its activation a replica writes the next key, so every replica has loaded it before any replica signs with it. It must be longer than the refresh interval, and the gateway does not start when it is not. |
+| `--signing-key-publish-lead` | `LENNY_SIGNING_KEY_PUBLISH_LEAD` | `2m` | How far ahead of its activation a replica writes the next key, so every replica has loaded it before any replica signs with it. It must be longer than the refresh interval, and the gateway does not start when it is not. It is also the minimum spacing of forced rotations through `POST /v1/admin/upload-token-keys/rotate`. |
 | `--upload-token-key-rotation-interval` | `LENNY_UPLOAD_TOKEN_KEY_ROTATION_INTERVAL` | `24h` | How long a key signs before the next key replaces it. |
 
 After the next key becomes active, a replaced key keeps verifying for the overlap window (five minutes, which has no setting) plus the longer of the overlap window and the upload-token lifetime, `--max-created-state-timeout-seconds` (`LENNY_MAX_CREATED_STATE_TIMEOUT_SECONDS`, default 300 seconds). At the defaults that is ten minutes, and a longer token lifetime lengthens it, so every token a replica signs with the replaced key verifies on every replica until it expires.

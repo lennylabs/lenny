@@ -12,7 +12,8 @@ import (
 
 // Record is one stored signing key: the row of platform_signing_keys. The
 // secret is held only in its wrapped form. RetireAfter and DeleteAfter are
-// zero while the key is its purpose's newest key.
+// zero while the key is its purpose's newest key. Forced is true when a
+// forced rotation (Ring.RotateNow) wrote the key.
 type Record struct {
 	Purpose       string
 	KeyID         string
@@ -24,6 +25,7 @@ type Record struct {
 	ActiveFrom    time.Time
 	RetireAfter   time.Time
 	DeleteAfter   time.Time
+	Forced        bool
 }
 
 // Store persists the wrapped signing keys of every purpose. A Store is
@@ -37,8 +39,11 @@ type Store interface {
 	// Insert writes rec as its purpose's key at rec.RotationSlot and, in
 	// the same transaction, retires the key at the slot before it: that
 	// key's RetireAfter becomes rec.ActiveFrom and its DeleteAfter becomes
-	// rec.ActiveFrom plus verifyFor. It reports false, with no error and
-	// no change, when another writer already holds the slot.
+	// rec.ActiveFrom plus verifyFor, unless the key already carries an
+	// earlier instant, which it keeps. A key written again at a slot whose
+	// row was deleted therefore neither revives nor extends the key before
+	// it. It reports false, with no error and no change, when another
+	// writer already holds the slot.
 	Insert(ctx context.Context, rec Record, verifyFor time.Duration) (bool, error)
 
 	// DeleteExpired deletes the purpose's keys whose DeleteAfter is at or
@@ -90,8 +95,8 @@ func (m *MemoryStore) Insert(_ context.Context, rec Record, verifyFor time.Durat
 	}
 	for i := range rows {
 		if rows[i].RotationSlot == rec.RotationSlot-1 {
-			rows[i].RetireAfter = rec.ActiveFrom
-			rows[i].DeleteAfter = rec.ActiveFrom.Add(verifyFor)
+			rows[i].RetireAfter = earlier(rows[i].RetireAfter, rec.ActiveFrom)
+			rows[i].DeleteAfter = earlier(rows[i].DeleteAfter, rec.ActiveFrom.Add(verifyFor))
 		}
 	}
 	rows = append(rows, copyRecord(rec))
@@ -116,6 +121,17 @@ func (m *MemoryStore) DeleteExpired(_ context.Context, purpose string, now time.
 	}
 	m.rows[purpose] = kept
 	return n, nil
+}
+
+// earlier returns the earlier of a stored instant and a new one, where a
+// zero stored instant is unset and yields the new one.
+//
+// spec: §7.1 (Normal Flow), §12.3 (Postgres HA Requirements)
+func earlier(stored, next time.Time) time.Time {
+	if stored.IsZero() || next.Before(stored) {
+		return next
+	}
+	return stored
 }
 
 // copyRecord returns rec with its byte slices copied, so a caller cannot

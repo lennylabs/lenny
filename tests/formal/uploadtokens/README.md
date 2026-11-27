@@ -1,6 +1,6 @@
 # Upload-token model
 
-`UploadTokens.tla` is a TLA+ model of the upload-token signing keys and the consumed state of §7.1 **`uploadToken` format and security properties**, as change 0177 (`changes/0177-shared-upload-token-keys/`) builds them through its decision 11. Change 0179 (`changes/0179-upload-token-model/`) builds the model, and its `change.md` records the results and the counterexamples.
+`UploadTokens.tla` is a TLA+ model of the upload-token signing keys and the consumed state of §7.1 **`uploadToken` format and security properties**, as change 0177 (`changes/0177-shared-upload-token-keys/`) builds them through its decisions 11 and 13. Change 0179 (`changes/0179-upload-token-model/`) builds the model, and its `change.md` records the results and the counterexamples.
 
 The model is a design check. No tier of `lenny-test` runs it, and no Go test reads it. A change that edits a rule the model describes updates the model and reruns it, as decision 1 of change 0179 states.
 
@@ -10,6 +10,7 @@ The model is a design check. No tier of `lenny-test` runs it, and no Go test rea
 | :-- | :-- | :-- |
 | §7.1, `pkg/signingkeys`, `pkg/uploadtoken`, `cmd/lenny-gateway/token_signing.go`, and the session server, with steps 0177.S1 and 0177.S2 | `main` | `256e036b7` |
 | Steps 0177.S3 and 0177.S4 (decision 11 of change 0177: the issued-token binding, the create-and-start consumed mark, a retired key never signs, `Insert` keeps an earlier `retire_after` and `delete_after`, and `Ring.RotateNow`) | `change/0177.S3-S4-audit-tail-and-key-incidents` | `8785d86e9` |
+| Step 0177.S4, decision 13 of change 0177: a forced rotation writes nothing while the newest key is a forced rotation's key that is not active yet, and the `forced` column of `platform_signing_keys` (migration 0207) | `change/0177.S3-S4-audit-tail-and-key-incidents` | `677ea0bd6` |
 
 A change that lands a different version of these rules compares it with the table above and edits the model where they differ.
 
@@ -40,8 +41,8 @@ The verification time of a replaced key is `VerifyFor`, `Overlap + Max(Overlap, 
 | `Start` | `signingkeys.Open` (`pkg/signingkeys/ring.go`), called by `openUploadTokenKeyRing` in `cmd/lenny-gateway/token_signing.go`: list the keys, write the first key backdated by the publish lead when the purpose has none, reload, and when no key is active, `rotateIfDue` and reload again. The process stops when a step fails or when no key is active or awaiting activation. |
 | `RefreshRing` | `Ring.Refresh`, run by `Ring.Run` on its ticker: `rotateIfDue` over the replica's snapshot, `Store.DeleteExpired`, and `reload`. A failed part is logged and the next part runs. |
 | `RotateOn` (inside `Start` and `RefreshRing`) | `Ring.rotateIfDue`: a first key backdated by the lead when a reloaded ring is empty; the next slot one lead ahead when the newest key carries a retirement instant (0177.S4); nothing when the newest key is not active or not yet due; otherwise the next slot one lead ahead. |
-| `ForcedRotate` | `Ring.RotateNow` (0177.S4), behind `POST /v1/admin/upload-token-keys/rotate` (`pkg/gateway/api/admin/upload_token_keys.go`): reload, write the slot after the newest key one lead ahead, and reload. |
-| `WriteOn` (inside every key write) | `Ring.writeKey` and `Store.Insert` (`pkg/signingkeys/store.go`, `pkg/signingkeys/pgstore/pgstore.go`): seal the secret, insert at the slot unless the slot is taken, and in the same transaction set the previous slot's `retire_after` to the new key's `active_from` and its `delete_after` to that plus the verification time, keeping an earlier value (0177.S4). |
+| `ForcedRotate` | `Ring.RotateNow` (0177.S4), behind `POST /v1/admin/upload-token-keys/rotate` (`pkg/gateway/api/admin/upload_token_keys.go`): reload; when the newest key is a forced key that is not active yet (`PendingForced`), write nothing, which the route answers with `409 INVALID_STATE_TRANSITION` (decision 13); otherwise write the slot after the newest key one lead ahead, marked forced, and reload. |
+| `WriteOn` (inside every key write) | `Ring.writeKey` and `Store.Insert` (`pkg/signingkeys/store.go`, `pkg/signingkeys/pgstore/pgstore.go`): seal the secret, insert at the slot with its `forced` mark unless the slot is taken, and in the same transaction set the previous slot's `retire_after` to the new key's `active_from` and its `delete_after` to that plus the verification time, keeping an earlier value (0177.S4). |
 | `ReloadOKFor` (inside every reload) | `Ring.reload`: a failed `List`, or a failed unwrap of a key the snapshot does not hold, leaves the snapshot and the reload instant unchanged. |
 | `SigningKeyOK`, `SigningKey`, `VerKeys` | `Ring.SigningKey` and `Ring.VerificationKeys`, through `uploadtoken.NewSharedKeys` (`pkg/uploadtoken/shared.go`). |
 | `Mint` | `Issuer.IssueDetailed` (`pkg/uploadtoken/uploadtoken.go`) in `mintUploadToken` (`pkg/gateway/core/session/sessionserver/create.go`), and the row insert that records the token's digest and expiry. For a session of `StartSessions`, `mintClaimStartPersist` and `consumeAtStart` (`create_and_start.go`, 0177.S4) record the consumed mark in the creating write. |
@@ -90,6 +91,7 @@ TLC checks the invariants and the action properties each configuration lists, an
 | U6 | `StaleReplicaVerifiesHeldKeys` | A replica that cannot reload keeps verifying every unexpired issued token whose key it holds. |
 | U7 | `RetirementOnlyEarlier` | A key's `retire_after` and `delete_after` never move later once set. |
 | U7 | `OneKeyPerSlot` | At most one key occupies a rotation slot. |
+| U8 | `OneForcedPending` | At most one key that a forced rotation wrote is not active yet, so forced rotations add at most one key row per publish lead (decision 13 of change 0177). |
 
 `MintOnlyWithinStaleBound`, `MintNeverAfterHeldRetirement`, `StartTokenRefused`, and the first half of `NoAcceptAfterKeyDeletion` hold by the construction of the guard they restate; they pin the guard to the property it carries.
 
@@ -107,8 +109,9 @@ TLC checks the invariants and the action properties each configuration lists, an
 | `r3_consumed.cfg` | 3 | as `r2_default` | 6 | s1 finalized on three replicas; no cut |
 | `r2_rowdelete.cfg` | 2 | as `r2_default` | 16 | up to three key rows deleted by hand; one restart; one forced rotation; no cut |
 | `r2_lead_not_longer.cfg` | 2 | lead 1, equal to the refresh; others as `r2_default` | 10 | one forced rotation; no cut |
+| `r2_forced.cfg` | 2 | as `r2_default` | 16 | one session; three forced rotations on either replica; 5 key writes; no cut |
 
-Each configuration allows 3 key writes. Replicas are symmetric (`SYMMETRY Symmetry`). The horizons of `r2_default`, `r2_longtoken`, and `r2_shortlead` reach the sweep of a replaced key; the others stop before it. One configuration with every environment event and both sessions grows past 45 million states within twelve instants, which is why the concerns are split. `r2_rowdelete` lists no U1 or U5 property: a deleted row's key stops verifying, and a replica with no active key mints nothing, as the operator guide states. `r2_lead_not_longer` sets a publish lead the gateway refuses at start, and its U1 properties are expected to fail.
+Each configuration but `r2_forced` allows 3 key writes. Replicas are symmetric (`SYMMETRY Symmetry`). The horizons of `r2_default`, `r2_longtoken`, and `r2_shortlead` reach the sweep of a replaced key; the others stop before it. One configuration with every environment event and both sessions grows past 45 million states within twelve instants, which is why the concerns are split. `r2_rowdelete` lists no U1 or U5 property: a deleted row's key stops verifying, and a replica with no active key mints nothing, as the operator guide states. `r2_lead_not_longer` sets a publish lead the gateway refuses at start, and its U1 properties are expected to fail.
 
 ## Running it
 
@@ -149,5 +152,25 @@ Step 0179.S1 ran every configuration on 2026-11-27 with TLC `v1.7.4` (`tla2tools
 | U5 | Holds wherever no key row is deleted. |
 | U6 | `StaleReplicaVerifiesHeldKeys` holds. A replica that cannot reload does not verify a token signed with a key published after its last successful reload (R1). |
 | U7 | Holds, also under row deletion. |
+
+### Rerun for decision 13 of change 0177
+
+Step 0177.S4 added the bound on forced rotations (`PendingForced` in `ForcedRotate`), the `forced` mark of each key, the invariant `OneForcedPending`, and `r2_forced.cfg`, and reran every configuration on 2026-11-27 with the same TLC release and jar, 2 workers per run, on the module at `677ea0bd6`. A first run of each configuration with its listed checks found the same violations as before, and `r2_forced`, `r2_rowdelete`, and `r3_consumed` explored the whole state space. Each other configuration was rerun with its listed checks except `ReachableReplicaVerifies`, and `r2_lead_not_longer` also without `HealthyReplicaVerifies`, and each of those runs explored the whole state space and found no error. The `forced` mark separates keys that a scheduled and a forced rotation write at the same slot and instant, so most configurations reach more distinct states than before.
+
+| Configuration | Distinct states | Time | Violated |
+| :-- | --: | --: | :-- |
+| `r2_default` | 4,708,447 | 2 min 7 s | `ReachableReplicaVerifies` (R1) |
+| `r3_default` | 1,137,036 | 49 s | `ReachableReplicaVerifies` (R1) |
+| `r2_longtoken` | 9,427,967 | 4 min 19 s | `ReachableReplicaVerifies` (R1) |
+| `r2_shortlead` | 7,120,722 | 3 min 18 s | `ReachableReplicaVerifies` (R1) |
+| `r3_shortlead` | 11,593,783 | 8 min 45 s | `ReachableReplicaVerifies` (R1) |
+| `r2_restart` | 3,335,300 | 1 min 36 s | `ReachableReplicaVerifies` (R1) |
+| `r2_consumed` | 6,628,834 | 4 min 17 s | `ReachableReplicaVerifies` (R1) |
+| `r3_consumed` | 4,412 | under 1 s | None |
+| `r2_rowdelete` | 5,915,353 | 2 min 3 s | None of the listed checks |
+| `r2_lead_not_longer` | 5,162 | under 1 s | `HealthyReplicaVerifies`, `ReachableReplicaVerifies` (R2, expected) |
+| `r2_forced` | 321,198 | 15 s | None |
+
+U8 (`OneForcedPending`) holds in `r2_forced`, and every other property listed there holds. The results by property above are unchanged. Two scratch checks of `r2_forced` confirmed that the bound is reached: a second forced rotation at the instant of the first writes nothing, and a forced rotation writes after a scheduled key that is not active yet.
 
 Scratch checks of the same module confirmed that the properties are not vacuous: within the bounds, a replica mints with a second key, a stale replica mints after a key's retirement instant, a key's deletion instant passes and the sweep deletes its row, a finalize reaches `ready`, and a second concurrent finalize is refused.

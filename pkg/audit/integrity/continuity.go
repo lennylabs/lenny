@@ -302,7 +302,11 @@ func loadChainRows(ctx context.Context, db Querier, tenantID string) ([]audit.Ro
 	if err != nil {
 		return nil, fmt.Errorf("integrity: query chain rows for %q: %w", tenantID, err)
 	}
-	return scanChainRows(rows, tenantID)
+	out, err := scanChainRows(rows, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return out, applyChainReceipts(ctx, db, tenantID, out)
 }
 
 // loadRecentChainRows reads the most recent lastN rows of a tenant's
@@ -326,7 +330,62 @@ func loadRecentChainRows(ctx context.Context, db Querier, tenantID string, lastN
 	if err != nil {
 		return nil, fmt.Errorf("integrity: query recent chain rows for %q: %w", tenantID, err)
 	}
-	return scanChainRows(rows, tenantID)
+	out, err := scanChainRows(rows, tenantID)
+	if err != nil {
+		return nil, err
+	}
+	return out, applyChainReceipts(ctx, db, tenantID, out)
+}
+
+// applyChainReceipts sets the Hash of each redaction-marked row that has a
+// receipt to the receipt's original_hash, the preserved pre-redaction hash
+// that the row's successor carries as its prev_hash, as the audit store
+// does for the chain verifier and the append path. The link walk then
+// follows a receipted redaction, including one of a tenant's newest row,
+// rather than reporting a break at its successor. Whether the receipt
+// authorizes the rewrite is the receipt scan's check
+// (CheckRedactionReceipts), which reads the signature and new_hash. A
+// window with no redaction-marked row costs no receipt read.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
+func applyChainReceipts(ctx context.Context, db Querier, tenantID string, rows []audit.Row) error {
+	marked := false
+	for _, r := range rows {
+		if audit.IsRedactedPayload(r.Payload) {
+			marked = true
+			break
+		}
+	}
+	if !marked {
+		return nil
+	}
+	res, err := db.Query(ctx, `
+		SELECT sequence_number, original_hash FROM audit_redaction_receipts
+		WHERE tenant_id = $1`, tenantID)
+	if err != nil {
+		return fmt.Errorf("integrity: query redaction receipts for %q: %w", tenantID, err)
+	}
+	defer res.Close()
+	orig := map[uint64]string{}
+	for res.Next() {
+		var (
+			seq int64
+			h   []byte
+		)
+		if err := res.Scan(&seq, &h); err != nil {
+			return fmt.Errorf("integrity: scan redaction receipt: %w", err)
+		}
+		orig[uint64(seq)] = hex.EncodeToString(h)
+	}
+	if err := res.Err(); err != nil {
+		return fmt.Errorf("integrity: iterate redaction receipts for %q: %w", tenantID, err)
+	}
+	for i := range rows {
+		if h, ok := orig[rows[i].Seq]; ok && h != "" && audit.IsRedactedPayload(rows[i].Payload) {
+			rows[i].Hash = h
+		}
+	}
+	return nil
 }
 
 // scanChainRows scans a sequence-ordered audit_log result set into

@@ -298,7 +298,8 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		state_entered_at,
 		input_wait_id,
 		expiry_warned_cap_seconds,
-		terminal_pipeline_done_at
+		terminal_pipeline_done_at,
+		upload_token_consumed_at
 	) VALUES (
 		$1::uuid, $2, $3, $4, $5, $6, $7,
 		NULLIF($8, '')::uuid,
@@ -354,7 +355,11 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 		-- §11.3 expiry_warned_cap_seconds; zero for a new row.
 		$63,
 		-- §7.1 terminal_pipeline_done_at; NULL until the pipeline mark.
-		$64
+		$64,
+		-- §7.1 upload_token_consumed_at; NULL except for a session that
+		-- create-and-start writes in running, whose token is consumed at
+		-- creation.
+		$65
 	)`
 
 	expID, expVariant, expInherited := experimentCols(sess.ExperimentContext)
@@ -482,7 +487,9 @@ func (s *Store) create(ctx context.Context, sess sessionstore.Session, before be
 			// expiry-warning sweep claimed a warning for; zero for a new row.
 			sess.ExpiryWarnedCapSeconds,
 			// $64 — §7.1 pipeline mark; a zero time persists as NULL.
-			pgtenant.NullTime(sess.TerminalPipelineDoneAt))
+			pgtenant.NullTime(sess.TerminalPipelineDoneAt),
+			// $65 — §7.1 upload_token_consumed_at; a zero time persists as NULL.
+			pgtenant.NullTime(sess.UploadTokenConsumedAt))
 		if err != nil {
 			return err
 		}

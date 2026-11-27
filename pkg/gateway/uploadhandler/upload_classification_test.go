@@ -61,6 +61,7 @@ func TestHandleUploadRejectsTierStoreMismatch_spec_12_9_1048(t *testing.T) {
 	if err != nil {
 		t.Fatalf("issue token: %v", err)
 	}
+	recordIssuedToken(t, store, "restricted", "sess_t4", tok)
 
 	rr := doUpload(t, asOwner(apifront.Handler(srv)), "sess_t4", "restricted", tok, "restricted-bytes")
 	if rr.Code != http.StatusUnprocessableEntity {

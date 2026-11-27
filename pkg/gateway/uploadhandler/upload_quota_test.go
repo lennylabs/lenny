@@ -52,6 +52,9 @@ func newQuotaUploadServer(t *testing.T, quotaBytes int64) (*sessionserver.Server
 	})
 	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobstore.NewMemoryStore(nil)})
 	seedCreatedSession(t, store, "sess_upload", "acme")
+	// The issuer's clock is fixed, so this is the token each test mints.
+	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 	return srv, issuer, counter
 }
 
@@ -184,6 +187,7 @@ func TestUploadStorageQuotaDualOutageFailsClosed_spec_12_4_210(t *testing.T) {
 	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobstore.NewMemoryStore(nil)})
 	seedCreatedSession(t, store, "sess_upload", "acme")
 	tok, _ := issuer.Issue("sess_upload", 0)
+	recordIssuedToken(t, store, "acme", "sess_upload", tok)
 
 	rr := uploadRequest(t, asOwner(apifront.Handler(srv)), "sess_upload", "acme", tok, []byte("hello world"), "text/plain")
 	if rr.Code != http.StatusServiceUnavailable {

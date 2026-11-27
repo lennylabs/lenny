@@ -108,8 +108,6 @@ func TestASecondErasureOfAUserTheRedactedRowNamedFindsNothingToRedact(t *testing
 	keys, signer := receiptkeys.Load(t, "", nil)
 	store := auditstore.New(pg.Router(t), auditstore.WithReceiptVerifier(keys))
 	at := time.Date(2026, 11, 26, 10, 0, 0, 0, time.UTC)
-	// The redacted row is not the chain's tail: a row appended after a
-	// redacted tail links to its post-redaction hash (AUDIT-I6).
 	for _, payload := range []string{`{"user_id":"alice@acme.com","target_user_id":"bob@acme.com"}`, `{"x":1}`} {
 		if _, err := store.Append(ctx, "acme", "session.created", json.RawMessage(payload), at); err != nil {
 			t.Fatalf("append: %v", err)

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: MIT
 
 // Package pgstore is the Postgres signingkeys.Store over the
-// platform_signing_keys table (migration 0205). The table is platform-
+// platform_signing_keys table (migrations 0205 and 0207). The table is platform-
 // scoped, with no tenant_id column and no RLS, so the store runs plain
 // queries without an app.current_tenant context. The secret column holds
 // only the wrapped form the caller's Sealer produced.
@@ -44,7 +44,7 @@ var _ signingkeys.Store = (*Store)(nil)
 func (s *Store) List(ctx context.Context, purpose string, now time.Time) ([]signingkeys.Record, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT purpose, key_id, algorithm, kek_alias, wrapped_secret, public_key,
-		       rotation_slot, active_from, retire_after, delete_after
+		       rotation_slot, active_from, retire_after, delete_after, forced
 		FROM platform_signing_keys
 		WHERE purpose = $1 AND (delete_after IS NULL OR delete_after > $2)
 		ORDER BY rotation_slot`, purpose, now)
@@ -60,7 +60,7 @@ func (s *Store) List(ctx context.Context, purpose string, now time.Time) ([]sign
 		)
 		if err := rows.Scan(&rec.Purpose, &rec.KeyID, &rec.Algorithm, &rec.KEKAlias,
 			&rec.WrappedSecret, &rec.PublicKey, &rec.RotationSlot, &rec.ActiveFrom,
-			&retire, &dele); err != nil {
+			&retire, &dele, &rec.Forced); err != nil {
 			return nil, fmt.Errorf("signingkeys/pgstore: scan %q key: %w", purpose, err)
 		}
 		rec.ActiveFrom = rec.ActiveFrom.UTC()
@@ -82,7 +82,10 @@ func (s *Store) List(ctx context.Context, purpose string, now time.Time) ([]sign
 // the key at the previous slot run in one transaction, so a reader never
 // sees the next key without the previous key's deletion instant, and the
 // unique (purpose, rotation_slot) constraint decides which of several
-// concurrent writers holds the slot.
+// concurrent writers holds the slot. The previous key's retire_after and
+// delete_after only move earlier: a key written again at a slot whose row
+// was deleted keeps the previous key retired at the instant the deleted
+// key first retired it.
 //
 // spec: §7.1 (Normal Flow), §12.3 (Postgres HA Requirements)
 func (s *Store) Insert(ctx context.Context, rec signingkeys.Record, verifyFor time.Duration) (bool, error) {
@@ -91,11 +94,11 @@ func (s *Store) Insert(ctx context.Context, rec signingkeys.Record, verifyFor ti
 		tag, err := tx.Exec(ctx, `
 			INSERT INTO platform_signing_keys
 				(purpose, key_id, algorithm, kek_alias, wrapped_secret, public_key,
-				 rotation_slot, active_from)
-			VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+				 rotation_slot, active_from, forced)
+			VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 			ON CONFLICT ON CONSTRAINT platform_signing_keys_slot_unique DO NOTHING`,
 			rec.Purpose, rec.KeyID, rec.Algorithm, rec.KEKAlias, rec.WrappedSecret,
-			rec.PublicKey, rec.RotationSlot, rec.ActiveFrom)
+			rec.PublicKey, rec.RotationSlot, rec.ActiveFrom, rec.Forced)
 		if err != nil {
 			return err
 		}
@@ -105,7 +108,8 @@ func (s *Store) Insert(ctx context.Context, rec signingkeys.Record, verifyFor ti
 		inserted = true
 		_, err = tx.Exec(ctx, `
 			UPDATE platform_signing_keys
-			SET retire_after = $3, delete_after = $4
+			SET retire_after = LEAST(COALESCE(retire_after, $3::timestamptz), $3::timestamptz),
+			    delete_after = LEAST(COALESCE(delete_after, $4::timestamptz), $4::timestamptz)
 			WHERE purpose = $1 AND rotation_slot = $2`,
 			rec.Purpose, rec.RotationSlot-1, rec.ActiveFrom, rec.ActiveFrom.Add(verifyFor))
 		return err
