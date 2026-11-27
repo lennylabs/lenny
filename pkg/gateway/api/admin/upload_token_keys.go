@@ -52,11 +52,11 @@ type uploadTokenKeyRotation struct {
 // once, one publish lead ahead of its activation, and emits
 // platform.upload_token_key_rotated. The rotation itself is
 // signingkeys.Ring.RotateNow, which every protocol front can call; this
-// handler maps its outcome to HTTP. While the newest key is a forced
-// rotation's key that is not active yet, the rotation writes nothing and
-// the handler answers 409 INVALID_STATE_TRANSITION naming that key's
-// keyId and activeFrom, and emits nothing, so at most one forced rotation
-// runs per publish lead. A rotation that cannot read or write the key
+// handler maps its outcome to HTTP. A ForcedRotationPendingError (the
+// newest key carries the Forced mark and has not reached its ActiveFrom)
+// writes nothing, and the handler answers 409 INVALID_STATE_TRANSITION
+// naming that key's keyId and activeFrom and emits nothing, so at most one
+// forced rotation runs per publish lead. A rotation that cannot read or write the key
 // store, wrap the new secret, or win a slot answers 503
 // SERVICE_UNAVAILABLE with a retry hint and emits nothing. A client that
 // disconnects does not cancel the rotation, so every key written is

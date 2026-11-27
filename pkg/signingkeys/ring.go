@@ -76,13 +76,13 @@ const rotateNowAttempts = 3
 var ErrRotationContended = errors.New("signingkeys: other writers took every rotation slot the forced rotation tried")
 
 // ErrForcedRotationPending is matched by the error RotateNow returns when
-// the purpose's newest key is a forced rotation's key that is not active
-// yet. The error is a *ForcedRotationPendingError naming that key.
+// the purpose's newest key carries the Forced mark and its ActiveFrom is
+// after now. The error is a *ForcedRotationPendingError naming that key.
 var ErrForcedRotationPending = errors.New("signingkeys: a forced rotation's key is not active yet")
 
-// ForcedRotationPendingError is the refusal of a forced rotation while
-// the newest key is a forced rotation's key that is not active yet. Pending
-// is that key; a forced rotation is accepted from its ActiveFrom on.
+// ForcedRotationPendingError is RotateNow's refusal while the newest key
+// carries the Forced mark and has not reached its ActiveFrom. Pending is
+// that key; RotateNow writes again from its ActiveFrom on.
 type ForcedRotationPendingError struct {
 	Pending Rotation
 }
@@ -338,8 +338,8 @@ func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
 // activation instant is one publish lead ahead, so every replica loads it
 // before any replica signs with it, and the store retires the key before
 // it at that instant. It reloads the keys first, so the slot it writes
-// follows the newest key in the store. When the newest key is a forced
-// rotation's key that is not active yet, it writes nothing and returns a
+// follows the newest key in the store. When the newest key carries the
+// Forced mark and its ActiveFrom is after now, it writes nothing and returns a
 // *ForcedRotationPendingError, so at most one forced rotation runs per
 // publish lead; a newest key that a scheduled rotation wrote does not
 // refuse it. When another writer takes the slot first, it reloads and
