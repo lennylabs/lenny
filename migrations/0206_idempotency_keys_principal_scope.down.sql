@@ -1,4 +1,4 @@
--- Reverse migration 0205: restore the (tenant_id, idempotency_key)
+-- Reverse migration 0206: restore the (tenant_id, idempotency_key)
 -- primary key. Rows of different principals may share a key string, so
 -- the cache is discarded before the narrower key is restored.
 

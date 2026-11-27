@@ -1,5 +1,5 @@
 ---
-id: UPLOAD-I2
+id: UPLOAD-I7
 status: open
 kind: test-gap
 severity: medium
@@ -7,6 +7,8 @@ requirements: []
 ---
 
 # The security test of finalize upload tokens creates its sessions with no principal and fails before it reaches finalize
+
+This issue was filed as UPLOAD-I2 on the branch of steps 0178.S1 and 0178.S2, and took the number UPLOAD-I7 when the branch merged `main`, where change 0177 had filed UPLOAD-I2 to UPLOAD-I6.
 
 ## Specification
 

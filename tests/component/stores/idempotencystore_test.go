@@ -222,7 +222,7 @@ func aliceRecord(tenant, value string) idempotency.Key {
 // subjects or across bound sessions, or refused a claim under a scope that
 // holds no record. Every query of pkg/idempotency/idempotencymw/pgstore
 // must name tenant_id, subject, session_id, and idempotency_key, and the
-// ON CONFLICT target must be the four-column primary key of migration 0205.
+// ON CONFLICT target must be the four-column primary key of migration 0206.
 func TestThePostgresIdempotencyStoreKeysRecordsByTenantSubjectSessionAndKey(t *testing.T) {
 	t.Parallel()
 	_, pg := startStore(t)

@@ -17,10 +17,10 @@ import (
 
 // idempotencyScopeVersion is the migration that scopes idempotency_keys by
 // principal.
-const idempotencyScopeVersion = 205
+const idempotencyScopeVersion = 206
 
 // spec: §11.5 (Idempotency)
-// diagnosis: migration 0205 did not discard the rows of idempotency_keys,
+// diagnosis: migration 0206 did not discard the rows of idempotency_keys,
 // did not replace the primary key with (tenant_id, subject, session_id,
 // idempotency_key), or did not give session_id the empty-string default
 // the store writes for a bearer bound to no session; or the down
@@ -51,7 +51,7 @@ func TestTheIdempotencyScopeMigrationEmptiesTheTableAndKeysItByPrincipal(t *test
 		t.Fatalf("count rows: %v", err)
 	}
 	if rows != 0 {
-		t.Errorf("idempotency_keys holds %d rows after migration 0205, want 0", rows)
+		t.Errorf("idempotency_keys holds %d rows after migration 0206, want 0", rows)
 	}
 	if got, want := primaryKeyColumns(t, ctx, pg, "idempotency_keys"), []string{"tenant_id", "subject", "session_id", "idempotency_key"}; !slices.Equal(got, want) {
 		t.Errorf("primary key = %v, want %v", got, want)
