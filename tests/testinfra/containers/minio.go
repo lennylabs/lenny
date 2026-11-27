@@ -109,9 +109,6 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		opts.StartupTimeout = 60 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
-	defer cancel()
-
 	env := map[string]string{
 		"MINIO_ROOT_USER":     minioTestAccessKey,
 		"MINIO_ROOT_PASSWORD": minioTestSecretKey,
@@ -129,7 +126,7 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		env[k] = v
 	}
 
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	container, err := genericContainer(defaultStaleReaperRetry, opts.StartupTimeout, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        opts.Image,
 			Cmd:          []string{"server", "/data"},
@@ -150,6 +147,8 @@ func StartMinIO(t testing.TB, opts MinIOOptions) *MinIO {
 		_ = container.Terminate(stopCtx)
 	})
 
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
+	defer cancel()
 	endpoint, err := mappedEndpoint(ctx, container, "9000/tcp")
 	if err != nil {
 		t.Fatalf("StartMinIO: endpoint: %v", err)

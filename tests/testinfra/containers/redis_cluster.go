@@ -92,15 +92,16 @@ func StartRedisClusterOpts(t testing.TB, opts RedisClusterOptions) *RedisCluster
 	})
 }
 
+// redisClusterTimeout bounds one attempt to start the cluster container,
+// and the ping of its masters once it has started.
+const redisClusterTimeout = 90 * time.Second
+
 // startRedisClusterOnce runs one cluster start on the given host ports. It
 // returns an error wrapping ports.ErrAddrInUse when the container runtime
 // could not publish one of the ports, after removing that attempt's
 // container, so StartRedisClusterOpts retries on fresh ports.
 func startRedisClusterOnce(t testing.TB, opts RedisClusterOptions, hostPorts []int, clusterTLS *clusterTLSMaterial) (*RedisCluster, error) {
 	t.Helper()
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
 	exposed := make([]string, len(hostPorts))
 	bindings := network.PortMap{}
 	addrs := make([]string, len(hostPorts))
@@ -130,7 +131,7 @@ func startRedisClusterOnce(t testing.TB, opts RedisClusterOptions, hostPorts []i
 		env["REDIS_CLUSTER_TLS_DIR"] = clusterTLSDir
 		files = append(files, clusterTLS.containerFiles()...)
 	}
-	c, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	c, err := genericContainer(defaultStaleReaperRetry, redisClusterTimeout, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:              defaultRedisImage,
 			Entrypoint:         []string{"/bin/sh", "/opt/lenny/redis-cluster-start.sh"},
@@ -155,6 +156,8 @@ func startRedisClusterOnce(t testing.TB, opts RedisClusterOptions, hostPorts []i
 	}
 	t.Cleanup(func() { terminateRedisCluster(c) })
 
+	ctx, cancel := context.WithTimeout(context.Background(), redisClusterTimeout)
+	defer cancel()
 	copts := &redis.ClusterOptions{Addrs: addrs, Password: opts.Password}
 	handle := &RedisCluster{Addrs: addrs}
 	if clusterTLS != nil {
