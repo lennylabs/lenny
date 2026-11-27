@@ -133,7 +133,7 @@ func TestOpenRefusesARingWithNoKeyItCanSignWith(t *testing.T) {
 	store.DeleteKey(signingkeys.PurposeUploadToken, recs[1].KeyID)
 
 	for name, f := range map[string]func(*scriptedStore){
-		"the slot write fails":  func(s *scriptedStore) { s.insertErr = errors.New("insert refused") },
+		"the slot write fails":   func(s *scriptedStore) { s.insertErr = errors.New("insert refused") },
 		"the slot write is lost": func(s *scriptedStore) { s.insertErr = nil; s.loseSlots = true },
 	} {
 		t.Run(name, func(t *testing.T) {
