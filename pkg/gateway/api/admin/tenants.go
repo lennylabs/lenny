@@ -137,8 +137,12 @@ type Router struct {
 	// verifier trusts. It verifies receipts in the audit-events chain
 	// walk and is served by GET /v1/admin/audit-receipt-keys. Nil
 	// trusts no receipt and serves an empty list.
-	receiptKeys  *audit.ReceiptKeySet
-	auditMetrics AuditQueryMetrics
+	receiptKeys *audit.ReceiptKeySet
+	// uploadTokenKeys forces a rotation of the shared upload-token signing
+	// keys for POST /v1/admin/upload-token-keys/rotate. Nil leaves the
+	// route unregistered.
+	uploadTokenKeys UploadTokenKeyRotator
+	auditMetrics    AuditQueryMetrics
 	// auditScatter / scatterCache / scatterCacheEnabled back the §25.9 platform-admin cross-tenant audit scatter-gather and
 	// its Redis result cache. A nil auditScatter leaves the platform-admin
 	// no-tenantId query on the single-tenant (`platform`) read path.

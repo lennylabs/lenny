@@ -53,6 +53,7 @@ func (r *Router) Handler() http.Handler {
 	r.registerTokenRevokerRoutes(mux)
 	r.registerAuditRoutes(mux)
 	r.registerReceiptKeyRoutes(mux)
+	r.registerUploadTokenKeyRoutes(mux)
 	r.registerPlatformRoutes(mux)
 	r.registerPreflightRoutes(mux)
 	r.registerMeRoutes(mux)

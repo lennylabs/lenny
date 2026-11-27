@@ -135,6 +135,32 @@ func TestHashChainRedactionWithoutReceiptIsBroken(t *testing.T) {
 	}
 }
 
+// TestARedactedTailRowWithoutAReceiptReadsBrokenWhateverItsHash pins the
+// tail case of the missing receipt: a row read back from the store, flagged
+// Redacted, with no receipt and a Hash equal to its recomputed content hash
+// (no successor pins its earlier hash), reads broken in Verify and in
+// VerifyRows, and so does the row after it.
+//
+// spec: §12.8 (Compliance Interfaces), §11.7 (Audit Logging)
+func TestARedactedTailRowWithoutAReceiptReadsBrokenWhateverItsHash(t *testing.T) {
+	t.Parallel()
+	c := NewChain("acme")
+	c.Append("e1", json.RawMessage(`{"n":1}`), ts())
+	c.Append("e2", json.RawMessage(`{"pii":"x"}`), ts())
+	rows := c.Rows()
+	rows[1].Payload = json.RawMessage(`{"redacted":true}`)
+	rows[1].Hash = ComputeHash(rows[1])
+	rows[1].Redacted = true
+
+	stored := ChainFromRows("acme", rows, nil)
+	if res := stored.Verify(); res.Integrity != ChainBroken || res.BreakSeq != 2 {
+		t.Errorf("Verify = %q at %d (%s), want broken at 2", res.Integrity, res.BreakSeq, res.Detail)
+	}
+	if got := stored.VerifyRows()[2]; got != ChainBroken {
+		t.Errorf("VerifyRows[2] = %q, want broken", got)
+	}
+}
+
 func TestHashChainEmptyVerifies(t *testing.T) {
 	t.Parallel()
 	if res := NewChain("acme").Verify(); res.Integrity != ChainVerified {

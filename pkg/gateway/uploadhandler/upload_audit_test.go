@@ -91,6 +91,7 @@ func (a auditStack) upload(t *testing.T, id, body string, hdrs map[string]string
 	if err != nil {
 		t.Fatalf("mint: %v", err)
 	}
+	recordIssuedToken(t, a.store, "default", id, tok)
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions/"+id+"/upload", bytes.NewBufferString(body))
 	req.Header.Set("X-Lenny-Tenant-ID", "default")
 	req.Header.Set("X-Lenny-Upload-Token", tok)

@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I15
-status: open
+status: planned
 kind: spec-defect
 severity: low
 requirements: []
+change: 0177.S4
 ---
 
 # The §7.1 sentence that a replica never signs with a key after its retirement instant does not hold for a replica that has not loaded the retirement
@@ -25,3 +26,5 @@ The first sentence reads as a rule about the retirement instant in the table, wh
 ## Suggested resolution
 
 Reword the sentence in step 0177.S4's specification edit to "a replica never signs with a key after the retirement instant it has loaded for that key", and keep the stale-bound sentence that follows as the statement of what a replica that has not loaded it does.
+
+Step 0177.S4 rewords the sentence on its branch, together with the matching sentence of `docs/operator-guide/security.md`.
