@@ -107,6 +107,9 @@ func TestErasureLeavesNoRawUserIDInTheBillingEventsOfDrainedSessions(t *testing.
 		if n := dbCountErasure(t, pg, `SELECT COUNT(*) FROM billing_events WHERE session_id = $1::uuid AND event_type = 'session.completed'`, sid); n != 1 {
 			t.Errorf("session %s has %d session.completed billing events when the job completed, want 1 written before the pseudonymization", sid, n)
 		}
+		if n := dbCountErasure(t, pg, `SELECT COUNT(*) FROM billing_events WHERE session_id = $1::uuid AND event_type = 'session.completed' AND user_id <> ''`, sid); n != 0 {
+			t.Errorf("session %s has %d session.completed billing events with a user id, want none: the event carries no user and joins session.created on session_id", sid, n)
+		}
 	}
 
 	// No step of a drained session's pipeline writes after its budget, so a

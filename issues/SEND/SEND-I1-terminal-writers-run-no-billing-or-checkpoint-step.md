@@ -15,6 +15,7 @@ requirements: []
 ## Evidence
 
 - Found by the review of step 0176.S1 (2026-11-25), recorded as open decision O4 of change 0176.
+- Step 0176.S2 (decision 4 of change 0176) qualifies §7.1: the new paragraph **Terminal writers and the pipeline steps:** names the writers that run the whole pipeline, those that run the steps up to the delegation budget return and the pipeline mark, and those that run no pipeline. The question of whether every writer should run the whole pipeline stays with this issue.
 - The writers that call `AfterTerminalWrite` directly rather than `recordSessionCompleted` run none of the later steps: `failSession`, `failFinalizing`, `failStarting`, the cascade cancel, the cancel in `mcptools`, and `endHeldSession` of the Open Responses surface (`pkg/gateway/core/session/sessionserver/` and the platform tools seam).
 
 ## Gap

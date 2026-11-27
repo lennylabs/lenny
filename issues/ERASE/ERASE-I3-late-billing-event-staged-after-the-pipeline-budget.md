@@ -1,9 +1,10 @@
 ---
 id: ERASE-I3
-status: open
+status: planned
 kind: build-gap
 severity: high
 requirements: []
+change: 0176.S2
 ---
 
 # A `session.completed` billing event appended after the terminal pipeline's budget is staged and inserted after the erasure has passed
@@ -25,3 +26,5 @@ Change 0176 makes the erasure wait until the pipeline writes its mark or its bud
 ## Suggested resolution
 
 Under the owner's answer to 0176 O2: skip the append on an ended pipeline context and count it, with an exception in §11.2.1 (recommended); or have `failover.Pipeline.Append` refuse to stage when the caller's context has ended; or keep the behaviour and record the limit.
+
+The owner settled O2 on 2026-11-26 with option (e), decision 6 of change 0176: the terminal pipeline writes `session.completed` with an empty `user_id`, so an event staged after the budget carries no user identifier and the erasure has nothing to rewrite in it. Step 0176.S2 builds it. Events staged on another replica outside the purge remain ERASE-I4.

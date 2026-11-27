@@ -605,6 +605,8 @@ Usage of lenny-gateway:
     	§12.8 tenant-deletion runner tick. Each tick advances every in-flight tenant deletion by one phase. Default 30s. Override via LENNY_TENANT_DELETION_INTERVAL. (default 30s)
   -tenant-id-claim tenant_id
     	§10.2 OIDC claim name the gateway reads the tenant identifier from. Defaults to tenant_id (matches the canonical Lenny claim shape); set to e.g. `https://acme.example/tenant` when the upstream IdP stamps tenant identity under a different claim. Mirrors the `auth.tenantIdClaim` Helm value. F-10.2.9. (default "tenant_id")
+  -terminal-pipeline-wait-margin duration
+    	§12.8 pipeline wait margin: the time user erasure and tenant deletion add to the terminal pipeline budget (the seal window plus --stream-failure-report-timeout) while they wait for a drained session's terminal pipeline. It covers clock skew between replicas and a pipeline write that commits just after the budget's deadline, and changes no other use of the budget. Must not be negative. Default 30s. Override via LENNY_TERMINAL_PIPELINE_WAIT_MARGIN. (default 30s)
   -tls-terminated-upstream
     	§17.4 acknowledgment that an ingress or proxy terminates TLS in front of the gateway's plain-HTTP listener (the §17 production Deployment+Service+Ingress topology). Outside --dev-mode the gateway refuses to start without it. Override via LENNY_TLS_TERMINATED_UPSTREAM.
   -token-anomaly-implausible-ratio float
