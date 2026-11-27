@@ -17,6 +17,7 @@ requirements: []
 - `pkg/audit/auditstore/redaction.go`, `RedactDeadLettered`: `UPDATE audit_log SET payload = ... WHERE tenant_id = $1 AND sequence_number = $2` carries no guard on the redaction marker, and the receipt `INSERT` in the same transaction fails on `audit_redaction_receipts_position_unique` when another erasure already redacted the row.
 - `pkg/storage/deadletterredaction/redaction.go`, `RedactForUser`: a failed `redactRow` returns the error and stops the job.
 - Found by the review of step 0177.S2 on 2026-11-26.
+- The model of change 0180 (`tests/formal/auditchain/`, configuration `redaction`) reproduces it: job 1 selects and signs for row 2, job 2 selects row 2, job 1 commits its redaction, and job 2's receipt `INSERT` fails on the uniqueness, so `NoJobFailsOnRedactedRow` fails. The chain stays intact: `LinearChain` and the window and receipt-scan checks hold over the same configuration.
 
 ## Gap
 

@@ -314,4 +314,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 4 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 3 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `Decided` | 0 of 1 | 0 |
-| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 0 of 1 | 0 |
+| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 0 of 1 | 14 |
