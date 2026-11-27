@@ -1,6 +1,6 @@
 # A formal model of the audit chain and redaction receipts
 
-Status: `Decided`, revision 1, 2026-11-26.
+Status: `In progress`, revision 1, 2026-11-27.
 
 ## Problem
 
