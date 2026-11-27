@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 2 |
-| Ready | 9 |
+| Building | 3 |
+| Ready | 8 |
 | Waiting on decisions | 31 |
 | Blocked | 160 |
 | Landed | 19 |
@@ -56,6 +56,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | :-- | :-- | :-- | :-- |
 | [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Building |  |
 | [0179.S1](0179-upload-token-model/steps.md#0179s1-model-of-the-upload-token-keys-and-consumed-state) | Model of the upload-token keys and consumed state | Building |  |
+| [0180.S1](0180-audit-chain-model/steps.md#0180s1-model-of-the-audit-chain-and-redaction-receipts) | Model of the audit chain and redaction receipts | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
@@ -63,7 +64,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177.S3](0177-shared-upload-token-keys/steps.md#0177s3-the-append-after-a-redacted-tail-row) | The append after a redacted tail row | Ready |  |
 | [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Ready |  |
 | [0178.S3](0178-idempotency-keys-by-principal/steps.md#0178s3-the-acting-party-in-the-scope) | The acting party in the scope | Ready |  |
-| [0180.S1](0180-audit-chain-model/steps.md#0180s1-model-of-the-audit-chain-and-redaction-receipts) | Model of the audit chain and redaction receipts | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -314,4 +314,4 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 4 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 3 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 0 of 1 | 3 |
-| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `Decided` | 0 of 1 | 0 |
+| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 0 of 1 | 14 |

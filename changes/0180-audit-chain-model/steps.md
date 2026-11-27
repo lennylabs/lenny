@@ -7,7 +7,7 @@ None beyond the model's own checks.
 ## Steps
 
 ### 0180.S1 Model of the audit chain and redaction receipts
-- status: Planned
+- status: Building
 - lanes: [non-specification]
 - depends-on: [0177.S2]
 - closes: []
