@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I11
-status: open
+status: planned
 kind: question
 severity: low
 requirements: []
+change: 0177.S4
 ---
 
 # Forced upload-token key rotations have no bound, so a looping caller can stop minting on every replica
@@ -34,3 +35,5 @@ The owner chooses a bound. Options:
 - (d) Document the cost and add no bound.
 
 Recommendation: (a), because it bounds the key count by construction and matches the publish lead.
+
+The owner chose (a) on 2026-11-27 (decision 13 of change 0177, answer to UK-9). Step 0177.S4 builds it.
