@@ -118,7 +118,7 @@ func newTerminalBillingRound(t *testing.T, appendDelay, verifyDelay time.Duratio
 		}).
 		WithHoldCheck(func(context.Context, string, string) ([]erasurejob.Hold, error) { return nil, nil }).
 		WithPipelineGate(func(ctx context.Context, tenantID, userID string) ([]string, error) {
-			return admin.TerminalPipelinesPending(ctx, sessions, tenantID, userID, time.Now(), srv.TerminalPipelineBudget())
+			return admin.TerminalPipelinesPending(ctx, sessions, tenantID, userID, time.Now(), srv.TerminalPipelineBudget(), 0)
 		}).
 		WithBilling(erasurejob.NewBillingEraser(slowVerifyBilling{Memory: billing, delay: verifyDelay}, tenants)).
 		WithCompletionReceipt(func(context.Context, erasurejob.Job) error { return nil })

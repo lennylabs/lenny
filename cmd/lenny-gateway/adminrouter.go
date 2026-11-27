@@ -1301,12 +1301,12 @@ func sessionIDsAdapter(fn func(ctx context.Context, tenantID, userID string, ses
 // in their post-terminal window (admin.TerminalPipelinesPending), listed from
 // the primary over w.sessions on the injected clock with the terminal
 // pipeline budget buildStores computed, the one the session server's
-// terminalContext applies. The gate returns identifiers rather than an admin
-// error, because admin imports erasurejob.
+// terminalContext applies, plus the pipeline wait margin. The gate returns
+// identifiers rather than an admin error, because admin imports erasurejob.
 // spec: §12.8 (Lifecycle fence and drain), §7.1 (Pipeline-pending session)
 func (w *gatewayWiring) erasurePipelineGate() func(ctx context.Context, tenantID, userID string) ([]string, error) {
 	return func(ctx context.Context, tenantID, userID string) ([]string, error) {
-		return admin.TerminalPipelinesPending(ctx, w.sessions, tenantID, userID, clockinject.Now(), w.postTerminalCap)
+		return admin.TerminalPipelinesPending(ctx, w.sessions, tenantID, userID, clockinject.Now(), w.postTerminalCap, w.pipelineWaitMargin)
 	}
 }
 
@@ -1315,7 +1315,8 @@ func (w *gatewayWiring) erasurePipelineGate() func(ctx context.Context, tenantID
 // publishing the drained sessions on pods (the binding-release fan-out, nil
 // without a pod registry), and holding Phase 2 while a session is
 // pipeline-pending or in its post-terminal window, with the terminal pipeline
-// budget buildStores computed and the injected clock.
+// budget buildStores computed plus the pipeline wait margin, and the injected
+// clock.
 // spec: §12.8 (Tenant deletion lifecycle), §7.1 (Pipeline-pending session),
 // §28.5.7 (Gateway-to-store)
 func (w *gatewayWiring) newTenantSessionTerminator(term admin.DrainTerminator, pods admin.UserPodTerminator, budget time.Duration) tenantSessionTerminator {
@@ -1325,6 +1326,7 @@ func (w *gatewayWiring) newTenantSessionTerminator(term admin.DrainTerminator, p
 		pods:     pods,
 		budget:   budget,
 		cap:      w.postTerminalCap,
+		margin:   w.pipelineWaitMargin,
 		clock:    clockinject.Now,
 	}
 }

@@ -120,6 +120,10 @@ Step 1 of "SL-3" halts the slot's egress through `netagent` when a suspension ca
 
 **Recommendation: (a)**, as `0124-connector-removal` recommends, because no member change designs a per-slot control outside `netagent`. It blocks the "Limits" entry and the documentation row of 0146.S1, and 0124.S3. The other change is [`0124-connector-removal`](../0124-connector-removal/decisions.md) (O19), which also names `0127-egress-and-git`. (raised by the M3 readiness review, 2026-11-19; requested by change 0124; sources: 0124-F2)
 
+**Open decisions of `0175-session-lifecycle-model` on this change's rules. Open.**
+
+The formal model of step 0175.S1 found these, and [`0175-session-lifecycle-model/decisions.md`](../0175-session-lifecycle-model/decisions.md#open-decisions) holds each with its options and recommendation; each answer lands here as the next L entry. O4: SLR-21 and "A child's age" in SL-10, which decision 1 of 0175 moved here from 0166, disagree on a child in `awaiting_client_action` under a suspended ancestor. O5: the tree terminate's root state and its effect on a tree whose root already ended (SL-9). O6: a resume the root's client asks for is undone when the session has no pod (SL-2, SLR-4). O7: a leave keeps descendants `blocked` under a session outside their tree (SL-4). O8: a parent's transfer lifts a pause that only the root's client may lift (SL-4, SLR-5). O9: whether `maxParallelChildren` holds at every instant (SL-10, with SL-Q12). O10: a leave that commits between a parent's end and the cascade escapes it (SL-9, SLR-31).
+
 ## Decisions
 
 Settled by the owner on 2026-11-11, in a review of the combined lifecycle of a parent and its children after revision 9 of the message delivery design. The rows quote the owner.
