@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I9
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0177.S4
 ---
 
 # The upload-token check does not compare the presented token with the digest recorded on the session row

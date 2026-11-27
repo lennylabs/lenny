@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I8
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0177.S4
 ---
 
 # POST /v1/sessions/start never marks its upload token consumed

@@ -8,7 +8,7 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Ready | 7 |
+| Ready | 8 |
 | Waiting on decisions | 34 |
 | Blocked | 160 |
 | Landed | 34 |
@@ -58,6 +58,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
 | [0176.S2](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s2-the-budget-margin-and-the-terminal-writers-in-71) | The budget margin and the terminal writers in §7.1 | Ready |  |
 | [0177.S3](0177-shared-upload-token-keys/steps.md#0177s3-the-append-after-a-redacted-tail-row) | The append after a redacted tail row | Ready |  |
+| [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Ready |  |
 | [0178.S3](0178-idempotency-keys-by-principal/steps.md#0178s3-the-acting-party-in-the-scope) | The acting party in the scope | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
@@ -326,7 +327,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0172](0172-gate-speed/change.md) | Merge gate wall time | `Implemented` | 12 of 12 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Draft` | 0 of 1 | 2 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 1 of 2 | 0 |
-| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 3 | 1 |
+| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 4 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 3 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `Draft` | 0 of 1 | 2 |
 | [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `Draft` | 0 of 1 | 2 |
