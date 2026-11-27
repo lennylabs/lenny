@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 1 |
-| Ready | 10 |
+| Building | 2 |
+| Ready | 9 |
 | Waiting on decisions | 31 |
 | Blocked | 160 |
 | Landed | 19 |
@@ -54,11 +54,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
+| [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Building |  |
 | [0179.S1](0179-upload-token-model/steps.md#0179s1-model-of-the-upload-token-keys-and-consumed-state) | Model of the upload-token keys and consumed state | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
-| [0175.S1](0175-session-lifecycle-model/steps.md#0175s1-review-and-model-of-the-session-lifecycle) | Review and model of the session lifecycle | Ready |  |
 | [0176.S2](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s2-the-budget-margin-and-the-terminal-writers-in-71) | The budget margin and the terminal writers in §7.1 | Ready |  |
 | [0177.S3](0177-shared-upload-token-keys/steps.md#0177s3-the-append-after-a-redacted-tail-row) | The append after a redacted tail row | Ready |  |
 | [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Ready |  |
@@ -309,7 +309,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0156](0156-store-conformance-and-router-contracts/change.md) | Store conformance suites and router contracts | `Decided` | 0 of 1 | 0 |
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
-| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `Decided` | 0 of 1 | 0 |
+| [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `In progress` | 0 of 1 | 0 |
 | [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 1 of 2 | 0 |
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 4 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 3 | 0 |

@@ -1,6 +1,6 @@
 # A formal model of the session lifecycle
 
-Status: `Decided`, revision 3, 2026-11-26.
+Status: `In progress`, revision 3, 2026-11-27.
 
 ## Problem
 
