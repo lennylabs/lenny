@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-None.
+- **O9. Coverage waiver for 0177.S3 and 0177.S4.** `lenny-test coverage --diff main --threshold 0.80 --require-gate` on the profile of gate run `caf3e5a8521d24558dcdbfdf` (PASS on `7c41a7e27`) measures 177 of 222 changed lines (79.7%), below the floor of 80%. The unit tier cannot reach 34 of the uncovered lines, which are Postgres store code and gateway wiring: `pkg/session/sessionstore/pgstore/pgstore.go` (10 lines, the `upload_token_consumed_at` insert column), `pkg/audit/auditstore/redaction.go` (11 lines, `tailReceiptHash`), `pkg/audit/auditstore/auditstore.go` (6 lines, the receipt read in `scanTail`), `pkg/signingkeys/pgstore/pgstore.go` (2 lines, the `LEAST` update), and `cmd/lenny-gateway/adminrouter.go` (5 lines, wiring the ring into the admin router). The component tests `TestARowAppendedAfterARedactedTailRowLinksToItsOriginalHash`, `TestARedactedTailRowWithoutAReceiptStillReadsBroken`, `TestSessionStoreCreatesARowWithItsTokenConsumed`, `TestSigningKeyStoreNeverExtendsTheReplacedKey`, and `TestAForcedRotationOverPostgresReachesThePeerBeforeItsActivation` run the store lines, and the coverage check measures the unit tier alone (GATE-I14). Without those lines the measure is 177 of 188 (94.1%). Options: (a) waive the floor for those 34 lines, as decision 6 did for 0177.S1; (b) add unit tests over fake stores for the store code, which the brief of this build excludes; (c) hold the merge until GATE-I14 counts the component tier. Recommendation: (a).
 
 ## Decisions
 
