@@ -24,4 +24,4 @@ A margin entered in the wrong unit, such as `720h` meant as minutes, holds every
 
 ## Suggested resolution
 
-Needs the owner's decision. Options: (a) refuse a margin above a fixed ceiling, such as the budget itself; (b) log a startup warning above a threshold; (c) keep the value unbounded and rely on the `ErasureJobOverdue` alert (recommended only if the owner prefers no new limit).
+Open decision O7 of change [0176](../../changes/0176-erasure-waits-for-terminal-pipeline/decisions.md). Options: (a) refuse a margin above a fixed ceiling, such as the budget itself (recommended); (b) log a startup warning above a threshold; (c) keep the value unbounded and rely on the `ErasureJobOverdue` alert.

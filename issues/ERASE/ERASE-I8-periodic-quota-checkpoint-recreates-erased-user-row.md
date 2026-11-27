@@ -26,4 +26,4 @@ A pass that read the user's counter before the erasure deleted it, and whose wri
 
 ## Suggested resolution
 
-Needs the owner's decision. Options: (a) the periodic write skips a subject whose user row is `processing_restricted`, read in the write transaction on the primary, the fence pattern of §12.8 (recommended); (b) the erasure job deletes the user's quota rows again just before verification and includes them in the verification.
+Open decision O6 of change [0176](../../changes/0176-erasure-waits-for-terminal-pipeline/decisions.md). Options: (a) the periodic write skips a subject whose user row is `processing_restricted`, read in the write transaction on the primary, the fence pattern of §12.8 (recommended); (b) the erasure job deletes the user's quota rows again just before verification and includes them in the verification.
