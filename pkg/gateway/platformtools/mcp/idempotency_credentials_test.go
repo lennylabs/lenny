@@ -6,7 +6,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -46,14 +45,14 @@ func TestMCPIdempotencyStoresNoCredentialAndReplaysIt(t *testing.T) {
 		})
 	store := idempotencymw.NewMemoryStore()
 	s.SetIdempotency(mcp.IdempotencyConfig{
-		Store:             idempotencymw.WithCredentials(store, swapRedactor{}),
-		TenantFromRequest: func(r *http.Request) string { return r.Header.Get("X-Lenny-Tenant-ID") },
-		Tools:             map[string]bool{"lenny/create_session": true},
+		Store:   idempotencymw.WithCredentials(store, swapRedactor{}),
+		Callers: headerPrincipal,
+		Tools:   map[string]bool{"lenny/create_session": true},
 	})
 
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/create_session","arguments":{"runtimeRef":"echo","idempotencyKey":"abc-123"}}}`
 	r1 := rpcWithTenant(t, s.Handler(), "acme", body)
-	rec, found, err := store.Get(context.Background(), "acme", "mcp/lenny/create_session/abc-123")
+	rec, found, err := store.Get(context.Background(), aliceScope("mcp/lenny/create_session/abc-123"))
 	if err != nil || !found {
 		t.Fatalf("Get: found=%v err=%v", found, err)
 	}

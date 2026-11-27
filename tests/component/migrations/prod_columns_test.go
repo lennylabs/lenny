@@ -685,6 +685,9 @@ var prodMigrationSchema = []struct {
 	// 0205 adds the §7.1 single-use record of the uploadToken, which the
 	// finalize ready write sets and every replica reads on verification.
 	{migration: "0205", table: "sessions", columns: []string{"upload_token_consumed_at"}},
+	// 0206 scopes the §11.5 idempotency records by principal: the subject
+	// and the bound session join the primary key.
+	{migration: "0206", table: "idempotency_keys", columns: []string{"subject", "session_id"}},
 }
 
 // renamedTables maps a table an earlier migration created or altered to
@@ -745,7 +748,9 @@ func TestProdMigrationsRollBackPerStep(t *testing.T) {
 		if err != nil {
 			t.Fatalf("migration number %q: %v", m.migration, err)
 		}
-		pg.MigrateTo(t, dir, uint(n)-1)
+		// The version below n is the highest migration file under it, which is
+		// n-1 unless a number was skipped.
+		pg.MigrateTo(t, dir, migrationVersionBelow(t, dir, uint(n)))
 		if m.create {
 			mustNotHaveTable(t, ctx, pg, m.table)
 			continue

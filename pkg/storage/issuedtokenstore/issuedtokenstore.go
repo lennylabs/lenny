@@ -1003,7 +1003,7 @@ func (s *Store) DeleteExpired(ctx context.Context, tenantID string, cutoff time.
 // the hour.
 //
 // spec: §12.1, §12.8 (Compliance Interfaces: DeleteByUser
-// dependency-ordered deletion sequence, step 18), §13.3 (Credential Flow:
+// dependency-ordered deletion sequence, step 19), §13.3 (Credential Flow:
 // Authoritative durability for revocation).
 func (s *Store) DeleteByUser(ctx context.Context, tenantID, userID string) (int, error) {
 	if tenantID == "" || userID == "" {

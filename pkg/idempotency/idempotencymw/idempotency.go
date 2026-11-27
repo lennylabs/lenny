@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"log"
 	"net/http"
@@ -34,60 +35,59 @@ import (
 // Store is the persistence contract the middleware drives. Production
 // uses a Postgres-backed implementation; the in-memory store below
 // satisfies the same shape for tests and the minimal gateway.
+//
+// Every method addresses a record by its full idempotency.Key: the
+// principal's tenant, subject, and bound session, and the caller's key
+// string. A store never matches a record across scopes.
 type Store interface {
-	// Get returns the stored Record for (tenantID, key) or the zero
-	// value when no record exists.
-	Get(ctx context.Context, tenantID, key string) (idempotency.Record, bool, error)
+	// Get returns the stored Record for key or the zero value when no
+	// record exists.
+	Get(ctx context.Context, key idempotency.Key) (idempotency.Record, bool, error)
 
-	// Put inserts or replaces a record. Implementations MUST honour
-	// the §11.5 24-hour TTL via Record.StoredAt.
+	// Put inserts or replaces a record under record.Key. Implementations
+	// MUST honour the §11.5 24-hour TTL via Record.StoredAt.
 	Put(ctx context.Context, record idempotency.Record) error
 
-	// Claim atomically reserves (tenantID, key). When no live record
-	// exists, a pending row (Response.StatusCode == 0) is written with
-	// the inbound bodyHash and the call returns claimed=true. When a
-	// live record already exists, it is returned with claimed=false so
-	// the middleware can branch on its state (pending → in-flight,
-	// matching hash → replay, different hash → 422 reuse). An expired
-	// record (older than the §11.5 24-hour TTL) is treated as absent
-	// and overwritten by the fresh claim. spec: §11.5;
-	// F-11.5.2.
-	Claim(ctx context.Context, tenantID, key, bodyHash string, now time.Time) (existing idempotency.Record, claimed bool, err error)
+	// Claim atomically reserves key. When no live record exists, a
+	// pending row (Response.StatusCode == 0) is written with the inbound
+	// bodyHash and the call returns claimed=true. When a live record
+	// already exists, it is returned with claimed=false so the middleware
+	// can branch on its state (pending → in-flight, matching hash →
+	// replay, different hash → 422 reuse). An expired record (older than
+	// the §11.5 24-hour TTL) is treated as absent and overwritten by the
+	// fresh claim. spec: §11.5; F-11.5.2.
+	Claim(ctx context.Context, key idempotency.Key, bodyHash string, now time.Time) (existing idempotency.Record, claimed bool, err error)
 
-	// Release deletes the (tenantID, key) row. The middleware calls it
-	// when the inner handler returns a 5xx (so a retry can re-execute)
-	// or when the captured response was streamed and is not safely
-	// replayable. Releasing a non-existent row is not an error.
+	// Release deletes the row for key. The middleware calls it when the
+	// inner handler returns a 5xx (so a retry can re-execute) or when the
+	// captured response was streamed and is not safely replayable.
+	// Releasing a non-existent row is not an error.
 	// spec: §11.5; F-11.5.2, F-11.5.3, F-11.5.10.
-	Release(ctx context.Context, tenantID, key string) error
+	Release(ctx context.Context, key idempotency.Key) error
 }
 
 // MemoryStore is an in-memory Store backing tests and the minimal
-// gateway. The map is keyed by (tenantID, key) and protected by an
-// RWMutex.
+// gateway. The map is keyed by the full idempotency.Key (tenant,
+// subject, bound session, and key string) and protected by an RWMutex.
 type MemoryStore struct {
 	mu      sync.RWMutex
-	records map[storeKey]idempotency.Record
+	records map[idempotency.Key]idempotency.Record
 	now     func() time.Time
-}
-
-type storeKey struct {
-	tenantID string
-	key      string
 }
 
 // NewMemoryStore returns an empty in-memory Store.
 func NewMemoryStore() *MemoryStore {
 	return &MemoryStore{
-		records: make(map[storeKey]idempotency.Record),
+		records: make(map[idempotency.Key]idempotency.Record),
 		now:     func() time.Time { return time.Now().UTC() },
 	}
 }
 
-func (m *MemoryStore) Get(_ context.Context, tenantID, key string) (idempotency.Record, bool, error) {
+// Get returns the live record filed under key.
+func (m *MemoryStore) Get(_ context.Context, key idempotency.Key) (idempotency.Record, bool, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	rec, ok := m.records[storeKey{tenantID, key}]
+	rec, ok := m.records[key]
 	if !ok {
 		return idempotency.Record{}, false, nil
 	}
@@ -98,48 +98,95 @@ func (m *MemoryStore) Get(_ context.Context, tenantID, key string) (idempotency.
 	return rec, true, nil
 }
 
+// Put inserts or replaces the record filed under rec.Key. Like the
+// Postgres store, it refuses a key that fails validation, so neither store
+// files a record under an empty tenant or subject.
 func (m *MemoryStore) Put(_ context.Context, rec idempotency.Record) error {
+	if err := rec.Key.Validate(); err != nil {
+		return err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if rec.StoredAt.IsZero() {
 		rec.StoredAt = m.now()
 	}
-	m.records[storeKey{rec.Key.TenantID, rec.Key.Value}] = rec
+	m.records[rec.Key] = rec
 	return nil
 }
 
-// Claim atomically inserts a pending row for (tenantID, key) when no
-// live record exists, or returns the existing record without modifying
-// it. The pending row's Response.StatusCode is zero — the sentinel the
+// Claim atomically inserts a pending row for key when no live record
+// exists, or returns the existing record without modifying it. The
+// pending row's Response.StatusCode is zero — the sentinel the
 // middleware reads when a concurrent retry arrives mid-execution. An
 // expired record (older than the §11.5 24-hour TTL) is treated as
-// absent so the new caller wins the slot. spec: §11.5; F-11.5.2.
-func (m *MemoryStore) Claim(_ context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+// absent so the new caller wins the slot. A key that fails validation is
+// refused. spec: §11.5; F-11.5.2.
+func (m *MemoryStore) Claim(_ context.Context, key idempotency.Key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+	if err := key.Validate(); err != nil {
+		return idempotency.Record{}, false, err
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	k := storeKey{tenantID, key}
-	if rec, ok := m.records[k]; ok && !rec.IsExpired(now) {
+	if rec, ok := m.records[key]; ok && !rec.IsExpired(now) {
 		return rec, false, nil
 	}
-	pending := idempotency.Record{
-		Key:      idempotency.Key{TenantID: tenantID, Value: key},
+	m.records[key] = idempotency.Record{
+		Key:      key,
 		BodyHash: bodyHash,
 		Response: idempotency.Response{StatusCode: 0},
 		StoredAt: now,
 	}
-	m.records[k] = pending
 	return idempotency.Record{}, true, nil
 }
 
-// Release removes the pending or final row for (tenantID, key). Used by
-// the middleware on 5xx/streaming paths so a retry can re-execute
-// against a healthy backend. A missing row is not an error.
+// Release removes the pending or final row for key. Used by the
+// middleware on 5xx/streaming paths so a retry can re-execute against a
+// healthy backend. A missing row is not an error.
 // spec: §11.5; F-11.5.2, F-11.5.3.
-func (m *MemoryStore) Release(_ context.Context, tenantID, key string) error {
+func (m *MemoryStore) Release(_ context.Context, key idempotency.Key) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	delete(m.records, storeKey{tenantID, key})
+	delete(m.records, key)
 	return nil
+}
+
+// DeleteByUser deletes every record of one user in one tenant, under every
+// bound session, and returns the number deleted. User erasure runs it as
+// its idempotency-records step.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (m *MemoryStore) DeleteByUser(_ context.Context, tenantID, subject string) (int, error) {
+	if tenantID == "" || subject == "" {
+		return 0, errors.New("idempotency: DeleteByUser needs a tenant and a subject")
+	}
+	return m.deleteWhere(func(k idempotency.Key) bool {
+		return k.TenantID == tenantID && k.Subject == subject
+	}), nil
+}
+
+// DeleteByTenant deletes every record of one tenant and returns the number
+// deleted. Tenant deletion Phase 4 runs it as its idempotency-records step.
+//
+// spec: §12.8 (Compliance Interfaces)
+func (m *MemoryStore) DeleteByTenant(_ context.Context, tenantID string) (int, error) {
+	if tenantID == "" {
+		return 0, errors.New("idempotency: DeleteByTenant needs a tenant")
+	}
+	return m.deleteWhere(func(k idempotency.Key) bool { return k.TenantID == tenantID }), nil
+}
+
+// deleteWhere deletes the records whose key matches and returns the count.
+func (m *MemoryStore) deleteWhere(match func(idempotency.Key) bool) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	n := 0
+	for k := range m.records {
+		if match(k) {
+			delete(m.records, k)
+			n++
+		}
+	}
+	return n
 }
 
 // HeaderName is the §11.5 HTTP header that carries the idempotency
@@ -168,10 +215,13 @@ type Metrics interface {
 
 // Options configures a Middleware.
 type Options struct {
-	// TenantFromRequest extracts the tenant id from the inbound
-	// request. The minimal gateway uses the dev X-Lenny-Tenant-ID
-	// header; production wires in pkg/auth.
-	TenantFromRequest func(*http.Request) string
+	// PrincipalFromRequest returns the scope of the request's
+	// authenticated principal: its tenant, its subject, and the session
+	// its bearer is bound to (empty for a bearer bound to none). The
+	// gateway wires it to the principal the auth middleware attaches to
+	// the request context. There is no default: a nil resolver resolves
+	// no tenant, and the middleware refuses every keyed request.
+	PrincipalFromRequest func(*http.Request) (tenantID, subject, sessionID string)
 
 	// MaxBodyBytes caps the body the middleware buffers in memory
 	// before hashing. Required because the middleware must read the
@@ -213,9 +263,6 @@ type Options struct {
 // invoking inner. Requests without an Idempotency-Key header pass
 // through untouched.
 func Wrap(inner http.Handler, store Store, opts Options) http.Handler {
-	if opts.TenantFromRequest == nil {
-		opts.TenantFromRequest = defaultTenantFromRequest
-	}
 	if opts.MaxBodyBytes <= 0 {
 		opts.MaxBodyBytes = 1 << 20
 	}
@@ -318,22 +365,10 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	tenantID := m.opts.TenantFromRequest(r)
-	if tenantID == "" {
-		// spec: §11.5 — "Idempotency keys are scoped per
-		// tenant — the same key string used by different tenants is
-		// treated independently." If the request reaches this
-		// middleware without a tenant, the chain is misordered (the
-		// idempotency middleware ran before auth or auth was bypassed
-		// for this path); failing closed surfaces the wiring bug
-		// instead of collapsing keys from different tenants under a
-		// shared scope.
-		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
-			"idempotency middleware: tenant could not be resolved from request — auth chain must precede idempotency",
-			map[string]any{"reason": "tenant_required"})
+	idemKey, ok := m.resolveKey(w, r, key)
+	if !ok {
 		return
 	}
-	idemKey := idempotency.Key{TenantID: tenantID, Value: key}
 	if err := idemKey.Validate(); err != nil {
 		writeError(w, http.StatusBadRequest, "INVALID_IDEMPOTENCY_KEY", err.Error(), nil)
 		return
@@ -354,7 +389,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// mid-execution observes the claim and is rejected with
 	// IDEMPOTENCY_KEY_IN_FLIGHT instead of executing in parallel. Closes
 	// F-11.5.2.
-	existing, claimed, err := m.store.Claim(r.Context(), tenantID, key, hash, now)
+	existing, claimed, err := m.store.Claim(r.Context(), idemKey, hash, now)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 		return
@@ -393,7 +428,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		case idempotency.ActionStoreNew:
 			// The existing row expired between the Claim's TTL check and
 			// here (unlikely race), so re-claim and proceed.
-			_, claimed, err = m.store.Claim(r.Context(), tenantID, key, hash, now)
+			_, claimed, err = m.store.Claim(r.Context(), idemKey, hash, now)
 			if err != nil {
 				writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR", err.Error(), nil)
 				return
@@ -418,7 +453,7 @@ func (m *middleware) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	finalized := false
 	defer func() {
 		if !finalized {
-			_ = m.store.Release(r.Context(), tenantID, key)
+			_ = m.store.Release(r.Context(), idemKey)
 		}
 	}()
 	m.inner.ServeHTTP(captured, r)
@@ -468,7 +503,7 @@ func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, 
 			m.opts.Metrics.IncIdempotencyCacheSkipped(idemKey.TenantID, "streamed")
 		}
 		m.logger().Printf("idempotency: skipping cache write for streamed response tenant=%q key=%q", idemKey.TenantID, idemKey.Value)
-		if err := m.store.Release(ctx, idemKey.TenantID, idemKey.Value); err != nil {
+		if err := m.store.Release(ctx, idemKey); err != nil {
 			m.logger().Printf("idempotency: failed to release pending row after streamed response tenant=%q key=%q err=%q", idemKey.TenantID, idemKey.Value, err.Error())
 		}
 		return
@@ -486,7 +521,7 @@ func (m *middleware) maybePersist(ctx context.Context, idemKey idempotency.Key, 
 			m.opts.Metrics.IncIdempotencyCacheSkipped(idemKey.TenantID, "server_error")
 		}
 		m.logger().Printf("idempotency: skipping cache write for 5xx response tenant=%q key=%q status=%d", idemKey.TenantID, idemKey.Value, status)
-		if err := m.store.Release(ctx, idemKey.TenantID, idemKey.Value); err != nil {
+		if err := m.store.Release(ctx, idemKey); err != nil {
 			m.logger().Printf("idempotency: failed to release pending row after 5xx response tenant=%q key=%q err=%q", idemKey.TenantID, idemKey.Value, err.Error())
 		}
 		return
@@ -526,7 +561,7 @@ func (m *middleware) skipAndRelease(ctx context.Context, idemKey idempotency.Key
 		m.opts.Metrics.IncIdempotencyCacheSkipped(idemKey.TenantID, reason)
 	}
 	m.logger().Printf("idempotency: skipping cache write (%s) tenant=%q key=%q", reason, idemKey.TenantID, idemKey.Value)
-	if err := m.store.Release(ctx, idemKey.TenantID, idemKey.Value); err != nil {
+	if err := m.store.Release(ctx, idemKey); err != nil {
 		m.logger().Printf("idempotency: failed to release pending row (%s) tenant=%q key=%q err=%q", reason, idemKey.TenantID, idemKey.Value, err.Error())
 	}
 }
@@ -730,13 +765,33 @@ func writeError(w http.ResponseWriter, status int, code, message string, details
 	_ = json.NewEncoder(w).Encode(map[string]any{"error": body})
 }
 
-// defaultTenantFromRequest reads the tenant from the auth-set
-// X-Lenny-Tenant-ID header (set by pkg/auth/authmw on
-// every authenticated request). Returning "" causes the middleware to
-// fail closed with 500 INTERNAL_ERROR — the §11.5 per-tenant scope
-// must not silently collapse to a shared bucket when the request
-// arrives without a tenant.
-// spec: §11.5 — "scoped per tenant".
-func defaultTenantFromRequest(r *http.Request) string {
-	return r.Header.Get("X-Lenny-Tenant-ID")
+// resolveKey files the request's key under the scope of its authenticated
+// principal. It writes the refusal and returns false when the scope is
+// incomplete: a request with no tenant reached the middleware outside the
+// auth chain, which is a wiring defect (500, reason tenant_required), and a
+// request with no subject has no owner to file the record under
+// (401 UNAUTHORIZED, reason principal_subject_required, the envelope the
+// session surfaces write for a create with no subject). Neither refusal
+// claims the key, so no record is ever filed under an empty tenant or an
+// empty subject.
+//
+// spec: §11.5 (Idempotency)
+func (m *middleware) resolveKey(w http.ResponseWriter, r *http.Request, key string) (idempotency.Key, bool) {
+	var tenantID, subject, sessionID string
+	if m.opts.PrincipalFromRequest != nil {
+		tenantID, subject, sessionID = m.opts.PrincipalFromRequest(r)
+	}
+	if tenantID == "" {
+		writeError(w, http.StatusInternalServerError, "INTERNAL_ERROR",
+			"idempotency middleware: tenant could not be resolved from request — auth chain must precede idempotency",
+			map[string]any{"reason": "tenant_required"})
+		return idempotency.Key{}, false
+	}
+	if subject == "" {
+		writeError(w, http.StatusUnauthorized, "UNAUTHORIZED",
+			"request requires an authenticated principal with a subject",
+			map[string]any{"reason": "principal_subject_required"})
+		return idempotency.Key{}, false
+	}
+	return idempotency.Key{TenantID: tenantID, Subject: subject, SessionID: sessionID, Value: key}, true
 }

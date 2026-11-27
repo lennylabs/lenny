@@ -20,7 +20,7 @@ import (
 // state between concurrent invocations.
 func TestIdempotencyDetectReuseIsPure(t *testing.T) {
 	t.Parallel()
-	key := idempotency.Key{TenantID: "acme", Value: "k-1"}
+	key := idempotency.Key{TenantID: "acme", Subject: "alice", Value: "k-1"}
 	now := time.Now()
 	hash := idempotency.HashBody([]byte(`{"x":1}`))
 	stored := idempotency.Record{Key: key, BodyHash: hash, StoredAt: now}

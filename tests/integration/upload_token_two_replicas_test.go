@@ -63,8 +63,9 @@ func uploadTokenReplica(t *testing.T, pg *containers.Postgres, blobs blobstore.S
 		UploadTokenVerifier: uploadtoken.NewVerifier(keys, nil, nil),
 	})
 	uploadwire.Attach(t, srv, uploadhandler.Options{Blobs: blobs})
-	return idempotencymw.Wrap(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice),
-		idempotencymw.WithCredentials(idempotencypg.New(pg.Pool), uploadtoken.NewRedactor(keys)), idempotencymw.Options{})
+	return ownerprincipal.Wrap(idempotencymw.Wrap(apifront.Handler(srv),
+		idempotencymw.WithCredentials(idempotencypg.New(pg.Pool), uploadtoken.NewRedactor(keys)),
+		idempotencymw.Options{PrincipalFromRequest: ownerprincipal.Scope}), ownerprincipal.Alice)
 }
 
 // replicaRequest sends one request for the test tenant to h.

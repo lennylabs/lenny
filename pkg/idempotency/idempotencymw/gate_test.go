@@ -22,7 +22,7 @@ func TestWrapDoesNotStoreAForwardRefusal_spec_11_5(t *testing.T) {
 	})
 	store := NewMemoryStore()
 	metrics := &recordingMetrics{}
-	h := Wrap(inner, store, Options{Metrics: metrics})
+	h := Wrap(inner, store, testOptions(Options{Metrics: metrics}))
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s/resume", strings.NewReader("{}"))
 		req.Header.Set(HeaderName, "k-1")
@@ -36,7 +36,7 @@ func TestWrapDoesNotStoreAForwardRefusal_spec_11_5(t *testing.T) {
 	if n := calls.Load(); n != 2 {
 		t.Errorf("handler ran %d times, want 2: a same-key retry after a refusal runs again", n)
 	}
-	if _, ok, _ := store.Get(context.Background(), "acme", "k-1"); ok {
+	if _, ok, _ := store.Get(context.Background(), aliceKey("k-1")); ok {
 		t.Error("the refusal left a cache row")
 	}
 	if len(metrics.skipped) != 2 || metrics.skipped[0].reason != SkipReasonForwardRefused {
@@ -52,7 +52,7 @@ func TestWrapStillStoresAnUnmarked409_spec_11_5(t *testing.T) {
 		w.WriteHeader(http.StatusConflict)
 		_, _ = w.Write([]byte(`{"error":{"code":"TARGET_NOT_READY"}}`))
 	})
-	h := Wrap(inner, NewMemoryStore(), Options{})
+	h := Wrap(inner, NewMemoryStore(), testOptions(Options{}))
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions/s/start", strings.NewReader("{}"))
 		req.Header.Set(HeaderName, "k-2")
@@ -98,7 +98,7 @@ func TestWrapDoesNotStoreAResponseMarkedAsCarryingACredential(t *testing.T) {
 	})
 	store := NewMemoryStore()
 	metrics := &recordingMetrics{}
-	h := Wrap(inner, store, Options{Metrics: metrics})
+	h := Wrap(inner, store, testOptions(Options{Metrics: metrics}))
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodPost, "/mcp", strings.NewReader("{}"))
 		req.Header.Set(HeaderName, "k-cred")
@@ -111,7 +111,7 @@ func TestWrapDoesNotStoreAResponseMarkedAsCarryingACredential(t *testing.T) {
 	if forwardRefused.Load() {
 		t.Error("a credential mark reads as a forward refusal")
 	}
-	if _, ok, _ := store.Get(context.Background(), "acme", "k-cred"); ok {
+	if _, ok, _ := store.Get(context.Background(), aliceKey("k-cred")); ok {
 		t.Error("the response left a cache row")
 	}
 	if len(metrics.skipped) != 2 || metrics.skipped[0].reason != SkipReasonCredential || metrics.skipped[1].reason != SkipReasonCredential {

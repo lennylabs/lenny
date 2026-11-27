@@ -65,6 +65,7 @@ runGateway:
       w.checkpointSessionErasers
     w.buildUserErasers
       w.userCacheErasers
+      w.idempotencyUserEraser
     w.erasurePipelineGate
     w.tenants.Get
     defer preflightMu.Unlock
@@ -93,6 +94,7 @@ runGateway:
     defer cancel
     w.WriteHeader
     w.Write
+    w.idempotencyStore
   w.buildHolderForwardServer
     w.responsesHandler.Handler
     w.apiRoutes.Handler

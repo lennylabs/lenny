@@ -42,8 +42,8 @@ type credentialStore struct {
 	redactor CredentialRedactor
 }
 
-func (c *credentialStore) Get(ctx context.Context, tenantID, key string) (idempotency.Record, bool, error) {
-	rec, found, err := c.inner.Get(ctx, tenantID, key)
+func (c *credentialStore) Get(ctx context.Context, key idempotency.Key) (idempotency.Record, bool, error) {
+	rec, found, err := c.inner.Get(ctx, key)
 	if err != nil || !found {
 		return rec, found, err
 	}
@@ -57,16 +57,16 @@ func (c *credentialStore) Put(ctx context.Context, rec idempotency.Record) error
 	return c.inner.Put(ctx, rec)
 }
 
-func (c *credentialStore) Claim(ctx context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
-	existing, claimed, err := c.inner.Claim(ctx, tenantID, key, bodyHash, now)
+func (c *credentialStore) Claim(ctx context.Context, key idempotency.Key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+	existing, claimed, err := c.inner.Claim(ctx, key, bodyHash, now)
 	if err != nil || claimed {
 		return existing, claimed, err
 	}
 	return c.remint(existing), false, nil
 }
 
-func (c *credentialStore) Release(ctx context.Context, tenantID, key string) error {
-	return c.inner.Release(ctx, tenantID, key)
+func (c *credentialStore) Release(ctx context.Context, key idempotency.Key) error {
+	return c.inner.Release(ctx, key)
 }
 
 // remint returns rec with the credentials of its stored body restored.

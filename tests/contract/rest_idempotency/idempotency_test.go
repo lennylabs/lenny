@@ -29,7 +29,8 @@ func newTestServer(t *testing.T) *httptest.Server {
 	store := memstore.New()
 	srv := sessionserver.New(store, sessionserver.Options{DevTenantHeader: true})
 	idem := idempotencymw.NewMemoryStore()
-	wrapped := idempotencymw.Wrap(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice), idem, idempotencymw.Options{})
+	wrapped := ownerprincipal.WrapFromHeader(idempotencymw.Wrap(apifront.Handler(srv), idem,
+		idempotencymw.Options{PrincipalFromRequest: ownerprincipal.Scope}), ownerprincipal.Alice)
 	ts := httptest.NewServer(wrapped)
 	t.Cleanup(ts.Close)
 	return ts
@@ -192,6 +193,56 @@ func TestIdempotencyTenantScoped(t *testing.T) {
 	}
 	if got := b2["tenantId"]; got != "globex" {
 		t.Errorf("tenant B should see its own tenant; got %v", got)
+	}
+}
+
+// postAs is post with the caller's subject named by user.
+func postAs(t *testing.T, ts *httptest.Server, user, path, idemKey string, body any) (*http.Response, map[string]any) {
+	t.Helper()
+	req, _ := http.NewRequest(http.MethodPost, ts.URL+path, bytes.NewReader(mustJSON(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Lenny-Tenant-ID", "acme")
+	req.Header.Set(ownerprincipal.UserHeader, user)
+	req.Header.Set(idempotencymw.HeaderName, idemKey)
+	resp, err := ts.Client().Do(req)
+	if err != nil {
+		t.Fatalf("do: %v", err)
+	}
+	defer resp.Body.Close()
+	var out map[string]any
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	return resp, out
+}
+
+// spec: §11.5 (Idempotency)
+// diagnosis: bob's POST /v1/sessions with alice's Idempotency-Key and body
+// replayed alice's stored 201 instead of creating bob's own session, or a
+// retry did not replay its sender's response. The record scope must
+// include the principal's subject: check idempotency.Key in
+// pkg/idempotency and the PrincipalFromRequest resolver the middleware is
+// wired with.
+func TestTheSameKeyAndBodyFromAnotherUserOfTheTenantCreatesASecondSession(t *testing.T) {
+	ts := newTestServer(t)
+	const alice, bob = ownerprincipal.Alice, "bob@acme.com"
+	body := map[string]any{"runtimeRef": "claude-code"}
+
+	resp1, b1 := postAs(t, ts, alice, "/v1/sessions", "k1", body)
+	resp2, b2 := postAs(t, ts, bob, "/v1/sessions", "k1", body)
+	if resp1.StatusCode != http.StatusCreated || resp2.StatusCode != http.StatusCreated {
+		t.Fatalf("creates: alice %d, bob %d, want 201 each", resp1.StatusCode, resp2.StatusCode)
+	}
+	aliceID, _ := b1["id"].(string)
+	bobID, _ := b2["id"].(string)
+	if aliceID == "" || bobID == "" || aliceID == bobID {
+		t.Fatalf("session ids: alice %q, bob %q, want two distinct sessions", aliceID, bobID)
+	}
+
+	_, r1 := postAs(t, ts, alice, "/v1/sessions", "k1", body)
+	_, r2 := postAs(t, ts, bob, "/v1/sessions", "k1", body)
+	if r1["id"] != aliceID || r2["id"] != bobID {
+		t.Errorf("retries: alice got %v (want %s), bob got %v (want %s)", r1["id"], aliceID, r2["id"], bobID)
 	}
 }
 

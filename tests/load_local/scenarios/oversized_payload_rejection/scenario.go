@@ -45,7 +45,7 @@ func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	if wantReject {
 		keyValue = strings.Repeat("x", idempotency.MaxKeyLength+1+(iter%32))
 	}
-	key := idempotency.Key{TenantID: "acme", Value: keyValue}
+	key := idempotency.Key{TenantID: "acme", Subject: "alice", Value: keyValue}
 	err := key.Validate()
 	switch {
 	case err == nil && wantReject:

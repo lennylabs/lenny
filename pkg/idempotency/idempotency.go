@@ -4,7 +4,7 @@
 // are pure: the 128-character key length cap, the SHA-256 body-hash
 // canonicalisation, the same-key-different-body reuse detection that
 // produces the 422 IDEMPOTENCY_KEY_REUSED envelope, the 24-hour TTL
-// constant, and the tenant-scoped Key value.
+// constant, and the principal-scoped Key value.
 //
 // The Postgres-backed `idempotency_keys` table, the GC job that
 // drops expired rows, and the HTTP/MCP transport handlers that read
@@ -15,6 +15,7 @@ package idempotency
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"time"
 	"unicode/utf8"
@@ -31,19 +32,45 @@ const MaxKeyLength = 128
 // this window the GC job drops the row and the key may be reused.
 const TTL = 24 * time.Hour
 
-// Key is a tenant-scoped idempotency key. The tenant scope is part of
-// the key per §11.5: "the same key string used by different tenants
-// is treated independently."
+// Key identifies one idempotency record: the scope of the authenticated
+// principal that sent the request, and the caller's key string. The same
+// Value under a different scope is a different record, so one user's stored
+// response never replays to another user of the tenant, and a bearer bound
+// to one session never replays a response stored for another session.
+//
+// spec: §11.5 (Idempotency)
 type Key struct {
+	// TenantID is the principal's tenant.
 	TenantID string
-	Value    string
+	// Subject is the principal's subject, the owner of a session the
+	// request creates.
+	Subject string
+	// SessionID is the principal's SessionID: set for a bearer minted for
+	// one session (authmw.Principal.SessionID), and empty for an ordinary
+	// user token. The Postgres store holds the empty string in its
+	// session_id column for that case, because the column is part of the
+	// primary key and cannot be NULL.
+	SessionID string
+	// Value is the caller's key string.
+	Value string
 }
 
+// ErrSubjectRequired is the error Validate returns for a key with no
+// subject. The gateway refuses such a request before it claims the key.
+var ErrSubjectRequired = errors.New("idempotency: Subject is required")
+
 // Validate reports the §11.5 format errors. Returns nil when the key
-// is admissible at the request boundary.
+// is admissible at the request boundary. An empty tenant or subject is
+// refused, so a record is never filed under a shared empty scope. An empty
+// SessionID is the scope of a bearer bound to no session and is valid.
+//
+// spec: §11.5 (Idempotency)
 func (k Key) Validate() error {
 	if k.TenantID == "" {
 		return fmt.Errorf("idempotency: TenantID is required")
+	}
+	if k.Subject == "" {
+		return ErrSubjectRequired
 	}
 	if k.Value == "" {
 		return fmt.Errorf("idempotency: key value is required")

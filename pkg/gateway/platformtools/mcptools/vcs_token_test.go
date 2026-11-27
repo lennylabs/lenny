@@ -21,6 +21,7 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/core/toolops"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcp"
 	"github.com/lennylabs/lenny/pkg/gateway/platformtools/mcptools"
+	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 	"github.com/lennylabs/lenny/pkg/workspaceplan/vcscred"
 )
@@ -257,9 +258,10 @@ func TestVCSTokenResultIsNotStoredForAnIdempotentRetry(t *testing.T) {
 	srv := vcsTokenServer(t, r, nil)
 	store := idempotencymw.NewMemoryStore()
 	principal := authmw.Principal{TenantID: "acme", SessionID: "sess-1", Subject: "u", CallerType: "agent"}
-	h := idempotencymw.Wrap(http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		srv.Handler().ServeHTTP(w, req.WithContext(authmw.WithPrincipal(req.Context(), principal)))
-	}), store, idempotencymw.Options{})
+	scoped := idempotencymw.Wrap(srv.Handler(), store, idempotencymw.Options{PrincipalFromRequest: ownerprincipal.Scope})
+	h := http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		scoped.ServeHTTP(w, req.WithContext(authmw.WithPrincipal(req.Context(), principal)))
+	})
 	body := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lenny/vcs_token","arguments":{"host":"github.com"}}}`
 	calls := 0
 	for i := 0; i < 2; i++ {
@@ -280,7 +282,7 @@ func TestVCSTokenResultIsNotStoredForAnIdempotentRetry(t *testing.T) {
 	if calls != 2 {
 		t.Fatalf("resolver ran %d times, want 2: a retry mints again", calls)
 	}
-	if _, found, _ := store.Get(context.Background(), "acme", "vcs-1"); found {
+	if _, found, _ := store.Get(context.Background(), idempotency.Key{TenantID: "acme", Subject: "u", SessionID: "sess-1", Value: "vcs-1"}); found {
 		t.Fatal("the idempotency store holds a record of the VCS token result")
 	}
 }

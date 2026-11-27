@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
 )
@@ -30,10 +31,14 @@ import (
 type IdempotencyConfig struct {
 	// Store is the §11.5 cache. Required for MCP idempotency.
 	Store idempotencymw.Store
-	// TenantFromRequest extracts the tenant id from the inbound HTTP
-	// request. Set to the same function the §11.5 HTTP middleware uses
-	// so MCP and REST stay coherent under one auth chain.
-	TenantFromRequest func(*http.Request) string
+	// Callers resolves the request's authenticated caller through
+	// GWSEAM-RequestCaller. The record scope is the caller's tenant, its
+	// subject, and the session its bearer is bound to (empty for a bearer
+	// bound to none). The gateway wires the same caller resolution the
+	// REST idempotency middleware's resolver reads, so the REST and MCP
+	// paths file records under one scope. A nil Callers resolves no
+	// caller, and every keyed call is refused.
+	Callers seam.CallerIdentity
 	// Tools is the set of tool names whose arguments admit an
 	// idempotencyKey field. Calls to tools outside this set ignore the
 	// field — the contract is opt-in per tool so a stray field on a
@@ -48,6 +53,32 @@ func (c IdempotencyConfig) now() time.Time {
 		return c.Now()
 	}
 	return time.Now().UTC()
+}
+
+// scope resolves the record scope of a keyed tool call from the request's
+// principal. A call with no tenant reached the MCP server outside the auth
+// chain and is refused; a call with no subject is refused with
+// UNAUTHORIZED, reason principal_subject_required, as the REST middleware
+// refuses it. Neither refusal claims the key.
+//
+// spec: §11.5 (Idempotency)
+func (c IdempotencyConfig) scope(r *http.Request) (idempotency.Key, *ToolError) {
+	var tenantID, subject, sessionID string
+	if c.Callers != nil {
+		if caller, ok := c.Callers.RequestCaller(r.Context()); ok {
+			tenantID, subject, sessionID = caller.TenantID, caller.Subject, caller.SessionID
+		}
+	}
+	if tenantID == "" {
+		return idempotency.Key{}, NewToolError("UNAUTHORIZED",
+			"idempotency: tenant could not be resolved for MCP tool call; auth chain must precede MCP dispatch", nil)
+	}
+	if subject == "" {
+		return idempotency.Key{}, NewToolError("UNAUTHORIZED",
+			"request requires an authenticated principal with a subject",
+			map[string]any{"reason": "principal_subject_required"})
+	}
+	return idempotency.Key{TenantID: tenantID, Subject: subject, SessionID: sessionID}, nil
 }
 
 // SetIdempotency installs the §11.5 idempotency hook for tool calls.
@@ -87,19 +118,23 @@ func mcpKey(tool, caller string) string {
 // ToolResult directly to the client; the in-flight path returns a
 // transient IDEMPOTENCY_KEY_IN_FLIGHT ToolError. The contract caps the
 // stored payload at the configured Tools allow-list and namespaces
-// keys per tool. spec: §11.5; F-11.5.1, F-11.5.2, F-11.5.6.
-func (s *Server) dispatchIdempotent(ctx context.Context, tenant, tool, callerKey string, arguments json.RawMessage, run func(context.Context, json.RawMessage) (ToolResult, error)) (ToolResult, bool, error) {
+// keys per tool. The record is filed under scope, the principal's tenant,
+// subject, and bound session, so a caller never replays another
+// principal's result, or a result stored for another session of the same
+// subject. spec: §11.5; F-11.5.1, F-11.5.2, F-11.5.6.
+func (s *Server) dispatchIdempotent(ctx context.Context, scope idempotency.Key, tool, callerKey string, arguments json.RawMessage, run func(context.Context, json.RawMessage) (ToolResult, error)) (ToolResult, bool, error) {
 	if s.idem.Store == nil || tool == "" || callerKey == "" {
 		return ToolResult{}, false, nil
 	}
-	key := mcpKey(tool, callerKey)
-	if err := (idempotency.Key{TenantID: tenant, Value: key}).Validate(); err != nil {
+	key := scope
+	key.Value = mcpKey(tool, callerKey)
+	if err := key.Validate(); err != nil {
 		return ToolResult{}, true, NewToolError("INVALID_IDEMPOTENCY_KEY", err.Error(), nil)
 	}
 	bodyHash := idempotency.HashBody(arguments)
 	now := s.idem.now()
 
-	existing, claimed, err := s.idem.Store.Claim(ctx, tenant, key, bodyHash, now)
+	existing, claimed, err := s.idem.Store.Claim(ctx, key, bodyHash, now)
 	if err != nil {
 		return ToolResult{}, true, NewToolError("INTERNAL_ERROR", "idempotency claim: "+err.Error(), nil)
 	}
@@ -127,7 +162,7 @@ func (s *Server) dispatchIdempotent(ctx context.Context, tenant, tool, callerKey
 		}
 		// action == StoreNew implies expired-between-Claim-and-DetectReuse;
 		// re-claim and continue to execution below.
-		_, claimed, err = s.idem.Store.Claim(ctx, tenant, key, bodyHash, now)
+		_, claimed, err = s.idem.Store.Claim(ctx, key, bodyHash, now)
 		if err != nil {
 			return ToolResult{}, true, NewToolError("INTERNAL_ERROR", "idempotency re-claim: "+err.Error(), nil)
 		}
@@ -142,7 +177,7 @@ func (s *Server) dispatchIdempotent(ctx context.Context, tenant, tool, callerKey
 		// spec: §11.5 — a tool error is the MCP analogue of a
 		// 5xx: do not cache, release the pending row so a retry can
 		// re-execute. The caller sees the ToolError directly.
-		if relErr := s.idem.Store.Release(ctx, tenant, key); relErr != nil {
+		if relErr := s.idem.Store.Release(ctx, key); relErr != nil {
 			// Release failure is non-fatal; log via the caller path.
 			_ = relErr
 		}
@@ -152,12 +187,12 @@ func (s *Server) dispatchIdempotent(ctx context.Context, tenant, tool, callerKey
 	if merr != nil {
 		// Cannot serialise the result; treat as a runtime error and
 		// release the pending row so a retry re-executes.
-		_ = s.idem.Store.Release(ctx, tenant, key)
+		_ = s.idem.Store.Release(ctx, key)
 		return ToolResult{}, true, NewToolError("INTERNAL_ERROR",
 			fmt.Sprintf("idempotency: serialize ToolResult: %v", merr), nil)
 	}
 	fresh := idempotency.Record{
-		Key:      idempotency.Key{TenantID: tenant, Value: key},
+		Key:      key,
 		BodyHash: bodyHash,
 		Response: idempotency.Response{
 			StatusCode: http.StatusOK,

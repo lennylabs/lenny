@@ -1,6 +1,6 @@
 # Idempotency keys scoped by principal
 
-Status: `Decided`, revision 3, 2026-11-26.
+Status: `In progress`, revision 4, 2026-11-26.
 
 ## Problem
 

@@ -47,6 +47,7 @@ var canonicalRank = map[string]int{
 	"billing":                150, // EventStore (billing)
 	"eval_results":           155, // EvalResultStore
 	"delegation_budget":      160, // delegation budget keys
+	"idempotency_records":    165, // the §11.5 idempotency records (idempotency_keys)
 	"sessions":               170, // SessionStore, the FK parent
 	"tokens":                 180, // TokenStore
 	"issued_tokens":          185, // TokenIssuanceStore

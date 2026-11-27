@@ -57,7 +57,6 @@ import (
 	"github.com/lennylabs/lenny/pkg/gateway/runtime/adapterregistry"
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
 	"github.com/lennylabs/lenny/pkg/idempotency/idempotencymw"
-	idempgstore "github.com/lennylabs/lenny/pkg/idempotency/idempotencymw/pgstore"
 	"github.com/lennylabs/lenny/pkg/policy/interceptor"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgradeguard"
 	"github.com/lennylabs/lenny/pkg/runtime/runtimeupgradestore"
@@ -700,10 +699,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// AllowedPaths restricts the cache to the §11.5-listed critical
 	// operations so a stray Idempotency-Key on an unrelated route
 	// cannot trap a non-mutating response for 24 hours. spec: §11.5; F-11.5.7.
-	var idemStore idempotencymw.Store = idempotencymw.NewMemoryStore()
-	if w.pgPool != nil {
-		idemStore = idempgstore.New(w.pgPool)
-	}
+	// The store is the one the user and tenant erasers delete records from.
+	var idemStore idempotencymw.Store = w.idempotencyStore()
 	// A stored response holds no uploadToken (§11.5, Idempotency). The
 	// store strips the tokens through a redactor over the gateway's
 	// signing-key ring and restores them on replay, for the REST and the
@@ -714,13 +711,11 @@ func (w *gatewayWiring) buildHTTPSurface(
 	// lenny/delegate_task), the MCP server runs the call through the
 	// same §11.5 Store with per-tool key namespacing so retries collapse
 	// to one execution. The Tools allow-list keeps the field opt-in per
-	// tool; the TenantFromRequest resolver mirrors the REST middleware's
-	// auth-set header. spec: F-11.5.1, F-11.5.6.
+	// tool. The MCP hook resolves the caller through the API front's
+	// caller resolution, which idempotencyPrincipal also reads.
 	mcpSrv.SetIdempotency(mcp.IdempotencyConfig{
-		Store: idemStore,
-		TenantFromRequest: func(r *http.Request) string {
-			return r.Header.Get("X-Lenny-Tenant-ID")
-		},
+		Store:   idemStore,
+		Callers: pipeline.Callers{},
 		Tools: map[string]bool{
 			"lenny/create_session": true,
 			"lenny/delegate_task":  true,
@@ -728,7 +723,8 @@ func (w *gatewayWiring) buildHTTPSurface(
 		Now: clockinject.Now,
 	})
 	handler = idempotencymw.Wrap(handler, idemStore, idempotencymw.Options{
-		Metrics: gwMetrics,
+		PrincipalFromRequest: idempotencyPrincipal,
+		Metrics:              gwMetrics,
 		// spec: §11.5 — the middleware buffers the request body
 		// to hash and replay it. The default 8 MiB cap covers the
 		// critical-operation payloads and is operator-tunable via the

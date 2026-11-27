@@ -23,11 +23,17 @@ func TestTTLMatchesSpec(t *testing.T) {
 	}
 }
 
+// TestKeyValidateAcceptsCanonical checks that a key with a tenant, a
+// subject, and a value within the cap is admissible, with and without a
+// bound session.
+//
+// spec: §11.5 (Idempotency)
 func TestKeyValidateAcceptsCanonical(t *testing.T) {
 	cases := []Key{
-		{TenantID: "acme", Value: "abc-123"},
-		{TenantID: "acme", Value: strings.Repeat("a", MaxKeyLength)},
-		{TenantID: "globex", Value: "550e8400-e29b-41d4-a716-446655440000"},
+		{TenantID: "acme", Subject: "alice", Value: "abc-123"},
+		{TenantID: "acme", Subject: "alice", SessionID: "s1", Value: "abc-123"},
+		{TenantID: "acme", Subject: "alice", Value: strings.Repeat("a", MaxKeyLength)},
+		{TenantID: "globex", Subject: "bob", Value: "550e8400-e29b-41d4-a716-446655440000"},
 	}
 	for _, k := range cases {
 		if err := k.Validate(); err != nil {
@@ -37,7 +43,7 @@ func TestKeyValidateAcceptsCanonical(t *testing.T) {
 }
 
 func TestKeyValidateRejectsOverLengthValue(t *testing.T) {
-	k := Key{TenantID: "acme", Value: strings.Repeat("a", MaxKeyLength+1)}
+	k := Key{TenantID: "acme", Subject: "alice", Value: strings.Repeat("a", MaxKeyLength+1)}
 	err := k.Validate()
 	var tle *KeyTooLongError
 	if !errors.As(err, &tle) {
@@ -49,9 +55,25 @@ func TestKeyValidateRejectsOverLengthValue(t *testing.T) {
 }
 
 func TestKeyValidateRejectsMissingFields(t *testing.T) {
-	for _, k := range []Key{{}, {TenantID: "acme"}, {Value: "x"}} {
+	for _, k := range []Key{{}, {TenantID: "acme", Subject: "alice"}, {Subject: "alice", Value: "x"}} {
 		if err := k.Validate(); err == nil {
 			t.Errorf("Key(%+v) should reject", k)
+		}
+	}
+}
+
+// TestKeyValidateRefusesAnEmptySubject checks that a key with no subject is
+// refused with ErrSubjectRequired, with or without a bound session, so no
+// record is filed under an empty subject.
+//
+// spec: §11.5 (Idempotency)
+func TestKeyValidateRefusesAnEmptySubject(t *testing.T) {
+	for _, k := range []Key{
+		{TenantID: "acme", Value: "k1"},
+		{TenantID: "acme", SessionID: "s1", Value: "k1"},
+	} {
+		if err := k.Validate(); !errors.Is(err, ErrSubjectRequired) {
+			t.Errorf("Key(%+v).Validate() = %v, want ErrSubjectRequired", k, err)
 		}
 	}
 }
@@ -67,7 +89,7 @@ func TestKeyValidateRuneLengthAcceptsMultibyteUpToCap(t *testing.T) {
 	if got := utf8RuneCount(value); got != MaxKeyLength {
 		t.Fatalf("test fixture: want %d runes, got %d", MaxKeyLength, got)
 	}
-	k := Key{TenantID: "acme", Value: value}
+	k := Key{TenantID: "acme", Subject: "alice", Value: value}
 	if err := k.Validate(); err != nil {
 		t.Errorf("128-rune multibyte key: Validate = %v, want nil", err)
 	}
@@ -77,7 +99,7 @@ func TestKeyValidateRuneLengthAcceptsMultibyteUpToCap(t *testing.T) {
 // regardless of how many UTF-8 bytes they encode to. Closes F-11.5.11.
 func TestKeyValidateRuneLengthRejectsOverCapMultibyte(t *testing.T) {
 	value := strings.Repeat("я", MaxKeyLength+1)
-	k := Key{TenantID: "acme", Value: value}
+	k := Key{TenantID: "acme", Subject: "alice", Value: value}
 	err := k.Validate()
 	var tle *KeyTooLongError
 	if !errors.As(err, &tle) {
@@ -133,7 +155,7 @@ func TestDetectReuseStoreNewWhenNoPrior(t *testing.T) {
 
 func TestDetectReuseReplayWhenMatch(t *testing.T) {
 	stored := Record{
-		Key:      Key{TenantID: "acme", Value: "abc"},
+		Key:      Key{TenantID: "acme", Subject: "alice", Value: "abc"},
 		BodyHash: HashBody([]byte("body")),
 		StoredAt: testNow,
 	}
@@ -148,7 +170,7 @@ func TestDetectReuseReplayWhenMatch(t *testing.T) {
 
 func TestDetectReuseRejectsKeyReusedWithDifferentBody(t *testing.T) {
 	stored := Record{
-		Key:      Key{TenantID: "acme", Value: "abc"},
+		Key:      Key{TenantID: "acme", Subject: "alice", Value: "abc"},
 		BodyHash: HashBody([]byte("original-body")),
 		StoredAt: testNow,
 	}
@@ -170,7 +192,7 @@ func TestDetectReuseRejectsKeyReusedWithDifferentBody(t *testing.T) {
 
 func TestDetectReuseTreatsExpiredAsNoPrior(t *testing.T) {
 	stored := Record{
-		Key:      Key{TenantID: "acme", Value: "abc"},
+		Key:      Key{TenantID: "acme", Subject: "alice", Value: "abc"},
 		BodyHash: HashBody([]byte("body")),
 		StoredAt: testNow.Add(-25 * time.Hour), // outside the 24h TTL
 	}

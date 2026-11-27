@@ -78,7 +78,7 @@ func TestBuildTenantErasersOrder_spec_12_8(t *testing.T) {
 	got := strings.Join(names, ",")
 	want := "leases,coordination_mirror,semantic_cache,experiment_sticky,billing_buffer,quota,artifacts," +
 		"checkpoint_manifests,checkpoint_retention,checkpoint_meta,transcripts,interactions,memory," +
-		"session_message_queues,session_tree_archive,audit,billing,eval_results,delegation_budget," +
+		"session_message_queues,session_tree_archive,audit,billing,eval_results,delegation_budget,idempotency_records," +
 		"sessions,tokens,issued_tokens,credential_pool,runtime_tenant_access,pool_tenant_access," +
 		"user_roles,custom_roles,tenant_definitions,tenant_config"
 	if got != want {

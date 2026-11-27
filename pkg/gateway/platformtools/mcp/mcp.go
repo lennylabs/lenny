@@ -417,21 +417,13 @@ func (s *Server) handleToolCall(w http.ResponseWriter, r *http.Request, req json
 	if s.idem.Store != nil && s.idem.Tools[params.Name] {
 		callerKey := extractIdempotencyKey(params.Arguments)
 		if callerKey != "" {
-			tenant := ""
-			if s.idem.TenantFromRequest != nil {
-				tenant = s.idem.TenantFromRequest(r)
-			}
-			if tenant == "" {
-				// Mirror the REST middleware's fail-closed posture: a
-				// missing tenant means the auth chain was bypassed for
-				// this request, so collapsing keys under a shared
-				// bucket would violate §11.5's per-tenant scope.
-				s.WriteLennyError(w, req.ID, errInvalidRequest, "UNAUTHORIZED",
-					"idempotency: tenant could not be resolved for MCP tool call; auth chain must precede MCP dispatch", nil)
+			scope, te := s.idem.scope(r)
+			if te != nil {
+				s.WriteLennyError(w, req.ID, errInvalidRequest, te.Code, te.Msg, te.Details)
 				return
 			}
 			var handled bool
-			result, handled, err = s.dispatchIdempotent(ctx, tenant, params.Name, callerKey, params.Arguments, handler)
+			result, handled, err = s.dispatchIdempotent(ctx, scope, params.Name, callerKey, params.Arguments, handler)
 			if !handled {
 				result, err = handler(ctx, params.Arguments)
 			}

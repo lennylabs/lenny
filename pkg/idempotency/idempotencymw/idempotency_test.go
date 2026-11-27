@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ type stubStore struct {
 	releases int
 }
 
-func (s *stubStore) Get(_ context.Context, _, _ string) (idempotency.Record, bool, error) {
+func (s *stubStore) Get(_ context.Context, _ idempotency.Key) (idempotency.Record, bool, error) {
 	if s.getErr != nil {
 		return idempotency.Record{}, false, s.getErr
 	}
@@ -59,7 +60,7 @@ func (s *stubStore) Put(_ context.Context, rec idempotency.Record) error {
 // middleware's existing-row branch runs. Errors from getErr are
 // surfaced through claimErr too so the §15.1 envelope test keeps
 // covering the store-failure path. spec: §11.5; F-11.5.2.
-func (s *stubStore) Claim(_ context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+func (s *stubStore) Claim(_ context.Context, key idempotency.Key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
 	if s.claimErr != nil {
 		return idempotency.Record{}, false, s.claimErr
 	}
@@ -71,7 +72,7 @@ func (s *stubStore) Claim(_ context.Context, tenantID, key, bodyHash string, now
 	}
 	// Simulate inserting a pending row.
 	s.rec = idempotency.Record{
-		Key:      idempotency.Key{TenantID: tenantID, Value: key},
+		Key:      key,
 		BodyHash: bodyHash,
 		Response: idempotency.Response{StatusCode: 0},
 		StoredAt: now,
@@ -80,7 +81,7 @@ func (s *stubStore) Claim(_ context.Context, tenantID, key, bodyHash string, now
 	return idempotency.Record{}, true, nil
 }
 
-func (s *stubStore) Release(_ context.Context, _, _ string) error {
+func (s *stubStore) Release(_ context.Context, _ idempotency.Key) error {
 	s.releases++
 	s.found = false
 	s.rec = idempotency.Record{}
@@ -95,7 +96,7 @@ func TestWrap_FailsClosedWhenTenantMissing_spec_11_5(t *testing.T) {
 		t.Fatalf("inner handler must not be invoked when tenant is missing")
 		w.WriteHeader(http.StatusOK)
 	})
-	wrapped := Wrap(inner, NewMemoryStore(), Options{})
+	wrapped := Wrap(inner, NewMemoryStore(), testOptions(Options{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	req.Header.Set(HeaderName, "abc-123")
@@ -132,7 +133,7 @@ func TestWrap_AdmitsWhenTenantPresent_spec_11_5(t *testing.T) {
 		called = true
 		w.WriteHeader(http.StatusCreated)
 	})
-	wrapped := Wrap(inner, NewMemoryStore(), Options{})
+	wrapped := Wrap(inner, NewMemoryStore(), testOptions(Options{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	req.Header.Set(HeaderName, "abc-123")
@@ -188,7 +189,7 @@ func TestWrap_ErrorEnvelopeIncludesCategoryAndRetryable_spec_15_1(t *testing.T) 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
-			wrapped := Wrap(inner, NewMemoryStore(), Options{})
+			wrapped := Wrap(inner, NewMemoryStore(), testOptions(Options{}))
 			req := httptest.NewRequest(http.MethodPost, "/v1/sessions", tc.body)
 			req.Header.Set(HeaderName, tc.key)
 			if tc.tenant != "" {
@@ -230,7 +231,7 @@ func TestWrap_ReuseEnvelopeShape_spec_11_5(t *testing.T) {
 		_, _ = w.Write([]byte(`{"sessionId":"sess-1"}`))
 	})
 	store := NewMemoryStore()
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	send := func(payload string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(payload))
@@ -269,25 +270,12 @@ func TestWrap_ReuseEnvelopeShape_spec_11_5(t *testing.T) {
 	}
 }
 
-// spec: F-11.5.13 — defaultTenantFromRequest must never return
-// "default" as a synthetic fallback.
-func TestDefaultTenantFromRequest_ReturnsEmptyWhenHeaderMissing(t *testing.T) {
-	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", nil)
-	if got := defaultTenantFromRequest(req); got != "" {
-		t.Errorf("default tenant = %q, want empty string", got)
-	}
-	req.Header.Set("X-Lenny-Tenant-ID", "acme")
-	if got := defaultTenantFromRequest(req); got != "acme" {
-		t.Errorf("with header = %q, want acme", got)
-	}
-}
-
 // spec: F-11.5.14 — when Put fails the middleware returns an envelope
 // in the spec shape (still no panic, still carries category/retryable).
 func TestWrap_StoreGetError_EnvelopeShape_spec_15_1(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusOK) })
 	store := &stubStore{getErr: errors.New("boom")}
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	req.Header.Set(HeaderName, "k1")
@@ -340,7 +328,7 @@ func TestWrap_DoesNotCache5xxResponses_spec_11_5(t *testing.T) {
 	store := NewMemoryStore()
 	rm := &recordingMetrics{}
 	var buf bytes.Buffer
-	wrapped := Wrap(inner, store, Options{Metrics: rm, Logger: log.New(&buf, "", 0)})
+	wrapped := Wrap(inner, store, testOptions(Options{Metrics: rm, Logger: log.New(&buf, "", 0)}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	req.Header.Set(HeaderName, "k1")
@@ -352,7 +340,7 @@ func TestWrap_DoesNotCache5xxResponses_spec_11_5(t *testing.T) {
 		t.Fatalf("client status = %d, want 500", rec.Code)
 	}
 	// The cache must be empty: the next retry should re-execute, not replay.
-	if _, found, err := store.Get(context.Background(), "acme", "k1"); err != nil || found {
+	if _, found, err := store.Get(context.Background(), aliceKey("k1")); err != nil || found {
 		t.Errorf("5xx must not be persisted: found=%v err=%v", found, err)
 	}
 	if len(rm.skipped) != 1 || rm.skipped[0].tenant != "acme" || rm.skipped[0].reason != "server_error" {
@@ -374,7 +362,7 @@ func TestWrap_Caches4xxResponses_spec_11_5(t *testing.T) {
 		_, _ = w.Write([]byte(`{"error":{"code":"VALIDATION_ERROR"}}`))
 	})
 	store := NewMemoryStore()
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	send := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
@@ -406,7 +394,7 @@ func TestWrap_StorePutError_LogsAndIncrementsMetric_spec_11_5(t *testing.T) {
 	store := &stubStore{putErr: errors.New("rls denial")}
 	rm := &recordingMetrics{}
 	var buf bytes.Buffer
-	wrapped := Wrap(inner, store, Options{Metrics: rm, Logger: log.New(&buf, "", 0)})
+	wrapped := Wrap(inner, store, testOptions(Options{Metrics: rm, Logger: log.New(&buf, "", 0)}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	req.Header.Set(HeaderName, "k1")
@@ -438,7 +426,7 @@ func TestWrap_PassesThroughNonAllowedMethod_spec_11_5(t *testing.T) {
 		_, _ = w.Write([]byte(`{"sessions":[]}`))
 	})
 	store := &stubStore{}
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	for i := 0; i < 2; i++ {
 		req := httptest.NewRequest(http.MethodGet, "/v1/sessions", nil)
@@ -462,7 +450,7 @@ func TestWrap_PassesThroughNonAllowedMethod_spec_11_5(t *testing.T) {
 func TestWrap_AdmitsPOSTWithDefaultAllowedMethods_spec_11_5(t *testing.T) {
 	inner := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusCreated) })
 	store := &stubStore{}
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	req.Header.Set(HeaderName, "k1")
@@ -481,12 +469,13 @@ func TestWrap_AdmitsPOSTWithDefaultAllowedMethods_spec_11_5(t *testing.T) {
 // many Put calls each request triggered without losing the proper
 // (tenant,key) → record map.
 type countingStore struct {
-	inner *MemoryStore
-	puts  int
+	inner  *MemoryStore
+	puts   int
+	claims atomic.Int64
 }
 
-func (c *countingStore) Get(ctx context.Context, tenantID, key string) (idempotency.Record, bool, error) {
-	return c.inner.Get(ctx, tenantID, key)
+func (c *countingStore) Get(ctx context.Context, key idempotency.Key) (idempotency.Record, bool, error) {
+	return c.inner.Get(ctx, key)
 }
 
 func (c *countingStore) Put(ctx context.Context, rec idempotency.Record) error {
@@ -494,12 +483,13 @@ func (c *countingStore) Put(ctx context.Context, rec idempotency.Record) error {
 	return c.inner.Put(ctx, rec)
 }
 
-func (c *countingStore) Claim(ctx context.Context, tenantID, key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
-	return c.inner.Claim(ctx, tenantID, key, bodyHash, now)
+func (c *countingStore) Claim(ctx context.Context, key idempotency.Key, bodyHash string, now time.Time) (idempotency.Record, bool, error) {
+	c.claims.Add(1)
+	return c.inner.Claim(ctx, key, bodyHash, now)
 }
 
-func (c *countingStore) Release(ctx context.Context, tenantID, key string) error {
-	return c.inner.Release(ctx, tenantID, key)
+func (c *countingStore) Release(ctx context.Context, key idempotency.Key) error {
+	return c.inner.Release(ctx, key)
 }
 
 // spec: §11.5 — only paths matching an AllowedPaths pattern are
@@ -519,7 +509,7 @@ func TestWrap_PathAllowList_spec_11_5(t *testing.T) {
 			"/v1/sessions/{id}/tool-use/...",
 		},
 	}
-	wrapped := Wrap(inner, store, opts)
+	wrapped := Wrap(inner, store, testOptions(opts))
 
 	cases := []struct {
 		path    string
@@ -570,7 +560,7 @@ func TestWrap_MultiValueHeadersPreservedOnReplay_spec_11_5(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	store := NewMemoryStore()
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	send := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
@@ -611,7 +601,7 @@ func TestWrap_ZeroStatusCaptureStoredAs200_spec_11_5(t *testing.T) {
 		// No WriteHeader; no Write either.
 	})
 	store := &stubStore{}
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
 	req.Header.Set(HeaderName, "k1")
@@ -677,7 +667,7 @@ func TestWrap_AtomicClaim_ConcurrentRetryGetsInFlight_spec_11_5(t *testing.T) {
 		_, _ = w.Write([]byte(`{"sessionId":"sess-1"}`))
 	})
 	store := NewMemoryStore()
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	send := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
@@ -742,7 +732,7 @@ func TestWrap_AtomicClaim_5xxReleasesPendingRow_spec_11_5(t *testing.T) {
 		w.WriteHeader(http.StatusCreated)
 	})
 	store := NewMemoryStore()
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	send := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
@@ -782,7 +772,7 @@ func TestWrap_StreamingResponseSkipsCache_spec_11_5(t *testing.T) {
 	store := NewMemoryStore()
 	rm := &recordingMetrics{}
 	var buf bytes.Buffer
-	wrapped := Wrap(inner, store, Options{Metrics: rm, Logger: log.New(&buf, "", 0)})
+	wrapped := Wrap(inner, store, testOptions(Options{Metrics: rm, Logger: log.New(&buf, "", 0)}))
 
 	send := func() *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(`{}`))
@@ -801,7 +791,7 @@ func TestWrap_StreamingResponseSkipsCache_spec_11_5(t *testing.T) {
 	}
 	// The cache must be empty: streamed responses are not safely
 	// replayable.
-	if _, found, err := store.Get(context.Background(), "acme", "stream-key"); err != nil || found {
+	if _, found, err := store.Get(context.Background(), aliceKey("stream-key")); err != nil || found {
 		t.Errorf("streamed response must not be cached: found=%v err=%v", found, err)
 	}
 	if len(rm.skipped) != 1 || rm.skipped[0].reason != "streamed" {
@@ -830,7 +820,7 @@ func TestWrap_AtomicClaim_PreservesReuseRejection_spec_11_5(t *testing.T) {
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	})
 	store := NewMemoryStore()
-	wrapped := Wrap(inner, store, Options{})
+	wrapped := Wrap(inner, store, testOptions(Options{}))
 
 	send := func(payload string) *httptest.ResponseRecorder {
 		req := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(payload))
@@ -866,7 +856,7 @@ func TestMemoryStore_Claim_spec_11_5(t *testing.T) {
 	now := time.Now().UTC()
 
 	// First claim wins.
-	existing, claimed, err := store.Claim(ctx, "acme", "k1", "hash-1", now)
+	existing, claimed, err := store.Claim(ctx, aliceKey("k1"), "hash-1", now)
 	if err != nil {
 		t.Fatalf("first claim: %v", err)
 	}
@@ -878,7 +868,7 @@ func TestMemoryStore_Claim_spec_11_5(t *testing.T) {
 	}
 
 	// Concurrent retry observes the pending row.
-	existing, claimed, err = store.Claim(ctx, "acme", "k1", "hash-1", now)
+	existing, claimed, err = store.Claim(ctx, aliceKey("k1"), "hash-1", now)
 	if err != nil {
 		t.Fatalf("second claim: %v", err)
 	}
@@ -893,10 +883,10 @@ func TestMemoryStore_Claim_spec_11_5(t *testing.T) {
 	}
 
 	// Release frees the slot.
-	if err := store.Release(ctx, "acme", "k1"); err != nil {
+	if err := store.Release(ctx, aliceKey("k1")); err != nil {
 		t.Fatalf("release: %v", err)
 	}
-	_, claimed, err = store.Claim(ctx, "acme", "k1", "hash-2", now)
+	_, claimed, err = store.Claim(ctx, aliceKey("k1"), "hash-2", now)
 	if err != nil {
 		t.Fatalf("third claim: %v", err)
 	}
@@ -915,13 +905,13 @@ func TestMemoryStore_Claim_ExpiredRecordReclaimed_spec_11_5(t *testing.T) {
 
 	// Seed a stale claim directly.
 	store.now = func() time.Time { return old }
-	_, claimed, err := store.Claim(ctx, "acme", "k1", "hash-old", old)
+	_, claimed, err := store.Claim(ctx, aliceKey("k1"), "hash-old", old)
 	if err != nil || !claimed {
 		t.Fatalf("seed: claimed=%v err=%v", claimed, err)
 	}
 	// Now claim with a fresh `now`; expired pending row should yield.
 	store.now = func() time.Time { return time.Now().UTC() }
-	_, claimed, err = store.Claim(ctx, "acme", "k1", "hash-new", time.Now().UTC())
+	_, claimed, err = store.Claim(ctx, aliceKey("k1"), "hash-new", time.Now().UTC())
 	if err != nil {
 		t.Fatalf("fresh claim: %v", err)
 	}
@@ -941,7 +931,7 @@ func TestWrap_MaxBodyBytesIsOperatorTunable_spec_11_5(t *testing.T) {
 	})
 	store := NewMemoryStore()
 	// Operator raises the cap to 16 MiB.
-	wrapped := Wrap(inner, store, Options{MaxBodyBytes: 16 << 20})
+	wrapped := Wrap(inner, store, testOptions(Options{MaxBodyBytes: 16 << 20}))
 
 	// A 2 MiB body (would be rejected by the legacy 1 MiB default)
 	// passes through under the raised cap.
@@ -956,7 +946,7 @@ func TestWrap_MaxBodyBytesIsOperatorTunable_spec_11_5(t *testing.T) {
 	}
 
 	// A body just over the configured cap is rejected with 413.
-	wrappedTight := Wrap(inner, NewMemoryStore(), Options{MaxBodyBytes: 1024})
+	wrappedTight := Wrap(inner, NewMemoryStore(), testOptions(Options{MaxBodyBytes: 1024}))
 	tooBig := strings.Repeat("y", 2048)
 	req2 := httptest.NewRequest(http.MethodPost, "/v1/sessions", strings.NewReader(tooBig))
 	req2.Header.Set(HeaderName, "k2")

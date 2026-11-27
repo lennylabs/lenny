@@ -107,7 +107,7 @@ func (s *Scenario) Teardown(ctx context.Context) error { return nil }
 
 func (s *Scenario) Run(ctx context.Context, vu, iter int) error {
 	keyIdx := iter % keyspace
-	k := idempotency.Key{TenantID: "acme", Value: fmt.Sprintf("req-%d", keyIdx)}
+	k := idempotency.Key{TenantID: "acme", Subject: "alice", Value: fmt.Sprintf("req-%d", keyIdx)}
 	if err := k.Validate(); err != nil {
 		s.counters.Inc("validation_failed")
 		return nil

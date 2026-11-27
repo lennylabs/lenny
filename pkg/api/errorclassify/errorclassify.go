@@ -92,7 +92,7 @@ var table = map[string]entry{
 	"RESOURCE_HAS_DEPENDENTS": {CategoryPolicy, false},
 	"IDEMPOTENCY_KEY_REUSED":  {CategoryPermanent, false},
 	// spec: §11.5. The middleware atomically claims the
-	// (tenant_id, idempotency_key) row before executing the inner handler;
+	// row of the principal's scope and key before executing the inner handler;
 	// a concurrent retry that arrives while the original is still in flight
 	// observes the pending claim and is rejected with this code so the two
 	// retries do not double-execute the side effect. POLICY: the gate is a

@@ -133,8 +133,9 @@ Create a new agent session. Claims a warm pod, assigns credentials, and prepares
 | `environment` | string | No | Environment name to scope the session |
 | `callbackUrl` | string | No | Webhook URL for completion notification |
 | `dataResidencyRegion` | string | No | Required data residency region constraint |
+| `idempotencyKey` | string | No | Opaque key of at most 128 characters that makes the call idempotent for 24 hours |
 
-For idempotent creation, set the `Idempotency-Key` HTTP header on the JSON-RPC POST that carries this tool call (see [Idempotency](../api/rest.html#idempotency)). The MCP tool input has no `idempotencyKey` field today.
+For idempotent creation, set the `idempotencyKey` field in the tool input. A retry with the same key and the same arguments within 24 hours returns the first result without creating a second session, and the same key with different arguments returns `IDEMPOTENCY_KEY_REUSED`. A key is scoped to the calling user within the tenant: another user of the tenant who sends the same key runs the call and receives a result of their own. When the caller's credential is bound to one session, such as the credential a delegated child session holds, the key is also scoped to that session. A call that carries a key and whose credential names no user is refused with `UNAUTHORIZED`, reason `principal_subject_required`. The `Idempotency-Key` HTTP header on the JSON-RPC POST follows the REST rules in [Idempotency](../api/rest.html#idempotency).
 
 **Output schema:**
 

@@ -42,7 +42,7 @@ packages:
     - package: cmd/lenny-egress-capture
       count: 1
     - package: cmd/lenny-gateway
-      count: 1527
+      count: 1534
     - package: cmd/lenny-migrate
       count: 4
     - package: cmd/lenny-ocsf-mapping-gen
@@ -544,7 +544,7 @@ packages:
     - package: pkg/gateway/platformtools/leasecontrol/leaseelicit
       count: 13
     - package: pkg/gateway/platformtools/mcp
-      count: 124
+      count: 129
     - package: pkg/gateway/platformtools/mcptools
       count: 679
     - package: pkg/gateway/platformtools/mcptools/internal/genmcpschemas
@@ -608,9 +608,11 @@ packages:
     - package: pkg/gateway/uploadhandler
       count: 90
     - package: pkg/idempotency
-      count: 7
+      count: 11
     - package: pkg/idempotency/idempotencymw
-      count: 56
+      count: 65
+    - package: pkg/idempotency/idempotencymw/pgstore
+      count: 2
     - package: pkg/kms
       count: 36
     - package: pkg/kms/aws
@@ -878,7 +880,7 @@ packages:
     - package: pkg/storage/deadletterredaction
       count: 15
     - package: pkg/storage/erasure
-      count: 32
+      count: 33
     - package: pkg/storage/erasurejob
       count: 108
     - package: pkg/storage/erasurejob/pgstore
@@ -1032,7 +1034,7 @@ packages:
     - package: tests/component/lifecycle
       count: 9
     - package: tests/component/migrations
-      count: 86
+      count: 87
     - package: tests/component/observability
       count: 17
     - package: tests/component/opsaudit
@@ -1070,7 +1072,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 330
+      count: 332
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
@@ -1180,7 +1182,7 @@ packages:
     - package: tests/contract/rest_circuitbreaker
       count: 6
     - package: tests/contract/rest_idempotency
-      count: 10
+      count: 11
     - package: tests/contract/rest_mcp_consistency
       count: 76
     - package: tests/contract/rest_openai_chat
@@ -1218,7 +1220,7 @@ packages:
     - package: tests/load_kind
       count: 24
     - package: tests/load_local
-      count: 502
+      count: 503
     - package: tests/load_local/directusage_teardown
       count: 2
     - package: tests/load_local/scenarios/extension_episode_fanout
@@ -1236,7 +1238,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 582
+      count: 583
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

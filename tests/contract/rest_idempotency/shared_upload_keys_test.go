@@ -57,8 +57,9 @@ func (s sharedState) replica(t *testing.T) *httptest.Server {
 		UploadTokenIssuer:   uploadtoken.NewIssuer(keys, nil),
 		UploadTokenVerifier: uploadtoken.NewVerifier(keys, nil, nil),
 	})
-	ts := httptest.NewServer(idempotencymw.Wrap(ownerprincipal.Wrap(apifront.Handler(srv), ownerprincipal.Alice),
-		idempotencymw.WithCredentials(s.idem, uploadtoken.NewRedactor(keys)), idempotencymw.Options{}))
+	ts := httptest.NewServer(ownerprincipal.Wrap(idempotencymw.Wrap(apifront.Handler(srv),
+		idempotencymw.WithCredentials(s.idem, uploadtoken.NewRedactor(keys)),
+		idempotencymw.Options{PrincipalFromRequest: ownerprincipal.Scope}), ownerprincipal.Alice))
 	t.Cleanup(ts.Close)
 	return ts
 }

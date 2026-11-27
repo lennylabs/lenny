@@ -68,13 +68,13 @@ func TestStoredResponseHoldsNoCredentialAndReplayRestoresIt(t *testing.T) {
 	store := NewMemoryStore()
 	redactor := &swapRedactor{}
 	var runs atomic.Int32
-	h := Wrap(credentialHandler(&runs), WithCredentials(store, redactor), Options{})
+	h := Wrap(credentialHandler(&runs), WithCredentials(store, redactor), testOptions(Options{}))
 
 	first := postWithKey(t, h)
 	if first.Code != http.StatusCreated || !strings.Contains(first.Body.String(), testCredential) {
 		t.Fatalf("first response = %d %s, want 201 with the credential", first.Code, first.Body)
 	}
-	rec, found, err := store.Get(context.Background(), "acme", "k1")
+	rec, found, err := store.Get(context.Background(), aliceKey("k1"))
 	if err != nil || !found {
 		t.Fatalf("Get: found=%v err=%v", found, err)
 	}
@@ -101,9 +101,9 @@ func TestStoredResponseHoldsNoCredentialAndReplayRestoresIt(t *testing.T) {
 func TestNoRedactorStoresTheBodyAsWritten(t *testing.T) {
 	store := NewMemoryStore()
 	var runs atomic.Int32
-	h := Wrap(credentialHandler(&runs), WithCredentials(store, nil), Options{})
+	h := Wrap(credentialHandler(&runs), WithCredentials(store, nil), testOptions(Options{}))
 	first := postWithKey(t, h)
-	rec, _, _ := store.Get(context.Background(), "acme", "k1")
+	rec, _, _ := store.Get(context.Background(), aliceKey("k1"))
 	if string(rec.Response.Body) != first.Body.String() {
 		t.Fatalf("stored body = %s, want %s", rec.Response.Body, first.Body)
 	}
@@ -120,7 +120,7 @@ func TestRedactorIsNotCalledForAResponseThatIsNotStored(t *testing.T) {
 	redactor := &swapRedactor{}
 	h := Wrap(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusServiceUnavailable)
-	}), WithCredentials(NewMemoryStore(), redactor), Options{})
+	}), WithCredentials(NewMemoryStore(), redactor), testOptions(Options{}))
 	postWithKey(t, h)
 	if redactor.strips.Load() != 0 {
 		t.Fatalf("Strip ran %d times for a 5xx, want 0", redactor.strips.Load())
@@ -130,14 +130,14 @@ func TestRedactorIsNotCalledForAResponseThatIsNotStored(t *testing.T) {
 // errStore fails every call with err.
 type errStore struct{ err error }
 
-func (e errStore) Get(context.Context, string, string) (idempotency.Record, bool, error) {
+func (e errStore) Get(context.Context, idempotency.Key) (idempotency.Record, bool, error) {
 	return idempotency.Record{}, false, e.err
 }
 func (e errStore) Put(context.Context, idempotency.Record) error { return e.err }
-func (e errStore) Claim(context.Context, string, string, string, time.Time) (idempotency.Record, bool, error) {
+func (e errStore) Claim(context.Context, idempotency.Key, string, time.Time) (idempotency.Record, bool, error) {
 	return idempotency.Record{}, false, e.err
 }
-func (e errStore) Release(context.Context, string, string) error { return e.err }
+func (e errStore) Release(context.Context, idempotency.Key) error { return e.err }
 
 // TestCredentialStoreRemintsOnGetAndPassesErrorsAndPendingRowsThrough
 // covers the store's other paths: Get of a stored record remints it, a
@@ -152,14 +152,14 @@ func TestCredentialStoreRemintsOnGetAndPassesErrorsAndPendingRowsThrough(t *test
 	redactor := &swapRedactor{}
 	store := WithCredentials(inner, redactor)
 
-	if _, claimed, err := store.Claim(ctx, "acme", "k1", "h", time.Now().UTC()); err != nil || !claimed {
+	if _, claimed, err := store.Claim(ctx, aliceKey("k1"), "h", time.Now().UTC()); err != nil || !claimed {
 		t.Fatalf("first Claim: claimed=%v err=%v", claimed, err)
 	}
-	pending, claimed, err := store.Claim(ctx, "acme", "k1", "h", time.Now().UTC())
+	pending, claimed, err := store.Claim(ctx, aliceKey("k1"), "h", time.Now().UTC())
 	if err != nil || claimed || pending.Response.StatusCode != 0 {
 		t.Fatalf("second Claim: %+v claimed=%v err=%v, want the pending row", pending, claimed, err)
 	}
-	if _, found, err := store.Get(ctx, "acme", "absent"); err != nil || found {
+	if _, found, err := store.Get(ctx, aliceKey("absent")); err != nil || found {
 		t.Fatalf("Get(absent): found=%v err=%v", found, err)
 	}
 	if redactor.remints.Load() != 0 {
@@ -167,7 +167,7 @@ func TestCredentialStoreRemintsOnGetAndPassesErrorsAndPendingRowsThrough(t *test
 	}
 
 	rec := idempotency.Record{
-		Key:      idempotency.Key{TenantID: "acme", Value: "k1"},
+		Key:      aliceKey("k1"),
 		BodyHash: "h",
 		Response: idempotency.Response{StatusCode: http.StatusCreated, Body: []byte(`{"t":"` + testCredential + `"}`)},
 		StoredAt: time.Now().UTC(),
@@ -175,27 +175,27 @@ func TestCredentialStoreRemintsOnGetAndPassesErrorsAndPendingRowsThrough(t *test
 	if err := store.Put(ctx, rec); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	raw, _, _ := inner.Get(ctx, "acme", "k1")
+	raw, _, _ := inner.Get(ctx, aliceKey("k1"))
 	if strings.Contains(string(raw.Response.Body), testCredential) {
 		t.Fatalf("inner store holds the credential: %s", raw.Response.Body)
 	}
-	got, found, err := store.Get(ctx, "acme", "k1")
+	got, found, err := store.Get(ctx, aliceKey("k1"))
 	if err != nil || !found || string(got.Response.Body) != string(rec.Response.Body) {
 		t.Fatalf("Get = %s found=%v err=%v, want the original body", got.Response.Body, found, err)
 	}
-	if err := store.Release(ctx, "acme", "k1"); err != nil {
+	if err := store.Release(ctx, aliceKey("k1")); err != nil {
 		t.Fatalf("Release: %v", err)
 	}
-	if _, found, _ := inner.Get(ctx, "acme", "k1"); found {
+	if _, found, _ := inner.Get(ctx, aliceKey("k1")); found {
 		t.Fatal("Release did not reach the inner store")
 	}
 
 	boom := errors.New("store down")
 	failing := WithCredentials(errStore{err: boom}, redactor)
-	if _, _, err := failing.Get(ctx, "acme", "k1"); !errors.Is(err, boom) {
+	if _, _, err := failing.Get(ctx, aliceKey("k1")); !errors.Is(err, boom) {
 		t.Errorf("Get err = %v, want %v", err, boom)
 	}
-	if _, _, err := failing.Claim(ctx, "acme", "k1", "h", time.Now()); !errors.Is(err, boom) {
+	if _, _, err := failing.Claim(ctx, aliceKey("k1"), "h", time.Now()); !errors.Is(err, boom) {
 		t.Errorf("Claim err = %v, want %v", err, boom)
 	}
 	if err := failing.Put(ctx, rec); !errors.Is(err, boom) {

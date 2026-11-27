@@ -233,7 +233,7 @@ type Store interface {
 	// transaction it deletes the user's session-ID reservations, which
 	// the count does not include.
 	//
-	// spec: §12.1, §12.8 step 17, §12.8 (Lifecycle fence and drain).
+	// spec: §12.1, §12.8 step 18, §12.8 (Lifecycle fence and drain).
 	DeleteByUser(ctx context.Context, tenantID, userID string) (int, error)
 
 	// DeleteByTenant removes every session row belonging to tenantID

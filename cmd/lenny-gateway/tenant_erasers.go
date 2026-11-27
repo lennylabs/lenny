@@ -96,7 +96,7 @@ func (w *gatewayWiring) tenantErasersBeforeSessions(
 	}
 	erasers = append(erasers, namedTenantEraser{"session_message_queues", queues})
 	erasers = append(erasers, w.ledgerTenantErasers()...)
-	return append(erasers, w.delegationBudgetTenantEraser())
+	return append(erasers, w.delegationBudgetTenantEraser(), w.idempotencyTenantEraser())
 }
 
 // cacheTenantErasers returns the Phase 4 entries for the coordination

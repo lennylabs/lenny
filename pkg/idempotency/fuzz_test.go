@@ -7,12 +7,12 @@ import (
 )
 
 // FuzzKeyValidate exercises the §11.5 key validator on arbitrary
-// tenantID + value inputs. The invariants asserted:
+// tenantID, subject, and value inputs. The invariants asserted:
 //
 //   - Validate never panics on any input.
 //   - The error categorisation is deterministic (same input → same
 //     error type).
-//   - Empty tenant or empty value always errors.
+//   - An empty tenant, an empty subject, or an empty value always errors.
 //   - Over-length values always produce KeyTooLongError.
 //   - Inputs whose length is within bounds and contain a non-empty
 //     value succeed.
@@ -20,21 +20,26 @@ import (
 // Seed corpus covers known edge cases: empty values, just-under and
 // just-over MaxKeyLength, multi-byte runes, ASCII control chars.
 func FuzzKeyValidate(f *testing.F) {
-	f.Add("acme", "key-1")
-	f.Add("", "key-1")
-	f.Add("acme", "")
-	f.Add("acme", string(make([]byte, MaxKeyLength)))
-	f.Add("acme", string(make([]byte, MaxKeyLength+1)))
-	f.Add("acme", "\x00\x01\x02")
-	f.Add("acme", "日本語")
+	f.Add("acme", "alice", "key-1")
+	f.Add("", "alice", "key-1")
+	f.Add("acme", "", "key-1")
+	f.Add("acme", "alice", "")
+	f.Add("acme", "alice", string(make([]byte, MaxKeyLength)))
+	f.Add("acme", "alice", string(make([]byte, MaxKeyLength+1)))
+	f.Add("acme", "alice", "\x00\x01\x02")
+	f.Add("acme", "alice", "日本語")
 
-	f.Fuzz(func(t *testing.T, tenant, value string) {
-		key := Key{TenantID: tenant, Value: value}
+	f.Fuzz(func(t *testing.T, tenant, subject, value string) {
+		key := Key{TenantID: tenant, Subject: subject, Value: value}
 		err := key.Validate()
 		switch {
 		case tenant == "":
 			if err == nil {
 				t.Errorf("empty tenant must error; key=%+v", key)
+			}
+		case subject == "":
+			if err == nil {
+				t.Errorf("empty subject must error; key=%+v", key)
 			}
 		case value == "":
 			if err == nil {

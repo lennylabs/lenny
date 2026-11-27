@@ -440,9 +440,14 @@ type gatewayWiringFields struct {
 	// (session_checkpoints). The §12.8 tenant-deletion Phase 4 eraser
 	// erases the tenant's rows through it.
 	checkpointRetention checkpointretention.Store
-	securityBus         *pubsub.Bus
-	memories            memorystore.Store
-	memoryBackendLabel  string
+	// idempotencyRecords is the §11.5 idempotency record store, Postgres
+	// under --postgres-dsn and in memory otherwise. The REST middleware and
+	// the MCP hook read and write it through the credential wrapper, and the
+	// §12.8 user and tenant erasers delete its records directly.
+	idempotencyRecords idempotencyRecordStore
+	securityBus        *pubsub.Bus
+	memories           memorystore.Store
+	memoryBackendLabel string
 
 	// tokenServiceConn is the §4.3 token-service gRPC connection. buildStores
 	// dials it; runGateway closes it on exit (the original deferred close is

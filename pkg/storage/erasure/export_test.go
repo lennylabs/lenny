@@ -14,7 +14,8 @@ var (
 	}
 	gatewayUserScoped = []string{
 		"leases", "semantic_cache", "experiment_sticky", "billing_buffer", "quota", "memory",
-		"interactions", "audit", "sessions", "tokens", "issued_tokens", "credential_pool",
+		"interactions", "audit", "idempotency_records", "sessions", "tokens", "issued_tokens",
+		"credential_pool",
 	}
 	// gatewayTenantPhase4 is the gateway's tenant-path wiring of the deletion
 	// step of spec: 12.8 (Compliance Interfaces: Tenant deletion lifecycle
@@ -23,8 +24,8 @@ var (
 		"leases", "coordination_mirror", "semantic_cache", "experiment_sticky", "billing_buffer",
 		"quota", "artifacts", "checkpoint_manifests", "checkpoint_retention", "checkpoint_meta",
 		"transcripts", "interactions", "memory", "session_message_queues", "session_tree_archive",
-		"audit", "billing", "eval_results", "delegation_budget", "sessions", "tokens",
-		"issued_tokens", "credential_pool", "runtime_tenant_access", "pool_tenant_access",
+		"audit", "billing", "eval_results", "delegation_budget", "idempotency_records", "sessions",
+		"tokens", "issued_tokens", "credential_pool", "runtime_tenant_access", "pool_tenant_access",
 		"user_roles", "custom_roles", "tenant_definitions", "tenant_config",
 	}
 )

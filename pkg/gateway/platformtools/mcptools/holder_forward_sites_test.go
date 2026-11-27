@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/lennylabs/lenny/pkg/gateway/seam"
+	"github.com/lennylabs/lenny/pkg/idempotency"
 	"github.com/lennylabs/lenny/tests/testinfra/ownerprincipal"
 
 	"github.com/alicebob/miniredis/v2"
@@ -433,7 +434,7 @@ func TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5
 			srv, store, _, _, _ := newMCPRoutingDeliveryWith(t, nil, func(d *mcptools.Deps) { d.HolderForward = fwd.ToolsSeam() })
 			mkSession(t, store, "sess_t", session.StateRunning, "")
 			cache := idempotencymw.NewMemoryStore()
-			h := authmw.Wrap(idempotencymw.Wrap(srv.Handler(), cache, idempotencymw.Options{}), devAuth)
+			h := authmw.Wrap(idempotencymw.Wrap(srv.Handler(), cache, idempotencymw.Options{PrincipalFromRequest: ownerprincipal.Scope}), devAuth)
 			for i := 0; i < 2; i++ {
 				rec := keyedCancel(h, "cancel-key")
 				var resp map[string]any
@@ -450,7 +451,7 @@ func TestWiredCancelSessionForwardRefusalsStayOutOfTheIdempotencyCache_spec_11_5
 			if n := leases.gets.Load(); n != 2 {
 				t.Errorf("forward reached %d times, want 2: a same-key retry after a refusal runs again", n)
 			}
-			if _, ok, _ := cache.Get(context.Background(), "acme", "cancel-key"); ok {
+			if _, ok, _ := cache.Get(context.Background(), idempotency.Key{TenantID: "acme", Subject: ownerprincipal.Alice, Value: "cancel-key"}); ok {
 				t.Error("the refusal was stored in the idempotency cache")
 			}
 			if row, _ := store.Get(context.Background(), "acme", "sess_t"); row.State != session.StateRunning || !row.TerminatedAt.IsZero() {

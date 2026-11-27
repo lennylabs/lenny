@@ -52,6 +52,42 @@ func Wrap(h http.Handler, subject string) http.Handler {
 	})
 }
 
+// Scope is the idempotency record scope resolver for a suite that mounts the
+// idempotency middleware or the MCP idempotency hook without the gateway's
+// auth middleware. It returns the subject and the bound session of the
+// principal on the request context, as the gateway's resolver does, and the
+// principal's tenant, or the X-Lenny-Tenant-ID dev header when the
+// principal carries none, because Context leaves the tenant empty. Mount the
+// idempotency middleware inside Wrap so the principal is on the context.
+func Scope(r *http.Request) (tenantID, subject, sessionID string) {
+	p, _ := authmw.FromContext(r.Context())
+	tenantID = p.TenantID
+	if tenantID == "" {
+		tenantID = r.Header.Get("X-Lenny-Tenant-ID")
+	}
+	return tenantID, p.Subject, p.SessionID
+}
+
+// UserHeader is the request header WrapFromHeader reads the caller's subject
+// from, the dev-header name the gateway's auth middleware reads.
+const UserHeader = "X-Lenny-User-ID"
+
+// WrapFromHeader is Wrap with the subject taken from the request's
+// X-Lenny-User-ID header, and subject when the header is absent, so a suite
+// can send requests as several users through one handler.
+func WrapFromHeader(h http.Handler, subject string) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := authmw.FromContext(r.Context()); !ok {
+			s := r.Header.Get(UserHeader)
+			if s == "" {
+				s = subject
+			}
+			r = r.WithContext(Context(r.Context(), s))
+		}
+		h.ServeHTTP(w, r)
+	})
+}
+
 // SessionAccess is a session-service double for a suite that calls the MCP
 // tools reading the session store directly. Its SessionAccessible grants
 // the row's owner and nobody else, the owner half of the §10.2 ownership
