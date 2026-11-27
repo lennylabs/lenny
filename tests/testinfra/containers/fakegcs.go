@@ -64,14 +64,11 @@ func StartFakeGCS(t testing.TB, opts FakeGCSOptions) *FakeGCS {
 		opts.StartupTimeout = 60 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
-	defer cancel()
-
 	// -scheme http keeps the emulator on plain HTTP; -backend memory
 	// avoids disk I/O. The public host is patched after start via the
 	// /_internal/config endpoint once the mapped port is known, so that
 	// resumable-upload redirects point back at the mapped address.
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	container, err := genericContainer(defaultStaleReaperRetry, opts.StartupTimeout, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        opts.Image,
 			Cmd:          []string{"-scheme", "http", "-backend", "memory", "-port", "4443"},
@@ -91,6 +88,8 @@ func StartFakeGCS(t testing.TB, opts FakeGCSOptions) *FakeGCS {
 		_ = container.Terminate(stopCtx)
 	})
 
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
+	defer cancel()
 	publicHost, err := mappedEndpoint(ctx, container, "4443/tcp")
 	if err != nil {
 		t.Fatalf("StartFakeGCS: endpoint: %v", err)

@@ -100,12 +100,14 @@ func (s *SharedPostgres) Database(t testing.TB, migrationsDir string) *Postgres 
 // when a later step fails, so Stop still terminates it.
 func (s *SharedPostgres) start(migrationsDir string) error {
 	opts := PostgresOptions{Database: sharedTemplateDatabase, MigrationsDir: migrationsDir}.withDefaults()
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
-	defer cancel()
-	c, err := runPostgres(ctx, opts, testcontainers.WithCmdArgs("-c", "max_connections="+sharedMaxConnections))
+	c, err := startContainer(defaultStaleReaperRetry, opts.StartupTimeout, func(ctx context.Context) (*tcpostgres.PostgresContainer, error) {
+		return runPostgres(ctx, opts, testcontainers.WithCmdArgs("-c", "max_connections="+sharedMaxConnections))
+	})
 	if err != nil {
 		return err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
+	defer cancel()
 	s.container = c
 	dsn, err := postgresDSN(ctx, c)
 	if err != nil {

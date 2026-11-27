@@ -45,10 +45,7 @@ func StartRedis(t testing.TB, opts RedisOptions) *Redis {
 		opts.StartupTimeout = 30 * time.Second
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
-	defer cancel()
-
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	container, err := genericContainer(defaultStaleReaperRetry, opts.StartupTimeout, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:        opts.Image,
 			ExposedPorts: []string{"6379/tcp"},
@@ -73,6 +70,8 @@ func StartRedis(t testing.TB, opts RedisOptions) *Redis {
 		_ = container.Terminate(stopCtx)
 	})
 
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
+	defer cancel()
 	addr, err := mappedEndpoint(ctx, container, "6379/tcp")
 	if err != nil {
 		t.Fatalf("StartRedis: endpoint: %v", err)

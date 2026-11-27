@@ -89,13 +89,14 @@ func (p *Postgres) Router(t testing.TB) *storerouter.SingleShardRouter {
 func StartPostgres(t testing.TB, opts PostgresOptions) *Postgres {
 	t.Helper()
 	opts = opts.withDefaults()
-	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
-	defer cancel()
-
-	container, err := runPostgres(ctx, opts)
+	container, err := startContainer(defaultStaleReaperRetry, opts.StartupTimeout, func(ctx context.Context) (*tcpostgres.PostgresContainer, error) {
+		return runPostgres(ctx, opts)
+	})
 	if err != nil {
 		t.Fatalf("StartPostgres: %v", err)
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), opts.StartupTimeout)
+	defer cancel()
 	return finishPostgres(t, ctx, container, opts)
 }
 
