@@ -44,6 +44,10 @@ type PromtoolResult struct {
 	Output string
 }
 
+// promtoolTimeout bounds one attempt to start the promtool container, and
+// the reads of its state and logs once it has exited.
+const promtoolTimeout = 90 * time.Second
+
 // RunPromtoolRuleTest runs `promtool test rules` in a throwaway
 // prom/prometheus container against rulesYAML (a Prometheus rule file in
 // the `groups:` format) and testYAML (a promtool unit-test document whose
@@ -57,10 +61,7 @@ type PromtoolResult struct {
 func RunPromtoolRuleTest(t testing.TB, rulesYAML, testYAML []byte) PromtoolResult {
 	t.Helper()
 
-	ctx, cancel := context.WithTimeout(context.Background(), 90*time.Second)
-	defer cancel()
-
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	container, err := genericContainer(defaultStaleReaperRetry, promtoolTimeout, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image: promtoolImage,
 			// promtool ships alongside the prometheus server binary in the
@@ -84,6 +85,8 @@ func RunPromtoolRuleTest(t testing.TB, rulesYAML, testYAML []byte) PromtoolResul
 		_ = container.Terminate(stopCtx)
 	})
 
+	ctx, cancel := context.WithTimeout(context.Background(), promtoolTimeout)
+	defer cancel()
 	state, err := container.State(ctx)
 	if err != nil {
 		t.Fatalf("RunPromtoolRuleTest: container state: %v", err)
