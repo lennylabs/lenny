@@ -19,13 +19,15 @@ import (
 // fakeRotator stands for the upload-token key ring: it reports rot or err
 // and counts its calls.
 type fakeRotator struct {
-	rot   signingkeys.Rotation
-	err   error
-	calls int
+	rot    signingkeys.Rotation
+	err    error
+	calls  int
+	ctxErr error
 }
 
-func (f *fakeRotator) RotateNow(context.Context) (signingkeys.Rotation, error) {
+func (f *fakeRotator) RotateNow(ctx context.Context) (signingkeys.Rotation, error) {
 	f.calls++
+	f.ctxErr = ctx.Err()
 	return f.rot, f.err
 }
 
@@ -144,4 +146,26 @@ func TestForcedUploadTokenKeyRotationIsAbsentWithoutARing(t *testing.T) {
 // spec: §15.1 (REST API)
 func TestTheUploadTokenKeyRingIsAnUploadTokenKeyRotator(t *testing.T) {
 	var _ admin.UploadTokenKeyRotator = (*signingkeys.Ring)(nil)
+}
+
+// TestForcedUploadTokenKeyRotationOutlivesADisconnectedClient pins that a
+// client that has gone away does not cancel the rotation, so a key the
+// store commits is answered for and audited.
+//
+// spec: §15.1 (REST API)
+func TestForcedUploadTokenKeyRotationOutlivesADisconnectedClient(t *testing.T) {
+	rot := &fakeRotator{rot: signingkeys.Rotation{KeyID: "upload-token-9-00000000", RotationSlot: 9, ActiveFrom: time.Unix(0, 0)}}
+	sink := &capturingAuditSink{}
+	router := admin.NewRouter(tenantstore.NewMemory(), admin.Options{Audit: sink}).WithUploadTokenKeyRotator(rot)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	rr := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/upload-token-keys/rotate", nil).WithContext(ctx)
+	router.Handler().ServeHTTP(rr, withAdminPrincipal(req))
+	if rot.ctxErr != nil {
+		t.Errorf("RotateNow saw a cancelled context: %v", rot.ctxErr)
+	}
+	if rr.Code != http.StatusOK || len(sink.events) != 1 {
+		t.Errorf("status %d, audit events %d; want 200 and one event", rr.Code, len(sink.events))
+	}
 }

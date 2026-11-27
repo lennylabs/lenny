@@ -160,7 +160,7 @@ packages:
     - package: pkg/audit/deploymentconfigstore
       count: 3
     - package: pkg/audit/integrity
-      count: 52
+      count: 54
     - package: pkg/audit/jcs
       count: 4
     - package: pkg/audit/jwtaudit
@@ -352,7 +352,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1330
+      count: 1331
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret

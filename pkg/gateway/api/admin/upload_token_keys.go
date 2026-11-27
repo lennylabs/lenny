@@ -54,12 +54,16 @@ type uploadTokenKeyRotation struct {
 // signingkeys.Ring.RotateNow, which every protocol front can call; this
 // handler maps its outcome to HTTP. A rotation that cannot read or write
 // the key store, wrap the new secret, or win a slot answers 503
-// SERVICE_UNAVAILABLE with a retry hint and emits nothing.
+// SERVICE_UNAVAILABLE with a retry hint and emits nothing. A client that
+// disconnects does not cancel the rotation, so every key written is
+// audited.
 //
 // spec: §7.1 (uploadToken format and security properties), §15.1 (REST
 // API)
 func (r *Router) handleRotateUploadTokenKeys(w http.ResponseWriter, req *http.Request) {
-	rot, err := r.uploadTokenKeys.RotateNow(req.Context())
+	// The rotation is not cut short by a client that disconnects: a key
+	// committed after the cancellation would otherwise go unaudited.
+	rot, err := r.uploadTokenKeys.RotateNow(context.WithoutCancel(req.Context()))
 	if err != nil {
 		msg := "upload-token key rotation failed: " + err.Error()
 		if errors.Is(err, signingkeys.ErrRotationContended) {

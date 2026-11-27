@@ -46,7 +46,8 @@ func receiptOriginalHash(t *testing.T, ctx context.Context, pg *containers.Postg
 // the tenant's newest audit row, the gdpr.erasure_deadletter_redacted event
 // it appends next, and a later row, link to the redacted row's preserved
 // pre-redaction hash (its receipt's original_hash), so the chain verifier
-// reads redacted_gdpr and the periodic receipt scan counts nothing missing.
+// reads redacted_gdpr, the periodic receipt scan counts nothing missing, and
+// the startup and periodic continuity check reads verified.
 // It runs once with the erasure's events on the synchronous append path and
 // once on the batched-insert path.
 //
@@ -113,6 +114,16 @@ func TestARowAppendedAfterARedactedTailRowLinksToItsOriginalHash(t *testing.T) {
 	for _, m := range missing {
 		if m.Missing != 0 {
 			t.Errorf("receipt scan counted %d missing for %s, want 0", m.Missing, m.TenantID)
+		}
+	}
+	// The startup and periodic continuity check follows the same link.
+	continuity, err := integrity.CheckChainContinuityRecent(ctx, pg.Pool, pg.Pool, 1000)
+	if err != nil {
+		t.Fatalf("CheckChainContinuityRecent: %v", err)
+	}
+	for _, r := range continuity {
+		if r.Result.Integrity != audit.ChainVerified {
+			t.Errorf("continuity of %s = %q at %d (%s), want verified", r.TenantID, r.Result.Integrity, r.Result.BreakSeq, r.Result.Detail)
 		}
 	}
 }
