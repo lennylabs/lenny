@@ -872,7 +872,7 @@ packages:
     - package: pkg/sessionrecord
       count: 37
     - package: pkg/signingkeys
-      count: 44
+      count: 50
     - package: pkg/signingkeys/pgstore
       count: 3
     - package: pkg/spiffeid
