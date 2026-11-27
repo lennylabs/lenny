@@ -572,6 +572,20 @@ The gateway also records each slot reservation in Postgres before the session's 
 
 Change these values across a rolling gateway update in a fixed order, because a gateway replica that still runs the old configuration can hold the leader role while a replica with the new configuration runs a launch, restore, or seal. To raise one of these timeouts, raise `claimOrphanTimeoutSeconds` first in its own rollout, and raise the timeout in a later rollout. To lower `claimOrphanTimeoutSeconds`, lower the timeout first in its own rollout, and lower `claimOrphanTimeoutSeconds` in a later rollout.
 
+### Erasure and tenant-deletion wait
+
+| Gateway flag | Environment variable | Default | Effect |
+|:--|:--|:--|:--|
+| `--terminal-pipeline-wait-margin` | `LENNY_TERMINAL_PIPELINE_WAIT_MARGIN` | `30s` | Time that user erasure and tenant deletion add to the terminal pipeline budget while they wait for the terminal steps of the sessions they drained. It must not be negative, and the gateway does not start with a negative value. `0s` waits for the budget alone. |
+
+When a session ends, the gateway that ends it runs the session's terminal steps: the workspace seal, the pod or slot release, the session-log close, the final quota checkpoint, and the final billing event. It records on the session's record when they finish. A [user erasure](security.md#gdpr-erasure) job deletes no data, and a [tenant deletion](multi-tenancy.md) does not leave its session-drain phase, while a session it drained has not recorded the end of its terminal steps, for at most the terminal pipeline budget plus the margin after the session ended. The terminal pipeline budget is the largest `maxWorkspaceSealDurationSeconds` of any pool plus the release allowance (`--stream-failure-report-timeout`, default 30 seconds).
+
+The gateway that runs a session's terminal steps stops them when the budget has elapsed on its own clock, and the gateway leader runs the wait on its clock. The margin covers the difference between the clocks of the two replicas and a write of the terminal steps that commits just after the budget ends. Set the margin to at least the largest clock offset between gateway replicas that the deployment allows, plus the commit latency of a Postgres write. The margin lengthens only this wait: the pod and slot accounting, the stale slot reaper, and artifact retention use the budget alone. A session whose terminal steps record no end, such as one cut by a gateway restart, delays an erasure or a tenant deletion by at most the budget plus the margin.
+
+The wait assumes that every gateway replica runs with the same budget. A rolling update that raises `maxWorkspaceSealDurationSeconds` or the release allowance leaves replicas with the old, shorter budget, and while one of them holds the leader role it ends the wait before the terminal steps that a replica with the new budget runs can end. Keeping the wait over the longest budget in effect during such a rollout is the deployer's responsibility: raise `--terminal-pipeline-wait-margin` by at least the increase of the budget in its own rollout first, raise the budget in a later rollout, and lower the margin again once every replica runs the new budget.
+
+The chart renders neither `--terminal-pipeline-wait-margin` nor `--stream-failure-report-timeout`. Set them on the gateway container's arguments or environment.
+
 ### MinIO / Object Storage
 
 ```yaml
@@ -888,6 +902,10 @@ billing:
   dualControlThreshold: 0             # Default: 0 (all corrections require dual-control)
   flushIntervalMs: 500
 ```
+
+### Event Fields
+
+Each billing event carries the tenant, the session, the event type, and a timestamp, and most events carry the ID of the user who started the session. A `session.completed` event carries no user ID. A consumer that needs the user of a `session.completed` event joins it on `session_id` with the session's `session.created` event. After a user erasure pseudonymizes the user's billing events, the `session.created` event carries the pseudonym, so the join yields the pseudonym. The gateway writes `session.completed` when the session's terminal steps finish, which can be after an erasure of its user has pseudonymized the user's events, and an event with no user ID leaves no raw user ID behind in that case. The gateway writes no `session.completed` event for a session that ends in one of these ways: a failure while the session is finalized or started, the failure of a delegated session during delegation tree recovery, a cancel by the `lenny/cancel_session` or `lenny/cancel_child` tool, a cancel of a delegation tree's sessions by a failure cascade or after the tree's budget records expire, the end of a held Open Responses conversation, a cancel when an administrator fully revokes the session's user, and the end of a single-shot request through the OpenAI Chat Completions or Open Responses surface.
 
 ### Retention
 
