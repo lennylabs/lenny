@@ -1,10 +1,12 @@
 ---
 id: ERASE-I2
-status: planned
+status: closed
 kind: spec-defect
 severity: medium
 requirements: []
 change: 0178.S2
+closed: fixed
+closed-by: 0178.S2
 ---
 
 # User erasure leaves the user's idempotency records, and the §12.8 store table does not list them

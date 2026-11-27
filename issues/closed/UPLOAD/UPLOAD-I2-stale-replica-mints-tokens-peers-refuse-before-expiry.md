@@ -1,10 +1,12 @@
 ---
 id: UPLOAD-I2
-status: planned
+status: closed
 kind: spec-defect
 severity: low
 requirements: []
 change: 0177.S2
+closed: fixed
+closed-by: 0177.S2
 ---
 
 # A replica that cannot refresh its signing keys can mint upload tokens that its peers refuse before the tokens expire

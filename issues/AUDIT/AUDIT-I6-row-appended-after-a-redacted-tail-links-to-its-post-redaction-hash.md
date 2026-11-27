@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I6
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0177.S3
 ---
 
 # A row appended after a redacted tail row links to the tail's post-redaction hash, so the chain reads broken

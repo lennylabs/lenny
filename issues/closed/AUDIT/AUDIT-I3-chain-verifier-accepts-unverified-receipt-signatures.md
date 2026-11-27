@@ -1,10 +1,12 @@
 ---
 id: AUDIT-I3
-status: planned
+status: closed
 kind: build-gap
 severity: high
 requirements: []
 change: 0177.S1
+closed: fixed
+closed-by: 0177.S1
 ---
 
 # The audit chain verifier accepts a redaction receipt without verifying its signature
