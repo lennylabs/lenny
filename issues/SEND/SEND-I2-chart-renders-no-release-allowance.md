@@ -1,5 +1,5 @@
 ---
-id: SESS-I2
+id: SEND-I2
 status: open
 kind: build-gap
 severity: low
