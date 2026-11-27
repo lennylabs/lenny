@@ -15,7 +15,7 @@ None.
 §7.1 **Terminal pipeline context:** and **Post-terminal window:**, and §12.8 **Lifecycle fence and drain.**, as EW-4 in `change.md` states (decision 1). Then the migration adding `sessions.terminal_pipeline_done_at`, the field and the mutator in `pkg/session/sessionstore` (EW-1), the mark write at the end of `recordSessionCompleted`, `TerminalPipelinePending` and `admin.TerminalPipelinesPending` in place of `ReleasePending` for user erasure and tenant deletion (EW-2), and the unit, component, load_local, integration, and security tests. The digest lists the terminal writers that run no pipeline (EW-3). Then the "Erasure Process" list of `docs/operator-guide/security.md`.
 
 ### 0176.S2 The budget margin and the terminal writers in §7.1
-- status: Planned
+- status: Building
 - lanes: [specification, code, documentation]
 - depends-on: [0176.S1]
 - closes: []
