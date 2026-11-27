@@ -146,7 +146,7 @@ packages:
     - package: pkg/apis/lenny/v1alpha1
       count: 35
     - package: pkg/audit
-      count: 65
+      count: 67
     - package: pkg/audit/adminaudit
       count: 2
     - package: pkg/audit/auditretention
@@ -154,7 +154,7 @@ packages:
     - package: pkg/audit/auditscope
       count: 2
     - package: pkg/audit/auditstore
-      count: 71
+      count: 76
     - package: pkg/audit/auditstore/auditbatch
       count: 7
     - package: pkg/audit/deploymentconfigstore
@@ -352,7 +352,7 @@ packages:
     - package: pkg/experiment
       count: 10
     - package: pkg/gateway/api/admin
-      count: 1321
+      count: 1330
     - package: pkg/gateway/api/admintoken
       count: 25
     - package: pkg/gateway/api/admintoken/k8ssecret
@@ -452,7 +452,7 @@ packages:
     - package: pkg/gateway/core/session/sessioninbox
       count: 73
     - package: pkg/gateway/core/session/sessionserver
-      count: 2989
+      count: 2995
     - package: pkg/gateway/core/session/slotcounter
       count: 125
     - package: pkg/gateway/core/session/slothealth
@@ -872,7 +872,7 @@ packages:
     - package: pkg/sessionrecord
       count: 37
     - package: pkg/signingkeys
-      count: 28
+      count: 44
     - package: pkg/signingkeys/pgstore
       count: 3
     - package: pkg/spiffeid
@@ -1004,7 +1004,7 @@ packages:
     - package: tests/component/auditintegrity
       count: 5
     - package: tests/component/auditstore
-      count: 59
+      count: 63
     - package: tests/component/breakers
       count: 3
     - package: tests/component/controllers
@@ -1072,7 +1072,7 @@ packages:
     - package: tests/component/storagequota
       count: 1
     - package: tests/component/stores
-      count: 332
+      count: 338
     - package: tests/component/tenantsalt
       count: 4
     - package: tests/component/tokenproperties
@@ -1182,7 +1182,7 @@ packages:
     - package: tests/contract/rest_circuitbreaker
       count: 6
     - package: tests/contract/rest_idempotency
-      count: 11
+      count: 17
     - package: tests/contract/rest_mcp_consistency
       count: 76
     - package: tests/contract/rest_openai_chat
@@ -1238,7 +1238,7 @@ packages:
     - package: tests/load_local/usagemeter_contention
       count: 4
     - package: tests/security
-      count: 583
+      count: 589
     - package: tests/security/pentest
       count: 6
     - package: tests/static/build

@@ -305,8 +305,9 @@ func (r *Ring) rotateIfDue(ctx context.Context, now time.Time) error {
 	return err
 }
 
-// RotateNow writes the purpose's next key at once, whatever the age of the
-// active key, through the write a scheduled rotation uses: the key's
+// RotateNow writes the purpose's next key immediately, even before the
+// active key reaches its rotation interval, through the same write as
+// rotateIfDue: the key's
 // activation instant is one publish lead ahead, so every replica loads it
 // before any replica signs with it, and the store retires the key before
 // it at that instant. It reloads the keys first, so the slot it writes
