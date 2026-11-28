@@ -1,6 +1,6 @@
 # Flaky test fixes and gate coverage across tiers
 
-Status: `In progress`, revision 1, 2026-11-27.
+Status: `In progress`, revision 2, 2026-11-27.
 
 ## Problem
 
@@ -35,7 +35,7 @@ The change covers the three tests and their fixtures, where the embedded-manifes
 
 ## High-level design
 
-The secret-probe test waits until the API server's authorizer allows the grant before its first probe, by asking the API server through a `SubjectAccessReview` until the answer is yes or a deadline passes. The stack tests hand the forwarder the listener they opened rather than its port number, through a seam in the package that the forwarder's two legs bind through. The Postgres fixture waits longer for a container under load, as open decision O1 settles.
+The secret-probe test waits until the API server's authorizer allows the grant before its first probe, by asking the API server through a `SubjectAccessReview` until the answer is yes or a deadline passes. The stack tests hand the forwarder the listener they opened rather than its port number, through a seam in the package that the forwarder's two legs bind through. The Postgres fixture waits up to 60 seconds for a container to start, as the MinIO and fake GCS fixtures do (decision 1).
 
 The embedded-manifest check runs in the gate image before a code merge, as open decision O2 settles.
 
@@ -65,7 +65,7 @@ After `startAPI` creates the `RoleBinding`, it polls a `SubjectAccessReview` for
 
 ### FT-3 The Postgres start timeout
 
-As open decision O1 settles.
+`PostgresOptions.withDefaults` sets a zero `StartupTimeout` to 60 seconds rather than 30 (decision 1). `StartPostgres` and `SharedPostgres` both take their options through it, so both wait up to 60 seconds for the log line and the mapped port, and the context of each start attempt has the same bound. `startContainer` creates a fresh context for each attempt it retries while the session's reaper is not running (GATE-I18), so a wait for a stopped reaper does not shorten the 60 seconds. A test that sets `StartupTimeout` keeps its value. The wait ends as soon as the container is ready, so the longer bound adds time only to a start that would otherwise fail.
 
 ### EM-1 The embedded-manifest check in the gate image
 
@@ -97,7 +97,7 @@ The verdict records the tiers whose profiles the run merged as `gate.cover_tiers
 ## Specification and non-specification changes
 
 - Specification: none.
-- Tests and fixtures: `tests/component/secretprobe/secretprobe_envtest_test.go`; `pkg/embedded/stack/bringup_test.go`, `lifecycle_test.go`, `stack_test.go`, `tlsproxy_test.go`, and `testsupport_test.go`; `tests/testinfra/containers/postgres.go` and `postgres_shared.go` (O1).
+- Tests and fixtures: `tests/component/secretprobe/secretprobe_envtest_test.go`; `pkg/embedded/stack/bringup_test.go`, `lifecycle_test.go`, `stack_test.go`, `tlsproxy_test.go`, and `testsupport_test.go`; `tests/testinfra/containers/postgres.go` and a unit test of its default, `postgres_defaults_test.go` (decision 1).
 - Code: `pkg/embedded/stack/tlsproxy.go` (the `listenTCP` seam).
 - Merge gate: `cmd/lenny-test/` (CV-1 to CV-3, and EM-1 under O2), and the placement of `embedded_manifests_sync_test.go` under O2.
 - Records: `TESTING.md` ("Restricted runs and coverage" and "Verdict"), `cmd/lenny-test/README.md`, and, once O3 is settled, the rule texts that say `--cover` writes the unit run's profile (`.claude/rules/git-workflow.md`, "v1 merge policy", and `.claude/rules/test-coverage.md`, "How to run").
@@ -110,5 +110,5 @@ No reader-facing behavior changes: the change touches no specification page. The
 
 - FT-1: the component test itself, run repeatedly in the component tier.
 - FT-2: the unit tests of `pkg/embedded/stack`, run repeatedly, and a unit test of the held-listener helper: a held port is handed to the forwarder, and a port no test holds is bound through `net.Listen`.
-- FT-3: the component tests that start Postgres, under O1.
+- FT-3: a unit test that pins the 60-second default and a timeout the caller sets, and the component tests that start Postgres, `tests/component/auditintegrity` and `tests/component/auditstore` among them, run three times in the gate container. The next runs of the gate-main workflow show whether the timeout recurs.
 - CV-1 to CV-3: unit tests of `cmd/lenny-test`: the coverage flags of each tier's invocations with and without `--cover`, the changed-package list, the merge of tier profiles into the unit profile, a merge failure that fails the tier, the removal of stale tier profiles, and `gate.cover_tiers` in the verdict and in the note of `coverage --diff`. A gate run with `--cover` on a branch whose changed lines only component tests reach shows them covered.

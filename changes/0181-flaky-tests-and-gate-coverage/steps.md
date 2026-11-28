@@ -16,12 +16,13 @@
 FT-1 and FT-2. The secret-probe fixture waits for the grant through a `SubjectAccessReview` before the first probe. The stack package binds its forwarder legs through the `listenTCP` seam, and its tests hand the forwarder held listeners. The fixes are confirmed by repeated runs of `tests/component/secretprobe` and of the unit tests of `pkg/embedded/stack`.
 
 ### 0181.S2 The Postgres start timeout
-- status: Planned
+- status: Building
+- ruled-ready: 2026-11-27, the owner settled open decision O1 as decision 1, the only open decision that touched the step
 - lanes: [code]
 - depends-on: []
 - closes: [GATE-I16]
 
-FT-3, as open decision O1 settles, in `tests/testinfra/containers`. The next runs of the gate-main workflow confirm that the timeout does not recur.
+FT-3, as decision 1 settles it, in `tests/testinfra/containers`. The next runs of the gate-main workflow confirm that the timeout does not recur.
 
 ### 0181.S3 The embedded-manifest check in the gate image
 - status: Planned

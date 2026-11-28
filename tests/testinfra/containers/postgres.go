@@ -40,6 +40,17 @@ const defaultImage = "pgvector/pgvector:pg16"
 // postgresPort is the container port Postgres listens on.
 const postgresPort = "5432/tcp"
 
+// defaultPostgresStartupTimeout is the StartupTimeout of StartPostgres and
+// SharedPostgres when the caller sets none. It matches the 60 seconds of the
+// MinIO and fake GCS fixtures. At 30 seconds, a burst of parallel starts on
+// the 4-vCPU gate-main runner, or on a loaded workstation, ran past the bound
+// in the Docker API calls or in the wait for the log line, and a rerun on the
+// same commit passed (GATE-I16). The wait ends as soon as the container is
+// ready, so the bound adds time only to a start that would otherwise fail.
+// startContainer gives each attempt it retries its own context of this
+// length, so a wait for a stopped session reaper does not shorten it.
+const defaultPostgresStartupTimeout = 60 * time.Second
+
 // PostgresOptions configures StartPostgres. Zero value is sensible.
 type PostgresOptions struct {
 	// Image is the container image. Defaults to defaultImage.
@@ -54,8 +65,9 @@ type PostgresOptions struct {
 	// migrate-style numbered .up.sql / .down.sql files. If non-empty,
 	// StartPostgres applies them with golang-migrate before returning.
 	MigrationsDir string
-	// StartupTimeout caps how long we wait for the container to accept
-	// connections. Defaults to 30 seconds.
+	// StartupTimeout caps how long each start attempt waits for the
+	// container to be created, to log that it accepts connections, and to
+	// publish its port. Defaults to defaultPostgresStartupTimeout.
 	StartupTimeout time.Duration
 }
 
@@ -115,7 +127,7 @@ func (opts PostgresOptions) withDefaults() PostgresOptions {
 		opts.Password = "postgres"
 	}
 	if opts.StartupTimeout == 0 {
-		opts.StartupTimeout = 30 * time.Second
+		opts.StartupTimeout = defaultPostgresStartupTimeout
 	}
 	return opts
 }
