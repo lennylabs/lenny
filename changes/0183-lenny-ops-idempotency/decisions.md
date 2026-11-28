@@ -2,12 +2,7 @@
 
 ## Open decisions
 
-Raised on 2026-11-27 when the change was created. Each entry states the question, the options, and a recommendation.
-
-- **O1. Program and milestone.** The owner's answer to IP-21 named the timing in these words: "We can tackle that later as part of M3, I think". The change was created outside any program, as changes 0178 and 0182 are, and its membership is the owner's to confirm.
-  - (a) The change joins the v1 program, and its steps are placed in M3 when M3 is sequenced. *Recommended*, because it follows the owner's words, and the defects it closes include a high-severity one (APICONV-I16).
-  - (b) The change joins the v1 program in a later milestone of M3+.
-  - (c) The change stays outside the v1 program, as 0178 and 0182 do, and is scheduled when the owner asks for it.
+Raised on 2026-11-27 when the change was created. Each entry states the question, the options, and a recommendation. O1 is settled as decision 1. O2 to O8 stay open and are deferred with the change: the owner will answer them after a larger review of `lenny-ops` (decision 1).
 
 - **O2. One implementation, or a fix of `opsidem` in place.** The review recommended fixing `pkg/ops/opsidem` in place and folding it onto `idempotencymw` later, because the fixes were then step 0178.S6, which was not to wait on 0178.S3 and 0178.S4. As a change of its own that the owner places later, that reason no longer holds.
   - (a) Fold: after step 0178.S4 lands, `idempotencymw` gains the parameters of OI-9, `lenny-ops` runs it over its own table, and `pkg/ops/opsidem` is removed (steps 0183.S1 and 0183.S2 as written). *Recommended*: each rule of the gateway's design C is then built and tested once, which the code best practices ask for by reuse over duplication and the design principles ask for by keeping the core small, and `lenny-ops` inherits every later gateway fix, such as APICONV-I20.
@@ -41,4 +36,4 @@ Raised on 2026-11-27 when the change was created. Each entry states the question
 
 ## Decisions
 
-None.
+1. **The change is deferred (O1).** The owner's own option. The change stays `Draft`, outside the v1 program and outside M3, and is not scheduled. The owner wants a much larger review of `lenny-ops` before tackling its idempotency records, and does not consider them critical now. Open decisions O2 to O8 wait for that review. The fix of the gateway's idempotency middleware that this change would inherit, APICONV-I20, stays with step 0178.S4 (0178 decision 21). The options not chosen were (a), joining the v1 program with its steps placed in M3, and (b), joining it in a later milestone. Owner's answer to LO-1 to LO-8 in chat, 2026-11-28: "I don't want to tackle lenny-ops yet. I need a much larger review of it and it's not critical at this point".
