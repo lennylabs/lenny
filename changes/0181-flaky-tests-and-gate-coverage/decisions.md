@@ -2,16 +2,6 @@
 
 ## Open decisions
 
-### O1 The Postgres start timeout (GATE-I16)
-
-`StartPostgres` and `SharedPostgres` wait at most 30 seconds for a container to log that it accepts connections. Under a burst of parallel starts on the 4-vCPU runner, seven starts timed out in one run and passed on the rerun. The wait ends as soon as the container is ready, so a longer bound costs time only when a start would otherwise fail.
-
-- **(a) Raise the default to 60 seconds** in `PostgresOptions.withDefaults`, which `SharedPostgres` also uses, the bound of the MinIO and fake GCS fixtures. The next runs of the gate-main workflow show whether the timeout recurs.
-- **(b) Bound the starts.** Keep 30 seconds, and let at most a fixed number of Postgres containers start at once in one test binary (a semaphore in `runPostgres`), so a package's parallel tests queue their starts.
-- **(c) Both.**
-
-Recommendation: (a). It is the smallest change, matches the other fixtures, and adds no time to a passing run; (b) changes how long a package's parallel tests wait for each other, and can follow if the timeout recurs at 60 seconds.
-
 ### O2 Where the embedded-manifest check runs (GATE-I17)
 
 `TestEmbeddedManifestsMatchDevProfileRender_spec_17_4` is a general documentation gate (`gateDocsFiles`), which the gate on `main` runs and the check before a code merge does not. On the host it always fails, because the host's helm renders differently from the helm `tests/gate/Dockerfile` pins.
@@ -34,4 +24,4 @@ Recommendation: given after the measurement, in the step's digest and in this en
 
 ## Decisions
 
-None.
+1. **The Postgres start timeout (GC-1, O1).** `PostgresOptions.withDefaults` raises the default `StartupTimeout` from 30 to 60 seconds, the bound of the MinIO and fake GCS fixtures, and `SharedPostgres` takes the same default through it. The timeout bounds each attempt of the retry `startContainer` runs while the session's reaper is not running (GATE-I18), so a start that waits for a stopped reaper keeps its full 60 seconds. The next runs of the gate-main workflow show whether the timeout recurs. Step 0181.S2 builds it and closes GATE-I16. The options not chosen were (b), keeping 30 seconds and bounding how many Postgres containers one test binary starts at once with a semaphore in `runPostgres`, and (c), both. Owner's answer to GC-1 on the M3 readiness decision page, answered in chat 2026-11-27, with the words "GC-1: (a)".
