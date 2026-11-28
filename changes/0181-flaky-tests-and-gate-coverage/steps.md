@@ -7,7 +7,7 @@
 ## Steps
 
 ### 0181.S1 The secret-probe grant and the stack tests' ports
-- status: Building
+- status: Landed
 - ruled-ready: 2026-11-27, the owner approved the build order whose last item is GATE-I14 with the flaky-test fixes; no open decision touches the step
 - lanes: [code]
 - depends-on: []
@@ -16,7 +16,7 @@
 FT-1 and FT-2. The secret-probe fixture waits for the grant through a `SubjectAccessReview` before the first probe. The stack package binds its forwarder legs through the `listenTCP` seam, and its tests hand the forwarder held listeners. The fixes are confirmed by repeated runs of `tests/component/secretprobe` and of the unit tests of `pkg/embedded/stack`.
 
 ### 0181.S2 The Postgres start timeout
-- status: Building
+- status: Landed
 - ruled-ready: 2026-11-27, the owner settled open decision O1 as decision 1, the only open decision that touched the step
 - lanes: [code]
 - depends-on: []

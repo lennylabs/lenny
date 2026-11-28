@@ -8,11 +8,11 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 6 |
-| Ready | 6 |
+| Building | 2 |
+| Ready | 8 |
 | Waiting on decisions | 32 |
-| Blocked | 167 |
-| Landed | 23 |
+| Blocked | 166 |
+| Landed | 27 |
 | Cancelled | 6 |
 
 ## Program v1
@@ -54,17 +54,15 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | Step | Title | State | Waiting on |
 | :-- | :-- | :-- | :-- |
-| [0177.S3](0177-shared-upload-token-keys/steps.md#0177s3-the-append-after-a-redacted-tail-row) | The append after a redacted tail row | Building |  |
-| [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Building |  |
 | [0178.S3](0178-idempotency-keys-by-principal/steps.md#0178s3-the-idempotency-scope-by-subject-source-session-and-route) | The idempotency scope by subject, source, session, and route | Building |  |
 | [0178.S4](0178-idempotency-keys-by-principal/steps.md#0178s4-replay-admission-by-the-routes-authorization-checks-the-stored-routes-and-the-refusals-not-stored) | Replay admission by the route's authorization checks, the stored routes, and the refusals not stored | Building |  |
-| [0181.S1](0181-flaky-tests-and-gate-coverage/steps.md#0181s1-the-secret-probe-grant-and-the-stack-tests-ports) | The secret-probe grant and the stack tests' ports | Building |  |
-| [0181.S2](0181-flaky-tests-and-gate-coverage/steps.md#0181s2-the-postgres-start-timeout) | The Postgres start timeout | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
+| [0176.S3](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s3-the-checkpoint-billing-event-without-a-user-id) | The checkpoint billing event without a user id | Ready |  |
 | [0181.S3](0181-flaky-tests-and-gate-coverage/steps.md#0181s3-the-embedded-manifest-check-in-the-gate-image) | The embedded-manifest check in the gate image | Ready |  |
 | [0181.S4](0181-flaky-tests-and-gate-coverage/steps.md#0181s4-coverage-of-the-component-and-contract-tiers) | Coverage of the component and contract tiers | Ready |  |
+| [0182.S1](0182-client-chosen-upload-secret/steps.md#0182s1-the-client-chosen-upload-secret) | The client-chosen upload secret | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -258,7 +256,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
 | [0179.S2](0179-upload-token-model/steps.md#0179s2-the-reduced-model-of-the-client-chosen-upload-secret) | The reduced model of the client-chosen upload secret | Blocked | 0182.S1 |
-| [0182.S1](0182-client-chosen-upload-secret/steps.md#0182s1-the-client-chosen-upload-secret) | The client-chosen upload secret | Blocked | 0177.S4 |
 | [0182.S2](0182-client-chosen-upload-secret/steps.md#0182s2-retirement-of-the-restore-and-the-upload-token-key-ring) | Retirement of the restore and the upload-token key ring | Blocked | 0182.S1 |
 | [0183.S1](0183-lenny-ops-idempotency/steps.md#0183s1-one-idempotency-implementation-for-the-gateway-and-lenny-ops) | One idempotency implementation for the gateway and lenny-ops | Blocked | 0178.S4 |
 | [0183.S2](0183-lenny-ops-idempotency/steps.md#0183s2-lenny-ops-records-under-design-c) | lenny-ops records under design C | Blocked | 0183.S1 |
@@ -270,10 +267,14 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0176.S2](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s2-the-budget-margin-and-the-terminal-writers-in-71) | The budget margin and the terminal writers in §7.1 | Landed |  |
 | [0177.S1](0177-shared-upload-token-keys/steps.md#0177s1-shared-signing-keys-consumed-state-and-receipt-signing) | Shared signing keys, consumed state, and receipt signing | Landed |  |
 | [0177.S2](0177-shared-upload-token-keys/steps.md#0177s2-the-receipt-key-set-the-verification-time-of-replaced-keys-and-the-check-against-new_hash) | The receipt key set, the verification time of replaced keys, and the check against new_hash | Landed |  |
+| [0177.S3](0177-shared-upload-token-keys/steps.md#0177s3-the-append-after-a-redacted-tail-row) | The append after a redacted tail row | Landed |  |
+| [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Landed |  |
 | [0178.S1](0178-idempotency-keys-by-principal/steps.md#0178s1-records-scoped-by-principal) | Records scoped by principal | Landed |  |
 | [0178.S2](0178-idempotency-keys-by-principal/steps.md#0178s2-user-erasure-deletes-the-users-idempotency-records) | User erasure deletes the user's idempotency records | Landed |  |
 | [0179.S1](0179-upload-token-model/steps.md#0179s1-model-of-the-upload-token-keys-and-consumed-state) | Model of the upload-token keys and consumed state | Landed |  |
 | [0180.S1](0180-audit-chain-model/steps.md#0180s1-model-of-the-audit-chain-and-redaction-receipts) | Model of the audit chain and redaction receipts | Landed |  |
+| [0181.S1](0181-flaky-tests-and-gate-coverage/steps.md#0181s1-the-secret-probe-grant-and-the-stack-tests-ports) | The secret-probe grant and the stack tests' ports | Landed |  |
+| [0181.S2](0181-flaky-tests-and-gate-coverage/steps.md#0181s2-the-postgres-start-timeout) | The Postgres start timeout | Landed |  |
 | [0133.S3](0133-llm-upstreams-and-cost-budgets/steps.md#0133s3-rate-cards-and-credit-budgets) | Rate cards and credit budgets | Cancelled |  |
 | [0137.S3](0137-pod-lifecycle-controller/steps.md#0137s3-go-type-renames) | Go type renames | Cancelled |  |
 | [0170.S5](0170-budgets/steps.md#0170s5-tenant-level-meters) | Tenant-level meters | Cancelled |  |
@@ -326,11 +327,11 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `In progress` | 1 of 1 | 19 |
-| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 2 of 2 | 8 |
-| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `In progress` | 2 of 5 | 0 |
+| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 2 of 3 | 5 |
+| [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Implemented` | 4 of 5 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 6 | 1 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 2 | 0 |
 | [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 1 | 14 |
-| [0181](0181-flaky-tests-and-gate-coverage/change.md) | Flaky test fixes and gate coverage across tiers | `In progress` | 0 of 4 | 6 |
+| [0181](0181-flaky-tests-and-gate-coverage/change.md) | Flaky test fixes and gate coverage across tiers | `In progress` | 2 of 4 | 6 |
 | [0182](0182-client-chosen-upload-secret/change.md) | Client-chosen upload secret | `Decided` | 0 of 2 | 0 |
 | [0183](0183-lenny-ops-idempotency/change.md) | Redesign of the lenny-ops idempotency records | `Draft` | 0 of 5 | 8 |
