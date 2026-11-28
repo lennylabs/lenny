@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I13
-status: open
+status: planned
 kind: doc-gap
 severity: low
 requirements: []
+change: 0180.S2
 ---
 
 # A receipt key rotation in one rollout lets a replica that has not restarted refuse receipts signed under the new key

@@ -9,7 +9,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | State | Steps |
 | :-- | --: |
 | Building | 2 |
-| Ready | 8 |
+| Ready | 9 |
 | Waiting on decisions | 32 |
 | Blocked | 166 |
 | Landed | 27 |
@@ -60,6 +60,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
 | [0176.S3](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s3-the-periodic-writers-after-an-erasure-and-the-margin-ceiling) | The periodic writers after an erasure, and the margin ceiling | Ready |  |
+| [0180.S2](0180-audit-chain-model/steps.md#0180s2-the-verifiers-after-a-retention-sweep-and-a-redaction-and-the-receipt-key-rotation) | The verifiers after a retention sweep and a redaction, and the receipt key rotation | Ready |  |
 | [0181.S3](0181-flaky-tests-and-gate-coverage/steps.md#0181s3-the-embedded-manifest-check-in-the-gate-image) | The embedded-manifest check in the gate image | Ready |  |
 | [0181.S4](0181-flaky-tests-and-gate-coverage/steps.md#0181s4-coverage-of-the-component-and-contract-tiers) | Coverage of the component and contract tiers | Ready |  |
 | [0182.S1](0182-client-chosen-upload-secret/steps.md#0182s1-the-client-chosen-upload-secret) | The client-chosen upload secret | Ready |  |
@@ -331,7 +332,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Implemented` | 4 of 5 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 6 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 2 | 0 |
-| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 1 | 14 |
+| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 2 | 3 |
 | [0181](0181-flaky-tests-and-gate-coverage/change.md) | Flaky test fixes and gate coverage across tiers | `In progress` | 2 of 4 | 6 |
 | [0182](0182-client-chosen-upload-secret/change.md) | Client-chosen upload secret | `Decided` | 0 of 2 | 0 |
 | [0183](0183-lenny-ops-idempotency/change.md) | Redesign of the lenny-ops idempotency records | `Draft` | 0 of 5 | 8 |
