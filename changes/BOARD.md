@@ -59,7 +59,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
-| [0176.S3](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s3-the-checkpoint-billing-event-without-a-user-id) | The checkpoint billing event without a user id | Ready |  |
+| [0176.S3](0176-erasure-waits-for-terminal-pipeline/steps.md#0176s3-the-periodic-writers-after-an-erasure-and-the-margin-ceiling) | The periodic writers after an erasure, and the margin ceiling | Ready |  |
 | [0181.S3](0181-flaky-tests-and-gate-coverage/steps.md#0181s3-the-embedded-manifest-check-in-the-gate-image) | The embedded-manifest check in the gate image | Ready |  |
 | [0181.S4](0181-flaky-tests-and-gate-coverage/steps.md#0181s4-coverage-of-the-component-and-contract-tiers) | Coverage of the component and contract tiers | Ready |  |
 | [0182.S1](0182-client-chosen-upload-secret/steps.md#0182s1-the-client-chosen-upload-secret) | The client-chosen upload secret | Ready |  |
@@ -327,9 +327,9 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0166](0166-delegation-primitives/change.md) | Delegation as session primitives | `Decided` | 0 of 4 | 0 |
 | [0170](0170-budgets/change.md) | Budgets | `Draft` | 0 of 6 | 0 |
 | [0175](0175-session-lifecycle-model/change.md) | A formal model of the session lifecycle | `In progress` | 1 of 1 | 19 |
-| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 2 of 3 | 5 |
+| [0176](0176-erasure-waits-for-terminal-pipeline/change.md) | Erasure waits for the terminal pipeline | `In progress` | 2 of 3 | 0 |
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Implemented` | 4 of 5 | 0 |
-| [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 6 | 1 |
+| [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 6 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 2 | 0 |
 | [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 1 | 14 |
 | [0181](0181-flaky-tests-and-gate-coverage/change.md) | Flaky test fixes and gate coverage across tiers | `In progress` | 2 of 4 | 6 |

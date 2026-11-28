@@ -1,9 +1,10 @@
 ---
 id: ERASE-I8
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0176.S3
 ---
 
 # The periodic quota checkpoint can recreate a quota row keyed by an erased user's raw id
