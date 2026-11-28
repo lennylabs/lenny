@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I17
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0182.S2
 ---
 
 # A forced rotation whose commit succeeds on the server but fails on the client writes a key without an audit event
@@ -27,3 +28,7 @@ A key the gateway wrote can lack its audit event when the commit outcome is ambi
 ## Suggested resolution
 
 When `Insert` returns an error, `RotateNow` lists the purpose's keys again and, when the row of the key it tried to write exists, returns that key as written, so the route audits it.
+
+Change 0182 removes the forced rotation with the key ring in step 0182.S2, under which this issue closes as obsolete. The issue stays `open` until the owner answers O1 and O3 of change 0182; under O1 (d) or (e) the ring stays and this resolution applies.
+
+The owner answered on 2026-11-27: design C (decision 1 of change 0182, UC-1 (a)) and the retirement of the upload-token half of change 0177 (decision 3 of 0182, UC-3 (a)). Step 0182.S2 removes the key ring and closes this issue as obsolete.

@@ -122,8 +122,11 @@ Every configuration sets the planned tree (`Shape`), the suspension causes in pl
 | `chain3_end` | r, a, b | client | 3, 1 | 0, 0, 0, 1, 0 | both root values; `FairSpec` | P1, P13, L1, L2 |
 | `chain3_end_leave` | r, a, b | client | 3, 1 | 0, 0, 1, 1, 0 | both root values; `FairSpec` | P1, P13, L1, L2 |
 | `chain2_resume` | r, a | client | 3, 1 | 2, 0, 0, 0, 1 | root `close_all`; `FairSpec` | P1, P13, L3, L4 |
+| `chain3_twosusp` | r, a, b | client | 3, 1 | 2, 1, 0, 0, 0 | root `close_all`; expiry | P1 to P17 except P4b and P6 |
+| `chain3_letfinish` | r, a, b | client | 3, 1 | 1, 1, 0, 0, 0 | both root values; expiry | P1 to P17 except P4b and P6 |
+| `chain4_safety` | r, a, b, c | client | 3, 1 | 1, 0, 1, 0, 0 | root `close_all`; no expiry | P1 to P17 except P4, P4b, P6, and P7 |
 
-The safety configurations use `VIEW View`, which leaves the actor of the last step out of a state's identity and writes every terminal state as one, because no step reads which terminal state a session ended in. The liveness configurations set `TrackActor = FALSE` and turn off the expiry timers, which keeps their state graphs small enough for TLC's liveness check. A configuration with two suspension calls on the chain of three sessions grows past eight million distinct states and runs for more than fifteen minutes with two workers, and one with both root values and the expiry timers on the chain of three passes nine million, which is why the two-suspension cases and both root values run on the chain of two, and the safety configurations on the chains of three and four run with a root under `close_all`. Under a `close_all` root every session is `close_all` (SLR-32), so the `let_finish` cases run in the `chain2_*` configurations and in the liveness configurations on the chain of three.
+The safety configurations use `VIEW View`, which leaves the actor of the last step out of a state's identity and writes every terminal state as one, because no step reads which terminal state a session ended in. The liveness configurations set `TrackActor = FALSE` and turn off the expiry timers, which keeps their state graphs small enough for TLC's liveness check. A configuration with two suspension calls on the chain of three sessions grows past eight million distinct states and runs for more than fifteen minutes with two workers, and one with both root values and the expiry timers on the chain of three passes nine million, which is why the two-suspension cases and both root values run on the chain of two, and the safety configurations on the chains of three and four run with a root under `close_all`. The configurations `chain3_twosusp`, `chain3_letfinish`, and `chain4_safety` were added on 2026-11-27 to run those cases on the larger chains with 8 workers; they leave out the checks that a counterexample already breaks while its fix has not landed (P4b, P6, and, on the chain of four, P4 and P7), as `.claude/rules/working-practices.md` states. Under a `close_all` root every session is `close_all` (SLR-32), so the `let_finish` cases run in the `chain2_*` configurations and in the liveness configurations on the chain of three.
 
 ## Results
 
@@ -156,17 +159,29 @@ Step 0175.S1 ran every configuration on 2026-11-27 with TLC `v1.7.4` (`tla2tools
 | L1, L2 | Hold without leaves, and fail when a leave can race the cascade (R6). |
 | L3, L4 | Hold. |
 
+### Larger runs of 2026-11-27
+
+The three larger configurations ran on 2026-11-27 with the same TLC release and jar, on the host's Java (OpenJDK 11.0.26), with 8 workers and a 12 GB heap. A run on the owner's workstation is stopped at one hour, or at 30 minutes when TLC's queue is still growing.
+
+| Configuration | Distinct states | Time | Violated |
+| :-- | --: | --: | :-- |
+| `chain3_twosusp` | 16,806,904 | 12 min 13 s | None |
+| `chain3_letfinish` | 22,749,016 | 15 min 8 s | None |
+| `chain4_safety` | not explored to the end: stopped at 30 min with 59,444,646 distinct states, depth 21, and 24,238,740 states on the queue | | None up to the stop |
+
+`chain4_safety` is owed on a larger machine: its queue grew through the 30 minutes, which puts the full run well past one hour on the workstation.
+
 `changes/0175-session-lifecycle-model/change.md` states each counterexample, its trace, and the open decision it raised. The model is checked for counterexamples only; no separate run confirmed that each holding property is reachable rather than vacuous, beyond the traces of the counterexamples, which reach `blocked`, `suspended`, `dormant`, `resume_pending`, `awaiting_client_action`, a release, a transfer, a force-terminate, and an expiry.
 
 ## Running it
 
-The runner needs Docker and the `tla2tools.jar` of TLC `v1.7.4`, from `https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar`. It checks the jar's SHA-256 against `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88` and stops when it differs, and runs TLC in an `eclipse-temurin:21-jdk` container with no network, the model directory and the jar mounted read-only.
+The runner needs the `tla2tools.jar` of TLC `v1.7.4`, from `https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar`, and Java 11 or later. It checks the jar's SHA-256 against `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88` and stops when it differs. It runs TLC on the host's Java: `TLC_JAVA` names the `java` binary, else `$JAVA_HOME/bin/java`, else `java` on the `PATH`. `TLC_DOCKER=1` runs TLC in an `eclipse-temurin:21-jdk` container with no network instead, with the model directory and the jar mounted read-only.
 
 ```sh
 tests/formal/sessionlifecycle/run.sh <path-to-tla2tools.jar> <output-dir> <configuration> [property ...]
 tests/formal/sessionlifecycle/run.sh <path-to-tla2tools.jar> <output-dir> all
 ```
 
-With no property named, TLC checks every invariant and property the configuration lists; with properties named, it checks only those. `all` runs every configuration in turn. TLC stops at the first violation, so a run that finds one is repeated with the other checks named. `TLC_WORKERS` sets the worker count (default 2), `TLC_HEAP` the JVM heap (default 3g), `TLC_NODEADLOCK=1` turns off TLC's deadlock check, and `TLC_DETACH=1` starts each container detached. The output directory receives the effective configuration, TLC's log, and a receipt with the TLC release, the jar's SHA-256, the checks, and the start and finish times.
+With no property named, TLC checks every invariant and property the configuration lists; with properties named, it checks only those. `all` runs every configuration in turn. TLC stops at the first violation, so a run that finds one is repeated with the other checks named. `TLC_WORKERS` sets the worker count (default 8), `TLC_HEAP` the JVM heap (default 12g), `TLC_NODEADLOCK=1` turns off TLC's deadlock check, and with `TLC_DOCKER=1`, `TLC_DETACH=1` starts each container detached. The output directory receives the effective configuration, TLC's log, and a receipt with the TLC release, the jar's SHA-256, the Java version on a host run, the checks, and the start and finish times.
 
-On the owner's workstation, take the shared lock before a run, as `.claude/rules/working-practices.md` states: create `scratchpad/gate.lock` with `mkdir` (retry until it succeeds), and remove it with `rmdir` afterwards.
+The model belongs to no gate and is run ad hoc. On the owner's workstation, take the shared lock before a run and stop any run at one hour, as `.claude/rules/working-practices.md` states: create `scratchpad/gate.lock` with `mkdir` (retry until it succeeds), and remove it with `rmdir` afterwards.

@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I5
-status: open
+status: planned
 kind: question
 severity: low
 requirements: []
+change: 0182.S2
 ---
 
 # One unreadable row of platform_signing_keys stops every replica's key reload, and the application role may delete every row
@@ -25,3 +26,7 @@ A single malformed or foreign row, written by anyone with the `lenny_app` creden
 ## Suggested resolution
 
 Decide whether a reload skips, and alerts on, a row it cannot read when that row is not the newest key, and whether `lenny_app` keeps `DELETE` on the table or the sweep moves to a narrower role. Both trade the fail-closed startup rule of §7.1 against availability, so they are the owner's call.
+
+Change 0182 removes the key ring and `platform_signing_keys` in step 0182.S2, under which this issue closes as obsolete. The issue stays `open` until the owner answers O1 and O3 of change 0182; under O1 (d) or (e) the ring stays and the question above stands.
+
+The owner answered on 2026-11-27: design C (decision 1 of change 0182, UC-1 (a)) and the retirement of the upload-token half of change 0177 (decision 3 of 0182, UC-3 (a)). Step 0182.S2 removes the key ring and closes this issue as obsolete.

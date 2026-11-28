@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I13
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0182.S2
 ---
 
 # A first upload-token key written after every row was deleted is active at once, so peers refuse its tokens until they reload
@@ -26,3 +27,7 @@ The publish lead does not hold for the first key written after an operator delet
 ## Suggested resolution
 
 Write the replacement first key one publish lead ahead when the ring has already been opened (the rows were deleted under a running fleet), keeping the backdated first key only for an `Open` that finds an empty table, and accept the minting gap of one publish lead. Or keep the behavior, since the documented procedure never deletes rows. This needs the owner's choice.
+
+Change 0182 removes the key ring in step 0182.S2, under which this issue closes as obsolete. The issue stays `open` until the owner answers O1 and O3 of change 0182; under O1 (d) or (e) the ring stays and the choice above stands.
+
+The owner answered on 2026-11-27: design C (decision 1 of change 0182, UC-1 (a)) and the retirement of the upload-token half of change 0177 (decision 3 of 0182, UC-3 (a)). Step 0182.S2 removes the key ring and closes this issue as obsolete.

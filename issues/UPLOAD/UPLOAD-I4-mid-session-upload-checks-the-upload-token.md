@@ -24,3 +24,5 @@ A mid-session upload through the upload endpoint is refused for a token that §7
 ## Suggested resolution
 
 In `admitUpload`, skip the token check for a session the precondition table admits from `running`, and authenticate it with the caller's bearer through the ownership check that already precedes it, or route such uploads only through the mid-session upload endpoint and document it.
+
+Change 0182 rewrites the verifier that `admitUpload` calls and keeps the order of the checks, so this issue stays open under it. Under 0182, the refusal is `410 UPLOAD_TOKEN_CONSUMED` for a session created with an upload secret, as today, and `401 UPLOAD_TOKEN_INVALID` for a session with no upload phase, such as a create-and-start session, which answers `410` today.
