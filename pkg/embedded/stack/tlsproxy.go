@@ -29,6 +29,13 @@ type tlsProxy struct {
 	srv *http.Server
 }
 
+// listenTCP binds the loopback address of a forwarder leg. Both legs bind
+// through it, and it is a variable so the package's tests can hand a leg a
+// listener they opened on port 0 and kept open. A test that closed its
+// listener and passed only the port number would leave the port free until
+// the leg binds it, and another process could take it in between.
+var listenTCP = net.Listen
+
 // startTLSProxy builds and starts the HTTPS reverse proxy. listenAddr
 // is the loopback host:port to serve HTTPS on, upstream is the
 // gateway's plaintext base URL, and certPath and keyPath are the
@@ -58,7 +65,7 @@ func startTLSProxy(listenAddr, upstream, certPath, keyPath string) (*tlsProxy, e
 			MinVersion:   tls.VersionTLS12,
 		},
 	}
-	ln, err := net.Listen("tcp", listenAddr)
+	ln, err := listenTCP("tcp", listenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("embedded tls-proxy: listen on %s: %w", listenAddr, err)
 	}
@@ -106,7 +113,7 @@ func startTCPRelay(listenAddr, upstream string) (*tcpRelay, error) {
 		// reachable outside localhost on the HTTP leg either.
 		return nil, err
 	}
-	ln, err := net.Listen("tcp", listenAddr)
+	ln, err := listenTCP("tcp", listenAddr)
 	if err != nil {
 		return nil, fmt.Errorf("embedded http-relay: listen on %s: %w", listenAddr, err)
 	}

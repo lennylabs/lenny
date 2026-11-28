@@ -28,7 +28,7 @@ func TestStartTLSProxyForwardsToUpstream(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tlsgen.Generate: %v", err)
 	}
-	listen := "127.0.0.1:" + freePort(t)
+	listen := heldLoopbackAddr(t)
 	proxy, err := startTLSProxy(listen, backend.URL, mat.CertPath, mat.KeyPath)
 	if err != nil {
 		t.Fatalf("startTLSProxy: %v", err)
@@ -80,8 +80,11 @@ func TestStartTLSProxyRejectsNonLoopback(t *testing.T) {
 	}
 }
 
-// freePort returns a currently-free loopback TCP port as a string.
-func freePort(t *testing.T) string {
+// closedPort returns a loopback TCP port that had no listener when it
+// returned, as a string, for a test that needs a dial to be refused. A port a
+// forwarder leg binds comes from heldLoopbackPort instead, because another
+// process can take a released port before the leg binds it.
+func closedPort(t *testing.T) string {
 	t.Helper()
 	ln, err := listenLoopback()
 	if err != nil {
@@ -89,6 +92,54 @@ func freePort(t *testing.T) string {
 	}
 	defer func() { _ = ln.Close() }()
 	return portOf(ln.Addr().String())
+}
+
+// TestHeldPortIsHandedToTheForwarderLeg checks the held-port helper the
+// forwarder tests rely on: the leg that binds a held address receives the
+// test's own open listener, an address no test holds is bound through
+// net.Listen, and a held listener no leg took is closed at the test's
+// cleanup. It verifies test support rather than a requirement, so it carries
+// no specification annotation.
+func TestHeldPortIsHandedToTheForwarderLeg(t *testing.T) {
+	addr := heldLoopbackAddr(t)
+	heldListeners.Lock()
+	want := heldListeners.byAddr[addr]
+	heldListeners.Unlock()
+	got, err := listenTCP("tcp", addr)
+	if err != nil {
+		t.Fatalf("listenTCP(%s): %v", addr, err)
+	}
+	defer func() { _ = got.Close() }()
+	if got != want {
+		t.Fatalf("listenTCP(%s) returned a new listener, want the held one", addr)
+	}
+	heldListeners.Lock()
+	_, still := heldListeners.byAddr[addr]
+	heldListeners.Unlock()
+	if still {
+		t.Errorf("the held listener for %s stayed registered after a leg took it", addr)
+	}
+
+	other, err := listenTCP("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listenTCP of an address no test holds: %v", err)
+	}
+	_ = other.Close()
+
+	var unclaimed string
+	t.Run("unclaimed", func(t *testing.T) { unclaimed = heldLoopbackAddr(t) })
+	heldListeners.Lock()
+	_, left := heldListeners.byAddr[unclaimed]
+	heldListeners.Unlock()
+	if left {
+		t.Errorf("the unclaimed held listener for %s stayed registered after its test ended", unclaimed)
+	}
+	ln, err := net.Listen("tcp", unclaimed)
+	if err != nil {
+		t.Errorf("bind %s after its test ended: %v; want the unclaimed listener closed", unclaimed, err)
+		return
+	}
+	_ = ln.Close()
 }
 
 // TestStartTCPRelayForwardsToNodePort asserts the §17.4 127.0.0.1:8080 HTTP
@@ -107,7 +158,7 @@ func TestStartTCPRelayForwardsToNodePort(t *testing.T) {
 	defer backend.Close()
 	upstream := backend.Listener.Addr().String()
 
-	listen := "127.0.0.1:" + freePort(t)
+	listen := heldLoopbackAddr(t)
 	relay, err := startTCPRelay(listen, upstream)
 	if err != nil {
 		t.Fatalf("startTCPRelay: %v", err)
@@ -137,9 +188,9 @@ func TestStartTCPRelayForwardsToNodePort(t *testing.T) {
 // unreachable node port surfaces a connection failure).
 func TestStartTCPRelayDropsClientWhenUpstreamUnreachable(t *testing.T) {
 	// Reserve a loopback port and close it so the upstream dial is refused.
-	deadUpstream := "127.0.0.1:" + freePort(t)
+	deadUpstream := "127.0.0.1:" + closedPort(t)
 
-	listen := "127.0.0.1:" + freePort(t)
+	listen := heldLoopbackAddr(t)
 	relay, err := startTCPRelay(listen, deadUpstream)
 	if err != nil {
 		t.Fatalf("startTCPRelay: %v", err)
@@ -189,7 +240,7 @@ func TestTCPRelayShutdownClosesConnections(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	listen := "127.0.0.1:" + freePort(t)
+	listen := heldLoopbackAddr(t)
 	relay, err := startTCPRelay(listen, backend.Listener.Addr().String())
 	if err != nil {
 		t.Fatalf("startTCPRelay: %v", err)
