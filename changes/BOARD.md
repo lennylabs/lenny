@@ -11,7 +11,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | Building | 2 |
 | Ready | 9 |
 | Waiting on decisions | 32 |
-| Blocked | 166 |
+| Blocked | 167 |
 | Landed | 27 |
 | Cancelled | 6 |
 
@@ -257,6 +257,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0170.S4](0170-budgets/steps.md#0170s4-storage-budgets) | Storage budgets | Blocked | 0170.S1, 0131.S4, 0121.S4, 0146.S1; a part waits on 0170.S3, 0144.S1, 0135.S4, 0153.S2 |
 | [0170.S6](0170-budgets/steps.md#0170s6-external-charges) | External charges | Blocked | 0170.S1, 0170.S2, 0124.S2; a part waits on 0127.S4, 0146.S1, 0135.S5, 0146.S2, 0170.S3, 0139.S1 |
 | [0179.S2](0179-upload-token-model/steps.md#0179s2-the-reduced-model-of-the-client-chosen-upload-secret) | The reduced model of the client-chosen upload secret | Blocked | 0182.S1 |
+| [0180.S3](0180-audit-chain-model/steps.md#0180s3-a-stored-hash-of-each-audit-row) | A stored hash of each audit row | Blocked | 0180.S2 |
 | [0182.S2](0182-client-chosen-upload-secret/steps.md#0182s2-retirement-of-the-restore-and-the-upload-token-key-ring) | Retirement of the restore and the upload-token key ring | Blocked | 0182.S1 |
 | [0183.S1](0183-lenny-ops-idempotency/steps.md#0183s1-one-idempotency-implementation-for-the-gateway-and-lenny-ops) | One idempotency implementation for the gateway and lenny-ops | Blocked | 0178.S4 |
 | [0183.S2](0183-lenny-ops-idempotency/steps.md#0183s2-lenny-ops-records-under-design-c) | lenny-ops records under design C | Blocked | 0183.S1 |
@@ -332,7 +333,7 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177](0177-shared-upload-token-keys/change.md) | Shared signing keys for upload tokens and redaction receipts | `Implemented` | 4 of 5 | 0 |
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 6 | 0 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 2 | 0 |
-| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 2 | 3 |
+| [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 3 | 0 |
 | [0181](0181-flaky-tests-and-gate-coverage/change.md) | Flaky test fixes and gate coverage across tiers | `In progress` | 2 of 4 | 6 |
 | [0182](0182-client-chosen-upload-secret/change.md) | Client-chosen upload secret | `Decided` | 0 of 2 | 0 |
-| [0183](0183-lenny-ops-idempotency/change.md) | Redesign of the lenny-ops idempotency records | `Draft` | 0 of 5 | 8 |
+| [0183](0183-lenny-ops-idempotency/change.md) | Redesign of the lenny-ops idempotency records | `Draft` | 0 of 5 | 7 |

@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I8
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0180.S3
 ---
 
 # The audit immutability trigger does not check the prev_hash of an INSERT, which §11.7 says it does

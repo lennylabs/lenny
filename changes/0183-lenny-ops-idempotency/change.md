@@ -1,6 +1,6 @@
 # Redesign of the lenny-ops idempotency records
 
-Status: `Draft`, revision 1, 2026-11-27.
+Status: `Draft`, revision 2, 2026-11-28.
 
 ## Problem
 

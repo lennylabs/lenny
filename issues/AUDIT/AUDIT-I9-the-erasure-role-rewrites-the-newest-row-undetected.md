@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I9
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0180.S3
 ---
 
 # The erasure role rewrites the payload of a tenant's newest audit row, and no verifier detects it
