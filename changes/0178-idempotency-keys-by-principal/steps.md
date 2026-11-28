@@ -2,7 +2,7 @@
 
 ## Validation owed
 
-An in-depth review of `pkg/ops/opsidem` against the gateway's idempotency design, which started on 2026-11-27 in answer to the owner's note on decision 19. Step 0178.S6 waits on it: the review completes the step's scope, and a finding that needs the owner's decision becomes an open decision of this change.
+None.
 
 ## Steps
 
@@ -49,9 +49,9 @@ IP-7 and IP-8 in `change.md` (decision 18). §11.5 states the checks a replay ru
 Cancelled by decision 14 on 2026-11-27 (owner's answer to IP-15), which withdraws decision 9, because a retry replays after any refresh once the scope names no rotation chain. The step would have built decision 9: the Go SDK's token source (`sdks/client/go/lenny/auth.go`), every other client SDK under `sdks/`, and the CLI refresh a Lenny-issued token by self-rotation, an exchange of the token for itself with its full `audience` and `scope`, with tests that a refresh issues a token of the same lineage and that a refresh after `exp` or at the lineage depth limit fails with the error the client reports, and `docs/client-guide/authentication.md` states the refresh and its limits: before `exp` only, at most `auth.tokenLineageMaxDepth` links (TOKX-I26), and the revocation of the replaced token.
 
 ### 0178.S6 The `lenny-ops` idempotency records
-- status: Planned
+- status: Cancelled
 - lanes: [specification, code, documentation]
 - depends-on: []
-- closes: [APICONV-I16]
+- closes: []
 
-Decision 19 and IP-10 in `change.md`. The step starts after the in-depth review of `pkg/ops/opsidem` against the gateway's idempotency design reports ("Validation owed"); the review completes its scope. First the specification: §25.4 **Idempotency** states that a record is matched on the key, the caller, the endpoint, and a SHA-256 of the request body, that a mismatch answers `422 IDEMPOTENCY_KEY_REUSED`, that a response carrying a credential is not stored, and that a replay through the MCP bridge runs the bridge's scope gate first. Then `pkg/ops/opsidem` and its Postgres store compare the endpoint and the body hash, with a migration of `ops_idempotency_keys` for the hash; the impersonation proxy and every tool or route whose response carries a token mark the response, and `opsidem` releases the claim rather than storing it; and the replay path of `/mcp/management` runs the scope gate of `pkg/ops/mcp` before it returns a stored response. The tests of IP-10 at the unit, component, and contract tiers. Then the "Idempotency" section of `docs/operator-guide/agent-operability.md`. The step depends on no other step of this change and no answer of change 0182, and closes [APICONV-I16](../../issues/APICONV/APICONV-I16-ops-idempotency-replays-the-impersonation-bearer-by-subject.md).
+Cancelled by decision 20 on 2026-11-27 (owner's answer to IP-21), which moves the `lenny-ops` records to change [0183](../0183-lenny-ops-idempotency/change.md). The step would have built decision 19 after the in-depth review of `pkg/ops/opsidem` reported: §25.4 **Idempotency** stating that a record is matched on the key, the caller, the endpoint, and a SHA-256 of the request body, that a mismatch answers `422 IDEMPOTENCY_KEY_REUSED`, that a response carrying a credential is not stored, and that a replay through the MCP bridge runs the bridge's scope gate first; `pkg/ops/opsidem` and its Postgres store comparing the endpoint and the body hash, with a migration of `ops_idempotency_keys` for the hash; the impersonation proxy and every tool or route whose response carries a token marking the response so that `opsidem` releases the claim; the replay path of `/mcp/management` running the scope gate of `pkg/ops/mcp`; tests at the unit, component, and contract tiers; and the "Idempotency" section of `docs/operator-guide/agent-operability.md`. It would have closed [APICONV-I16](../../issues/APICONV/APICONV-I16-ops-idempotency-replays-the-impersonation-bearer-by-subject.md), which steps 0183.S2 and 0183.S3 now close.

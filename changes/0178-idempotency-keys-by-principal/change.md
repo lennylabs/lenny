@@ -1,6 +1,6 @@
 # Idempotency keys scoped by principal
 
-Status: `In progress`, revision 13, 2026-11-27.
+Status: `In progress`, revision 14, 2026-11-27.
 
 ## Problem
 
@@ -19,15 +19,16 @@ Steps 0178.S1 and 0178.S2 landed the scope by tenant, subject, and bound session
 
 Decision 8 scoped each record by the rotation chain of the bearer, so that only the credential that stored a response, or its self-rotation, replays it. The chain exists to protect one value, the `uploadToken` in a create response. Building it showed its costs: a retry after a re-login, a re-narrowing, or `exp` runs the operation again (decision 9 and step 0178.S5); an IdP token's chain names a client application rather than a party (decisions 10 and 11, and the open decisions O11 and O12 they raised); and a deny-list of client claims cannot be complete, because it omits `nonce` and any claim an identity provider lets a client set.
 
-Change [0182](../0182-client-chosen-upload-secret/change.md) removes the credential from the create response: the client chooses the upload secret and sends its digest. With no credential to protect, this change scopes a record by who calls and what the call is, without the credential's identity, which is design C. The owner chose design C for both changes on 2026-11-27 (decision 1 of change 0182, which records the owner's words that led to the redesign). Decision 12 here states what that answer withdraws from or restores to the settled decisions, decisions 13 to 17 settle the decisions that design C narrows or withdraws, decision 18 settles the replay admission, and decision 19 adds step 0178.S6 for the `lenny-ops` records.
+Change [0182](../0182-client-chosen-upload-secret/change.md) removes the credential from the create response: the client chooses the upload secret and sends its digest. With no credential to protect, this change scopes a record by who calls and what the call is, without the credential's identity, which is design C. The owner chose design C for both changes on 2026-11-27 (decision 1 of change 0182, which records the owner's words that led to the redesign). Decision 12 here states what that answer withdraws from or restores to the settled decisions, decisions 13 to 17 settle the decisions that design C narrows or withdraws, decision 18 settles the replay admission, decision 19 added step 0178.S6 for the `lenny-ops` records, and decision 20 cancels that step and moves the `lenny-ops` records to change [0183](../0183-lenny-ops-idempotency/change.md).
 
 ## Scope
 
-The change covers the idempotency records of the §11.5 critical operations on the REST `Idempotency-Key` path and the MCP `idempotencyKey` path: the store's key and the table, the scope the middleware and the MCP hook resolve, the principal source that the verifier records, the replay admission, the responses that are stored and those that are not, and the attribution of the credential that stored a record. It also covers the deletion of a user's records by user erasure (steps 0178.S1 and 0178.S2), and the `lenny-ops` idempotency records of [§25.4](../../spec/25_agent-operability.md#254-the-lenny-ops-service) (`ops_idempotency_keys`, `pkg/ops/opsidem`), which store and replay credentials and compare neither the endpoint nor the body ([APICONV-I16](../../issues/APICONV/APICONV-I16-ops-idempotency-replays-the-impersonation-bearer-by-subject.md), step 0178.S6, decision 19).
+The change covers the idempotency records of the §11.5 critical operations on the REST `Idempotency-Key` path and the MCP `idempotencyKey` path: the store's key and the table, the scope the middleware and the MCP hook resolve, the principal source that the verifier records, the replay admission, the responses that are stored and those that are not, and the attribution of the credential that stored a record. It also covers the deletion of a user's records by user erasure (steps 0178.S1 and 0178.S2).
 
 It leaves out:
 
 - The upload credential itself, which change [0182](../0182-client-chosen-upload-secret/change.md) changes.
+- The `lenny-ops` idempotency records of [§25.4](../../spec/25_agent-operability.md#254-the-lenny-ops-service) (`ops_idempotency_keys`, `pkg/ops/opsidem`), which change [0183](../0183-lenny-ops-idempotency/change.md) redesigns to align with this change's design C ([APICONV-I16](../../issues/APICONV/APICONV-I16-ops-idempotency-replays-the-impersonation-bearer-by-subject.md), decision 20).
 - The effective audience and the operation check of 0138's narrowing ("RO-4" of [0138](../0138-rest-only-client-api/change.md)), which do not exist in the tree. The scope carries an effective audience that is empty for a request that is not narrowed, so step 0138.S2 sets it without changing the record scope's layout, and 0138.S2 adds the operation check to the replay admission as a hook that runs on every route.
 - The lifetime and size of stored responses ([APICONV-I15](../../issues/APICONV/APICONV-I15-stored-idempotency-responses-outlive-what-they-describe-and-have-no-size-limit.md)).
 
@@ -47,7 +48,7 @@ It leaves out:
 
 ## High-level design
 
-The gateway files each idempotency record under the caller's tenant and subject, the verifier path that authenticated it, the session the bearer is bound to, the operation's route with its path parameters, and the key. It does not file a record under the identity of the credential, so a retry after any token refresh replays the stored response. No response that the gateway stores carries a credential: change 0182 removes the upload token from the create response, and a response that carries any other credential is not stored. What a replay returns is therefore state that the caller could read through the session's own read operations. The `lenny-ops` service keeps idempotency records of its own, which step 0178.S6 brings under the same rules: it compares the endpoint and the body, stores no response that carries a credential, and runs the MCP bridge's scope gate before a replay (APICONV-I16).
+The gateway files each idempotency record under the caller's tenant and subject, the verifier path that authenticated it, the session the bearer is bound to, the operation's route with its path parameters, and the key. It does not file a record under the identity of the credential, so a retry after any token refresh replays the stored response. No response that the gateway stores carries a credential: change 0182 removes the upload token from the create response, and a response that carries any other credential is not stored. What a replay returns is therefore state that the caller could read through the session's own read operations. The `lenny-ops` service keeps idempotency records of its own, which change 0183 redesigns under the same rules (decision 20).
 
 Before a replay, the gateway runs the authorization checks of the matched route: the permission gate of every stored route, the ownership check of a session route, the checks of the caller that a session-creating route or tool runs, and the user gate and the restriction of processing. A caller that the operation would refuse receives the refusal. On `/mcp`, only the session-creating tools are stored. The record notes which credential stored it, and a metric counts replays by another credential, so a replay across credentials leaves a trace. Refusals that can clear, `401` responses, upload-token refusals, and the refusal of an upload digest in use are not stored.
 
@@ -133,20 +134,11 @@ The branch's build of decisions 8, 10, and 11 is reworked mostly by deletion:
 - Kept: `authmw.Principal.Source` and the source each verifier reports, the clearing of `act` in `normalizeUserBearer`, the route resolution, the scope digest and migration 0208, the per-route admit hooks, GWSEAM-AdmitToolReplay, and the refusals that are not stored.
 - Added: the session dimension from `Principal.SessionID`, the explicit environment of an MCP call kept as a path parameter, the attribution columns and the metric, the lookup inside the pipeline after `guard` for every stored REST route, GWSEAM-AdmitRouteReplay with the checks of IP-7, the checks of `lenny/delegate_task` and `lenny/create_and_start_session` in GWSEAM-AdmitToolReplay, the `/mcp` storage allow-list of `tools/call`, the static and contract tests of stored responses, and the refusals of IP-8 that decision 8 did not list.
 
-### IP-10 The `lenny-ops` records (step 0178.S6)
+### IP-10 The `lenny-ops` records
 
-`lenny-ops` keeps idempotency records of its own in `ops_idempotency_keys` through `pkg/ops/opsidem`, keyed by the key and the caller's subject (§25.4 **Idempotency**). Decision 19 brings them under the rules this change states for the gateway:
-
-- **Match.** A record is matched on the key, the caller, the endpoint (`method path`), and a SHA-256 of the request body. A request with a stored key whose endpoint or body hash differs answers `422 IDEMPOTENCY_KEY_REUSED`, and is not executed.
-- **No stored credential.** A response that carries a credential is not stored. The impersonation proxy (`admin.start_impersonation`, which returns `bearerToken`) and every tool or route whose response carries a token mark the response, and `opsidem` releases the claim instead of storing it, so a retry executes again and writes its own audit row.
-- **Replay through the MCP bridge.** A replay through `/mcp/management` runs the bridge's scope gate for the stored tool before it returns the stored response, so a token without the tool's scope is refused.
-- §25.4 states the three rules.
-
-An in-depth review of `pkg/ops/opsidem` against the gateway's idempotency design, which the owner asked about with decision 19 and which started on 2026-11-27, completes this section's scope. Step 0178.S6 starts after it reports.
+Withdrawn by decision 20 on 2026-11-27 (owner's answer to IP-21). The `lenny-ops` records of §25.4, which this section brought under the rules of this change for step 0178.S6, are redesigned by change [0183](../0183-lenny-ops-idempotency/change.md), whose scope includes the three rules this section stated: the match on the endpoint and the body, no stored credential, and the bridge's scope gate before a replay.
 
 ## Ordering
-
-Step 0178.S6 depends on no other step and waits only on the review of IP-10.
 
 Step 0178.S3 merges to `main` only with or after step 0182.S1. Without 0182.S1, a create response still carries the upload token that 0173 restores on replay, and the scope of IP-1 returns it to every credential of the subject that knows the key and the body, including an `a2a_delegation` token that a third-party agent holds and a playground bearer. That is `main`'s behaviour today, so the order adds no regression, but it leaves the intent of decision 5 unmet. Step 0178.S4 can be built on the branch beside the rework, and it merges with 0178.S3.
 
@@ -157,6 +149,7 @@ Step 0178.S3 merges to `main` only with or after step 0182.S1. Without 0182.S1, 
 - **0138's removal of the MCP `idempotencyKey`.** When 0138 removes the MCP API, the `idempotencyKey` tool argument, the MCP hook, and the `/mcp` storage allow-list leave with it, and the pod-path platform tools lose §11.5 deduplication. A runtime then deduplicates child creation through DP-1's `session.create` key, and a client through the REST `Idempotency-Key`. The `agent` source stays for any pod-path call that reaches a REST route with the header.
 - **0138 R5.** R5, the "Idempotency [design]" paragraph, and the §11.5 row of 0138's table of specification changes state the scope of decision 8, with the rotation chain. Under decision 12, the scope in all three becomes the record scope of IP-1: the bound session of decision 3 stays, R5 keeps its effective audience and its operation check, and the chain sentences and the `clientRef` note about a change of chain leave R5. Revision 18 of 0138 makes that edit.
 - **0182.** Decision 1 of change 0182 chose design C for both changes; decisions 12 to 17 here state what it means for this change.
+- **0183.** Change [0183](../0183-lenny-ops-idempotency/change.md) redesigns the `lenny-ops` records to align with design C and, under its open decision O2, builds them on `idempotencymw` after step 0178.S4 lands. [APICONV-I20](../../issues/APICONV/APICONV-I20-gateway-idempotency-final-write-uses-the-request-context.md), the gateway's final write on the request context, stays with this change, and open decision O21 asks whether step 0178.S4 takes it.
 
 ## Worked example
 
@@ -170,7 +163,7 @@ Step 0178.S3 merges to `main` only with or after step 0182.S1. Without 0182.S1, 
 - Stored responses outlive what they describe and have no size limit ([APICONV-I15](../../issues/APICONV/APICONV-I15-stored-idempotency-responses-outlive-what-they-describe-and-have-no-size-limit.md)).
 - The attribution metric does not see a replay between two credentials that carry neither a `jti` nor a client claim (IP-4).
 - Clearing `act` at boundary normalization drops an actor that the identity provider names. Lenny never trusted that claim for access, so nothing is lost but the record of it.
-- Until step 0178.S6 lands, the `lenny-ops` records of §25.4 still store and replay credentials ([APICONV-I16](../../issues/APICONV/APICONV-I16-ops-idempotency-replays-the-impersonation-bearer-by-subject.md), decision 19).
+- Until change [0183](../0183-lenny-ops-idempotency/change.md) lands, the `lenny-ops` records of §25.4 still store and replay credentials ([APICONV-I16](../../issues/APICONV/APICONV-I16-ops-idempotency-replays-the-impersonation-bearer-by-subject.md), decision 20).
 - Decision 8's rotation chain was the design of revisions 7 to 10. Decision 12 withdrew it under design C, which the owner chose over designs A, A2, and V1, each of which kept the chain (decision 1 of change 0182).
 - Restoring the upload token on replay only to the storing credential's `jti` until 0182 lands, which the security review offered in place of the merge order, is not proposed: "Ordering" keeps the chain's purpose by holding the merge instead of building a mechanism that 0182 deletes.
 - Option (b) of decision 1, keeping per-tenant scoping, was not taken.
@@ -181,7 +174,7 @@ Step 0178.S3 merges to `main` only with or after step 0182.S1. Without 0182.S1, 
 - `spec/13_security-model.md`: §13.3, **Rotation chain.** and the `rch` row of the claim table removed.
 - `spec/10_gateway-internals.md`: §10.2, the `user_bearer` normalization clears `act`, and what that drops; **Client claim of an identity-provider token.** removed.
 - `spec/17_deployment-topology.md`: §17.4, the chain of the development header path, and §17.8.1, the `auth.oidc.clientIdClaim` row, removed.
-- `spec/25_agent-operability.md`: §25.4 "Calling the Gateway", the chain of a service account's call removed; §25.4 **Idempotency**, the match on the endpoint and the body hash, the responses that are not stored, and the scope gate before a replay through the MCP bridge (step 0178.S6).
+- `spec/25_agent-operability.md`: §25.4 "Calling the Gateway", the chain of a service account's call removed.
 - `spec/27_web-playground.md`: §27.3.1, the playground chain removed.
 - `spec/12_storage-architecture.md`: §12.8, the erasure-scope row and `DeleteByUser` step 17.
 - `spec/16_observability.md`: §16.1, `lenny_idempotency_replay_other_credential_total`; §16.7, the `session_mint_replay` value of `exchange_type`.
@@ -196,17 +189,15 @@ Step 0178.S3 merges to `main` only with or after step 0182.S1. Without 0182.S1, 
 - `pkg/auth/callercheck` and `pkg/gateway/core/session/sessionserver`: the replay checks of IP-7, served through GWSEAM-AdmitRouteReplay and GWSEAM-AdmitToolReplay.
 - `cmd/lenny-gateway`: the verifier tags, the resolvers, the admit hooks, and the wiring of the lookup inside the pipeline; the `--oidc-client-id-claim` flag removed.
 - `charts/lenny` and `pkg/chart/values`: the `auth.oidc.clientIdClaim` value and its schema removed.
-- `pkg/ops/opsidem` with its Postgres store, `pkg/ops/opsserver`, and `pkg/ops/mcp`: the match on the endpoint and the body hash, the credential mark and the release of the claim, and the scope gate before a replay (step 0178.S6); a migration of `ops_idempotency_keys` for the body hash, numbered when the step is built.
 
 ## Documentation
 
 - `docs/api/rest.md` (client developer): the idempotency section states the scope by subject, source, bound session, route, and path parameters; that a retry after any token refresh replays; the refusal `principal_subject_required`; the authorization checks a replay runs; the stored routes; the responses that are not stored; and that another credential of the same user that knows the key and body receives the stored response, which holds no credential.
 - `docs/api/mcp.md` (client developer): the same for `idempotencyKey`, that only the `tools/call` requests of `lenny/create_session`, `lenny/create_and_start_session`, and `lenny/delegate_task` are stored, and that the explicit-environment endpoint separates records by environment.
 - `docs/client-guide/authentication.md` (client developer): the retry-cost text and the rotation example of revisions 8 to 10 removed; a refresh by any means keeps replay; an IdP token's `act` claim is cleared and names no actor in Lenny.
-- `docs/operator-guide/security.md` (operator): the `idempotency_keys` key and the attribution columns, migration 0208 and its upgrade window, the erasure of a user's records, the metric `lenny_idempotency_replay_other_credential_total`, what a rise means, and the replays it cannot see, the clearing of an IdP token's `act` claim, that the `lenny-ops` records are outside these rules, that the effective audience protects no credential of a subject from another, and the limits of "Limits, and alternatives rejected"; the rotation-chain and client-claim text removed.
+- `docs/operator-guide/security.md` (operator): the `idempotency_keys` key and the attribution columns, migration 0208 and its upgrade window, the erasure of a user's records, the metric `lenny_idempotency_replay_other_credential_total`, what a rise means, and the replays it cannot see, the clearing of an IdP token's `act` claim, that the `lenny-ops` records are outside these rules until change 0183 lands, that the effective audience protects no credential of a subject from another, and the limits of "Limits, and alternatives rejected"; the rotation-chain and client-claim text removed.
 - `docs/reference/configuration.md` (operator): the `auth.oidc.clientIdClaim` row removed.
 - `docs/reference/metrics.md` (operator): the new metric with its labels.
-- `docs/operator-guide/agent-operability.md` (operator, and the author of an agent that calls `lenny-ops`): the "Idempotency" section states that a key is matched with the endpoint and the body, the `422 IDEMPOTENCY_KEY_REUSED` on a mismatch, that a response carrying a credential, such as an impersonation bearer, is not stored and a retry executes again, and that a replay through the MCP bridge needs the tool's scope (step 0178.S6).
 - No reader-facing behavior changes: GWSEAM.
 
 ## Tests
@@ -222,5 +213,4 @@ Step 0178.S3 merges to `main` only with or after step 0182.S1. Without 0182.S1, 
 - Contract, `tests/contract/rest_idempotency`: through the auth middleware's bearer path, a replay across a token refresh, a replay refused by the ownership check of a session route, a replay of a deleted session's finalize answering `404`, a refusal that is not stored for each code of IP-8, the stored bodies of every stored route and tool free of credential keys, and the `/mcp` allow-list. Cites §11.5.
 - Security, `tests/security`: an impersonation bearer that reuses the user's key and body is refused at replay; a credential that lost access to a session receives the ownership refusal on a replay of its finalize; a stored `/mcp` read-tool result does not exist to replay; a predicted key with a missing upload secret does not store the `401`. Cites §11.5.
 - Unit, contract, and security (step 0178.S4): an invalidated, restricted, or refused bearer's replay is refused on every stored route and leaves the record; a refused replay writes the `session_mint_replay` row; a retry after a quota refusal runs; an admitted replay returns the stored response. Cites §11.5.
-- Unit and component, `pkg/ops/opsidem` and its Postgres store, and contract, the `lenny-ops` server (step 0178.S6): the same key on another path, and the same key with another body, answer `422 IDEMPOTENCY_KEY_REUSED`; a replay of `admin.start_impersonation` executes again and writes its `admin.impersonation_started` audit row; a token without a tool's scope is refused on a replay through `/mcp/management`; an admitted replay returns the stored response. Cites §25.4.
 - Each isolation case has a mutation check: the test fails when the dimension or the check that separates it is removed.
