@@ -2,24 +2,7 @@
 
 ## Open decisions
 
-### O6. The periodic quota checkpoint can recreate an erased user's quota row (ERASE-I8)
-
-The periodic quota checkpoint lists active subjects from a replica and writes each subject's row keyed by the raw `UserID` at the end of the pass. A pass that read the counter before the erasure deleted it, and whose write commits after the delete, leaves a `ScopeUser` row that nothing deletes; the erasure verification checks billing events only. The final checkpoint inside the terminal pipeline is covered by the pipeline wait of 0176.S1; the periodic pass is not.
-
-- **(a) Fence the write.** The periodic write skips a subject whose user row is `processing_restricted`, read in the write transaction on the primary, the fence pattern of §12.8.
-- **(b) Delete again before verifying.** The erasure job deletes the user's quota rows again just before verification and adds them to the verification.
-
-Recommendation: (a). It applies the fence §12.8 already uses for other writers, and it keeps the row from being written rather than cleaning it up afterwards.
-
-### O7. The pipeline wait margin has no upper bound (ERASE-I9)
-
-The gateway refuses a negative margin and one whose sum with the budget overflows, and accepts any other value. A session whose writer runs no terminal pipeline, or whose pipeline a restart cut, holds each erasure for the whole budget plus the margin, so a margin entered in the wrong unit, such as `720h`, holds such erasures past the 72-hour erasure deadline with no startup error.
-
-- **(a) A ceiling.** The gateway refuses to start with a margin above the terminal pipeline budget.
-- **(b) A warning.** The gateway logs a warning at startup when the margin exceeds a threshold.
-- **(c) Unbounded.** Keep the value unbounded and rely on the `ErasureJobOverdue` alert.
-
-Recommendation: (a). The margin exists to cover clock skew and a commit just after the deadline, which a value above the budget does not describe, and refusing at startup is how the gateway already treats a negative margin.
+None.
 
 ## Decisions
 
@@ -30,3 +13,5 @@ Recommendation: (a). The margin exists to cover clock skew and a commit just aft
 5. **Coverage waiver for 0176.S1.** The floor of 80% is waived for the 20 changed lines of `pkg/session/sessionstore/pgstore/pgstore.go`, which the unit tier cannot reach without Postgres and which the step's component, integration, and security tests exercise, and for the 3 changed lines of `cmd/lenny-gateway/sessionsrv.go` that pass two flag values through `terminalPipelineFlags`. The measured coverage was 70.9% (56 of 79 lines) on gate runs `cc7d4399f9e28c53f221834b` and `d0b76fb7f7a807c81cf6267a`. Issue GATE-I14 records that the coverage check measures the unit tier alone. Owner's answer to EW-W on the M3 readiness decision page, 2026-11-26, option (a).
 6. **The late `session.completed` billing event carries no user (O2).** Option (e), proposed by the owner. The terminal pipeline writes the `session.completed` billing event with `user_id` empty, and the event keeps the tenant, the session id, the environment, the experiment and variant, and the labels. A consumer that needs the user joins on `session_id` with the session's `session.created` event, whose `user_id` user erasure pseudonymizes. A late append then carries nothing the erasure rewrites, because the pseudonymize path updates `billing_events.user_id` alone, so the event is neither dropped nor left with a raw identifier, and §11.2.1 needs no exception to "never dropped". §11.2.1's `user_id` row states that `session.completed` leaves it empty, and the billing documentation states the join. Owner's proposal in chat on 2026-11-26 ("if it doesn't carry much information and it's not used, could we not store the user id with it at all? Just the session id") and answer "EW-2b: ok". The options not chosen were (a), writing the event first and skipping it when the pipeline starts past its budget, (b), skipping it whenever the budget has run out, (c), an erasure check on every billing insert, and (d), keeping the behavior.
 7. **The periodic `token_usage.checkpoint` event carries no user (O5).** The billing checkpointer writes `token_usage.checkpoint` with `user_id` empty, as decision 6 does for `session.completed`, and a consumer joins it on `session_id` with the session's `session.created` event. A checkpoint event appended after the erasure of its session's user then carries nothing the erasure rewrites, whatever the timing of the append, including an append staged in the failover tiers and flushed later. §11.2.1's `user_id` row and the billing documentation state it. Step 0176.S3 builds it and closes ERASE-I7. The options not chosen were (b), a lister that reads the primary and skips sessions whose user is `processing_restricted`, and (c), refusing billing inserts for a restricted user. Owner's answer to EW-6 on the M3 readiness decision page, 2026-11-27, option (a).
+8. **The periodic quota checkpoint is fenced (O6).** The periodic quota checkpoint skips a subject whose user is `processing_restricted`, read in the write transaction on the Postgres primary, the fence §12.8 uses for the other writers, so a pass that read the counter before the erasure deleted the user's quota rows does not write the row again. Step 0176.S3 builds it and closes ERASE-I8. The option not chosen was (b), deleting the user's quota rows again before the verification and adding them to it. Owner's answer to EW-7 in chat, 2026-11-27, "EW-7: (a)".
+9. **A ceiling on the pipeline wait margin (O7).** The gateway refuses to start with a pipeline wait margin above the terminal pipeline budget, as it refuses a negative margin, and the configuration page states the bound. Step 0176.S3 builds it and closes ERASE-I9. The options not chosen were (b), a startup warning above a threshold, and (c), an unbounded margin with the `ErasureJobOverdue` alert as the only signal. Owner's answer to EW-8 in chat, 2026-11-27, "EW-8: (a)".

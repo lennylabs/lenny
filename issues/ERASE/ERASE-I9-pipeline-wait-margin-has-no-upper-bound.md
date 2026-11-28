@@ -1,9 +1,10 @@
 ---
 id: ERASE-I9
-status: open
+status: planned
 kind: question
 severity: low
 requirements: []
+change: 0176.S3
 ---
 
 # The pipeline wait margin has no upper bound

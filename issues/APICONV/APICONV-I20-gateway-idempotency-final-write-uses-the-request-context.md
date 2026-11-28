@@ -1,9 +1,10 @@
 ---
 id: APICONV-I20
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0178.S4
 ---
 
 # The gateway's idempotency middleware stores or releases a claim with the request context, so a client disconnect leaves the claim pending for 24 hours

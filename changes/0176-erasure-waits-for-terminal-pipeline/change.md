@@ -1,6 +1,6 @@
 # Erasure waits for the terminal pipeline
 
-Status: `In progress`, revision 6, 2026-11-27.
+Status: `In progress`, revision 7, 2026-11-27.
 
 ## Problem
 
