@@ -1,6 +1,6 @@
 # Workspace materialization
 
-Status: `Draft`, revision 18, 2026-11-24. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 19, 2026-11-27. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
@@ -475,7 +475,7 @@ The runtime adapter sends `FilesUpdated` only after `setupdone` and a valid resu
 
 ### WM-9 Archive extraction leaves the gateway
 
-**What the gateway keeps.** The upload API, the `uploadToken` checks, the inbound body cap of the upload's declared length, the storage limits of the session's budget set that an upload is a declared write to under [`0170-budgets`, "BG-6"](../0170-budgets/change.md#bg-6-enforcement), the check of `uploadArchive.format` against `tar`, `tar.gz`, and `zip` at plan validation, and storage of the blob. At finalize it streams each upload to the adapter as stored **[design]**.
+**What the gateway keeps.** The upload API, the checks of the client's upload secret against the digest the session row records (change [0182](../0182-client-chosen-upload-secret/change.md), US-4), the inbound body cap of the upload's declared length, the storage limits of the session's budget set that an upload is a declared write to under [`0170-budgets`, "BG-6"](../0170-budgets/change.md#bg-6-enforcement), the check of `uploadArchive.format` against `tar`, `tar.gz`, and `zip` at plan validation, and storage of the blob. At finalize it streams each upload to the adapter as stored **[design]**.
 
 **What the gateway drops.** `rewriteExtractedSources`, `extractOneArchive`, `gatedExtract`, the in-memory `archive.Extract` path, the `__archx_` synthetic references, the internal `symlink` source variant, and the Upload Handler's extraction goroutine pool and circuit breaker, whose only purpose was isolating extraction from the other subsystems **[design]**. A plan's archives no longer occupy gateway memory between bind and `PrepareWorkspace`.
 

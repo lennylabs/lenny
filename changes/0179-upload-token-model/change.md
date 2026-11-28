@@ -1,6 +1,6 @@
 # A formal model of the upload-token keys and consumed state
 
-Status: `In progress`, revision 1, 2026-11-27.
+Status: `In progress`, revision 2, 2026-11-27.
 
 ## Problem
 
@@ -84,13 +84,24 @@ A token is its session, its key, and its expiry: the HMAC is deterministic, so t
 
 The configurations split the concerns, because one configuration with every environment event and both sessions grows past 45 million states within twelve instants. Each configuration of the keys has one session, one cut of a replica's link to Postgres or to the KMS (which may heal), and one forced rotation; `r2_restart` adds a restart; the consumed configurations add concurrent finalizes, a create-and-start session, and terminate over a short horizon; `r2_rowdelete` lets an operator delete key rows; and `r2_lead_not_longer` sets a publish lead the gateway refuses at start. The README lists the bounds of each.
 
+### UT-6 The reduced model (step 0179.S2)
+
+Change [0182](../0182-client-chosen-upload-secret/decisions.md) replaces the upload token with a secret the client chooses: the client sends the SHA-256 digest of the secret on the routes that open an upload phase, the session row records the digest, a marker of the upload phase, and an expiry, and the verifier reads the row, compares the digest in constant time, checks the expiry, and refuses a consumed secret. Steps 0182.S1 and 0182.S2 remove every HMAC token, the key ring, its rotation, its stale bound, and its sweep. 0182 decision 4 narrows FV-2 to what remains, and step 0179.S2 reduces the model to these properties, across replicas and concurrent requests:
+
+- A secret is consumed at most once.
+- A secret is accepted only for the session whose row records its digest, and only until the row's expiry.
+- A session whose row records no upload phase accepts no secret.
+- Two live sessions of one user never record one digest.
+
+The step removes the key table, the rings, the reloads, the rotations, the sweep, the link cuts to the KMS, and properties U1, U2, U4, U5, U6, and U7 with their configurations; it keeps U3 and the concurrent finalizes, adds the row-bound acceptance, the marker, and the per-user uniqueness of the digest under concurrent creates, reruns every configuration, and records the results in "Model results" and the README. A secret is modelled as unguessable, as a signature is today. The model reads §7.1 as step 0182.S1 edits it.
+
 ## Specification and non-specification changes
 
 None to the specification. The model and its runner are non-specification files under `tests/formal/`. A confirmed counterexample becomes an open decision of this change, and its fix lands in change 0177 or another change.
 
 ## Documentation
 
-The `formal/` entry of `tests/README.md` names the new model.
+The `formal/` entry of `tests/README.md` names the new model, and step 0179.S2 updates its description to the reduced model.
 
 ## Tests
 
@@ -133,7 +144,7 @@ Every key configuration also allows one cut of a replica's link to Postgres or t
 
 ### Counterexamples
 
-- **R1. A replica whose reload fails refuses a valid token (U1, U6, confirmed gap).** In `r2_default`, replica r1's link to the KMS is cut at instant 0, while its link to Postgres works. Replica r2 forces a rotation at instant 0, which writes key 2 active from instant 4 (2 minutes later). Every reload of r1 fails, because `Ring.reload` cannot unwrap key 2 and fails as a whole. At instant 4, r2 mints s1's token with key 2. r1 can read s1's row, but `Verifier.Verify` finds no key for the token and r1 answers `401 UPLOAD_TOKEN_INVALID`, for as long as the KMS link is cut; from instant 10 r1 also stops minting, as decision 4 of change 0177 designs. In `r2_consumed` the same refusal follows a cut of r1's link to Postgres that spans the write and the activation of key 2: the link returns at instant 5 after r1's refresh at 5 failed, and r2 mints with key 2 at 6, before r1's next refresh. The text and the code were checked: §7.1 **Shared signing keys** states that a token minted on one replica verifies on any other, and **Key refresh failure** covers only a replica that cannot reach Postgres, where the row read fails too. Open decision O3 and [UPLOAD-I14](../../issues/UPLOAD/UPLOAD-I14-replica-whose-key-reload-fails-refuses-valid-tokens.md).
+- **R1. A replica whose reload fails refuses a valid token (U1, U6, confirmed gap).** In `r2_default`, replica r1's link to the KMS is cut at instant 0, while its link to Postgres works. Replica r2 forces a rotation at instant 0, which writes key 2 active from instant 4 (2 minutes later). Every reload of r1 fails, because `Ring.reload` cannot unwrap key 2 and fails as a whole. At instant 4, r2 mints s1's token with key 2. r1 can read s1's row, but `Verifier.Verify` finds no key for the token and r1 answers `401 UPLOAD_TOKEN_INVALID`, for as long as the KMS link is cut; from instant 10 r1 also stops minting, as decision 4 of change 0177 designs. In `r2_consumed` the same refusal follows a cut of r1's link to Postgres that spans the write and the activation of key 2: the link returns at instant 5 after r1's refresh at 5 failed, and r2 mints with key 2 at 6, before r1's next refresh. The text and the code were checked: §7.1 **Shared signing keys** states that a token minted on one replica verifies on any other, and **Key refresh failure** covers only a replica that cannot reach Postgres, where the row read fails too. Open decision O3, which decision 3 records as moot, and [UPLOAD-I14](../../issues/UPLOAD/UPLOAD-I14-replica-whose-key-reload-fails-refuses-valid-tokens.md).
 - **R2. A publish lead not longer than the refresh interval (U1, expected).** In `r2_lead_not_longer`, with a lead equal to the refresh interval, r1 forces a rotation that activates key 2 at the next instant, and r1 mints with key 2 before r2's refresh at that instant has run, so the healthy replica r2 refuses the token. The gateway refuses to start with such a setting (`signingkeys.Open`); the configuration shows why the check exists.
 - **R3. A key row deleted by hand (U1, U5, expected).** In `r2_rowdelete`, the operator deletes the row of the key that signed an unexpired token, so every replica stops verifying the token at its next reload, and deleting the only row leaves a forced rotation's key as the only key until it becomes active, so no replica can mint for one publish lead. `docs/operator-guide/security.md`, as step 0177.S4 edits it, states both effects and tells operators to rotate rather than delete rows. Under row deletion U2, U4, U6, and U7 hold. The model does not reach UPLOAD-I13, filed on branch `change/0177.S3-S4-audit-tail-and-key-incidents` (a first key written after every row is deleted skips the publish lead), separately, because the deletion of a signing key's row breaks U1 first.
 

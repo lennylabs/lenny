@@ -1,6 +1,7 @@
 ---
 id: APICONV-I6
-status: open
+status: planned
+change: 0178.S4
 kind: build-gap
 severity: medium
 requirements: []

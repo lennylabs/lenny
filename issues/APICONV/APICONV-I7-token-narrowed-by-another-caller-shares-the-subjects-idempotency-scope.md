@@ -1,6 +1,7 @@
 ---
 id: APICONV-I7
-status: open
+status: planned
+change: 0178.S3
 kind: spec-defect
 severity: low
 requirements: []

@@ -1,6 +1,6 @@
 # Shared signing keys for upload tokens and redaction receipts
 
-Status: `In progress`, revision 9, 2026-11-26.
+Status: `In progress`, revision 10, 2026-11-27.
 
 ## Problem
 

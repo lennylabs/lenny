@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I12
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0182.S1
 ---
 
 # The upload-token check admits a token when the session row it re-reads is missing
@@ -25,3 +26,7 @@ Every other path of the token check fails closed since step 0177.S4. The missing
 ## Suggested resolution
 
 Return `uploadtoken.ErrInvalid` on `sessionstore.ErrNotFound`. Finalize of a missing session then answers `401 UPLOAD_TOKEN_INVALID` rather than `404`, so the §7.1 and §15.1 text on that outcome and the tests that pin `404` change with it.
+
+Step 0182.S1 of change 0182 makes the verifier fail closed on a missing row (US-4 of 0182). The issue stays `open` until the owner answers O1 of change 0182, the choice of design; under an answer other than (a) or (c), the resolution above applies on its own.
+
+The owner chose design C on 2026-11-27 (decision 1 of change 0182, UC-1 (a)). Step 0182.S1 makes the verifier fail closed on a missing row and closes this issue.

@@ -1,6 +1,6 @@
 # Tenant security settings
 
-Status: `Draft`, revision 12, 2026-11-23. Programs: [v1](../programs/v1.md).
+Status: `Draft`, revision 13, 2026-11-27. Programs: [v1](../programs/v1.md).
 
 Each factual claim carries one of these tags where the source matters:
 
