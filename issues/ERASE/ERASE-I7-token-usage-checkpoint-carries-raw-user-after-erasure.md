@@ -1,9 +1,10 @@
 ---
 id: ERASE-I7
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0176.S3
 ---
 
 # A periodic `token_usage.checkpoint` billing event can carry the raw user id after user erasure has pseudonymized the user's events
