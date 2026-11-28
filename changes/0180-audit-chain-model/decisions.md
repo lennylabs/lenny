@@ -2,7 +2,7 @@
 
 ## Open decisions
 
-Each decision below comes from a counterexample of the model that step 0180.S1 checked against the specification and the code ("Model results" in `change.md`). The fix of each lands in another change, as "Specification and non-specification changes" in `change.md` states.
+Each decision below comes from a counterexample of the model that step 0180.S1 checked against the specification and the code ("Model results" in `change.md`). Steps 0180.S2 and 0180.S3 of this change build the fixes that decisions 3 to 7 settle.
 
 None.
 

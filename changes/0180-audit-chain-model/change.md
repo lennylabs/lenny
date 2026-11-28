@@ -96,7 +96,7 @@ A row holds the hashed columns of §11.7 item 3 that differ between rows: `prev_
 
 ## Specification and non-specification changes
 
-None to the specification. The model and its runner are non-specification files under `tests/formal/auditchain/`. A confirmed counterexample becomes an open decision of this change and an issue under `issues/AUDIT/`, and its fix lands in change 0177 or another change.
+None to the specification. The model and its runner are non-specification files under `tests/formal/auditchain/`. A confirmed counterexample becomes an open decision of this change and an issue under `issues/AUDIT/`, and its fix lands in change 0177 or another change. The fixes that decisions 3 to 7 settle land in steps 0180.S2 and 0180.S3 of this change, which edit §11.7 and §12.8.
 
 ## Documentation
 
