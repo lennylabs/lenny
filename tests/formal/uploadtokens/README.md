@@ -115,16 +115,16 @@ Each configuration but `r2_forced` allows 3 key writes. Replicas are symmetric (
 
 ## Running it
 
-The runner needs Docker and the `tla2tools.jar` of TLC `v1.7.4`, from `https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar`. It checks the jar's SHA-256 against `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88` and stops when it differs, and runs TLC in an `eclipse-temurin:21-jdk` container with no network, the model directory and the jar mounted read-only.
+The runner needs the `tla2tools.jar` of TLC `v1.7.4`, from `https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar`, and Java 11 or later. It checks the jar's SHA-256 against `936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88` and stops when it differs. It runs TLC on the host's Java: `TLC_JAVA` names the `java` binary, else `$JAVA_HOME/bin/java`, else `java` on the `PATH`. `TLC_DOCKER=1` runs TLC in an `eclipse-temurin:21-jdk` container with no network instead, with the model directory and the jar mounted read-only.
 
 ```sh
 tests/formal/uploadtokens/run.sh <path-to-tla2tools.jar> <output-dir> <configuration> [property ...]
 tests/formal/uploadtokens/run.sh <path-to-tla2tools.jar> <output-dir> all
 ```
 
-With no property named, TLC checks every invariant and property the configuration lists; with properties named, it checks only those. `all` runs every configuration in turn. TLC stops at the first violation, so a run that finds one is repeated with the other checks named. `TLC_WORKERS` sets the worker count (default 2), `TLC_HEAP` the JVM heap (default 3g), `TLC_NODEADLOCK=1` turns off TLC's deadlock check, and `TLC_DETACH=1` starts each container detached. The output directory receives the effective configuration, TLC's log, and a receipt with the TLC release, the jar's SHA-256, the checks, and the start and finish times.
+With no property named, TLC checks every invariant and property the configuration lists; with properties named, it checks only those. `all` runs every configuration in turn. TLC stops at the first violation, so a run that finds one is repeated with the other checks named. `TLC_WORKERS` sets the worker count (default 8), `TLC_HEAP` the JVM heap (default 12g), `TLC_NODEADLOCK=1` turns off TLC's deadlock check, and with `TLC_DOCKER=1`, `TLC_DETACH=1` starts each container detached. The output directory receives the effective configuration, TLC's log, and a receipt with the TLC release, the jar's SHA-256, the checks, and the start and finish times.
 
-On the owner's workstation, take the shared lock before a run, as `.claude/rules/working-practices.md` states: create `scratchpad/gate.lock` with `mkdir` (retry until it succeeds), and remove it with `rmdir` afterwards.
+The model belongs to no gate and is run ad hoc. On the owner's workstation, take the shared lock before a run and stop any run at one hour, as `.claude/rules/working-practices.md` states: create `scratchpad/gate.lock` with `mkdir` (retry until it succeeds), and remove it with `rmdir` afterwards.
 
 ## Results
 

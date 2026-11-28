@@ -1,9 +1,10 @@
 ---
 id: TOKSVC-I1
-status: open
+status: planned
 kind: test-gap
 severity: low
 requirements: []
+change: 0181.S1
 ---
 
 # The Token Service secret-probe component test reads a secret before its RBAC grant takes effect

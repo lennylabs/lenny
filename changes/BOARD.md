@@ -8,8 +8,8 @@ A step is ready when every step it depends on has landed and its change is not `
 
 | State | Steps |
 | :-- | --: |
-| Building | 4 |
-| Ready | 4 |
+| Building | 5 |
+| Ready | 7 |
 | Waiting on decisions | 32 |
 | Blocked | 167 |
 | Landed | 23 |
@@ -58,9 +58,13 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0177.S4](0177-shared-upload-token-keys/steps.md#0177s4-upload-token-key-incidents-and-the-digest-check) | Upload-token key incidents and the digest check | Building |  |
 | [0178.S3](0178-idempotency-keys-by-principal/steps.md#0178s3-the-idempotency-scope-by-subject-source-session-and-route) | The idempotency scope by subject, source, session, and route | Building |  |
 | [0178.S4](0178-idempotency-keys-by-principal/steps.md#0178s4-replay-admission-by-the-routes-authorization-checks-the-stored-routes-and-the-refusals-not-stored) | Replay admission by the route's authorization checks, the stored routes, and the refusals not stored | Building |  |
+| [0181.S1](0181-flaky-tests-and-gate-coverage/steps.md#0181s1-the-secret-probe-grant-and-the-stack-tests-ports) | The secret-probe grant and the stack tests' ports | Building |  |
 | [0125.S1](0125-decision-records/steps.md#0125s1-specification-changes) | Specification changes | Ready |  |
 | [0137.S4](0137-pod-lifecycle-controller/steps.md#0137s4-pool-and-runtime-name-rule) | Pool and runtime name rule | Ready |  |
 | [0156.S1](0156-store-conformance-and-router-contracts/steps.md#0156s1-conformance-suite-pattern-and-router-contracts) | Conformance suite pattern and router contracts | Ready |  |
+| [0181.S2](0181-flaky-tests-and-gate-coverage/steps.md#0181s2-the-postgres-start-timeout) | The Postgres start timeout | Ready |  |
+| [0181.S3](0181-flaky-tests-and-gate-coverage/steps.md#0181s3-the-embedded-manifest-check-in-the-gate-image) | The embedded-manifest check in the gate image | Ready |  |
+| [0181.S4](0181-flaky-tests-and-gate-coverage/steps.md#0181s4-coverage-of-the-component-and-contract-tiers) | Coverage of the component and contract tiers | Ready |  |
 | [0119.S1](0119-agent-runtimes-only/steps.md#0119s1-removal-of-type-mcp) | Removal of type: mcp | Waiting on decisions | 0119 is `Draft` |
 | [0120.S1](0120-anthropic-messages-api/steps.md#0120s1-conversation-input) | Conversation input | Waiting on decisions | 0120 is `Draft` |
 | [0123.S1](0123-connector-authorization-and-external-memory/steps.md#0123s1-shared-oauth-link-flow) | Shared OAuth link flow | Waiting on decisions | 0123 is `Draft` |
@@ -327,5 +331,6 @@ A step is ready when every step it depends on has landed and its change is not `
 | [0178](0178-idempotency-keys-by-principal/change.md) | Idempotency keys scoped by principal | `In progress` | 2 of 6 | 1 |
 | [0179](0179-upload-token-model/change.md) | A formal model of the upload-token keys and consumed state | `In progress` | 1 of 2 | 0 |
 | [0180](0180-audit-chain-model/change.md) | A formal model of the audit chain and redaction receipts | `In progress` | 1 of 1 | 14 |
+| [0181](0181-flaky-tests-and-gate-coverage/change.md) | Flaky test fixes and gate coverage across tiers | `In progress` | 0 of 4 | 9 |
 | [0182](0182-client-chosen-upload-secret/change.md) | Client-chosen upload secret | `Decided` | 0 of 2 | 0 |
 | [0183](0183-lenny-ops-idempotency/change.md) | Redesign of the lenny-ops idempotency records | `Draft` | 0 of 5 | 8 |

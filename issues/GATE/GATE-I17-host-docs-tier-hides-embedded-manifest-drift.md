@@ -1,9 +1,10 @@
 ---
 id: GATE-I17
-status: open
+status: planned
 kind: test-gap
 severity: medium
 requirements: []
+change: 0181.S3
 ---
 
 # The docs tier on the host always fails the embedded-manifest check, so a real drift passes as a known failure

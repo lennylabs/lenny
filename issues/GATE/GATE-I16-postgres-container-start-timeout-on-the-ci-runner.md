@@ -1,9 +1,10 @@
 ---
 id: GATE-I16
-status: open
+status: planned
 kind: test-gap
 severity: low
 requirements: []
+change: 0181.S2
 ---
 
 # Postgres test containers time out at start on the gate-main runner

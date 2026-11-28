@@ -1,9 +1,10 @@
 ---
 id: GATE-I14
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0181.S4
 ---
 
 # `coverage --diff` measures only the unit tier, so code that component tests cover reads as uncovered
