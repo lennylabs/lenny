@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I14
-status: open
+status: planned
 kind: question
 severity: low
 requirements: []
+change: 0180.S2
 ---
 
 # The application role decides which rows are dead-lettered, so it can expose any row that names an erased user to the step-14 redaction

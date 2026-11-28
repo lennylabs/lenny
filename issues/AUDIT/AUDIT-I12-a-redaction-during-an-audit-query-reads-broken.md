@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I12
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0180.S2
 ---
 
 # The audit query reads the rows and the receipts in separate transactions, so a redaction that commits between them reads broken

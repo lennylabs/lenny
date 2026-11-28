@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I10
-status: open
+status: planned
 kind: spec-defect
 severity: high
 requirements: []
+change: 0180.S2
 ---
 
 # The retention sweep keeps gdpr.* rows among deleted rows, and every chain verifier then reports the tenant's chain broken

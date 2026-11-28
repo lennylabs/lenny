@@ -1,9 +1,10 @@
 ---
 id: AUDIT-I11
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0180.S2
 ---
 
 # The query verifier asserts the genesis sentinel on whatever row comes first, so the first row left by a retention sweep reads broken
