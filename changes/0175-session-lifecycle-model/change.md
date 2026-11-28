@@ -1,6 +1,6 @@
 # A formal model of the session lifecycle
 
-Status: `In progress`, revision 4, 2026-11-27.
+Status: `In progress`, revision 5, 2026-11-27.
 
 ## Problem
 
@@ -147,6 +147,16 @@ The distinct states and time are those of the last run of each configuration, wh
 | `chain2_resume` | r, a; two suspensions, one cut by a crash; `FairSpec` | 65,676 | 20 s | None |
 
 `chain3_client` and `chain3_leave` run longer than the ten minutes the step aimed for; the two-suspension and `let_finish` cases moved to the chain of two for that reason, and a configuration with two suspensions on the chain of three reached 8,186,426 distinct states in 16 min 40 s during the step.
+
+On 2026-11-27, after the step, the owner set that the models run ad hoc and belong to no gate, with 8 workers and a 12 GB heap and at most one hour per run on the workstation ("Run with 8 workers and 12GB of heap. Drop the 10 minute limit (these tests shouldn't be part of any gate, only run ad-hoc), but also don't run anything that's going to take more than 1 hr on this machine for now. I can farm those tests out to a different machine."), and that a run leaves out the checks a counterexample already breaks while its fix has not landed. Three configurations then ran the cases moved to the smaller chains on the larger ones, on the host's Java (OpenJDK 11.0.26):
+
+| Configuration | Bounds | Distinct states | Time | Violated |
+| :-- | :-- | --: | --: | :-- |
+| `chain3_twosusp` | r, a, b; two suspensions, one pod loss; cap 3; root `close_all`; expiry; checks except P4b and P6 | 16,806,904 | 12 min 13 s | None |
+| `chain3_letfinish` | r, a, b; one suspension, one pod loss; cap 3; both root values; expiry; checks except P4b and P6 | 22,749,016 | 15 min 8 s | None |
+| `chain4_safety` | the bounds of `chain4_leave`; checks except P4, P4b, P6, and P7 | not explored to the end: stopped at 30 min with 59,444,646 distinct states and a growing queue | | None up to the stop |
+
+`chain4_safety` is owed on a larger machine.
 
 ### Counterexamples
 

@@ -41,6 +41,8 @@ These rules hold while the merge gate and the build agents run on the owner's la
 - While writing code, run the unit tests of the packages a change touches. Run the gate once, when the code is done.
 - After a run on the host, stop the envtest `etcd` and `kube-apiserver` processes it left behind.
 - `-race` builds do not link on macOS 27.2 hosts. Run them in the gate image, for example through `lenny-test run --since main --container`.
+- The formal models under `tests/formal/` are run ad hoc and belong to no gate. On this workstation a model runs under the lock with 8 TLC workers and a 12 GB heap, the defaults of each model's `run.sh`, and no run goes past one hour; a configuration that would run longer is listed for the owner, who runs it on another machine. The owner's words, 2026-11-27: "Run with 8 workers and 12GB of heap. Drop the 10 minute limit (these tests shouldn't be part of any gate, only run ad-hoc), but also don't run anything that's going to take more than 1 hr on this machine for now. I can farm those tests out to a different machine."
+- A model run leaves out every check that a counterexample already breaks while the fix has not landed, and a configuration whose purpose is such a check waits for the fix. The owner's words, 2026-11-27: "Don't rerun anything you already know is going to fail due to previous failures that haven't been fixed yet."
 
 ## Reporting
 
