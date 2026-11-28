@@ -1,9 +1,10 @@
 ---
 id: APICONV-I25
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0183.S2
 ---
 
 # lenny-ops accepts an idempotency key of any length, and a key too long for the index answers 500
@@ -26,4 +27,4 @@ A malformed key produces a server error where a client error is due, and §25.4 
 
 Limit the key to 128 characters in §25.4, as §11.5 does, and answer a longer key with `400 INVALID_IDEMPOTENCY_KEY` before the claim. Add a unit test for a key at and over the limit.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S2 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

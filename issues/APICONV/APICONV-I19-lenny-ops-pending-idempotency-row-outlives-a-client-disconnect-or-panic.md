@@ -1,9 +1,10 @@
 ---
 id: APICONV-I19
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0183.S2
 ---
 
 # A lenny-ops idempotency claim stays in progress after a client disconnect or a handler panic and blocks its key for 24 hours or 7 days
@@ -28,4 +29,4 @@ An agent whose connection drops while a mutation runs, which is when it retries,
 
 Make the final `Complete` or `Fail` with `context.WithoutCancel(r.Context())` and a bounded timeout, and release the claim in a deferred function when the handler panics, as the gateway's middleware does. Give a pending claim a lease shorter than the TTL, as APICONV-I9 suggests for the gateway, so that a claim whose final write never lands can be taken over. Add unit tests that a cancelled request context and a panicking handler leave no `in_progress` row.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S2 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

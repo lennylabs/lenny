@@ -1,9 +1,10 @@
 ---
 id: APICONV-I18
-status: open
+status: planned
 kind: spec-defect
 severity: medium
 requirements: []
+change: 0183.S2
 ---
 
 # lenny-ops scopes an idempotency record by the bare subject, with no tenant or verifier source
@@ -27,4 +28,4 @@ Two principals of different tenants or different verifiers whose `sub` values ar
 
 Change §25.4 to scope a record by tenant, subject, and verifier source, together with the route of [APICONV-I16](APICONV-I16-ops-idempotency-replays-the-impersonation-bearer-by-subject.md), as change 0178 does for the gateway, and remove `IDEMPOTENCY_KEY_OWNED_BY_OTHER_CALLER` so that the same key from another caller is a separate record that reveals nothing. Recreate `ops_idempotency_keys` with the new key in one migration, with no compatibility shim. Add unit tests that the same subject under two tenants and under two sources gets two records.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S2 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

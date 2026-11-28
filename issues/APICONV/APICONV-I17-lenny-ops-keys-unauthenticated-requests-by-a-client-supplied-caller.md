@@ -1,9 +1,10 @@
 ---
 id: APICONV-I17
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0183.S2
 ---
 
 # lenny-ops stores idempotency records for unauthenticated requests under a caller the client names
@@ -30,4 +31,4 @@ An unauthenticated client writes rows into `ops_idempotency_keys` at any rate, e
 
 Apply `opsidem` inside the authenticated chain only, so that a request to an unauthenticated path is never keyed, and refuse a keyed request that reaches `opsidem` with no verified principal, as §11.5 does with `principal_subject_required`. Never take `caller_id` from `X-Lenny-Caller` when an authentication configuration is wired. Do not store a `401`. State in §25.4 that only an authenticated request is keyed. Add unit tests that a keyed POST to each unauthenticated path stores no record, and a security-tier test that the invalidate path is not a write path into `ops_idempotency_keys`.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S2 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

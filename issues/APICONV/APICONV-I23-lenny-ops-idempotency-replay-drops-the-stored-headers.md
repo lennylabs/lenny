@@ -1,9 +1,10 @@
 ---
 id: APICONV-I23
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0183.S2
 ---
 
 # A lenny-ops idempotency replay drops the original response headers and adds marker headers the specification does not define
@@ -28,4 +29,4 @@ A replayed response differs from the original in its headers, so a client that r
 
 Store the response headers with the record and replay them, as the gateway does. Either specify the two marker headers in §25.4 or remove them, and keep the `degradation.warnings` envelope that §25.4 specifies. Add a unit test that a replay returns the original headers.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S2 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

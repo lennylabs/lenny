@@ -1,9 +1,10 @@
 ---
 id: APICONV-I21
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0183.S2
 ---
 
 # lenny-ops cuts every POST and PUT body at 1 MiB without an error and runs the handler on an empty body after a read error
@@ -29,4 +30,4 @@ A request over 1 MiB, or one whose body fails to read, reaches the handler alter
 
 Buffer the body only for a keyed request or a route whose classification reads it, answer a body over the limit with `413` and a read error with `400`, as the gateway does, and make the limit a flag with its default documented. State the limit in §25.4. Add unit tests for an over-limit body and a failing reader.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S2 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

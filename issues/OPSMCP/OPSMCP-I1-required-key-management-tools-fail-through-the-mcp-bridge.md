@@ -1,9 +1,10 @@
 ---
 id: OPSMCP-I1
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0183.S3
 ---
 
 # The management MCP tools whose REST call requires an idempotency key always fail at Tier 2 and Tier 3
@@ -29,4 +30,4 @@ At Tier 2 and Tier 3 an agent that uses the management MCP server cannot start a
 
 Specify in §25.12 an `idempotencyKey` tool argument, as §11.5 does for the gateway's MCP tools, which the bridge removes from the body and forwards as `Idempotency-Key` on the replayed REST call, and emit `x-lenny-idempotency-key` for each tool from the §25.4 classification. Stop storing `/mcp/management` at the HTTP layer, so a tool result is stored only through the mapped REST call. Add a contract test that runs each required-key tool through `/mcp/management` with `IdempotencyKeyRequired: true`, with and without the argument.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S3 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

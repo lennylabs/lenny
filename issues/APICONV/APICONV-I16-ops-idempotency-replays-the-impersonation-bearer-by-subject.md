@@ -4,7 +4,7 @@ status: planned
 kind: build-gap
 severity: high
 requirements: []
-change: 0178.S6
+change: 0183.S3
 ---
 
 # lenny-ops idempotency stores and replays the impersonation bearer to any caller with the same subject
@@ -41,4 +41,6 @@ Open decision O20 of change 0178 asks whether a new step of 0178 fixes it, a cha
 
 The owner answered O20 of change 0178 with option (a) on 2026-11-27 (0178 decision 19, IP-20): step 0178.S6 fixes the `lenny-ops` records and closes this issue. The owner asked for an in-depth review of `pkg/ops/opsidem` against the gateway's idempotency design, which started on 2026-11-27; the step starts after it reports.
 
-Amended on 2026-11-27 with finding F1 of that review: the event-subscription routes store the plaintext webhook secret, and `ops_idempotency_keys` is copied into backups. The severity is raised from medium to high for the plaintext credentials that backups carry. Step 0178.S6 as decision 19 approved it covers responses that carry a credential, and whether it also takes the backup exposure and the other findings of the review waits on the owner's answer to IP-21 on the M3 readiness decision page: whether 0178.S6 takes the review's full list, keeps its approved scope, or splits off an urgent fix.
+Amended on 2026-11-27 with finding F1 of that review: the event-subscription routes store the plaintext webhook secret, and `ops_idempotency_keys` is copied into backups. The severity is raised from medium to high for the plaintext credentials that backups carry. Whether step 0178.S6 also took the backup exposure and the review's other findings was asked as IP-21 on the M3 readiness decision page.
+
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0178.S6 is `Cancelled`, and the issue moves to that change. Step 0183.S2 closes the match on the endpoint and the body and the stored credentials of the `lenny-ops` routes, and with them the copy in backups taken after it lands; step 0183.S3 closes the stored impersonation bearer and the replay that skips the bridge's scope gate. The issue closes when step 0183.S3 lands. Open decision O4 of change 0183 asks whether an interim fix of the backup exposure lands ahead of the redesign, with no interim fix as its recommendation, because no deployment exists outside the project.

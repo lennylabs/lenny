@@ -1,9 +1,10 @@
 ---
 id: LOPSKRES-I1
-status: open
+status: planned
 kind: build-gap
 severity: medium
 requirements: []
+change: 0183.S4
 ---
 
 # The lenny-ops Ingress routes the internal invalidate RPC and the metrics endpoint from outside the cluster
@@ -27,4 +28,4 @@ With `ops.ingress.enabled`, a client outside the cluster reaches a peer RPC mean
 
 Route only the public prefixes through the Ingress, `/v1/` and `/mcp/management` among them, or render a rule that denies `/internal/` and `/metrics`, and state in §25.4 which paths the ops Ingress routes. Serve the invalidate RPC and `/metrics` on a listener the Ingress does not target, if the chart keeps a prefix rule. Add a chart test that the rendered Ingress does not route `/internal/` or `/metrics`.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S4 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

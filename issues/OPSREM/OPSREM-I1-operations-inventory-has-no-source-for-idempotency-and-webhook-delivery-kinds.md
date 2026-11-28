@@ -26,4 +26,4 @@ requirements: []
 
 Add a source for each kind, with a listing method on the idempotency store and on the delivery store, or remove the kinds from §25.4 and from the filter. Add a contract test that an in-progress claim and a pending delivery appear in the inventory.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S5 of that change closes the `idempotency_in_progress` part of this issue. The `webhook_delivery_pending` part has no idempotency record and no step, so the issue stays `open` with no `change` until a step takes that part.

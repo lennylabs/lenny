@@ -1,9 +1,10 @@
 ---
 id: ERASE-I10
-status: open
+status: planned
 kind: spec-defect
 severity: low
 requirements: []
+change: 0183.S5
 ---
 
 # User erasure deletes no lenny-ops idempotency records
@@ -27,4 +28,4 @@ An erased user's subject, and data about the user in a stored response, stay in 
 
 Add `ops_idempotency_keys` to the §12.8 erasure scope, deleting the rows whose `caller_id` is the erased user's subject, and state what happens to a record of another caller whose stored response names the user, as [APICONV-I15](../APICONV/APICONV-I15-stored-idempotency-responses-outlive-what-they-describe-and-have-no-size-limit.md) asks for the gateway. The gateway's user eraser cannot reach the platform-scoped table through a tenant transaction, so the step names the store that deletes the rows.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S5 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

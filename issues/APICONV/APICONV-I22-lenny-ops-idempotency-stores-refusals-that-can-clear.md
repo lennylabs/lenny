@@ -1,9 +1,10 @@
 ---
 id: APICONV-I22
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0183.S2
 ---
 
 # lenny-ops idempotency stores refusals whose condition can clear and replays them for the record's lifetime
@@ -26,4 +27,4 @@ An agent whose scope, lock, or upgrade state changes keeps receiving the stored 
 
 List in §25.4 the refusals that are not stored, `401` among them, aligned with the gateway's list of decision 8 of change 0178 and extended with the `lenny-ops` codes whose condition can clear, and have `opsidem` release the claim for them. Add a unit test per listed code.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S2 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.

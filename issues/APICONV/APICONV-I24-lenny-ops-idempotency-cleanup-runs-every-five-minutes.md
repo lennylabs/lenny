@@ -1,9 +1,10 @@
 ---
 id: APICONV-I24
-status: open
+status: planned
 kind: build-gap
 severity: low
 requirements: []
+change: 0183.S5
 ---
 
 # The lenny-ops idempotency cleanup runs every five minutes where the specification says daily at 02:30 UTC
@@ -25,4 +26,4 @@ The code and the specification state different schedules. Neither schedule chang
 
 State in §25.4 that the cleanup runs every five minutes, the schedule the code has, or change the reconciler to the daily schedule with its setting. Either way, name the interval or the time as an operator setting with its default.
 
-Scheduling waits on the owner's answer to IP-21 on the M3 readiness decision page: whether step 0178.S6 takes the full list of findings of that review, keeps the scope that decision 19 of change 0178 approved, or splits off an urgent fix. The issue stays `open` with no `change` until that answer.
+The owner answered IP-21 on the M3 readiness decision page on 2026-11-27 with a redesign of the `lenny-ops` idempotency records as a change of its own (decision 20 of change 0178), which is change [0183](../../changes/0183-lenny-ops-idempotency/change.md). Step 0183.S5 of that change closes this issue. The change is `Draft`, and an answer to its open decisions can move the issue to another of its steps.
