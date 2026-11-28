@@ -551,8 +551,8 @@ func TestStartForwarderStartsBothLegs_spec_17_4(t *testing.T) {
 	if err != nil {
 		t.Fatalf("tlsgen.Generate: %v", err)
 	}
-	httpsPort, _ := strconv.Atoi(freePort(t))
-	httpPort, _ := strconv.Atoi(freePort(t))
+	httpsPort := heldLoopbackPort(t)
+	httpPort := heldLoopbackPort(t)
 
 	s := &Stack{tls: mat}
 	addr, err := s.startForwarder(Config{HTTPPort: httpPort, HTTPSPort: httpsPort}, io.Discard)

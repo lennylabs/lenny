@@ -18,7 +18,9 @@ import (
 	"bytes"
 	"context"
 	"testing"
+	"time"
 
+	authorizationv1 "k8s.io/api/authorization/v1"
 	corev1 "k8s.io/api/core/v1"
 	rbacv1 "k8s.io/api/rbac/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -44,8 +46,16 @@ type apiFixture struct {
 	cfg   *rest.Config
 }
 
-// startAPI boots envtest, creates both namespaces, and binds tsUser to a Role
-// granting get on secrets in the credentials namespace.
+// grantWait bounds how long startAPI waits for the API server's authorizer to
+// allow the new binding, and grantPoll is the interval between its reviews.
+const (
+	grantWait = 30 * time.Second
+	grantPoll = 50 * time.Millisecond
+)
+
+// startAPI boots envtest, creates both namespaces, binds tsUser to a Role
+// granting get on secrets in the credentials namespace, and returns once the
+// API server's authorizer allows that grant.
 func startAPI(t *testing.T) *apiFixture {
 	t.Helper()
 	env := envtest.Start(t)
@@ -75,7 +85,43 @@ func startAPI(t *testing.T) *apiFixture {
 	if _, err := admin.RbacV1().RoleBindings(credNS).Create(ctx, binding, metav1.CreateOptions{}); err != nil {
 		t.Fatalf("create rolebinding: %v", err)
 	}
+	waitForGrant(t, admin, tsUser, credNS)
 	return &apiFixture{admin: admin, cfg: env.RESTConfig()}
+}
+
+// waitForGrant polls a SubjectAccessReview for user's get on secrets in ns
+// until the API server allows it. The RBAC authorizer reads roles and
+// bindings through informers, so a binding takes effect a short time after
+// its create returns, and a probe sent before then is denied although the
+// grant exists. The review asks the same authorizer the probe's request
+// meets, so an allowed review means the probe's request is allowed too.
+func waitForGrant(t *testing.T, admin kubernetes.Interface, user, ns string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), grantWait)
+	defer cancel()
+	review := &authorizationv1.SubjectAccessReview{Spec: authorizationv1.SubjectAccessReviewSpec{
+		User:               user,
+		ResourceAttributes: &authorizationv1.ResourceAttributes{Namespace: ns, Verb: "get", Resource: "secrets"},
+	}}
+	tick := time.NewTicker(grantPoll)
+	defer tick.Stop()
+	var last string
+	for {
+		got, err := admin.AuthorizationV1().SubjectAccessReviews().Create(ctx, review, metav1.CreateOptions{})
+		switch {
+		case err != nil:
+			last = err.Error()
+		case got.Status.Allowed:
+			return
+		default:
+			last = "not allowed: " + got.Status.Reason
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatalf("the grant of get on secrets in %s to %s did not take effect within %s; last review: %s", ns, user, grantWait, last)
+		case <-tick.C:
+		}
+	}
 }
 
 // proberAs returns a prober for namespace ns whose client impersonates user.
