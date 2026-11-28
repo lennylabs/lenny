@@ -151,3 +151,7 @@ Raised as open decisions:
 ## Owner answers on the M3 readiness decision page (2026-11-23)
 
 Revision 18 records the owner's answers of 2026-11-20: O10 as (a) by question PR-A5 (D28) and O11 as (a) by question PR-A7 (D29). Both move to "Settled open decisions of the M3 readiness review". O19 notes that its ordering part is settled through 0118's O11 and 0145's O17 (question PR-A3), and its `lenny-store-fill` part stays open. The recommendation of O10 also asks whether adoption at bind rewrites or checks the adopted repository's `.git` directory, which the page question did not decide. `change.md` does not yet apply D28 and D29 in WM-3, WM-15, and the "Broker root" term, and the next revision brings them in line. It was revision 16 on `main`. The merge of `main` into the branch of change 0166 on 2026-11-24 renumbered it, because that branch had used revision 16 and later revisions for its own edits.
+
+## Revision 19 (2026-11-27)
+
+Decision 1 of change [0182](../0182-client-chosen-upload-secret/decisions.md), the owner's answer to UC-1 on the M3 readiness decision page, 2026-11-27, option (a), replaces the `uploadToken` that a create response returned with a secret the client chooses and whose digest the session row records. 0182 stays outside the v1 program and edits this member's records as its answers land (0182 decision 7), so **What the gateway keeps.** names the checks of the client's upload secret in place of the `uploadToken` checks. Nothing else in this change reads the token.

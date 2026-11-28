@@ -1,6 +1,7 @@
 ---
 id: AUTHN-I2
-status: open
+status: planned
+change: 0178.S3
 kind: build-gap
 severity: low
 requirements: []

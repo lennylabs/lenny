@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I16
-status: open
+status: planned
 kind: question
 severity: low
 requirements: []
+change: 0182.S2
 ---
 
 # A row planted with forced set and a far-future activation instant refuses every forced rotation
@@ -27,3 +28,7 @@ A holder of the gateway's database credentials can insert or update the newest r
 ## Suggested resolution
 
 Open decision O11 of change 0177 states the options: (a) refuse only while the pending forced key's `active_from` is at most one publish lead (plus a clock-skew margin) ahead, and otherwise write the next slot and log a warning; (b) keep the condition of decision 13 and rely on the runbook's escalation (row repair by hand). Recommendation: (a).
+
+The owner chose (a) on 2026-11-27 (0177 decision 14); step 0177.S5 builds it.
+
+Decision 3 of change 0182 (UC-3 (a), 2026-11-27) withdraws 0177 decision 14 and cancels step 0177.S5. Step 0182.S2 removes the forced rotation with the key ring and closes this issue as obsolete.

@@ -1,9 +1,10 @@
 ---
 id: UPLOAD-I14
-status: open
+status: planned
 kind: spec-defect
 severity: medium
 requirements: []
+change: 0182.S1
 ---
 
 # A replica whose key reload fails refuses valid upload tokens signed with a newer key while it can still read the session row
@@ -26,3 +27,7 @@ The publish lead guarantees only that a replica whose reloads succeed holds a ke
 ## Suggested resolution
 
 Open decision O3 of change 0179 states the options: a retryable `503` in place of the `401` when the HMAC check misses and the ring's last successful reload is at least one publish lead old; the same with one rate-limited reload on such a miss before the `503`; or a §7.1 statement of the limit. The model shows that a ring younger than the publish lead holds every key any replica signs with, so the `401` stays correct for a miss on such a ring.
+
+Under design C, open decision O1 (a) of change 0182, step 0182.S1 removes the HMAC check from the verifier, which then reads only the session row, so this issue becomes moot when 0182.S1 lands, before step 0182.S2 removes the ring, and open decision O4 of 0182 asks whether 0179's O3 then closes as moot. The issue stays `open` until the owner answers O1 and O3 of change 0182 and O3 of change 0179; under O1 (d) or (e) of 0182 the options of 0179's O3 apply.
+
+The owner answered on 2026-11-27: design C (decision 1 of change 0182, UC-1 (a)), the retirement of the key ring (decision 3 of 0182, UC-3 (a)), and FV-2 narrowed with open decision O3 of change 0179 moot (decision 4 of 0182, UC-4 (a), recorded as 0179 decision 3). Step 0182.S1 removes the HMAC check from the verifier and closes this issue as obsolete.
